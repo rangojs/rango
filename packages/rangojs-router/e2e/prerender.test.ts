@@ -15,13 +15,13 @@ test.describe("prerender-handler (dev mode)", () => {
     await waitForHydration(page);
 
     await expect(page.locator('[data-testid="docs-title"]')).toContainText(
-      "Documentation"
+      "Documentation",
     );
     await expect(page.locator('[data-testid="docs-content"]')).toContainText(
-      "pre-rendered documentation content"
+      "pre-rendered documentation content",
     );
     await expect(page.locator('[data-testid="docs-pathname"]')).toContainText(
-      "/docs"
+      "/docs",
     );
   });
 
@@ -32,14 +32,16 @@ test.describe("prerender-handler (dev mode)", () => {
     await waitForHydration(page);
 
     await expect(
-      page.locator('[data-testid="docs-article-title"]')
+      page.locator('[data-testid="docs-article-title"]'),
     ).toContainText("getting-started");
     await expect(
-      page.locator('[data-testid="docs-article-content"]')
+      page.locator('[data-testid="docs-article-content"]'),
     ).toContainText("Content for getting-started");
   });
 
-  test("prerender client component resolves loader, action, and locationState", async ({ page }) => {
+  test("prerender client component resolves loader, action, and locationState", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/docs/getting-started"));
@@ -47,46 +49,56 @@ test.describe("prerender-handler (dev mode)", () => {
 
     // Loader data should be resolved and rendered by useLoader
     await expect(
-      page.locator('[data-testid="prerender-loader-data"]')
+      page.locator('[data-testid="prerender-loader-data"]'),
     ).toContainText("prerender-loader-data");
     await expect(
-      page.locator('[data-testid="prerender-loader-test"]')
+      page.locator('[data-testid="prerender-loader-test"]'),
     ).toContainText("true");
 
     // useAction should work with directly imported action
     await expect(
-      page.locator('[data-testid="prerender-action-state"]')
+      page.locator('[data-testid="prerender-action-state"]'),
     ).toContainText("idle");
 
     // Verify loader has $$id injected
-    const loaderJson = await page.locator('[data-testid="prerender-loader-json"]').textContent();
+    const loaderJson = await page
+      .locator('[data-testid="prerender-loader-json"]')
+      .textContent();
     const loaderObj = JSON.parse(loaderJson!);
     expect(loaderObj.$$id).toBeTruthy();
 
     // Verify action has $$id injected (via direct import, not prop)
-    const actionId = await page.locator('[data-testid="prerender-action-id"]').textContent();
+    const actionId = await page
+      .locator('[data-testid="prerender-action-id"]')
+      .textContent();
     expect(actionId).not.toBe("no-action-id");
 
     // Verify location state has __rsc_ls_key injected
-    const locationStateKey = await page.locator('[data-testid="prerender-location-state-key"]').textContent();
+    const locationStateKey = await page
+      .locator('[data-testid="prerender-location-state-key"]')
+      .textContent();
     expect(locationStateKey).not.toBe("no-ls-key");
   });
 
-  test("Static handler on non-parameterized route renders in dev", async ({ page }) => {
+  test("Static handler on non-parameterized route renders in dev", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/static-page"));
     await waitForHydration(page);
 
-    await expect(page.locator('[data-testid="static-page-title"]')).toContainText(
-      "Static Page"
-    );
-    await expect(page.locator('[data-testid="static-page-content"]')).toContainText(
-      "This is a statically pre-rendered page."
-    );
+    await expect(
+      page.locator('[data-testid="static-page-title"]'),
+    ).toContainText("Static Page");
+    await expect(
+      page.locator('[data-testid="static-page-content"]'),
+    ).toContainText("This is a statically pre-rendered page.");
   });
 
-  test("Static handler pushes breadcrumb handle data in dev", async ({ page }) => {
+  test("Static handler pushes breadcrumb handle data in dev", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/static-page"));
@@ -95,33 +107,37 @@ test.describe("prerender-handler (dev mode)", () => {
     // The Static handler pushes a "Static Page" breadcrumb.
     // BreadcrumbNav should render it (alongside "Home" from RootLayout).
     await expect(page.locator('[data-testid="breadcrumbs"]')).toBeVisible();
-    await expect(page.locator('[data-testid="breadcrumbs-current"]')).toContainText("Static Page");
+    await expect(
+      page.locator('[data-testid="breadcrumbs-current"]'),
+    ).toContainText("Static Page");
   });
 
-  test("Static handler on parameterized route serves content for any param", async ({ page }) => {
+  test("Static handler on parameterized route serves content for any param", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     // Visit with one param value
     await page.goto(f.url("/static-shell/hello"));
     await waitForHydration(page);
 
-    await expect(page.locator('[data-testid="static-shell-title"]')).toContainText(
-      "Static Shell"
-    );
-    await expect(page.locator('[data-testid="static-shell-content"]')).toContainText(
-      "This content is the same for every param."
-    );
+    await expect(
+      page.locator('[data-testid="static-shell-title"]'),
+    ).toContainText("Static Shell");
+    await expect(
+      page.locator('[data-testid="static-shell-content"]'),
+    ).toContainText("This content is the same for every param.");
 
     // Visit with a completely different param value -- should get the same content
     await page.goto(f.url("/static-shell/world"));
     await waitForHydration(page);
 
-    await expect(page.locator('[data-testid="static-shell-title"]')).toContainText(
-      "Static Shell"
-    );
-    await expect(page.locator('[data-testid="static-shell-content"]')).toContainText(
-      "This content is the same for every param."
-    );
+    await expect(
+      page.locator('[data-testid="static-shell-title"]'),
+    ).toContainText("Static Shell");
+    await expect(
+      page.locator('[data-testid="static-shell-content"]'),
+    ).toContainText("This content is the same for every param.");
   });
 
   test("dynamic prerender handler renders different params", async ({
@@ -133,10 +149,10 @@ test.describe("prerender-handler (dev mode)", () => {
     await waitForHydration(page);
 
     await expect(
-      page.locator('[data-testid="docs-article-title"]')
+      page.locator('[data-testid="docs-article-title"]'),
     ).toContainText("api-reference");
     await expect(
-      page.locator('[data-testid="docs-article-content"]')
+      page.locator('[data-testid="docs-article-content"]'),
     ).toContainText("Content for api-reference");
   });
 
@@ -152,7 +168,7 @@ test.describe("prerender-handler (dev mode)", () => {
     await waitForHydration(page);
 
     await expect(
-      page.locator('[data-testid="docs-article-title"]')
+      page.locator('[data-testid="docs-article-title"]'),
     ).toContainText("api-reference");
   });
 });
@@ -170,10 +186,10 @@ test.describe("prerender-complex (dev mode)", () => {
     await waitForHydration(page);
 
     await expect(
-      page.locator('[data-testid="prerender-complex-layout"]')
+      page.locator('[data-testid="prerender-complex-layout"]'),
     ).toBeVisible();
     await expect(
-      page.locator('[data-testid="prerender-complex-index-title"]')
+      page.locator('[data-testid="prerender-complex-index-title"]'),
     ).toContainText("Complex Index");
   });
 
@@ -184,10 +200,10 @@ test.describe("prerender-complex (dev mode)", () => {
     await waitForHydration(page);
 
     await expect(
-      page.locator('[data-testid="prerender-complex-layout"]')
+      page.locator('[data-testid="prerender-complex-layout"]'),
     ).toBeVisible();
     await expect(
-      page.locator('[data-testid="prerender-complex-detail-title"]')
+      page.locator('[data-testid="prerender-complex-detail-title"]'),
     ).toContainText("alpha");
   });
 
@@ -198,10 +214,10 @@ test.describe("prerender-complex (dev mode)", () => {
     await waitForHydration(page);
 
     await expect(
-      page.locator('[data-testid="prerender-inner-layout"]')
+      page.locator('[data-testid="prerender-inner-layout"]'),
     ).toBeVisible();
     await expect(
-      page.locator('[data-testid="prerender-complex-detail-title"]')
+      page.locator('[data-testid="prerender-complex-detail-title"]'),
     ).toContainText("beta");
   });
 
@@ -212,10 +228,10 @@ test.describe("prerender-complex (dev mode)", () => {
     await waitForHydration(page);
 
     await expect(
-      page.locator('[data-testid="prerender-sidebar"]')
+      page.locator('[data-testid="prerender-sidebar"]'),
     ).toBeVisible();
     await expect(
-      page.locator('[data-testid="prerender-sidebar-title"]')
+      page.locator('[data-testid="prerender-sidebar-title"]'),
     ).toContainText("Sidebar");
   });
 
@@ -226,7 +242,7 @@ test.describe("prerender-complex (dev mode)", () => {
     await waitForHydration(page);
 
     await expect(
-      page.locator('[data-testid="prerender-sidebar"]')
+      page.locator('[data-testid="prerender-sidebar"]'),
     ).not.toBeVisible();
   });
 
@@ -285,48 +301,58 @@ test.describe("Static handler (production build)", () => {
     await page.goto(f.url("/static-page"));
     await waitForHydration(page);
 
-    await expect(page.locator('[data-testid="static-page-title"]')).toContainText(
-      "Static Page"
-    );
+    await expect(
+      page.locator('[data-testid="static-page-title"]'),
+    ).toContainText("Static Page");
   });
 
-  test("Static on non-dynamic route has stable timestamp across reloads (truly pre-rendered)", async ({ page }) => {
+  test("Static on non-dynamic route has stable timestamp across reloads (truly pre-rendered)", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/static-page"));
     await waitForHydration(page);
 
-    const ts1 = await page.locator('[data-testid="static-page-timestamp"]').textContent();
+    const ts1 = await page
+      .locator('[data-testid="static-page-timestamp"]')
+      .textContent();
 
     await page.reload();
     await waitForHydration(page);
 
-    const ts2 = await page.locator('[data-testid="static-page-timestamp"]').textContent();
+    const ts2 = await page
+      .locator('[data-testid="static-page-timestamp"]')
+      .textContent();
 
     // If truly pre-rendered, timestamp should be identical (frozen at build time)
     expect(ts1).toBe(ts2);
   });
 
-  test("Static on dynamic route serves content for any param value", async ({ page }) => {
+  test("Static on dynamic route serves content for any param value", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/static-shell/hello"));
     await waitForHydration(page);
 
-    await expect(page.locator('[data-testid="static-shell-title"]')).toContainText(
-      "Static Shell"
-    );
+    await expect(
+      page.locator('[data-testid="static-shell-title"]'),
+    ).toContainText("Static Shell");
   });
 
-  test("Static on dynamic route serves same content for different param", async ({ page }) => {
+  test("Static on dynamic route serves same content for different param", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/static-shell/totally-different-value"));
     await waitForHydration(page);
 
-    await expect(page.locator('[data-testid="static-shell-title"]')).toContainText(
-      "Static Shell"
-    );
+    await expect(
+      page.locator('[data-testid="static-shell-title"]'),
+    ).toContainText("Static Shell");
   });
 });
 
@@ -343,10 +369,10 @@ test.describe("prerender-complex (production build)", () => {
     await waitForHydration(page);
 
     await expect(
-      page.locator('[data-testid="prerender-complex-layout"]')
+      page.locator('[data-testid="prerender-complex-layout"]'),
     ).toBeVisible();
     await expect(
-      page.locator('[data-testid="prerender-complex-index-title"]')
+      page.locator('[data-testid="prerender-complex-index-title"]'),
     ).toContainText("Complex Index");
   });
 
@@ -357,10 +383,10 @@ test.describe("prerender-complex (production build)", () => {
     await waitForHydration(page);
 
     await expect(
-      page.locator('[data-testid="prerender-complex-layout"]')
+      page.locator('[data-testid="prerender-complex-layout"]'),
     ).toBeVisible();
     await expect(
-      page.locator('[data-testid="prerender-complex-detail-title"]')
+      page.locator('[data-testid="prerender-complex-detail-title"]'),
     ).toContainText("alpha");
   });
 
@@ -371,10 +397,10 @@ test.describe("prerender-complex (production build)", () => {
     await waitForHydration(page);
 
     await expect(
-      page.locator('[data-testid="prerender-inner-layout"]')
+      page.locator('[data-testid="prerender-inner-layout"]'),
     ).toBeVisible();
     await expect(
-      page.locator('[data-testid="prerender-complex-detail-title"]')
+      page.locator('[data-testid="prerender-complex-detail-title"]'),
     ).toContainText("beta");
   });
 
@@ -385,10 +411,10 @@ test.describe("prerender-complex (production build)", () => {
     await waitForHydration(page);
 
     await expect(
-      page.locator('[data-testid="prerender-sidebar"]')
+      page.locator('[data-testid="prerender-sidebar"]'),
     ).toBeVisible();
     await expect(
-      page.locator('[data-testid="prerender-sidebar-title"]')
+      page.locator('[data-testid="prerender-sidebar-title"]'),
     ).toContainText("Sidebar");
   });
 
@@ -399,7 +425,7 @@ test.describe("prerender-complex (production build)", () => {
     await waitForHydration(page);
 
     await expect(
-      page.locator('[data-testid="prerender-sidebar"]')
+      page.locator('[data-testid="prerender-sidebar"]'),
     ).not.toBeVisible();
   });
 
@@ -445,7 +471,9 @@ test.describe("prerender-complex (production build)", () => {
     expect(ts2).not.toBe(ts1);
   });
 
-  test("pre-rendered handler content stays identical while loader timestamps differ", async ({ page }) => {
+  test("pre-rendered handler content stays identical while loader timestamps differ", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/prerender-complex"));
@@ -474,7 +502,9 @@ test.describe("prerender-complex (production build)", () => {
     expect(ts1).not.toBe(ts2);
   });
 
-  test("client navigation from index to prerender-complex", async ({ page }) => {
+  test("client navigation from index to prerender-complex", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/"));
@@ -484,21 +514,23 @@ test.describe("prerender-complex (production build)", () => {
     await waitForHydration(page);
 
     await expect(
-      page.locator('[data-testid="prerender-complex-index-title"]')
+      page.locator('[data-testid="prerender-complex-index-title"]'),
     ).toContainText("Complex Index");
   });
 
-  test("client navigation between index and detail preserves parent layout", async ({ page }) => {
+  test("client navigation between index and detail preserves parent layout", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/prerender-complex"));
     await waitForHydration(page);
 
     await expect(
-      page.locator('[data-testid="prerender-complex-layout"]')
+      page.locator('[data-testid="prerender-complex-layout"]'),
     ).toBeVisible();
     await expect(
-      page.locator('[data-testid="prerender-complex-index-title"]')
+      page.locator('[data-testid="prerender-complex-index-title"]'),
     ).toContainText("Complex Index");
 
     // Navigate to detail
@@ -507,10 +539,10 @@ test.describe("prerender-complex (production build)", () => {
 
     // Parent layout should still be there
     await expect(
-      page.locator('[data-testid="prerender-complex-layout"]')
+      page.locator('[data-testid="prerender-complex-layout"]'),
     ).toBeVisible();
     await expect(
-      page.locator('[data-testid="prerender-complex-detail-title"]')
+      page.locator('[data-testid="prerender-complex-detail-title"]'),
     ).toContainText("alpha");
   });
 });

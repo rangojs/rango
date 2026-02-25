@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError, expectNoCSPViolations, testId } from "./helper";
+import {
+  waitForHydration,
+  expectNoPageError,
+  expectNoCSPViolations,
+  testId,
+} from "./helper";
 
 test.describe("CSP nonce support", () => {
   const f = useFixture({
@@ -8,10 +13,13 @@ test.describe("CSP nonce support", () => {
     mode: "dev",
   });
 
-  test("should include CSP header with nonce on initial page load", async ({ page }) => {
+  test("should include CSP header with nonce on initial page load", async ({
+    page,
+  }) => {
     // Intercept the response to check headers
-    const responsePromise = page.waitForResponse((response) =>
-      response.url().includes(f.url("/")) && response.status() === 200
+    const responsePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes(f.url("/")) && response.status() === 200,
     );
 
     await page.goto(f.url("/"));
@@ -30,13 +38,16 @@ test.describe("CSP nonce support", () => {
 
   test("should have unique nonce for each request", async ({ page }) => {
     // Helper to get CSP header (works in both dev and prod mode)
-    const getCSPHeader = (response: { headers: () => Record<string, string> }) =>
+    const getCSPHeader = (response: {
+      headers: () => Record<string, string>;
+    }) =>
       response.headers()["content-security-policy-report-only"] ||
       response.headers()["content-security-policy"];
 
     // Get first response
-    const response1Promise = page.waitForResponse((response) =>
-      response.url().includes(f.url("/")) && response.status() === 200
+    const response1Promise = page.waitForResponse(
+      (response) =>
+        response.url().includes(f.url("/")) && response.status() === 200,
     );
     await page.goto(f.url("/"));
     const response1 = await response1Promise;
@@ -48,8 +59,9 @@ test.describe("CSP nonce support", () => {
     const nonce1 = nonceMatch1![1];
 
     // Get second response (hard navigation)
-    const response2Promise = page.waitForResponse((response) =>
-      response.url().includes(f.url("/about")) && response.status() === 200
+    const response2Promise = page.waitForResponse(
+      (response) =>
+        response.url().includes(f.url("/about")) && response.status() === 200,
     );
     await page.goto(f.url("/about"));
     const response2 = await response2Promise;
@@ -64,7 +76,9 @@ test.describe("CSP nonce support", () => {
     expect(nonce1).not.toBe(nonce2);
   });
 
-  test("should have nonce attribute on inline scripts in raw HTML", async ({ page }) => {
+  test("should have nonce attribute on inline scripts in raw HTML", async ({
+    page,
+  }) => {
     // Browsers hide nonce values from JS for security (getAttribute returns "")
     // So we need to check the raw HTML response instead
     const response = await page.goto(f.url("/"));
@@ -92,7 +106,9 @@ test.describe("CSP nonce support", () => {
     await expect(testId(page, "home-page")).toBeVisible();
   });
 
-  test("should work with client-side navigation (no CSP on RSC responses)", async ({ page }) => {
+  test("should work with client-side navigation (no CSP on RSC responses)", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
     using __ = expectNoCSPViolations(page);
 
@@ -121,7 +137,9 @@ test.describe("CSP nonce support", () => {
 
     // Trigger server action
     await testId(page, "counter-increment").click();
-    await expect(testId(page, "counter-pending")).not.toBeVisible({ timeout: 10000 });
+    await expect(testId(page, "counter-pending")).not.toBeVisible({
+      timeout: 10000,
+    });
 
     // Verify action worked
     const newText = await testId(page, "counter-value").textContent();
@@ -129,9 +147,12 @@ test.describe("CSP nonce support", () => {
     expect(newCount).toBe(initialCount + 1);
   });
 
-  test("should not expose nonce in x-nonce header (internal header removed)", async ({ page }) => {
-    const responsePromise = page.waitForResponse((response) =>
-      response.url().includes(f.url("/")) && response.status() === 200
+  test("should not expose nonce in x-nonce header (internal header removed)", async ({
+    page,
+  }) => {
+    const responsePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes(f.url("/")) && response.status() === 200,
     );
 
     await page.goto(f.url("/"));
@@ -142,18 +163,22 @@ test.describe("CSP nonce support", () => {
     expect(xNonceHeader).toBeUndefined();
   });
 
-  test("should use Report-Only CSP header in dev mode (localhost)", async ({ page }) => {
+  test("should use Report-Only CSP header in dev mode (localhost)", async ({
+    page,
+  }) => {
     // In dev mode, we use Content-Security-Policy-Report-Only
     // so that HMR scripts are not blocked
-    const responsePromise = page.waitForResponse((response) =>
-      response.url().includes(f.url("/")) && response.status() === 200
+    const responsePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes(f.url("/")) && response.status() === 200,
     );
 
     await page.goto(f.url("/"));
     const response = await responsePromise;
 
     // Dev mode should use Report-Only header
-    const reportOnlyHeader = response.headers()["content-security-policy-report-only"];
+    const reportOnlyHeader =
+      response.headers()["content-security-policy-report-only"];
     const enforcingHeader = response.headers()["content-security-policy"];
 
     // In dev (localhost), we expect Report-Only, not enforcing

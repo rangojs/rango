@@ -33,7 +33,7 @@ const CLIENT_REFERENCE = Symbol.for("react.client.reference");
  * ```
  */
 export function isClientComponent(
-  component: ComponentType<unknown> | unknown
+  component: ComponentType<unknown> | unknown,
 ): boolean {
   if (typeof component !== "function") {
     return false;
@@ -52,13 +52,13 @@ export function isClientComponent(
  */
 export function assertClientComponent(
   component: ComponentType<unknown> | unknown,
-  name: string
+  name: string,
 ): asserts component is ComponentType<unknown> {
   if (typeof component !== "function") {
     throw new Error(
       `${name} must be a client component function with "use client" directive. ` +
         `Make sure to pass the component itself, not a JSX element: ` +
-        `${name}: My${capitalize(name)} (correct) vs ${name}: <My${capitalize(name)} /> (incorrect)`
+        `${name}: My${capitalize(name)} (correct) vs ${name}: <My${capitalize(name)} /> (incorrect)`,
     );
   }
 
@@ -66,7 +66,7 @@ export function assertClientComponent(
     throw new Error(
       `${name} must be a client component with "use client" directive at the top of the file. ` +
         `Server components cannot be used as the ${name} because their function reference ` +
-        `cannot be serialized in the RSC payload. Add "use client" to your ${name} file.`
+        `cannot be serialized in the RSC payload. Add "use client" to your ${name} file.`,
     );
   }
 }

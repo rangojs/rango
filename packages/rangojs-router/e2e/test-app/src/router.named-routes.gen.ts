@@ -40,7 +40,10 @@ export const NamedRoutes = {
   "hookTests.routeA": "/hook-tests/route-a",
   "hookTests.routeB": "/hook-tests/route-b",
   "href.detail": "/href/:id",
-  "href.filtered": { path: "/href/filtered/:category", search: { q: "string", page: "number?", active: "boolean?" } },
+  "href.filtered": {
+    path: "/href/filtered/:category",
+    search: { q: "string", page: "number?", active: "boolean?" },
+  },
   "href.index": "/href",
   "href.nested.index": "/href/nested",
   hydrationTest: "/hydration-test",
@@ -76,7 +79,8 @@ export const NamedRoutes = {
   "middlewareTest.protected": "/middleware-test/protected",
   "middlewareTest.protectedDashboard": "/middleware-test/protected/dashboard",
   "middlewareTest.routeLevel": "/middleware-test/route-level",
-  "middlewareTest.routeLevelWithParams": "/middleware-test/route-level/:routeId",
+  "middlewareTest.routeLevelWithParams":
+    "/middleware-test/route-level/:routeId",
   "middlewareTest.sharedVars": "/middleware-test/shared-vars",
   negotiateJsonFirst: "/negotiate-test-json-first",
   negotiateJsonFirstRsc: "/negotiate-test-json-first",
@@ -117,8 +121,14 @@ export const NamedRoutes = {
   "reverseAutofill.settings": "/reverse-autofill/:tenantId/settings",
   "reverseAutofill.user": "/reverse-autofill/:tenantId/users/:userId",
   reverseFallbackTest: "/reverse-fallback-test",
-  "search.detail": { path: "/search/:category", search: { q: "string?", active: "boolean?" } },
-  "search.index": { path: "/search", search: { q: "string", page: "number?", sort: "string?" } },
+  "search.detail": {
+    path: "/search/:category",
+    search: { q: "string?", active: "boolean?" },
+  },
+  "search.index": {
+    path: "/search",
+    search: { q: "string", page: "number?", sort: "string?" },
+  },
   shopPlayground: "/shop-playground",
   slow: "/slow",
   "slowProduct.detail": "/slow-product/:productId",
@@ -140,7 +150,8 @@ export const NamedRoutes = {
   "useCacheTest.useCacheTest.inlineHandler": "/use-cache-test/inline-handler",
   "useCacheTest.useCacheTest.inlineLayout": "/use-cache-test/inline-layout",
   "useCacheTest.useCacheTest.interceptIndex": "/use-cache-test/intercept-index",
-  "useCacheTest.useCacheTest.interceptTarget": "/use-cache-test/intercept-target/:id",
+  "useCacheTest.useCacheTest.interceptTarget":
+    "/use-cache-test/intercept-target/:id",
   "useCacheTest.useCacheTest.namedProfile": "/use-cache-test/named-profile",
   "useCacheTest.useCacheTest.plainData": "/use-cache-test/plain-data",
   "useCacheTest.useCacheTest.streaming": "/use-cache-test/streaming",

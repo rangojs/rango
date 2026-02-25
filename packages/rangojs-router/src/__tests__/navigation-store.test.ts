@@ -83,10 +83,7 @@ describe("navigation-store", () => {
         initialSegmentIds: ["L0", "L0R0"],
       });
 
-      expect(store.getSegmentState().currentSegmentIds).toEqual([
-        "L0",
-        "L0R0",
-      ]);
+      expect(store.getSegmentState().currentSegmentIds).toEqual(["L0", "L0R0"]);
     });
 
     it("caches initial segments if both key and segments provided", () => {
@@ -169,11 +166,21 @@ describe("navigation-store", () => {
     it("adds and removes inflight actions", () => {
       const store = createTestStore();
 
-      store.addInflightAction({ id: "a1", actionId: "save", payload: [], startedAt: 0 });
+      store.addInflightAction({
+        id: "a1",
+        actionId: "save",
+        payload: [],
+        startedAt: 0,
+      });
       expect(store.getState().inflightActions).toHaveLength(1);
       expect(store.getState().inflightActions[0].id).toBe("a1");
 
-      store.addInflightAction({ id: "a2", actionId: "delete", payload: [], startedAt: 0 });
+      store.addInflightAction({
+        id: "a2",
+        actionId: "delete",
+        payload: [],
+        startedAt: 0,
+      });
       expect(store.getState().inflightActions).toHaveLength(2);
 
       store.removeInflightAction("a1");
@@ -183,7 +190,12 @@ describe("navigation-store", () => {
 
     it("removing non-existent action is a no-op", () => {
       const store = createTestStore();
-      store.addInflightAction({ id: "a1", actionId: "save", payload: [], startedAt: 0 });
+      store.addInflightAction({
+        id: "a1",
+        actionId: "save",
+        payload: [],
+        startedAt: 0,
+      });
       store.removeInflightAction("nonexistent");
       expect(store.getState().inflightActions).toHaveLength(1);
     });
@@ -223,10 +235,7 @@ describe("navigation-store", () => {
       );
 
       store.setSegmentIds(["L0", "L0R1"]);
-      expect(store.getSegmentState().currentSegmentIds).toEqual([
-        "L0",
-        "L0R1",
-      ]);
+      expect(store.getSegmentState().currentSegmentIds).toEqual(["L0", "L0R1"]);
     });
   });
 

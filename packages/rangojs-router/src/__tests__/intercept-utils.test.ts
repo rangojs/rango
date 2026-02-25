@@ -183,10 +183,7 @@ describe("intercept-utils", () => {
 
   describe("isInterceptOnlyCache", () => {
     it("returns false for no intercept segments", () => {
-      const segments = [
-        seg("L0", { type: "layout" }),
-        seg("L0R0"),
-      ];
+      const segments = [seg("L0", { type: "layout" }), seg("L0R0")];
       expect(isInterceptOnlyCache(segments)).toBe(false);
     });
 

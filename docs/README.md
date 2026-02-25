@@ -62,17 +62,17 @@ Routes are relative to mount point. When mounted at `/blog`, `/:slug` becomes `/
 
 All helpers are available in the `map()` callback:
 
-| Helper | Purpose |
-|--------|---------|
-| `route(name, handler, use?)` | Define route handler |
-| `layout(component, use?)` | Define layout wrapper |
-| `middleware(...fns)` | Attach middleware |
-| `parallel(slots, use?)` | Define parallel routes |
-| `loader(loaderDef, use?)` | Attach data loader |
-| `revalidate(fn)` | Control revalidation |
-| `loading(component, skipSSR?)` | Loading UI |
-| `errorBoundary(fallback)` | Error fallback |
-| `notFoundBoundary(fallback)` | NotFound fallback |
+| Helper                                    | Purpose                |
+| ----------------------------------------- | ---------------------- |
+| `route(name, handler, use?)`              | Define route handler   |
+| `layout(component, use?)`                 | Define layout wrapper  |
+| `middleware(...fns)`                      | Attach middleware      |
+| `parallel(slots, use?)`                   | Define parallel routes |
+| `loader(loaderDef, use?)`                 | Attach data loader     |
+| `revalidate(fn)`                          | Control revalidation   |
+| `loading(component, skipSSR?)`            | Loading UI             |
+| `errorBoundary(fallback)`                 | Error fallback         |
+| `notFoundBoundary(fallback)`              | NotFound fallback      |
 | `intercept(slot, route, component, use?)` | Intercept for soft nav |
 
 ## Layout Composition
@@ -108,6 +108,7 @@ middleware((ctx, next) => {
 Middleware runs before handlers. Call `next()` to continue chain.
 
 **Context methods:**
+
 - `ctx.set(key, value)` / `ctx.get(key)` - Store/retrieve values
 - `ctx.var` - Access all stored values
 - `redirect(url)` - Soft redirect (SPA navigation)
@@ -151,8 +152,8 @@ function KanbanLayout({ children }) {
   return (
     <div>
       <KanbanBoard />
-      <Outlet name="@modal" />  {/* Intercept content renders here */}
-      <Outlet />                 {/* Normal route content */}
+      <Outlet name="@modal" /> {/* Intercept content renders here */}
+      <Outlet /> {/* Normal route content */}
     </div>
   );
 }
@@ -160,11 +161,11 @@ function KanbanLayout({ children }) {
 
 ### Behavior
 
-| Navigation Type | What Renders |
-|-----------------|--------------|
-| Click link to `/card` | `<CardModal />` in `@modal` slot, background preserved |
-| Direct URL `/card` | `<CardDetailPage />` as full page |
-| Back button from modal | Modal closes, background restored |
+| Navigation Type        | What Renders                                           |
+| ---------------------- | ------------------------------------------------------ |
+| Click link to `/card`  | `<CardModal />` in `@modal` slot, background preserved |
+| Direct URL `/card`     | `<CardDetailPage />` as full page                      |
+| Back button from modal | Modal closes, background restored                      |
 
 ### With Loaders and Revalidation
 
@@ -206,10 +207,12 @@ revalidate(({ currentParams, nextParams, defaultShouldRevalidate }) => {
 ```
 
 **Return values:**
+
 - `true` / `false` - Hard decision, stops evaluation
 - `{ defaultShouldRevalidate: boolean }` - Soft decision, continues to next
 
 **Default behavior:**
+
 - Params changed -> revalidate
 - Only query/hash changed -> skip
 
@@ -346,11 +349,11 @@ route("landing", (ctx) => {
 
 **Title descriptor options:**
 
-| Form | Example | Result |
-|------|---------|--------|
-| String | `{ title: "About" }` | Applies template if set |
+| Form     | Example                                                  | Result                     |
+| -------- | -------------------------------------------------------- | -------------------------- |
+| String   | `{ title: "About" }`                                     | Applies template if set    |
 | Template | `{ title: { template: "%s \| Site", default: "Site" } }` | Sets template for children |
-| Absolute | `{ title: { absolute: "Custom" } }` | Bypasses template |
+| Absolute | `{ title: { absolute: "Custom" } }`                      | Bypasses template          |
 
 ### Unset Meta
 
@@ -376,12 +379,12 @@ route("private", (ctx) => {
 
 **Unset key format:**
 
-| Meta Type | Unset Key |
-|-----------|-----------|
-| Title | `"title"` |
-| Name | `"name:description"`, `"name:robots"` |
-| Property | `"property:og:title"`, `"property:og:image"` |
-| HTTP-Equiv | `"httpEquiv:refresh"` |
+| Meta Type  | Unset Key                                    |
+| ---------- | -------------------------------------------- |
+| Title      | `"title"`                                    |
+| Name       | `"name:description"`, `"name:robots"`        |
+| Property   | `"property:og:title"`, `"property:og:image"` |
+| HTTP-Equiv | `"httpEquiv:refresh"`                        |
 
 ### Supported Descriptors
 
@@ -450,7 +453,7 @@ meta({ title: "Site" });
 meta({ name: "author", content: "Default Author" });
 
 // Child route
-meta({ title: "Blog" });  // Overrides root title
+meta({ title: "Blog" }); // Overrides root title
 // author meta inherited from root
 ```
 
@@ -505,11 +508,11 @@ Generate URLs from route names with type-safe params:
 import { reverse } from "./router";
 
 // Routes without params
-reverse("shop.index");  // "/shop"
-reverse("shop.cart");   // "/shop/cart"
+reverse("shop.index"); // "/shop"
+reverse("shop.cart"); // "/shop/cart"
 
 // Routes with params - TypeScript enforces required params
-href("shop.products.detail", { slug: "my-product" });  // "/shop/product/my-product"
+href("shop.products.detail", { slug: "my-product" }); // "/shop/product/my-product"
 ```
 
 ### Using href from client (Path Validation)
@@ -520,15 +523,15 @@ Validate paths at compile-time against registered routes:
 import { href } from "rsc-router/client";
 
 // Valid paths (compile)
-href("/shop/cart");              // matches /shop/cart
-href("/shop/product/widget");    // matches /shop/product/:slug
+href("/shop/cart"); // matches /shop/cart
+href("/shop/product/widget"); // matches /shop/product/:slug
 
 // With query strings and hashes
 href("/shop/cart?coupon=ABC");
 href("/shop#featured");
 
 // Invalid paths cause TypeScript errors
-href("/nonexistent");  // Error: not assignable to ValidPaths
+href("/nonexistent"); // Error: not assignable to ValidPaths
 ```
 
 ### Link Component
@@ -615,7 +618,11 @@ function ProductModal() {
   const product = useLocationState(ProductState);
 
   if (product) {
-    return <div>Loading {product.name} (${product.price})...</div>;
+    return (
+      <div>
+        Loading {product.name} (${product.price})...
+      </div>
+    );
   }
   return <div>Loading...</div>;
 }
@@ -641,7 +648,9 @@ Simple untyped state still works:
 
 ```tsx
 // Static state
-<Link to="/product/123" state={{ from: "list" }}>View</Link>
+<Link to="/product/123" state={{ from: "list" }}>
+  View
+</Link>;
 
 // Navigate with legacy state
 navigate("/product/123", { state: { from: "list" } });
@@ -664,7 +673,7 @@ Disable global link interception to rely solely on `<Link>` components:
 await initBrowserApp({
   rscStream,
   deps,
-  linkInterception: false,  // Disable global interception
+  linkInterception: false, // Disable global interception
 });
 ```
 
@@ -672,11 +681,11 @@ await initBrowserApp({
 
 Control interception behavior on individual anchors:
 
-| Attribute | Effect |
-|-----------|--------|
-| `data-link-component` | Link component marker (auto-added). These anchors handle their own navigation. |
-| `data-external` | External link marker (auto-added by Link). Never intercepted. |
-| `data-no-intercept="true"` | Opt-out individual anchors from global interception. |
+| Attribute                  | Effect                                                                         |
+| -------------------------- | ------------------------------------------------------------------------------ |
+| `data-link-component`      | Link component marker (auto-added). These anchors handle their own navigation. |
+| `data-external`            | External link marker (auto-added by Link). Never intercepted.                  |
+| `data-no-intercept="true"` | Opt-out individual anchors from global interception.                           |
 
 ```html
 <!-- This anchor won't be intercepted -->
@@ -686,6 +695,7 @@ Control interception behavior on individual anchors:
 ### Interception Rules
 
 Links are **not intercepted** when:
+
 - Cross-origin (different host)
 - Has `download` attribute
 - Has `target` other than `_self`
@@ -712,11 +722,11 @@ const data = useLoader(ProductLoader);
 
 ```typescript
 route("post", (ctx) => {
-  ctx.params.slug;        // Route params
-  ctx.pathname;           // Current path
-  ctx.searchParams;       // URLSearchParams
-  ctx.request;            // Original Request
-  ctx.url;                // URL object
+  ctx.params.slug; // Route params
+  ctx.pathname; // Current path
+  ctx.searchParams; // URLSearchParams
+  ctx.request; // Original Request
+  ctx.url; // URL object
   // + AppContext fields (db, user, env, etc.)
 });
 ```

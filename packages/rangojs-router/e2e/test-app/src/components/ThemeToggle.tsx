@@ -11,9 +11,7 @@ export function ThemeToggle({ testId }: ThemeToggleProps) {
 
   return (
     <div data-testid={testId}>
-      <div data-testid={`${testId}-current-theme`}>
-        Current theme: {theme}
-      </div>
+      <div data-testid={`${testId}-current-theme`}>Current theme: {theme}</div>
       <div data-testid={`${testId}-resolved-theme`}>
         Resolved theme: {resolvedTheme}
       </div>

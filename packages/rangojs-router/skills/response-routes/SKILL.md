@@ -22,43 +22,62 @@ export const urlpatterns = urls(({ path, layout, include }) => [
   path("/about", AboutPage, { name: "about" }),
 
   // JSON API route (inline, alongside RSC routes)
-  path.json("/api/status", (ctx) => ({
-    status: "ok",
-    timestamp: Date.now(),
-  }), { name: "status" }),
+  path.json(
+    "/api/status",
+    (ctx) => ({
+      status: "ok",
+      timestamp: Date.now(),
+    }),
+    { name: "status" },
+  ),
 
   // Text route
-  path.text("/robots.txt", (ctx) => {
-    return "User-agent: *\nAllow: /\nDisallow: /api/\n";
-  }, { name: "robots" }),
+  path.text(
+    "/robots.txt",
+    (ctx) => {
+      return "User-agent: *\nAllow: /\nDisallow: /api/\n";
+    },
+    { name: "robots" },
+  ),
 
   // Markdown route
-  path.md("/docs/:slug.md", (ctx) => {
-    return `# ${ctx.params.slug}\n\nDocumentation content here.`;
-  }, { name: "docs" }),
+  path.md(
+    "/docs/:slug.md",
+    (ctx) => {
+      return `# ${ctx.params.slug}\n\nDocumentation content here.`;
+    },
+    { name: "docs" },
+  ),
 
   // Response route (full control, returns Response directly)
-  path.image("/og/:slug.png", async (ctx) => {
-    const image = await generateOgImage(ctx.params.slug);
-    return new Response(image, {
-      headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
-    });
-  }, { name: "ogImage" }),
+  path.image(
+    "/og/:slug.png",
+    async (ctx) => {
+      const image = await generateOgImage(ctx.params.slug);
+      return new Response(image, {
+        headers: {
+          "Content-Type": "image/png",
+          "Cache-Control": "public, max-age=86400",
+        },
+      });
+    },
+    { name: "ogImage" },
+  ),
 ]);
 ```
 
 ## Available Tags
 
-| Tag | Usage | Handler returns | Auto-wrap |
-|-----|-------|-----------------|-----------|
-| `json` | `path.json()` | plain object/array | `{ data: T }` envelope |
-| `text` | `path.text()` | string | text/plain Response |
-| `html` | `path.html()` | string | text/html Response |
-| `xml` | `path.xml()` | string | application/xml Response |
-| `md` | `path.md()` | string | text/markdown Response |
-| `image` | `path.image()` | Response | pass-through |
-| `stream` | `path.stream()` | Response | pass-through |
-| `any` | `path.any()` | Response | pass-through |
+| Tag      | Usage           | Handler returns    | Auto-wrap                |
+| -------- | --------------- | ------------------ | ------------------------ |
+| `json`   | `path.json()`   | plain object/array | `{ data: T }` envelope   |
+| `text`   | `path.text()`   | string             | text/plain Response      |
+| `html`   | `path.html()`   | string             | text/html Response       |
+| `xml`    | `path.xml()`    | string             | application/xml Response |
+| `md`     | `path.md()`     | string             | text/markdown Response   |
+| `image`  | `path.image()`  | Response           | pass-through             |
+| `stream` | `path.stream()` | Response           | pass-through             |
+| `any`    | `path.any()`    | Response           | pass-through             |
 
 ## ResponseHandlerContext
 
@@ -67,8 +86,8 @@ Response route handlers receive a lighter context (no `ctx.use()`, no `ctx.res`)
 ```typescript
 interface ResponseHandlerContext<TParams, TEnv> {
   request: Request;
-  params: TParams;             // Typed from URL pattern
-  env: Bindings;               // Extracted from RouterEnv (DB, KV, etc.)
+  params: TParams; // Typed from URL pattern
+  env: Bindings; // Extracted from RouterEnv (DB, KV, etc.)
   searchParams: URLSearchParams;
   url: URL;
   pathname: string;
@@ -84,11 +103,15 @@ String-returning handlers (json, text, html, xml, md) can set custom headers and
 without constructing a full Response:
 
 ```typescript
-path.md("/docs/:slug.md", (ctx) => {
-  ctx.header("Cache-Control", "public, max-age=3600");
-  ctx.setCookie("last-doc", ctx.params.slug, { path: "/" });
-  return `# ${ctx.params.slug}\n\nContent here.`;
-}, { name: "docs" });
+path.md(
+  "/docs/:slug.md",
+  (ctx) => {
+    ctx.header("Cache-Control", "public, max-age=3600");
+    ctx.setCookie("last-doc", ctx.params.slug, { path: "/" });
+    return `# ${ctx.params.slug}\n\nContent here.`;
+  },
+  { name: "docs" },
+);
 ```
 
 Headers and cookies set via `ctx.header()` / `ctx.setCookie()` are merged into the
@@ -103,12 +126,16 @@ auto-wrapped Response. If the handler returns a `Response` directly, these are i
 type AppEnv = RouterEnv<{ DB: D1Database; KV: KVNamespace }, { user: User }>;
 
 // In a response handler:
-path.json("/api/data", (ctx) => {
-  ctx.env.DB;    // D1Database (bindings extracted)
-  ctx.env.KV;    // KVNamespace
-  // ctx.env.user  -- NOT available (variables are not on response ctx.env)
-  return { data: "ok" };
-}, { name: "data" });
+path.json(
+  "/api/data",
+  (ctx) => {
+    ctx.env.DB; // D1Database (bindings extracted)
+    ctx.env.KV; // KVNamespace
+    // ctx.env.user  -- NOT available (variables are not on response ctx.env)
+    return { data: "ok" };
+  },
+  { name: "data" },
+);
 ```
 
 ## JSON Envelope
@@ -131,16 +158,22 @@ Throw `RouterError` to return structured error envelopes:
 ```typescript
 import { RouterError } from "@rangojs/router";
 
-path.json("/api/users/:id", (ctx) => {
-  const user = users.get(ctx.params.id);
-  if (!user) {
-    throw new RouterError("NOT_FOUND", `User ${ctx.params.id} not found`, { status: 404 });
-  }
-  if (!hasPermission(ctx)) {
-    throw new RouterError("FORBIDDEN", "Access denied", { status: 403 });
-  }
-  return user;
-}, { name: "user" });
+path.json(
+  "/api/users/:id",
+  (ctx) => {
+    const user = users.get(ctx.params.id);
+    if (!user) {
+      throw new RouterError("NOT_FOUND", `User ${ctx.params.id} not found`, {
+        status: 404,
+      });
+    }
+    if (!hasPermission(ctx)) {
+      throw new RouterError("FORBIDDEN", "Access denied", { status: 403 });
+    }
+    return user;
+  },
+  { name: "user" },
+);
 ```
 
 ### Returning Response Directly
@@ -148,15 +181,19 @@ path.json("/api/users/:id", (ctx) => {
 JSON handlers can return `Response` to bypass auto-wrap (custom status, headers, streaming):
 
 ```typescript
-path.json("/api/export", (ctx) => {
-  const csv = generateCsv();
-  return new Response(csv, {
-    headers: {
-      "Content-Type": "text/csv",
-      "Content-Disposition": "attachment; filename=export.csv",
-    },
-  });
-}, { name: "export" });
+path.json(
+  "/api/export",
+  (ctx) => {
+    const csv = generateCsv();
+    return new Response(csv, {
+      headers: {
+        "Content-Type": "text/csv",
+        "Content-Disposition": "attachment; filename=export.csv",
+      },
+    });
+  },
+  { name: "export" },
+);
 ```
 
 ## Client-Side Type Safety
@@ -272,18 +309,29 @@ A self-contained module with RSC pages + JSON APIs, mountable via `include()`:
 import { urls, RouterError } from "@rangojs/router";
 
 export const blogApiPatterns = urls(({ path }) => [
-  path.json("/stats", (ctx) => ({
-    views: 1200, visitors: 450,
-  }), { name: "stats" }),
+  path.json(
+    "/stats",
+    (ctx) => ({
+      views: 1200,
+      visitors: 450,
+    }),
+    { name: "stats" },
+  ),
 
-  path.json("/:slug/likes", (ctx) => ({
-    slug: ctx.params.slug,
-    count: 42,
-  }), { name: "likes" }),
+  path.json(
+    "/:slug/likes",
+    (ctx) => ({
+      slug: ctx.params.slug,
+      count: 42,
+    }),
+    { name: "likes" },
+  ),
 
-  path.json("/:slug/comments", (ctx) => ([
-    { id: "c1", body: "Great post", author: "alice" },
-  ]), { name: "comments" }),
+  path.json(
+    "/:slug/comments",
+    (ctx) => [{ id: "c1", body: "Great post", author: "alice" }],
+    { name: "comments" },
+  ),
 ]);
 
 // blog/urls.tsx
@@ -333,13 +381,17 @@ Response route handlers inside a mounted module can reference local names:
 
 ```typescript
 // Inside blogApiPatterns handler
-path("/:slug/likes", (ctx) => {
-  // ctx.reverse resolves names relative to the mount point
-  const commentsUrl = ctx.reverse("comments", { slug: ctx.params.slug });
-  // -> "/blog/api/my-post/comments"
+path(
+  "/:slug/likes",
+  (ctx) => {
+    // ctx.reverse resolves names relative to the mount point
+    const commentsUrl = ctx.reverse("comments", { slug: ctx.params.slug });
+    // -> "/blog/api/my-post/comments"
 
-  return { slug: ctx.params.slug, count: 42, commentsUrl };
-}, { name: "likes" });
+    return { slug: ctx.params.slug, count: 42, commentsUrl };
+  },
+  { name: "likes" },
+);
 ```
 
 ## Content Negotiation

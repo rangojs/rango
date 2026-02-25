@@ -1,6 +1,11 @@
 "use client";
 
-import { useLoader, useLocationState, useAction, type LoaderDefinition } from "@rangojs/router/client";
+import {
+  useLoader,
+  useLocationState,
+  useAction,
+  type LoaderDefinition,
+} from "@rangojs/router/client";
 import { PrerenderTestLocationState } from "../location-states.js";
 import { prerenderTestAction } from "../actions.js";
 
@@ -27,8 +32,12 @@ export function PrerenderClientTest({ loader }: PrerenderClientTestProps) {
       )}
       <p data-testid="prerender-action-state">{actionState.state}</p>
       <pre data-testid="prerender-loader-json">{JSON.stringify(loader)}</pre>
-      <pre data-testid="prerender-action-id">{String((prerenderTestAction as any)?.$$id ?? "no-action-id")}</pre>
-      <pre data-testid="prerender-location-state-key">{(PrerenderTestLocationState as any).__rsc_ls_key || "no-ls-key"}</pre>
+      <pre data-testid="prerender-action-id">
+        {String((prerenderTestAction as any)?.$$id ?? "no-action-id")}
+      </pre>
+      <pre data-testid="prerender-location-state-key">
+        {(PrerenderTestLocationState as any).__rsc_ls_key || "no-ls-key"}
+      </pre>
     </div>
   );
 }

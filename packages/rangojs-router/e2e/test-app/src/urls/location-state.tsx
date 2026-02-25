@@ -1,7 +1,12 @@
 import { urls, redirect } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { FlashMessage, ServerInfo } from "../location-states.js";
-import { FlashBanner, ServerInfoDisplay, ActionRedirectButton, ActionSimpleRedirectButton } from "../components/FlashBanner.js";
+import {
+  FlashBanner,
+  ServerInfoDisplay,
+  ActionRedirectButton,
+  ActionSimpleRedirectButton,
+} from "../components/FlashBanner.js";
 
 /**
  * Location state test routes - tests for redirect() with state,
@@ -18,22 +23,34 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
         <ServerInfoDisplay />
         <ul>
           <li>
-            <Link to="/location-state/trigger-redirect" data-testid="ls-redirect-link">
+            <Link
+              to="/location-state/trigger-redirect"
+              data-testid="ls-redirect-link"
+            >
               Trigger redirect with flash
             </Link>
           </li>
           <li>
-            <Link to="/location-state/trigger-ctx-state" data-testid="ls-ctx-state-link">
+            <Link
+              to="/location-state/trigger-ctx-state"
+              data-testid="ls-ctx-state-link"
+            >
               Trigger ctx.setLocationState
             </Link>
           </li>
           <li>
-            <Link to="/location-state/mw-redirect" data-testid="ls-mw-redirect-link">
+            <Link
+              to="/location-state/mw-redirect"
+              data-testid="ls-mw-redirect-link"
+            >
               Trigger middleware redirect with flash
             </Link>
           </li>
           <li>
-            <Link to="/location-state/redirect-303" data-testid="ls-redirect-303-link">
+            <Link
+              to="/location-state/redirect-303"
+              data-testid="ls-redirect-303-link"
+            >
               Trigger 303 redirect with flash
             </Link>
           </li>

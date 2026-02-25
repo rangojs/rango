@@ -47,7 +47,6 @@ function toPublicState(state: DerivedNavigationState): PublicNavigationState {
   return publicState;
 }
 
-
 /**
  * Navigation methods returned by useNavigation
  */
@@ -84,7 +83,7 @@ export function useNavigation<T>(
 
   if (!ctx) {
     throw new Error(
-      "useNavigation must be used within NavigationStoreContext.Provider"
+      "useNavigation must be used within NavigationStoreContext.Provider",
     );
   }
 

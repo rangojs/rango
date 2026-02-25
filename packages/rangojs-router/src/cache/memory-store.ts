@@ -65,7 +65,7 @@ export class MemoryCacheStore implements CacheStore {
   async put<T extends CacheValue>(
     key: string,
     value: T,
-    options?: CachePutOptions
+    options?: CachePutOptions,
   ): Promise<void> {
     const ttl = options?.ttl ?? DEFAULT_TTL_SECONDS;
     const expiresAt = Date.now() + ttl * 1000;
@@ -213,7 +213,7 @@ export class MemoryCacheStore implements CacheStore {
  * @internal
  */
 async function streamToArrayBuffer(
-  stream: ReadableStream<Uint8Array>
+  stream: ReadableStream<Uint8Array>,
 ): Promise<ArrayBuffer> {
   const chunks: Uint8Array[] = [];
   const reader = stream.getReader();

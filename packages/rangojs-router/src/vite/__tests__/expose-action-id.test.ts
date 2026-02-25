@@ -65,7 +65,9 @@ describe("exposeActionId", () => {
         /\(function\(fn\)\s*\{\s*fn\.\$\$id\s*=\s*"src\/actions\.ts#addTodo";\s*return fn;\s*\}\)/,
       );
       // The original createServerReference call should still be invoked
-      expect(result.code).toMatch(/createServerReference\("src\/actions\.ts#addTodo"/);
+      expect(result.code).toMatch(
+        /createServerReference\("src\/actions\.ts#addTodo"/,
+      );
     });
 
     it("wraps $$ReactClient.createServerReference (namespace form)", () => {
@@ -91,7 +93,11 @@ describe("exposeActionId", () => {
     it("skips files in node_modules", () => {
       const plugin = initDev();
       const code = `const action = createServerReference("hash#fn", callServer);`;
-      const result = plugin.transform.call({}, code, "/project/node_modules/lib/index.js");
+      const result = plugin.transform.call(
+        {},
+        code,
+        "/project/node_modules/lib/index.js",
+      );
       expect(result).toBeUndefined();
     });
 
@@ -111,7 +117,9 @@ const remove = createServerReference("src/actions.ts#remove", callServer);
       const result = plugin.transform.call({}, code, "/project/src/client.tsx");
       expect(result).toBeDefined();
       // Both references should be wrapped with IIFE
-      const idMatches = [...result.code.matchAll(/fn\.\$\$id\s*=\s*"([^"]+)"/g)];
+      const idMatches = [
+        ...result.code.matchAll(/fn\.\$\$id\s*=\s*"([^"]+)"/g),
+      ];
       expect(idMatches).toHaveLength(2);
       // Each should have a distinct action ID
       expect(idMatches[0][1]).toBe("src/actions.ts#add");
@@ -206,7 +214,10 @@ const remove = createServerReference("src/actions.ts#remove", callServer);
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "action-test-"));
     const actionsFile = path.join(tmpDir, "src", "actions.ts");
     fs.mkdirSync(path.dirname(actionsFile), { recursive: true });
-    fs.writeFileSync(actionsFile, '"use server";\nexport async function addTodo() {}\nexport async function removeTodo() {}');
+    fs.writeFileSync(
+      actionsFile,
+      '"use server";\nexport async function addTodo() {}\nexport async function removeTodo() {}',
+    );
 
     afterAll(() => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -230,7 +241,9 @@ const remove = createServerReference("src/actions.ts#remove", callServer);
       const result = plugin.renderChunk.call(ctx, code, chunk);
       expect(result).toBeDefined();
       // RSC environment should replace hash with file path
-      expect(result.code).toMatch(/fn\.\$\$id\s*=\s*"src\/actions\.ts#addTodo"/);
+      expect(result.code).toMatch(
+        /fn\.\$\$id\s*=\s*"src\/actions\.ts#addTodo"/,
+      );
     });
 
     it("wraps registerServerReference with $id (single dollar) in RSC env", () => {
@@ -245,7 +258,9 @@ const remove = createServerReference("src/actions.ts#remove", callServer);
         /\(function\(fn\)\s*\{\s*fn\.\$id\s*=\s*"src\/actions\.ts#addTodo"/,
       );
       // Original registerServerReference should still be called with original hash
-      expect(result.code).toMatch(/registerServerReference\(addTodoFn,\s*"abc123",\s*"addTodo"\)/);
+      expect(result.code).toMatch(
+        /registerServerReference\(addTodoFn,\s*"abc123",\s*"addTodo"\)/,
+      );
     });
 
     it("handles both createServerReference and registerServerReference in same chunk", () => {
@@ -259,7 +274,9 @@ const remove = createServerReference("src/actions.ts#remove", callServer);
       const result = plugin.renderChunk.call(ctx, code, chunk);
       expect(result).toBeDefined();
       // Both should be wrapped
-      expect(result.code).toMatch(/fn\.\$\$id\s*=\s*"src\/actions\.ts#addTodo"/);
+      expect(result.code).toMatch(
+        /fn\.\$\$id\s*=\s*"src\/actions\.ts#addTodo"/,
+      );
       expect(result.code).toMatch(/fn\.\$id\s*=\s*"src\/actions\.ts#addTodo"/);
       // Single sourcemap covering both transforms
       expect(result.map).toBeDefined();
@@ -321,34 +338,51 @@ const remove = createServerReference("src/actions.ts#remove", callServer);
       // Test via registerServerReference in RSC env
       const code = `registerServerReference(actionFn, "${hash}", "action");`;
       const ctx = { environment: { name: "rsc" } };
-      const result = plugin.renderChunk.call(ctx, code, { fileName: "test.js" });
+      const result = plugin.renderChunk.call(ctx, code, {
+        fileName: "test.js",
+      });
       // If isUseServerModule returned true, the hash will be in hashToFileMap
       // and registerServerReference will be wrapped with $id
       return result !== null && result.code.includes("fn.$id");
     }
 
     it("detects double-quoted 'use server' directive", () => {
-      const fp = writeModule("double.ts", '"use server";\nexport async function action() {}');
+      const fp = writeModule(
+        "double.ts",
+        '"use server";\nexport async function action() {}',
+      );
       expect(isHashMapped(fp, "hash1")).toBe(true);
     });
 
     it("detects single-quoted 'use server' directive", () => {
-      const fp = writeModule("single.ts", "'use server';\nexport async function action() {}");
+      const fp = writeModule(
+        "single.ts",
+        "'use server';\nexport async function action() {}",
+      );
       expect(isHashMapped(fp, "hash2")).toBe(true);
     });
 
     it("detects directive after comments", () => {
-      const fp = writeModule("commented.ts", '// file header\n/* license */\n"use server";\nexport async function action() {}');
+      const fp = writeModule(
+        "commented.ts",
+        '// file header\n/* license */\n"use server";\nexport async function action() {}',
+      );
       expect(isHashMapped(fp, "hash3")).toBe(true);
     });
 
     it("rejects file without use server directive", () => {
-      const fp = writeModule("no-directive.ts", 'export async function action() {}');
+      const fp = writeModule(
+        "no-directive.ts",
+        "export async function action() {}",
+      );
       expect(isHashMapped(fp, "hash4")).toBe(false);
     });
 
     it("rejects file with use server inside function (not module-level)", () => {
-      const fp = writeModule("inline.tsx", 'export function Component() {\n  async function action() {\n    "use server";\n  }\n}');
+      const fp = writeModule(
+        "inline.tsx",
+        'export function Component() {\n  async function action() {\n    "use server";\n  }\n}',
+      );
       expect(isHashMapped(fp, "hash5")).toBe(false);
     });
 
@@ -367,7 +401,9 @@ const remove = createServerReference("src/actions.ts#remove", callServer);
         root: "/project",
         plugins: [],
       });
-      expect(() => plugin.buildStart()).toThrow("Could not find @vitejs/plugin-rsc");
+      expect(() => plugin.buildStart()).toThrow(
+        "Could not find @vitejs/plugin-rsc",
+      );
     });
 
     it("has enforce: post", () => {

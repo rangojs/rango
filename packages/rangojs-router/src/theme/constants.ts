@@ -33,7 +33,9 @@ export const THEME_COOKIE: {
  * Resolve theme config by applying defaults.
  * Accepts `true` to enable with all defaults, or a config object.
  */
-export function resolveThemeConfig(config: ThemeConfig | true): ResolvedThemeConfig {
+export function resolveThemeConfig(
+  config: ThemeConfig | true,
+): ResolvedThemeConfig {
   // Handle `theme: true` shorthand
   if (config === true) {
     config = {};
@@ -53,7 +55,8 @@ export function resolveThemeConfig(config: ThemeConfig | true): ResolvedThemeCon
     attribute: config.attribute ?? THEME_DEFAULTS.attribute,
     storageKey: config.storageKey ?? THEME_DEFAULTS.storageKey,
     enableSystem: config.enableSystem ?? THEME_DEFAULTS.enableSystem,
-    enableColorScheme: config.enableColorScheme ?? THEME_DEFAULTS.enableColorScheme,
+    enableColorScheme:
+      config.enableColorScheme ?? THEME_DEFAULTS.enableColorScheme,
     value,
   };
 }

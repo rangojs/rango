@@ -44,7 +44,9 @@ function createMockCacheStore() {
 // Mock Request Context
 // ============================================================================
 
-function createMockRequestContext(store: ReturnType<typeof createMockCacheStore>) {
+function createMockRequestContext(
+  store: ReturnType<typeof createMockCacheStore>,
+) {
   return {
     _cacheStore: store,
     _onResponseCallbacks: [] as Array<(r: Response) => Response>,
@@ -106,7 +108,8 @@ describe("createDocumentCacheMiddleware", () => {
 
   describe("cache miss", () => {
     it("should pass through and cache response with s-maxage", async () => {
-      const { createDocumentCacheMiddleware } = await import("../document-cache.js");
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
 
       const middleware = createDocumentCacheMiddleware();
       const ctx = createMockMiddlewareContext("http://localhost/page");
@@ -124,7 +127,7 @@ describe("createDocumentCacheMiddleware", () => {
         mockRequestCtx as any,
       );
 
-      const response = await middleware(ctx, next) as Response;
+      const response = (await middleware(ctx, next)) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.get("x-document-cache-status")).toBe("MISS");
@@ -138,7 +141,8 @@ describe("createDocumentCacheMiddleware", () => {
     });
 
     it("should not cache response without s-maxage", async () => {
-      const { createDocumentCacheMiddleware } = await import("../document-cache.js");
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
 
       const middleware = createDocumentCacheMiddleware();
       const ctx = createMockMiddlewareContext("http://localhost/page");
@@ -154,7 +158,7 @@ describe("createDocumentCacheMiddleware", () => {
         mockRequestCtx as any,
       );
 
-      const response = await middleware(ctx, next) as Response;
+      const response = (await middleware(ctx, next)) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.has("x-document-cache-status")).toBe(false);
@@ -164,7 +168,8 @@ describe("createDocumentCacheMiddleware", () => {
 
   describe("cache hit", () => {
     it("should return cached response on second request", async () => {
-      const { createDocumentCacheMiddleware } = await import("../document-cache.js");
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
 
       // Pre-populate cache
       const cachedResponse = new Response("Cached content", {
@@ -184,7 +189,7 @@ describe("createDocumentCacheMiddleware", () => {
         mockRequestCtx as any,
       );
 
-      const response = await middleware(ctx, next) as Response;
+      const response = (await middleware(ctx, next)) as Response;
 
       expect(next).not.toHaveBeenCalled();
       expect(response.headers.get("x-document-cache-status")).toBe("HIT");
@@ -194,7 +199,8 @@ describe("createDocumentCacheMiddleware", () => {
 
   describe("stale-while-revalidate", () => {
     it("should return stale response and revalidate in background", async () => {
-      const { createDocumentCacheMiddleware } = await import("../document-cache.js");
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
 
       // Pre-populate cache with stale entry
       const staleResponse = new Response("Stale content", {
@@ -218,7 +224,7 @@ describe("createDocumentCacheMiddleware", () => {
         mockRequestCtx as any,
       );
 
-      const response = await middleware(ctx, next) as Response;
+      const response = (await middleware(ctx, next)) as Response;
 
       // Should return stale content immediately
       expect(response.headers.get("x-document-cache-status")).toBe("STALE");
@@ -237,7 +243,8 @@ describe("createDocumentCacheMiddleware", () => {
 
   describe("skip conditions", () => {
     it("should skip RSC action requests", async () => {
-      const { createDocumentCacheMiddleware } = await import("../document-cache.js");
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
 
       const middleware = createDocumentCacheMiddleware();
       const ctx = createMockMiddlewareContext(
@@ -246,14 +253,15 @@ describe("createDocumentCacheMiddleware", () => {
 
       const next = vi.fn().mockResolvedValue(new Response("Action response"));
 
-      const response = await middleware(ctx, next) as Response;
+      const response = (await middleware(ctx, next)) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.has("x-document-cache-status")).toBe(false);
     });
 
     it("should skip loader requests", async () => {
-      const { createDocumentCacheMiddleware } = await import("../document-cache.js");
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
 
       const middleware = createDocumentCacheMiddleware();
       const ctx = createMockMiddlewareContext(
@@ -262,14 +270,15 @@ describe("createDocumentCacheMiddleware", () => {
 
       const next = vi.fn().mockResolvedValue(new Response("Loader response"));
 
-      const response = await middleware(ctx, next) as Response;
+      const response = (await middleware(ctx, next)) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.has("x-document-cache-status")).toBe(false);
     });
 
     it("should skip configured paths", async () => {
-      const { createDocumentCacheMiddleware } = await import("../document-cache.js");
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
 
       const middleware = createDocumentCacheMiddleware({
         skipPaths: ["/api", "/admin"],
@@ -278,14 +287,15 @@ describe("createDocumentCacheMiddleware", () => {
 
       const next = vi.fn().mockResolvedValue(new Response("API response"));
 
-      const response = await middleware(ctx, next) as Response;
+      const response = (await middleware(ctx, next)) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.has("x-document-cache-status")).toBe(false);
     });
 
     it("should skip when isEnabled returns false", async () => {
-      const { createDocumentCacheMiddleware } = await import("../document-cache.js");
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
 
       const middleware = createDocumentCacheMiddleware({
         isEnabled: (ctx) => !ctx.request.headers.has("x-no-cache"),
@@ -296,7 +306,7 @@ describe("createDocumentCacheMiddleware", () => {
 
       const next = vi.fn().mockResolvedValue(new Response("Response"));
 
-      const response = await middleware(ctx, next) as Response;
+      const response = (await middleware(ctx, next)) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.has("x-document-cache-status")).toBe(false);
@@ -305,7 +315,8 @@ describe("createDocumentCacheMiddleware", () => {
 
   describe("cache key generation", () => {
     it("should use custom key generator", async () => {
-      const { createDocumentCacheMiddleware } = await import("../document-cache.js");
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
 
       const middleware = createDocumentCacheMiddleware({
         keyGenerator: (url) => `custom:${url.pathname}`,
@@ -328,14 +339,15 @@ describe("createDocumentCacheMiddleware", () => {
         mockRequestCtx as any,
       );
 
-      const response = await middleware(ctx, next) as Response;
+      const response = (await middleware(ctx, next)) as Response;
 
       expect(next).not.toHaveBeenCalled();
       expect(response.headers.get("x-document-cache-status")).toBe("HIT");
     });
 
     it("should differentiate RSC partial requests with :rsc suffix", async () => {
-      const { createDocumentCacheMiddleware } = await import("../document-cache.js");
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
 
       // Pre-populate HTML cache
       const htmlResponse = new Response("HTML", {
@@ -363,7 +375,7 @@ describe("createDocumentCacheMiddleware", () => {
         mockRequestCtx as any,
       );
 
-      const response = await middleware(ctx, next) as Response;
+      const response = (await middleware(ctx, next)) as Response;
 
       // Should be a MISS since RSC key is different
       expect(next).toHaveBeenCalledTimes(1);
@@ -371,7 +383,8 @@ describe("createDocumentCacheMiddleware", () => {
     });
 
     it("should include segment hash in cache key for partial requests", async () => {
-      const { createDocumentCacheMiddleware } = await import("../document-cache.js");
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
 
       const middleware = createDocumentCacheMiddleware();
 
@@ -403,7 +416,7 @@ describe("createDocumentCacheMiddleware", () => {
         }),
       );
 
-      const response2 = await middleware(ctx2, next2) as Response;
+      const response2 = (await middleware(ctx2, next2)) as Response;
 
       // Should be a MISS because different segments = different cache key
       expect(next2).toHaveBeenCalledTimes(1);
@@ -414,7 +427,8 @@ describe("createDocumentCacheMiddleware", () => {
   describe("debug logging", () => {
     it("should not log when debug is false", async () => {
       const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-      const { createDocumentCacheMiddleware } = await import("../document-cache.js");
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
 
       const middleware = createDocumentCacheMiddleware({ debug: false });
       const ctx = createMockMiddlewareContext("http://localhost/page");
@@ -438,7 +452,8 @@ describe("createDocumentCacheMiddleware", () => {
 
     it("should log when debug is true", async () => {
       const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-      const { createDocumentCacheMiddleware } = await import("../document-cache.js");
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
 
       const middleware = createDocumentCacheMiddleware({ debug: true });
       const ctx = createMockMiddlewareContext("http://localhost/page");
@@ -465,7 +480,8 @@ describe("createDocumentCacheMiddleware", () => {
 
   describe("error handling", () => {
     it("should fall through to handler on cache error", async () => {
-      const { createDocumentCacheMiddleware } = await import("../document-cache.js");
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
 
       // Create a store that throws on getResponse
       const brokenStore = {
@@ -486,7 +502,7 @@ describe("createDocumentCacheMiddleware", () => {
         brokenCtx as any,
       );
 
-      const response = await middleware(ctx, next) as Response;
+      const response = (await middleware(ctx, next)) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(await response.text()).toBe("Fallback");
@@ -495,7 +511,8 @@ describe("createDocumentCacheMiddleware", () => {
 
   describe("no cache store", () => {
     it("should pass through when no cache store is configured", async () => {
-      const { createDocumentCacheMiddleware } = await import("../document-cache.js");
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
 
       const noCacheCtx = {
         _cacheStore: undefined,
@@ -513,7 +530,7 @@ describe("createDocumentCacheMiddleware", () => {
         noCacheCtx as any,
       );
 
-      const response = await middleware(ctx, next) as Response;
+      const response = (await middleware(ctx, next)) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.has("x-document-cache-status")).toBe(false);

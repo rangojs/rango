@@ -331,7 +331,7 @@ describe("skipStringOrComment", () => {
   });
 
   it("should skip template literals with expressions", () => {
-    const code = '`hello ${name}` rest';
+    const code = "`hello ${name}` rest";
     expect(skipStringOrComment(code, 0)).toBe(15);
   });
 
@@ -366,7 +366,7 @@ describe("skipStringOrComment", () => {
   });
 
   it("should handle nested template expression with string", () => {
-    const code = '`a ${`inner`} b` rest';
+    const code = "`a ${`inner`} b` rest";
     expect(skipStringOrComment(code, 0)).toBe(16);
   });
 

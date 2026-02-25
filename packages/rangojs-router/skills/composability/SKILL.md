@@ -38,7 +38,7 @@ They work because they use AsyncLocalStorage internally and resolve context at c
 urls(({ path, include }) => [
   path("/blog", BlogPage, { name: "blog" }),
   include("/shop", shopPatterns, { name: "shop" }),
-])
+]);
 ```
 
 They define the route structure -- the URL patterns and how modules compose. Keeping them in the `urls()` callback makes the route tree readable at a glance. When scanning a URL file, `path()` and `include()` calls show what renders where. Moving them into factories would hide the routing structure and make it harder to understand which URLs exist and how they nest.
@@ -122,9 +122,7 @@ import { urls } from "@rangojs/router";
 import { withPublicDefaults } from "../route-config";
 
 export const blogPatterns = urls(({ path }) => [
-  path("/", BlogIndex, { name: "index" }, () => [
-    withPublicDefaults(),
-  ]),
+  path("/", BlogIndex, { name: "index" }, () => [withPublicDefaults()]),
 ]);
 ```
 
@@ -134,9 +132,7 @@ import { urls } from "@rangojs/router";
 import { withProtectedDefaults } from "../route-config";
 
 export const adminPatterns = urls(({ path }) => [
-  path("/", AdminDashboard, { name: "index" }, () => [
-    withProtectedDefaults(),
-  ]),
+  path("/", AdminDashboard, { name: "index" }, () => [withProtectedDefaults()]),
 ]);
 ```
 

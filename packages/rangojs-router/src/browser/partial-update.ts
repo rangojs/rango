@@ -10,9 +10,7 @@ import { startTransition } from "react";
 
 // addTransitionType is only available in React experimental
 const addTransitionType: ((type: string) => void) | undefined =
-  "addTransitionType" in React
-    ? (React as any).addTransitionType
-    : undefined;
+  "addTransitionType" in React ? (React as any).addTransitionType : undefined;
 import type { RenderSegmentsOptions } from "../segment-system.js";
 import { reconcileSegments } from "./segment-reconciler.js";
 import type { ReconcileActor } from "./segment-reconciler.js";
@@ -371,7 +369,9 @@ export function createPartialUpdater(
           );
         }
         if (signal?.aborted) {
-          debugLog("[Browser] Ignoring stale navigation (aborted during HMR retry)");
+          debugLog(
+            "[Browser] Ignoring stale navigation (aborted during HMR retry)",
+          );
           return streamComplete;
         }
         if (isAction) {
@@ -474,9 +474,7 @@ export function createPartialUpdater(
       // For stale revalidation: wait for stream to complete (loaders resolved), then update
       // For actions: wrap in startTransition to avoid UI flickering
       // For transitions: wrap in startTransition + addTransitionType for ViewTransition
-      const hasTransition = reconciled.mainSegments.some(
-        (s) => s.transition,
-      );
+      const hasTransition = reconciled.mainSegments.some((s) => s.transition);
 
       if (isAction || staleRevalidation) {
         startTransition(() => {

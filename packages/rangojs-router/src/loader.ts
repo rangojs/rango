@@ -21,19 +21,19 @@ import type {
 
 // Overload 1: With function only (not fetchable)
 export function createLoader<T>(
-  fn: LoaderFn<T, Record<string, string | undefined>, any>
+  fn: LoaderFn<T, Record<string, string | undefined>, any>,
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
 
 // Overload 2: Fetchable with `true` (no middleware)
 export function createLoader<T>(
   fn: LoaderFn<T, Record<string, string | undefined>, any>,
-  fetchable: true
+  fetchable: true,
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
 
 // Overload 3: Fetchable with middleware options
 export function createLoader<T>(
   fn: LoaderFn<T, Record<string, string | undefined>, any>,
-  options: FetchableLoaderOptions
+  options: FetchableLoaderOptions,
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
 
 // Implementation - client stub that just returns the loader definition
@@ -45,7 +45,7 @@ export function createLoader<T>(
 export function createLoader<T>(
   _fn: LoaderFn<T, Record<string, string | undefined>, any>,
   _fetchable?: true | FetchableLoaderOptions,
-  __injectedId?: string
+  __injectedId?: string,
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>> {
   const loaderId = __injectedId || "";
 

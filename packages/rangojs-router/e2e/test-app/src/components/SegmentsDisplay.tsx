@@ -11,7 +11,15 @@ export function SegmentsDisplay() {
   const { path, segmentIds, location } = useSegments();
 
   return (
-    <div data-testid="segments-display" style={{ fontSize: "12px", padding: "8px", background: "#f5f5f5", marginTop: "8px" }}>
+    <div
+      data-testid="segments-display"
+      style={{
+        fontSize: "12px",
+        padding: "8px",
+        background: "#f5f5f5",
+        marginTop: "8px",
+      }}
+    >
       <div data-testid="segments-path">
         <strong>Path:</strong> {JSON.stringify(path)}
       </div>
@@ -30,11 +38,7 @@ export function SegmentsDisplay() {
  */
 export function PathDisplay() {
   const path = useSegments((s) => s.path);
-  return (
-    <span data-testid="path-only">
-      /{path.join("/")}
-    </span>
-  );
+  return <span data-testid="path-only">/{path.join("/")}</span>;
 }
 
 /**
@@ -42,9 +46,5 @@ export function PathDisplay() {
  */
 export function IsProductRoute() {
   const isProduct = useSegments((s) => s.path[0] === "product");
-  return (
-    <span data-testid="is-product-route">
-      {isProduct ? "Yes" : "No"}
-    </span>
-  );
+  return <span data-testid="is-product-route">{isProduct ? "Yes" : "No"}</span>;
 }

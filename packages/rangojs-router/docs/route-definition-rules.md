@@ -8,46 +8,46 @@ the route tree is built.
 
 ### path() (href)
 
-| Rule | Example | Guard location |
-|------|---------|----------------|
-| Cannot be inside `parallel()` | `parallel({ "@slot": path(...) })` | `urls.ts` |
-| Cannot be nested inside another `path()` | `path("/a", A, () => [path("/b", B)])` | `urls.ts` (ancestor walk) |
+| Rule                                        | Example                                                   | Guard location            |
+| ------------------------------------------- | --------------------------------------------------------- | ------------------------- |
+| Cannot be inside `parallel()`               | `parallel({ "@slot": path(...) })`                        | `urls.ts`                 |
+| Cannot be nested inside another `path()`    | `path("/a", A, () => [path("/b", B)])`                    | `urls.ts` (ancestor walk) |
 | Ancestor walk catches intermediate wrappers | `path("/a", A, () => [layout(L, () => [path("/b", B)])])` | `urls.ts` (ancestor walk) |
-| Same through cache boundaries | `path("/a", A, () => [cache(c, () => [path("/b", B)])])` | `urls.ts` (ancestor walk) |
+| Same through cache boundaries               | `path("/a", A, () => [cache(c, () => [path("/b", B)])])`  | `urls.ts` (ancestor walk) |
 
 ### layout()
 
-| Rule | Example | Guard location |
-|------|---------|----------------|
-| Cannot be inside `parallel()` | `layout(L)` inside parallel callback | `route-definition.ts` |
-| Orphan layout cannot contain other layouts | `layout(A, () => [layout(B)])` where A has no routes | `route-definition.ts` |
-| Orphan layout at non-root level needs parent | Orphan layout floating without route/layout/cache parent | `route-definition.ts` |
-| Orphan layout parent must be route, layout, or cache | Orphan layout inside parallel or intercept | `route-definition.ts` |
+| Rule                                                 | Example                                                  | Guard location        |
+| ---------------------------------------------------- | -------------------------------------------------------- | --------------------- |
+| Cannot be inside `parallel()`                        | `layout(L)` inside parallel callback                     | `route-definition.ts` |
+| Orphan layout cannot contain other layouts           | `layout(A, () => [layout(B)])` where A has no routes     | `route-definition.ts` |
+| Orphan layout at non-root level needs parent         | Orphan layout floating without route/layout/cache parent | `route-definition.ts` |
+| Orphan layout parent must be route, layout, or cache | Orphan layout inside parallel or intercept               | `route-definition.ts` |
 
 ### parallel()
 
-| Rule | Example | Guard location |
-|------|---------|----------------|
+| Rule                                         | Example                             | Guard location        |
+| -------------------------------------------- | ----------------------------------- | --------------------- |
 | Cannot be nested inside another `parallel()` | `parallel({ "@a": parallel(...) })` | `route-definition.ts` |
-| Needs a parent entry | `parallel()` at root level | `route-definition.ts` |
+| Needs a parent entry                         | `parallel()` at root level          | `route-definition.ts` |
 
 ### intercept()
 
-| Rule | Example | Guard location |
-|------|---------|----------------|
+| Rule                          | Example                              | Guard location        |
+| ----------------------------- | ------------------------------------ | --------------------- |
 | Cannot be inside `parallel()` | `parallel({ "@a": intercept(...) })` | `route-definition.ts` |
-| Needs a parent entry | `intercept()` at root level | `route-definition.ts` |
+| Needs a parent entry          | `intercept()` at root level          | `route-definition.ts` |
 
 ### when()
 
-| Rule | Example | Guard location |
-|------|---------|----------------|
+| Rule                                           | Example                            | Guard location        |
+| ---------------------------------------------- | ---------------------------------- | --------------------- |
 | Can only be used inside `intercept()` callback | `path("/a", A, () => [when(...)])` | `route-definition.ts` |
 
 ### Route names
 
-| Rule | Example | Guard location |
-|------|---------|----------------|
+| Rule                                        | Example                                    | Guard location                   |
+| ------------------------------------------- | ------------------------------------------ | -------------------------------- |
 | Must be unique across the entire route tree | Two `path()` calls with `{ name: "home" }` | `urls.ts`, `route-definition.ts` |
 
 ## Orphan Layout Behavior
@@ -86,15 +86,15 @@ layout(RootLayout, () => [
   layout(AuthWrapper, () => [middleware(authMw)]),
   layout(ThemeWrapper, () => [middleware(themeMw)]),
   path("/", HomePage, { name: "home" }),
-])
+]);
 
 // INVALID: nested orphan layouts (throws at definition time)
 layout(RootLayout, () => [
   layout(AuthWrapper, () => [
-    layout(ThemeWrapper, () => [middleware(themeMw)]),  // THROWS
+    layout(ThemeWrapper, () => [middleware(themeMw)]), // THROWS
   ]),
   path("/", HomePage, { name: "home" }),
-])
+]);
 ```
 
 ## Orphan Cache Behavior
@@ -104,10 +104,10 @@ subsequent siblings become children of the cache entry.
 
 ```typescript
 layout(RootLayout, () => [
-  cache({ ttl: 300 }),          // replaces ctx.parent
-  path("/", HomePage),          // parent is now the cache, not RootLayout
-  path("/about", AboutPage),    // same: parent is cache
-])
+  cache({ ttl: 300 }), // replaces ctx.parent
+  path("/", HomePage), // parent is now the cache, not RootLayout
+  path("/about", AboutPage), // same: parent is cache
+]);
 ```
 
 A cache **with** children callback but no routes among its children is treated
@@ -124,16 +124,16 @@ is the only child, which would break the middleware chain.
 layout(AuthLayout, () => [
   middleware(authMw),
   include("/blog", blogPatterns, { name: "blog" }),
-])
+]);
 
 // VALID: middleware inside included patterns (stacks with parent middleware)
 const blogPatterns = urls(({ path, layout, middleware }) => [
   layout(BlogLayout, () => [
-    middleware(blogMw),  // applies to all blog routes
+    middleware(blogMw), // applies to all blog routes
     path("/", BlogIndex, { name: "index" }),
     path("/:postId", BlogPost, { name: "post" }),
   ]),
-])
+]);
 ```
 
 Included patterns use the full `urls()` builder, so they support `layout()`,

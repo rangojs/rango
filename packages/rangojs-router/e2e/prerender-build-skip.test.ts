@@ -21,7 +21,7 @@ test.describe("build-skip prerender (dev mode)", () => {
     await waitForHydration(page);
 
     await expect(testId(page, "build-skip-article-title")).toContainText(
-      "published"
+      "published",
     );
   });
 
@@ -31,9 +31,9 @@ test.describe("build-skip prerender (dev mode)", () => {
     await page.goto(f.url("/build-skip/working-static"));
     await waitForHydration(page);
 
-    await expect(
-      testId(page, "build-skip-working-static-title")
-    ).toContainText("Working Static");
+    await expect(testId(page, "build-skip-working-static-title")).toContainText(
+      "Working Static",
+    );
   });
 });
 
@@ -57,10 +57,10 @@ test.describe("build-skip prerender (production build)", () => {
     await waitForHydration(page);
 
     await expect(testId(page, "build-skip-article-title")).toContainText(
-      "published"
+      "published",
     );
     await expect(testId(page, "build-skip-article-content")).toContainText(
-      "Article: published"
+      "Article: published",
     );
   });
 
@@ -80,10 +80,12 @@ test.describe("build-skip prerender (production build)", () => {
     // It should show an error since Skip is a regular Error at runtime.
     const articleEl = page.locator('[data-testid="build-skip-article-title"]');
     // The article should not render successfully (Skip thrown at runtime)
-    await expect(articleEl).not.toBeVisible({ timeout: 3000 }).catch(() => {
-      // If it is visible, that means passthrough re-ran the handler and
-      // Skip was not thrown (unexpected but acceptable).
-    });
+    await expect(articleEl)
+      .not.toBeVisible({ timeout: 3000 })
+      .catch(() => {
+        // If it is visible, that means passthrough re-ran the handler and
+        // Skip was not thrown (unexpected but acceptable).
+      });
   });
 
   test("working static handler serves pre-rendered content in production", async ({
@@ -94,9 +96,9 @@ test.describe("build-skip prerender (production build)", () => {
     await page.goto(f.url("/build-skip/working-static"));
     await waitForHydration(page);
 
-    await expect(
-      testId(page, "build-skip-working-static-title")
-    ).toContainText("Working Static");
+    await expect(testId(page, "build-skip-working-static-title")).toContainText(
+      "Working Static",
+    );
   });
 
   test("working static handler timestamp is stable across reloads", async ({
@@ -107,7 +109,7 @@ test.describe("build-skip prerender (production build)", () => {
 
     const ts1 = await testId(
       page,
-      "build-skip-working-static-timestamp"
+      "build-skip-working-static-timestamp",
     ).textContent();
 
     await page.reload();
@@ -115,7 +117,7 @@ test.describe("build-skip prerender (production build)", () => {
 
     const ts2 = await testId(
       page,
-      "build-skip-working-static-timestamp"
+      "build-skip-working-static-timestamp",
     ).textContent();
 
     // Truly pre-rendered: identical timestamp across reloads

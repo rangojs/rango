@@ -176,7 +176,10 @@ export interface ActionHandle extends Disposable {
  */
 export interface EventController {
   // Navigation operations
-  startNavigation(url: string, options?: NavigateOptions & { skipLoadingState?: boolean }): NavigationHandle;
+  startNavigation(
+    url: string,
+    options?: NavigateOptions & { skipLoadingState?: boolean },
+  ): NavigationHandle;
   abortNavigation(): void;
 
   // Action operations
@@ -194,7 +197,7 @@ export interface EventController {
   subscribe(listener: StateListener): () => void;
   subscribeToAction(
     actionId: string,
-    listener: ActionStateListener
+    listener: ActionStateListener,
   ): () => void;
   subscribeToHandles(listener: HandleListener): () => void;
 
@@ -202,7 +205,7 @@ export interface EventController {
   setHandleData(
     data: HandleData,
     matched?: string[],
-    isPartial?: boolean
+    isPartial?: boolean,
   ): void;
   getHandleState(): HandleState;
 
@@ -230,7 +233,10 @@ const DEFAULT_ACTION_STATE: TrackedActionState = {
  * When subscriptionId has no '#', it's just an action name and matches by suffix.
  * This allows useAction("addToCart") to match "hash#addToCart" or "src/file.ts#addToCart".
  */
-function matchesActionId(subscriptionId: string, entryActionId: string): boolean {
+function matchesActionId(
+  subscriptionId: string,
+  entryActionId: string,
+): boolean {
   if (subscriptionId.includes("#")) {
     // Full ID: exact match
     return subscriptionId === entryActionId;
@@ -261,7 +267,7 @@ export interface EventControllerConfig {
  * Actions use mergeMap semantics (all run concurrently, consolidate at end).
  */
 export function createEventController(
-  config?: EventControllerConfig
+  config?: EventControllerConfig,
 ): EventController {
   // ========================================================================
   // Source of Truth
@@ -334,7 +340,7 @@ export function createEventController(
             listeners.forEach((listener) => listener(state));
           }
         }
-      }, 0)
+      }, 0),
     );
   }
 
@@ -372,8 +378,7 @@ export function createEventController(
     const isVisibleNavigation =
       currentNavigation !== null &&
       !currentNavigation.options?.skipLoadingState;
-    const state =
-      isVisibleNavigation || hasActiveActions ? "loading" : "idle";
+    const state = isVisibleNavigation || hasActiveActions ? "loading" : "idle";
 
     // Streaming: true if any active streams (navigation or action) or loading
     const isStreaming = activeStreamCount > 0 || state === "loading";
@@ -397,12 +402,16 @@ export function createEventController(
     // Find the most recent action with this ID that's not settling
     // Uses suffix matching when actionId is just a name (no #)
     const activeEntry = [...inflightActions.values()]
-      .filter((a) => matchesActionId(actionId, a.actionId) && a.phase !== "settling")
+      .filter(
+        (a) => matchesActionId(actionId, a.actionId) && a.phase !== "settling",
+      )
       .sort((a, b) => b.startedAt - a.startedAt)[0];
 
     // Also check for settling entries to get result/error
     const settlingEntry = [...inflightActions.values()]
-      .filter((a) => matchesActionId(actionId, a.actionId) && a.phase === "settling")
+      .filter(
+        (a) => matchesActionId(actionId, a.actionId) && a.phase === "settling",
+      )
       .sort((a, b) => b.startedAt - a.startedAt)[0];
 
     const entry = activeEntry || settlingEntry;
@@ -440,7 +449,7 @@ export function createEventController(
 
   function startNavigation(
     url: string,
-    options?: NavigateOptions & { skipLoadingState?: boolean }
+    options?: NavigateOptions & { skipLoadingState?: boolean },
   ): NavigationHandle {
     // Cancel existing navigation (switchMap semantics)
     if (currentNavigation) {
@@ -664,7 +673,7 @@ export function createEventController(
         // We don't need to wait for streaming to complete since we're refetching anyway
         // Count actions that are still fetching (waiting for server response)
         const stillFetchingCount = [...inflightActions.values()].filter(
-          (a) => a.phase === "fetching"
+          (a) => a.phase === "fetching",
         ).length;
 
         if (stillFetchingCount > 0) {
@@ -743,7 +752,7 @@ export function createEventController(
   function setHandleData(
     data: HandleData,
     matched?: string[],
-    isPartial?: boolean
+    isPartial?: boolean,
   ): void {
     const newSegmentOrder = filterSegmentOrder(matched ?? []);
 
@@ -792,7 +801,7 @@ export function createEventController(
 
   function subscribeToAction(
     actionId: string,
-    listener: ActionStateListener
+    listener: ActionStateListener,
   ): () => void {
     let listeners = actionListeners.get(actionId);
     if (!listeners) {
@@ -857,7 +866,7 @@ let controllerInstance: EventController | null = null;
  * Initialize the global event controller
  */
 export function initEventController(
-  config?: EventControllerConfig
+  config?: EventControllerConfig,
 ): EventController {
   if (!controllerInstance) {
     controllerInstance = createEventController(config);
@@ -871,7 +880,7 @@ export function initEventController(
 export function getEventController(): EventController {
   if (!controllerInstance) {
     throw new Error(
-      "Event controller not initialized. Call initEventController first."
+      "Event controller not initialized. Call initEventController first.",
     );
   }
   return controllerInstance;

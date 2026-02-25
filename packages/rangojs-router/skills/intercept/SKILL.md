@@ -45,11 +45,11 @@ export const urlpatterns = urls(({ path, layout, intercept, loader }) => [
 
 ## Navigation Behavior
 
-| Navigation Type | What Renders |
-|-----------------|--------------|
+| Navigation Type                | What Renders                                         |
+| ------------------------------ | ---------------------------------------------------- |
 | Click link `/shop/product/abc` | `<ProductModal />` in `@modal`, background preserved |
-| Direct URL `/shop/product/abc` | Full `<ProductPage />` page |
-| Browser back | Close modal, restore previous state |
+| Direct URL `/shop/product/abc` | Full `<ProductPage />` page                          |
+| Browser back                   | Close modal, restore previous state                  |
 
 ## Intercept with Layout
 
@@ -151,12 +151,14 @@ layout(ShopLayout, () => [
 ```
 
 Build-time behavior:
+
 - The intercept handler (`<ProductModal />`) is resolved with BuildContext
 - Result is stored under the key `"detail/paramHash/i"` (intercept variant)
 - `when()` conditions are skipped at build time (all intercepts pre-rendered unconditionally)
 - `when()` is still evaluated at runtime by the intercept-resolution middleware
 
 Runtime behavior:
+
 - Intercept navigation: prerender store serves the `/i` variant (frozen handler + fresh loaders)
 - Direct navigation: prerender store serves the main variant (full page)
 - If no intercept prerender entry exists, falls through to live intercept resolution

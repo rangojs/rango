@@ -44,7 +44,9 @@ test.describe("counter server actions", () => {
     await expect(testId(page, "counter-pending")).toBeVisible();
 
     // Wait for pending to disappear and count to update
-    await expect(testId(page, "counter-pending")).not.toBeVisible({ timeout: 10000 });
+    await expect(testId(page, "counter-pending")).not.toBeVisible({
+      timeout: 10000,
+    });
 
     // Check count increased
     const newText = await testId(page, "counter-value").textContent();
@@ -61,7 +63,9 @@ test.describe("counter server actions", () => {
 
     // First increment to make sure we have a positive count
     await testId(page, "counter-increment").click();
-    await expect(testId(page, "counter-pending")).not.toBeVisible({ timeout: 10000 });
+    await expect(testId(page, "counter-pending")).not.toBeVisible({
+      timeout: 10000,
+    });
 
     // Get current count
     const currentText = await testId(page, "counter-value").textContent();
@@ -71,7 +75,9 @@ test.describe("counter server actions", () => {
     await testId(page, "counter-decrement").click();
 
     // Wait for action to complete
-    await expect(testId(page, "counter-pending")).not.toBeVisible({ timeout: 10000 });
+    await expect(testId(page, "counter-pending")).not.toBeVisible({
+      timeout: 10000,
+    });
 
     // Check count decreased
     const newText = await testId(page, "counter-value").textContent();
@@ -94,7 +100,9 @@ test.describe("counter server actions", () => {
     await expect(testId(page, "counter-decrement")).toBeDisabled();
 
     // Wait for action to complete
-    await expect(testId(page, "counter-pending")).not.toBeVisible({ timeout: 10000 });
+    await expect(testId(page, "counter-pending")).not.toBeVisible({
+      timeout: 10000,
+    });
 
     // Buttons should be enabled again
     await expect(testId(page, "counter-increment")).toBeEnabled();

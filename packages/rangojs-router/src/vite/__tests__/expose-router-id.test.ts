@@ -100,7 +100,10 @@ export const loader = createLoader(() => null);
     const code = `import { createRouter } from "@rangojs/router";
 export const router = createRouter({});
 `;
-    const result = plugin.transform(code, "/project/node_modules/some-lib/router.tsx");
+    const result = plugin.transform(
+      code,
+      "/project/node_modules/some-lib/router.tsx",
+    );
     expect(result).toBeNull();
   });
 
@@ -151,7 +154,7 @@ export const router = createRouter({});
 export const router = createRouter({});
 `;
     const result = plugin.transform(code, "/project/src/my-router.tsx");
-    expect(result.code).toContain('./my-router.named-routes.gen.js');
+    expect(result.code).toContain("./my-router.named-routes.gen.js");
   });
 
   it("generates named-routes import for nested path correctly", () => {
@@ -161,7 +164,7 @@ export const router = createRouter({});
 `;
     const result = plugin.transform(code, "/project/src/routes/main.ts");
     // Import should reference the gen file relative to the router file
-    expect(result.code).toContain('./main.named-routes.gen.js');
+    expect(result.code).toContain("./main.named-routes.gen.js");
   });
 
   // ---- Idempotency ----

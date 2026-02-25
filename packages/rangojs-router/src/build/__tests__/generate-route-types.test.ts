@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  statSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
@@ -58,10 +65,13 @@ describe("writeCombinedRouteTypes", () => {
   it("should create .named-routes.gen.ts with correct routes", () => {
     const urlsPath = join(tempDir, "urls.ts");
     const routerPath = join(tempDir, "router.ts");
-    writeFileSync(urlsPath, urlsSource([
-      { pattern: "/", name: "index" },
-      { pattern: "/about", name: "about" },
-    ]));
+    writeFileSync(
+      urlsPath,
+      urlsSource([
+        { pattern: "/", name: "index" },
+        { pattern: "/about", name: "about" },
+      ]),
+    );
     writeFileSync(routerPath, routerSource("./urls.js"));
 
     writeCombinedRouteTypes(tempDir, [routerPath]);
@@ -77,9 +87,7 @@ describe("writeCombinedRouteTypes", () => {
   it("should not rewrite when content is unchanged", () => {
     const urlsPath = join(tempDir, "urls.ts");
     const routerPath = join(tempDir, "router.ts");
-    writeFileSync(urlsPath, urlsSource([
-      { pattern: "/", name: "index" },
-    ]));
+    writeFileSync(urlsPath, urlsSource([{ pattern: "/", name: "index" }]));
     writeFileSync(routerPath, routerSource("./urls.js"));
 
     writeCombinedRouteTypes(tempDir, [routerPath]);
@@ -99,10 +107,13 @@ describe("writeCombinedRouteTypes", () => {
     const routerPath = join(tempDir, "router.ts");
 
     // Static parser will find 2 routes
-    writeFileSync(urlsPath, urlsSource([
-      { pattern: "/", name: "index" },
-      { pattern: "/about", name: "about" },
-    ]));
+    writeFileSync(
+      urlsPath,
+      urlsSource([
+        { pattern: "/", name: "index" },
+        { pattern: "/about", name: "about" },
+      ]),
+    );
     writeFileSync(routerPath, routerSource("./urls.js"));
 
     // Pre-seed the gen file with 3 routes (simulating runtime discovery)
@@ -127,11 +138,14 @@ describe("writeCombinedRouteTypes", () => {
     const routerPath = join(tempDir, "router.ts");
 
     // Static parser will find 3 routes
-    writeFileSync(urlsPath, urlsSource([
-      { pattern: "/", name: "index" },
-      { pattern: "/about", name: "about" },
-      { pattern: "/contact", name: "contact" },
-    ]));
+    writeFileSync(
+      urlsPath,
+      urlsSource([
+        { pattern: "/", name: "index" },
+        { pattern: "/about", name: "about" },
+        { pattern: "/contact", name: "contact" },
+      ]),
+    );
     writeFileSync(routerPath, routerSource("./urls.js"));
 
     // Pre-seed with only 2 routes
@@ -154,10 +168,13 @@ describe("writeCombinedRouteTypes", () => {
     const routerPath = join(tempDir, "router.ts");
 
     // Static parser will find 2 routes
-    writeFileSync(urlsPath, urlsSource([
-      { pattern: "/", name: "index" },
-      { pattern: "/new-page", name: "newPage" },
-    ]));
+    writeFileSync(
+      urlsPath,
+      urlsSource([
+        { pattern: "/", name: "index" },
+        { pattern: "/new-page", name: "newPage" },
+      ]),
+    );
     writeFileSync(routerPath, routerSource("./urls.js"));
 
     // Pre-seed with 2 different routes
@@ -180,10 +197,13 @@ describe("writeCombinedRouteTypes", () => {
     const routerPath = join(tempDir, "router.ts");
 
     // Static parser will find 2 routes
-    writeFileSync(urlsPath, urlsSource([
-      { pattern: "/", name: "index" },
-      { pattern: "/about", name: "about" },
-    ]));
+    writeFileSync(
+      urlsPath,
+      urlsSource([
+        { pattern: "/", name: "index" },
+        { pattern: "/about", name: "about" },
+      ]),
+    );
     writeFileSync(routerPath, routerSource("./urls.js"));
 
     // Pre-seed with 3 routes
@@ -209,30 +229,36 @@ describe("writeCombinedRouteTypes", () => {
     const urlsBPath = join(tempDir, "urlsB.ts");
     const routerBPath = join(tempDir, "routerB.ts");
 
-    writeFileSync(urlsAPath, urlsSource([
-      { pattern: "/", name: "index" },
-    ]));
+    writeFileSync(urlsAPath, urlsSource([{ pattern: "/", name: "index" }]));
     writeFileSync(routerAPath, routerSource("./urlsA.js"));
 
-    writeFileSync(urlsBPath, urlsSource([
-      { pattern: "/dashboard", name: "dashboard" },
-      { pattern: "/settings", name: "settings" },
-    ]));
+    writeFileSync(
+      urlsBPath,
+      urlsSource([
+        { pattern: "/dashboard", name: "dashboard" },
+        { pattern: "/settings", name: "settings" },
+      ]),
+    );
     writeFileSync(routerBPath, routerSource("./urlsB.js"));
 
     // Pre-seed routerA's gen file with more routes than static parser finds
     const genAPath = genPath(routerAPath);
-    writeFileSync(genAPath, generateRouteTypesSource({
-      index: "/",
-      about: "/about",
-      contact: "/contact",
-    }));
+    writeFileSync(
+      genAPath,
+      generateRouteTypesSource({
+        index: "/",
+        about: "/about",
+        contact: "/contact",
+      }),
+    );
 
     // routerB has no gen file yet
     const genBPath = genPath(routerBPath);
     expect(existsSync(genBPath)).toBe(false);
 
-    writeCombinedRouteTypes(tempDir, [routerAPath, routerBPath], { preserveIfLarger: true });
+    writeCombinedRouteTypes(tempDir, [routerAPath, routerBPath], {
+      preserveIfLarger: true,
+    });
 
     // routerA should be preserved (guard triggered)
     const afterA = readFileSync(genAPath, "utf-8");
@@ -420,22 +446,25 @@ describe("formatRouteEntry", () => {
 
   it("formats routes with params as plain strings (params extracted at type level)", () => {
     expect(formatRouteEntry("detail", "/:slug", { slug: "string" })).toBe(
-      '  detail: "/:slug",'
+      '  detail: "/:slug",',
     );
   });
 
   it("formats routes with search as objects", () => {
     expect(
-      formatRouteEntry("search", "/search", undefined, { q: "string" })
+      formatRouteEntry("search", "/search", undefined, { q: "string" }),
     ).toBe('  search: { path: "/search", search: { q: "string" } },');
   });
 
   it("formats routes with params and search as objects with search only", () => {
     expect(
-      formatRouteEntry("items", "/:id/items", { id: "string" }, { page: "number?" })
-    ).toBe(
-      '  items: { path: "/:id/items", search: { page: "number?" } },'
-    );
+      formatRouteEntry(
+        "items",
+        "/:id/items",
+        { id: "string" },
+        { page: "number?" },
+      ),
+    ).toBe('  items: { path: "/:id/items", search: { page: "number?" } },');
   });
 });
 
@@ -487,7 +516,8 @@ describe("per-module vs named-routes consistency", () => {
     expect(namedRoutes).toContain('detail: "/:slug"');
 
     // Routes with search use object format (params excluded, extracted at type level)
-    const itemsEntry = 'items: { path: "/:id/items", search: { page: "number?" } }';
+    const itemsEntry =
+      'items: { path: "/:id/items", search: { page: "number?" } }';
     expect(perModule).toContain(itemsEntry);
     expect(namedRoutes).toContain(itemsEntry);
   });
@@ -511,24 +541,30 @@ describe("writePerModuleRouteTypesForFile with includes", () => {
   it("follows include() to a sub-module and merges routes", () => {
     // Sub-module with API routes
     const apiPath = join(tempDir, "api-urls.ts");
-    writeFileSync(apiPath, `import { urls } from "@rangojs/router";
+    writeFileSync(
+      apiPath,
+      `import { urls } from "@rangojs/router";
 const handler = () => null;
 export const apiUrls = urls(({ path }) => [
   path("/users", handler, { name: "users" }),
   path("/posts", handler, { name: "posts" }),
 ]);
-`);
+`,
+    );
 
     // Main module that includes the sub-module
     const mainPath = join(tempDir, "urls.ts");
-    writeFileSync(mainPath, `import { urls } from "@rangojs/router";
+    writeFileSync(
+      mainPath,
+      `import { urls } from "@rangojs/router";
 import { apiUrls } from "./api-urls.js";
 const handler = () => null;
 export const patterns = urls(({ path, include }) => [
   path("/", handler, { name: "index" }),
   include("/api", apiUrls, { name: "api" }),
 ]);
-`);
+`,
+    );
 
     writePerModuleRouteTypesForFile(mainPath);
 
@@ -548,34 +584,43 @@ export const patterns = urls(({ path, include }) => [
   it("follows multi-level includes (A -> B -> C)", () => {
     // Level C: leaf routes
     const cPath = join(tempDir, "c-urls.ts");
-    writeFileSync(cPath, `import { urls } from "@rangojs/router";
+    writeFileSync(
+      cPath,
+      `import { urls } from "@rangojs/router";
 const handler = () => null;
 export const cUrls = urls(({ path }) => [
   path("/leaf", handler, { name: "leaf" }),
 ]);
-`);
+`,
+    );
 
     // Level B: includes C
     const bPath = join(tempDir, "b-urls.ts");
-    writeFileSync(bPath, `import { urls } from "@rangojs/router";
+    writeFileSync(
+      bPath,
+      `import { urls } from "@rangojs/router";
 import { cUrls } from "./c-urls.js";
 const handler = () => null;
 export const bUrls = urls(({ path, include }) => [
   path("/mid", handler, { name: "mid" }),
   include("/nested", cUrls, { name: "nested" }),
 ]);
-`);
+`,
+    );
 
     // Level A: includes B
     const aPath = join(tempDir, "urls.ts");
-    writeFileSync(aPath, `import { urls } from "@rangojs/router";
+    writeFileSync(
+      aPath,
+      `import { urls } from "@rangojs/router";
 import { bUrls } from "./b-urls.js";
 const handler = () => null;
 export const patterns = urls(({ path, include }) => [
   path("/", handler, { name: "index" }),
   include("/b", bUrls, { name: "b" }),
 ]);
-`);
+`,
+    );
 
     writePerModuleRouteTypesForFile(aPath);
 
@@ -597,23 +642,29 @@ export const patterns = urls(({ path, include }) => [
     const aPath = join(tempDir, "a-urls.ts");
     const bPath = join(tempDir, "b-urls.ts");
 
-    writeFileSync(aPath, `import { urls } from "@rangojs/router";
+    writeFileSync(
+      aPath,
+      `import { urls } from "@rangojs/router";
 import { bUrls } from "./b-urls.js";
 const handler = () => null;
 export const aUrls = urls(({ path, include }) => [
   path("/a-route", handler, { name: "aRoute" }),
   include("/b", bUrls, { name: "b" }),
 ]);
-`);
+`,
+    );
 
-    writeFileSync(bPath, `import { urls } from "@rangojs/router";
+    writeFileSync(
+      bPath,
+      `import { urls } from "@rangojs/router";
 import { aUrls } from "./a-urls.js";
 const handler = () => null;
 export const bUrls = urls(({ path, include }) => [
   path("/b-route", handler, { name: "bRoute" }),
   include("/a", aUrls, { name: "a" }),
 ]);
-`);
+`,
+    );
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
@@ -630,7 +681,7 @@ export const bUrls = urls(({ path, include }) => [
 
     // Should warn about the circular reference
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Circular include detected")
+      expect.stringContaining("Circular include detected"),
     );
 
     warnSpy.mockRestore();
@@ -638,22 +689,28 @@ export const bUrls = urls(({ path, include }) => [
 
   it("includes params from sub-module parameterized routes", () => {
     const subPath = join(tempDir, "detail-urls.ts");
-    writeFileSync(subPath, `import { urls } from "@rangojs/router";
+    writeFileSync(
+      subPath,
+      `import { urls } from "@rangojs/router";
 const handler = () => null;
 export const detailUrls = urls(({ path }) => [
   path("/:slug", handler, { name: "detail" }),
 ]);
-`);
+`,
+    );
 
     const mainPath = join(tempDir, "urls.ts");
-    writeFileSync(mainPath, `import { urls } from "@rangojs/router";
+    writeFileSync(
+      mainPath,
+      `import { urls } from "@rangojs/router";
 import { detailUrls } from "./detail-urls.js";
 const handler = () => null;
 export const patterns = urls(({ path, include }) => [
   path("/", handler, { name: "index" }),
   include("/docs", detailUrls, { name: "docs" }),
 ]);
-`);
+`,
+    );
 
     writePerModuleRouteTypesForFile(mainPath);
 
@@ -667,12 +724,15 @@ export const patterns = urls(({ path, include }) => [
   it("falls back to direct extraction when no urls() variable exists", () => {
     // File with path() calls but no urls() variable assignment
     const filePath = join(tempDir, "urls.ts");
-    writeFileSync(filePath, `import { urls } from "@rangojs/router";
+    writeFileSync(
+      filePath,
+      `import { urls } from "@rangojs/router";
 const handler = () => null;
 export default urls(({ path }) => [
   path("/", handler, { name: "index" }),
 ]);
-`);
+`,
+    );
 
     writePerModuleRouteTypesForFile(filePath);
 
@@ -684,7 +744,9 @@ export default urls(({ path }) => [
 
   it("handles same-file includes (no import needed)", () => {
     const filePath = join(tempDir, "urls.ts");
-    writeFileSync(filePath, `import { urls } from "@rangojs/router";
+    writeFileSync(
+      filePath,
+      `import { urls } from "@rangojs/router";
 const handler = () => null;
 const apiUrls = urls(({ path }) => [
   path("/users", handler, { name: "users" }),
@@ -693,7 +755,8 @@ export const patterns = urls(({ path, include }) => [
   path("/", handler, { name: "index" }),
   include("/api", apiUrls, { name: "api" }),
 ]);
-`);
+`,
+    );
 
     writePerModuleRouteTypesForFile(filePath);
 
@@ -801,7 +864,7 @@ describe("detectUnresolvableIncludes", () => {
       `import { createRouter } from "@rangojs/router";
 import { urlpatterns } from "./urls.js";
 export const router = createRouter().routes(urlpatterns);
-`
+`,
     );
     writeFileSync(
       join(dir, "urls.tsx"),
@@ -812,7 +875,7 @@ export const urlpatterns = urls(({ path, include }) => [
   path("/", handler, { name: "home" }),
   include("/missing", missingUrls, { name: "missing" }),
 ]);
-`
+`,
     );
 
     const diagnostics = detectUnresolvableIncludes(join(dir, "router.tsx"));
@@ -830,7 +893,7 @@ export const urlpatterns = urls(({ path, include }) => [
       `import { createRouter } from "@rangojs/router";
 import { urlpatterns } from "./urls.js";
 export const router = createRouter().routes(urlpatterns);
-`
+`,
     );
     writeFileSync(
       join(dir, "urls.tsx"),
@@ -840,7 +903,7 @@ export const urlpatterns = urls(({ path, include }) => [
   path("/", handler, { name: "home" }),
   include("/ghost", ghostUrls, { name: "ghost" }),
 ]);
-`
+`,
     );
 
     const diagnostics = detectUnresolvableIncludes(join(dir, "router.tsx"));

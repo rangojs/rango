@@ -38,16 +38,20 @@ test.describe("streaming-actions", () => {
       await waitForHydration(page);
 
       // Verify we're on detail page (not intercept)
-      await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+      await expect(
+        page.locator('[data-testid="segment-metadata"]'),
+      ).toBeVisible();
 
       // Find streaming action button and status indicator
       const button = page.locator('[data-testid="streaming-btn"]');
-      const actionStatus = page.locator('[data-testid="StreamingActionStatus-action-status"]');
+      const actionStatus = page.locator(
+        '[data-testid="StreamingActionStatus-action-status"]',
+      );
       await expect(button).toBeVisible();
       await expect(actionStatus).toBeVisible();
 
       // Verify initial state is idle
-      await expect(actionStatus).toContainText('idle');
+      await expect(actionStatus).toContainText("idle");
 
       // Click to start streaming action
       await button.click();
@@ -56,26 +60,32 @@ test.describe("streaming-actions", () => {
       const startTime = Date.now();
 
       // Verify state transitions to loading
-      await expect(actionStatus).toContainText('loading', { timeout: 2000 });
+      await expect(actionStatus).toContainText("loading", { timeout: 2000 });
 
       // Verify "Streaming..." loading state appears in the result area
-      await expect(page.locator('[data-testid="streaming-btn-loading"]')).toContainText('Streaming...', { timeout: 5000 });
+      await expect(
+        page.locator('[data-testid="streaming-btn-loading"]'),
+      ).toContainText("Streaming...", { timeout: 5000 });
 
       // Verify state transitions to streaming
-      await expect(actionStatus).toContainText('streaming', { timeout: 5000 });
+      await expect(actionStatus).toContainText("streaming", { timeout: 5000 });
 
       // Wait for the streaming result to show "Completed!"
-      await expect(page.locator('[data-testid="streaming-btn-result"]')).toContainText('Completed', { timeout: 10000 });
+      await expect(
+        page.locator('[data-testid="streaming-btn-result"]'),
+      ).toContainText("Completed", { timeout: 10000 });
 
       // Verify state returns to idle after completion
-      await expect(actionStatus).toContainText('idle', { timeout: 5000 });
+      await expect(actionStatus).toContainText("idle", { timeout: 5000 });
 
       // Verify timing - streaming completes after ~3000ms
       const elapsed = Date.now() - startTime;
       expect(elapsed).toBeGreaterThan(STREAMING_DELAY - TIMING_TOLERANCE);
 
       // Page should remain stable
-      await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+      await expect(
+        page.locator('[data-testid="segment-metadata"]'),
+      ).toBeVisible();
     });
   });
 
@@ -90,13 +100,17 @@ test.describe("streaming-actions", () => {
       await waitForHydration(page);
 
       // Navigate to product via SPA (intercept)
-      const productLink = page.locator('[data-testid="product-link-product-a"]');
+      const productLink = page.locator(
+        '[data-testid="product-link-product-a"]',
+      );
       await productLink.click();
       await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
       // Go to full details (still SPA navigation)
       await page.locator('[data-testid="view-full-details"]').click();
-      await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+      await expect(
+        page.locator('[data-testid="segment-metadata"]'),
+      ).toBeVisible();
 
       // Find streaming action button
       const button = page.locator('[data-testid="streaming-btn"]');
@@ -109,14 +123,18 @@ test.describe("streaming-actions", () => {
       await button.click();
 
       // Wait for the streaming result to show "Completed!"
-      await expect(page.locator('[data-testid="streaming-btn-result"]')).toContainText('Completed', { timeout: 10000 });
+      await expect(
+        page.locator('[data-testid="streaming-btn-result"]'),
+      ).toContainText("Completed", { timeout: 10000 });
 
       // Verify timing
       const elapsed = Date.now() - startTime;
       expect(elapsed).toBeGreaterThan(STREAMING_DELAY - TIMING_TOLERANCE);
 
       // Page should remain stable
-      await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+      await expect(
+        page.locator('[data-testid="segment-metadata"]'),
+      ).toBeVisible();
     });
   });
 
@@ -129,28 +147,38 @@ test.describe("streaming-actions", () => {
       // === Test on document load ===
       await page.goto(f.url("/product/product-a"));
       await waitForHydration(page);
-      await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+      await expect(
+        page.locator('[data-testid="segment-metadata"]'),
+      ).toBeVisible();
 
       let button = page.locator('[data-testid="streaming-btn"]');
 
       await button.click();
-      await expect(page.locator('[data-testid="streaming-btn-result"]')).toContainText('Completed', { timeout: 10000 });
+      await expect(
+        page.locator('[data-testid="streaming-btn-result"]'),
+      ).toContainText("Completed", { timeout: 10000 });
 
       // === Test on SPA navigation ===
       await page.goto(f.url("/"));
       await waitForHydration(page);
 
       // Navigate via SPA
-      const productLink = page.locator('[data-testid="product-link-product-a"]');
+      const productLink = page.locator(
+        '[data-testid="product-link-product-a"]',
+      );
       await productLink.click();
       await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
       await page.locator('[data-testid="view-full-details"]').click();
-      await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+      await expect(
+        page.locator('[data-testid="segment-metadata"]'),
+      ).toBeVisible();
 
       button = page.locator('[data-testid="streaming-btn"]');
 
       await button.click();
-      await expect(page.locator('[data-testid="streaming-btn-result"]')).toContainText('Completed', { timeout: 10000 });
+      await expect(
+        page.locator('[data-testid="streaming-btn-result"]'),
+      ).toContainText("Completed", { timeout: 10000 });
     });
   });
 });
@@ -161,15 +189,15 @@ test.describe("action-form-patterns", () => {
     mode: "dev",
   });
 
-  test("add to cart action should work on document load", async ({
-    page,
-  }) => {
+  test("add to cart action should work on document load", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/product/product-a"));
     await waitForHydration(page);
 
-    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
 
     // Find add to cart button
     const button = page.locator('[data-testid="add-to-cart-btn"]');
@@ -179,10 +207,14 @@ test.describe("action-form-patterns", () => {
     await button.click();
 
     // Wait for result message
-    await expect(page.locator('[data-testid="add-to-cart-btn-result"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="add-to-cart-btn-result"]'),
+    ).toBeVisible();
 
     // Page should remain stable
-    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
   });
 
   test("add to cart action should work after SPA navigation", async ({
@@ -199,17 +231,23 @@ test.describe("action-form-patterns", () => {
     await productLink.click();
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
     await page.locator('[data-testid="view-full-details"]').click();
-    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
 
     // Find add to cart button
     const button = page.locator('[data-testid="add-to-cart-btn"]');
     await button.click();
 
     // Wait for result message
-    await expect(page.locator('[data-testid="add-to-cart-btn-result"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="add-to-cart-btn-result"]'),
+    ).toBeVisible();
 
     // Page should remain stable
-    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
   });
 
   test("quantity control should work on document load", async ({ page }) => {
@@ -218,10 +256,14 @@ test.describe("action-form-patterns", () => {
     await page.goto(f.url("/product/product-a"));
     await waitForHydration(page);
 
-    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
 
     // Find quantity control
-    const incrementButton = page.locator('[data-testid="quantity-control"] button:has-text("+")');
+    const incrementButton = page.locator(
+      '[data-testid="quantity-control"] button:has-text("+")',
+    );
 
     await expect(incrementButton).toBeVisible();
 
@@ -232,7 +274,9 @@ test.describe("action-form-patterns", () => {
     await page.waitForTimeout(600);
 
     // Page should remain stable
-    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
   });
 
   test("quantity control should work after SPA navigation", async ({
@@ -248,16 +292,22 @@ test.describe("action-form-patterns", () => {
     await productLink.click();
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
     await page.locator('[data-testid="view-full-details"]').click();
-    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
 
     // Find quantity control
-    const incrementButton = page.locator('[data-testid="quantity-control"] button:has-text("+")');
+    const incrementButton = page.locator(
+      '[data-testid="quantity-control"] button:has-text("+")',
+    );
     await incrementButton.click();
 
     // Wait for update
     await page.waitForTimeout(600);
 
     // Page should remain stable
-    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
   });
 });

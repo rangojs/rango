@@ -62,9 +62,9 @@ describe("href()", () => {
     });
 
     it("dynamic param", () => {
-      expectTypeOf<PatternToPath<"/blog/:slug">>().toEqualTypeOf<
-        `/blog/${string}`
-      >();
+      expectTypeOf<
+        PatternToPath<"/blog/:slug">
+      >().toEqualTypeOf<`/blog/${string}`>();
     });
 
     it("optional param at end", () => {
@@ -80,9 +80,9 @@ describe("href()", () => {
     });
 
     it("multiple dynamic params", () => {
-      expectTypeOf<PatternToPath<"/user/:id/post/:slug">>().toEqualTypeOf<
-        `/user/${string}/post/${string}`
-      >();
+      expectTypeOf<
+        PatternToPath<"/user/:id/post/:slug">
+      >().toEqualTypeOf<`/user/${string}/post/${string}`>();
     });
 
     it("root path stays root", () => {

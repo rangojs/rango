@@ -19,7 +19,7 @@
  * ```
  */
 export function defineHosts<T extends Record<string, string | string[]>>(
-  hosts: T
+  hosts: T,
 ): Readonly<T> {
   return Object.freeze(hosts);
 }

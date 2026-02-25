@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { generateManifest } from "../generate-manifest";
-import { buildRouteTrie, extractAncestryFromTrie, type TrieNode } from "../route-trie";
+import {
+  buildRouteTrie,
+  extractAncestryFromTrie,
+  type TrieNode,
+} from "../route-trie";
 import { urls } from "../../urls";
 import {
   setRouterManifest,
@@ -26,7 +30,11 @@ function flattenLeafEntries(
 ): void {
   function visit(node: any): void {
     const children = node.children || {};
-    if (Object.keys(children).length === 0 && node.routes && node.routes.length > 0) {
+    if (
+      Object.keys(children).length === 0 &&
+      node.routes &&
+      node.routes.length > 0
+    ) {
       const routes: Record<string, string> = {};
       for (const name of node.routes) {
         if (name in routeManifest) {
@@ -153,15 +161,33 @@ describe("per-router manifest generation", () => {
     const siteManifest = generateManifest(sitePatterns, 0);
     const adminManifest = generateManifest(adminPatterns, 1);
 
-    const sitePrecomputed: Array<{ staticPrefix: string; routes: Record<string, string> }> = [];
-    flattenLeafEntries(siteManifest.prefixTree, siteManifest.routeManifest, sitePrecomputed);
+    const sitePrecomputed: Array<{
+      staticPrefix: string;
+      routes: Record<string, string>;
+    }> = [];
+    flattenLeafEntries(
+      siteManifest.prefixTree,
+      siteManifest.routeManifest,
+      sitePrecomputed,
+    );
 
-    const adminPrecomputed: Array<{ staticPrefix: string; routes: Record<string, string> }> = [];
-    flattenLeafEntries(adminManifest.prefixTree, adminManifest.routeManifest, adminPrecomputed);
+    const adminPrecomputed: Array<{
+      staticPrefix: string;
+      routes: Record<string, string>;
+    }> = [];
+    flattenLeafEntries(
+      adminManifest.prefixTree,
+      adminManifest.routeManifest,
+      adminPrecomputed,
+    );
 
     // Each router's precomputed entries should only reference its own route names
-    const siteRouteNames = sitePrecomputed.flatMap((e) => Object.keys(e.routes));
-    const adminRouteNames = adminPrecomputed.flatMap((e) => Object.keys(e.routes));
+    const siteRouteNames = sitePrecomputed.flatMap((e) =>
+      Object.keys(e.routes),
+    );
+    const adminRouteNames = adminPrecomputed.flatMap((e) =>
+      Object.keys(e.routes),
+    );
 
     expect(siteRouteNames).not.toContain("dashboard");
     expect(siteRouteNames).not.toContain("users");
@@ -203,7 +229,11 @@ describe("per-router manifest generation", () => {
       mergedStaticPrefix[name] = "";
     }
 
-    const mergedTrie = buildRouteTrie(mergedManifest, mergedAncestry, mergedStaticPrefix);
+    const mergedTrie = buildRouteTrie(
+      mergedManifest,
+      mergedAncestry,
+      mergedStaticPrefix,
+    );
     const trieRoutes = extractAncestryFromTrie(mergedTrie);
 
     // Merged trie has all routes (but "/" collides: last writer wins)
@@ -236,7 +266,10 @@ describe("per-router manifest with includes", () => {
 
     // Site should have blog routes
     expect(siteManifest.routeManifest).toHaveProperty("blog.list", "/blog");
-    expect(siteManifest.routeManifest).toHaveProperty("blog.detail", "/blog/:slug");
+    expect(siteManifest.routeManifest).toHaveProperty(
+      "blog.detail",
+      "/blog/:slug",
+    );
     expect(siteManifest.routeManifest).not.toHaveProperty("dashboard");
 
     // Admin should not have blog routes
@@ -244,8 +277,15 @@ describe("per-router manifest with includes", () => {
     expect(adminManifest.routeManifest).toHaveProperty("dashboard", "/");
 
     // Per-router precomputed: site's blog include becomes a leaf
-    const sitePrecomputed: Array<{ staticPrefix: string; routes: Record<string, string> }> = [];
-    flattenLeafEntries(siteManifest.prefixTree, siteManifest.routeManifest, sitePrecomputed);
+    const sitePrecomputed: Array<{
+      staticPrefix: string;
+      routes: Record<string, string>;
+    }> = [];
+    flattenLeafEntries(
+      siteManifest.prefixTree,
+      siteManifest.routeManifest,
+      sitePrecomputed,
+    );
 
     // The /blog include is a leaf node (no children), so it appears in precomputed
     const blogEntry = sitePrecomputed.find((e) => e.staticPrefix === "/blog");
@@ -307,7 +347,10 @@ describe("per-router storage isolation", () => {
     setRouterManifest("admin", { dashboard: "/", users: "/users" });
 
     expect(getRouterManifest("site")).toEqual({ home: "/", about: "/about" });
-    expect(getRouterManifest("admin")).toEqual({ dashboard: "/", users: "/users" });
+    expect(getRouterManifest("admin")).toEqual({
+      dashboard: "/",
+      users: "/users",
+    });
     expect(getRouterManifest("unknown")).toBeUndefined();
   });
 
@@ -324,8 +367,12 @@ describe("per-router storage isolation", () => {
   });
 
   it("should store and retrieve per-router precomputed entries independently", () => {
-    const siteEntries = [{ staticPrefix: "", routes: { home: "/", about: "/about" } }];
-    const adminEntries = [{ staticPrefix: "", routes: { dashboard: "/", users: "/users" } }];
+    const siteEntries = [
+      { staticPrefix: "", routes: { home: "/", about: "/about" } },
+    ];
+    const adminEntries = [
+      { staticPrefix: "", routes: { dashboard: "/", users: "/users" } },
+    ];
 
     setRouterPrecomputedEntries("site", siteEntries);
     setRouterPrecomputedEntries("admin", adminEntries);
@@ -354,7 +401,9 @@ describe("ensureRouterManifest lazy loading", () => {
       precomputedEntries: [{ staticPrefix: "", routes: { home: "/" } }],
     };
 
-    registerRouterManifestLoader("lazy-site", () => Promise.resolve(mockModule));
+    registerRouterManifestLoader("lazy-site", () =>
+      Promise.resolve(mockModule),
+    );
 
     // Before loading
     expect(getRouterManifest("lazy-site")).toBeUndefined();
@@ -365,7 +414,9 @@ describe("ensureRouterManifest lazy loading", () => {
     // After loading
     expect(getRouterManifest("lazy-site")).toEqual(mockModule.manifest);
     expect(getRouterTrie("lazy-site")).toBe(mockModule.trie);
-    expect(getRouterPrecomputedEntries("lazy-site")).toBe(mockModule.precomputedEntries);
+    expect(getRouterPrecomputedEntries("lazy-site")).toBe(
+      mockModule.precomputedEntries,
+    );
   });
 
   it("should not re-load if manifest is already set", async () => {

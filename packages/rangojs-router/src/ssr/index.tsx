@@ -10,7 +10,10 @@ import type { HandleData } from "../browser/types.js";
 import type { ErrorPhase } from "../types.js";
 import type { ResolvedSegment } from "../types.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
-import type { EventController, DerivedNavigationState } from "../browser/event-controller.js";
+import type {
+  EventController,
+  DerivedNavigationState,
+} from "../browser/event-controller.js";
 
 /**
  * Options for injectRSCPayload
@@ -56,14 +59,16 @@ export interface SSRDependencies<TEnv = unknown> {
   /**
    * createFromReadableStream from @vitejs/plugin-rsc/ssr
    */
-  createFromReadableStream: <T>(stream: ReadableStream<Uint8Array>) => Promise<T>;
+  createFromReadableStream: <T>(
+    stream: ReadableStream<Uint8Array>,
+  ) => Promise<T>;
 
   /**
    * renderToReadableStream from react-dom/server.edge
    */
   renderToReadableStream: (
     element: React.ReactNode,
-    options?: RenderToReadableStreamOptions
+    options?: RenderToReadableStreamOptions,
   ) => Promise<ReadableStream<Uint8Array>>;
 
   /**
@@ -71,7 +76,7 @@ export interface SSRDependencies<TEnv = unknown> {
    */
   injectRSCPayload: (
     rscStream: ReadableStream<Uint8Array>,
-    options?: InjectRSCPayloadOptions
+    options?: InjectRSCPayloadOptions,
   ) => TransformStream<Uint8Array, Uint8Array>;
 
   /**
@@ -119,7 +124,7 @@ interface RscPayload {
  * Used for SSR where we need to await all handle data before rendering.
  */
 async function consumeAsyncGenerator(
-  generator: AsyncGenerator<HandleData, void, unknown>
+  generator: AsyncGenerator<HandleData, void, unknown>,
 ): Promise<HandleData> {
   let lastData: HandleData = {};
   for await (const data of generator) {
@@ -206,7 +211,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
    */
   return async function renderHTML(
     rscStream: ReadableStream<Uint8Array>,
-    options?: SSRRenderOptions
+    options?: SSRRenderOptions,
   ): Promise<ReadableStream<Uint8Array>> {
     const { nonce, formState } = options ?? {};
 
@@ -225,7 +230,10 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         const resolved = React.use(payload);
 
         // Initialize segments state before children render (for useSegments hook)
-        initSegmentsSync(resolved.metadata?.matched, resolved.metadata?.pathname);
+        initSegmentsSync(
+          resolved.metadata?.matched,
+          resolved.metadata?.pathname,
+        );
 
         // Initialize theme config for MetaTags to render theme script
         const themeConfig = resolved.metadata?.themeConfig ?? null;
@@ -243,16 +251,21 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         // Create SSR context with correct pathname for useNavigation
         ssrContextValue ??= {
           store: null as any,
-          eventController: createSsrEventController(resolved.metadata?.pathname ?? "/"),
+          eventController: createSsrEventController(
+            resolved.metadata?.pathname ?? "/",
+          ),
           navigate: async () => {},
           refresh: async () => {},
         };
 
         // Build content tree from segments.
         // Order must match NavigationProvider: NavigationStoreContext > ThemeProvider > content
-        const reconstructedRoot = renderSegments(resolved.metadata?.segments ?? [], {
-          rootLayout: resolved.metadata?.rootLayout,
-        });
+        const reconstructedRoot = renderSegments(
+          resolved.metadata?.segments ?? [],
+          {
+            rootLayout: resolved.metadata?.rootLayout,
+          },
+        );
         let content: React.ReactNode =
           reconstructedRoot instanceof Promise
             ? React.use(reconstructedRoot)
@@ -261,7 +274,10 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         // Wrap content with ThemeProvider if theme is enabled
         if (themeConfig) {
           content = (
-            <ThemeProvider config={themeConfig} initialTheme={resolved.metadata?.initialTheme}>
+            <ThemeProvider
+              config={themeConfig}
+              initialTheme={resolved.metadata?.initialTheme}
+            >
               {content}
             </ThemeProvider>
           );
@@ -292,7 +308,8 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
     } catch (error) {
       // Invoke onError callback if provided
       if (onError) {
-        const errorObj = error instanceof Error ? error : new Error(String(error));
+        const errorObj =
+          error instanceof Error ? error : new Error(String(error));
         try {
           onError(errorObj, { phase: "rendering" });
         } catch (callbackError) {

@@ -38,7 +38,8 @@ export function parsePattern(pattern: string): ParsedSegment[] {
   // - :param(a|b)
   // - :param(a|b)?
   // - *
-  const segmentRegex = /\/(:([a-zA-Z_][a-zA-Z0-9_]*)(\(([^)]+)\))?(\?)?|(\*)|([^/]+))/g;
+  const segmentRegex =
+    /\/(:([a-zA-Z_][a-zA-Z0-9_]*)(\(([^)]+)\))?(\?)?|(\*)|([^/]+))/g;
 
   let match;
   while ((match = segmentRegex.exec(pattern)) !== null) {
@@ -277,7 +278,7 @@ export interface LazyEvaluationNeeded<TEnv = any> {
  * Type guard to check if result is a lazy evaluation needed response
  */
 export function isLazyEvaluationNeeded<TEnv>(
-  result: RouteMatchResult<TEnv> | LazyEvaluationNeeded<TEnv> | null
+  result: RouteMatchResult<TEnv> | LazyEvaluationNeeded<TEnv> | null,
 ): result is LazyEvaluationNeeded<TEnv> {
   return result !== null && "lazyEntry" in result;
 }
@@ -298,12 +299,16 @@ export function enableMatchDebug(enabled: boolean): void {
 }
 
 export function getMatchDebugStats(): MatchDebugStats {
-  return { entriesChecked: debugStats.entriesChecked, entriesSkipped: debugStats.entriesSkipped, routesChecked: debugStats.routesChecked };
+  return {
+    entriesChecked: debugStats.entriesChecked,
+    entriesSkipped: debugStats.entriesSkipped,
+    routesChecked: debugStats.routesChecked,
+  };
 }
 
 export function findMatch<TEnv>(
   pathname: string,
-  routesEntries: RouteEntry<TEnv>[]
+  routesEntries: RouteEntry<TEnv>[],
 ): RouteMatchResult<TEnv> | LazyEvaluationNeeded<TEnv> | null {
   const effectiveDebug = debugEnabled || isRouterDebugEnabled();
 
@@ -319,7 +324,8 @@ export function findMatch<TEnv>(
     }
   }
 
-  const pathnameHasTrailingSlash = pathname.length > 1 && pathname.endsWith("/");
+  const pathnameHasTrailingSlash =
+    pathname.length > 1 && pathname.endsWith("/");
   // Try alternate pathname for redirect matching
   const alternatePathname = pathnameHasTrailingSlash
     ? pathname.slice(0, -1)
@@ -371,14 +377,17 @@ export function findMatch<TEnv>(
         fullPattern = entry.prefix + pattern;
       }
 
-      const { regex, paramNames, optionalParams, hasTrailingSlash } = getCompiledPattern(fullPattern);
+      const { regex, paramNames, optionalParams, hasTrailingSlash } =
+        getCompiledPattern(fullPattern);
 
       // Get trailing slash mode for this route (per-route config or pattern-based)
-      const trailingSlashMode: TrailingSlashMode | undefined = entry.trailingSlash?.[routeKey];
-
+      const trailingSlashMode: TrailingSlashMode | undefined =
+        entry.trailingSlash?.[routeKey];
 
       // Prerender flag from entry metadata (set by urls() for prerender handlers)
-      const prFlag = entry.prerenderRouteKeys?.has(routeKey) ? { pr: true as const } : {};
+      const prFlag = entry.prerenderRouteKeys?.has(routeKey)
+        ? { pr: true as const }
+        : {};
 
       // Try exact match first
       const match = regex.exec(pathname);
@@ -397,12 +406,30 @@ export function findMatch<TEnv>(
         }
 
         // Check if trailing slash mode requires redirect even on exact match
-        if (trailingSlashMode === "always" && !pathnameHasTrailingSlash && pathname !== "/") {
+        if (
+          trailingSlashMode === "always" &&
+          !pathnameHasTrailingSlash &&
+          pathname !== "/"
+        ) {
           // Mode says always have trailing slash, but pathname doesn't have it
-          return { entry, routeKey, params, optionalParams, redirectTo: pathname + "/", ...prFlag };
+          return {
+            entry,
+            routeKey,
+            params,
+            optionalParams,
+            redirectTo: pathname + "/",
+            ...prFlag,
+          };
         } else if (trailingSlashMode === "never" && pathnameHasTrailingSlash) {
           // Mode says never have trailing slash, but pathname has it
-          return { entry, routeKey, params, optionalParams, redirectTo: pathname.slice(0, -1), ...prFlag };
+          return {
+            entry,
+            routeKey,
+            params,
+            optionalParams,
+            redirectTo: pathname.slice(0, -1),
+            ...prFlag,
+          };
         }
 
         return { entry, routeKey, params, optionalParams, ...prFlag };
@@ -423,20 +450,43 @@ export function findMatch<TEnv>(
         } else if (trailingSlashMode === "never") {
           // Redirect to no trailing slash
           if (pathnameHasTrailingSlash) {
-            return { entry, routeKey, params, optionalParams, redirectTo: alternatePathname, ...prFlag };
+            return {
+              entry,
+              routeKey,
+              params,
+              optionalParams,
+              redirectTo: alternatePathname,
+              ...prFlag,
+            };
           }
           return { entry, routeKey, params, optionalParams, ...prFlag };
         } else if (trailingSlashMode === "always") {
           // Redirect to with trailing slash
           if (!pathnameHasTrailingSlash) {
-            return { entry, routeKey, params, optionalParams, redirectTo: alternatePathname, ...prFlag };
+            return {
+              entry,
+              routeKey,
+              params,
+              optionalParams,
+              redirectTo: alternatePathname,
+              ...prFlag,
+            };
           }
           return { entry, routeKey, params, optionalParams, ...prFlag };
         } else {
           // No explicit mode - use pattern-based detection
           // Redirect to canonical form (what the pattern defines)
-          const canonicalPath = hasTrailingSlash ? alternatePathname : pathname.slice(0, -1);
-          return { entry, routeKey, params, optionalParams, redirectTo: canonicalPath, ...prFlag };
+          const canonicalPath = hasTrailingSlash
+            ? alternatePathname
+            : pathname.slice(0, -1);
+          return {
+            entry,
+            routeKey,
+            params,
+            optionalParams,
+            redirectTo: canonicalPath,
+            ...prFlag,
+          };
         }
       }
     }

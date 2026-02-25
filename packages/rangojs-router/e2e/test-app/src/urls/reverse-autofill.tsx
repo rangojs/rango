@@ -27,9 +27,7 @@ export const reverseAutofillPatterns = urls(({ path }) => [
 
       return (
         <div data-testid="autofill-index-page">
-          <h1 data-testid="autofill-index-title">
-            Tenant: {params.tenantId}
-          </h1>
+          <h1 data-testid="autofill-index-title">Tenant: {params.tenantId}</h1>
           <ul>
             <li data-testid="autofill-settings-url">{settingsUrl}</li>
             <li data-testid="autofill-user-url">{userUrl}</li>
@@ -108,10 +106,7 @@ export const reverseAutofillPatterns = urls(({ path }) => [
               Back to Index
             </Link>
             {" | "}
-            <Link
-              to={settingsUrl}
-              data-testid="autofill-link-user-settings"
-            >
+            <Link to={settingsUrl} data-testid="autofill-link-user-settings">
               Settings
             </Link>
           </nav>

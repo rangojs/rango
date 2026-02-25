@@ -11,11 +11,7 @@ import type { Breadcrumbs } from "../handles.js";
  * Uses `typeof Breadcrumbs` for the prop type -- this infers the full generic
  * from the handle definition, so the accumulated data type is automatically type-checked.
  */
-export function RefTestHandleProp({
-  handle,
-}: {
-  handle: typeof Breadcrumbs;
-}) {
+export function RefTestHandleProp({ handle }: { handle: typeof Breadcrumbs }) {
   const breadcrumbs = useHandle(handle);
   return (
     <div data-testid="ref-test-handle-page">

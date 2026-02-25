@@ -115,7 +115,7 @@ import { debugLog } from "./logging.js";
  * Collect all segments from an async generator
  */
 export async function collectSegments(
-  generator: AsyncGenerator<ResolvedSegment>
+  generator: AsyncGenerator<ResolvedSegment>,
 ): Promise<ResolvedSegment[]> {
   const segments: ResolvedSegment[] = [];
   for await (const segment of generator) {
@@ -130,9 +130,11 @@ export async function collectSegments(
 export function buildMatchResult<TEnv>(
   allSegments: ResolvedSegment[],
   ctx: MatchContext<TEnv>,
-  state: MatchPipelineState
+  state: MatchPipelineState,
 ): MatchResult {
-  const logPrefix = ctx.isFullMatch ? "[Router.match]" : "[Router.matchPartial]";
+  const logPrefix = ctx.isFullMatch
+    ? "[Router.match]"
+    : "[Router.matchPartial]";
 
   let allIds: string[];
   let segmentsToRender: ResolvedSegment[];
@@ -169,7 +171,7 @@ export function buildMatchResult<TEnv>(
     // Filter out segments with null components (client already has them)
     // BUT always include loader segments - they carry data even with null component
     segmentsToRender = allSegments.filter(
-      (s) => s.component !== null || s.type === "loader"
+      (s) => s.component !== null || s.type === "loader",
     );
   }
 
@@ -213,7 +215,7 @@ export function buildMatchResult<TEnv>(
 export async function collectMatchResult<TEnv>(
   pipeline: AsyncGenerator<ResolvedSegment>,
   ctx: MatchContext<TEnv>,
-  state: MatchPipelineState
+  state: MatchPipelineState,
 ): Promise<MatchResult> {
   const allSegments = await collectSegments(pipeline);
 

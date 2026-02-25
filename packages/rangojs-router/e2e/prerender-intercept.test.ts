@@ -11,7 +11,9 @@ test.describe("prerender-intercept (dev mode)", () => {
     mode: "dev",
   });
 
-  test("direct navigation renders full detail page without modal", async ({ page }) => {
+  test("direct navigation renders full detail page without modal", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/prerender-intercept/alpha"));
@@ -19,19 +21,25 @@ test.describe("prerender-intercept (dev mode)", () => {
 
     // Full detail page renders
     await expect(page.locator('[data-testid="pri-detail"]')).toBeVisible();
-    await expect(page.locator('[data-testid="pri-detail-title"]')).toContainText("alpha");
-    await expect(page.locator('[data-testid="pri-detail-content"]')).toContainText(
-      "Full detail page for alpha"
-    );
+    await expect(
+      page.locator('[data-testid="pri-detail-title"]'),
+    ).toContainText("alpha");
+    await expect(
+      page.locator('[data-testid="pri-detail-content"]'),
+    ).toContainText("Full detail page for alpha");
     // Handler-time marker is present (rendered on-demand in dev)
-    const handlerTime = await page.locator('[data-testid="pri-handler-time"]').textContent();
+    const handlerTime = await page
+      .locator('[data-testid="pri-handler-time"]')
+      .textContent();
     expect(handlerTime).toBeTruthy();
 
     // Modal must NOT be visible on direct navigation
     await expect(page.locator('[data-testid="pri-modal"]')).not.toBeVisible();
   });
 
-  test("client navigation from index shows modal via intercept", async ({ page }) => {
+  test("client navigation from index shows modal via intercept", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/prerender-intercept"));
@@ -45,11 +53,17 @@ test.describe("prerender-intercept (dev mode)", () => {
 
     // Modal appears with intercept content
     await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
-    await expect(page.locator('[data-testid="pri-modal-title"]')).toContainText("alpha");
-    await expect(page.locator('[data-testid="pri-modal-indicator"]')).toContainText("Intercepted");
+    await expect(page.locator('[data-testid="pri-modal-title"]')).toContainText(
+      "alpha",
+    );
+    await expect(
+      page.locator('[data-testid="pri-modal-indicator"]'),
+    ).toContainText("Intercepted");
 
     // Modal render-time marker is present
-    const modalTime = await page.locator('[data-testid="pri-modal-render-time"]').textContent();
+    const modalTime = await page
+      .locator('[data-testid="pri-modal-render-time"]')
+      .textContent();
     expect(modalTime).toBeTruthy();
   });
 
@@ -75,13 +89,17 @@ test.describe("prerender-intercept (dev mode)", () => {
     await page.goto(f.url("/prerender-intercept/alpha"));
     await waitForHydration(page);
 
-    const ts1 = await page.locator('[data-testid="fresh-timestamp"]').textContent();
+    const ts1 = await page
+      .locator('[data-testid="fresh-timestamp"]')
+      .textContent();
     expect(Number(ts1)).toBeGreaterThan(0);
 
     await page.reload();
     await waitForHydration(page);
 
-    const ts2 = await page.locator('[data-testid="fresh-timestamp"]').textContent();
+    const ts2 = await page
+      .locator('[data-testid="fresh-timestamp"]')
+      .textContent();
     expect(Number(ts2)).toBeGreaterThan(0);
     // Loader always returns fresh data -- timestamps must differ
     expect(ts2).not.toBe(ts1);
@@ -92,17 +110,21 @@ test.describe("prerender-intercept (dev mode)", () => {
 
     await page.goto(f.url("/prerender-intercept/alpha"));
     await waitForHydration(page);
-    await expect(page.locator('[data-testid="pri-detail-title"]')).toContainText("alpha");
-    await expect(page.locator('[data-testid="pri-detail-content"]')).toContainText(
-      "Full detail page for alpha"
-    );
+    await expect(
+      page.locator('[data-testid="pri-detail-title"]'),
+    ).toContainText("alpha");
+    await expect(
+      page.locator('[data-testid="pri-detail-content"]'),
+    ).toContainText("Full detail page for alpha");
 
     await page.goto(f.url("/prerender-intercept/beta"));
     await waitForHydration(page);
-    await expect(page.locator('[data-testid="pri-detail-title"]')).toContainText("beta");
-    await expect(page.locator('[data-testid="pri-detail-content"]')).toContainText(
-      "Full detail page for beta"
-    );
+    await expect(
+      page.locator('[data-testid="pri-detail-title"]'),
+    ).toContainText("beta");
+    await expect(
+      page.locator('[data-testid="pri-detail-content"]'),
+    ).toContainText("Full detail page for beta");
   });
 
   test("intercept works for both alpha and beta params", async ({ page }) => {
@@ -114,7 +136,9 @@ test.describe("prerender-intercept (dev mode)", () => {
     // Intercept alpha
     await page.locator('[data-testid="pri-link-alpha"]').click();
     await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
-    await expect(page.locator('[data-testid="pri-modal-title"]')).toContainText("alpha");
+    await expect(page.locator('[data-testid="pri-modal-title"]')).toContainText(
+      "alpha",
+    );
 
     await goBack(page);
     await expect(page.locator('[data-testid="pri-modal"]')).not.toBeVisible();
@@ -122,7 +146,9 @@ test.describe("prerender-intercept (dev mode)", () => {
     // Intercept beta
     await page.locator('[data-testid="pri-link-beta"]').click();
     await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
-    await expect(page.locator('[data-testid="pri-modal-title"]')).toContainText("beta");
+    await expect(page.locator('[data-testid="pri-modal-title"]')).toContainText(
+      "beta",
+    );
   });
 });
 
@@ -135,42 +161,58 @@ test.describe("prerender-intercept (production build)", () => {
     mode: "build",
   });
 
-  test("direct navigation renders full detail page without modal", async ({ page }) => {
+  test("direct navigation renders full detail page without modal", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/prerender-intercept/alpha"));
     await waitForHydration(page);
 
     await expect(page.locator('[data-testid="pri-detail"]')).toBeVisible();
-    await expect(page.locator('[data-testid="pri-detail-title"]')).toContainText("alpha");
-    await expect(page.locator('[data-testid="pri-detail-content"]')).toContainText(
-      "Full detail page for alpha"
-    );
+    await expect(
+      page.locator('[data-testid="pri-detail-title"]'),
+    ).toContainText("alpha");
+    await expect(
+      page.locator('[data-testid="pri-detail-content"]'),
+    ).toContainText("Full detail page for alpha");
 
     // Handler-time marker present
-    const handlerTime = await page.locator('[data-testid="pri-handler-time"]').textContent();
+    const handlerTime = await page
+      .locator('[data-testid="pri-handler-time"]')
+      .textContent();
     expect(handlerTime).toBeTruthy();
 
     // No modal on direct navigation
     await expect(page.locator('[data-testid="pri-modal"]')).not.toBeVisible();
   });
 
-  test("handler content is frozen across reloads (proves prerender store)", async ({ page }) => {
+  test("handler content is frozen across reloads (proves prerender store)", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     // First load
     await page.goto(f.url("/prerender-intercept/alpha"));
     await waitForHydration(page);
 
-    const handlerTime1 = await page.locator('[data-testid="pri-handler-time"]').textContent();
-    const loaderTs1 = await page.locator('[data-testid="fresh-timestamp"]').textContent();
+    const handlerTime1 = await page
+      .locator('[data-testid="pri-handler-time"]')
+      .textContent();
+    const loaderTs1 = await page
+      .locator('[data-testid="fresh-timestamp"]')
+      .textContent();
 
     // Second load
     await page.reload();
     await waitForHydration(page);
 
-    const handlerTime2 = await page.locator('[data-testid="pri-handler-time"]').textContent();
-    const loaderTs2 = await page.locator('[data-testid="fresh-timestamp"]').textContent();
+    const handlerTime2 = await page
+      .locator('[data-testid="pri-handler-time"]')
+      .textContent();
+    const loaderTs2 = await page
+      .locator('[data-testid="fresh-timestamp"]')
+      .textContent();
 
     // Handler render time is baked at build time -- identical across reloads.
     // This is the definitive proof that content comes from the prerender store,
@@ -184,7 +226,9 @@ test.describe("prerender-intercept (production build)", () => {
     expect(loaderTs1).not.toBe(loaderTs2);
   });
 
-  test("client navigation from index shows modal via intercept", async ({ page }) => {
+  test("client navigation from index shows modal via intercept", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/prerender-intercept"));
@@ -195,15 +239,23 @@ test.describe("prerender-intercept (production build)", () => {
 
     // Modal appears
     await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
-    await expect(page.locator('[data-testid="pri-modal-title"]')).toContainText("alpha");
-    await expect(page.locator('[data-testid="pri-modal-indicator"]')).toContainText("Intercepted");
+    await expect(page.locator('[data-testid="pri-modal-title"]')).toContainText(
+      "alpha",
+    );
+    await expect(
+      page.locator('[data-testid="pri-modal-indicator"]'),
+    ).toContainText("Intercepted");
 
     // Modal render-time marker is present (from prerender store)
-    const modalTime = await page.locator('[data-testid="pri-modal-render-time"]').textContent();
+    const modalTime = await page
+      .locator('[data-testid="pri-modal-render-time"]')
+      .textContent();
     expect(modalTime).toBeTruthy();
   });
 
-  test("modal content is frozen across intercept navigations (proves prerender store)", async ({ page }) => {
+  test("modal content is frozen across intercept navigations (proves prerender store)", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     // First intercept navigation
@@ -212,7 +264,9 @@ test.describe("prerender-intercept (production build)", () => {
 
     await page.locator('[data-testid="pri-link-alpha"]').click();
     await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
-    const modalTime1 = await page.locator('[data-testid="pri-modal-render-time"]').textContent();
+    const modalTime1 = await page
+      .locator('[data-testid="pri-modal-render-time"]')
+      .textContent();
 
     // Go back, then intercept again
     await goBack(page);
@@ -220,7 +274,9 @@ test.describe("prerender-intercept (production build)", () => {
 
     await page.locator('[data-testid="pri-link-alpha"]').click();
     await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
-    const modalTime2 = await page.locator('[data-testid="pri-modal-render-time"]').textContent();
+    const modalTime2 = await page
+      .locator('[data-testid="pri-modal-render-time"]')
+      .textContent();
 
     // Modal render time is baked at build time -- identical across navigations.
     // This proves the intercept variant is served from the prerender store.
@@ -243,26 +299,36 @@ test.describe("prerender-intercept (production build)", () => {
     await expect(page.locator('[data-testid="pri-index"]')).toBeVisible();
   });
 
-  test("different params render different detail content from prerender store", async ({ page }) => {
+  test("different params render different detail content from prerender store", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     // Alpha
     await page.goto(f.url("/prerender-intercept/alpha"));
     await waitForHydration(page);
-    await expect(page.locator('[data-testid="pri-detail-title"]')).toContainText("alpha");
-    await expect(page.locator('[data-testid="pri-detail-content"]')).toContainText(
-      "Full detail page for alpha"
-    );
-    const alphaTime = await page.locator('[data-testid="pri-handler-time"]').textContent();
+    await expect(
+      page.locator('[data-testid="pri-detail-title"]'),
+    ).toContainText("alpha");
+    await expect(
+      page.locator('[data-testid="pri-detail-content"]'),
+    ).toContainText("Full detail page for alpha");
+    const alphaTime = await page
+      .locator('[data-testid="pri-handler-time"]')
+      .textContent();
 
     // Beta
     await page.goto(f.url("/prerender-intercept/beta"));
     await waitForHydration(page);
-    await expect(page.locator('[data-testid="pri-detail-title"]')).toContainText("beta");
-    await expect(page.locator('[data-testid="pri-detail-content"]')).toContainText(
-      "Full detail page for beta"
-    );
-    const betaTime = await page.locator('[data-testid="pri-handler-time"]').textContent();
+    await expect(
+      page.locator('[data-testid="pri-detail-title"]'),
+    ).toContainText("beta");
+    await expect(
+      page.locator('[data-testid="pri-detail-content"]'),
+    ).toContainText("Full detail page for beta");
+    const betaTime = await page
+      .locator('[data-testid="pri-handler-time"]')
+      .textContent();
 
     // Both have frozen handler times (from build), but they can differ
     // because alpha and beta are built as separate prerender entries
@@ -279,7 +345,9 @@ test.describe("prerender-intercept (production build)", () => {
     // Intercept alpha
     await page.locator('[data-testid="pri-link-alpha"]').click();
     await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
-    await expect(page.locator('[data-testid="pri-modal-title"]')).toContainText("alpha");
+    await expect(page.locator('[data-testid="pri-modal-title"]')).toContainText(
+      "alpha",
+    );
 
     await goBack(page);
     await expect(page.locator('[data-testid="pri-modal"]')).not.toBeVisible();
@@ -287,10 +355,14 @@ test.describe("prerender-intercept (production build)", () => {
     // Intercept beta
     await page.locator('[data-testid="pri-link-beta"]').click();
     await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
-    await expect(page.locator('[data-testid="pri-modal-title"]')).toContainText("beta");
+    await expect(page.locator('[data-testid="pri-modal-title"]')).toContainText(
+      "beta",
+    );
   });
 
-  test("intercept loader runs fresh at runtime (not pre-rendered)", async ({ page }) => {
+  test("intercept loader runs fresh at runtime (not pre-rendered)", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     // First intercept navigation
@@ -303,7 +375,9 @@ test.describe("prerender-intercept (production build)", () => {
     // The FreshTimestampLoader is attached to the intercept route.
     // It uses useLoader() client-side to display fresh data.
     // Even though the modal handler is pre-rendered, the loader runs fresh.
-    const ts1 = await page.locator('[data-testid="fresh-timestamp"]').textContent();
+    const ts1 = await page
+      .locator('[data-testid="fresh-timestamp"]')
+      .textContent();
     expect(Number(ts1)).toBeGreaterThan(0);
 
     // Go back and intercept again
@@ -313,7 +387,9 @@ test.describe("prerender-intercept (production build)", () => {
     await page.locator('[data-testid="pri-link-alpha"]').click();
     await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
 
-    const ts2 = await page.locator('[data-testid="fresh-timestamp"]').textContent();
+    const ts2 = await page
+      .locator('[data-testid="fresh-timestamp"]')
+      .textContent();
     expect(Number(ts2)).toBeGreaterThan(0);
     // Loader timestamp must differ -- proves loaders are NOT pre-rendered
     expect(ts2).not.toBe(ts1);
@@ -325,7 +401,7 @@ test.describe("prerender-intercept (production build)", () => {
     await page.goto(f.url("/prerender-intercept/alpha"));
     await waitForHydration(page);
     await expect(
-      page.locator('[data-testid="prerender-intercept-layout"]')
+      page.locator('[data-testid="prerender-intercept-layout"]'),
     ).toBeVisible();
   });
 });

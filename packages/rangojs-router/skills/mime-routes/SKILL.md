@@ -23,9 +23,13 @@ import { urls } from "@rangojs/router";
 export const urlpatterns = urls(({ path, layout, include }) => [
   // RSC page + JSON API on the same URL
   path("/products/:id", ProductPage, { name: "product" }),
-  path.json("/products/:id", (ctx) => {
-    return db.getProduct(ctx.params.id);
-  }, { name: "productJson" }),
+  path.json(
+    "/products/:id",
+    (ctx) => {
+      return db.getProduct(ctx.params.id);
+    },
+    { name: "productJson" },
+  ),
 ]);
 ```
 
@@ -45,14 +49,14 @@ There is no special short-circuit — RSC follows the same negotiation rules as 
 
 The MIME mapping used for matching:
 
-| Tag | MIME type |
-|-----|-----------|
+| Tag                  | MIME type                                                    |
+| -------------------- | ------------------------------------------------------------ |
 | RSC (plain `path()`) | `text/html` (negotiation) / `text/x-component` (wire format) |
-| `json` | `application/json` |
-| `text` | `text/plain` |
-| `xml` | `application/xml` |
-| `html` | `text/html` |
-| `md` | `text/markdown` |
+| `json`               | `application/json`                                           |
+| `text`               | `text/plain`                                                 |
+| `xml`                | `application/xml`                                            |
+| `html`               | `text/html`                                                  |
+| `md`                 | `text/markdown`                                              |
 
 RSC routes negotiate as `text/html` but respond with `text/x-component` (the RSC wire format).
 The browser's RSC runtime decodes this transparently — clients requesting `text/html` get

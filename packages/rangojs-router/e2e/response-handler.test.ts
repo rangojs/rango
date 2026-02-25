@@ -5,7 +5,9 @@ const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
 
 test.describe("response-handler", () => {
   test.describe("string auto-wrap", () => {
-    test("path.md() auto-wraps string with text/markdown content-type", async ({ request }) => {
+    test("path.md() auto-wraps string with text/markdown content-type", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-wrap/auto?q=hello"));
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("text/markdown");
@@ -14,21 +16,27 @@ test.describe("response-handler", () => {
       expect(body).toContain("Param: hello");
     });
 
-    test("path.text() auto-wraps string with text/plain content-type", async ({ request }) => {
+    test("path.text() auto-wraps string with text/plain content-type", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-wrap/text"));
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("text/plain");
       expect(await res.text()).toBe("plain text response");
     });
 
-    test("path.html() auto-wraps string with text/html content-type", async ({ request }) => {
+    test("path.html() auto-wraps string with text/html content-type", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-wrap/html"));
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("text/html");
       expect(await res.text()).toBe("<h1>html response</h1>");
     });
 
-    test("path.xml() auto-wraps string with application/xml content-type", async ({ request }) => {
+    test("path.xml() auto-wraps string with application/xml content-type", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-wrap/xml"));
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("application/xml");
@@ -37,7 +45,9 @@ test.describe("response-handler", () => {
   });
 
   test.describe("ctx.header() on auto-wrapped responses", () => {
-    test("md handler can set custom headers via ctx.header()", async ({ request }) => {
+    test("md handler can set custom headers via ctx.header()", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-wrap/with-headers"));
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("text/markdown");
@@ -47,7 +57,9 @@ test.describe("response-handler", () => {
       expect(body).toContain("# With Headers");
     });
 
-    test("json handler can set custom headers via ctx.header()", async ({ request }) => {
+    test("json handler can set custom headers via ctx.header()", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-wrap/json-headers"));
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("application/json");
@@ -57,7 +69,9 @@ test.describe("response-handler", () => {
       expect(body.data.version).toBe(2);
     });
 
-    test("text handler can set custom headers via ctx.header()", async ({ request }) => {
+    test("text handler can set custom headers via ctx.header()", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-wrap/text"));
       expect(res.status()).toBe(200);
       expect(res.headers()["x-text-custom"]).toBe("hello");
@@ -65,7 +79,9 @@ test.describe("response-handler", () => {
   });
 
   test.describe("ctx.setCookie() on auto-wrapped responses", () => {
-    test("md handler can set cookies via ctx.setCookie()", async ({ request }) => {
+    test("md handler can set cookies via ctx.setCookie()", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-wrap/with-headers"));
       expect(res.status()).toBe(200);
       const setCookie = res.headers()["set-cookie"];
@@ -73,7 +89,9 @@ test.describe("response-handler", () => {
       expect(setCookie).toContain("md-visited=true");
     });
 
-    test("json handler can set cookies via ctx.setCookie()", async ({ request }) => {
+    test("json handler can set cookies via ctx.setCookie()", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-wrap/json-headers"));
       expect(res.status()).toBe(200);
       const setCookie = res.headers()["set-cookie"];
@@ -84,7 +102,9 @@ test.describe("response-handler", () => {
   });
 
   test.describe("Response pass-through", () => {
-    test("returning Response directly preserves custom headers", async ({ request }) => {
+    test("returning Response directly preserves custom headers", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-wrap/custom-response"));
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("text/markdown");
@@ -96,7 +116,9 @@ test.describe("response-handler", () => {
   });
 
   test.describe("nested middleware on response routes", () => {
-    test("outer middleware sets variable, inner middleware reads it and sets its own", async ({ request }) => {
+    test("outer middleware sets variable, inner middleware reads it and sets its own", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-mw/nested"));
       expect(res.status()).toBe(200);
       const body = await res.json();
@@ -105,20 +127,26 @@ test.describe("response-handler", () => {
       expect(body.data.inner).toBe("inner-saw-outer-value");
     });
 
-    test("both middleware headers are present on the response", async ({ request }) => {
+    test("both middleware headers are present on the response", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-mw/nested"));
       expect(res.status()).toBe(200);
       expect(res.headers()["x-outer-mw"]).toBe("applied");
       expect(res.headers()["x-inner-mw"]).toBe("applied");
     });
 
-    test("outer middleware runs after handler (post-next header)", async ({ request }) => {
+    test("outer middleware runs after handler (post-next header)", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-mw/nested"));
       expect(res.status()).toBe(200);
       expect(res.headers()["x-outer-after"]).toBe("after-handler");
     });
 
-    test("middleware can set cookies on response route", async ({ request }) => {
+    test("middleware can set cookies on response route", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-mw/md-with-mw"));
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("text/markdown");
@@ -128,7 +156,9 @@ test.describe("response-handler", () => {
       expect(setCookie).toContain("mw-role=admin");
     });
 
-    test("global middleware still applies to response routes", async ({ request }) => {
+    test("global middleware still applies to response routes", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-mw/nested"));
       expect(res.status()).toBe(200);
       // Global middleware sets X-Global-Middleware on all routes
@@ -137,7 +167,9 @@ test.describe("response-handler", () => {
   });
 
   test.describe("response routes inside layout", () => {
-    test("path.json() inside layout returns JSON (layout is skipped)", async ({ request }) => {
+    test("path.json() inside layout returns JSON (layout is skipped)", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-in-layout"));
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("application/json");
@@ -145,7 +177,9 @@ test.describe("response-handler", () => {
       expect(body.data.source).toBe("json-in-layout");
     });
 
-    test("path.md() inside layout returns markdown (layout is skipped)", async ({ request }) => {
+    test("path.md() inside layout returns markdown (layout is skipped)", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/response-in-layout-md"));
       expect(res.status()).toBe(200);
       expect(res.headers()["content-type"]).toContain("text/markdown");

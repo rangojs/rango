@@ -30,7 +30,8 @@ const LAYOUT_TEMPLATE_PATTERN = /\/(layout|template)\.(tsx?|jsx?)$/;
 export function useCacheTransform(): Plugin {
   let projectRoot = "";
   let isBuild = false;
-  let rscTransforms: typeof import("@vitejs/plugin-rsc/transforms") | null = null;
+  let rscTransforms: typeof import("@vitejs/plugin-rsc/transforms") | null =
+    null;
 
   return {
     name: "@rangojs/router:use-cache",
@@ -63,7 +64,11 @@ export function useCacheTransform(): Plugin {
         }
       }
 
-      const { hasDirective, transformWrapExport, transformHoistInlineDirective } = rscTransforms;
+      const {
+        hasDirective,
+        transformWrapExport,
+        transformHoistInlineDirective,
+      } = rscTransforms;
 
       // Parse AST
       let ast: any;
@@ -80,14 +85,25 @@ export function useCacheTransform(): Plugin {
       // Check for file-level "use cache"
       if (hasDirective(ast.body, "use cache")) {
         return transformFileLevelUseCache(
-          code, ast, filePath, id, isBuild, isLayoutOrTemplate, transformWrapExport,
+          code,
+          ast,
+          filePath,
+          id,
+          isBuild,
+          isLayoutOrTemplate,
+          transformWrapExport,
         );
       }
 
       // Check for function-level "use cache" / "use cache: profileName"
       // (only if there's no file-level directive but code still contains the string)
       return transformFunctionLevelUseCache(
-        code, ast, filePath, id, isBuild, transformHoistInlineDirective,
+        code,
+        ast,
+        filePath,
+        id,
+        isBuild,
+        transformHoistInlineDirective,
       );
     },
   };
@@ -100,7 +116,7 @@ function transformFileLevelUseCache(
   sourceId: string,
   isBuild: boolean,
   isLayoutOrTemplate: boolean,
-  transformWrapExport: typeof import("@vitejs/plugin-rsc/transforms")["transformWrapExport"],
+  transformWrapExport: (typeof import("@vitejs/plugin-rsc/transforms"))["transformWrapExport"],
 ) {
   const { exportNames, output } = transformWrapExport(code, ast, {
     runtime: (value: string, name: string) => {
@@ -120,8 +136,15 @@ function transformFileLevelUseCache(
     const s = new MagicString(code);
     const directive = findFileLevelDirective(ast);
     if (directive) {
-      s.overwrite(directive.start, directive.end, `/* "use cache" -- wrapped by rango */`);
-      return { code: s.toString(), map: s.generateMap({ source: sourceId, hires: "boundary" }) };
+      s.overwrite(
+        directive.start,
+        directive.end,
+        `/* "use cache" -- wrapped by rango */`,
+      );
+      return {
+        code: s.toString(),
+        map: s.generateMap({ source: sourceId, hires: "boundary" }),
+      };
     }
     return;
   }
@@ -134,7 +157,11 @@ function transformFileLevelUseCache(
   // Replace the directive with a comment
   const directive = findFileLevelDirective(ast);
   if (directive) {
-    output.overwrite(directive.start, directive.end, `/* "use cache" -- wrapped by rango */`);
+    output.overwrite(
+      directive.start,
+      directive.end,
+      `/* "use cache" -- wrapped by rango */`,
+    );
   }
 
   return {
@@ -149,12 +176,16 @@ function transformFunctionLevelUseCache(
   filePath: string,
   sourceId: string,
   isBuild: boolean,
-  transformHoistInlineDirective: typeof import("@vitejs/plugin-rsc/transforms")["transformHoistInlineDirective"],
+  transformHoistInlineDirective: (typeof import("@vitejs/plugin-rsc/transforms"))["transformHoistInlineDirective"],
 ) {
   try {
     const { output, names } = transformHoistInlineDirective(code, ast, {
       directive: /^use cache(:\s*\w+)?$/,
-      runtime: (value: string, name: string, meta: { directiveMatch: RegExpMatchArray }) => {
+      runtime: (
+        value: string,
+        name: string,
+        meta: { directiveMatch: RegExpMatchArray },
+      ) => {
         const funcId = isBuild ? hashId(filePath, name) : `${filePath}#${name}`;
         const profileMatch = meta.directiveMatch[1];
         const profileName = profileMatch
@@ -187,7 +218,9 @@ function transformFunctionLevelUseCache(
 /**
  * Find the file-level "use cache" directive AST node for removal.
  */
-function findFileLevelDirective(ast: any): { start: number; end: number } | null {
+function findFileLevelDirective(
+  ast: any,
+): { start: number; end: number } | null {
   for (const node of ast.body ?? []) {
     if (
       node.type === "ExpressionStatement" &&

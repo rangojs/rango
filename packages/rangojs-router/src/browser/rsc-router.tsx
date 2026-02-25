@@ -11,7 +11,11 @@ import { createEventController } from "./event-controller.js";
 import { createNavigationClient } from "./navigation-client.js";
 import { createServerActionBridge } from "./server-action-bridge.js";
 import { createNavigationBridge } from "./navigation-bridge.js";
-import { NavigationProvider, initHandleDataSync, initSegmentsSync } from "./react/index.js";
+import {
+  NavigationProvider,
+  initHandleDataSync,
+  initSegmentsSync,
+} from "./react/index.js";
 import { initThemeConfigSync } from "../theme/theme-context.js";
 import type {
   RscPayload,
@@ -89,7 +93,6 @@ export interface InitBrowserAppOptions {
    * Only used when themeConfig is provided.
    */
   initialTheme?: Theme;
-
 }
 
 /**
@@ -122,9 +125,16 @@ let browserAppContext: BrowserAppContext | null = null;
  * - Configures HMR support
  */
 export async function initBrowserApp(
-  options: InitBrowserAppOptions
+  options: InitBrowserAppOptions,
 ): Promise<BrowserAppContext> {
-  const { rscStream, deps, storeOptions, linkInterception = true, themeConfig, initialTheme } = options;
+  const {
+    rscStream,
+    deps,
+    storeOptions,
+    linkInterception = true,
+    themeConfig,
+    initialTheme,
+  } = options;
 
   // Load initial payload from SSR-injected __FLIGHT_DATA__
   const initialPayload =
@@ -132,8 +142,10 @@ export async function initBrowserApp(
 
   // Extract themeConfig and initialTheme from payload if not explicitly provided
   // This allows virtual entries to work without importing the router
-  const effectiveThemeConfig = themeConfig ?? initialPayload.metadata?.themeConfig ?? null;
-  const effectiveInitialTheme = initialTheme ?? initialPayload.metadata?.initialTheme;
+  const effectiveThemeConfig =
+    themeConfig ?? initialPayload.metadata?.themeConfig ?? null;
+  const effectiveInitialTheme =
+    initialTheme ?? initialPayload.metadata?.initialTheme;
 
   // Get initial segments and compute history key from current URL
   const initialSegments = (initialPayload.metadata?.segments ??
@@ -155,7 +167,10 @@ export async function initBrowserApp(
   });
 
   // Initialize segments state BEFORE hydration to avoid mismatch
-  initSegmentsSync(initialPayload.metadata?.matched, initialPayload.metadata?.pathname);
+  initSegmentsSync(
+    initialPayload.metadata?.matched,
+    initialPayload.metadata?.pathname,
+  );
 
   // Initialize theme config for MetaTags (must match SSR state)
   initThemeConfigSync(effectiveThemeConfig);
@@ -173,14 +188,16 @@ export async function initBrowserApp(
       lastHandleData = handleData;
     }
     // Initialize both event controller AND module-level SSR state for hydration compatibility
-    eventController.setHandleData(lastHandleData, initialPayload.metadata?.matched);
+    eventController.setHandleData(
+      lastHandleData,
+      initialPayload.metadata?.matched,
+    );
     initHandleDataSync(lastHandleData, initialPayload.metadata?.matched);
 
     // Update the initial cache entry with the processed handleData
     // The cache entry was created by createNavigationStore but without handleData
     store.updateCacheHandleData(initialHistoryKey, lastHandleData);
   }
-
 
   // Create composable utilities
   const client = createNavigationClient(deps);
@@ -192,7 +209,7 @@ export async function initBrowserApp(
   // Create a bound renderSegments that includes rootLayout
   const renderSegments = (
     segments: ResolvedSegment[],
-    options?: RenderSegmentsOptions
+    options?: RenderSegmentsOptions,
   ) => baseRenderSegments(segments, { ...options, rootLayout });
 
   // Lazy reference for navigation bridge — the action bridge is created first
@@ -267,7 +284,11 @@ export async function initBrowserApp(
           const historyKey = generateHistoryKey(window.location.href);
           store.setHistoryKey(historyKey);
           const currentHandleData = eventController.getHandleState().data;
-          store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
+          store.cacheSegmentsForHistory(
+            historyKey,
+            segments,
+            currentHandleData,
+          );
 
           store.emitUpdate({
             root: renderSegments(segments),
@@ -306,7 +327,7 @@ export async function initBrowserApp(
 export function getBrowserAppContext(): BrowserAppContext {
   if (!browserAppContext) {
     throw new Error(
-      "RSCRouter: initBrowserApp() must be called before rendering RSCRouter"
+      "RSCRouter: initBrowserApp() must be called before rendering RSCRouter",
     );
   }
   return browserAppContext;
@@ -349,8 +370,16 @@ export interface RSCRouterProps {}
  * ```
  */
 export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
-  const { store, eventController, bridge, initialPayload, initialTree, themeConfig, initialTheme, warmupEnabled } =
-    getBrowserAppContext();
+  const {
+    store,
+    eventController,
+    bridge,
+    initialPayload,
+    initialTree,
+    themeConfig,
+    initialTheme,
+    warmupEnabled,
+  } = getBrowserAppContext();
 
   return (
     <NavigationProvider

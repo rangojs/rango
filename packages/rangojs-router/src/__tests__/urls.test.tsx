@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { urls, type IncludeItem } from "../urls.js";
-import { RSCRouterContext, runWithPrefixes, type EntryData } from "../server/context.js";
+import {
+  RSCRouterContext,
+  runWithPrefixes,
+  type EntryData,
+} from "../server/context.js";
 
 /**
  * Helper to simulate lazy include evaluation.
@@ -8,11 +12,14 @@ import { RSCRouterContext, runWithPrefixes, type EntryData } from "../server/con
  * For testing, we manually trigger it by calling runWithPrefixes with the captured context.
  */
 function evaluateLazyInclude(
-  includeItem: IncludeItem & { _lazyContext?: { urlPrefix: string; namePrefix: string | undefined } },
+  includeItem: IncludeItem & {
+    _lazyContext?: { urlPrefix: string; namePrefix: string | undefined };
+  },
   manifest: Map<string, EntryData>,
-  patterns: Map<string, string>
+  patterns: Map<string, string>,
 ): any[] {
-  const urlPrefix = (includeItem._lazyContext?.urlPrefix || "") + includeItem.prefix;
+  const urlPrefix =
+    (includeItem._lazyContext?.urlPrefix || "") + includeItem.prefix;
   // _lazyContext.namePrefix already includes the include's own name (fullNamePrefix)
   // so we use it directly without adding the name again
   const namePrefix = includeItem._lazyContext?.namePrefix;
@@ -30,7 +37,7 @@ function evaluateLazyInclude(
       items = runWithPrefixes(urlPrefix, namePrefix, () => {
         return (includeItem.patterns as any).handler();
       });
-    }
+    },
   );
   return items;
 }
@@ -38,9 +45,7 @@ function evaluateLazyInclude(
 describe("urls()", () => {
   describe("basic structure", () => {
     it("should return UrlPatterns with handler function", () => {
-      const patterns = urls(({ path }) => [
-        path("/", () => <div>Home</div>),
-      ]);
+      const patterns = urls(({ path }) => [path("/", () => <div>Home</div>)]);
 
       expect(typeof patterns.handler).toBe("function");
       expect(patterns.definitions).toEqual([]);
@@ -81,7 +86,7 @@ describe("urls()", () => {
           parent: null,
           counters: {},
         },
-        () => urlPatterns.handler()
+        () => urlPatterns.handler(),
       );
 
       // Should have registered a route
@@ -101,7 +106,7 @@ describe("urls()", () => {
           parent: null,
           counters: {},
         },
-        () => urlPatterns.handler()
+        () => urlPatterns.handler(),
       );
 
       // Should have registered route with name "about"
@@ -122,7 +127,7 @@ describe("urls()", () => {
           parent: null,
           counters: {},
         },
-        () => urlPatterns.handler()
+        () => urlPatterns.handler(),
       );
 
       const entry = manifest.get("post");
@@ -132,9 +137,11 @@ describe("urls()", () => {
 
     it("should accept use callback as third argument", () => {
       const urlPatterns = urls(({ path, middleware }) => [
-        path("/admin", () => <div>Admin</div>, () => [
-          middleware(() => {}),
-        ]),
+        path(
+          "/admin",
+          () => <div>Admin</div>,
+          () => [middleware(() => {})],
+        ),
       ]);
 
       RSCRouterContext.run(
@@ -145,7 +152,7 @@ describe("urls()", () => {
           parent: null,
           counters: {},
         },
-        () => urlPatterns.handler()
+        () => urlPatterns.handler(),
       );
 
       // Should have a route registered
@@ -154,9 +161,12 @@ describe("urls()", () => {
 
     it("should accept options and use callback", () => {
       const urlPatterns = urls(({ path, middleware }) => [
-        path("/admin", () => <div>Admin</div>, { name: "admin" }, () => [
-          middleware(() => {}),
-        ]),
+        path(
+          "/admin",
+          () => <div>Admin</div>,
+          { name: "admin" },
+          () => [middleware(() => {})],
+        ),
       ]);
 
       RSCRouterContext.run(
@@ -167,7 +177,7 @@ describe("urls()", () => {
           parent: null,
           counters: {},
         },
-        () => urlPatterns.handler()
+        () => urlPatterns.handler(),
       );
 
       expect(manifest.has("admin")).toBe(true);
@@ -185,10 +195,13 @@ describe("urls()", () => {
 
     it("should work with path() inside layout", () => {
       const urlPatterns = urls(({ path, layout }) => [
-        layout(() => <div>Layout</div>, () => [
-          path("/", () => <div>Home</div>, { name: "home" }),
-          path("/about", () => <div>About</div>, { name: "about" }),
-        ]),
+        layout(
+          () => <div>Layout</div>,
+          () => [
+            path("/", () => <div>Home</div>, { name: "home" }),
+            path("/about", () => <div>About</div>, { name: "about" }),
+          ],
+        ),
       ]);
 
       RSCRouterContext.run(
@@ -199,7 +212,7 @@ describe("urls()", () => {
           parent: null,
           counters: {},
         },
-        () => urlPatterns.handler()
+        () => urlPatterns.handler(),
       );
 
       expect(manifest.has("home")).toBe(true);
@@ -214,9 +227,18 @@ describe("urls()", () => {
       const trailingSlash = new Map<string, "always" | "never" | "ignore">();
 
       const urlPatterns = urls(({ path }) => [
-        path("/ts-always", () => <div>Always</div>, { name: "tsAlways", trailingSlash: "always" }),
-        path("/ts-never", () => <div>Never</div>, { name: "tsNever", trailingSlash: "never" }),
-        path("/ts-ignore", () => <div>Ignore</div>, { name: "tsIgnore", trailingSlash: "ignore" }),
+        path("/ts-always", () => <div>Always</div>, {
+          name: "tsAlways",
+          trailingSlash: "always",
+        }),
+        path("/ts-never", () => <div>Never</div>, {
+          name: "tsNever",
+          trailingSlash: "never",
+        }),
+        path("/ts-ignore", () => <div>Ignore</div>, {
+          name: "tsIgnore",
+          trailingSlash: "ignore",
+        }),
       ]);
 
       RSCRouterContext.run(
@@ -228,7 +250,7 @@ describe("urls()", () => {
           parent: null,
           counters: {},
         },
-        () => urlPatterns.handler()
+        () => urlPatterns.handler(),
       );
 
       expect(trailingSlash.get("tsAlways")).toBe("always");
@@ -258,7 +280,9 @@ describe("urls()", () => {
         () => {
           // Test include() directly within context
           const urlPatterns = urls(({ include }) => {
-            const includeItem = include("/blog", blogPatterns, { name: "blog" }) as IncludeItem & {
+            const includeItem = include("/blog", blogPatterns, {
+              name: "blog",
+            }) as IncludeItem & {
               lazy: boolean;
               _lazyContext: any;
             };
@@ -278,7 +302,7 @@ describe("urls()", () => {
 
           // Execute handler to verify it doesn't throw
           urlPatterns.handler();
-        }
+        },
       );
     });
 
@@ -308,7 +332,7 @@ describe("urls()", () => {
 
           const items = urlPatterns.handler();
           capturedInclude = items[0] as IncludeItem;
-        }
+        },
       );
 
       // Before evaluation: routes should NOT be in manifest
@@ -351,7 +375,7 @@ describe("urls()", () => {
           const items = urlPatterns.handler();
           // Capture the lazy include item
           capturedInclude = items[0] as IncludeItem;
-        }
+        },
       );
 
       // Routes should NOT be registered yet (lazy)
@@ -397,7 +421,7 @@ describe("urls()", () => {
 
           const items = urlPatterns.handler();
           capturedInclude = items[0] as IncludeItem;
-        }
+        },
       );
 
       // Simulate router evaluating the lazy include
@@ -440,7 +464,7 @@ describe("urls()", () => {
 
           const items = urlPatterns.handler();
           capturedInclude = items[0] as IncludeItem;
-        }
+        },
       );
 
       // Simulate router evaluating the lazy include
@@ -486,11 +510,15 @@ describe("urls()", () => {
 
           const items = urlPatterns.handler();
           capturedBlogInclude = items[0] as IncludeItem;
-        }
+        },
       );
 
       // Evaluate outer include (blog) - this will register blog.home and return nested posts include
-      const blogItems = evaluateLazyInclude(capturedBlogInclude!, manifest, patterns);
+      const blogItems = evaluateLazyInclude(
+        capturedBlogInclude!,
+        manifest,
+        patterns,
+      );
 
       // Top level blog routes should be registered
       expect(manifest.has("blog.home")).toBe(true);
@@ -498,7 +526,7 @@ describe("urls()", () => {
 
       // Get the nested posts include from the returned items
       const capturedPostsInclude = blogItems.find(
-        (item: any) => item?.type === "include"
+        (item: any) => item?.type === "include",
       ) as IncludeItem | undefined;
 
       // Evaluate nested posts include
@@ -541,7 +569,7 @@ describe("urls()", () => {
 
           const items = urlPatterns.handler();
           capturedIncludes = items as IncludeItem[];
-        }
+        },
       );
 
       // Evaluate both includes

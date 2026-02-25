@@ -43,13 +43,22 @@ export function tryTrieMatch(
   if (!trie) return null;
 
   // Split pathname into segments, filtering empty strings from leading/trailing slashes
-  const pathnameHasTrailingSlash = pathname.length > 1 && pathname.endsWith("/");
-  const normalizedPath = pathnameHasTrailingSlash ? pathname.slice(0, -1) : pathname;
+  const pathnameHasTrailingSlash =
+    pathname.length > 1 && pathname.endsWith("/");
+  const normalizedPath = pathnameHasTrailingSlash
+    ? pathname.slice(0, -1)
+    : pathname;
 
   // Handle root path
   if (normalizedPath === "" || normalizedPath === "/") {
     if (trie.r) {
-      return validateAndBuild(trie.r, [], undefined, pathname, pathnameHasTrailingSlash);
+      return validateAndBuild(
+        trie.r,
+        [],
+        undefined,
+        pathname,
+        pathnameHasTrailingSlash,
+      );
     }
     return null;
   }
@@ -60,7 +69,13 @@ export function tryTrieMatch(
   // Try exact match with normalized path (no trailing slash)
   const result = walkTrie(trie, segments, 0, []);
   if (result) {
-    return validateAndBuild(result.leaf, result.paramValues, result.wildcardValue, pathname, pathnameHasTrailingSlash);
+    return validateAndBuild(
+      result.leaf,
+      result.paramValues,
+      result.wildcardValue,
+      pathname,
+      pathnameHasTrailingSlash,
+    );
   }
 
   return null;
@@ -177,7 +192,11 @@ function validateAndBuild(
   const tsMode = leaf.ts as "never" | "always" | "ignore" | undefined;
   let redirectTo: string | undefined;
 
-  if (tsMode === "always" && !pathnameHasTrailingSlash && originalPathname !== "/") {
+  if (
+    tsMode === "always" &&
+    !pathnameHasTrailingSlash &&
+    originalPathname !== "/"
+  ) {
     redirectTo = originalPathname + "/";
   } else if (tsMode === "never" && pathnameHasTrailingSlash) {
     redirectTo = originalPathname.slice(0, -1);

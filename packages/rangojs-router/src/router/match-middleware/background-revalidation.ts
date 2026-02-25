@@ -128,10 +128,10 @@ import { debugLog, debugWarn } from "../logging.js";
  */
 export function withBackgroundRevalidation<TEnv>(
   ctx: MatchContext<TEnv>,
-  state: MatchPipelineState
+  state: MatchPipelineState,
 ): GeneratorMiddleware<ResolvedSegment> {
   return async function* (
-    source: AsyncGenerator<ResolvedSegment>
+    source: AsyncGenerator<ResolvedSegment>,
   ): AsyncGenerator<ResolvedSegment> {
     // Pass through all segments unchanged
     for await (const segment of source) {
@@ -177,7 +177,7 @@ export function withBackgroundRevalidation<TEnv>(
             ctx.routeKey,
             ctx.matched.params,
             ctx.handlerContext,
-            ctx.loaderPromises
+            ctx.loaderPromises,
           );
         } else {
           // Partial match (navigation) - resolution with revalidation
@@ -195,7 +195,7 @@ export function withBackgroundRevalidation<TEnv>(
             ctx.actionContext,
             ctx.interceptResult,
             ctx.localRouteName,
-            ctx.pathname
+            ctx.pathname,
           );
 
           freshSegments = freshResult.segments;
@@ -217,7 +217,7 @@ export function withBackgroundRevalidation<TEnv>(
                 routeKey: ctx.routeKey,
                 actionContext: ctx.actionContext,
                 stale: false,
-              }
+              },
             );
             freshSegments = [...freshSegments, ...freshInterceptSegments];
           }
@@ -227,7 +227,7 @@ export function withBackgroundRevalidation<TEnv>(
           ctx.pathname,
           ctx.matched.params,
           freshSegments,
-          ctx.isIntercept
+          ctx.isIntercept,
         );
         debugLog("backgroundRevalidation", "revalidation complete", {
           pathname: ctx.pathname,

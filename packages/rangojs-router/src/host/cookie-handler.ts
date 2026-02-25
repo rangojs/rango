@@ -4,28 +4,28 @@
  * Manages cookie-based host override for development environments.
  */
 
-import type { HostOverrideConfig } from './types.js';
-import { matchPattern, parseRequest } from './pattern-matcher.js';
+import type { HostOverrideConfig } from "./types.js";
+import { matchPattern, parseRequest } from "./pattern-matcher.js";
 import {
   HostOverrideNotAllowedError,
   InvalidHostnameError,
   HostValidationError,
-} from './errors.js';
+} from "./errors.js";
 
 /**
  * Parse cookies from request
  */
 export function parseCookies(request: Request): Record<string, string> {
-  const cookieHeader = request.headers.get('cookie');
+  const cookieHeader = request.headers.get("cookie");
   if (!cookieHeader) {
     return {};
   }
 
   const cookies: Record<string, string> = {};
-  const pairs = cookieHeader.split(';');
+  const pairs = cookieHeader.split(";");
 
   for (const pair of pairs) {
-    const [key, value] = pair.trim().split('=');
+    const [key, value] = pair.trim().split("=");
     if (key && value) {
       cookies[key] = decodeURIComponent(value);
     }
@@ -54,7 +54,7 @@ export function createDeleteCookieHeader(name: string): string {
  */
 export function createCookieErrorResponse(
   cookieName: string,
-  message: string
+  message: string,
 ): Response {
   return new Response(
     JSON.stringify({
@@ -64,10 +64,10 @@ export function createCookieErrorResponse(
     {
       status: 400,
       headers: {
-        'Content-Type': 'application/json',
-        'Set-Cookie': createDeleteCookieHeader(cookieName),
+        "Content-Type": "application/json",
+        "Set-Cookie": createDeleteCookieHeader(cookieName),
       },
-    }
+    },
   );
 }
 
@@ -76,7 +76,7 @@ export function createCookieErrorResponse(
  */
 export function isHostAllowed(
   request: Request,
-  allowedHosts: string[]
+  allowedHosts: string[],
 ): boolean {
   const { hostname, pathname, parts } = parseRequest(request);
 
@@ -98,7 +98,7 @@ export function isHostAllowed(
 export function handleCookieOverride(
   request: Request,
   config: HostOverrideConfig | undefined,
-  context: any
+  context: any,
 ): string {
   if (!config) {
     const { hostname } = parseRequest(request);

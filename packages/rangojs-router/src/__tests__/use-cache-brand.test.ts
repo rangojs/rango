@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { CACHED_FN_SYMBOL, isCachedFunction, INSIDE_CACHE_EXEC, assertNotInsideCacheExec } from "../cache/taint";
+import {
+  CACHED_FN_SYMBOL,
+  isCachedFunction,
+  INSIDE_CACHE_EXEC,
+  assertNotInsideCacheExec,
+} from "../cache/taint";
 import { createRouteHelpers } from "../route-definition";
 import { Static } from "../static-handler";
 import { Prerender } from "../prerender";
@@ -50,7 +55,9 @@ describe("use-cache branding", () => {
 
     it("throws when multiple fns include a cached function", () => {
       const helpers = createRouteHelpers();
-      const normalFn = async (_ctx: any, next: any) => { await next(); };
+      const normalFn = async (_ctx: any, next: any) => {
+        await next();
+      };
       const cachedFn = async () => {};
       (cachedFn as any)[CACHED_FN_SYMBOL] = true;
 
@@ -61,7 +68,9 @@ describe("use-cache branding", () => {
 
     it("does not throw cached function error for normal middleware", () => {
       const helpers = createRouteHelpers();
-      const normalFn = async (_ctx: any, next: any) => { await next(); };
+      const normalFn = async (_ctx: any, next: any) => {
+        await next();
+      };
 
       // Outside route context, middleware() throws a context error — but
       // critically NOT the "cannot be used as middleware" error. This proves

@@ -159,7 +159,11 @@ function helper() { return 42; }
 
 layout(Static(() => <div />));
 `;
-    const decls = extractModuleLevelDeclarations(code, parseAst, new Set(["Static"]));
+    const decls = extractModuleLevelDeclarations(
+      code,
+      parseAst,
+      new Set(["Static"]),
+    );
     expect(decls).toHaveLength(6);
     expect(decls[0]).toContain("let counter");
     expect(decls[1]).toContain("var flag");
@@ -178,7 +182,11 @@ const alias = existingVar;
 
 layout(Static(() => <div />));
 `;
-    const decls = extractModuleLevelDeclarations(code, parseAst, new Set(["Static"]));
+    const decls = extractModuleLevelDeclarations(
+      code,
+      parseAst,
+      new Set(["Static"]),
+    );
     expect(decls).toHaveLength(0);
   });
 
@@ -191,7 +199,9 @@ const Page = Prerender(() => <div />);
 layout(Static(() => <div />));
 `;
     const decls = extractModuleLevelDeclarations(
-      code, parseAst, new Set(["Static", "Prerender"]),
+      code,
+      parseAst,
+      new Set(["Static", "Prerender"]),
     );
     expect(decls).toHaveLength(1);
     expect(decls[0]).toContain("const ITEMS");
@@ -204,7 +214,11 @@ export function helper() { return 42; }
 
 layout(Static(() => helper()));
 `;
-    const decls = extractModuleLevelDeclarations(code, parseAst, new Set(["Static"]));
+    const decls = extractModuleLevelDeclarations(
+      code,
+      parseAst,
+      new Set(["Static"]),
+    );
     expect(decls).toHaveLength(2);
     expect(decls[0]).not.toMatch(/^export/);
     expect(decls[0]).toContain("const ITEMS");
@@ -219,7 +233,11 @@ export { something } from "./other";
 
 layout(Static(() => <div />));
 `;
-    const decls = extractModuleLevelDeclarations(code, parseAst, new Set(["Static"]));
+    const decls = extractModuleLevelDeclarations(
+      code,
+      parseAst,
+      new Set(["Static"]),
+    );
     expect(decls).toHaveLength(0);
   });
 
@@ -230,13 +248,21 @@ const ITEMS = [1, 2];
 
 layout(Static(() => <div />));
 `;
-    const decls = extractModuleLevelDeclarations(code, parseAst, new Set(["Static"]));
+    const decls = extractModuleLevelDeclarations(
+      code,
+      parseAst,
+      new Set(["Static"]),
+    );
     expect(decls).toHaveLength(1);
     expect(decls[0]).toContain("const ITEMS");
   });
 
   it("returns empty array on parse failure", () => {
-    const decls = extractModuleLevelDeclarations("{{invalid", parseAst, new Set());
+    const decls = extractModuleLevelDeclarations(
+      "{{invalid",
+      parseAst,
+      new Set(),
+    );
     expect(decls).toEqual([]);
   });
 });
@@ -254,8 +280,14 @@ layout(Static(() => <nav />));
     const registry = new Map<string, VirtualHandlerEntry>();
 
     const result = transformInlineHandlers(
-      "Static", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      "Static",
+      "virtual:handler-extract:",
+      s,
+      code,
+      "src/urls.tsx",
+      registry,
+      "/abs/src/urls.tsx",
+      parseAst,
     );
 
     expect(result).toBe(true);
@@ -283,8 +315,14 @@ path("/about", Prerender(() => <div>About</div>));
     const registry = new Map<string, VirtualHandlerEntry>();
 
     const result = transformInlineHandlers(
-      "Prerender", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      "Prerender",
+      "virtual:handler-extract:",
+      s,
+      code,
+      "src/urls.tsx",
+      registry,
+      "/abs/src/urls.tsx",
+      parseAst,
     );
 
     expect(result).toBe(true);
@@ -311,8 +349,14 @@ layout(Static(() => <nav />));
     const registry = new Map<string, VirtualHandlerEntry>();
 
     const result = transformInlineHandlers(
-      "Static", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      "Static",
+      "virtual:handler-extract:",
+      s,
+      code,
+      "src/urls.tsx",
+      registry,
+      "/abs/src/urls.tsx",
+      parseAst,
     );
 
     expect(result).toBe(true);
@@ -322,9 +366,7 @@ layout(Static(() => <nav />));
     const routerImportPos = output.indexOf(
       `import { Static } from "@rangojs/router";`,
     );
-    const virtualImportPos = output.indexOf(
-      `import { __sh_`,
-    );
+    const virtualImportPos = output.indexOf(`import { __sh_`);
 
     expect(directivePos).toBeGreaterThanOrEqual(0);
     expect(routerImportPos).toBeGreaterThan(directivePos);
@@ -339,8 +381,14 @@ export const Nav = Static(() => <nav />);
     const registry = new Map<string, VirtualHandlerEntry>();
 
     const result = transformInlineHandlers(
-      "Static", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      "Static",
+      "virtual:handler-extract:",
+      s,
+      code,
+      "src/urls.tsx",
+      registry,
+      "/abs/src/urls.tsx",
+      parseAst,
     );
 
     expect(result).toBe(false);
@@ -356,8 +404,14 @@ export { NavDef as Nav };
     const registry = new Map<string, VirtualHandlerEntry>();
 
     const result = transformInlineHandlers(
-      "Static", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      "Static",
+      "virtual:handler-extract:",
+      s,
+      code,
+      "src/urls.tsx",
+      registry,
+      "/abs/src/urls.tsx",
+      parseAst,
     );
 
     expect(result).toBe(false);
@@ -373,8 +427,14 @@ path("/about", Static(() => <about />));
     const registry = new Map<string, VirtualHandlerEntry>();
 
     const result = transformInlineHandlers(
-      "Static", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      "Static",
+      "virtual:handler-extract:",
+      s,
+      code,
+      "src/urls.tsx",
+      registry,
+      "/abs/src/urls.tsx",
+      parseAst,
     );
 
     expect(result).toBe(true);
@@ -394,8 +454,14 @@ layout(Static(() => <sidebar />));
     const registry = new Map<string, VirtualHandlerEntry>();
 
     const result = transformInlineHandlers(
-      "Static", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      "Static",
+      "virtual:handler-extract:",
+      s,
+      code,
+      "src/urls.tsx",
+      registry,
+      "/abs/src/urls.tsx",
+      parseAst,
     );
 
     expect(result).toBe(true);
@@ -419,8 +485,14 @@ layout(Static(() => <Nav />));
     const registry = new Map<string, VirtualHandlerEntry>();
 
     transformInlineHandlers(
-      "Static", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      "Static",
+      "virtual:handler-extract:",
+      s,
+      code,
+      "src/urls.tsx",
+      registry,
+      "/abs/src/urls.tsx",
+      parseAst,
     );
 
     const entry = [...registry.values()][0];
@@ -442,8 +514,14 @@ layout(Static(() => helper()));
     const registry = new Map<string, VirtualHandlerEntry>();
 
     transformInlineHandlers(
-      "Static", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      "Static",
+      "virtual:handler-extract:",
+      s,
+      code,
+      "src/urls.tsx",
+      registry,
+      "/abs/src/urls.tsx",
+      parseAst,
     );
 
     const entry = [...registry.values()][0];
@@ -466,8 +544,14 @@ layout(Static(() => <div />));
     const registry = new Map<string, VirtualHandlerEntry>();
 
     transformInlineHandlers(
-      "Static", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      "Static",
+      "virtual:handler-extract:",
+      s,
+      code,
+      "src/urls.tsx",
+      registry,
+      "/abs/src/urls.tsx",
+      parseAst,
     );
 
     const entries = [...registry.values()];
@@ -488,8 +572,14 @@ layout(Static(() => <a />), Static(() => <b />));
     const registry = new Map<string, VirtualHandlerEntry>();
 
     transformInlineHandlers(
-      "Static", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      "Static",
+      "virtual:handler-extract:",
+      s,
+      code,
+      "src/urls.tsx",
+      registry,
+      "/abs/src/urls.tsx",
+      parseAst,
     );
 
     expect(registry.size).toBe(2);

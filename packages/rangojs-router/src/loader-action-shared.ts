@@ -38,7 +38,8 @@ export async function executeLoaderAction(
   // Use the real request context values. Route params come from route matching
   // (set by setRequestContextParams), NOT from FormData.
   const actionUrl = requestCtx?.url ?? new URL("http://localhost/");
-  const actionRequest = requestCtx?.request ?? new Request(actionUrl, { method: "POST" });
+  const actionRequest =
+    requestCtx?.request ?? new Request(actionUrl, { method: "POST" });
   const env = requestCtx?.env ?? {};
 
   // Use the shared variables object directly (same reference as requestCtx.var).
@@ -51,12 +52,10 @@ export async function executeLoaderAction(
   // Clone the request so middleware can read the body even if the original
   // was already consumed by server action argument decoding.
   if (registered.middleware.length > 0 && requestCtx?.res) {
-    const { executeServerActionMiddleware } = await import(
-      "./router/middleware.js"
-    );
-    const { createReverseFunction } = await import(
-      "./router/handler-context.js"
-    );
+    const { executeServerActionMiddleware } =
+      await import("./router/middleware.js");
+    const { createReverseFunction } =
+      await import("./router/handler-context.js");
     const { getGlobalRouteMap } = await import("./route-map-builder.js");
     const middlewareRequest = actionRequest.bodyUsed
       ? new Request(actionRequest.url, {

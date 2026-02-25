@@ -51,10 +51,14 @@ type _SH_NotLoading = AssertTrue<IsNotAssignable<SH, LoadingComponent>>;
 type _SH_NotIntercept = AssertTrue<IsNotAssignable<SH, InterceptHandler>>;
 
 // StaticHandlerDefinition is NOT assignable to errorBoundary() fallback param
-type _SH_NotErrorBoundary = AssertTrue<IsNotAssignable<SH, ErrorBoundaryFallback>>;
+type _SH_NotErrorBoundary = AssertTrue<
+  IsNotAssignable<SH, ErrorBoundaryFallback>
+>;
 
 // StaticHandlerDefinition is NOT assignable to notFoundBoundary() fallback param
-type _SH_NotNotFound = AssertTrue<IsNotAssignable<SH, NotFoundBoundaryFallback>>;
+type _SH_NotNotFound = AssertTrue<
+  IsNotAssignable<SH, NotFoundBoundaryFallback>
+>;
 
 // ============================================================================
 // Prerender — disallowed positions (compile-time assertions)
@@ -70,10 +74,14 @@ type _PH_NotLoading = AssertTrue<IsNotAssignable<PH, LoadingComponent>>;
 type _PH_NotIntercept = AssertTrue<IsNotAssignable<PH, InterceptHandler>>;
 
 // PrerenderHandlerDefinition is NOT assignable to errorBoundary() fallback param
-type _PH_NotErrorBoundary = AssertTrue<IsNotAssignable<PH, ErrorBoundaryFallback>>;
+type _PH_NotErrorBoundary = AssertTrue<
+  IsNotAssignable<PH, ErrorBoundaryFallback>
+>;
 
 // PrerenderHandlerDefinition is NOT assignable to notFoundBoundary() fallback param
-type _PH_NotNotFound = AssertTrue<IsNotAssignable<PH, NotFoundBoundaryFallback>>;
+type _PH_NotNotFound = AssertTrue<
+  IsNotAssignable<PH, NotFoundBoundaryFallback>
+>;
 
 // ============================================================================
 // Runtime tests using expectTypeOf

@@ -3,6 +3,7 @@
 ## Problem
 
 Every RSC response sends the **full** `getGlobalRouteMap()` to the client. For 10k+ route apps this:
+
 1. Creates a huge payload on every navigation
 2. Leaks internal route names/patterns to the client
 3. Client-side `useHref()` named resolution is fundamentally hard to do right with partial maps
@@ -27,11 +28,13 @@ function BlogNav({ slug }) {
 ```
 
 Without mount (root-level navigation):
+
 ```tsx
 <Link to={href("/shop/cart")}>Cart</Link>
 ```
 
 No type safety needed:
+
 ```tsx
 <a href="/whatever">Link</a>
 <Link to="/whatever">Link</Link>
@@ -39,27 +42,33 @@ No type safety needed:
 
 ## Why This Works
 
-| Concern | How it's solved |
-|---------|----------------|
-| Payload size | Zero route data sent to client. `useMount()` is one string in React context |
-| Leaks internals | Only the current module's mount path is exposed |
-| Composability | `include("/articles", Blog)` → `useMount()` returns "/articles". Change mount → client code doesn't break |
-| Hydration | No route map to mismatch. Mount path is part of React tree |
-| Type safety | Compile-time validation of paths against route patterns |
-| SPA navigation | No route map needed. Mount path is in React context, survives navigations |
+| Concern         | How it's solved                                                                                           |
+| --------------- | --------------------------------------------------------------------------------------------------------- |
+| Payload size    | Zero route data sent to client. `useMount()` is one string in React context                               |
+| Leaks internals | Only the current module's mount path is exposed                                                           |
+| Composability   | `include("/articles", Blog)` → `useMount()` returns "/articles". Change mount → client code doesn't break |
+| Hydration       | No route map to mismatch. Mount path is part of React tree                                                |
+| Type safety     | Compile-time validation of paths against route patterns                                                   |
+| SPA navigation  | No route map needed. Mount path is in React context, survives navigations                                 |
 
 ## API Design
 
 ### Server (unchanged)
+
 ```tsx
 // ctx.reverse() still uses named routes with full map
-path("/:slug", (ctx) => {
-  const url = ctx.reverse("shop.cart"); // named resolution, server-only
-  return <BlogPost cartUrl={url} />;
-}, { name: "post" });
+path(
+  "/:slug",
+  (ctx) => {
+    const url = ctx.reverse("shop.cart"); // named resolution, server-only
+    return <BlogPost cartUrl={url} />;
+  },
+  { name: "post" },
+);
 ```
 
 ### Client (new)
+
 ```tsx
 import { href, useMount } from "@rangojs/router/client";
 
@@ -123,6 +132,7 @@ During segment rendering, when a layout comes from an include, wrap its subtree 
 **File:** `packages/rangojs-router/src/segment-system.tsx`
 
 When rendering a layout segment from an include, wrap:
+
 ```tsx
 <MountContext.Provider value={entry.urlPrefix}>
   {children}
@@ -130,6 +140,7 @@ When rendering a layout segment from an include, wrap:
 ```
 
 For nested includes, each level wraps its own provider. `useMount()` returns the nearest one:
+
 ```
 include("/articles", ...)          → useMount() = "/articles"
   include("/comments", ...)        → useMount() = "/articles/comments"
@@ -140,6 +151,7 @@ include("/articles", ...)          → useMount() = "/articles"
 **File:** `packages/rangojs-router/src/client.tsx`
 
 Add exports:
+
 ```ts
 export { useMount } from "./browser/react/use-mount.js";
 export { href } from "./browser/href.js";
@@ -162,10 +174,17 @@ Remove `routeMap?: Record<string, string>` from metadata type.
 **File:** `packages/rangojs-router/src/ssr/index.tsx` (lines 265-271)
 
 Remove:
+
 ```tsx
-invariant(resolved.metadata?.routeMap, "SSR payload must include routeMap in metadata");
+invariant(
+  resolved.metadata?.routeMap,
+  "SSR payload must include routeMap in metadata",
+);
 content = (
-  <HrefProvider routeMap={resolved.metadata.routeMap} routeName={resolved.metadata.routeName}>
+  <HrefProvider
+    routeMap={resolved.metadata.routeMap}
+    routeName={resolved.metadata.routeName}
+  >
     {content}
   </HrefProvider>
 );
@@ -295,6 +314,7 @@ Remove if no longer used anywhere.
 #### Migration checklist per app
 
 For each app above:
+
 1. Replace `useHref()` imports with `href, useMount` from `@rangojs/router/client`
 2. Replace `href("routeName")` calls with path-based `href("/path", mount)` or keep as server-side `ctx.reverse("routeName")`
 3. Remove `type AppRoutes = typeof router.routeMap` + `RegisteredRoutes` augmentation
@@ -310,6 +330,7 @@ Search for and remove any remaining references.
 ## Server-side `ctx.reverse()` - NO CHANGES
 
 These files are **unchanged** - server keeps full route map:
+
 - `packages/rangojs-router/src/route-map-builder.ts` - `getGlobalRouteMap()` still used server-side
 - `packages/rangojs-router/src/router/handler-context.ts` - `ctx.reverse()` still resolves named routes
 - `packages/rangojs-router/src/router.ts` - still passes routeMap to handler context
@@ -321,24 +342,27 @@ These files are **unchanged** - server keeps full route map:
 ### How to get mount path into segments
 
 The include's URL prefix needs to be available when rendering layout segments. Need to verify:
+
 - Is `urlPrefix` available on `EntryData` or `ResolvedSegment`?
 - Does `renderSegments()` know which segments come from includes?
 - Where exactly to inject `MountContext.Provider` in the segment tree
 
 ### Type system for client `href()`
 
-**Current system:** Server `ReverseFunction<TRoutes>` validates route *names* (`"blog.post"`) and params (`{ slug: string }`) at compile time. The route map type `{ "blog.post": "/blog/:slug" }` is built via phantom types on `UrlPatterns._routes` and `TypedIncludeItem.__routes/__urlPrefix/__namePrefix`, composed through `PrefixPatterns` and `PrefixRoutes` type transforms.
+**Current system:** Server `ReverseFunction<TRoutes>` validates route _names_ (`"blog.post"`) and params (`{ slug: string }`) at compile time. The route map type `{ "blog.post": "/blog/:slug" }` is built via phantom types on `UrlPatterns._routes` and `TypedIncludeItem.__routes/__urlPrefix/__namePrefix`, composed through `PrefixPatterns` and `PrefixRoutes` type transforms.
 
 **New client `href()` needs path-based types, not name-based.** The question is: how do we type `href("/blog/:slug", mount)` when the paths come from `include()`?
 
-**Prior art:** The old `rsc-router` package (on main, now removed) had a type-safe client `href()` in `packages/rsc-router/src/href-client.ts`. It used `PatternToPath<T>` to convert route patterns to template literal types, validating *resolved paths* (not route names) at compile time. Key types:
+**Prior art:** The old `rsc-router` package (on main, now removed) had a type-safe client `href()` in `packages/rsc-router/src/href-client.ts`. It used `PatternToPath<T>` to convert route patterns to template literal types, validating _resolved paths_ (not route names) at compile time. Key types:
+
 - `PatternToPath<"/blog/:slug">` → `` `/blog/${string}` ``
 - `ValidPaths<TRoutes>` → union of all `PatternToPath` results with optional `?`/`#` suffixes
 - `href(path: ValidPaths): string` — identity function, compile-time only
 
-That implementation validated *absolute* paths against all routes. The new version needs to work with *mount-relative* paths.
+That implementation validated _absolute_ paths against all routes. The new version needs to work with _mount-relative_ paths.
 
 **Approach — start untyped, add types incrementally:**
+
 1. Phase 1: `href(path: string, mount?: string): string` — no compile-time validation
 2. Future: Reuse `PatternToPath` from the old implementation, but scope it. When `useMount()` is typed (e.g. via generic on the include), `href()` only accepts paths matching the include's local patterns.
 
@@ -352,8 +376,8 @@ That implementation validated *absolute* paths against all routes. The new versi
 
 // Client (new, untyped initially):
 const mount = useMount(); // "/articles"
-href("/", mount)          // "/articles/"  — blog index
-href(`/${slug}`, mount)   // "/articles/hello" — blog post
+href("/", mount); // "/articles/"  — blog index
+href(`/${slug}`, mount); // "/articles/hello" — blog post
 
 // Client (future typed version using PatternToPath from old rsc-router):
 // Local patterns for blogPatterns: { index: "/", post: "/:slug" }
@@ -363,44 +387,44 @@ href(`/${slug}`, mount)   // "/articles/hello" — blog post
 // href() inside this include only accepts these local patterns
 ```
 
-**Key insight:** Client `href()` paths are *relative to the mount point*, not absolute. So the type system only needs the local route patterns (`"/"`, `"/:slug"`), not the fully composed ones. This makes typing simpler — a component inside an include only sees its own routes.
+**Key insight:** Client `href()` paths are _relative to the mount point_, not absolute. So the type system only needs the local route patterns (`"/"`, `"/:slug"`), not the fully composed ones. This makes typing simpler — a component inside an include only sees its own routes.
 
 ---
 
 ## Files Summary
 
-| File | Change |
-|------|--------|
-| `src/browser/react/mount-context.ts` | **NEW** - MountContext |
-| `src/browser/react/use-mount.ts` | **NEW** - useMount() hook |
-| `src/browser/href.ts` | **NEW** - client href() function |
-| `src/segment-system.tsx` | Add MountContext.Provider wrapping for include layouts |
-| `src/client.tsx` | Export useMount, href; remove useHref, HrefProvider, HrefContext |
-| `src/client.rsc.tsx` | Remove useHref, HrefProvider, HrefContext re-exports |
-| `src/rsc/handler.ts` | Remove ~15 `routeMap: getGlobalRouteMap()` from metadata |
-| `src/rsc/types.ts` | Remove routeMap from metadata type |
-| `src/ssr/index.tsx` | Remove HrefProvider wrapping + invariant |
-| `src/browser/react/NavigationProvider.tsx` | Remove HrefProvider wrapping + routeMap handling |
-| `src/browser/react/use-href.tsx` | Remove/deprecate |
-| `src/href-context.ts` | Remove |
-| `src/segment-system.tsx` | Remove routeMap/routeName from RenderSegmentsOptions |
-| `src/router/match-context.ts` | Remove routeMap field |
-| `src/types.ts` | Remove routeMap from MatchResult |
-| `src/router/match-result.ts` | Remove routeMap from result |
-| `src/browser/types.ts` | Remove routeMap from payload types |
+| File                                       | Change                                                           |
+| ------------------------------------------ | ---------------------------------------------------------------- |
+| `src/browser/react/mount-context.ts`       | **NEW** - MountContext                                           |
+| `src/browser/react/use-mount.ts`           | **NEW** - useMount() hook                                        |
+| `src/browser/href.ts`                      | **NEW** - client href() function                                 |
+| `src/segment-system.tsx`                   | Add MountContext.Provider wrapping for include layouts           |
+| `src/client.tsx`                           | Export useMount, href; remove useHref, HrefProvider, HrefContext |
+| `src/client.rsc.tsx`                       | Remove useHref, HrefProvider, HrefContext re-exports             |
+| `src/rsc/handler.ts`                       | Remove ~15 `routeMap: getGlobalRouteMap()` from metadata         |
+| `src/rsc/types.ts`                         | Remove routeMap from metadata type                               |
+| `src/ssr/index.tsx`                        | Remove HrefProvider wrapping + invariant                         |
+| `src/browser/react/NavigationProvider.tsx` | Remove HrefProvider wrapping + routeMap handling                 |
+| `src/browser/react/use-href.tsx`           | Remove/deprecate                                                 |
+| `src/href-context.ts`                      | Remove                                                           |
+| `src/segment-system.tsx`                   | Remove routeMap/routeName from RenderSegmentsOptions             |
+| `src/router/match-context.ts`              | Remove routeMap field                                            |
+| `src/types.ts`                             | Remove routeMap from MatchResult                                 |
+| `src/router/match-result.ts`               | Remove routeMap from result                                      |
+| `src/browser/types.ts`                     | Remove routeMap from payload types                               |
 
 All paths above relative to `packages/rangojs-router/`.
 
 ### Migration targets (Phase 4)
 
-| App | Files | Primary change |
-|-----|-------|----------------|
-| `examples/vite-rsc-demo/` | 2 | `useHref()` → path-based `href()` |
-| `examples/cloudflare-basic/` | 3 | `useHref()` → `href()` + `useMount()`, remove `routeMap` type |
-| `examples/cloudflare-basic-nonce/` | 2 | `useHref()` → `href()` + `useMount()`, remove `routeMap` type |
-| `e2e/test-app/` | 4 | `useHref()` → `href()` + `useMount()`, update type checks |
-| `e2e/e2e-basic/` | 2 | `useHref()` → `href()` + `useMount()`, remove `routeMap` type |
-| **Total** | **13 files** | |
+| App                                | Files        | Primary change                                                |
+| ---------------------------------- | ------------ | ------------------------------------------------------------- |
+| `examples/vite-rsc-demo/`          | 2            | `useHref()` → path-based `href()`                             |
+| `examples/cloudflare-basic/`       | 3            | `useHref()` → `href()` + `useMount()`, remove `routeMap` type |
+| `examples/cloudflare-basic-nonce/` | 2            | `useHref()` → `href()` + `useMount()`, remove `routeMap` type |
+| `e2e/test-app/`                    | 4            | `useHref()` → `href()` + `useMount()`, update type checks     |
+| `e2e/e2e-basic/`                   | 2            | `useHref()` → `href()` + `useMount()`, remove `routeMap` type |
+| **Total**                          | **13 files** |                                                               |
 
 ## Verification Checkpoints
 

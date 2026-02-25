@@ -123,14 +123,12 @@ test.describe("revalidation-precision", () => {
 
     // The request should be a partial request
     const rscRequest = requests.find(
-      (r) => r.url.includes("_rsc_partial") || r.url.includes("/product/")
+      (r) => r.url.includes("_rsc_partial") || r.url.includes("/product/"),
     );
     expect(rscRequest).toBeDefined();
   });
 
-  test("partial navigation should fetch RSC content", async ({
-    page,
-  }) => {
+  test("partial navigation should fetch RSC content", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     const rscRequests: string[] = [];
@@ -138,10 +136,7 @@ test.describe("revalidation-precision", () => {
     // Intercept RSC requests
     page.on("request", (request) => {
       const headers = request.headers();
-      if (
-        request.url().includes("_rsc") ||
-        headers["rsc"] === "1"
-      ) {
+      if (request.url().includes("_rsc") || headers["rsc"] === "1") {
         rscRequests.push(request.url());
       }
     });
@@ -162,9 +157,7 @@ test.describe("revalidation-precision", () => {
     expect(rscRequests.length).toBeGreaterThan(0);
   });
 
-  test("action should trigger server request", async ({
-    page,
-  }) => {
+  test("action should trigger server request", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     // Navigate to index
@@ -186,7 +179,9 @@ test.describe("revalidation-precision", () => {
     });
 
     // Perform action - click quantity increment
-    const incrementButton = page.locator('[data-testid="modal-quantity-control"] button:has-text("+")');
+    const incrementButton = page.locator(
+      '[data-testid="modal-quantity-control"] button:has-text("+")',
+    );
     await incrementButton.click();
 
     // Wait for action to complete
@@ -210,10 +205,7 @@ test.describe("revalidation-precision", () => {
     const requests: string[] = [];
     page.on("request", (request) => {
       const headers = request.headers();
-      if (
-        request.url().includes("_rsc") ||
-        headers["rsc"] === "1"
-      ) {
+      if (request.url().includes("_rsc") || headers["rsc"] === "1") {
         requests.push(request.url());
       }
     });
@@ -242,7 +234,9 @@ test.describe("revalidation-precision", () => {
 
     // Navigate to full details
     await page.locator('[data-testid="view-full-details"]').click();
-    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
 
     // Go back - intercept should appear from cache instantly
     const startTime = Date.now();
@@ -276,7 +270,9 @@ test.describe("revalidation-precision", () => {
     });
 
     // Fire multiple rapid actions using quantity buttons
-    const incrementButton = page.locator('[data-testid="modal-quantity-control"] button:has-text("+")');
+    const incrementButton = page.locator(
+      '[data-testid="modal-quantity-control"] button:has-text("+")',
+    );
     await incrementButton.click();
     await incrementButton.click();
     await incrementButton.click();
@@ -308,7 +304,9 @@ test.describe("revalidation-precision", () => {
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
 
     // Modal content should also be visible
-    await expect(page.locator('[data-testid="view-full-details"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="view-full-details"]'),
+    ).toBeVisible();
   });
 });
 
@@ -327,10 +325,7 @@ test.describe("revalidation-headers", () => {
 
     page.on("request", (request) => {
       const reqHeaders = request.headers();
-      if (
-        request.url().includes("_rsc") ||
-        reqHeaders["rsc"] === "1"
-      ) {
+      if (request.url().includes("_rsc") || reqHeaders["rsc"] === "1") {
         headers.push(reqHeaders);
       }
     });
@@ -372,7 +367,9 @@ test.describe("revalidation-headers", () => {
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
     // Perform action (quantity increment)
-    const incrementButton = page.locator('[data-testid="modal-quantity-control"] button:has-text("+")');
+    const incrementButton = page.locator(
+      '[data-testid="modal-quantity-control"] button:has-text("+")',
+    );
     await incrementButton.click();
     await page.waitForTimeout(600);
 

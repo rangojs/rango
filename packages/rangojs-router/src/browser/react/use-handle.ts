@@ -49,11 +49,13 @@ function resolveCollect<T, A>(handle: Handle<T, A>): (segments: T[][]) => A {
   if (process.env.NODE_ENV !== "production") {
     console.warn(
       `[rsc-router] Handle "${handle.$$id}" was passed as a prop but its collect ` +
-      `function could not be resolved. Falling back to flat array. ` +
-      `Import the handle module in a client component to register its collect function.`
+        `function could not be resolved. Falling back to flat array. ` +
+        `Import the handle module in a client component to register its collect function.`,
     );
   }
-  return ((segments: unknown[][]) => segments.flat()) as unknown as (segments: T[][]) => A;
+  return ((segments: unknown[][]) => segments.flat()) as unknown as (
+    segments: T[][],
+  ) => A;
 }
 
 /**
@@ -62,7 +64,7 @@ function resolveCollect<T, A>(handle: Handle<T, A>): (segments: T[][]) => A {
 function collectHandle<T, A>(
   handle: Handle<T, A>,
   data: HandleData,
-  segmentOrder: string[]
+  segmentOrder: string[],
 ): A {
   const collect = resolveCollect(handle);
   const segmentData = data[handle.$$id];
@@ -144,11 +146,11 @@ export function initHandleDataSync(data: HandleData, matched?: string[]): void {
 export function useHandle<T, A>(handle: Handle<T, A>): A;
 export function useHandle<T, A, S>(
   handle: Handle<T, A>,
-  selector: (data: A) => S
+  selector: (data: A) => S,
 ): S;
 export function useHandle<T, A, S>(
   handle: Handle<T, A>,
-  selector?: (data: A) => S
+  selector?: (data: A) => S,
 ): A | S {
   const ctx = useContext(NavigationStoreContext);
 

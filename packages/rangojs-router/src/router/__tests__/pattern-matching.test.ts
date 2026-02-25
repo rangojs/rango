@@ -1,10 +1,20 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { compilePattern, extractStaticPrefix, findMatch as rawFindMatch, isLazyEvaluationNeeded, getPatternCacheSize, clearPatternCache, type RouteMatchResult } from "../pattern-matching";
+import {
+  compilePattern,
+  extractStaticPrefix,
+  findMatch as rawFindMatch,
+  isLazyEvaluationNeeded,
+  getPatternCacheSize,
+  clearPatternCache,
+  type RouteMatchResult,
+} from "../pattern-matching";
 import type { RouteEntry, TrailingSlashMode } from "../../types";
 
 // Wrapper for findMatch that asserts it's not a lazy evaluation result
 // All tests in this file use non-lazy entries, so this is safe
-function findMatch<TEnv>(...args: Parameters<typeof rawFindMatch<TEnv>>): RouteMatchResult<TEnv> | null {
+function findMatch<TEnv>(
+  ...args: Parameters<typeof rawFindMatch<TEnv>>
+): RouteMatchResult<TEnv> | null {
   const result = rawFindMatch(...args);
   if (result === null) return null;
   if (isLazyEvaluationNeeded(result)) {
@@ -17,7 +27,7 @@ function findMatch<TEnv>(...args: Parameters<typeof rawFindMatch<TEnv>>): RouteM
 const createRouteEntry = (
   prefix: string,
   routes: Record<string, string>,
-  trailingSlash?: Record<string, TrailingSlashMode>
+  trailingSlash?: Record<string, TrailingSlashMode>,
 ): RouteEntry => ({
   prefix,
   staticPrefix: extractStaticPrefix(prefix),
@@ -88,7 +98,9 @@ describe("compilePattern", () => {
     });
 
     it("should match multiple params", () => {
-      const { regex, paramNames } = compilePattern("/blog/:slug/comments/:commentId");
+      const { regex, paramNames } = compilePattern(
+        "/blog/:slug/comments/:commentId",
+      );
       expect(regex.test("/blog/my-post/comments/42")).toBe(true);
       expect(regex.test("/blog/my-post/comments")).toBe(false);
       expect(paramNames).toEqual(["slug", "commentId"]);
@@ -268,7 +280,8 @@ describe("findMatch", () => {
 describe("optional parameters", () => {
   describe("compilePattern", () => {
     it("should match pattern with optional param present: /:locale?/blog -> /en/blog", () => {
-      const { regex, paramNames, optionalParams } = compilePattern("/:locale?/blog");
+      const { regex, paramNames, optionalParams } =
+        compilePattern("/:locale?/blog");
       expect(regex.test("/en/blog")).toBe(true);
       expect(paramNames).toEqual(["locale"]);
       expect(optionalParams.has("locale")).toBe(true);
@@ -286,7 +299,8 @@ describe("optional parameters", () => {
     });
 
     it("should handle optional param at end: /blog/:page?", () => {
-      const { regex, paramNames, optionalParams } = compilePattern("/blog/:page?");
+      const { regex, paramNames, optionalParams } =
+        compilePattern("/blog/:page?");
       expect(regex.test("/blog")).toBe(true);
       expect(regex.test("/blog/2")).toBe(true);
       expect(regex.test("/blog/")).toBe(false);
@@ -302,7 +316,9 @@ describe("optional parameters", () => {
     });
 
     it("should handle mix of required and optional params", () => {
-      const { regex, paramNames, optionalParams } = compilePattern("/:locale?/blog/:slug");
+      const { regex, paramNames, optionalParams } = compilePattern(
+        "/:locale?/blog/:slug",
+      );
       expect(regex.test("/blog/hello")).toBe(true);
       expect(regex.test("/en/blog/hello")).toBe(true);
       expect(regex.test("/blog")).toBe(false);
@@ -314,9 +330,7 @@ describe("optional parameters", () => {
 
   describe("findMatch param extraction", () => {
     it("should extract optional param when present", () => {
-      const entries = [
-        createRouteEntry("", { "blog": "/:locale?/blog" }),
-      ];
+      const entries = [createRouteEntry("", { blog: "/:locale?/blog" })];
       const result = findMatch("/en/blog", entries);
       expect(result).not.toBeNull();
       expect(result!.params).toEqual({ locale: "en" });
@@ -324,9 +338,7 @@ describe("optional parameters", () => {
     });
 
     it("should return empty string for optional param when absent", () => {
-      const entries = [
-        createRouteEntry("", { "blog": "/:locale?/blog" }),
-      ];
+      const entries = [createRouteEntry("", { blog: "/:locale?/blog" })];
       const result = findMatch("/blog", entries);
       expect(result).not.toBeNull();
       expect(result!.params).toEqual({ locale: "" });
@@ -335,7 +347,7 @@ describe("optional parameters", () => {
 
     it("should handle multiple optional params correctly", () => {
       const entries = [
-        createRouteEntry("", { "shop": "/:locale?/:region?/shop" }),
+        createRouteEntry("", { shop: "/:locale?/:region?/shop" }),
       ];
 
       expect(findMatch("/shop", entries)!.params).toEqual({
@@ -390,7 +402,7 @@ describe("constrained parameters", () => {
   describe("findMatch param extraction", () => {
     it("should extract constrained param value", () => {
       const entries = [
-        createRouteEntry("", { "localized": "/:locale(en|gb)/blog" }),
+        createRouteEntry("", { localized: "/:locale(en|gb)/blog" }),
       ];
       const result = findMatch("/en/blog", entries);
       expect(result).not.toBeNull();
@@ -398,9 +410,7 @@ describe("constrained parameters", () => {
     });
 
     it("should extract optional + constrained param when present", () => {
-      const entries = [
-        createRouteEntry("", { "blog": "/:locale(en|gb)?/blog" }),
-      ];
+      const entries = [createRouteEntry("", { blog: "/:locale(en|gb)?/blog" })];
       const result = findMatch("/gb/blog", entries);
       expect(result).not.toBeNull();
       expect(result!.params).toEqual({ locale: "gb" });
@@ -408,9 +418,7 @@ describe("constrained parameters", () => {
     });
 
     it("should return empty string for optional + constrained param when absent", () => {
-      const entries = [
-        createRouteEntry("", { "blog": "/:locale(en|gb)?/blog" }),
-      ];
+      const entries = [createRouteEntry("", { blog: "/:locale(en|gb)?/blog" })];
       const result = findMatch("/blog", entries);
       expect(result).not.toBeNull();
       expect(result!.params).toEqual({ locale: "" });
@@ -443,7 +451,11 @@ describe("trailing slash handling", () => {
 
     it("should work with dynamic params", () => {
       const entries = [
-        createRouteEntry("", { "product": "/product/:id" }, { product: "ignore" }),
+        createRouteEntry(
+          "",
+          { product: "/product/:id" },
+          { product: "ignore" },
+        ),
       ];
 
       const withoutSlash = findMatch("/product/123", entries);
@@ -481,7 +493,7 @@ describe("trailing slash handling", () => {
 
     it("should redirect dynamic routes to no trailing slash", () => {
       const entries = [
-        createRouteEntry("", { "post": "/blog/:slug" }, { post: "never" }),
+        createRouteEntry("", { post: "/blog/:slug" }, { post: "never" }),
       ];
       const result = findMatch("/blog/hello-world/", entries);
       expect(result).not.toBeNull();
@@ -513,7 +525,11 @@ describe("trailing slash handling", () => {
 
     it("should redirect dynamic routes to with trailing slash", () => {
       const entries = [
-        createRouteEntry("", { "category": "/shop/:cat" }, { category: "always" }),
+        createRouteEntry(
+          "",
+          { category: "/shop/:cat" },
+          { category: "always" },
+        ),
       ];
       const result = findMatch("/shop/electronics", entries);
       expect(result).not.toBeNull();
@@ -534,9 +550,7 @@ describe("trailing slash handling", () => {
     });
 
     it("should match exact pattern without redirect", () => {
-      const entries = [
-        createRouteEntry("", { about: "/about" }),
-      ];
+      const entries = [createRouteEntry("", { about: "/about" })];
       const result = findMatch("/about", entries);
       expect(result).not.toBeNull();
       expect(result!.redirectTo).toBeUndefined();
@@ -545,9 +559,7 @@ describe("trailing slash handling", () => {
 
   describe("root path handling", () => {
     it("should match root path without redirect", () => {
-      const entries = [
-        createRouteEntry("", { index: "/" }),
-      ];
+      const entries = [createRouteEntry("", { index: "/" })];
       const result = findMatch("/", entries);
       expect(result).not.toBeNull();
       expect(result!.routeKey).toBe("index");
@@ -569,7 +581,7 @@ describe("trailing slash handling", () => {
             api: "ignore",
             blog: "never",
             docs: "always",
-          }
+          },
         ),
       ];
 

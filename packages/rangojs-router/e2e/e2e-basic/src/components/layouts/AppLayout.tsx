@@ -6,13 +6,21 @@ export function AppLayout() {
       <header data-testid="header">
         <h1>E2E Basic App</h1>
         <nav data-testid="main-nav">
-          <Link to="/" data-testid="nav-home">Home</Link>
+          <Link to="/" data-testid="nav-home">
+            Home
+          </Link>
           {" | "}
-          <Link to="/about" data-testid="nav-about">About</Link>
+          <Link to="/about" data-testid="nav-about">
+            About
+          </Link>
           {" | "}
-          <Link to="/blog" data-testid="nav-blog">Blog</Link>
+          <Link to="/blog" data-testid="nav-blog">
+            Blog
+          </Link>
           {" | "}
-          <Link to="/shop" data-testid="nav-shop">Shop</Link>
+          <Link to="/shop" data-testid="nav-shop">
+            Shop
+          </Link>
         </nav>
       </header>
       <main data-testid="main-content">

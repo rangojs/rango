@@ -60,7 +60,8 @@ function NetworkErrorFallback({
           marginBottom: "1.5rem",
         }}
       >
-        {error.message || "Unable to connect to the server. Please check your internet connection."}
+        {error.message ||
+          "Unable to connect to the server. Please check your internet connection."}
       </p>
       <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
         <button
@@ -104,7 +105,10 @@ function NetworkErrorFallback({
  * Default fallback UI for root error boundary
  * This is shown when an unhandled error bubbles up to the root
  */
-function RootErrorFallback({ error, reset }: ClientErrorBoundaryFallbackProps): ReactNode {
+function RootErrorFallback({
+  error,
+  reset,
+}: ClientErrorBoundaryFallbackProps): ReactNode {
   return (
     <div
       style={{
@@ -231,7 +235,11 @@ export class RootErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
-    console.error("[RootErrorBoundary] Unhandled error caught:", error, errorInfo);
+    console.error(
+      "[RootErrorBoundary] Unhandled error caught:",
+      error,
+      errorInfo,
+    );
   }
 
   componentDidUpdate(prevProps: { children: ReactNode }): void {

@@ -285,4 +285,3 @@ export function findStatementEnd(code: string, pos: number): number {
 export function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-

@@ -96,10 +96,7 @@ function createMockStore(opts?: {
   };
 }
 
-function createMockClient(
-  payload: any,
-  opts?: { hangStream?: boolean },
-) {
+function createMockClient(payload: any, opts?: { hangStream?: boolean }) {
   let resolveStream: () => void;
   // By default, streamComplete resolves immediately.
   // The async function's return Promise adopts streamComplete (JS promise flattening),
@@ -136,7 +133,10 @@ function createMockTx(currentUrl = "http://localhost/") {
 describe("partial-update", () => {
   describe("partial update (isPartial=true)", () => {
     it("merges server diff segments with cached segments", async () => {
-      const cachedLayout = seg("L0", { type: "layout", component: "cached-layout" });
+      const cachedLayout = seg("L0", {
+        type: "layout",
+        component: "cached-layout",
+      });
       const cachedRoute = seg("L0R0", { component: "cached-route" });
       const newRoute = seg("L0R0", { component: "new-route" });
 
@@ -164,7 +164,13 @@ describe("partial-update", () => {
         renderSegments,
       });
 
-      await updater("http://localhost/page", ["L0", "L0R0"], false, undefined, tx);
+      await updater(
+        "http://localhost/page",
+        ["L0", "L0R0"],
+        false,
+        undefined,
+        tx,
+      );
 
       // renderSegments should be called with merged segments
       expect(renderSegments).toHaveBeenCalledTimes(1);
@@ -194,7 +200,10 @@ describe("partial-update", () => {
     });
 
     it("preserves cached component when server returns null for layout", async () => {
-      const cachedLayout = seg("L0", { type: "layout", component: "my-layout" });
+      const cachedLayout = seg("L0", {
+        type: "layout",
+        component: "my-layout",
+      });
       const newLayout = seg("L0", { type: "layout", component: null as any });
       const cachedRoute = seg("L0R0");
 
@@ -315,7 +324,13 @@ describe("partial-update", () => {
         renderSegments,
       });
 
-      await updater("http://localhost/page", ["L0", "L0R0"], false, undefined, tx);
+      await updater(
+        "http://localhost/page",
+        ["L0", "L0R0"],
+        false,
+        undefined,
+        tx,
+      );
 
       const rendered = renderSegments.mock.calls[0][0];
       const layout = rendered.find((s: any) => s.id === "L0");
@@ -395,7 +410,10 @@ describe("partial-update", () => {
 
     it("forces re-render when leavingIntercept even with empty diff", async () => {
       const cached = seg("L0", { type: "layout" });
-      const modal = seg("L0.@modal", { type: "parallel", namespace: "intercept:modal" });
+      const modal = seg("L0.@modal", {
+        type: "parallel",
+        namespace: "intercept:modal",
+      });
       const store = createMockStore({
         cachedSegments: [cached, modal],
         segmentIds: ["L0", "L0.@modal"],
@@ -440,11 +458,20 @@ describe("partial-update", () => {
     // This test confirms: unmodified segments come from targetCacheSegments
     // (not the source page's cache) even when the server returns an intercept response.
     it("uses targetCacheSegments for unmodified layout when server returns intercept response", async () => {
-      const sourceLayout = seg("L0", { type: "layout", component: "source-layout" });
+      const sourceLayout = seg("L0", {
+        type: "layout",
+        component: "source-layout",
+      });
       const sourceRoute = seg("L0R0", { component: "source-route" });
-      const targetLayout = seg("L0", { type: "layout", component: "target-layout" });
+      const targetLayout = seg("L0", {
+        type: "layout",
+        component: "target-layout",
+      });
       const targetRoute = seg("L0R0", { component: "target-route" });
-      const modalSegment = seg("L0.@modal", { type: "parallel", namespace: "intercept:modal" });
+      const modalSegment = seg("L0.@modal", {
+        type: "parallel",
+        namespace: "intercept:modal",
+      });
 
       // Source page is cached at the current history key
       const store = createMockStore({
@@ -480,10 +507,12 @@ describe("partial-update", () => {
         false,
         undefined,
         tx,
-        { targetCacheSegments: [targetLayout, targetRoute] }
+        { targetCacheSegments: [targetLayout, targetRoute] },
       );
 
-      const mainSegs = (renderSegments.mock.calls as any[][])[0][0] as ResolvedSegment[];
+      const mainSegs = (
+        renderSegments.mock.calls as any[][]
+      )[0][0] as ResolvedSegment[];
       const layout = mainSegs.find((s) => s.id === "L0");
 
       // Layout must come from targetCacheSegments ("target-layout"),
@@ -496,7 +525,10 @@ describe("partial-update", () => {
     it("filters intercept segments from segmentIds when leavingIntercept", async () => {
       const layout = seg("L0", { type: "layout" });
       const route = seg("L0R0");
-      const modal = seg("L0.@modal", { type: "parallel", namespace: "intercept:modal" });
+      const modal = seg("L0.@modal", {
+        type: "parallel",
+        namespace: "intercept:modal",
+      });
 
       const store = createMockStore({
         segmentIds: ["L0", "L0R0", "L0.@modal"],
@@ -534,7 +566,10 @@ describe("partial-update", () => {
     it("separates intercept segments from main segments for rendering", async () => {
       const layout = seg("L0", { type: "layout" });
       const route = seg("L0R0");
-      const modal = seg("L0.@modal", { type: "parallel", namespace: "intercept:modal" });
+      const modal = seg("L0.@modal", {
+        type: "parallel",
+        namespace: "intercept:modal",
+      });
 
       const store = createMockStore({ cachedSegments: [layout, route] });
 
@@ -558,7 +593,13 @@ describe("partial-update", () => {
         renderSegments,
       });
 
-      await updater("http://localhost/modal", ["L0", "L0R0"], false, undefined, tx);
+      await updater(
+        "http://localhost/modal",
+        ["L0", "L0R0"],
+        false,
+        undefined,
+        tx,
+      );
 
       // renderSegments should receive main segments and intercept segments separately
       const call = (renderSegments.mock.calls as any[][])[0];
@@ -645,10 +686,7 @@ describe("partial-update", () => {
 
   describe("full update fallback", () => {
     it("renders all segments client-side when isPartial=false", async () => {
-      const serverSegments = [
-        seg("L0", { type: "layout" }),
-        seg("L0R0"),
-      ];
+      const serverSegments = [seg("L0", { type: "layout" }), seg("L0R0")];
 
       const store = createMockStore();
       const { client } = createMockClient({
@@ -675,10 +713,7 @@ describe("partial-update", () => {
       expect(renderSegments).toHaveBeenCalledWith(serverSegments);
 
       // Commit with segment IDs from server
-      expect(tx.commit).toHaveBeenCalledWith(
-        ["L0", "L0R0"],
-        serverSegments,
-      );
+      expect(tx.commit).toHaveBeenCalledWith(["L0", "L0R0"], serverSegments);
 
       expect(onUpdate).toHaveBeenCalledWith({
         root: "full-tree",
@@ -753,10 +788,7 @@ describe("partial-update", () => {
           payload: {
             metadata: {
               isPartial: false,
-              segments: [
-                seg("L0", { type: "layout" }),
-                seg("L0R0"),
-              ],
+              segments: [seg("L0", { type: "layout" }), seg("L0R0")],
             },
           },
           streamComplete: Promise.resolve(),
@@ -931,9 +963,16 @@ describe("partial-update", () => {
           renderSegments,
         });
 
-        await updater("http://localhost/page", ["L0", "L0R0"], false, undefined, tx, {
-          isAction: true,
-        });
+        await updater(
+          "http://localhost/page",
+          ["L0", "L0R0"],
+          false,
+          undefined,
+          tx,
+          {
+            isAction: true,
+          },
+        );
 
         const rendered = (renderSegments.mock.calls as any[][])[0][0];
         const layout = rendered.find((s: any) => s.id === "L0");
@@ -959,9 +998,9 @@ describe("partial-update", () => {
 
         const serverLayout = seg("L0", {
           type: "layout",
-          component: null as any,      // null = don't re-render
-          loading: "skeleton" as any,   // different from cached
-          mountPath: "/shop",           // same (mountPath is always consistent)
+          component: null as any, // null = don't re-render
+          loading: "skeleton" as any, // different from cached
+          mountPath: "/shop", // same (mountPath is always consistent)
         });
         const serverRoute = seg("L0R0", { component: "updated" });
 
@@ -988,16 +1027,23 @@ describe("partial-update", () => {
           renderSegments,
         });
 
-        await updater("http://localhost/page", ["L0", "L0R0"], false, undefined, tx, {
-          isAction: true,
-        });
+        await updater(
+          "http://localhost/page",
+          ["L0", "L0R0"],
+          false,
+          undefined,
+          tx,
+          {
+            isAction: true,
+          },
+        );
 
         const rendered = (renderSegments.mock.calls as any[][])[0][0];
         const layout = rendered.find((s: any) => s.id === "L0");
 
-        expect(layout.component).toBe("my-layout");  // preserved (server sent null)
-        expect(layout.loading).toBe(false);           // preserved (server sent skeleton)
-        expect(layout.mountPath).toBe("/shop");       // unchanged (same in both)
+        expect(layout.component).toBe("my-layout"); // preserved (server sent null)
+        expect(layout.loading).toBe(false); // preserved (server sent skeleton)
+        expect(layout.mountPath).toBe("/shop"); // unchanged (same in both)
       });
     });
 
@@ -1046,9 +1092,16 @@ describe("partial-update", () => {
           renderSegments,
         });
 
-        await updater("http://localhost/page", ["L0", "L0R0"], false, undefined, tx, {
-          isAction: true,
-        });
+        await updater(
+          "http://localhost/page",
+          ["L0", "L0R0"],
+          false,
+          undefined,
+          tx,
+          {
+            isAction: true,
+          },
+        );
 
         const rendered = (renderSegments.mock.calls as any[][])[0][0];
         const layout = rendered.find((s: any) => s.id === "L0");
@@ -1101,15 +1154,22 @@ describe("partial-update", () => {
           renderSegments,
         });
 
-        await updater("http://localhost/page", ["L0", "L0R0"], false, undefined, tx, {
-          isAction: true,
-        });
+        await updater(
+          "http://localhost/page",
+          ["L0", "L0R0"],
+          false,
+          undefined,
+          tx,
+          {
+            isAction: true,
+          },
+        );
 
         const rendered = (renderSegments.mock.calls as any[][])[0][0];
         const layout = rendered.find((s: any) => s.id === "L0");
 
-        expect(layout.component).toBe("my-layout");  // preserved from cache
-        expect(layout.loading).toBe("skeleton");      // same in both, no change
+        expect(layout.component).toBe("my-layout"); // preserved from cache
+        expect(layout.loading).toBe("skeleton"); // same in both, no change
       });
     });
 
@@ -1156,7 +1216,13 @@ describe("partial-update", () => {
           renderSegments,
         });
 
-        await updater("http://localhost/page", ["L0", "L0R0"], false, undefined, tx);
+        await updater(
+          "http://localhost/page",
+          ["L0", "L0R0"],
+          false,
+          undefined,
+          tx,
+        );
 
         const rendered = (renderSegments.mock.calls as any[][])[0][0];
         const layout = rendered.find((s: any) => s.id === "L0");
@@ -1176,10 +1242,7 @@ describe("partial-update", () => {
       const { client } = createMockClient({
         metadata: {
           isPartial: true,
-          segments: [
-            seg("L0", { type: "layout" }),
-            seg("L0R0"),
-          ],
+          segments: [seg("L0", { type: "layout" }), seg("L0R0")],
           matched: ["L0", "L0R0"],
           diff: ["L0", "L0R0"],
           slots: { "@modal": { active: true } },
@@ -1195,7 +1258,13 @@ describe("partial-update", () => {
         renderSegments: vi.fn(async () => "tree"),
       });
 
-      await updater("http://localhost/modal", ["L0", "L0R0"], false, undefined, tx);
+      await updater(
+        "http://localhost/modal",
+        ["L0", "L0R0"],
+        false,
+        undefined,
+        tx,
+      );
 
       // Should set intercept source URL from current URL (segmentState.currentUrl)
       expect(store.setInterceptSourceUrl).toHaveBeenCalledWith(

@@ -74,9 +74,15 @@ export function runWithRouterLogContext<T>(
   );
 }
 
-export function withRouterLogScope<T>(label: string, fn: () => Promise<T>): Promise<T>;
+export function withRouterLogScope<T>(
+  label: string,
+  fn: () => Promise<T>,
+): Promise<T>;
 export function withRouterLogScope<T>(label: string, fn: () => T): T;
-export function withRouterLogScope<T>(label: string, fn: () => Promise<T> | T): Promise<T> | T {
+export function withRouterLogScope<T>(
+  label: string,
+  fn: () => Promise<T> | T,
+): Promise<T> | T {
   const ctx = routerLogContext.getStore();
   if (!INTERNAL_RANGO_DEBUG || !ctx) {
     return fn();

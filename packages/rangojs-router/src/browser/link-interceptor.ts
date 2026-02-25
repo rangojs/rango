@@ -70,7 +70,7 @@ export function defaultShouldIntercept(link: HTMLAnchorElement): boolean {
  */
 export function setupLinkInterception(
   onNavigate: (url: string, options?: NavigateOptions) => void,
-  options?: LinkInterceptorOptions
+  options?: LinkInterceptorOptions,
 ): () => void {
   const shouldIntercept = options?.shouldIntercept ?? defaultShouldIntercept;
 

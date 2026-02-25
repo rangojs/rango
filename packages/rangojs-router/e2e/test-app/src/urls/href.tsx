@@ -1,6 +1,10 @@
 import { urls } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
-import { HrefIndexHandler, HrefDetailHandler, HrefFilteredHandler } from "./href.handlers.js";
+import {
+  HrefIndexHandler,
+  HrefDetailHandler,
+  HrefFilteredHandler,
+} from "./href.handlers.js";
 
 /**
  * Href URL patterns for testing scoped href resolution
@@ -67,6 +71,6 @@ const nestedHrefPatterns = urls(({ path }) => [
         </div>
       );
     },
-    { name: "index" }
+    { name: "index" },
   ),
 ]);

@@ -34,13 +34,15 @@ if (typeof Symbol.asyncDispose === "undefined") {
 /**
  * Extended configuration for server action bridge with event controller
  */
-export interface ServerActionBridgeConfigWithController
-  extends ServerActionBridgeConfig {
+export interface ServerActionBridgeConfigWithController extends ServerActionBridgeConfig {
   eventController: EventController;
   /** RSC version from initial payload metadata */
   version?: string;
   /** Callback to trigger SPA navigation (for action redirects) */
-  onNavigate?: (url: string, options?: { state?: unknown; replace?: boolean }) => Promise<void>;
+  onNavigate?: (
+    url: string,
+    options?: { state?: unknown; replace?: boolean },
+  ) => Promise<void>;
 }
 
 /**
@@ -57,10 +59,18 @@ export interface ServerActionBridgeConfigWithController
  * @returns ServerActionBridge instance
  */
 export function createServerActionBridge(
-  config: ServerActionBridgeConfigWithController
+  config: ServerActionBridgeConfigWithController,
 ): ServerActionBridge {
-  const { store, client, eventController, deps, onUpdate, renderSegments, version, onNavigate } =
-    config;
+  const {
+    store,
+    client,
+    eventController,
+    deps,
+    onUpdate,
+    renderSegments,
+    version,
+    onNavigate,
+  } = config;
 
   let isRegistered = false;
 
@@ -141,7 +151,7 @@ export function createServerActionBridge(
     url.searchParams.set("_rsc_action", id);
     url.searchParams.set(
       "_rsc_segments",
-      segmentState.currentSegmentIds.join(",")
+      segmentState.currentSegmentIds.join(","),
     );
     // Add version param for version mismatch detection
     if (version) {
@@ -200,7 +210,9 @@ export function createServerActionBridge(
       const simpleRedirectUrl = response.headers.get("X-RSC-Redirect");
       if (simpleRedirectUrl && !handle.signal.aborted) {
         if (tx) {
-          browserDebugLog(tx, "action simple redirect", { url: simpleRedirectUrl });
+          browserDebugLog(tx, "action simple redirect", {
+            url: simpleRedirectUrl,
+          });
         }
         handle.complete(undefined);
         if (onNavigate) {
@@ -353,7 +365,7 @@ export function createServerActionBridge(
       // Update segment tracking to exclude error segment IDs
       const errorSegmentIds = new Set(diff);
       const segmentIdsAfterError = segmentState.currentSegmentIds.filter(
-        (id) => !errorSegmentIds.has(id)
+        (id) => !errorSegmentIds.has(id),
       );
 
       // Update store state
@@ -379,7 +391,7 @@ export function createServerActionBridge(
     if (!isPartial) {
       // Full update not supported for actions
       throw new Error(
-        `[Browser] Full update after action is not supported yet`
+        `[Browser] Full update after action is not supported yet`,
       );
     }
 
@@ -468,7 +480,9 @@ export function createServerActionBridge(
       }
 
       case "hmr-missing": {
-        console.warn(`[Browser] Missing segments after action (HMR detected), refetching...`);
+        console.warn(
+          `[Browser] Missing segments after action (HMR detected), refetching...`,
+        );
         await refetchRoute({ interceptSourceUrl });
         store.broadcastCacheInvalidation();
         break;
@@ -479,7 +493,7 @@ export function createServerActionBridge(
         // Calculate segments to send (exclude the ones we want fresh)
         const currentSegmentIds = store.getSegmentState().currentSegmentIds;
         const segmentsToSend = currentSegmentIds.filter(
-          (sid) => !scenario.segmentIds.includes(sid)
+          (sid) => !scenario.segmentIds.includes(sid),
         );
 
         // Clear consolidation tracking before fetch

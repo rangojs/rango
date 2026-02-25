@@ -38,9 +38,15 @@ describe("parseSearchParams", () => {
   });
 
   it("should parse boolean false values", () => {
-    expect(parseSearchParams(new URLSearchParams("x=false"), { x: "boolean" })).toEqual({ x: false });
-    expect(parseSearchParams(new URLSearchParams("x=0"), { x: "boolean" })).toEqual({ x: false });
-    expect(parseSearchParams(new URLSearchParams("x="), { x: "boolean" })).toEqual({ x: false });
+    expect(
+      parseSearchParams(new URLSearchParams("x=false"), { x: "boolean" }),
+    ).toEqual({ x: false });
+    expect(
+      parseSearchParams(new URLSearchParams("x=0"), { x: "boolean" }),
+    ).toEqual({ x: false });
+    expect(
+      parseSearchParams(new URLSearchParams("x="), { x: "boolean" }),
+    ).toEqual({ x: false });
   });
 
   it("should use zero values for missing required params", () => {
@@ -109,7 +115,9 @@ describe("serializeSearchParams", () => {
   });
 
   it("should skip undefined and null values", () => {
-    expect(serializeSearchParams({ q: "react", page: undefined, sort: null })).toBe("q=react");
+    expect(
+      serializeSearchParams({ q: "react", page: undefined, sort: null }),
+    ).toBe("q=react");
   });
 
   it("should encode special characters", () => {
@@ -117,7 +125,11 @@ describe("serializeSearchParams", () => {
   });
 
   it("should handle multiple params", () => {
-    const result = serializeSearchParams({ q: "react", page: 2, sort: "stars" });
+    const result = serializeSearchParams({
+      q: "react",
+      page: 2,
+      sort: "stars",
+    });
     expect(result).toBe("q=react&page=2&sort=stars");
   });
 
@@ -162,8 +174,16 @@ describe("ResolveSearchSchema", () => {
   });
 
   it("should resolve mixed required and optional", () => {
-    type S = ResolveSearchSchema<{ q: "string"; page: "number?"; sort: "string?" }>;
-    expectTypeOf<S>().toEqualTypeOf<{ q: string; page?: number; sort?: string }>();
+    type S = ResolveSearchSchema<{
+      q: "string";
+      page: "number?";
+      sort: "string?";
+    }>;
+    expectTypeOf<S>().toEqualTypeOf<{
+      q: string;
+      page?: number;
+      sort?: string;
+    }>();
   });
 
   it("should resolve empty schema to empty object", () => {
@@ -204,13 +224,17 @@ describe("HandlerContext.searchParams and search types", () => {
 
 describe("path() search schema type inference", () => {
   const patterns = urls(({ path }) => [
-    path("/search", (ctx) => {
-      // searchParams is always URLSearchParams
-      expectTypeOf(ctx.searchParams).toEqualTypeOf<URLSearchParams>();
-      // search is the typed parsed object
-      expectTypeOf(ctx.search).toEqualTypeOf<{ q: string; page?: number }>();
-      return null;
-    }, { name: "search", search: { q: "string", page: "number?" } }),
+    path(
+      "/search",
+      (ctx) => {
+        // searchParams is always URLSearchParams
+        expectTypeOf(ctx.searchParams).toEqualTypeOf<URLSearchParams>();
+        // search is the typed parsed object
+        expectTypeOf(ctx.search).toEqualTypeOf<{ q: string; page?: number }>();
+        return null;
+      },
+      { name: "search", search: { q: "string", page: "number?" } },
+    ),
 
     path("/about", () => null, { name: "about" }),
   ]);
@@ -247,7 +271,11 @@ describe("extractRoutesFromSource with search", () => {
     `;
     const routes = extractRoutesFromSource(code);
     expect(routes).toEqual([
-      { name: "search", pattern: "/search", search: { q: "string", page: "number?" } },
+      {
+        name: "search",
+        pattern: "/search",
+        search: { q: "string", page: "number?" },
+      },
     ]);
   });
 
@@ -258,9 +286,7 @@ describe("extractRoutesFromSource with search", () => {
       ]);
     `;
     const routes = extractRoutesFromSource(code);
-    expect(routes).toEqual([
-      { name: "about", pattern: "/about" },
-    ]);
+    expect(routes).toEqual([{ name: "about", pattern: "/about" }]);
   });
 
   it("should handle search with quoted keys", () => {
@@ -271,7 +297,11 @@ describe("extractRoutesFromSource with search", () => {
     `;
     const routes = extractRoutesFromSource(code);
     expect(routes).toEqual([
-      { name: "items", pattern: "/items", search: { q: "string", page: "number?" } },
+      {
+        name: "items",
+        pattern: "/items",
+        search: { q: "string", page: "number?" },
+      },
     ]);
   });
 
@@ -282,9 +312,7 @@ describe("extractRoutesFromSource with search", () => {
       ]);
     `;
     const routes = extractRoutesFromSource(code);
-    expect(routes).toEqual([
-      { name: "docs.md", pattern: "/docs" },
-    ]);
+    expect(routes).toEqual([{ name: "docs.md", pattern: "/docs" }]);
   });
 });
 
@@ -300,7 +328,9 @@ describe("generateRouteTypesSource with search schemas", () => {
     const searchSchemas = { search: { q: "string", page: "number?" } };
     const source = generateRouteTypesSource(manifest, searchSchemas);
     expect(source).toContain('about: "/about"');
-    expect(source).toContain('search: { path: "/search", search: { q: "string", page: "number?" } }');
+    expect(source).toContain(
+      'search: { path: "/search", search: { q: "string", page: "number?" } }',
+    );
   });
 
   it("should generate plain strings when no search schemas", () => {
@@ -323,8 +353,14 @@ type TestRouteMap = {
   readonly blogPost: "/blog/:slug";
   readonly userProfile: "/user/:userId/profile";
   readonly userSettings: "/user/:userId/settings/:tab?";
-  readonly search: { readonly path: "/search"; readonly search: { q: "string"; page: "number?" } };
-  readonly products: { readonly path: "/products/:category"; readonly search: { sort: "string?"; page: "number?" } };
+  readonly search: {
+    readonly path: "/search";
+    readonly search: { q: "string"; page: "number?" };
+  };
+  readonly products: {
+    readonly path: "/products/:category";
+    readonly search: { sort: "string?"; page: "number?" };
+  };
 };
 
 describe("RouteParams (explicit route map)", () => {
@@ -404,8 +440,14 @@ describe("RouteParams + RouteSearchParams from urls() patterns", () => {
   const testPatterns = urls(({ path }) => [
     path("/", () => null, { name: "home" }),
     path("/blog/:slug", () => null, { name: "blogPost" }),
-    path("/search", () => null, { name: "search", search: { q: "string", page: "number?", sort: "string?" } }),
-    path("/items/:category", () => null, { name: "items", search: { page: "number?", limit: "number?" } }),
+    path("/search", () => null, {
+      name: "search",
+      search: { q: "string", page: "number?", sort: "string?" },
+    }),
+    path("/items/:category", () => null, {
+      name: "items",
+      search: { page: "number?", limit: "number?" },
+    }),
   ]);
 
   type Routes = NonNullable<(typeof testPatterns)["_routes"]>;
@@ -427,7 +469,11 @@ describe("RouteParams + RouteSearchParams from urls() patterns", () => {
 
   it("should resolve search params from urls()-defined route", () => {
     type Search = RouteSearchParams<"search", Routes>;
-    expectTypeOf<Search>().toEqualTypeOf<{ q: string; page?: number; sort?: string }>();
+    expectTypeOf<Search>().toEqualTypeOf<{
+      q: string;
+      page?: number;
+      sort?: string;
+    }>();
   });
 
   it("should resolve search params on route with path params", () => {

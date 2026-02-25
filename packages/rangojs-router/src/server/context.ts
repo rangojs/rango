@@ -1,6 +1,15 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ReactNode } from "react";
-import type { PartialCacheOptions, ErrorBoundaryHandler, Handler, LoaderDefinition, MiddlewareFn, NotFoundBoundaryHandler, ShouldRevalidateFn, TransitionConfig } from "../types";
+import type {
+  PartialCacheOptions,
+  ErrorBoundaryHandler,
+  Handler,
+  LoaderDefinition,
+  MiddlewareFn,
+  NotFoundBoundaryHandler,
+  ShouldRevalidateFn,
+  TransitionConfig,
+} from "../types";
 import { invariant } from "../errors";
 
 // ============================================================================
@@ -13,9 +22,9 @@ import { invariant } from "../errors";
  * @internal This type is an implementation detail and may change without notice.
  */
 export interface PerformanceMetric {
-  label: string;      // e.g., "route-matching", "loader:UserLoader"
-  duration: number;   // milliseconds
-  startTime: number;  // relative to request start
+  label: string; // e.g., "route-matching", "loader:UserLoader"
+  duration: number; // milliseconds
+  startTime: number; // relative to request start
 }
 
 /**
@@ -105,12 +114,12 @@ export type InterceptSegmentsState = {
  * @internal This type is an implementation detail and may change without notice.
  */
 export type InterceptSelectorContext<TEnv = any> = {
-  from: URL;                              // Source URL (where user is coming from)
-  to: URL;                                // Destination URL (where user is navigating to)
-  params: Record<string, string>;         // Matched route params
-  request: Request;                       // The HTTP request object
-  env: TEnv;                              // Platform bindings (Cloudflare env, etc.)
-  segments: InterceptSegmentsState;       // Client's current segments (where navigating FROM)
+  from: URL; // Source URL (where user is coming from)
+  to: URL; // Destination URL (where user is navigating to)
+  params: Record<string, string>; // Matched route params
+  request: Request; // The HTTP request object
+  env: TEnv; // Platform bindings (Cloudflare env, etc.)
+  segments: InterceptSegmentsState; // Client's current segments (where navigating FROM)
 };
 
 /**
@@ -119,7 +128,9 @@ export type InterceptSelectorContext<TEnv = any> = {
  *
  * @internal This type is an implementation detail and may change without notice.
  */
-export type InterceptWhenFn<TEnv = any> = (ctx: InterceptSelectorContext<TEnv>) => boolean;
+export type InterceptWhenFn<TEnv = any> = (
+  ctx: InterceptSelectorContext<TEnv>,
+) => boolean;
 
 /**
  * Intercept entry stored in EntryData
@@ -128,8 +139,8 @@ export type InterceptWhenFn<TEnv = any> = (ctx: InterceptSelectorContext<TEnv>) 
  * @internal This type is an implementation detail and may change without notice.
  */
 export type InterceptEntry = {
-  slotName: `@${string}`;  // e.g., "@modal"
-  routeName: string;        // e.g., "card"
+  slotName: `@${string}`; // e.g., "@modal"
+  routeName: string; // e.g., "card"
   handler: ReactNode | Handler<any, any, any>;
   middleware: MiddlewareFn<any, any>[];
   revalidate: ShouldRevalidateFn<any, any>[];
@@ -138,8 +149,8 @@ export type InterceptEntry = {
   loader: LoaderEntry[];
   loading?: ReactNode | false;
   transition?: TransitionConfig;
-  layout?: ReactNode | Handler<any, any, any>;  // Wrapper layout with <Outlet /> for content
-  when: InterceptWhenFn[];  // Selector conditions - all must return true to intercept
+  layout?: ReactNode | Handler<any, any, any>; // Wrapper layout with <Outlet /> for content
+  when: InterceptWhenFn[]; // Selector conditions - all must return true to intercept
 };
 
 export type EntryPropSegments = {
@@ -160,7 +171,10 @@ export type EntryData =
       /** Set when handler is a Prerender definition */
       isPrerender?: true;
       /** Original PrerenderHandlerDefinition (for build-time getParams access) */
-      prerenderDef?: { getParams?: (ctx: any) => Promise<any[]> | any[]; options?: { passthrough?: boolean } };
+      prerenderDef?: {
+        getParams?: (ctx: any) => Promise<any[]> | any[];
+        options?: { passthrough?: boolean };
+      };
       /** Set when handler is a Static definition (build-time only) */
       isStaticPrerender?: true;
       /** Static handler $$id for build-time store lookup */
@@ -251,9 +265,9 @@ interface HelperContext {
 // hold references to the old instance — causing getStore() to return
 // undefined even inside a run() callback.
 const RSC_CONTEXT_KEY = Symbol.for("rangojs-router:rsc-context");
-export const RSCRouterContext: AsyncLocalStorage<HelperContext> =
-  (globalThis as any)[RSC_CONTEXT_KEY] ??=
-    new AsyncLocalStorage<HelperContext>();
+export const RSCRouterContext: AsyncLocalStorage<HelperContext> = ((
+  globalThis as any
+)[RSC_CONTEXT_KEY] ??= new AsyncLocalStorage<HelperContext>());
 
 export const getContext = (): {
   context: AsyncLocalStorage<HelperContext>;
@@ -261,21 +275,21 @@ export const getContext = (): {
   getParent: () => EntryData | null;
   getOrCreateStore: (forRoute?: string) => HelperContext;
   getNextIndex: (
-    type: (string & {}) | "layout" | "parallel" | "middleware" | "revalidate"
+    type: (string & {}) | "layout" | "parallel" | "middleware" | "revalidate",
   ) => string;
   getShortCode: (
-    type: "layout" | "parallel" | "route" | "loader" | "cache"
+    type: "layout" | "parallel" | "route" | "loader" | "cache",
   ) => string;
   run: <T>(
     namespace: string,
     parent: EntryData | null,
-    callback: (...args: any[]) => T
+    callback: (...args: any[]) => T,
   ) => T;
   runWithStore: <T>(
     store: HelperContext,
     namespace: string,
     parent: EntryData | null,
-    callback: (...args: any[]) => T
+    callback: (...args: any[]) => T,
   ) => T;
 } => {
   const context = RSCRouterContext;
@@ -303,7 +317,7 @@ export const getContext = (): {
       const store = context.getStore();
       if (!store) {
         throw new Error(
-          "RSC Router context store is not available. Make sure to run within RSC Router context."
+          "RSC Router context store is not available. Make sure to run within RSC Router context.",
         );
       }
       return store;
@@ -317,7 +331,7 @@ export const getContext = (): {
       return store.parent;
     },
     getNextIndex: (
-      type: (string & {}) | "layout" | "parallel" | "middleware" | "revalidate"
+      type: (string & {}) | "layout" | "parallel" | "middleware" | "revalidate",
     ) => {
       const store = context.getStore();
       invariant(store, "No context RSCRouterContext available");
@@ -326,17 +340,31 @@ export const getContext = (): {
       store.counters[type] = index + 1;
       return `$${type}.${index}`;
     },
-    getShortCode: (type: "layout" | "parallel" | "route" | "loader" | "cache") => {
+    getShortCode: (
+      type: "layout" | "parallel" | "route" | "loader" | "cache",
+    ) => {
       const store = context.getStore();
       invariant(store, "No context RSCRouterContext available");
 
       const parent = store.parent;
-      const prefix = type === "layout" ? "L" : type === "parallel" ? "P" : type === "loader" ? "D" : type === "cache" ? "C" : "R";
-      const mountPrefix = store.mountIndex !== undefined ? `M${store.mountIndex}` : "";
+      const prefix =
+        type === "layout"
+          ? "L"
+          : type === "parallel"
+            ? "P"
+            : type === "loader"
+              ? "D"
+              : type === "cache"
+                ? "C"
+                : "R";
+      const mountPrefix =
+        store.mountIndex !== undefined ? `M${store.mountIndex}` : "";
 
       if (!parent) {
         // Root entry: prefix with mount index and use mount-scoped counter
-        const counterKey = mountPrefix ? `${mountPrefix}_root_${type}` : `root_${type}`;
+        const counterKey = mountPrefix
+          ? `${mountPrefix}_root_${type}`
+          : `root_${type}`;
         store.counters[counterKey] ??= 0;
         const index = store.counters[counterKey];
         store.counters[counterKey] = index + 1;
@@ -354,7 +382,7 @@ export const getContext = (): {
       store: HelperContext,
       namespace: string,
       parent: EntryData | null,
-      callback: (...args: any[]) => T
+      callback: (...args: any[]) => T,
     ): T => {
       return context.run(
         {
@@ -373,13 +401,13 @@ export const getContext = (): {
           namePrefix: store.namePrefix,
           trackedIncludes: store.trackedIncludes,
         },
-        callback
+        callback,
       );
     },
     run: <T>(
       namespace: string,
       parent: EntryData | null,
-      callback: (...args: any[]) => T
+      callback: (...args: any[]) => T,
     ) => {
       const store = context.getStore();
       // Preserve parent counters to ensure globally unique shortCodes
@@ -387,8 +415,11 @@ export const getContext = (): {
       const manifest = store ? store.manifest : new Map<string, EntryData>();
       const patterns = store?.patterns || new Map<string, string>();
       const patternsByPrefix = store?.patternsByPrefix;
-      const trailingSlash = store?.trailingSlash || new Map<string, "never" | "always" | "ignore">();
-      const searchSchemas = store?.searchSchemas || new Map<string, Record<string, string>>();
+      const trailingSlash =
+        store?.trailingSlash ||
+        new Map<string, "never" | "always" | "ignore">();
+      const searchSchemas =
+        store?.searchSchemas || new Map<string, Record<string, string>>();
       return context.run(
         {
           manifest,
@@ -407,7 +438,7 @@ export const getContext = (): {
           namePrefix: store?.namePrefix,
           trackedIncludes: store?.trackedIncludes,
         },
-        callback
+        callback,
       );
     },
   };
@@ -420,7 +451,7 @@ export const getContext = (): {
 export function runWithPrefixes<T>(
   urlPrefix: string,
   namePrefix: string | undefined,
-  callback: () => T
+  callback: () => T,
 ): T {
   const store = RSCRouterContext.getStore();
   if (!store) {
@@ -450,7 +481,7 @@ export function runWithPrefixes<T>(
       urlPrefix: combinedUrlPrefix,
       namePrefix: combinedNamePrefix,
     },
-    callback
+    callback,
   );
 }
 
@@ -499,7 +530,8 @@ export function track(label: string): () => void {
   const startTime = performance.now() - store.metrics.requestStart;
 
   return () => {
-    const duration = performance.now() - store.metrics!.requestStart - startTime;
+    const duration =
+      performance.now() - store.metrics!.requestStart - startTime;
     store.metrics!.metrics.push({ label, duration, startTime });
   };
 }

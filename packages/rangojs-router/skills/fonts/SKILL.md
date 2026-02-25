@@ -24,7 +24,11 @@ export function Document({ children }: { children: ReactNode }) {
       <head>
         {/* Preconnect to Google Fonts */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          rel="preconnect"
+          href="https://fonts.gstatic.com"
+          crossOrigin="anonymous"
+        />
 
         {/* Load font stylesheet */}
         <link
@@ -37,9 +41,7 @@ export function Document({ children }: { children: ReactNode }) {
         <link rel="stylesheet" href={styles} />
         <MetaTags />
       </head>
-      <body>
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

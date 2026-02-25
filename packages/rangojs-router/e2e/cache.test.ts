@@ -64,12 +64,12 @@ test.describe("cache-server-logs", () => {
 
     // Should have exactly one MISS for doc:/blog
     expect(
-      firstLogs.misses.some((log) => log.includes("doc:/blog"))
+      firstLogs.misses.some((log) => log.includes("doc:/blog")),
     ).toBeTruthy();
 
     // Should have a Cached log after async write
     expect(
-      firstLogs.cached.some((log) => log.includes("doc:/blog"))
+      firstLogs.cached.some((log) => log.includes("doc:/blog")),
     ).toBeTruthy();
 
     // Navigate away
@@ -89,14 +89,16 @@ test.describe("cache-server-logs", () => {
 
     // Get logs from second request
     const afterSecondStdout = f.proc().stdout();
-    const secondLogs = getCacheLogs(afterSecondStdout.substring(beforeSecondLength));
+    const secondLogs = getCacheLogs(
+      afterSecondStdout.substring(beforeSecondLength),
+    );
 
     // Should have a HIT for doc:/blog (not MISS)
     expect(
-      secondLogs.hits.some((log) => log.includes("doc:/blog"))
+      secondLogs.hits.some((log) => log.includes("doc:/blog")),
     ).toBeTruthy();
     expect(
-      secondLogs.misses.some((log) => log.includes("doc:/blog"))
+      secondLogs.misses.some((log) => log.includes("doc:/blog")),
     ).toBeFalsy();
   });
 
@@ -129,12 +131,12 @@ test.describe("cache-server-logs", () => {
 
     // Should have MISS for partial:/blog
     expect(
-      navLogs.misses.some((log) => log.includes("partial:/blog"))
+      navLogs.misses.some((log) => log.includes("partial:/blog")),
     ).toBeTruthy();
 
     // Should have Cached for partial:/blog
     expect(
-      navLogs.cached.some((log) => log.includes("partial:/blog"))
+      navLogs.cached.some((log) => log.includes("partial:/blog")),
     ).toBeTruthy();
 
     // Navigate back to home
@@ -153,10 +155,12 @@ test.describe("cache-server-logs", () => {
 
     // Check for cache hit
     const afterSecondNav = f.proc().stdout();
-    const secondNavLogs = getCacheLogs(afterSecondNav.substring(beforeSecondNavLen));
+    const secondNavLogs = getCacheLogs(
+      afterSecondNav.substring(beforeSecondNavLen),
+    );
 
     expect(
-      secondNavLogs.hits.some((log) => log.includes("partial:/blog"))
+      secondNavLogs.hits.some((log) => log.includes("partial:/blog")),
     ).toBeTruthy();
   });
 
@@ -172,7 +176,9 @@ test.describe("cache-server-logs", () => {
     await page.goto(f.url("/blog/post-1"));
     await waitForHydration(page);
 
-    await expect(page.getByTestId("blog-post-title")).toHaveText("Post: post-1");
+    await expect(page.getByTestId("blog-post-title")).toHaveText(
+      "Post: post-1",
+    );
 
     // Wait for cache write
     await page.waitForTimeout(500);
@@ -182,7 +188,10 @@ test.describe("cache-server-logs", () => {
 
     // Should have MISS for doc:/blog/post-1 with params
     expect(
-      firstLogs.misses.some((log) => log.includes("doc:/blog/post-1") || log.includes("postId=post-1"))
+      firstLogs.misses.some(
+        (log) =>
+          log.includes("doc:/blog/post-1") || log.includes("postId=post-1"),
+      ),
     ).toBeTruthy();
 
     // Different post should have its own cache entry
@@ -192,14 +201,19 @@ test.describe("cache-server-logs", () => {
     await page.goto(f.url("/blog/post-2"));
     await waitForHydration(page);
 
-    await expect(page.getByTestId("blog-post-title")).toHaveText("Post: post-2");
+    await expect(page.getByTestId("blog-post-title")).toHaveText(
+      "Post: post-2",
+    );
 
     const afterSecondPost = f.proc().stdout();
     const secondLogs = getCacheLogs(afterSecondPost.substring(beforeSecondLen));
 
     // Should be a MISS (different cache key due to different param)
     expect(
-      secondLogs.misses.some((log) => log.includes("doc:/blog/post-2") || log.includes("postId=post-2"))
+      secondLogs.misses.some(
+        (log) =>
+          log.includes("doc:/blog/post-2") || log.includes("postId=post-2"),
+      ),
     ).toBeTruthy();
 
     // Going back to post-1 should be a HIT
@@ -213,7 +227,10 @@ test.describe("cache-server-logs", () => {
     const thirdLogs = getCacheLogs(afterThirdPost.substring(beforeThirdLen));
 
     expect(
-      thirdLogs.hits.some((log) => log.includes("doc:/blog/post-1") || log.includes("postId=post-1"))
+      thirdLogs.hits.some(
+        (log) =>
+          log.includes("doc:/blog/post-1") || log.includes("postId=post-1"),
+      ),
     ).toBeTruthy();
   });
 
@@ -364,23 +381,27 @@ test.describe("cache-intercept-routes", () => {
 
     // Wait for modal to appear
     await expect(page.getByTestId("cache-test-modal")).toBeVisible();
-    await expect(page.getByTestId("cache-test-modal-indicator")).toHaveText("Cache Test Intercept");
+    await expect(page.getByTestId("cache-test-modal-indicator")).toHaveText(
+      "Cache Test Intercept",
+    );
 
     // Wait for cache write
     await page.waitForTimeout(500);
 
     // Check logs - should see intercept: prefix in cache key
     const afterInterceptStdout = f.proc().stdout();
-    const interceptLogs = getCacheLogs(afterInterceptStdout.substring(beforeInterceptLen));
+    const interceptLogs = getCacheLogs(
+      afterInterceptStdout.substring(beforeInterceptLen),
+    );
 
     // Should have MISS for intercept:
     expect(
-      interceptLogs.misses.some((log) => log.includes("intercept:"))
+      interceptLogs.misses.some((log) => log.includes("intercept:")),
     ).toBeTruthy();
 
     // Should have Cached for intercept:
     expect(
-      interceptLogs.cached.some((log) => log.includes("intercept:"))
+      interceptLogs.cached.some((log) => log.includes("intercept:")),
     ).toBeTruthy();
   });
 
@@ -418,11 +439,13 @@ test.describe("cache-intercept-routes", () => {
 
     // Check logs - should be a MISS for intercept: (separate cache from doc:)
     const afterInterceptStdout = f.proc().stdout();
-    const interceptLogs = getCacheLogs(afterInterceptStdout.substring(beforeInterceptLen));
+    const interceptLogs = getCacheLogs(
+      afterInterceptStdout.substring(beforeInterceptLen),
+    );
 
     // Should be a MISS because intercept cache is separate from doc cache
     expect(
-      interceptLogs.misses.some((log) => log.includes("intercept:"))
+      interceptLogs.misses.some((log) => log.includes("intercept:")),
     ).toBeTruthy();
   });
 
@@ -459,10 +482,12 @@ test.describe("cache-intercept-routes", () => {
 
     // Check logs - should be a HIT for intercept:
     const afterSecondStdout = f.proc().stdout();
-    const secondLogs = getCacheLogs(afterSecondStdout.substring(beforeSecondLen));
+    const secondLogs = getCacheLogs(
+      afterSecondStdout.substring(beforeSecondLen),
+    );
 
     expect(
-      secondLogs.hits.some((log) => log.includes("intercept:"))
+      secondLogs.hits.some((log) => log.includes("intercept:")),
     ).toBeTruthy();
   });
 
@@ -480,7 +505,9 @@ test.describe("cache-intercept-routes", () => {
     await expect(page.getByTestId("cache-test-modal")).toBeVisible();
 
     // Get the initial count - loader data is passed via ctx.use() -> props
-    const firstCount = await page.getByTestId("cache-test-modal-count").textContent();
+    const firstCount = await page
+      .getByTestId("cache-test-modal-count")
+      .textContent();
     expect(firstCount).toContain("Count:");
 
     // Wait for cache write
@@ -496,7 +523,9 @@ test.describe("cache-intercept-routes", () => {
 
     // Get the second count - since segment is cached and loader data is passed
     // via props, the data is part of the cached segment
-    const secondCount = await page.getByTestId("cache-test-modal-count").textContent();
+    const secondCount = await page
+      .getByTestId("cache-test-modal-count")
+      .textContent();
     expect(secondCount).toContain("Count:");
 
     // Note: With ctx.use() + props pattern, the data is part of the RSC output
@@ -526,7 +555,9 @@ test.describe("useLoader-with-loader-registration", () => {
 
     // useLoader should have data from loader() registration on regular route
     await expect(page.getByTestId("detail-useloader-data")).toBeVisible();
-    const count = await page.getByTestId("detail-useloader-data-count").textContent();
+    const count = await page
+      .getByTestId("detail-useloader-data-count")
+      .textContent();
     expect(count).toContain("Count:");
   });
 
@@ -541,7 +572,9 @@ test.describe("useLoader-with-loader-registration", () => {
     await expect(page.getByTestId("detail-useloader-data")).toBeVisible();
 
     // Get first count
-    const firstCount = await page.getByTestId("detail-useloader-data-count").textContent();
+    const firstCount = await page
+      .getByTestId("detail-useloader-data-count")
+      .textContent();
 
     // Navigate away
     await page.goto(f.url("/"));
@@ -553,7 +586,9 @@ test.describe("useLoader-with-loader-registration", () => {
     await expect(page.getByTestId("detail-useloader-data")).toBeVisible();
 
     // Get second count - should be different (loader runs fresh, not cached)
-    const secondCount = await page.getByTestId("detail-useloader-data-count").textContent();
+    const secondCount = await page
+      .getByTestId("detail-useloader-data-count")
+      .textContent();
 
     // Counts should be different because this route is not cached
     expect(secondCount).not.toBe(firstCount);
@@ -577,13 +612,17 @@ test.describe("useLoader-with-loader-registration", () => {
 
     // Modal should appear with data from useLoader
     await expect(page.getByTestId("useloader-modal")).toBeVisible();
-    await expect(page.getByTestId("useloader-modal-indicator")).toHaveText("useLoader Modal");
+    await expect(page.getByTestId("useloader-modal-indicator")).toHaveText(
+      "useLoader Modal",
+    );
 
     // Verify loader data is available via useLoader
     const count = await page.getByTestId("useloader-modal-count").textContent();
     expect(count).toContain("Count:");
 
-    const message = await page.getByTestId("useloader-modal-message").textContent();
+    const message = await page
+      .getByTestId("useloader-modal-message")
+      .textContent();
     expect(message).toBe("Intercept cache test data");
   });
 });
@@ -621,10 +660,21 @@ test.describe("proactive-caching", () => {
     // Wait for proactive caching to complete in background
     // Proactive caching stores under the partial: key prefix, so verify
     // with a [CacheScope] Cached: log for item-b
-    await expect.poll(() => {
-      const stdout = f.proc().stdout().slice(afterFirstVisit.length);
-      return stdout.includes("[CacheScope] Cached:") && stdout.includes("/proactive-cache/item-b");
-    }, { timeout: 5000, message: "Expected proactive cache write for /proactive-cache/item-b" }).toBeTruthy();
+    await expect
+      .poll(
+        () => {
+          const stdout = f.proc().stdout().slice(afterFirstVisit.length);
+          return (
+            stdout.includes("[CacheScope] Cached:") &&
+            stdout.includes("/proactive-cache/item-b")
+          );
+        },
+        {
+          timeout: 5000,
+          message: "Expected proactive cache write for /proactive-cache/item-b",
+        },
+      )
+      .toBeTruthy();
   });
 
   test("layout renders correctly after proactive caching", async ({ page }) => {
@@ -653,7 +703,7 @@ test.describe("proactive-caching", () => {
     // Layout should be visible and functional
     await expect(page.getByTestId("proactive-cache-layout")).toBeVisible();
     await expect(page.getByTestId("proactive-layout-title")).toHaveText(
-      "Proactive Cache Layout"
+      "Proactive Cache Layout",
     );
     await expect(page.getByTestId("proactive-item-a-page")).toBeVisible();
 

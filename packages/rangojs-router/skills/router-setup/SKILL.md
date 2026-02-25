@@ -50,20 +50,22 @@ export const urlpatterns = urls(({ path, layout, loader, loading }) => [
 The `urls()` function provides a callback with all available DSL functions:
 
 ```typescript
-urls(({
-  path,        // Define a route
-  layout,      // Wrap routes in a layout
-  parallel,    // Define parallel routes (slots)
-  loader,      // Add data loader
-  loading,     // Add loading skeleton
-  cache,       // Configure caching
-  middleware,  // Add middleware
-  revalidate,  // Control revalidation
-  intercept,   // Intercept routes for modals
-  when,        // Conditional rendering
-}) => [
-  // Route definitions here
-]);
+urls(
+  ({
+    path, // Define a route
+    layout, // Wrap routes in a layout
+    parallel, // Define parallel routes (slots)
+    loader, // Add data loader
+    loading, // Add loading skeleton
+    cache, // Configure caching
+    middleware, // Add middleware
+    revalidate, // Control revalidation
+    intercept, // Intercept routes for modals
+    when, // Conditional rendering
+  }) => [
+    // Route definitions here
+  ],
+);
 ```
 
 ## Router Options
@@ -101,7 +103,10 @@ interface RSCRouterOptions<TEnv> {
   warmup?: boolean;
 
   // CSP nonce provider (for router.fetch)
-  nonce?: (request: Request, env: TEnv) => string | true | Promise<string | true>;
+  nonce?: (
+    request: Request,
+    env: TEnv,
+  ) => string | true | Promise<string | true>;
 
   // RSC version string (for router.fetch)
   version?: string;

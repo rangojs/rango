@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  useContext,
-  useMemo,
-  type ReactNode,
-} from "react";
+import { useContext, useMemo, type ReactNode } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import type { ResolvedSegment } from "./types.js";
 
@@ -40,7 +36,7 @@ export function OutletProvider({
       parent: parentContext,
       loading: segment?.loading,
     }),
-    [content, parallel, segment, loaderData, parentContext]
+    [content, parallel, segment, loaderData, parentContext],
   );
 
   return (

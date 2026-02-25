@@ -42,7 +42,7 @@ async function processHandles(
     matched?: string[];
     isPartial?: boolean;
     historyKey: string;
-  }
+  },
 ): Promise<void> {
   const { eventController, store, matched, isPartial, historyKey } = opts;
 
@@ -53,7 +53,7 @@ async function processHandles(
     // the current route's breadcrumbs (e.g., quick popstate after clicking a link).
     if (historyKey !== store.getHistoryKey()) {
       console.log(
-        "[NavigationProvider] Stopping handle processing - user navigated away"
+        "[NavigationProvider] Stopping handle processing - user navigated away",
       );
       return;
     }
@@ -168,7 +168,7 @@ export function NavigationProvider({
     async (url: string, options?: NavigateOptions): Promise<void> => {
       await bridge.navigate(url, options);
     },
-    []
+    [],
   );
 
   /**
@@ -186,7 +186,7 @@ export function NavigationProvider({
       navigate,
       refresh,
     }),
-    []
+    [],
   );
 
   // Connection warmup: keep TLS alive after idle periods.
@@ -252,7 +252,12 @@ export function NavigationProvider({
     }
 
     // Activity events that reset the idle timer
-    const activityEvents = ["mousemove", "keydown", "touchstart", "scroll"] as const;
+    const activityEvents = [
+      "mousemove",
+      "keydown",
+      "touchstart",
+      "scroll",
+    ] as const;
     const activityOptions: AddEventListenerOptions = { passive: true };
 
     for (const event of activityEvents) {
@@ -292,7 +297,7 @@ export function NavigationProvider({
           isPartial: update.metadata.isPartial,
           historyKey,
         }).catch((err) =>
-          console.error("[NavigationProvider] Error consuming handles:", err)
+          console.error("[NavigationProvider] Error consuming handles:", err),
         );
       } else if (update.metadata.cachedHandleData) {
         // For back/forward navigation from cache, restore the cached handleData
@@ -300,14 +305,14 @@ export function NavigationProvider({
         eventController.setHandleData(
           update.metadata.cachedHandleData,
           update.metadata.matched,
-          false // full replace - restore entire cached state
+          false, // full replace - restore entire cached state
         );
       } else if (update.metadata.matched) {
         // For cached navigations without handleData, update segmentOrder to clean up stale data
         eventController.setHandleData(
           {}, // Empty data - all existing data not in matched will be cleaned up
           update.metadata.matched,
-          true // partial update - will clean up segments not in matched
+          true, // partial update - will clean up segments not in matched
         );
       }
     });

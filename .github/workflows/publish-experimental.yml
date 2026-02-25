@@ -1,0 +1,76 @@
+name: Publish Experimental
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: publish-experimental
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build @rangojs/router
+        run: pnpm --filter @rangojs/router build
+
+      - name: Compute next version
+        id: version
+        run: |
+          CURRENT=$(npm view @rangojs/router@experimental version 2>/dev/null || echo "0.0.0-experimental.0")
+          echo "Current experimental version: $CURRENT"
+
+          # Extract the numeric part after "experimental."
+          # Handle both "0.0.0-experimental.17" and "0.0.0-experimental.17.abc1234"
+          NUM=$(echo "$CURRENT" | sed -E 's/^0\.0\.0-experimental\.([0-9]+).*/\1/')
+          NEXT=$((NUM + 1))
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          VERSION="0.0.0-experimental.${NEXT}.${SHORT_SHA}"
+
+          echo "Next version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Set version and publish
+        working-directory: packages/rangojs-router
+        run: |
+          npm version "${{ steps.version.outputs.version }}" --no-git-tag-version
+          npm publish --tag experimental
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Comment on merged PR
+        run: |
+          PR_NUMBER=$(gh pr list --search "${{ github.sha }}" --state merged --json number --jq '.[0].number')
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr comment "$PR_NUMBER" --body "Published as \`@rangojs/router@${{ steps.version.outputs.version }}\`
+
+          \`\`\`
+          pnpm add @rangojs/router@${{ steps.version.outputs.version }}
+          \`\`\`"
+          else
+            echo "No merged PR found for commit ${{ github.sha }}"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}

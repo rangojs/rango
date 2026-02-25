@@ -34,7 +34,7 @@ test.describe("error-boundary", () => {
 
       // Verify the error message is displayed
       await expect(
-        page.getByText("Client-side error", { exact: false }).first()
+        page.getByText("Client-side error", { exact: false }).first(),
       ).toBeVisible();
     });
 
@@ -76,7 +76,7 @@ test.describe("error-boundary", () => {
 
       // Verify the error message mentions it's a server error
       await expect(
-        page.getByText("Server error", { exact: false }).first()
+        page.getByText("Server error", { exact: false }).first(),
       ).toBeVisible();
     });
 
@@ -113,8 +113,8 @@ test.describe("error-boundary", () => {
       // Should briefly show loading state
       await expect(
         testId(page, "main-content").locator(
-          '[data-testid="streaming-error-loading"]'
-        )
+          '[data-testid="streaming-error-loading"]',
+        ),
       ).toBeVisible({
         timeout: 2000,
       });
@@ -126,7 +126,7 @@ test.describe("error-boundary", () => {
 
       // Verify the error message mentions streaming
       await expect(
-        page.getByText("Streaming error", { exact: false }).first()
+        page.getByText("Streaming error", { exact: false }).first(),
       ).toBeVisible();
     });
 
@@ -143,8 +143,8 @@ test.describe("error-boundary", () => {
       // Should show loading
       await expect(
         testId(page, "main-content").locator(
-          '[data-testid="streaming-error-loading"]'
-        )
+          '[data-testid="streaming-error-loading"]',
+        ),
       ).toBeVisible({
         timeout: 2000,
       });

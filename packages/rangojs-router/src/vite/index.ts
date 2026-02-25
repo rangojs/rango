@@ -4,7 +4,13 @@ import * as Vite from "vite";
 import { resolve, join, dirname, basename, relative, posix } from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
+import {
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  unlinkSync,
+} from "node:fs";
 import {
   generateRouteTypesSource,
   writeCombinedRouteTypes,
@@ -54,10 +60,13 @@ const versionEsbuildPlugin = {
       path: args.path,
       namespace: "@rangojs/router-virtual",
     }));
-    build.onLoad({ filter: /.*/, namespace: "@rangojs/router-virtual" }, () => ({
-      contents: `export const VERSION = "dev";`,
-      loader: "js",
-    }));
+    build.onLoad(
+      { filter: /.*/, namespace: "@rangojs/router-virtual" },
+      () => ({
+        contents: `export const VERSION = "dev";`,
+        loader: "js",
+      }),
+    );
   },
 };
 
@@ -70,8 +79,10 @@ const sharedEsbuildOptions = {
 };
 
 // Dev-mode client-reference key prefixes emitted by @vitejs/plugin-rsc
-const CLIENT_PKG_PROXY_PREFIX = "/@id/__x00__virtual:vite-rsc/client-package-proxy/";
-const CLIENT_IN_SERVER_PKG_PROXY_PREFIX = "/@id/__x00__virtual:vite-rsc/client-in-server-package-proxy/";
+const CLIENT_PKG_PROXY_PREFIX =
+  "/@id/__x00__virtual:vite-rsc/client-package-proxy/";
+const CLIENT_IN_SERVER_PKG_PROXY_PREFIX =
+  "/@id/__x00__virtual:vite-rsc/client-in-server-package-proxy/";
 const FS_PREFIX = "/@fs/";
 
 /**
@@ -84,7 +95,10 @@ const FS_PREFIX = "/@fs/";
  * Returns the input unchanged if it doesn't match a known dev-mode pattern
  * (e.g., already a production hash).
  */
-export function computeProductionHash(projectRoot: string, refKey: string): string {
+export function computeProductionHash(
+  projectRoot: string,
+  refKey: string,
+): string {
   let toHash: string;
 
   if (refKey.startsWith(CLIENT_PKG_PROXY_PREFIX)) {
@@ -92,7 +106,9 @@ export function computeProductionHash(projectRoot: string, refKey: string): stri
     toHash = refKey.slice(CLIENT_PKG_PROXY_PREFIX.length);
   } else if (refKey.startsWith(CLIENT_IN_SERVER_PKG_PROXY_PREFIX)) {
     // /@id/__x00__virtual:vite-rsc/client-in-server-package-proxy/<encodedAbsPath>
-    const absPath = decodeURIComponent(refKey.slice(CLIENT_IN_SERVER_PKG_PROXY_PREFIX.length));
+    const absPath = decodeURIComponent(
+      refKey.slice(CLIENT_IN_SERVER_PKG_PROXY_PREFIX.length),
+    );
     toHash = posix.normalize(relative(projectRoot, absPath));
   } else if (refKey.startsWith(FS_PREFIX)) {
     // /@fs/abs/path.tsx -> hash(relative(root, "/abs/path.tsx"))
@@ -112,7 +128,8 @@ export function computeProductionHash(projectRoot: string, refKey: string): stri
 // Regex to match registerClientReference() calls as emitted by @vitejs/plugin-rsc.
 // Captures the reference key (second argument) from the call.
 // Handles two proxy forms: parenthesized expression `(expr)` and arrow-throw `() => { ... }`.
-const REGISTER_CLIENT_REF_RE = /registerClientReference\(\s*(?:(?:\([^)]*\))|(?:\(\)[\s\S]*?\}))\s*,\s*"([^"]+)"\s*,\s*"[^"]+"\s*\)/g;
+const REGISTER_CLIENT_REF_RE =
+  /registerClientReference\(\s*(?:(?:\([^)]*\))|(?:\(\)[\s\S]*?\}))\s*,\s*"([^"]+)"\s*,\s*"[^"]+"\s*\)/g;
 
 /**
  * Transform source code by replacing dev-mode client reference keys with
@@ -126,12 +143,15 @@ export function transformClientRefs(
   if (!code.includes("registerClientReference")) return null;
 
   let hasReplacement = false;
-  const result = code.replace(REGISTER_CLIENT_REF_RE, (match, refKey: string) => {
-    const hash = computeProductionHash(projectRoot, refKey);
-    if (hash === refKey) return match;
-    hasReplacement = true;
-    return match.replace(`"${refKey}"`, `"${hash}"`);
-  });
+  const result = code.replace(
+    REGISTER_CLIENT_REF_RE,
+    (match, refKey: string) => {
+      const hash = computeProductionHash(projectRoot, refKey);
+      if (hash === refKey) return match;
+      hasReplacement = true;
+      return match.replace(`"${refKey}"`, `"${hash}"`);
+    },
+  );
 
   return hasReplacement ? result : null;
 }
@@ -298,9 +318,8 @@ export type RangoOptions = RangoNodeOptions | RangoCloudflareOptions;
  */
 function createVirtualEntriesPlugin(
   entries: { client: string; ssr: string; rsc?: string },
-  routerPath?: string
+  routerPath?: string,
 ): Plugin {
-
   // Build virtual modules map based on which entries use virtual IDs
   const virtualModules: Record<string, string> = {};
 
@@ -354,8 +373,15 @@ function createVirtualEntriesPlugin(
  * - empty bundle: @vitejs/plugin-rsc scan build (step 1/5) produces an empty "index" chunk
  *   because the RSC entry is fully externalized during client-reference analysis
  */
-function onwarn(warning: Vite.Rollup.RollupLog, defaultHandler: (warning: Vite.Rollup.RollupLog) => void): void {
-  if (warning.code === "MODULE_LEVEL_DIRECTIVE" || warning.code === "SOURCEMAP_ERROR" || warning.code === "EMPTY_BUNDLE") {
+function onwarn(
+  warning: Vite.Rollup.RollupLog,
+  defaultHandler: (warning: Vite.Rollup.RollupLog) => void,
+): void {
+  if (
+    warning.code === "MODULE_LEVEL_DIRECTIVE" ||
+    warning.code === "SOURCEMAP_ERROR" ||
+    warning.code === "EMPTY_BUNDLE"
+  ) {
     return;
   }
   // @vitejs/plugin-rsc@0.5.14: rsc:virtual:vite-rsc/assets-manifest renderChunk
@@ -367,7 +393,9 @@ function onwarn(warning: Vite.Rollup.RollupLog, defaultHandler: (warning: Vite.R
   }
   if (
     warning.plugin === "vite:reporter" &&
-    warning.message?.includes("dynamic import will not move module into another chunk")
+    warning.message?.includes(
+      "dynamic import will not move module into another chunk",
+    )
   ) {
     return;
   }
@@ -416,7 +444,11 @@ function flattenLeafEntries(
 ): void {
   function visit(node: any): void {
     const children = node.children || {};
-    if (Object.keys(children).length === 0 && node.routes && node.routes.length > 0) {
+    if (
+      Object.keys(children).length === 0 &&
+      node.routes &&
+      node.routes.length > 0
+    ) {
       // Leaf node: collect its routes from the manifest
       const routes: Record<string, string> = {};
       for (const name of node.routes) {
@@ -446,7 +478,7 @@ function buildRouteToStaticPrefix(
 ): void {
   function visit(node: any): void {
     const sp = node.staticPrefix || "";
-    for (const name of (node.routes || [])) {
+    for (const name of node.routes || []) {
       result[name] = sp;
     }
     for (const child of Object.values(node.children || {})) {
@@ -465,7 +497,10 @@ function buildRouteToStaticPrefix(
  * Returns the position after the closing paren, or -1 if unmatched.
  * @internal Exported for testing only.
  */
-export function findMatchingParenInBundle(code: string, openParenPos: number): number {
+export function findMatchingParenInBundle(
+  code: string,
+  openParenPos: number,
+): number {
   let depth = 1;
   let pos = openParenPos;
   while (pos < code.length && depth > 0) {
@@ -492,7 +527,11 @@ export function extractHandlerExportsFromChunk(
   fnName: string,
   detectPassthrough: boolean,
 ): Array<{ name: string; handlerId: string; passthrough: boolean }> {
-  const handlers: Array<{ name: string; handlerId: string; passthrough: boolean }> = [];
+  const handlers: Array<{
+    name: string;
+    handlerId: string;
+    passthrough: boolean;
+  }> = [];
 
   for (const [, handlerNames] of handlerModules) {
     for (const name of handlerNames) {
@@ -558,7 +597,8 @@ export function evictHandlerCode(
 
     // Skip trailing whitespace and optional semicolon
     let rangeEnd = closePos;
-    while (rangeEnd < modified.length && /\s/.test(modified[rangeEnd])) rangeEnd++;
+    while (rangeEnd < modified.length && /\s/.test(modified[rangeEnd]))
+      rangeEnd++;
     if (modified[rangeEnd] === ";") rangeEnd++;
 
     // Validate: matched range must contain the expected handlerId
@@ -566,7 +606,8 @@ export function evictHandlerCode(
     if (!matched.includes(handlerId)) continue;
 
     const stub = `const ${name} = { __brand: "${brand}", $$id: "${handlerId}" };`;
-    modified = modified.slice(0, startMatch.index) + stub + modified.slice(rangeEnd);
+    modified =
+      modified.slice(0, startMatch.index) + stub + modified.slice(rangeEnd);
 
     // Remove the now-redundant $$id assignment line.
     modified = modified.replace(
@@ -576,7 +617,10 @@ export function evictHandlerCode(
   }
 
   if (modified === code) return null;
-  return { code: modified, savedBytes: originalSize - Buffer.byteLength(modified) };
+  return {
+    code: modified,
+    savedBytes: originalSize - Buffer.byteLength(modified),
+  };
 }
 
 /**
@@ -694,7 +738,12 @@ function notifyOnError(
  */
 function createRouterDiscoveryPlugin(
   entryPath: string | undefined,
-  opts?: { enableBuildPrerender?: boolean; staticRouteTypesGeneration?: boolean; include?: string[]; exclude?: string[] },
+  opts?: {
+    enableBuildPrerender?: boolean;
+    staticRouteTypesGeneration?: boolean;
+    include?: string[];
+    exclude?: string[];
+  },
 ): Plugin {
   let resolvedEntryPath: string | undefined = entryPath;
   let projectRoot = "";
@@ -736,7 +785,10 @@ function createRouterDiscoveryPlugin(
   let rscEntryFileName: string | null = null;
 
   // Collected static handler data: handlerId -> { encoded Flight payload, handle data }.
-  let staticCollectedData: Record<string, { encoded: string; handles: Record<string, unknown[]> }> | null = null;
+  let staticCollectedData: Record<
+    string,
+    { encoded: string; handles: Record<string, unknown[]> }
+  > | null = null;
 
   // Handler chunk info for __static-handlers, populated by generateBundle.
   let staticHandlerChunkInfo: {
@@ -769,7 +821,10 @@ function createRouterDiscoveryPlugin(
   // Each router gets its own manifest, trie, and precomputed entries so that
   // virtual:rsc-router/routes-manifest/<routerId> modules can be emitted.
   let perRouterTrieMap: Map<string, any> = new Map();
-  let perRouterPrecomputedMap: Map<string, Array<{ staticPrefix: string; routes: Record<string, string> }>> = new Map();
+  let perRouterPrecomputedMap: Map<
+    string,
+    Array<{ staticPrefix: string; routes: Record<string, string> }>
+  > = new Map();
   let perRouterManifestDataMap: Map<string, Record<string, string>> = new Map();
 
   // Dev-mode state for on-demand prerender endpoint.
@@ -827,16 +882,17 @@ function createRouterDiscoveryPlugin(
       // that need to be resolved to trigger sub-app createRouter() calls.
       try {
         const hostMod = await rscEnv.runner.import("@rangojs/router/host");
-        const hostRegistry: Map<string, any> | undefined = hostMod.HostRouterRegistry;
+        const hostRegistry: Map<string, any> | undefined =
+          hostMod.HostRouterRegistry;
 
         if (hostRegistry && hostRegistry.size > 0) {
           console.log(
-            `[rsc-router] Found ${hostRegistry.size} host router(s), resolving lazy handlers...`
+            `[rsc-router] Found ${hostRegistry.size} host router(s), resolving lazy handlers...`,
           );
 
           for (const [, entry] of hostRegistry) {
             for (const route of entry.routes) {
-              if (typeof route.handler === 'function') {
+              if (typeof route.handler === "function") {
                 try {
                   await route.handler();
                 } catch {
@@ -844,7 +900,10 @@ function createRouterDiscoveryPlugin(
                 }
               }
             }
-            if (entry.fallback && typeof entry.fallback.handler === 'function') {
+            if (
+              entry.fallback &&
+              typeof entry.fallback.handler === "function"
+            ) {
               try {
                 await entry.fallback.handler();
               } catch {
@@ -854,7 +913,9 @@ function createRouterDiscoveryPlugin(
           }
 
           // Re-read RouterRegistry - sub-app createRouter() calls should have populated it
-          const freshServerMod = await rscEnv.runner.import("@rangojs/router/server");
+          const freshServerMod = await rscEnv.runner.import(
+            "@rangojs/router/server",
+          );
           const freshRegistry: Map<string, any> = freshServerMod.RouterRegistry;
 
           if (freshRegistry && freshRegistry.size > 0) {
@@ -870,7 +931,7 @@ function createRouterDiscoveryPlugin(
       // If still no routers after host router resolution, fail
       if (!registry || registry.size === 0) {
         throw new Error(
-          `[rsc-router] No routers found in registry after importing ${resolvedEntryPath}`
+          `[rsc-router] No routers found in registry after importing ${resolvedEntryPath}`,
         );
       }
     }
@@ -902,7 +963,7 @@ function createRouterDiscoveryPlugin(
       allManifests.push({ id, manifest });
       const routeCount = Object.keys(manifest.routeManifest).length;
       const staticRoutes = Object.values(manifest.routeManifest).filter(
-        (p: any) => !p.includes(":") && !p.includes("*")
+        (p: any) => !p.includes(":") && !p.includes("*"),
       ).length;
       const dynamicRoutes = routeCount - staticRoutes;
 
@@ -914,7 +975,9 @@ function createRouterDiscoveryPlugin(
       // supplemented on file change since HMR won't re-discover them.
       let factoryOnlyPrefixes: Set<string> | undefined;
       if (router.__sourceFile) {
-        const staticParsed = buildCombinedRouteMapForRouterFile(router.__sourceFile);
+        const staticParsed = buildCombinedRouteMapForRouterFile(
+          router.__sourceFile,
+        );
         const staticNames = new Set(Object.keys(staticParsed.routes));
         factoryOnlyPrefixes = new Set<string>();
         for (const name of Object.keys(manifest.routeManifest)) {
@@ -922,7 +985,7 @@ function createRouterDiscoveryPlugin(
           const dotIdx = name.indexOf(".");
           if (dotIdx <= 0) continue;
           const prefix = name.substring(0, dotIdx + 1);
-          if ([...staticNames].some(n => n.startsWith(prefix))) continue;
+          if ([...staticNames].some((n) => n.startsWith(prefix))) continue;
           factoryOnlyPrefixes.add(prefix);
         }
         if (factoryOnlyPrefixes.size === 0) factoryOnlyPrefixes = undefined;
@@ -948,17 +1011,28 @@ function createRouterDiscoveryPlugin(
       // Flatten prefix tree leaf nodes into precomputed entries.
       // Leaf nodes (no children) can have their routes used directly by
       // evaluateLazyEntry() without running the handler at runtime.
-      flattenLeafEntries(manifest.prefixTree, manifest.routeManifest, mergedPrecomputedEntries);
+      flattenLeafEntries(
+        manifest.prefixTree,
+        manifest.routeManifest,
+        mergedPrecomputedEntries,
+      );
 
       // Store per-router manifest and precomputed entries for isolated virtual modules.
       perRouterManifestDataMap.set(id, manifest.routeManifest);
-      const routerPrecomputed: Array<{ staticPrefix: string; routes: Record<string, string> }> = [];
-      flattenLeafEntries(manifest.prefixTree, manifest.routeManifest, routerPrecomputed);
+      const routerPrecomputed: Array<{
+        staticPrefix: string;
+        routes: Record<string, string>;
+      }> = [];
+      flattenLeafEntries(
+        manifest.prefixTree,
+        manifest.routeManifest,
+        routerPrecomputed,
+      );
       perRouterPrecomputedMap.set(id, routerPrecomputed);
 
       console.log(
         `[rsc-router] Router "${id}" -> ${routeCount} routes ` +
-        `(${staticRoutes} static, ${dynamicRoutes} dynamic)`
+          `(${staticRoutes} static, ${dynamicRoutes} dynamic)`,
       );
     }
 
@@ -968,13 +1042,15 @@ function createRouterDiscoveryPlugin(
     // imports in host routers). This causes per-router data to be loaded into
     // the wrong router at runtime.
     if (registry.size > 1) {
-      const autoIds = [...registry.keys()].filter((id) => /^router_\d+$/.test(id));
+      const autoIds = [...registry.keys()].filter((id) =>
+        /^router_\d+$/.test(id),
+      );
       if (autoIds.length > 1) {
         console.warn(
           `[rsc-router] WARNING: ${autoIds.length} routers use auto-generated IDs (${autoIds.join(", ")}). ` +
-          `In multi-router setups, each createRouter() must have an explicit \`id\` option ` +
-          `to ensure per-router manifest data is matched correctly at runtime. ` +
-          `Example: createRouter({ id: "site", ... })`
+            `In multi-router setups, each createRouter() must have an explicit \`id\` option ` +
+            `to ensure per-router manifest data is matched correctly at runtime. ` +
+            `Example: createRouter({ id: "site", ... })`,
         );
       }
     }
@@ -1011,7 +1087,10 @@ function createRouterDiscoveryPlugin(
             }
           }
           if (manifest.responseTypeRoutes) {
-            Object.assign(mergedResponseTypeRoutes, manifest.responseTypeRoutes);
+            Object.assign(
+              mergedResponseTypeRoutes,
+              manifest.responseTypeRoutes,
+            );
           }
         }
 
@@ -1019,15 +1098,23 @@ function createRouterDiscoveryPlugin(
           mergedRouteManifest,
           mergedRouteAncestry,
           routeToStaticPrefix,
-          Object.keys(mergedRouteTrailingSlash).length > 0 ? mergedRouteTrailingSlash : undefined,
+          Object.keys(mergedRouteTrailingSlash).length > 0
+            ? mergedRouteTrailingSlash
+            : undefined,
           prerenderRouteNames.size > 0 ? prerenderRouteNames : undefined,
           passthroughRouteNames.size > 0 ? passthroughRouteNames : undefined,
-          Object.keys(mergedResponseTypeRoutes).length > 0 ? mergedResponseTypeRoutes : undefined,
+          Object.keys(mergedResponseTypeRoutes).length > 0
+            ? mergedResponseTypeRoutes
+            : undefined,
         );
 
         // Build per-router tries for multi-router isolation.
         for (const { id, manifest } of allManifests) {
-          if (!manifest._routeAncestry || Object.keys(manifest._routeAncestry).length === 0) continue;
+          if (
+            !manifest._routeAncestry ||
+            Object.keys(manifest._routeAncestry).length === 0
+          )
+            continue;
           const perRouterStaticPrefix: Record<string, string> = {};
           for (const name of Object.keys(manifest.routeManifest)) {
             perRouterStaticPrefix[name] = "";
@@ -1045,12 +1132,20 @@ function createRouterDiscoveryPlugin(
             manifest.routeManifest,
             manifest._routeAncestry,
             perRouterStaticPrefix,
-            manifest.routeTrailingSlash && Object.keys(manifest.routeTrailingSlash).length > 0
-              ? manifest.routeTrailingSlash : undefined,
-            perRouterPrerenderNames && perRouterPrerenderNames.size > 0 ? perRouterPrerenderNames : undefined,
-            perRouterPassthroughNames && perRouterPassthroughNames.size > 0 ? perRouterPassthroughNames : undefined,
-            manifest.responseTypeRoutes && Object.keys(manifest.responseTypeRoutes).length > 0
-              ? manifest.responseTypeRoutes : undefined,
+            manifest.routeTrailingSlash &&
+              Object.keys(manifest.routeTrailingSlash).length > 0
+              ? manifest.routeTrailingSlash
+              : undefined,
+            perRouterPrerenderNames && perRouterPrerenderNames.size > 0
+              ? perRouterPrerenderNames
+              : undefined,
+            perRouterPassthroughNames && perRouterPassthroughNames.size > 0
+              ? perRouterPassthroughNames
+              : undefined,
+            manifest.responseTypeRoutes &&
+              Object.keys(manifest.responseTypeRoutes).length > 0
+              ? manifest.responseTypeRoutes
+              : undefined,
           );
           perRouterTrieMap.set(id, perRouterTrie);
         }
@@ -1061,7 +1156,12 @@ function createRouterDiscoveryPlugin(
     // Static routes use pattern as-is; dynamic routes call getParams() to enumerate.
     // Each entry tracks its route name and concurrency setting for grouped parallel rendering.
     if (opts?.enableBuildPrerender && isBuildMode) {
-      type PrerenderEntry = { urlPath: string; routeName: string; concurrency: number; buildVars?: Record<string, any> };
+      type PrerenderEntry = {
+        urlPath: string;
+        routeName: string;
+        concurrency: number;
+        buildVars?: Record<string, any>;
+      };
       const entries: PrerenderEntry[] = [];
 
       // Build a merged route map for getParams context reverse()
@@ -1069,14 +1169,20 @@ function createRouterDiscoveryPlugin(
       for (const { manifest: m } of allManifests) {
         if (m.routeManifest) Object.assign(allRoutes, m.routeManifest);
       }
-      const getParamsReverse = (name: string, params?: Record<string, string>) => {
+      const getParamsReverse = (
+        name: string,
+        params?: Record<string, string>,
+      ) => {
         const pattern = allRoutes[name];
         if (!pattern) throw new Error(`Unknown route: "${name}"`);
         let result = pattern;
         if (params) {
           for (const [key, value] of Object.entries(params)) {
             // Strip constraint syntax: :param(a|b) -> value
-            result = result.replace(new RegExp(`:${key}(\\([^)]*\\))?`), encodeURIComponent(value));
+            result = result.replace(
+              new RegExp(`:${key}(\\([^)]*\\))?`),
+              encodeURIComponent(value),
+            );
             result = result.replace(`*${key}`, encodeURIComponent(value));
           }
         }
@@ -1105,27 +1211,39 @@ function createRouterDiscoveryPlugin(
                 const buildVars: Record<string, any> = {};
                 const getParamsCtx = {
                   build: true as const,
-                  set: ((keyOrVar: any, value: any) => { contextSet(buildVars, keyOrVar, value); }) as any,
+                  set: ((keyOrVar: any, value: any) => {
+                    contextSet(buildVars, keyOrVar, value);
+                  }) as any,
                   reverse: getParamsReverse,
                 };
                 const paramsList = await def.getParams(getParamsCtx);
                 const concurrency = def.options?.concurrency ?? 1;
-                const hasBuildVars = Object.keys(buildVars).length > 0 || Object.getOwnPropertySymbols(buildVars).length > 0;
+                const hasBuildVars =
+                  Object.keys(buildVars).length > 0 ||
+                  Object.getOwnPropertySymbols(buildVars).length > 0;
                 for (const params of paramsList) {
                   let url = pattern;
-                  for (const [key, value] of Object.entries(params as Record<string, string>)) {
+                  for (const [key, value] of Object.entries(
+                    params as Record<string, string>,
+                  )) {
                     const encoded = encodePathParam(value);
                     // Strip constraint syntax: :param(a|b) -> value
-                    url = url.replace(new RegExp(`:${key}(\\([^)]*\\))?`), encoded);
+                    url = url.replace(
+                      new RegExp(`:${key}(\\([^)]*\\))?`),
+                      encoded,
+                    );
                     url = url.replace(`*${key}`, encoded);
                   }
                   // Anonymous wildcard fallback: use conventional keys if provided
                   if (url.includes("*")) {
                     const wildcardValue =
-                      (params as Record<string, string>)["*"]
-                      ?? (params as Record<string, string>).splat;
+                      (params as Record<string, string>)["*"] ??
+                      (params as Record<string, string>).splat;
                     if (wildcardValue !== undefined) {
-                      url = url.replace(/\*[^/]*$/, encodePathParam(wildcardValue));
+                      url = url.replace(
+                        /\*[^/]*$/,
+                        encodePathParam(wildcardValue),
+                      );
                     }
                   }
                   entries.push({
@@ -1139,21 +1257,28 @@ function createRouterDiscoveryPlugin(
                 // Skip in getParams() skips the entire route
                 if (err.name === "Skip") {
                   console.log(
-                    `[rsc-router]   SKIP route "${routeName}" - ${err.message}`
+                    `[rsc-router]   SKIP route "${routeName}" - ${err.message}`,
                   );
-                  notifyOnError(registry, err, "prerender", routeName, undefined, true);
+                  notifyOnError(
+                    registry,
+                    err,
+                    "prerender",
+                    routeName,
+                    undefined,
+                    true,
+                  );
                   continue;
                 }
                 // Regular error: fail the build
                 console.error(
-                  `[rsc-router] Failed to get params for prerender route "${routeName}": ${err.message}`
+                  `[rsc-router] Failed to get params for prerender route "${routeName}": ${err.message}`,
                 );
                 notifyOnError(registry, err, "prerender", routeName);
                 throw err;
               }
             } else {
               console.warn(
-                `[rsc-router] Dynamic prerender route "${routeName}" has no getParams(), skipping`
+                `[rsc-router] Dynamic prerender route "${routeName}" has no getParams(), skipping`,
               );
             }
           }
@@ -1161,13 +1286,16 @@ function createRouterDiscoveryPlugin(
       }
       if (entries.length > 0) {
         // Determine the max concurrency for the log header
-        const maxConcurrency = Math.max(...entries.map(e => e.concurrency));
-        const concurrencyNote = maxConcurrency > 1 ? ` (concurrency: ${maxConcurrency})` : "";
+        const maxConcurrency = Math.max(...entries.map((e) => e.concurrency));
+        const concurrencyNote =
+          maxConcurrency > 1 ? ` (concurrency: ${maxConcurrency})` : "";
         console.log(
-          `[rsc-router] Pre-rendering ${entries.length} URL(s)${concurrencyNote}...`
+          `[rsc-router] Pre-rendering ${entries.length} URL(s)${concurrencyNote}...`,
         );
 
-        const { hashParams } = await rscEnv.runner.import("@rangojs/router/build");
+        const { hashParams } = await rscEnv.runner.import(
+          "@rangojs/router/build",
+        );
 
         const collectedData: Record<string, any> = {};
         let doneCount = 0;
@@ -1179,48 +1307,77 @@ function createRouterDiscoveryPlugin(
         const groups = groupByConcurrency(entries);
 
         for (const group of groups) {
-          await runWithConcurrency(group.entries, group.concurrency, async (entry) => {
-            const startUrl = performance.now();
-            for (const [, routerInstance] of registry) {
-              if (!routerInstance.matchForPrerender) continue;
-              try {
-                const result = await routerInstance.matchForPrerender(entry.urlPath, {}, entry.buildVars);
-                if (!result) continue;
-                const paramHash = hashParams(result.params || {});
-                collectedData[`${result.routeName}/${paramHash}`] = {
-                  segments: result.segments,
-                  handles: result.handles,
-                };
-                if (result.interceptSegments?.length) {
-                  collectedData[`${result.routeName}/${paramHash}/i`] = {
-                    segments: [...result.segments, ...result.interceptSegments],
-                    handles: { ...result.handles, ...(result.interceptHandles || {}) },
+          await runWithConcurrency(
+            group.entries,
+            group.concurrency,
+            async (entry) => {
+              const startUrl = performance.now();
+              for (const [, routerInstance] of registry) {
+                if (!routerInstance.matchForPrerender) continue;
+                try {
+                  const result = await routerInstance.matchForPrerender(
+                    entry.urlPath,
+                    {},
+                    entry.buildVars,
+                  );
+                  if (!result) continue;
+                  const paramHash = hashParams(result.params || {});
+                  collectedData[`${result.routeName}/${paramHash}`] = {
+                    segments: result.segments,
+                    handles: result.handles,
                   };
-                }
-                const elapsed = (performance.now() - startUrl).toFixed(0);
-                console.log(`[rsc-router]   OK   ${entry.urlPath.padEnd(40)} (${elapsed}ms)`);
-                doneCount++;
-                break;
-              } catch (err: any) {
-                if (err.name === "Skip") {
+                  if (result.interceptSegments?.length) {
+                    collectedData[`${result.routeName}/${paramHash}/i`] = {
+                      segments: [
+                        ...result.segments,
+                        ...result.interceptSegments,
+                      ],
+                      handles: {
+                        ...result.handles,
+                        ...(result.interceptHandles || {}),
+                      },
+                    };
+                  }
                   const elapsed = (performance.now() - startUrl).toFixed(0);
                   console.log(
-                    `[rsc-router]   SKIP ${entry.urlPath.padEnd(40)} (${elapsed}ms) - ${err.message}`
+                    `[rsc-router]   OK   ${entry.urlPath.padEnd(40)} (${elapsed}ms)`,
                   );
-                  skipCount++;
-                  notifyOnError(registry, err, "prerender", entry.routeName, entry.urlPath, true);
+                  doneCount++;
                   break;
+                } catch (err: any) {
+                  if (err.name === "Skip") {
+                    const elapsed = (performance.now() - startUrl).toFixed(0);
+                    console.log(
+                      `[rsc-router]   SKIP ${entry.urlPath.padEnd(40)} (${elapsed}ms) - ${err.message}`,
+                    );
+                    skipCount++;
+                    notifyOnError(
+                      registry,
+                      err,
+                      "prerender",
+                      entry.routeName,
+                      entry.urlPath,
+                      true,
+                    );
+                    break;
+                  }
+                  // Regular error: log, notify, and fail the build
+                  const elapsed = (performance.now() - startUrl).toFixed(0);
+                  console.error(
+                    `[rsc-router]   FAIL ${entry.urlPath.padEnd(40)} (${elapsed}ms) - ${err.message}`,
+                  );
+                  notifyOnError(
+                    registry,
+                    err,
+                    "prerender",
+                    entry.routeName,
+                    entry.urlPath,
+                  );
+                  throw err;
                 }
-                // Regular error: log, notify, and fail the build
-                const elapsed = (performance.now() - startUrl).toFixed(0);
-                console.error(
-                  `[rsc-router]   FAIL ${entry.urlPath.padEnd(40)} (${elapsed}ms) - ${err.message}`
-                );
-                notifyOnError(registry, err, "prerender", entry.routeName, entry.urlPath);
-                throw err;
               }
-            }
-          });
+            },
+          );
         }
 
         const totalElapsed = (performance.now() - startTotal).toFixed(0);
@@ -1230,7 +1387,7 @@ function createRouterDiscoveryPlugin(
         const parts = [`${doneCount} done`];
         if (skipCount > 0) parts.push(`${skipCount} skipped`);
         console.log(
-          `[rsc-router] Pre-render complete: ${parts.join(", ")} (${totalElapsed}ms total)`
+          `[rsc-router] Pre-render complete: ${parts.join(", ")} (${totalElapsed}ms total)`,
         );
       }
     }
@@ -1238,8 +1395,15 @@ function createRouterDiscoveryPlugin(
     // Render Static handlers at build time (segment-level, not route-level).
     // Each Static handler is called with a synthetic BuildContext and its
     // output is RSC-serialized. The encoded string is stored keyed by handler $$id.
-    if (opts?.enableBuildPrerender && isBuildMode && resolvedStaticModules?.size) {
-      const collected: Record<string, { encoded: string; handles: Record<string, unknown[]> }> = {};
+    if (
+      opts?.enableBuildPrerender &&
+      isBuildMode &&
+      resolvedStaticModules?.size
+    ) {
+      const collected: Record<
+        string,
+        { encoded: string; handles: Record<string, unknown[]> }
+      > = {};
       let staticDone = 0;
       let staticSkip = 0;
       let totalStaticCount = 0;
@@ -1249,14 +1413,18 @@ function createRouterDiscoveryPlugin(
         totalStaticCount += exportNames.length;
       }
       const startStatic = performance.now();
-      console.log(`[rsc-router] Rendering ${totalStaticCount} static handler(s)...`);
+      console.log(
+        `[rsc-router] Rendering ${totalStaticCount} static handler(s)...`,
+      );
 
       for (const [moduleId, exportNames] of resolvedStaticModules) {
         let mod: any;
         try {
           mod = await rscEnv!.runner.import(moduleId);
         } catch (err: any) {
-          console.error(`[rsc-router] Failed to import static module ${moduleId}: ${err.message}`);
+          console.error(
+            `[rsc-router] Failed to import static module ${moduleId}: ${err.message}`,
+          );
           notifyOnError(registry, err, "static");
           throw err;
         }
@@ -1272,11 +1440,17 @@ function createRouterDiscoveryPlugin(
           for (const [, routerInstance] of registry) {
             if (!routerInstance.renderStaticSegment) continue;
             try {
-              const result = await routerInstance.renderStaticSegment(def.handler, def.$$id, (def as any).$$routePrefix);
+              const result = await routerInstance.renderStaticSegment(
+                def.handler,
+                def.$$id,
+                (def as any).$$routePrefix,
+              );
               if (result) {
                 collected[def.$$id] = result;
                 const elapsed = (performance.now() - startHandler).toFixed(0);
-                console.log(`[rsc-router]   OK   ${name.padEnd(40)} (${elapsed}ms)`);
+                console.log(
+                  `[rsc-router]   OK   ${name.padEnd(40)} (${elapsed}ms)`,
+                );
                 staticDone++;
                 handled = true;
                 break;
@@ -1285,24 +1459,33 @@ function createRouterDiscoveryPlugin(
               if (err.name === "Skip") {
                 const elapsed = (performance.now() - startHandler).toFixed(0);
                 console.log(
-                  `[rsc-router]   SKIP ${name.padEnd(40)} (${elapsed}ms) - ${err.message}`
+                  `[rsc-router]   SKIP ${name.padEnd(40)} (${elapsed}ms) - ${err.message}`,
                 );
                 staticSkip++;
-                notifyOnError(registry, err, "static", undefined, undefined, true);
+                notifyOnError(
+                  registry,
+                  err,
+                  "static",
+                  undefined,
+                  undefined,
+                  true,
+                );
                 handled = true;
                 break;
               }
               // Regular error: log, notify, and fail the build
               const elapsed = (performance.now() - startHandler).toFixed(0);
               console.error(
-                `[rsc-router]   FAIL ${name.padEnd(40)} (${elapsed}ms) - ${err.message}`
+                `[rsc-router]   FAIL ${name.padEnd(40)} (${elapsed}ms) - ${err.message}`,
               );
               notifyOnError(registry, err, "static");
               throw err;
             }
           }
           if (!handled) {
-            console.warn(`[rsc-router] No router could render static handler "${name}"`);
+            console.warn(
+              `[rsc-router] No router could render static handler "${name}"`,
+            );
           }
         }
       }
@@ -1314,7 +1497,7 @@ function createRouterDiscoveryPlugin(
       const staticParts = [`${staticDone} done`];
       if (staticSkip > 0) staticParts.push(`${staticSkip} skipped`);
       console.log(
-        `[rsc-router] Static render complete: ${staticParts.join(", ")} (${totalStaticElapsed}ms total)`
+        `[rsc-router] Static render complete: ${staticParts.join(", ")} (${totalStaticElapsed}ms total)`,
       );
     }
 
@@ -1324,15 +1507,21 @@ function createRouterDiscoveryPlugin(
   // Write per-router named-routes type files next to each router's source file.
   // Each router gets its own {basename}.named-routes.gen.ts with only its routes.
   // Only writes when content has changed to avoid triggering HMR loops.
-  function writeCombinedRouteTypesWithTracking(opts?: { preserveIfLarger?: boolean }): void {
-    const routerFiles = cachedRouterFiles ?? findRouterFiles(projectRoot, scanFilter);
+  function writeCombinedRouteTypesWithTracking(opts?: {
+    preserveIfLarger?: boolean;
+  }): void {
+    const routerFiles =
+      cachedRouterFiles ?? findRouterFiles(projectRoot, scanFilter);
     cachedRouterFiles = routerFiles;
 
     // Snapshot pre-write content to detect which files actually change.
     const preContent = new Map<string, string>();
     for (const routerFilePath of routerFiles) {
       const routerDir = dirname(routerFilePath);
-      const routerBasename = basename(routerFilePath).replace(/\.(tsx?|jsx?)$/, "");
+      const routerBasename = basename(routerFilePath).replace(
+        /\.(tsx?|jsx?)$/,
+        "",
+      );
       const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
       try {
         preContent.set(outPath, readFileSync(outPath, "utf-8"));
@@ -1349,7 +1538,10 @@ function createRouterDiscoveryPlugin(
     // multi-server setups (e.g. shared webServer + isolated HMR server).
     for (const routerFilePath of routerFiles) {
       const routerDir = dirname(routerFilePath);
-      const routerBasename = basename(routerFilePath).replace(/\.(tsx?|jsx?)$/, "");
+      const routerBasename = basename(routerFilePath).replace(
+        /\.(tsx?|jsx?)$/,
+        "",
+      );
       const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
       if (!existsSync(outPath)) continue;
       try {
@@ -1372,11 +1564,18 @@ function createRouterDiscoveryPlugin(
       const oldCombinedPath = join(entryDir, "named-routes.gen.ts");
       if (existsSync(oldCombinedPath)) {
         unlinkSync(oldCombinedPath);
-        console.log(`[rsc-router] Removed stale combined route types: ${oldCombinedPath}`);
+        console.log(
+          `[rsc-router] Removed stale combined route types: ${oldCombinedPath}`,
+        );
       }
     } catch {}
 
-    for (const { id, routeManifest, routeSearchSchemas, sourceFile } of perRouterManifests) {
+    for (const {
+      id,
+      routeManifest,
+      routeSearchSchemas,
+      sourceFile,
+    } of perRouterManifests) {
       if (!sourceFile) continue;
 
       // Validate sourceFile points to a real project file, not node_modules or
@@ -1385,8 +1584,8 @@ function createRouterDiscoveryPlugin(
       if (sourceFile.includes("node_modules")) {
         throw new Error(
           `[rsc-router] Router "${id}" has sourceFile inside node_modules: ${sourceFile}\n` +
-          `This means createRouter() stack trace parsing matched a Vite internal frame.\n` +
-          `Set an explicit \`id\` on createRouter() or check the call site.`,
+            `This means createRouter() stack trace parsing matched a Vite internal frame.\n` +
+            `Set an explicit \`id\` on createRouter() or check the call site.`,
         );
       }
 
@@ -1398,7 +1597,8 @@ function createRouterDiscoveryPlugin(
       // Runtime manifest may omit search schema metadata in some module-runner
       // flows. Fall back to static source parsing from the router file.
       if (
-        (!effectiveSearchSchemas || Object.keys(effectiveSearchSchemas).length === 0) &&
+        (!effectiveSearchSchemas ||
+          Object.keys(effectiveSearchSchemas).length === 0) &&
         sourceFile
       ) {
         const staticParsed = buildCombinedRouteMapForRouterFile(sourceFile);
@@ -1420,7 +1620,9 @@ function createRouterDiscoveryPlugin(
           ? effectiveSearchSchemas
           : undefined,
       );
-      const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
+      const existing = existsSync(outPath)
+        ? readFileSync(outPath, "utf-8")
+        : null;
       if (existing !== source) {
         markSelfGenWrite(outPath, source);
         writeFileSync(outPath, source);
@@ -1442,7 +1644,10 @@ function createRouterDiscoveryPlugin(
   // virtual module and re-evaluates it on the next request.
   function supplementGenFilesWithRuntimeRoutes() {
     // Cache static parsing results to avoid redundant I/O + parsing per router.
-    const parseCache = new Map<string, ReturnType<typeof buildCombinedRouteMapForRouterFile>>();
+    const parseCache = new Map<
+      string,
+      ReturnType<typeof buildCombinedRouteMapForRouterFile>
+    >();
     const getParsed = (file: string) => {
       let cached = parseCache.get(file);
       if (!cached) {
@@ -1452,7 +1657,12 @@ function createRouterDiscoveryPlugin(
       return cached;
     };
 
-    for (const { routeManifest, routeSearchSchemas, sourceFile, factoryOnlyPrefixes } of perRouterManifests) {
+    for (const {
+      routeManifest,
+      routeSearchSchemas,
+      sourceFile,
+      factoryOnlyPrefixes,
+    } of perRouterManifests) {
       if (!sourceFile) continue;
       if (!factoryOnlyPrefixes || factoryOnlyPrefixes.size === 0) continue;
 
@@ -1460,7 +1670,9 @@ function createRouterDiscoveryPlugin(
 
       // Merge: static routes (authoritative) + factory-only groups from runtime.
       const mergedRoutes: Record<string, string> = { ...staticParsed.routes };
-      const mergedSearchSchemas: Record<string, Record<string, string>> = { ...staticParsed.searchSchemas };
+      const mergedSearchSchemas: Record<string, Record<string, string>> = {
+        ...staticParsed.searchSchemas,
+      };
 
       for (const [name, pattern] of Object.entries(routeManifest)) {
         const dotIdx = name.indexOf(".");
@@ -1480,9 +1692,13 @@ function createRouterDiscoveryPlugin(
       const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
       const source = generateRouteTypesSource(
         mergedRoutes,
-        Object.keys(mergedSearchSchemas).length > 0 ? mergedSearchSchemas : undefined,
+        Object.keys(mergedSearchSchemas).length > 0
+          ? mergedSearchSchemas
+          : undefined,
       );
-      const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
+      const existing = existsSync(outPath)
+        ? readFileSync(outPath, "utf-8")
+        : null;
       if (existing !== source) {
         markSelfGenWrite(outPath, source);
         writeFileSync(outPath, source);
@@ -1563,10 +1779,9 @@ function createRouterDiscoveryPlugin(
         const idsPlugin = config.plugins.find(
           (p: any) => p.name === "@rangojs/router:expose-internal-ids",
         );
-        resolvedPrerenderModules =
-          (idsPlugin?.api as any)?.prerenderHandlerModules;
-        resolvedStaticModules =
-          (idsPlugin?.api as any)?.staticHandlerModules;
+        resolvedPrerenderModules = (idsPlugin?.api as any)
+          ?.prerenderHandlerModules;
+        resolvedStaticModules = (idsPlugin?.api as any)?.staticHandlerModules;
       }
     },
 
@@ -1588,8 +1803,8 @@ function createRouterDiscoveryPlugin(
       // Compute dev server origin from resolved URLs (preferred) or config port (fallback).
       // Called after discovery (or in the load hook) when the server may be listening.
       const getDevServerOrigin = () =>
-        server.resolvedUrls?.local?.[0]?.replace(/\/$/, '')
-        || `http://localhost:${server.config.server.port || 5173}`;
+        server.resolvedUrls?.local?.[0]?.replace(/\/$/, "") ||
+        `http://localhost:${server.config.server.port || 5173}`;
 
       // Shared temp server for Cloudflare dev (no module runner in workerd).
       // Used by both discover() (route type generation) and the prerender
@@ -1622,7 +1837,13 @@ function createRouterDiscoveryPlugin(
             resolve: { alias: userResolveAlias },
             esbuild: { jsx: "automatic", jsxImportSource: "react" },
             plugins: [
-              rsc({ entries: { client: "virtual:entry-client", ssr: "virtual:entry-ssr", rsc: resolvedEntryPath! } }),
+              rsc({
+                entries: {
+                  client: "virtual:entry-client",
+                  ssr: "virtual:entry-ssr",
+                  rsc: resolvedEntryPath!,
+                },
+              }),
               createVersionPlugin(),
               createVirtualStubPlugin(),
               // Dev prerender must use dev-mode IDs (path-based) to match the
@@ -1636,12 +1857,16 @@ function createRouterDiscoveryPlugin(
           const tempRscEnv = (prerenderTempServer.environments as any)?.rsc;
           if (tempRscEnv?.runner) {
             await tempRscEnv.runner.import(resolvedEntryPath!);
-            const serverMod = await tempRscEnv.runner.import("@rangojs/router/server");
+            const serverMod = await tempRscEnv.runner.import(
+              "@rangojs/router/server",
+            );
             prerenderNodeRegistry = serverMod.RouterRegistry;
             return tempRscEnv;
           }
         } catch (err: any) {
-          console.warn(`[rsc-router] Failed to create temp runner: ${err.message}`);
+          console.warn(
+            `[rsc-router] Failed to create temp runner: ${err.message}`,
+          );
         }
         return null;
       }
@@ -1664,7 +1889,7 @@ function createRouterDiscoveryPlugin(
             }
           } catch (err: any) {
             console.warn(
-              `[rsc-router] Cloudflare dev discovery failed: ${err.message}\n${err.stack}`
+              `[rsc-router] Cloudflare dev discovery failed: ${err.message}\n${err.stack}`,
             );
           }
 
@@ -1675,7 +1900,9 @@ function createRouterDiscoveryPlugin(
         try {
           // Set the readiness gate BEFORE discovery so early requests
           // block until manifest is populated
-          const serverMod = await rscEnv.runner.import("@rangojs/router/server");
+          const serverMod = await rscEnv.runner.import(
+            "@rangojs/router/server",
+          );
           if (serverMod?.setManifestReadyPromise) {
             serverMod.setManifestReadyPromise(discoveryPromise);
           }
@@ -1699,7 +1926,11 @@ function createRouterDiscoveryPlugin(
           if (mergedRouteManifest && serverMod?.setCachedManifest) {
             serverMod.setCachedManifest(mergedRouteManifest);
           }
-          if (mergedPrecomputedEntries && mergedPrecomputedEntries.length > 0 && serverMod?.setPrecomputedEntries) {
+          if (
+            mergedPrecomputedEntries &&
+            mergedPrecomputedEntries.length > 0 &&
+            serverMod?.setPrecomputedEntries
+          ) {
             serverMod.setPrecomputedEntries(mergedPrecomputedEntries);
           }
           if (mergedRouteTrie && serverMod?.setRouteTrie) {
@@ -1724,7 +1955,7 @@ function createRouterDiscoveryPlugin(
           }
         } catch (err: any) {
           console.warn(
-            `[rsc-router] Router discovery failed: ${err.message}\n${err.stack}`
+            `[rsc-router] Router discovery failed: ${err.message}\n${err.stack}`,
           );
         } finally {
           resolveDiscovery!();
@@ -1791,7 +2022,10 @@ function createRouterDiscoveryPlugin(
             if (wantIntercept && result.interceptSegments?.length) {
               payload = {
                 segments: [...result.segments, ...result.interceptSegments],
-                handles: { ...result.handles, ...(result.interceptHandles || {}) },
+                handles: {
+                  ...result.handles,
+                  ...(result.interceptHandles || {}),
+                },
               };
             } else {
               payload = { segments: result.segments, handles: result.handles };
@@ -1799,7 +2033,9 @@ function createRouterDiscoveryPlugin(
             res.end(JSON.stringify(payload));
             return;
           } catch (err: any) {
-            console.warn(`[rsc-router] Dev prerender failed for ${pathname}: ${err.message}`);
+            console.warn(
+              `[rsc-router] Dev prerender failed for ${pathname}: ${err.message}`,
+            );
           }
         }
 
@@ -1812,7 +2048,8 @@ function createRouterDiscoveryPlugin(
       if (opts?.staticRouteTypesGeneration !== false) {
         const isGeneratedRouteFile = (filePath: string): boolean =>
           filePath.endsWith(".gen.ts") &&
-          (filePath.includes("named-routes.gen.ts") || filePath.includes("urls.gen.ts"));
+          (filePath.includes("named-routes.gen.ts") ||
+            filePath.includes("urls.gen.ts"));
 
         const regenerateGeneratedRouteFiles = () => {
           if (perRouterManifests.length > 0) {
@@ -1822,7 +2059,9 @@ function createRouterDiscoveryPlugin(
           }
         };
 
-        const maybeHandleGeneratedRouteFileMutation = (filePath: string): boolean => {
+        const maybeHandleGeneratedRouteFileMutation = (
+          filePath: string,
+        ): boolean => {
           if (!isGeneratedRouteFile(filePath)) return false;
           if (consumeSelfGenWrite(filePath)) return true;
           regenerateGeneratedRouteFiles();
@@ -1845,7 +2084,9 @@ function createRouterDiscoveryPlugin(
                 supplementGenFilesWithRuntimeRoutes();
               }
             } catch (err: any) {
-              console.error(`[rsc-router] Route regeneration error: ${err.message}`);
+              console.error(
+                `[rsc-router] Route regeneration error: ${err.message}`,
+              );
             }
           }, 100);
         };
@@ -1857,13 +2098,18 @@ function createRouterDiscoveryPlugin(
             !filePath.endsWith(".tsx") &&
             !filePath.endsWith(".js") &&
             !filePath.endsWith(".jsx")
-          ) return;
+          )
+            return;
           // Apply scan filter as early-exit before reading file
           if (scanFilter && !scanFilter(filePath)) return;
           try {
             const source = readFileSync(filePath, "utf-8");
             const trimmed = source.trimStart();
-            if (trimmed.startsWith('"use client"') || trimmed.startsWith("'use client'")) return;
+            if (
+              trimmed.startsWith('"use client"') ||
+              trimmed.startsWith("'use client'")
+            )
+              return;
             const hasUrls = source.includes("urls(");
             const hasCreateRouter = /\bcreateRouter\s*[<(]/.test(source);
             if (!hasUrls && !hasCreateRouter) return;
@@ -1926,7 +2172,13 @@ function createRouterDiscoveryPlugin(
           // which fails when lazy host-router handlers load sub-app modules with JSX.
           esbuild: { jsx: "automatic", jsxImportSource: "react" },
           plugins: [
-            rsc({ entries: { client: "virtual:entry-client", ssr: "virtual:entry-ssr", rsc: resolvedEntryPath! } }),
+            rsc({
+              entries: {
+                client: "virtual:entry-client",
+                ssr: "virtual:entry-ssr",
+                rsc: resolvedEntryPath!,
+              },
+            }),
             hashClientRefs(projectRoot),
             createVersionPlugin(),
             // Stub virtual modules that the RSC entry may import
@@ -1943,7 +2195,7 @@ function createRouterDiscoveryPlugin(
         const rscEnv = (tempServer.environments as any)?.rsc;
         if (!rscEnv?.runner) {
           console.warn(
-            "[rsc-router] RSC environment runner not available during build, skipping manifest generation"
+            "[rsc-router] RSC environment runner not available during build, skipping manifest generation",
           );
           return;
         }
@@ -1967,7 +2219,10 @@ function createRouterDiscoveryPlugin(
         // Extract the user source file from the stack trace (skip internal frames)
         const sourceFile = err.stack
           ?.split("\n")
-          .find((line: string) => line.includes(projectRoot) && !line.includes("node_modules"))
+          .find(
+            (line: string) =>
+              line.includes(projectRoot) && !line.includes("node_modules"),
+          )
           ?.match(/\(([^)]+)\)/)?.[1];
         // Extract the route name from "Unknown route: <name>" errors
         const routeName = err.message?.match(/Unknown route: (.+)/)?.[1];
@@ -1975,9 +2230,11 @@ function createRouterDiscoveryPlugin(
           routeName ? `  Route name: ${routeName}` : null,
           sourceFile ? `  File: ${sourceFile}` : null,
           err.stack ? `  Stack:\n${err.stack}` : null,
-        ].filter(Boolean).join("\n");
+        ]
+          .filter(Boolean)
+          .join("\n");
         throw new Error(
-          `[rsc-router] Build-time router discovery failed:\n${details}`
+          `[rsc-router] Build-time router discovery failed:\n${details}`,
         );
       } finally {
         delete (globalThis as any).__rscRouterDiscoveryActive;
@@ -2009,7 +2266,8 @@ function createRouterDiscoveryPlugin(
         if (discoveryDone) {
           await discoveryDone;
         }
-        const hasManifest = mergedRouteManifest && Object.keys(mergedRouteManifest).length > 0;
+        const hasManifest =
+          mergedRouteManifest && Object.keys(mergedRouteManifest).length > 0;
         if (hasManifest) {
           // Build gen file import statements for each router with a sourceFile.
           // This creates a dependency in Vite's module graph: when the gen file
@@ -2018,20 +2276,34 @@ function createRouterDiscoveryPlugin(
           // setCachedManifest() with fresh data. No manual sync needed.
           const genFileImports: string[] = [];
           const genFileVars: string[] = [];
-          const routersWithoutGenFile: Array<{ id: string; manifest: Record<string, string> }> = [];
+          const routersWithoutGenFile: Array<{
+            id: string;
+            manifest: Record<string, string>;
+          }> = [];
           let varIdx = 0;
 
           for (const entry of perRouterManifests) {
             if (entry.sourceFile) {
               const routerDir = dirname(entry.sourceFile);
-              const routerBasename = basename(entry.sourceFile).replace(/\.(tsx?|jsx?)$/, "");
-              const genPath = join(routerDir, `${routerBasename}.named-routes.gen.js`);
+              const routerBasename = basename(entry.sourceFile).replace(
+                /\.(tsx?|jsx?)$/,
+                "",
+              );
+              const genPath = join(
+                routerDir,
+                `${routerBasename}.named-routes.gen.js`,
+              );
               const varName = `_r${varIdx++}`;
-              genFileImports.push(`import { NamedRoutes as ${varName} } from ${JSON.stringify(genPath)};`);
+              genFileImports.push(
+                `import { NamedRoutes as ${varName} } from ${JSON.stringify(genPath)};`,
+              );
               genFileVars.push(varName);
             } else {
               // Routers without sourceFile: inline their manifest data directly
-              routersWithoutGenFile.push({ id: entry.id, manifest: entry.routeManifest });
+              routersWithoutGenFile.push({
+                id: entry.id,
+                manifest: entry.routeManifest,
+              });
             }
           }
 
@@ -2048,7 +2320,9 @@ function createRouterDiscoveryPlugin(
 
           // Flatten NamedRoutes entries: search schema objects -> plain string paths
           if (genFileVars.length > 0) {
-            lines.push(`function __flat(r) { const o = {}; for (const [k, v] of Object.entries(r)) o[k] = typeof v === "string" ? v : v.path; return o; }`);
+            lines.push(
+              `function __flat(r) { const o = {}; for (const [k, v] of Object.entries(r)) o[k] = typeof v === "string" ? v : v.path; return o; }`,
+            );
           }
 
           // Build the merged manifest from gen file imports + inlined data
@@ -2057,7 +2331,8 @@ function createRouterDiscoveryPlugin(
           } else {
             const parts: string[] = [];
             for (const v of genFileVars) parts.push(`...__flat(${v})`);
-            for (const { manifest } of routersWithoutGenFile) parts.push(`...${jsonParseExpression(manifest)}`);
+            for (const { manifest } of routersWithoutGenFile)
+              parts.push(`...${jsonParseExpression(manifest)}`);
             lines.push(`setCachedManifest({ ${parts.join(", ")} });`);
           }
 
@@ -2066,9 +2341,13 @@ function createRouterDiscoveryPlugin(
           for (const entry of perRouterManifests) {
             if (entry.sourceFile) {
               const varName = genFileVars[genVarIdx++];
-              lines.push(`setRouterManifest(${JSON.stringify(entry.id)}, __flat(${varName}));`);
+              lines.push(
+                `setRouterManifest(${JSON.stringify(entry.id)}, __flat(${varName}));`,
+              );
             } else {
-              lines.push(`setRouterManifest(${JSON.stringify(entry.id)}, ${jsonParseExpression(entry.routeManifest)});`);
+              lines.push(
+                `setRouterManifest(${JSON.stringify(entry.id)}, ${jsonParseExpression(entry.routeManifest)});`,
+              );
             }
           }
 
@@ -2080,11 +2359,18 @@ function createRouterDiscoveryPlugin(
           // In build mode, the trie is always fresh (built from the final route
           // tree) so it's safe to inject.
           if (isBuildMode) {
-            if (mergedPrecomputedEntries && mergedPrecomputedEntries.length > 0) {
-              lines.push(`setPrecomputedEntries(${jsonParseExpression(mergedPrecomputedEntries)});`);
+            if (
+              mergedPrecomputedEntries &&
+              mergedPrecomputedEntries.length > 0
+            ) {
+              lines.push(
+                `setPrecomputedEntries(${jsonParseExpression(mergedPrecomputedEntries)});`,
+              );
             }
             if (mergedRouteTrie) {
-              lines.push(`setRouteTrie(${jsonParseExpression(mergedRouteTrie)});`);
+              lines.push(
+                `setRouteTrie(${jsonParseExpression(mergedRouteTrie)});`,
+              );
             }
           }
           // Register lazy loaders for per-router manifest modules.
@@ -2095,7 +2381,9 @@ function createRouterDiscoveryPlugin(
             );
           }
           if (!isBuildMode && devServerOrigin) {
-            lines.push(`globalThis.__PRERENDER_DEV_URL = ${JSON.stringify(devServerOrigin)};`);
+            lines.push(
+              `globalThis.__PRERENDER_DEV_URL = ${JSON.stringify(devServerOrigin)};`,
+            );
           }
           return lines.join("\n");
         }
@@ -2103,9 +2391,11 @@ function createRouterDiscoveryPlugin(
         // Still inject __PRERENDER_DEV_URL so the prerender store can fetch on-demand.
         // Re-resolve origin now since the server is listening by module load time.
         if (!isBuildMode) {
-          const origin = devServerOrigin
-            || devServer?.resolvedUrls?.local?.[0]?.replace(/\/$/, '')
-            || (devServer && `http://localhost:${devServer.config.server.port || 5173}`);
+          const origin =
+            devServerOrigin ||
+            devServer?.resolvedUrls?.local?.[0]?.replace(/\/$/, "") ||
+            (devServer &&
+              `http://localhost:${devServer.config.server.port || 5173}`);
           if (origin) {
             devServerOrigin = origin;
             return `globalThis.__PRERENDER_DEV_URL = ${JSON.stringify(origin)};`;
@@ -2122,7 +2412,7 @@ function createRouterDiscoveryPlugin(
         }
         const routerId = id.slice(perRouterPrefix.length);
         // Find the per-router entry to get the gen file path
-        const routerEntry = perRouterManifests.find(e => e.id === routerId);
+        const routerEntry = perRouterManifests.find((e) => e.id === routerId);
         const trie = perRouterTrieMap.get(routerId);
         const entries = perRouterPrecomputedMap.get(routerId);
         const lines: string[] = [];
@@ -2130,22 +2420,36 @@ function createRouterDiscoveryPlugin(
         if (routerEntry?.sourceFile) {
           // Import manifest from the gen file so HMR auto-propagates
           const routerDir = dirname(routerEntry.sourceFile);
-          const routerBasename = basename(routerEntry.sourceFile).replace(/\.(tsx?|jsx?)$/, "");
-          const genPath = join(routerDir, `${routerBasename}.named-routes.gen.js`);
-          lines.push(`import { NamedRoutes as _r } from ${JSON.stringify(genPath)};`);
-          lines.push(`function __flat(r) { const o = {}; for (const [k, v] of Object.entries(r)) o[k] = typeof v === "string" ? v : v.path; return o; }`);
+          const routerBasename = basename(routerEntry.sourceFile).replace(
+            /\.(tsx?|jsx?)$/,
+            "",
+          );
+          const genPath = join(
+            routerDir,
+            `${routerBasename}.named-routes.gen.js`,
+          );
+          lines.push(
+            `import { NamedRoutes as _r } from ${JSON.stringify(genPath)};`,
+          );
+          lines.push(
+            `function __flat(r) { const o = {}; for (const [k, v] of Object.entries(r)) o[k] = typeof v === "string" ? v : v.path; return o; }`,
+          );
           lines.push(`export const manifest = __flat(_r);`);
         } else {
           const manifest = perRouterManifestDataMap.get(routerId);
           if (manifest) {
-            lines.push(`export const manifest = ${jsonParseExpression(manifest)};`);
+            lines.push(
+              `export const manifest = ${jsonParseExpression(manifest)};`,
+            );
           }
         }
         if (trie) {
           lines.push(`export const trie = ${jsonParseExpression(trie)};`);
         }
         if (entries && entries.length > 0) {
-          lines.push(`export const precomputedEntries = ${jsonParseExpression(entries)};`);
+          lines.push(
+            `export const precomputedEntries = ${jsonParseExpression(entries)};`,
+          );
         }
         return lines.join("\n") || "// empty router manifest";
       }
@@ -2159,22 +2463,35 @@ function createRouterDiscoveryPlugin(
       if (this.environment?.name !== "rsc") return;
 
       // Record RSC entry chunk filename for closeBundle injection
-      for (const [fileName, chunk] of Object.entries(bundle) as [string, any][]) {
+      for (const [fileName, chunk] of Object.entries(bundle) as [
+        string,
+        any,
+      ][]) {
         if (chunk.type === "chunk" && chunk.isEntry) {
           rscEntryFileName = fileName;
           break;
         }
       }
 
-      if (!resolvedPrerenderModules?.size && !resolvedStaticModules?.size) return;
+      if (!resolvedPrerenderModules?.size && !resolvedStaticModules?.size)
+        return;
 
-      for (const [fileName, chunk] of Object.entries(bundle) as [string, any][]) {
+      for (const [fileName, chunk] of Object.entries(bundle) as [
+        string,
+        any,
+      ][]) {
         if (chunk.type !== "chunk") continue;
 
         // Prerender handlers chunk
-        if (fileName.includes("__prerender-handlers") && resolvedPrerenderModules?.size) {
+        if (
+          fileName.includes("__prerender-handlers") &&
+          resolvedPrerenderModules?.size
+        ) {
           const handlers = extractHandlerExportsFromChunk(
-            chunk.code, resolvedPrerenderModules, "Prerender", true,
+            chunk.code,
+            resolvedPrerenderModules,
+            "Prerender",
+            true,
           );
           if (handlers.length > 0) {
             handlerChunkInfo = { fileName, exports: handlers };
@@ -2182,16 +2499,21 @@ function createRouterDiscoveryPlugin(
         }
 
         // Static handlers chunk
-        if (fileName.includes("__static-handlers") && resolvedStaticModules?.size) {
+        if (
+          fileName.includes("__static-handlers") &&
+          resolvedStaticModules?.size
+        ) {
           const handlers = extractHandlerExportsFromChunk(
-            chunk.code, resolvedStaticModules, "Static", false,
+            chunk.code,
+            resolvedStaticModules,
+            "Static",
+            false,
           );
           if (handlers.length > 0) {
             staticHandlerChunkInfo = { fileName, exports: handlers };
           }
         }
       }
-
     },
 
     // Build-time pre-rendering: evict handler code and inject collected prerender data.
@@ -2205,12 +2527,19 @@ function createRouterDiscoveryPlugin(
         // Only run for the RSC environment — other environments (client, ssr) have
         // no prerender/static data to process and would just do redundant file I/O.
         if (this.environment && this.environment.name !== "rsc") return;
-        const hasPrerenderData = prerenderCollectedData && Object.keys(prerenderCollectedData).length > 0;
-        const hasStaticData = staticCollectedData && Object.keys(staticCollectedData).length > 0;
+        const hasPrerenderData =
+          prerenderCollectedData &&
+          Object.keys(prerenderCollectedData).length > 0;
+        const hasStaticData =
+          staticCollectedData && Object.keys(staticCollectedData).length > 0;
         if (!hasPrerenderData && !hasStaticData) return;
 
         // Find RSC entry (recorded in generateBundle, fallback to dist/rsc/index.js)
-        const rscEntryPath = resolve(projectRoot, "dist/rsc", rscEntryFileName ?? "index.js");
+        const rscEntryPath = resolve(
+          projectRoot,
+          "dist/rsc",
+          rscEntryFileName ?? "index.js",
+        );
 
         // 1. Evict handler code from __prerender-handlers and __static-handlers chunks.
         // handlerChunkInfo/staticHandlerChunkInfo are populated by generateBundle
@@ -2223,16 +2552,35 @@ function createRouterDiscoveryPlugin(
           brand: string;
           label: string;
         }> = [
-          { info: handlerChunkInfo, fnName: "Prerender", brand: "prerenderHandler", label: "handler code from RSC bundle" },
-          { info: staticHandlerChunkInfo, fnName: "Static", brand: "staticHandler", label: "static handler code" },
+          {
+            info: handlerChunkInfo,
+            fnName: "Prerender",
+            brand: "prerenderHandler",
+            label: "handler code from RSC bundle",
+          },
+          {
+            info: staticHandlerChunkInfo,
+            fnName: "Static",
+            brand: "staticHandler",
+            label: "static handler code",
+          },
         ];
 
         for (const target of evictionTargets) {
           if (!target.info) continue;
-          const chunkPath = resolve(projectRoot, "dist/rsc", target.info.fileName);
+          const chunkPath = resolve(
+            projectRoot,
+            "dist/rsc",
+            target.info.fileName,
+          );
           try {
             const code = readFileSync(chunkPath, "utf-8");
-            const result = evictHandlerCode(code, target.info.exports, target.fnName, target.brand);
+            const result = evictHandlerCode(
+              code,
+              target.info.exports,
+              target.fnName,
+              target.brand,
+            );
             if (result) {
               writeFileSync(chunkPath, result.code);
               const savedKB = (result.savedBytes / 1024).toFixed(1);
@@ -2261,19 +2609,29 @@ function createRouterDiscoveryPlugin(
               const manifestEntries: string[] = [];
               let totalBytes = 0;
 
-              for (const [key, entry] of Object.entries(prerenderCollectedData!)) {
+              for (const [key, entry] of Object.entries(
+                prerenderCollectedData!,
+              )) {
                 const entryJson = JSON.stringify(entry);
-                const contentHash = createHash("sha256").update(entryJson).digest("hex").slice(0, 8);
+                const contentHash = createHash("sha256")
+                  .update(entryJson)
+                  .digest("hex")
+                  .slice(0, 8);
                 const assetFileName = `__pr-${contentHash}.js`;
                 const assetPath = resolve(assetsDir, assetFileName);
                 const assetCode = `export default ${entryJson};\n`;
                 writeFileSync(assetPath, assetCode);
                 totalBytes += Buffer.byteLength(assetCode);
-                manifestEntries.push(`${JSON.stringify(key)}:()=>import("./assets/${assetFileName}")`);
+                manifestEntries.push(
+                  `${JSON.stringify(key)}:()=>import("./assets/${assetFileName}")`,
+                );
               }
 
               const manifestCode = `const m={${manifestEntries.join(",")}};export default m;\n`;
-              const manifestPath = resolve(projectRoot, "dist/rsc/__prerender-manifest.js");
+              const manifestPath = resolve(
+                projectRoot,
+                "dist/rsc/__prerender-manifest.js",
+              );
               writeFileSync(manifestPath, manifestCode);
               totalBytes += Buffer.byteLength(manifestCode);
 
@@ -2285,7 +2643,9 @@ function createRouterDiscoveryPlugin(
                 `[rsc-router] Wrote prerender assets (${totalKB} KB total, ${Object.keys(prerenderCollectedData!).length} entries)`,
               );
             } catch (err: any) {
-              throw new Error(`[rsc-router] Failed to write prerender assets: ${err.message}`);
+              throw new Error(
+                `[rsc-router] Failed to write prerender assets: ${err.message}`,
+              );
             }
           }
         }
@@ -2302,8 +2662,13 @@ function createRouterDiscoveryPlugin(
               const manifestEntries: string[] = [];
               let totalBytes = 0;
 
-              for (const [handlerId, { encoded, handles }] of Object.entries(staticCollectedData!)) {
-                const contentHash = createHash("sha256").update(encoded).digest("hex").slice(0, 8);
+              for (const [handlerId, { encoded, handles }] of Object.entries(
+                staticCollectedData!,
+              )) {
+                const contentHash = createHash("sha256")
+                  .update(encoded)
+                  .digest("hex")
+                  .slice(0, 8);
                 const assetFileName = `__st-${contentHash}.js`;
                 const assetPath = resolve(assetsDir, assetFileName);
                 // Store both the Flight payload and handle data
@@ -2314,14 +2679,19 @@ function createRouterDiscoveryPlugin(
                 const assetCode = `export default ${exportValue};\n`;
                 writeFileSync(assetPath, assetCode);
                 totalBytes += Buffer.byteLength(assetCode);
-                manifestEntries.push(`${JSON.stringify(handlerId)}:()=>import("./assets/${assetFileName}")`);
+                manifestEntries.push(
+                  `${JSON.stringify(handlerId)}:()=>import("./assets/${assetFileName}")`,
+                );
               }
 
               // Set the global inside the manifest module so it is assigned
               // during module evaluation (before dependent modules like
               // segment-resolution.ts run their top-level initializers).
               const manifestCode = `const m={${manifestEntries.join(",")}};globalThis.__STATIC_MANIFEST=m;export default m;\n`;
-              const manifestPath = resolve(projectRoot, "dist/rsc/__static-manifest.js");
+              const manifestPath = resolve(
+                projectRoot,
+                "dist/rsc/__static-manifest.js",
+              );
               writeFileSync(manifestPath, manifestCode);
               totalBytes += Buffer.byteLength(manifestCode);
 
@@ -2335,7 +2705,9 @@ function createRouterDiscoveryPlugin(
                 `[rsc-router] Wrote static assets (${totalKB} KB total, ${Object.keys(staticCollectedData!).length} entries)`,
               );
             } catch (err: any) {
-              throw new Error(`[rsc-router] Failed to write static assets: ${err.message}`);
+              throw new Error(
+                `[rsc-router] Failed to write static assets: ${err.message}`,
+              );
             }
           }
         }
@@ -2360,7 +2732,7 @@ const VIRTUAL_ROUTES_MANIFEST_ID = "virtual:rsc-router/routes-manifest";
  */
 function jsonParseExpression(value: unknown): string {
   const json = JSON.stringify(value);
-  const escaped = json.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const escaped = json.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
   return `JSON.parse('${escaped}')`;
 }
 
@@ -2426,7 +2798,7 @@ function createVersionInjectorPlugin(rscEntryPath: string | undefined): Plugin {
         prepend.push(`import { VERSION } from "@rangojs/router:version";`);
         newCode = newCode.replace(
           /createRSCHandler\s*\(\s*\{/,
-          "createRSCHandler({\n  version: VERSION,"
+          "createRSCHandler({\n  version: VERSION,",
         );
       }
 
@@ -2450,7 +2822,7 @@ let _bannerPrinted = false;
 function printBanner(
   mode: "dev" | "build" | "preview",
   preset: string,
-  version: string
+  version: string,
 ): void {
   if (_bannerPrinted) return;
   _bannerPrinted = true;
@@ -2502,9 +2874,7 @@ ${bold}══════╝ ╚═════════╩═══${reset}$
  * });
  * ```
  */
-export async function rango(
-  options?: RangoOptions
-): Promise<PluginOption[]> {
+export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   const resolvedOptions: RangoOptions = options ?? { preset: "node" };
   const preset = resolvedOptions.preset ?? "node";
   const showBanner = resolvedOptions.banner ?? true;
@@ -2623,11 +2993,15 @@ export async function rango(
 
       configResolved(config) {
         if (showBanner) {
-          const mode = config.command === "serve" ? (process.argv.includes("preview") ? "preview" : "dev") : "build";
+          const mode =
+            config.command === "serve"
+              ? process.argv.includes("preview")
+                ? "preview"
+                : "dev"
+              : "build";
           printBanner(mode, "cloudflare", _rangoVersion);
         }
       },
-
     });
 
     plugins.push(createVirtualEntriesPlugin(finalEntries));
@@ -2641,7 +3015,7 @@ export async function rango(
           return finalEntries;
         },
         serverHandler: false,
-      }) as PluginOption
+      }) as PluginOption,
     );
   } else {
     // Node preset: full RSC plugin integration
@@ -2665,10 +3039,12 @@ export async function rango(
       } else if (candidates.length > 1) {
         const cwd = process.cwd();
         const list = candidates
-          .map((f) => "  - " + (f.startsWith(cwd) ? f.slice(cwd.length + 1) : f))
+          .map(
+            (f) => "  - " + (f.startsWith(cwd) ? f.slice(cwd.length + 1) : f),
+          )
           .join("\n");
         throw new Error(
-          `[rsc-router] Multiple routers found. Specify \`router\` to choose one:\n${list}`
+          `[rsc-router] Multiple routers found. Specify \`router\` to choose one:\n${list}`,
         );
       }
       // 0 found: routerPath stays undefined, warn at startup via discovery plugin
@@ -2782,20 +3158,25 @@ export async function rango(
 
         configResolved(config) {
           if (showBanner) {
-            const mode = config.command === "serve" ? (process.argv.includes("preview") ? "preview" : "dev") : "build";
+            const mode =
+              config.command === "serve"
+                ? process.argv.includes("preview")
+                  ? "preview"
+                  : "dev"
+                : "build";
             printBanner(mode, "node", _rangoVersion);
           }
 
           // Count how many RSC base plugins there are (rsc:minimal is the main one)
           const rscMinimalCount = config.plugins.filter(
-            (p) => p.name === "rsc:minimal"
+            (p) => p.name === "rsc:minimal",
           ).length;
 
           if (rscMinimalCount > 1 && !hasWarnedDuplicate) {
             hasWarnedDuplicate = true;
             console.warn(
               "[rsc-router] Duplicate @vitejs/plugin-rsc detected. " +
-                "Remove rsc() from your config or use rango({ rsc: false }) for manual configuration."
+                "Remove rsc() from your config or use rango({ rsc: false }) for manual configuration.",
             );
           }
         },
@@ -2809,7 +3190,7 @@ export async function rango(
       plugins.push(
         rsc({
           entries: finalEntries,
-        }) as PluginOption
+        }) as PluginOption,
       );
     }
   }
@@ -2833,12 +3214,21 @@ export async function rango(
 
       // Check if the changed file is a "use client" module
       const file = ctx.file;
-      if (!file.endsWith(".tsx") && !file.endsWith(".ts") && !file.endsWith(".jsx") && !file.endsWith(".js")) return;
+      if (
+        !file.endsWith(".tsx") &&
+        !file.endsWith(".ts") &&
+        !file.endsWith(".jsx") &&
+        !file.endsWith(".js")
+      )
+        return;
 
       try {
         const source = readFileSync(file, "utf-8");
         const trimmed = source.trimStart();
-        if (trimmed.startsWith('"use client"') || trimmed.startsWith("'use client'")) {
+        if (
+          trimmed.startsWith('"use client"') ||
+          trimmed.startsWith("'use client'")
+        ) {
           // Consume the update in RSC/SSR envs. The proxy module was already
           // re-transformed by the RSC plugin's hotUpdate. Without this, Vite
           // tries to propagate through the RSC/SSR module graph where the proxy
@@ -2879,7 +3269,8 @@ export async function rango(
   // Only applies when there's an explicit rscEntryPath or for cloudflare preset (resolved
   // lazily in configResolved). For node preset without a custom entry, the router file
   // must NOT be transformed — injecting routes-manifest there creates a circular dependency.
-  const injectorEntryPath = rscEntryPath ?? (preset === "cloudflare" ? undefined : null);
+  const injectorEntryPath =
+    rscEntryPath ?? (preset === "cloudflare" ? undefined : null);
   if (injectorEntryPath !== null) {
     plugins.push(createVersionInjectorPlugin(injectorEntryPath));
   }
@@ -2890,17 +3281,17 @@ export async function rango(
 
   // Router discovery plugin for build-time manifest generation.
   // For cloudflare, the entry is resolved lazily in configResolved from the RSC environment.
-  plugins.push(createRouterDiscoveryPlugin(discoveryEntryPath, {
-    enableBuildPrerender: prerenderEnabled,
-    staticRouteTypesGeneration: resolvedOptions.staticRouteTypesGeneration,
-    include: resolvedOptions.include,
-    exclude: resolvedOptions.exclude,
-  }));
+  plugins.push(
+    createRouterDiscoveryPlugin(discoveryEntryPath, {
+      enableBuildPrerender: prerenderEnabled,
+      staticRouteTypesGeneration: resolvedOptions.staticRouteTypesGeneration,
+      include: resolvedOptions.include,
+      exclude: resolvedOptions.exclude,
+    }),
+  );
 
   return plugins;
 }
-
-
 
 /**
  * Transform CJS vendor files from @vitejs/plugin-rsc to ESM for browser compatibility.
@@ -2950,7 +3341,7 @@ function createCjsToEsmPlugin(): Plugin {
         // Remove the conditional IIFE wrapper (development only)
         transformed = transformed.replace(
           /^\s*["']production["']\s*!==\s*process\.env\.NODE_ENV\s*&&\s*\(function\s*\(\)\s*\{/,
-          ""
+          "",
         );
 
         // Remove the closing of the conditional IIFE at the end (development only)
@@ -2959,25 +3350,25 @@ function createCjsToEsmPlugin(): Plugin {
         // Replace require('react') and require('react-dom') with imports (development)
         transformed = transformed.replace(
           /var\s+React\s*=\s*require\s*\(\s*["']react["']\s*\)\s*,[\s\n]+ReactDOM\s*=\s*require\s*\(\s*["']react-dom["']\s*\)\s*,/g,
-          'import React from "react";\nimport ReactDOM from "react-dom";\nvar '
+          'import React from "react";\nimport ReactDOM from "react-dom";\nvar ',
         );
 
         // Replace require('react-dom') only (production - doesn't import React)
         transformed = transformed.replace(
           /var\s+ReactDOM\s*=\s*require\s*\(\s*["']react-dom["']\s*\)\s*,/g,
-          'import ReactDOM from "react-dom";\nvar '
+          'import ReactDOM from "react-dom";\nvar ',
         );
 
         // Transform exports.xyz = function() to export function xyz()
         transformed = transformed.replace(
           /exports\.(\w+)\s*=\s*function\s*\(/g,
-          "export function $1("
+          "export function $1(",
         );
 
         // Transform exports.xyz = value to export const xyz = value
         transformed = transformed.replace(
           /exports\.(\w+)\s*=/g,
-          "export const $1 ="
+          "export const $1 =",
         );
 
         // Reconstruct with license at the top

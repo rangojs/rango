@@ -17,7 +17,9 @@ describe("toNetworkError", () => {
   });
 
   it("returns null for a non-AbortError DOMException", () => {
-    expect(toNetworkError(new DOMException("bad", "SyntaxError"), ctx)).toBeNull();
+    expect(
+      toNetworkError(new DOMException("bad", "SyntaxError"), ctx),
+    ).toBeNull();
   });
 
   it("returns the original NetworkError unchanged", () => {

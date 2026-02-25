@@ -21,11 +21,7 @@ export {
   type GeneratedManifest,
 } from "./generate-manifest.js";
 
-export {
-  buildRouteTrie,
-  type TrieNode,
-  type TrieLeaf,
-} from "./route-trie.js";
+export { buildRouteTrie, type TrieNode, type TrieLeaf } from "./route-trie.js";
 
 export {
   writePerModuleRouteTypes,

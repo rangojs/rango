@@ -7,7 +7,10 @@
  * individual prerender entry modules.
  */
 
-import type { SerializedSegmentData, SegmentHandleData } from "../cache/types.js";
+import type {
+  SerializedSegmentData,
+  SegmentHandleData,
+} from "../cache/types.js";
 
 export interface PrerenderEntry {
   segments: SerializedSegmentData[];
@@ -15,8 +18,11 @@ export interface PrerenderEntry {
 }
 
 export interface PrerenderStore {
-  get(routeName: string, paramHash: string, meta?: { pathname: string }):
-    PrerenderEntry | null | Promise<PrerenderEntry | null>;
+  get(
+    routeName: string,
+    paramHash: string,
+    meta?: { pathname: string },
+  ): PrerenderEntry | null | Promise<PrerenderEntry | null>;
 }
 
 export interface StaticEntry {
@@ -31,11 +37,15 @@ export interface StaticStore {
 declare global {
   // Injected by closeBundle post-processing: map of key -> () => import("./assets/__pr-*.js")
   // eslint-disable-next-line no-var
-  var __PRERENDER_MANIFEST: Record<string, () => Promise<{ default: PrerenderEntry }>> | undefined;
+  var __PRERENDER_MANIFEST:
+    | Record<string, () => Promise<{ default: PrerenderEntry }>>
+    | undefined;
   // Injected by closeBundle post-processing: map of handlerId -> () => import("./assets/__st-*.js")
   // Asset default export is either a string (no handles) or { encoded, handles } object.
   // eslint-disable-next-line no-var
-  var __STATIC_MANIFEST: Record<string, () => Promise<{ default: string | StaticEntry }>> | undefined;
+  var __STATIC_MANIFEST:
+    | Record<string, () => Promise<{ default: string | StaticEntry }>>
+    | undefined;
   // Injected by virtual module in dev mode for on-demand prerender
   // eslint-disable-next-line no-var
   var __PRERENDER_DEV_URL: string | undefined;
@@ -88,7 +98,9 @@ export function createPrerenderStore(): PrerenderStore | null {
       const loader = manifest[key];
       if (!loader) return Promise.resolve(null);
 
-      const promise = loader().then((mod) => mod.default).catch(() => null);
+      const promise = loader()
+        .then((mod) => mod.default)
+        .catch(() => null);
       cache.set(key, promise);
       return promise;
     },

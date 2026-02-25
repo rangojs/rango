@@ -53,7 +53,10 @@ export function isContextVar(value: unknown): value is ContextVar<unknown> {
  * Read a variable from the variables store.
  * Accepts either a string key (legacy) or a ContextVar token (typed).
  */
-export function contextGet(variables: any, keyOrVar: string | ContextVar<any>): any {
+export function contextGet(
+  variables: any,
+  keyOrVar: string | ContextVar<any>,
+): any {
   if (typeof keyOrVar === "string") return variables[keyOrVar];
   return variables[keyOrVar.key];
 }
@@ -62,7 +65,11 @@ export function contextGet(variables: any, keyOrVar: string | ContextVar<any>): 
  * Write a variable to the variables store.
  * Accepts either a string key (legacy) or a ContextVar token (typed).
  */
-export function contextSet(variables: any, keyOrVar: string | ContextVar<any>, value: any): void {
+export function contextSet(
+  variables: any,
+  keyOrVar: string | ContextVar<any>,
+  value: any,
+): void {
   if (typeof keyOrVar === "string") {
     variables[keyOrVar] = value;
   } else {

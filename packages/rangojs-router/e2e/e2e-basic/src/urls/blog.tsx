@@ -9,6 +9,8 @@ import { BlogIndexPage, BlogPostPage } from "../components/pages/index.js";
 export const blogPatterns = urls(({ path, layout }) => [
   layout(BlogLayout, () => [
     path("/", BlogIndexPage, { name: "index" }),
-    path("/:slug", (ctx) => <BlogPostPage params={ctx.params} />, { name: "post" }),
+    path("/:slug", (ctx) => <BlogPostPage params={ctx.params} />, {
+      name: "post",
+    }),
   ]),
 ]);

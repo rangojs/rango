@@ -44,7 +44,11 @@ export type {
 } from "./types.js";
 
 // Constants (for advanced use cases)
-export { THEME_DEFAULTS, THEME_COOKIE, resolveThemeConfig } from "./constants.js";
+export {
+  THEME_DEFAULTS,
+  THEME_COOKIE,
+  resolveThemeConfig,
+} from "./constants.js";
 
 // Script generation (for advanced SSR use cases)
 export { generateThemeScript, getNonceAttribute } from "./theme-script.js";

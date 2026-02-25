@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript"],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "no-unused-vars": "off",
+    "no-empty-pattern": "off",
+    "typescript/triple-slash-reference": "off"
+  },
+  "ignorePatterns": [
+    "dist/",
+    "node_modules/",
+    "playwright-report/",
+    "test-results/",
+    ".turbo/",
+    "tests/vite-rsc-demo/src/thinking.js",
+    "tests/cloudflare-stress-demo/benchmark.ts"
+  ]
+}

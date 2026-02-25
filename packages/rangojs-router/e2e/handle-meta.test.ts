@@ -24,7 +24,7 @@ test.describe("handle-meta", () => {
       const viewport = await page.locator('meta[name="viewport"]');
       await expect(viewport).toHaveAttribute(
         "content",
-        "width=device-width, initial-scale=1"
+        "width=device-width, initial-scale=1",
       );
     });
 
@@ -42,7 +42,7 @@ test.describe("handle-meta", () => {
       const description = await page.locator('meta[name="description"]');
       await expect(description).toHaveAttribute(
         "content",
-        "E2E test application for RSC Router"
+        "E2E test application for RSC Router",
       );
     });
   });
@@ -62,7 +62,7 @@ test.describe("handle-meta", () => {
       const description = await page.locator('meta[name="description"]');
       await expect(description).toHaveAttribute(
         "content",
-        "Blog posts from RSC Router"
+        "Blog posts from RSC Router",
       );
     });
 
@@ -70,12 +70,16 @@ test.describe("handle-meta", () => {
       await page.goto(f.url("/blog/post-1"));
       await waitForHydration(page);
 
-      await expect(page).toHaveTitle("Post post-1 - Blog - RSC Router Test App");
+      await expect(page).toHaveTitle(
+        "Post post-1 - Blog - RSC Router Test App",
+      );
     });
   });
 
   test.describe("streaming metadata", () => {
-    test("should update title after awaiting product data", async ({ page }) => {
+    test("should update title after awaiting product data", async ({
+      page,
+    }) => {
       await page.goto(f.url("/product/product-a"));
       await waitForHydration(page);
 
@@ -95,7 +99,7 @@ test.describe("handle-meta", () => {
       await expect(description).toHaveAttribute(
         "content",
         "First test product",
-        { timeout: 5000 }
+        { timeout: 5000 },
       );
     });
 
@@ -123,7 +127,7 @@ test.describe("handle-meta", () => {
       await expect(ogDescription).toHaveAttribute(
         "content",
         "Async meta for post-1",
-        { timeout: 3000 }
+        { timeout: 3000 },
       );
     });
 
@@ -133,11 +137,9 @@ test.describe("handle-meta", () => {
 
       // The author meta is pushed as an async IIFE that resolves after 300ms
       const author = page.locator('meta[name="author"]');
-      await expect(author).toHaveAttribute(
-        "content",
-        "Author of post-1",
-        { timeout: 3000 }
-      );
+      await expect(author).toHaveAttribute("content", "Author of post-1", {
+        timeout: 3000,
+      });
     });
 
     test("should update async meta on navigation", async ({ page }) => {
@@ -149,22 +151,26 @@ test.describe("handle-meta", () => {
       await expect(ogDescription).toHaveAttribute(
         "content",
         "Async meta for post-1",
-        { timeout: 3000 }
+        { timeout: 3000 },
       );
 
       // Navigate to post-2
       await testId(page, "back-to-blog").click();
-      await expect(testId(page, "blog-index-page")).toBeVisible({ timeout: 5000 });
+      await expect(testId(page, "blog-index-page")).toBeVisible({
+        timeout: 5000,
+      });
 
       await testId(page, "blog-post-link-2").click();
-      await expect(testId(page, "blog-post-page")).toBeVisible({ timeout: 5000 });
+      await expect(testId(page, "blog-post-page")).toBeVisible({
+        timeout: 5000,
+      });
 
       // Async meta should update for post-2
       ogDescription = page.locator('meta[property="og:description"]');
       await expect(ogDescription).toHaveAttribute(
         "content",
         "Async meta for post-2",
-        { timeout: 3000 }
+        { timeout: 3000 },
       );
     });
   });
@@ -246,18 +252,28 @@ test.describe("handle-meta", () => {
 
       // Navigate to post-1
       await testId(page, "blog-post-link-1").click();
-      await expect(testId(page, "blog-post-page")).toBeVisible({ timeout: 5000 });
-      await expect(page).toHaveTitle("Post post-1 - Blog - RSC Router Test App");
+      await expect(testId(page, "blog-post-page")).toBeVisible({
+        timeout: 5000,
+      });
+      await expect(page).toHaveTitle(
+        "Post post-1 - Blog - RSC Router Test App",
+      );
 
       // Navigate back to blog
       await testId(page, "back-to-blog").click();
-      await expect(testId(page, "blog-index-page")).toBeVisible({ timeout: 5000 });
+      await expect(testId(page, "blog-index-page")).toBeVisible({
+        timeout: 5000,
+      });
       await expect(page).toHaveTitle("Blog - RSC Router Test App");
 
       // Navigate to post-2
       await testId(page, "blog-post-link-2").click();
-      await expect(testId(page, "blog-post-page")).toBeVisible({ timeout: 5000 });
-      await expect(page).toHaveTitle("Post post-2 - Blog - RSC Router Test App");
+      await expect(testId(page, "blog-post-page")).toBeVisible({
+        timeout: 5000,
+      });
+      await expect(page).toHaveTitle(
+        "Post post-2 - Blog - RSC Router Test App",
+      );
     });
 
     test("should update meta description on navigation", async ({ page }) => {
@@ -267,7 +283,7 @@ test.describe("handle-meta", () => {
       let description = page.locator('meta[name="description"]');
       await expect(description).toHaveAttribute(
         "content",
-        "E2E test application for RSC Router"
+        "E2E test application for RSC Router",
       );
 
       // Navigate to blog
@@ -277,7 +293,7 @@ test.describe("handle-meta", () => {
       description = page.locator('meta[name="description"]');
       await expect(description).toHaveAttribute(
         "content",
-        "Blog posts from RSC Router"
+        "Blog posts from RSC Router",
       );
     });
   });
@@ -345,7 +361,7 @@ test.describe("handle-meta", () => {
       const html = await response.text();
 
       expect(html).toContain(
-        "<title>Post post-1 - Blog - RSC Router Test App</title>"
+        "<title>Post post-1 - Blog - RSC Router Test App</title>",
       );
       expect(html).toContain("Content for post post-1");
     });
@@ -360,9 +376,7 @@ test.describe("handle-meta", () => {
       const html = await response.text();
 
       // Title and description are set after awaiting loader data
-      expect(html).toContain(
-        "<title>Product A - RSC Router Test App</title>"
-      );
+      expect(html).toContain("<title>Product A - RSC Router Test App</title>");
       expect(html).toContain("First test product");
       expect(html).toContain('property="og:title"');
       expect(html).toContain("Product A");
@@ -394,13 +408,13 @@ test.describe("handle-meta", () => {
       const description = page.locator('meta[name="description"]');
       await expect(description).toHaveAttribute(
         "content",
-        "Meta set by child RSC component"
+        "Meta set by child RSC component",
       );
 
       const ogTitle = page.locator('meta[property="og:title"]');
       await expect(ogTitle).toHaveAttribute(
         "content",
-        "Child Set Title - RSC Router"
+        "Child Set Title - RSC Router",
       );
     });
 
@@ -424,10 +438,10 @@ test.describe("handle-meta", () => {
 
       await expect(testId(page, "child-meta-setter")).toBeVisible();
       await expect(testId(page, "child-set-title")).toContainText(
-        "Set title: Child Set Title - RSC Router"
+        "Set title: Child Set Title - RSC Router",
       );
       await expect(testId(page, "child-set-description")).toContainText(
-        "Set description: Meta set by child RSC component"
+        "Set description: Meta set by child RSC component",
       );
     });
   });
@@ -462,7 +476,7 @@ test.describe("handle-meta", () => {
 
       // Child content is rendered
       await expect(testId(page, "async-child-set-title")).toContainText(
-        "Async Child Title - RSC Router"
+        "Async Child Title - RSC Router",
       );
     });
 
@@ -538,7 +552,9 @@ test.describe("handle-meta", () => {
   });
 
   test.describe("title templates", () => {
-    test("should use default title when no child title is set", async ({ page }) => {
+    test("should use default title when no child title is set", async ({
+      page,
+    }) => {
       await page.goto(f.url("/meta-template"));
       await waitForHydration(page);
 
@@ -562,7 +578,9 @@ test.describe("handle-meta", () => {
       await expect(page).toHaveTitle("Custom Absolute Title");
     });
 
-    test("should use nested template instead of parent template", async ({ page }) => {
+    test("should use nested template instead of parent template", async ({
+      page,
+    }) => {
       await page.goto(f.url("/meta-template/nested"));
       await waitForHydration(page);
 
@@ -578,7 +596,9 @@ test.describe("handle-meta", () => {
       await expect(page).toHaveTitle("Nested Child | Nested Section");
     });
 
-    test("template should work with SSR (initial HTML)", async ({ request }) => {
+    test("template should work with SSR (initial HTML)", async ({
+      request,
+    }) => {
       const response = await request.get(f.url("/meta-template/child"), {
         headers: { Accept: "text/html,application/xhtml+xml" },
       });
@@ -596,7 +616,9 @@ test.describe("handle-meta", () => {
       expect(html).toContain("<title>Custom Absolute Title</title>");
     });
 
-    test("should update title on soft navigation with template", async ({ page }) => {
+    test("should update title on soft navigation with template", async ({
+      page,
+    }) => {
       await page.goto(f.url("/meta-template"));
       await waitForHydration(page);
 
@@ -604,12 +626,16 @@ test.describe("handle-meta", () => {
 
       // Navigate to child
       await testId(page, "meta-template-child-link").click();
-      await expect(testId(page, "meta-template-child-page")).toBeVisible({ timeout: 5000 });
+      await expect(testId(page, "meta-template-child-page")).toBeVisible({
+        timeout: 5000,
+      });
       await expect(page).toHaveTitle("Child Page | Test Site");
 
       // Navigate to absolute
       await testId(page, "meta-template-absolute-link").click();
-      await expect(testId(page, "meta-template-absolute-page")).toBeVisible({ timeout: 5000 });
+      await expect(testId(page, "meta-template-absolute-page")).toBeVisible({
+        timeout: 5000,
+      });
       await expect(page).toHaveTitle("Custom Absolute Title");
     });
   });
@@ -625,10 +651,16 @@ test.describe("handle-meta", () => {
       await expect(robots).toHaveAttribute("content", "index, follow");
 
       const description = page.locator('meta[name="description"]');
-      await expect(description).toHaveAttribute("content", "Parent description");
+      await expect(description).toHaveAttribute(
+        "content",
+        "Parent description",
+      );
 
       const ogImage = page.locator('meta[property="og:image"]');
-      await expect(ogImage).toHaveAttribute("content", "https://example.com/parent.jpg");
+      await expect(ogImage).toHaveAttribute(
+        "content",
+        "https://example.com/parent.jpg",
+      );
     });
 
     test("should unset specific meta tags", async ({ page }) => {
@@ -639,7 +671,10 @@ test.describe("handle-meta", () => {
       await expect(page).toHaveTitle("Parent Title");
 
       const description = page.locator('meta[name="description"]');
-      await expect(description).toHaveAttribute("content", "Parent description");
+      await expect(description).toHaveAttribute(
+        "content",
+        "Parent description",
+      );
 
       // robots and og:image should be removed
       const robots = page.locator('meta[name="robots"]');
@@ -658,7 +693,10 @@ test.describe("handle-meta", () => {
 
       // Description should be the new value after unset + set
       const description = page.locator('meta[name="description"]');
-      await expect(description).toHaveAttribute("content", "New description after unset");
+      await expect(description).toHaveAttribute(
+        "content",
+        "New description after unset",
+      );
 
       // robots should still be present (not unset in this route)
       const robots = page.locator('meta[name="robots"]');
@@ -680,7 +718,9 @@ test.describe("handle-meta", () => {
       expect(html).not.toContain('property="og:image"');
     });
 
-    test("should update meta on soft navigation with unset", async ({ page }) => {
+    test("should update meta on soft navigation with unset", async ({
+      page,
+    }) => {
       await page.goto(f.url("/meta-unset"));
       await waitForHydration(page);
 
@@ -690,7 +730,9 @@ test.describe("handle-meta", () => {
 
       // Navigate to child that unsets robots
       await testId(page, "meta-unset-child-link").click();
-      await expect(testId(page, "meta-unset-child-page")).toBeVisible({ timeout: 5000 });
+      await expect(testId(page, "meta-unset-child-page")).toBeVisible({
+        timeout: 5000,
+      });
 
       // robots should be gone
       const robotsOnChild = page.locator('meta[name="robots"]');
@@ -698,7 +740,9 @@ test.describe("handle-meta", () => {
 
       // Navigate back to index
       await testId(page, "meta-unset-index-link").click();
-      await expect(testId(page, "meta-unset-index-page")).toBeVisible({ timeout: 5000 });
+      await expect(testId(page, "meta-unset-index-page")).toBeVisible({
+        timeout: 5000,
+      });
 
       // robots should be back
       const robotsBack = page.locator('meta[name="robots"]');
@@ -707,7 +751,9 @@ test.describe("handle-meta", () => {
   });
 
   test.describe("meta merging behavior", () => {
-    test("child should override parent meta with same key", async ({ page }) => {
+    test("child should override parent meta with same key", async ({
+      page,
+    }) => {
       await page.goto(f.url("/meta-merge/child"));
       await waitForHydration(page);
 
@@ -719,7 +765,9 @@ test.describe("handle-meta", () => {
       await expect(keywords).toHaveAttribute("content", "child, override");
     });
 
-    test("child should inherit parent meta for different keys", async ({ page }) => {
+    test("child should inherit parent meta for different keys", async ({
+      page,
+    }) => {
       await page.goto(f.url("/meta-merge/child"));
       await waitForHydration(page);
 

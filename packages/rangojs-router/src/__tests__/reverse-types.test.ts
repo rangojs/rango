@@ -15,12 +15,17 @@ import type {
   PrefixRouteKeys,
 } from "../reverse.js";
 import type { ExtractParams, Handler } from "../types.js";
-import type { HandlerContext, GenericParams, DefaultEnv, RouterEnv } from "../types.js";
+import type {
+  HandlerContext,
+  GenericParams,
+  DefaultEnv,
+  RouterEnv,
+} from "../types.js";
 
 // Test route definitions
 type TestRoutes = {
-  "index": "/";
-  "about": "/about";
+  index: "/";
+  about: "/about";
   "blog.index": "/blog";
   "blog.post": "/blog/:slug";
   "shop.cart": "/shop/cart";
@@ -30,16 +35,16 @@ type TestRoutes = {
 };
 
 type BlogRoutes = {
-  "index": "/";
-  "post": "/:slug";
-  "category": "/category/:categoryId";
+  index: "/";
+  post: "/:slug";
+  category: "/category/:categoryId";
 };
 
 type ShopRoutes = {
-  "index": "/";
-  "cart": "/cart";
-  "product": "/product/:id";
-  "checkout": "/checkout/:step(shipping|payment|confirm)";
+  index: "/";
+  cart: "/cart";
+  product: "/product/:id";
+  checkout: "/checkout/:step(shipping|payment|confirm)";
 };
 
 describe("ExtractParams", () => {
@@ -95,9 +100,9 @@ describe("PrefixRoutePatterns", () => {
   it("should prefix patterns", () => {
     type Prefixed = PrefixRoutePatterns<BlogRoutes, "/blog">;
     expectTypeOf<Prefixed>().toEqualTypeOf<{
-      "index": "/blog";
-      "post": "/blog/:slug";
-      "category": "/blog/category/:categoryId";
+      index: "/blog";
+      post: "/blog/:slug";
+      category: "/blog/category/:categoryId";
     }>();
   });
 
@@ -107,9 +112,9 @@ describe("PrefixRoutePatterns", () => {
   });
 
   it("should handle root pattern", () => {
-    type Routes = { "index": "/" };
+    type Routes = { index: "/" };
     type Prefixed = PrefixRoutePatterns<Routes, "/blog">;
-    expectTypeOf<Prefixed>().toEqualTypeOf<{ "index": "/blog" }>();
+    expectTypeOf<Prefixed>().toEqualTypeOf<{ index: "/blog" }>();
   });
 });
 
@@ -178,7 +183,9 @@ describe("ScopedReverseFunction type structure", () => {
     type ScopedHref = ScopedReverseFunction<BlogRoutes>;
     expectTypeOf<ScopedHref>().toBeCallableWith(".post", { slug: "hello" });
     expectTypeOf<ScopedHref>().toBeCallableWith(".index");
-    expectTypeOf<ScopedHref>().toBeCallableWith(".category", { categoryId: "tech" });
+    expectTypeOf<ScopedHref>().toBeCallableWith(".category", {
+      categoryId: "tech",
+    });
   });
 
   it("should reject invalid dot-prefixed names", () => {
@@ -192,7 +199,10 @@ describe("ScopedReverseFunction type structure", () => {
   it("should separate local and global namespaces", () => {
     // Local routes (from gen file) vs global routes (from named-routes)
     type LocalRoutes = { article: "/:slug"; index: "/" };
-    type GlobalRoutes = { "magazine.article": "/magazine/:slug"; "blog.post": "/blog/:slug" };
+    type GlobalRoutes = {
+      "magazine.article": "/magazine/:slug";
+      "blog.post": "/blog/:slug";
+    };
     type Href = ScopedReverseFunction<LocalRoutes, GlobalRoutes>;
 
     // Dot-prefixed = local names
@@ -200,7 +210,9 @@ describe("ScopedReverseFunction type structure", () => {
     expectTypeOf<Href>().toBeCallableWith(".index");
 
     // Unprefixed = global names
-    expectTypeOf<Href>().toBeCallableWith("magazine.article", { slug: "design" });
+    expectTypeOf<Href>().toBeCallableWith("magazine.article", {
+      slug: "design",
+    });
     expectTypeOf<Href>().toBeCallableWith("blog.post", { slug: "hello" });
 
     // @ts-expect-error - "article" is local, must use ".article"
@@ -268,7 +280,9 @@ describe("Handler with local route map separates local/global", () => {
     // When GetRegisteredRoutes is not augmented, it falls back to Record<string, string>
     // which accepts any string for global names
     type Ctx = HandlerContext<{ slug: string }, DefaultEnv, {}, LocalRoutes>;
-    expectTypeOf<Ctx["reverse"]>().toBeCallableWith("blog.post", { slug: "hi" });
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith("blog.post", {
+      slug: "hi",
+    });
   });
 
   it("should separate namespaces with explicit types", () => {
@@ -291,7 +305,11 @@ describe("Handler with local route map separates local/global", () => {
 });
 
 describe("Handler type with dot-prefix route name", () => {
-  type LocalRoutes = { article: "/:slug"; index: "/"; author: "/author/:authorSlug" };
+  type LocalRoutes = {
+    article: "/:slug";
+    index: "/";
+    author: "/author/:authorSlug";
+  };
 
   it("should infer params from dot-prefixed local name", () => {
     type H = Handler<".article", LocalRoutes>;
@@ -316,9 +334,13 @@ describe("Handler type with dot-prefix route name", () => {
     type H = Handler<".article", LocalRoutes>;
     type Ctx = Parameters<H>[0];
     // Dot-prefixed = local
-    expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".article", { slug: "hello" });
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".article", {
+      slug: "hello",
+    });
     expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".index");
-    expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".author", { authorSlug: "jane" });
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".author", {
+      authorSlug: "jane",
+    });
   });
 });
 
@@ -329,26 +351,33 @@ type AssertTrue<T extends true> = T;
 type AssertEqual<T, U> = T extends U ? (U extends T ? true : false) : false;
 
 // Verify ExtractParams works correctly
-type _Test1 = AssertTrue<AssertEqual<ExtractParams<"/blog/:slug">, { slug: string }>>;
+type _Test1 = AssertTrue<
+  AssertEqual<ExtractParams<"/blog/:slug">, { slug: string }>
+>;
 type _Test2 = AssertTrue<AssertEqual<ExtractParams<"/about">, {}>>;
 type _Test3 = AssertTrue<AssertEqual<ExtractParams<"/:id?">, { id?: string }>>;
-type _Test4 = AssertTrue<AssertEqual<ExtractParams<"/:a/:b">, { a: string; b: string }>>;
+type _Test4 = AssertTrue<
+  AssertEqual<ExtractParams<"/:a/:b">, { a: string; b: string }>
+>;
 
 // Verify ParamsFor works correctly
-type _Test5 = AssertTrue<AssertEqual<ParamsFor<TestRoutes, "blog.post">, { slug: string }>>;
+type _Test5 = AssertTrue<
+  AssertEqual<ParamsFor<TestRoutes, "blog.post">, { slug: string }>
+>;
 type _Test6 = AssertTrue<AssertEqual<ParamsFor<TestRoutes, "about">, {}>>;
 
 // Verify PrefixRoutePatterns works correctly
-type _Test7 = AssertTrue<AssertEqual<
-  PrefixRoutePatterns<{ index: "/" }, "/blog">,
-  { index: "/blog" }
->>;
+type _Test7 = AssertTrue<
+  AssertEqual<PrefixRoutePatterns<{ index: "/" }, "/blog">, { index: "/blog" }>
+>;
 
 // Verify PrefixedRoutes works correctly
-type _Test8 = AssertTrue<AssertEqual<
-  PrefixedRoutes<{ index: "/"; post: "/:slug" }, "blog">,
-  { "blog.index": "/blog"; "blog.post": "/blog/:slug" }
->>;
+type _Test8 = AssertTrue<
+  AssertEqual<
+    PrefixedRoutes<{ index: "/"; post: "/:slug" }, "blog">,
+    { "blog.index": "/blog"; "blog.post": "/blog/:slug" }
+  >
+>;
 
 // ============================================================================
 // PathResponse — full type chain through path.json() → createRouter().routes()
@@ -356,7 +385,12 @@ type _Test8 = AssertTrue<AssertEqual<
 
 import type { PathResponse, ValidPaths } from "../href-client.js";
 import { urls } from "../urls.js";
-import type { RouteResponse, ResponseEnvelope, ResponseHandlerContext, ResponseError } from "../urls.js";
+import type {
+  RouteResponse,
+  ResponseEnvelope,
+  ResponseHandlerContext,
+  ResponseError,
+} from "../urls.js";
 import { isResponseError } from "../client.js";
 import type { RouteParams, RouteSearchParams } from "../search-params.js";
 
@@ -369,9 +403,17 @@ const rscPatterns = urls(({ path }) => [
 ]);
 
 const apiPatterns = urls(({ path }) => [
-  path.json("/health", () => ({ status: "ok" as const, timestamp: Date.now() }), { name: "health" }),
+  path.json(
+    "/health",
+    () => ({ status: "ok" as const, timestamp: Date.now() }),
+    { name: "health" },
+  ),
   path.json("/items", () => [{ id: "1", name: "Widget" }], { name: "items" }),
-  path.json("/items/:id", (ctx) => ({ id: ctx.params.id, name: "Widget", price: 9.99 }), { name: "item" }),
+  path.json(
+    "/items/:id",
+    (ctx) => ({ id: ctx.params.id, name: "Widget", price: 9.99 }),
+    { name: "item" },
+  ),
 ]);
 
 // --- Scoped RouteResponse (from UrlPatterns._responses phantom) ---
@@ -379,17 +421,23 @@ const apiPatterns = urls(({ path }) => [
 describe("RouteResponse (scoped, from UrlPatterns)", () => {
   it("should resolve typed response envelope from path.json() patterns", () => {
     type Health = RouteResponse<typeof apiPatterns, "health">;
-    expectTypeOf<Health>().toEqualTypeOf<ResponseEnvelope<{ status: "ok"; timestamp: number }>>();
+    expectTypeOf<Health>().toEqualTypeOf<
+      ResponseEnvelope<{ status: "ok"; timestamp: number }>
+    >();
   });
 
   it("should resolve array response envelope type", () => {
     type Items = RouteResponse<typeof apiPatterns, "items">;
-    expectTypeOf<Items>().toEqualTypeOf<ResponseEnvelope<{ id: string; name: string }[]>>();
+    expectTypeOf<Items>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; name: string }[]>
+    >();
   });
 
   it("should resolve dynamic route response envelope type", () => {
     type Item = RouteResponse<typeof apiPatterns, "item">;
-    expectTypeOf<Item>().toEqualTypeOf<ResponseEnvelope<{ id: string; name: string; price: number }>>();
+    expectTypeOf<Item>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; name: string; price: number }>
+    >();
   });
 });
 
@@ -413,11 +461,23 @@ type MergeRoutesWithResponses<
     ? unknown extends NonNullable<TResponses>[K]
       ? TRoutes[K]
       : TRoutes[K] extends string
-        ? { readonly path: TRoutes[K]; readonly response: NonNullable<TResponses>[K] }
+        ? {
+            readonly path: TRoutes[K];
+            readonly response: NonNullable<TResponses>[K];
+          }
         : TRoutes[K] extends { readonly path: infer P }
-          ? { readonly path: P; readonly search: TRoutes[K] extends { readonly search: infer S } ? S : never; readonly response: NonNullable<TResponses>[K] }
-          : { readonly path: TRoutes[K]; readonly response: NonNullable<TResponses>[K] }
-    : TRoutes[K]
+          ? {
+              readonly path: P;
+              readonly search: TRoutes[K] extends { readonly search: infer S }
+                ? S
+                : never;
+              readonly response: NonNullable<TResponses>[K];
+            }
+          : {
+              readonly path: TRoutes[K];
+              readonly response: NonNullable<TResponses>[K];
+            }
+    : TRoutes[K];
 };
 
 // Combined route map — same as typeof router.routeMap after .routes(rsc).routes(api)
@@ -426,17 +486,23 @@ type FullRoutes = RscRoutes & MergeRoutesWithResponses<ApiRoutes, ApiResponses>;
 describe("PathResponse (full chain through routeMap)", () => {
   it("should resolve response envelope for static response route", () => {
     type Health = PathResponse<"/health", FullRoutes>;
-    expectTypeOf<Health>().toEqualTypeOf<ResponseEnvelope<{ status: "ok"; timestamp: number }>>();
+    expectTypeOf<Health>().toEqualTypeOf<
+      ResponseEnvelope<{ status: "ok"; timestamp: number }>
+    >();
   });
 
   it("should resolve response envelope for array response", () => {
     type Items = PathResponse<"/items", FullRoutes>;
-    expectTypeOf<Items>().toEqualTypeOf<ResponseEnvelope<{ id: string; name: string }[]>>();
+    expectTypeOf<Items>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; name: string }[]>
+    >();
   });
 
   it("should resolve response envelope for dynamic response route", () => {
     type Item = PathResponse<"/items/:id", FullRoutes>;
-    expectTypeOf<Item>().toEqualTypeOf<ResponseEnvelope<{ id: string; name: string; price: number }>>();
+    expectTypeOf<Item>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; name: string; price: number }>
+    >();
   });
 
   it("should return ResponseEnvelope<never> for RSC routes (no response type)", () => {
@@ -544,7 +610,10 @@ describe("ResponseEnvelope", () => {
   });
 
   it("should have error branch with ResponseError and no data", () => {
-    type Failure = Extract<ResponseEnvelope<{ name: string }>, { error: ResponseError }>;
+    type Failure = Extract<
+      ResponseEnvelope<{ name: string }>,
+      { error: ResponseError }
+    >;
     expectTypeOf<Failure["error"]>().toEqualTypeOf<ResponseError>();
   });
 
@@ -577,7 +646,7 @@ describe("isResponseError", () => {
 
   it("should accept ResponseEnvelope input", () => {
     expectTypeOf(isResponseError<{ id: number }>).toBeCallableWith(
-      {} as ResponseEnvelope<{ id: number }>
+      {} as ResponseEnvelope<{ id: number }>,
     );
   });
 
@@ -594,20 +663,36 @@ describe("isResponseError", () => {
 
 // JSON API module (e.g. api/urls.tsx)
 const userApiPatterns = urls(({ path }) => [
-  path.json("/health", () => ({ status: "ok" as const, uptime: 123 }), { name: "health" }),
+  path.json("/health", () => ({ status: "ok" as const, uptime: 123 }), {
+    name: "health",
+  }),
   path.json("/users", () => [{ id: "1", email: "a@b.com" }], { name: "users" }),
-  path.json("/users/:userId", (ctx) => ({ id: ctx.params.userId, email: "a@b.com" }), { name: "user" }),
-  path.json("/users/:userId/posts/:postId", (ctx) => ({
-    id: ctx.params.postId,
-    author: ctx.params.userId,
-    title: "Hello",
-  }), { name: "user.post" }),
+  path.json(
+    "/users/:userId",
+    (ctx) => ({ id: ctx.params.userId, email: "a@b.com" }),
+    { name: "user" },
+  ),
+  path.json(
+    "/users/:userId/posts/:postId",
+    (ctx) => ({
+      id: ctx.params.postId,
+      author: ctx.params.userId,
+      title: "Hello",
+    }),
+    { name: "user.post" },
+  ),
 ]);
 
 // Text module (e.g. seo/urls.tsx)
 const seoPatterns = urls(({ path }) => [
-  path.text("/robots.txt", () => "User-agent: *\nDisallow: /api/", { name: "robots" }),
-  path.text("/sitemap.txt", () => "https://example.com/\nhttps://example.com/about", { name: "sitemap" }),
+  path.text("/robots.txt", () => "User-agent: *\nDisallow: /api/", {
+    name: "robots",
+  }),
+  path.text(
+    "/sitemap.txt",
+    () => "https://example.com/\nhttps://example.com/about",
+    { name: "sitemap" },
+  ),
 ]);
 
 // Main urlpatterns — mixes RSC pages, inline response routes, and includes
@@ -619,7 +704,9 @@ const mainPatterns = urls(({ path, include }) => [
   path("/blog/:slug", () => null, { name: "blog.post" }),
 
   // Inline JSON route alongside RSC
-  path.json("/api/inline", () => ({ inline: true as const, count: 42 }), { name: "inlineApi" }),
+  path.json("/api/inline", () => ({ inline: true as const, count: 42 }), {
+    name: "inlineApi",
+  }),
 
   // Inline text route
   path.text("/version.txt", () => "1.0.0", { name: "version" }),
@@ -636,22 +723,30 @@ const mainPatterns = urls(({ path, include }) => [
 describe("RouteResponse (scoped, local typing)", () => {
   it("should resolve typed response from local JSON patterns", () => {
     type Health = RouteResponse<typeof userApiPatterns, "health">;
-    expectTypeOf<Health>().toEqualTypeOf<ResponseEnvelope<{ status: "ok"; uptime: number }>>();
+    expectTypeOf<Health>().toEqualTypeOf<
+      ResponseEnvelope<{ status: "ok"; uptime: number }>
+    >();
   });
 
   it("should resolve array response from local JSON patterns", () => {
     type Users = RouteResponse<typeof userApiPatterns, "users">;
-    expectTypeOf<Users>().toEqualTypeOf<ResponseEnvelope<{ id: string; email: string }[]>>();
+    expectTypeOf<Users>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; email: string }[]>
+    >();
   });
 
   it("should resolve parameterized response from local JSON patterns", () => {
     type User = RouteResponse<typeof userApiPatterns, "user">;
-    expectTypeOf<User>().toEqualTypeOf<ResponseEnvelope<{ id: string; email: string }>>();
+    expectTypeOf<User>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; email: string }>
+    >();
   });
 
   it("should resolve deeply nested response from local JSON patterns", () => {
     type Post = RouteResponse<typeof userApiPatterns, "user.post">;
-    expectTypeOf<Post>().toEqualTypeOf<ResponseEnvelope<{ id: string; author: string; title: string }>>();
+    expectTypeOf<Post>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; author: string; title: string }>
+    >();
   });
 
   it("should resolve text patterns locally (text routes have string data)", () => {
@@ -679,7 +774,10 @@ describe("urls() with include() — full type chain", () => {
   // Inline response routes become { path, response } objects
   it("should have inline JSON route as { path, response } object", () => {
     type InlineValue = MainAppRoutes["inlineApi"];
-    expectTypeOf<InlineValue>().toMatchTypeOf<{ readonly path: string; readonly response: unknown }>();
+    expectTypeOf<InlineValue>().toMatchTypeOf<{
+      readonly path: string;
+      readonly response: unknown;
+    }>();
   });
 
   // Route names: RSC
@@ -703,7 +801,10 @@ describe("urls() with include() — full type chain", () => {
     expectTypeOf<Href>().toBeCallableWith("api.health");
     expectTypeOf<Href>().toBeCallableWith("api.users");
     expectTypeOf<Href>().toBeCallableWith("api.user", { userId: "123" });
-    expectTypeOf<Href>().toBeCallableWith("api.user.post", { userId: "1", postId: "42" });
+    expectTypeOf<Href>().toBeCallableWith("api.user.post", {
+      userId: "1",
+      postId: "42",
+    });
   });
 
   // Route names: included text routes (prefixed with "seo.")
@@ -727,7 +828,9 @@ describe("PathResponse through urls() with include()", () => {
   // Inline JSON route
   it("should resolve inline JSON route response", () => {
     type Inline = PathResponse<"/api/inline", MainAppRoutes>;
-    expectTypeOf<Inline>().toEqualTypeOf<ResponseEnvelope<{ inline: true; count: number }>>();
+    expectTypeOf<Inline>().toEqualTypeOf<
+      ResponseEnvelope<{ inline: true; count: number }>
+    >();
   });
 
   // Inline text route
@@ -739,22 +842,33 @@ describe("PathResponse through urls() with include()", () => {
   // Included JSON API routes (URL-prefixed with /api/v1)
   it("should resolve included JSON API route response", () => {
     type Health = PathResponse<"/api/v1/health", MainAppRoutes>;
-    expectTypeOf<Health>().toEqualTypeOf<ResponseEnvelope<{ status: "ok"; uptime: number }>>();
+    expectTypeOf<Health>().toEqualTypeOf<
+      ResponseEnvelope<{ status: "ok"; uptime: number }>
+    >();
   });
 
   it("should resolve included JSON API array response", () => {
     type Users = PathResponse<"/api/v1/users", MainAppRoutes>;
-    expectTypeOf<Users>().toEqualTypeOf<ResponseEnvelope<{ id: string; email: string }[]>>();
+    expectTypeOf<Users>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; email: string }[]>
+    >();
   });
 
   it("should resolve included JSON API parameterized response", () => {
     type User = PathResponse<"/api/v1/users/:userId", MainAppRoutes>;
-    expectTypeOf<User>().toEqualTypeOf<ResponseEnvelope<{ id: string; email: string }>>();
+    expectTypeOf<User>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; email: string }>
+    >();
   });
 
   it("should resolve included deeply nested route response", () => {
-    type Post = PathResponse<"/api/v1/users/:userId/posts/:postId", MainAppRoutes>;
-    expectTypeOf<Post>().toEqualTypeOf<ResponseEnvelope<{ id: string; author: string; title: string }>>();
+    type Post = PathResponse<
+      "/api/v1/users/:userId/posts/:postId",
+      MainAppRoutes
+    >;
+    expectTypeOf<Post>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; author: string; title: string }>
+    >();
   });
 
   // Included text routes (URL-prefixed with /seo)
@@ -818,11 +932,17 @@ describe("ValidPaths through urls() with include()", () => {
 
 // blog/api/urls.tsx — Blog's own JSON API routes
 const blogApiPatterns = urls(({ path }) => [
-  path.json("/stats", () => ({ views: 1000, visitors: 500 }), { name: "stats" }),
-  path.json("/:slug/likes", (ctx) => ({ slug: ctx.params.slug, count: 42 }), { name: "likes" }),
-  path.json("/:slug/comments", (ctx) => ([
-    { id: "c1", slug: ctx.params.slug, body: "Great post" },
-  ]), { name: "comments" }),
+  path.json("/stats", () => ({ views: 1000, visitors: 500 }), {
+    name: "stats",
+  }),
+  path.json("/:slug/likes", (ctx) => ({ slug: ctx.params.slug, count: 42 }), {
+    name: "likes",
+  }),
+  path.json(
+    "/:slug/comments",
+    (ctx) => [{ id: "c1", slug: ctx.params.slug, body: "Great post" }],
+    { name: "comments" },
+  ),
 ]);
 
 // blog/urls.tsx — Self-contained blog module (RSC pages + JSON APIs)
@@ -847,17 +967,23 @@ const appPatterns = urls(({ path, include }) => [
 describe("Mountable module — scoped RouteResponse on blog API", () => {
   it("should resolve stats response locally", () => {
     type Stats = RouteResponse<typeof blogApiPatterns, "stats">;
-    expectTypeOf<Stats>().toEqualTypeOf<ResponseEnvelope<{ views: number; visitors: number }>>();
+    expectTypeOf<Stats>().toEqualTypeOf<
+      ResponseEnvelope<{ views: number; visitors: number }>
+    >();
   });
 
   it("should resolve parameterized likes response locally", () => {
     type Likes = RouteResponse<typeof blogApiPatterns, "likes">;
-    expectTypeOf<Likes>().toEqualTypeOf<ResponseEnvelope<{ slug: string; count: number }>>();
+    expectTypeOf<Likes>().toEqualTypeOf<
+      ResponseEnvelope<{ slug: string; count: number }>
+    >();
   });
 
   it("should resolve array comments response locally", () => {
     type Comments = RouteResponse<typeof blogApiPatterns, "comments">;
-    expectTypeOf<Comments>().toEqualTypeOf<ResponseEnvelope<{ id: string; slug: string; body: string }[]>>();
+    expectTypeOf<Comments>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; slug: string; body: string }[]>
+    >();
   });
 });
 
@@ -866,7 +992,10 @@ describe("Mountable module — scoped RouteResponse on blog API", () => {
 // Extract the blog module's own routes (what ctx.reverse sees inside blog handlers)
 type BlogModuleRoutes = NonNullable<(typeof blogModulePatterns)["_routes"]>;
 type BlogModuleResponses = (typeof blogModulePatterns)["_responses"];
-type BlogModuleMerged = MergeRoutesWithResponses<BlogModuleRoutes, BlogModuleResponses>;
+type BlogModuleMerged = MergeRoutesWithResponses<
+  BlogModuleRoutes,
+  BlogModuleResponses
+>;
 
 describe("Mountable module — ScopedReverseFunction inside blog module", () => {
   it("should accept local RSC route names", () => {
@@ -880,7 +1009,9 @@ describe("Mountable module — ScopedReverseFunction inside blog module", () => 
     type BlogHref = ScopedReverseFunction<BlogModuleMerged>;
     expectTypeOf<BlogHref>().toBeCallableWith("api.stats");
     expectTypeOf<BlogHref>().toBeCallableWith("api.likes", { slug: "hello" });
-    expectTypeOf<BlogHref>().toBeCallableWith("api.comments", { slug: "hello" });
+    expectTypeOf<BlogHref>().toBeCallableWith("api.comments", {
+      slug: "hello",
+    });
   });
 
   it("should reject unknown names without escape hatches", () => {
@@ -896,17 +1027,23 @@ describe("Mountable module — ScopedReverseFunction inside blog module", () => 
 describe("Mountable module — RouteResponse on blog module (pre-mount)", () => {
   it("should resolve API response through nested include", () => {
     type Stats = RouteResponse<typeof blogModulePatterns, "api.stats">;
-    expectTypeOf<Stats>().toEqualTypeOf<ResponseEnvelope<{ views: number; visitors: number }>>();
+    expectTypeOf<Stats>().toEqualTypeOf<
+      ResponseEnvelope<{ views: number; visitors: number }>
+    >();
   });
 
   it("should resolve parameterized API response through nested include", () => {
     type Likes = RouteResponse<typeof blogModulePatterns, "api.likes">;
-    expectTypeOf<Likes>().toEqualTypeOf<ResponseEnvelope<{ slug: string; count: number }>>();
+    expectTypeOf<Likes>().toEqualTypeOf<
+      ResponseEnvelope<{ slug: string; count: number }>
+    >();
   });
 
   it("should resolve array API response through nested include", () => {
     type Comments = RouteResponse<typeof blogModulePatterns, "api.comments">;
-    expectTypeOf<Comments>().toEqualTypeOf<ResponseEnvelope<{ id: string; slug: string; body: string }[]>>();
+    expectTypeOf<Comments>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; slug: string; body: string }[]>
+    >();
   });
 });
 
@@ -927,14 +1064,20 @@ describe("Mountable module — ReverseFunction after mounting blog", () => {
     type AppHref = ReverseFunction<AppMerged>;
     expectTypeOf<AppHref>().toBeCallableWith("blog.index");
     expectTypeOf<AppHref>().toBeCallableWith("blog.post", { slug: "hello" });
-    expectTypeOf<AppHref>().toBeCallableWith("blog.category", { catId: "tech" });
+    expectTypeOf<AppHref>().toBeCallableWith("blog.category", {
+      catId: "tech",
+    });
   });
 
   it("should accept blog API routes with blog.api. prefix (nested include)", () => {
     type AppHref = ReverseFunction<AppMerged>;
     expectTypeOf<AppHref>().toBeCallableWith("blog.api.stats");
-    expectTypeOf<AppHref>().toBeCallableWith("blog.api.likes", { slug: "hello" });
-    expectTypeOf<AppHref>().toBeCallableWith("blog.api.comments", { slug: "hello" });
+    expectTypeOf<AppHref>().toBeCallableWith("blog.api.likes", {
+      slug: "hello",
+    });
+    expectTypeOf<AppHref>().toBeCallableWith("blog.api.comments", {
+      slug: "hello",
+    });
   });
 });
 
@@ -951,17 +1094,23 @@ describe("Mountable module — PathResponse after mounting blog", () => {
   // Blog API routes — response types propagate through nested include
   it("should resolve blog API stats response", () => {
     type Stats = PathResponse<"/blog/api/stats", AppMerged>;
-    expectTypeOf<Stats>().toEqualTypeOf<ResponseEnvelope<{ views: number; visitors: number }>>();
+    expectTypeOf<Stats>().toEqualTypeOf<
+      ResponseEnvelope<{ views: number; visitors: number }>
+    >();
   });
 
   it("should resolve blog API likes response with params", () => {
     type Likes = PathResponse<"/blog/api/:slug/likes", AppMerged>;
-    expectTypeOf<Likes>().toEqualTypeOf<ResponseEnvelope<{ slug: string; count: number }>>();
+    expectTypeOf<Likes>().toEqualTypeOf<
+      ResponseEnvelope<{ slug: string; count: number }>
+    >();
   });
 
   it("should resolve blog API comments array response", () => {
     type Comments = PathResponse<"/blog/api/:slug/comments", AppMerged>;
-    expectTypeOf<Comments>().toEqualTypeOf<ResponseEnvelope<{ id: string; slug: string; body: string }[]>>();
+    expectTypeOf<Comments>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; slug: string; body: string }[]>
+    >();
   });
 });
 
@@ -1015,17 +1164,36 @@ describe("Mountable module — ValidPaths after mounting blog", () => {
 
 const mixedPatterns = urls(({ path }) => [
   // RSC route with search schema
-  path("/search", () => null, { name: "search", search: { q: "string", page: "number?", sort: "string?" } }),
+  path("/search", () => null, {
+    name: "search",
+    search: { q: "string", page: "number?", sort: "string?" },
+  }),
   // RSC route with params + search schema
-  path("/category/:catId", () => null, { name: "category", search: { page: "number?", filter: "string?" } }),
+  path("/category/:catId", () => null, {
+    name: "category",
+    search: { page: "number?", filter: "string?" },
+  }),
   // JSON response route (no search schema)
-  path.json("/api/health", () => ({ status: "ok" as const, uptime: 123 }), { name: "api.health" }),
+  path.json("/api/health", () => ({ status: "ok" as const, uptime: 123 }), {
+    name: "api.health",
+  }),
   // JSON response route with params
-  path.json("/api/products/:id", (ctx) => ({ id: ctx.params.id, name: "Widget", price: 9.99 }), { name: "api.product" }),
+  path.json(
+    "/api/products/:id",
+    (ctx) => ({ id: ctx.params.id, name: "Widget", price: 9.99 }),
+    { name: "api.product" },
+  ),
   // JSON response route with search schema
-  path.json("/api/items", () => [{ id: "1", name: "Thing" }], { name: "api.items", search: { q: "string?", limit: "number?", offset: "number?" } }),
+  path.json("/api/items", () => [{ id: "1", name: "Thing" }], {
+    name: "api.items",
+    search: { q: "string?", limit: "number?", offset: "number?" },
+  }),
   // JSON response route with params + search schema
-  path.json("/api/users/:userId/posts", (ctx) => [{ id: "p1", author: ctx.params.userId }], { name: "api.userPosts", search: { page: "number?", tag: "string?" } }),
+  path.json(
+    "/api/users/:userId/posts",
+    (ctx) => [{ id: "p1", author: ctx.params.userId }],
+    { name: "api.userPosts", search: { page: "number?", tag: "string?" } },
+  ),
   // Plain RSC route
   path("/", () => null, { name: "home" }),
   path("/about", () => null, { name: "about" }),
@@ -1075,7 +1243,11 @@ describe("RouteParams with mixed RSC + response routes", () => {
 describe("RouteSearchParams with mixed RSC + response routes", () => {
   it("should resolve search schema for RSC route with search", () => {
     type Search = RouteSearchParams<"search", MixedMerged>;
-    expectTypeOf<Search>().toEqualTypeOf<{ q: string; page?: number; sort?: string }>();
+    expectTypeOf<Search>().toEqualTypeOf<{
+      q: string;
+      page?: number;
+      sort?: string;
+    }>();
   });
 
   it("should resolve search schema for RSC route with params + search", () => {
@@ -1100,7 +1272,11 @@ describe("RouteSearchParams with mixed RSC + response routes", () => {
 
   it("should resolve search schema for path.json() route with search", () => {
     type Search = RouteSearchParams<"api.items", MixedMerged>;
-    expectTypeOf<Search>().toEqualTypeOf<{ q?: string; limit?: number; offset?: number }>();
+    expectTypeOf<Search>().toEqualTypeOf<{
+      q?: string;
+      limit?: number;
+      offset?: number;
+    }>();
   });
 
   it("should resolve search schema for path.json() route with params + search", () => {
@@ -1112,22 +1288,30 @@ describe("RouteSearchParams with mixed RSC + response routes", () => {
 describe("PathResponse with mixed RSC + response routes", () => {
   it("should resolve response envelope for JSON health route", () => {
     type Health = PathResponse<"/api/health", MixedMerged>;
-    expectTypeOf<Health>().toEqualTypeOf<ResponseEnvelope<{ status: "ok"; uptime: number }>>();
+    expectTypeOf<Health>().toEqualTypeOf<
+      ResponseEnvelope<{ status: "ok"; uptime: number }>
+    >();
   });
 
   it("should resolve response envelope for JSON product route", () => {
     type Product = PathResponse<"/api/products/:id", MixedMerged>;
-    expectTypeOf<Product>().toEqualTypeOf<ResponseEnvelope<{ id: string; name: string; price: number }>>();
+    expectTypeOf<Product>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; name: string; price: number }>
+    >();
   });
 
   it("should resolve response envelope for path.json() route with search", () => {
     type Items = PathResponse<"/api/items", MixedMerged>;
-    expectTypeOf<Items>().toEqualTypeOf<ResponseEnvelope<{ id: string; name: string }[]>>();
+    expectTypeOf<Items>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; name: string }[]>
+    >();
   });
 
   it("should resolve response envelope for path.json() route with params + search", () => {
     type Posts = PathResponse<"/api/users/:userId/posts", MixedMerged>;
-    expectTypeOf<Posts>().toEqualTypeOf<ResponseEnvelope<{ id: string; author: string }[]>>();
+    expectTypeOf<Posts>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; author: string }[]>
+    >();
   });
 
   it("should return ResponseEnvelope<never> for RSC route with search", () => {
@@ -1149,22 +1333,30 @@ describe("PathResponse with mixed RSC + response routes", () => {
 describe("RouteResponse with mixed RSC + response routes", () => {
   it("should resolve response for JSON route by name", () => {
     type Health = RouteResponse<typeof mixedPatterns, "api.health">;
-    expectTypeOf<Health>().toEqualTypeOf<ResponseEnvelope<{ status: "ok"; uptime: number }>>();
+    expectTypeOf<Health>().toEqualTypeOf<
+      ResponseEnvelope<{ status: "ok"; uptime: number }>
+    >();
   });
 
   it("should resolve response for JSON route with params by name", () => {
     type Product = RouteResponse<typeof mixedPatterns, "api.product">;
-    expectTypeOf<Product>().toEqualTypeOf<ResponseEnvelope<{ id: string; name: string; price: number }>>();
+    expectTypeOf<Product>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; name: string; price: number }>
+    >();
   });
 
   it("should resolve response for path.json() route with search by name", () => {
     type Items = RouteResponse<typeof mixedPatterns, "api.items">;
-    expectTypeOf<Items>().toEqualTypeOf<ResponseEnvelope<{ id: string; name: string }[]>>();
+    expectTypeOf<Items>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; name: string }[]>
+    >();
   });
 
   it("should resolve response for path.json() route with params + search by name", () => {
     type Posts = RouteResponse<typeof mixedPatterns, "api.userPosts">;
-    expectTypeOf<Posts>().toEqualTypeOf<ResponseEnvelope<{ id: string; author: string }[]>>();
+    expectTypeOf<Posts>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; author: string }[]>
+    >();
   });
 });
 

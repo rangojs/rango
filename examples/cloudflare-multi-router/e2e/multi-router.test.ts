@@ -24,7 +24,7 @@ test.describe("multi-router", () => {
 
       await expect(testId(page, "site-home-page")).toBeVisible();
       await expect(testId(page, "site-home-title")).toHaveText(
-        "Welcome to the Site"
+        "Welcome to the Site",
       );
       await expect(testId(page, "site-nav")).toBeVisible();
     });
@@ -65,7 +65,7 @@ test.describe("multi-router", () => {
 
       await expect(testId(page, "admin-dashboard-page")).toBeVisible();
       await expect(testId(page, "admin-dashboard-title")).toHaveText(
-        "Admin Dashboard"
+        "Admin Dashboard",
       );
       await expect(testId(page, "admin-nav")).toBeVisible();
     });

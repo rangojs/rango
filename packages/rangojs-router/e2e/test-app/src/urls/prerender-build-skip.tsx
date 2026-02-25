@@ -30,7 +30,9 @@ export const SkipWorkingStatic = Static(() => {
   return (
     <div data-testid="build-skip-working-static">
       <h1 data-testid="build-skip-working-static-title">Working Static</h1>
-      <p data-testid="build-skip-working-static-timestamp">Built at: {Date.now()}</p>
+      <p data-testid="build-skip-working-static-timestamp">
+        Built at: {Date.now()}
+      </p>
     </div>
   );
 });
@@ -38,9 +40,5 @@ export const SkipWorkingStatic = Static(() => {
 export const buildSkipPatterns = urls(({ path }) => [
   path("/static-skip", SkipStatic, { name: "staticSkip" }),
   path("/working-static", SkipWorkingStatic, { name: "workingStatic" }),
-  path(
-    "/:slug",
-    SkipArticle,
-    { name: "article" },
-  ),
+  path("/:slug", SkipArticle, { name: "article" }),
 ]);

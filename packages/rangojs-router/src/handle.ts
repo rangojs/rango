@@ -29,7 +29,6 @@ export interface Handle<TData, TAccumulated = TData[]> {
    * Format: "filePath#ExportName" in dev, "hash#ExportName" in production
    */
   readonly $$id: string;
-
 }
 
 /**
@@ -48,7 +47,9 @@ const collectRegistry = new Map<string, (segments: unknown[][]) => unknown>();
  * Look up a collect function from the registry by handle $$id.
  * Returns undefined if not registered (falls back to defaultCollect in useHandle).
  */
-export function getCollectFn(id: string): ((segments: unknown[][]) => unknown) | undefined {
+export function getCollectFn(
+  id: string,
+): ((segments: unknown[][]) => unknown) | undefined {
   return collectRegistry.get(id);
 }
 
@@ -90,7 +91,7 @@ export function getCollectFn(id: string): ((segments: unknown[][]) => unknown) |
  */
 export function createHandle<TData, TAccumulated = TData[]>(
   collect?: (segments: TData[][]) => TAccumulated,
-  __injectedId?: string
+  __injectedId?: string,
 ): Handle<TData, TAccumulated> {
   const handleId = __injectedId ?? "";
 
@@ -98,17 +99,21 @@ export function createHandle<TData, TAccumulated = TData[]>(
     throw new Error(
       "[rsc-router] Handle is missing $$id. " +
         "Make sure the exposeInternalIds Vite plugin is enabled and " +
-        "the handle is exported with: export const MyHandle = createHandle(...)"
+        "the handle is exported with: export const MyHandle = createHandle(...)",
     );
   }
 
-  const collectFn = collect ??
+  const collectFn =
+    collect ??
     (defaultCollect as unknown as (segments: TData[][]) => TAccumulated);
 
   // Register collect in module-level registry so useHandle() can recover it
   // when the handle is deserialized from RSC props (toJSON strips collect).
   if (handleId) {
-    collectRegistry.set(handleId, collectFn as (segments: unknown[][]) => unknown);
+    collectRegistry.set(
+      handleId,
+      collectFn as (segments: unknown[][]) => unknown,
+    );
   }
 
   return {

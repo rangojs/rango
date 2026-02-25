@@ -32,7 +32,10 @@ import { isCachedFunction } from "./cache/taint.js";
 import { getCacheProfile } from "./cache/profile-registry.js";
 import { isStaticHandler } from "./static-handler.js";
 import type { LocationStateEntry } from "./browser/react/location-state-shared.js";
-import { requireRequestContext, getRequestContext } from "./server/request-context.js";
+import {
+  requireRequestContext,
+  getRequestContext,
+} from "./server/request-context.js";
 import RootLayout from "./server/root-layout";
 import type {
   AllUseItems,
@@ -98,7 +101,7 @@ function isRouteConfig(value: unknown): value is RouteConfig {
  */
 export function route<const T extends RouteDefinition>(
   input: T,
-  options?: RouteDefinitionOptions
+  options?: RouteDefinitionOptions,
 ): ResolvedRouteMap<T> & {
   __trailingSlash?: Record<string, TrailingSlashMode>;
 } {
@@ -107,7 +110,7 @@ export function route<const T extends RouteDefinition>(
     input as RouteDefinition,
     "",
     trailingSlash,
-    options?.trailingSlash
+    options?.trailingSlash,
   );
 
   // Attach trailing slash config as a non-enumerable property
@@ -133,7 +136,7 @@ function flattenRoutes(
   routes: RouteDefinition,
   prefix: string,
   trailingSlashConfig: Record<string, TrailingSlashMode>,
-  defaultTrailingSlash?: TrailingSlashMode
+  defaultTrailingSlash?: TrailingSlashMode,
 ): Record<string, string> {
   const flattened: Record<string, string> = {};
 
@@ -161,7 +164,7 @@ function flattenRoutes(
         value,
         `${fullKey}.`,
         trailingSlashConfig,
-        defaultTrailingSlash
+        defaultTrailingSlash,
       );
       Object.assign(flattened, nested);
     }
@@ -224,7 +227,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
   route: <K extends keyof ResolvedRouteMap<T> & string>(
     name: K,
     handler: Handler<ExtractRouteParams<T, K & string>, {}, TEnv>,
-    use?: () => UseItems<RouteUseItem>
+    use?: () => UseItems<RouteUseItem>,
   ) => RouteItem;
   /**
    * Define a layout that wraps child routes
@@ -248,7 +251,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    */
   layout: (
     component: ReactNode | Handler<any, any, TEnv>,
-    use?: () => UseItems<LayoutUseItem>
+    use?: () => UseItems<LayoutUseItem>,
   ) => LayoutItem;
   /**
    * Define parallel routes that render simultaneously in named slots
@@ -274,7 +277,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
     TSlots extends Record<`@${string}`, Handler<any, any, TEnv> | ReactNode>,
   >(
     slots: TSlots,
-    use?: () => UseItems<ParallelUseItem>
+    use?: () => UseItems<ParallelUseItem>,
   ) => ParallelItem;
   /**
    * Define an intercepting route for soft navigation
@@ -306,14 +309,14 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
       slotName: `@${string}`,
       routeName: `.${K}`,
       handler: ReactNode | Handler<ExtractRouteParams<T, K>, {}, TEnv>,
-      use?: () => UseItems<InterceptUseItem>
+      use?: () => UseItems<InterceptUseItem>,
     ): InterceptItem;
     // Global: unprefixed, params inferred from global route map
     <K extends keyof RSCRouter.GeneratedRouteMap & string>(
       slotName: `@${string}`,
       routeName: K,
       handler: ReactNode | Handler<K, RSCRouter.GeneratedRouteMap, TEnv>,
-      use?: () => UseItems<InterceptUseItem>
+      use?: () => UseItems<InterceptUseItem>,
     ): InterceptItem;
   };
   /**
@@ -374,7 +377,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    */
   loader: <TData>(
     loaderDef: LoaderDefinition<TData>,
-    use?: () => UseItems<LoaderUseItem>
+    use?: () => UseItems<LoaderUseItem>,
   ) => LoaderItem;
   /**
    * Attach a loading component to the current route/layout
@@ -407,7 +410,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param fallback - Static JSX or handler receiving error info and reset function
    */
   errorBoundary: (
-    fallback: ReactNode | ErrorBoundaryHandler
+    fallback: ReactNode | ErrorBoundaryHandler,
   ) => ErrorBoundaryItem;
   /**
    * Attach a not-found boundary to handle notFound() calls in this segment
@@ -425,7 +428,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param fallback - Static JSX or handler receiving not-found info
    */
   notFoundBoundary: (
-    fallback: ReactNode | NotFoundBoundaryHandler
+    fallback: ReactNode | NotFoundBoundaryHandler,
   ) => NotFoundBoundaryItem;
   /**
    * Define a condition for when an intercept should activate
@@ -525,7 +528,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
     (profileName: string, use: () => UseItems<AllUseItems>): CacheItem;
     (
       options: PartialCacheOptions | false,
-      use?: () => UseItems<AllUseItems>
+      use?: () => UseItems<AllUseItems>,
     ): CacheItem;
   };
   /**
@@ -557,7 +560,10 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    */
   transition: {
     (config: TransitionConfig): TransitionItem;
-    (config: TransitionConfig, children: () => UseItems<AllUseItems>): TransitionItem;
+    (
+      config: TransitionConfig,
+      children: () => UseItems<AllUseItems>,
+    ): TransitionItem;
   };
 };
 
@@ -672,7 +678,7 @@ const errorBoundary: RouteHelpers<any, any>["errorBoundary"] = (fallback) => {
  * ```
  */
 const notFoundBoundary: RouteHelpers<any, any>["notFoundBoundary"] = (
-  fallback
+  fallback,
 ) => {
   const ctx = getContext().getStore();
   if (!ctx) throw new Error("notFoundBoundary() must be called inside map()");
@@ -705,7 +711,7 @@ const when: RouteHelpers<any, any>["when"] = (fn) => {
   if (!parent || !("when" in parent)) {
     invariant(
       false,
-      "when() can only be used inside intercept() use() callback"
+      "when() can only be used inside intercept() use() callback",
     );
   }
 
@@ -729,8 +735,12 @@ const when: RouteHelpers<any, any>["when"] = (fn) => {
  * - cache({ ttl: 60 }, () => [...]) - with explicit options
  */
 const cache: RouteHelpers<any, any>["cache"] = (
-  optionsOrChildren?: PartialCacheOptions | false | string | (() => UseItems<AllUseItems>),
-  maybeChildren?: () => UseItems<AllUseItems>
+  optionsOrChildren?:
+    | PartialCacheOptions
+    | false
+    | string
+    | (() => UseItems<AllUseItems>),
+  maybeChildren?: () => UseItems<AllUseItems>,
 ) => {
   const store = getContext();
   const ctx = store.getStore();
@@ -750,7 +760,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
     invariant(
       profile,
       `cache("${optionsOrChildren}"): unknown cache profile. ` +
-      `Define it in createRouter({ cacheProfiles: { "${optionsOrChildren}": { ttl: ... } } }).`
+        `Define it in createRouter({ cacheProfiles: { "${optionsOrChildren}": { ttl: ... } } }).`,
     );
     options = { ttl: profile.ttl, swr: profile.swr, tags: profile.tags };
     children = maybeChildren;
@@ -847,7 +857,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
 
   invariant(
     Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-    `cache() children callback must return an array of use items [${namespace}]`
+    `cache() children callback must return an array of use items [${namespace}]`,
   );
 
   // Check if this cache has routes (including nested caches/layouts)
@@ -875,9 +885,9 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...fn) => {
     if (isCachedFunction(f)) {
       throw new Error(
         `A "use cache" function cannot be used as middleware. ` +
-        `Cached functions return data and do not participate in the ` +
-        `middleware chain. Remove the "use cache" directive or use a ` +
-        `regular middleware function instead.`,
+          `Cached functions return data and do not participate in the ` +
+          `middleware chain. Remove the "use cache" directive or use a ` +
+          `regular middleware function instead.`,
       );
     }
   }
@@ -906,7 +916,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
 
   invariant(
     ctx.parent.type !== "parallel",
-    "parallel() cannot be nested inside another parallel()"
+    "parallel() cannot be nested inside another parallel()",
   );
 
   const namespace = `${ctx.namespace}.$${store.getNextIndex("parallel")}`;
@@ -915,7 +925,9 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
   const unwrappedSlots: Record<string, any> = {};
   let hasStaticSlot = false;
   const staticSlotIds: Record<string, string> = {};
-  for (const [slotName, slotHandler] of Object.entries(slots as Record<string, any>)) {
+  for (const [slotName, slotHandler] of Object.entries(
+    slots as Record<string, any>,
+  )) {
     if (isStaticHandler(slotHandler)) {
       hasStaticSlot = true;
       unwrappedSlots[slotName] = slotHandler.handler;
@@ -949,7 +961,14 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     intercept: [],
     loader: [],
     ...(parallelUrlPrefix ? { mountPath: parallelUrlPrefix } : {}),
-    ...(hasStaticSlot ? { isStaticPrerender: true as const, ...(Object.keys(staticSlotIds).length > 0 ? { staticHandlerIds: staticSlotIds } : {}) } : {}),
+    ...(hasStaticSlot
+      ? {
+          isStaticPrerender: true as const,
+          ...(Object.keys(staticSlotIds).length > 0
+            ? { staticHandlerIds: staticSlotIds }
+            : {}),
+        }
+      : {}),
   } satisfies EntryData;
 
   // Run use callback if provided to collect loaders, revalidate, loading
@@ -957,7 +976,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     const result = store.run(namespace, entry, use)?.flat(3);
     invariant(
       Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-      `parallel() use() callback must return an array of use items [${namespace}]`
+      `parallel() use() callback must return an array of use items [${namespace}]`,
     );
   }
 
@@ -972,7 +991,7 @@ const intercept = (
   slotName: `@${string}`,
   routeName: string,
   handler: any,
-  use?: () => any[]
+  use?: () => any[],
 ) => {
   const store = getContext();
   const ctx = store.getStore();
@@ -984,7 +1003,7 @@ const intercept = (
 
   invariant(
     ctx.parent.type !== "parallel",
-    "intercept() cannot be used inside parallel()"
+    "intercept() cannot be used inside parallel()",
   );
 
   const namespace = `${ctx.namespace}.$${store.getNextIndex("intercept")}.${slotName}`;
@@ -993,7 +1012,8 @@ const intercept = (
   const isLocal = typeof routeName === "string" && routeName.startsWith(".");
   const bareRouteName = isLocal ? routeName.slice(1) : routeName;
   const namePrefix = getNamePrefix();
-  const prefixedRouteName = isLocal && namePrefix ? `${namePrefix}.${bareRouteName}` : bareRouteName;
+  const prefixedRouteName =
+    isLocal && namePrefix ? `${namePrefix}.${bareRouteName}` : bareRouteName;
 
   // Create intercept entry with its own loaders/revalidate/middleware/when
   const entry: InterceptEntry = {
@@ -1051,7 +1071,7 @@ const intercept = (
 
     invariant(
       Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-      `intercept() use() callback must return an array of use items [${namespace}]`
+      `intercept() use() callback must return an array of use items [${namespace}]`,
     );
   }
 
@@ -1098,7 +1118,7 @@ const loaderFn: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
 
     invariant(
       Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-      `loader() use() callback must return an array of use items [${name}]`
+      `loader() use() callback must return an array of use items [${name}]`,
     );
   }
 
@@ -1137,7 +1157,7 @@ const loadingFn: RouteHelpers<any, any>["loading"] = (component, options) => {
  */
 const transitionFn = (
   configOrChildren?: TransitionConfig | (() => UseItems<AllUseItems>),
-  maybeChildren?: () => UseItems<AllUseItems>
+  maybeChildren?: () => UseItems<AllUseItems>,
 ): TransitionItem => {
   // Resolve overloaded arguments:
   //   transition()                    -> config={}, children=undefined
@@ -1189,7 +1209,7 @@ const transitionFn = (
 
   invariant(
     Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-    `transition() children callback must return an array of use items [${namespace}]`
+    `transition() children callback must return an array of use items [${namespace}]`,
   );
 
   const hasRoutes =
@@ -1235,7 +1255,7 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
   /* We will throw if user is registring same route name twice */
   invariant(
     ctx.manifest.get(name) === undefined,
-    `Duplicate route name: ${name} at ${namespace}`
+    `Duplicate route name: ${name} at ${namespace}`,
   );
   /* Register route entry */
   ctx.manifest.set(name, entry);
@@ -1244,7 +1264,7 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
     const result = store.run(namespace, entry, use)?.flat(3);
     invariant(
       Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-      `route() use() callback must return an array of use items [${namespace}]`
+      `route() use() callback must return an array of use items [${namespace}]`,
     );
     return { name: namespace, type: "route", uses: result } as RouteItem;
   }
@@ -1260,7 +1280,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
 
   invariant(
     !ctx.parent || ctx.parent.type !== "parallel",
-    "layout() cannot be used inside parallel()"
+    "layout() cannot be used inside parallel()",
   );
 
   const isRoot = !ctx.parent || ctx.parent === null;
@@ -1289,7 +1309,12 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     layout: [],
     loader: [],
     ...(urlPrefix ? { mountPath: urlPrefix } : {}),
-    ...(isStatic ? { isStaticPrerender: true as const, ...(handler.$$id ? { staticHandlerId: handler.$$id } : {}) } : {}),
+    ...(isStatic
+      ? {
+          isStaticPrerender: true as const,
+          ...(handler.$$id ? { staticHandlerId: handler.$$id } : {}),
+        }
+      : {}),
   } satisfies EntryData;
 
   // Capture namespace prefix on static handler for build-time reverse() resolution
@@ -1304,7 +1329,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
 
     invariant(
       Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-      `layout() use() callback must return an array of use items [${namespace}]`
+      `layout() use() callback must return an array of use items [${namespace}]`,
     );
   }
 
@@ -1322,7 +1347,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     if (result) {
       invariant(
         !result.some((item) => item?.type === "layout"),
-        `orphan layout cannot contain other layouts as children [${namespace}]`
+        `orphan layout cannot contain other layouts as children [${namespace}]`,
       );
     }
 
@@ -1333,7 +1358,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
       if (!isRoot) {
         invariant(
           false,
-          `Orphan layout cannot be used at non-root level without parent [${namespace}]`
+          `Orphan layout cannot be used at non-root level without parent [${namespace}]`,
         );
       }
       // Root-level orphan is allowed (e.g., sibling layouts in map() builder)
@@ -1343,7 +1368,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
         parent.type === "route" ||
           parent.type === "layout" ||
           parent.type === "cache",
-        `Orphan layouts can only be defined inside route or layout > check [${namespace}]`
+        `Orphan layouts can only be defined inside route or layout > check [${namespace}]`,
       );
 
       // Clear parent pointer for orphan layouts to prevent duplicate processing
@@ -1534,13 +1559,13 @@ export interface RouteHandlers<T extends RouteDefinition> {
  *
  */
 export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
-  builder: (helpers: RouteHelpers<T, TEnv>) => Array<AllUseItems>
+  builder: (helpers: RouteHelpers<T, TEnv>) => Array<AllUseItems>,
 ): RouteHandlers<T> {
   const handler = () => {
     // Check if it's a builder function (array-based API)
     invariant(
       typeof builder === "function",
-      "map() expects a builder function as its argument"
+      "map() expects a builder function as its argument",
     );
     // Create helpers
     const helpers: RouteHelpers<T, TEnv> = {
@@ -1681,13 +1706,20 @@ export { createLoader } from "./loader.rsc.js";
  * ```
  */
 export function redirect(url: string, status?: number): Response;
-export function redirect(url: string, options: { status?: number; state?: LocationStateEntry[] }): Response;
+export function redirect(
+  url: string,
+  options: { status?: number; state?: LocationStateEntry[] },
+): Response;
 export function redirect(
   url: string,
   statusOrOptions?: number | { status?: number; state?: LocationStateEntry[] },
 ): Response {
-  const status = typeof statusOrOptions === "number" ? statusOrOptions : (statusOrOptions?.status ?? 302);
-  const state = typeof statusOrOptions === "object" ? statusOrOptions?.state : undefined;
+  const status =
+    typeof statusOrOptions === "number"
+      ? statusOrOptions
+      : (statusOrOptions?.status ?? 302);
+  const state =
+    typeof statusOrOptions === "object" ? statusOrOptions?.state : undefined;
 
   if (state) {
     const ctx = requireRequestContext();
@@ -1698,7 +1730,7 @@ export function redirect(
       if (reqCtx && !reqCtx.url.searchParams.has("_rsc_partial")) {
         console.warn(
           `[Router] redirect() with state during a full-page (SSR) request to "${url}". ` +
-          "Location state is only delivered during SPA navigations and will be lost on this request.",
+            "Location state is only delivered during SPA navigations and will be lost on this request.",
         );
       }
     }

@@ -29,7 +29,7 @@ test.describe("action-id-resolution (production)", () => {
         (file) =>
           typeof file === "string" &&
           file.includes("assets/") &&
-          file.endsWith(".js")
+          file.endsWith(".js"),
       );
 
       let foundFilePathInServerBundle = false;
@@ -51,9 +51,7 @@ test.describe("action-id-resolution (production)", () => {
           serverActionFileContent = content;
 
           // Verify the $id pattern: fn.$id = "src/path/to/file.tsx#actionName"
-          const matches = content.match(
-            /\$id\s*=\s*"(src\/[^"]+#[^"]+)"/g
-          );
+          const matches = content.match(/\$id\s*=\s*"(src\/[^"]+#[^"]+)"/g);
           if (matches && matches.length > 0) {
             // Verify at least one match contains a proper file path
             expect(matches.some((m) => m.includes("src/"))).toBe(true);
@@ -67,7 +65,7 @@ test.describe("action-id-resolution (production)", () => {
       // Verify the $id format is correct (should be "src/path/to/file.tsx#actionName")
       // Note: test-app uses .tsx files for actions
       expect(serverActionFileContent).toMatch(
-        /\$id\s*=\s*"src\/[^"]+\.tsx?#[^"]+"/
+        /\$id\s*=\s*"src\/[^"]+\.tsx?#[^"]+"/,
       );
     });
 
@@ -84,7 +82,7 @@ test.describe("action-id-resolution (production)", () => {
       const responsePromise = page.waitForResponse(
         (response) =>
           response.url().includes("/product/product-a") &&
-          response.request().method() === "POST"
+          response.request().method() === "POST",
       );
 
       // Click Add to Cart button
@@ -98,7 +96,9 @@ test.describe("action-id-resolution (production)", () => {
       await page.waitForTimeout(500);
 
       // Verify the result message appears (proves action completed)
-      const resultElement = page.locator('[data-testid="add-to-cart-btn-result"]');
+      const resultElement = page.locator(
+        '[data-testid="add-to-cart-btn-result"]',
+      );
       await expect(resultElement).toBeVisible({ timeout: 5000 });
     });
   });
@@ -111,7 +111,7 @@ test.describe("action-id-resolution (production)", () => {
 
       // Find JavaScript files
       const jsFiles = files.filter(
-        (file) => typeof file === "string" && file.endsWith(".js")
+        (file) => typeof file === "string" && file.endsWith(".js"),
       );
 
       for (const file of jsFiles) {
@@ -132,7 +132,7 @@ test.describe("action-id-resolution (production)", () => {
 
         expect(
           hasServerFilePath,
-          `Client bundle ${file} should not expose server file paths`
+          `Client bundle ${file} should not expose server file paths`,
         ).toBe(false);
       }
     });
@@ -147,7 +147,7 @@ test.describe("action-id-resolution (production)", () => {
         (file) =>
           typeof file === "string" &&
           file.includes("assets/") &&
-          file.endsWith(".js")
+          file.endsWith(".js"),
       );
 
       let foundActionReference = false;
@@ -161,7 +161,7 @@ test.describe("action-id-resolution (production)", () => {
         // but the $$id="hash#actionName" pattern remains stable
         // Pattern: $$id="hash#actionName" or .$$id="hash#actionName"
         const actionIdMatches = content.match(
-          /\$\$id\s*=\s*"([a-f0-9]+#[^"]+)"/g
+          /\$\$id\s*=\s*"([a-f0-9]+#[^"]+)"/g,
         );
 
         if (actionIdMatches && actionIdMatches.length > 0) {
@@ -209,7 +209,7 @@ test.describe("action-id-resolution (production)", () => {
       const requestPromise = page.waitForRequest(
         (request) =>
           request.url().includes("/product/product-a") &&
-          request.method() === "POST"
+          request.method() === "POST",
       );
 
       // Click Add to Cart button
@@ -247,7 +247,7 @@ test.describe("action-id-resolution (production)", () => {
           typeof file === "string" &&
           file.includes("assets/") &&
           file.includes("handlers") &&
-          file.endsWith(".js")
+          file.endsWith(".js"),
       );
       filesToCheck.push(...handlerFiles);
 
@@ -262,7 +262,7 @@ test.describe("action-id-resolution (production)", () => {
         // Look for the inline action registration
         // Pattern: registerServerReference(fn, "hash", "$$hoist_0_inlineTestAction")
         const inlineActionMatch = content.match(
-          /registerServerReference\([^,]+,\s*"([^"]+)",\s*"[^"]*inlineTestAction[^"]*"\)/
+          /registerServerReference\([^,]+,\s*"([^"]+)",\s*"[^"]*inlineTestAction[^"]*"\)/,
         );
 
         if (inlineActionMatch) {
@@ -284,7 +284,7 @@ test.describe("action-id-resolution (production)", () => {
 
       expect(
         foundInlineAction,
-        "Should find inline action in RSC bundle (index.js or handlers assets)"
+        "Should find inline action in RSC bundle (index.js or handlers assets)",
       ).toBe(true);
     });
 
@@ -301,7 +301,7 @@ test.describe("action-id-resolution (production)", () => {
       const responsePromise = page.waitForResponse(
         (response) =>
           response.url().includes("/inline-action") &&
-          response.request().method() === "POST"
+          response.request().method() === "POST",
       );
 
       // Submit the inline action form
@@ -326,7 +326,7 @@ test.describe("action-id-resolution (production)", () => {
       const requestPromise = page.waitForRequest(
         (request) =>
           request.url().includes("/inline-action") &&
-          request.method() === "POST"
+          request.method() === "POST",
       );
 
       await page.click('[data-testid="inline-action-submit"]');

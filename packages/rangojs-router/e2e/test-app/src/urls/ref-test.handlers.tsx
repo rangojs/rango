@@ -9,7 +9,9 @@ export const RefTestLoaderPropHandler: Handler<"refTest.loaderProp"> = () => (
   <RefTestLoaderProp loader={SlowLoader} />
 );
 
-export const RefTestHandlePropHandler: Handler<"refTest.handleProp"> = (ctx) => {
+export const RefTestHandlePropHandler: Handler<"refTest.handleProp"> = (
+  ctx,
+) => {
   const push = ctx.use(Breadcrumbs);
   push({ label: "Home", href: "/" });
   push({ label: "Ref Test", href: "/ref-test/handle-prop" });

@@ -24,7 +24,7 @@ import { createFromReadableStream } from "@vitejs/plugin-rsc/rsc";
  * Convert a ReadableStream to a string.
  */
 export async function streamToString(
-  stream: ReadableStream<Uint8Array>
+  stream: ReadableStream<Uint8Array>,
 ): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -63,7 +63,9 @@ export function stringToStream(str: string): ReadableStream<Uint8Array> {
  * RSC-serialize a value using React Server Components stream.
  * Used for serializing loaderData, layout, loading components etc.
  */
-export async function rscSerialize(value: unknown): Promise<string | undefined> {
+export async function rscSerialize(
+  value: unknown,
+): Promise<string | undefined> {
   if (value === undefined || value === null) return undefined;
 
   const temporaryReferences = createTemporaryReferenceSet();
@@ -75,7 +77,7 @@ export async function rscSerialize(value: unknown): Promise<string | undefined> 
  * RSC-deserialize a value from a stored string.
  */
 export async function rscDeserialize<T>(
-  encoded: string | undefined
+  encoded: string | undefined,
 ): Promise<T | undefined> {
   if (!encoded) return undefined;
 
@@ -92,9 +94,7 @@ export async function rscDeserialize<T>(
  * RSC-deserialize a single encoded component string back to a React element.
  * Used by the static handler runtime to revive pre-rendered components.
  */
-export async function deserializeComponent(
-  encoded: string
-): Promise<unknown> {
+export async function deserializeComponent(encoded: string): Promise<unknown> {
   const temporaryReferences = createTemporaryReferenceSet();
   const stream = stringToStream(encoded);
   return createFromReadableStream(stream, { temporaryReferences });
@@ -106,7 +106,7 @@ export async function deserializeComponent(
  * Metadata is preserved as-is.
  */
 export async function serializeSegments(
-  segments: ResolvedSegment[]
+  segments: ResolvedSegment[],
 ): Promise<SerializedSegmentData[]> {
   const serialized: SerializedSegmentData[] = [];
 
@@ -154,7 +154,7 @@ export async function serializeSegments(
         ? await segment.loaderDataPromise
         : segment.loaderDataPromise;
     const encodedLoaderDataPromise = await rscSerialize(
-      loaderDataPromiseResolved
+      loaderDataPromiseResolved,
     );
 
     serialized.push({
@@ -188,7 +188,7 @@ export async function serializeSegments(
  * Reconstructs ResolvedSegment objects from RSC-serialized data.
  */
 export async function deserializeSegments(
-  data: SerializedSegmentData[]
+  data: SerializedSegmentData[],
 ): Promise<ResolvedSegment[]> {
   const segments: ResolvedSegment[] = [];
 

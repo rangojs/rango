@@ -60,7 +60,7 @@ export function invokeOnError<TEnv = any>(
   error: unknown,
   phase: ErrorPhase,
   context: InvokeOnErrorContext<TEnv>,
-  logPrefix: string = "Router"
+  logPrefix: string = "Router",
 ): void {
   if (!onError) return;
 
@@ -112,7 +112,7 @@ export function invokeOnError<TEnv = any>(
  */
 export function findNearestErrorBoundary(
   entry: EntryData | null,
-  defaultErrorBoundary?: ReactNode | ErrorBoundaryHandler
+  defaultErrorBoundary?: ReactNode | ErrorBoundaryHandler,
 ): ReactNode | ErrorBoundaryHandler | null {
   let current: EntryData | null = entry;
 
@@ -148,7 +148,7 @@ export function findNearestErrorBoundary(
  */
 export function findNearestNotFoundBoundary(
   entry: EntryData | null,
-  defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler
+  defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler,
 ): ReactNode | NotFoundBoundaryHandler | null {
   let current: EntryData | null = entry;
 
@@ -172,7 +172,7 @@ export function findNearestNotFoundBoundary(
 export function createErrorInfo(
   error: unknown,
   segmentId: string,
-  segmentType: ErrorInfo["segmentType"]
+  segmentType: ErrorInfo["segmentType"],
 ): ErrorInfo {
   const isDev = process.env.NODE_ENV !== "production";
 
@@ -205,7 +205,7 @@ export function createErrorSegment(
   errorInfo: ErrorInfo,
   fallback: ReactNode | ErrorBoundaryHandler,
   entry: EntryData,
-  params: Record<string, string>
+  params: Record<string, string>,
 ): ResolvedSegment {
   // Determine the component to render
   let component: ReactNode;
@@ -241,7 +241,7 @@ export function createNotFoundInfo(
   error: { message: string },
   segmentId: string,
   segmentType: NotFoundInfo["segmentType"],
-  pathname?: string
+  pathname?: string,
 ): NotFoundInfo {
   return {
     message: error.message,
@@ -259,7 +259,7 @@ export function createNotFoundSegment(
   notFoundInfo: NotFoundInfo,
   fallback: ReactNode | NotFoundBoundaryHandler,
   entry: EntryData,
-  params: Record<string, string>
+  params: Record<string, string>,
 ): ResolvedSegment {
   // Determine the component to render
   let component: ReactNode;

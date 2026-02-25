@@ -30,7 +30,7 @@ export type SanitizePrefix<T extends string> = T extends `/${infer P}` ? P : T;
  */
 export type MergeRoutes<T extends unknown[]> = T extends [
   infer First,
-  ...infer Rest
+  ...infer Rest,
 ]
   ? First & MergeRoutes<Rest>
   : {};
@@ -39,10 +39,7 @@ export type MergeRoutes<T extends unknown[]> = T extends [
  * Add key prefix to all entries in a route map
  * { "cart": "/cart" } with prefix "shop" -> { "shop.cart": "/shop/cart" }
  */
-export type PrefixRouteKeys<
-  T,
-  Prefix extends string
-> = Prefix extends ""
+export type PrefixRouteKeys<T, Prefix extends string> = Prefix extends ""
   ? T
   : { [K in keyof T as `${Prefix}.${K & string}`]: T[K] };
 
@@ -50,10 +47,7 @@ export type PrefixRouteKeys<
  * Add path prefix to all patterns in a route map
  * { "cart": "/cart" } with prefix "/shop" -> { "cart": "/shop/cart" }
  */
-export type PrefixRoutePatterns<
-  T,
-  PathPrefix extends string
-> = {
+export type PrefixRoutePatterns<T, PathPrefix extends string> = {
   [K in keyof T]: PathPrefix extends "" | "/"
     ? T[K]
     : T[K] extends "/"
@@ -77,25 +71,28 @@ export type PrefixRoutePatterns<
 export type PrefixedRoutes<
   T,
   KeyPrefix extends string,
-  PathPrefix extends string = KeyPrefix extends "" ? "" : `/${KeyPrefix}`
+  PathPrefix extends string = KeyPrefix extends "" ? "" : `/${KeyPrefix}`,
 > = PrefixRouteKeys<PrefixRoutePatterns<T, PathPrefix>, KeyPrefix>;
 
 /**
  * Helper to safely extract route patterns from a routes object
  * Handles string values, { path, response } objects, and interface types (like RegisteredRoutes)
  */
-type RoutePatternFor<TRoutes, TName extends keyof TRoutes> =
-  TRoutes[TName] extends string ? TRoutes[TName]
-  : TRoutes[TName] extends { readonly path: infer P extends string } ? P
-  : string;
+type RoutePatternFor<
+  TRoutes,
+  TName extends keyof TRoutes,
+> = TRoutes[TName] extends string
+  ? TRoutes[TName]
+  : TRoutes[TName] extends { readonly path: infer P extends string }
+    ? P
+    : string;
 
 /**
  * Extract params type for a route
  */
-export type ParamsFor<
-  TRoutes,
-  TName extends keyof TRoutes
-> = ExtractParams<RoutePatternFor<TRoutes, TName>>;
+export type ParamsFor<TRoutes, TName extends keyof TRoutes> = ExtractParams<
+  RoutePatternFor<TRoutes, TName>
+>;
 
 /**
  * Check if an object type has any keys
@@ -106,10 +103,12 @@ type IsEmptyObject<T> = keyof T extends never ? true : false;
  * Extract search schema from a route entry.
  * Returns {} if no search schema is defined.
  */
-type ExtractSearchSchema<TRoutes, TName extends keyof TRoutes> =
-  TRoutes[TName] extends { readonly search: infer S extends SearchSchema }
-    ? S
-    : {};
+type ExtractSearchSchema<
+  TRoutes,
+  TName extends keyof TRoutes,
+> = TRoutes[TName] extends { readonly search: infer S extends SearchSchema }
+  ? S
+  : {};
 
 /**
  * Type-safe reverse function signature (Django-style URL reversal)
@@ -128,7 +127,11 @@ export type ReverseFunction<TRoutes> = {
    * Route without params - validates route name exists
    */
   <TName extends keyof TRoutes & string>(
-    name: IsEmptyObject<ExtractParams<RoutePatternFor<TRoutes, TName>>> extends true ? TName : never
+    name: IsEmptyObject<
+      ExtractParams<RoutePatternFor<TRoutes, TName>>
+    > extends true
+      ? TName
+      : never,
   ): string;
 
   /**
@@ -136,7 +139,7 @@ export type ReverseFunction<TRoutes> = {
    */
   <TName extends keyof TRoutes & string>(
     name: TName,
-    params: ExtractParams<RoutePatternFor<TRoutes, TName>>
+    params: ExtractParams<RoutePatternFor<TRoutes, TName>>,
   ): string;
 
   /**
@@ -145,14 +148,18 @@ export type ReverseFunction<TRoutes> = {
   <TName extends keyof TRoutes & string>(
     name: TName,
     params: ExtractParams<RoutePatternFor<TRoutes, TName>>,
-    search: ResolveSearchSchema<ExtractSearchSchema<TRoutes, TName>>
+    search: ResolveSearchSchema<ExtractSearchSchema<TRoutes, TName>>,
   ): string;
 
   /**
    * Dot-prefixed route without params - strictly local resolution
    */
   <TName extends keyof TRoutes & string>(
-    name: IsEmptyObject<ExtractParams<RoutePatternFor<TRoutes, TName>>> extends true ? `.${TName}` : never
+    name: IsEmptyObject<
+      ExtractParams<RoutePatternFor<TRoutes, TName>>
+    > extends true
+      ? `.${TName}`
+      : never,
   ): string;
 
   /**
@@ -160,7 +167,7 @@ export type ReverseFunction<TRoutes> = {
    */
   <TName extends keyof TRoutes & string>(
     name: `.${TName}`,
-    params: ExtractParams<RoutePatternFor<TRoutes, TName>>
+    params: ExtractParams<RoutePatternFor<TRoutes, TName>>,
   ): string;
 
   /**
@@ -169,7 +176,7 @@ export type ReverseFunction<TRoutes> = {
   <TName extends keyof TRoutes & string>(
     name: `.${TName}`,
     params: ExtractParams<RoutePatternFor<TRoutes, TName>>,
-    search: ResolveSearchSchema<ExtractSearchSchema<TRoutes, TName>>
+    search: ResolveSearchSchema<ExtractSearchSchema<TRoutes, TName>>,
   ): string;
 };
 
@@ -189,12 +196,19 @@ export type ReverseFunction<TRoutes> = {
  * reverse("typo")                             // ✗ Compile error (not in global routes)
  * ```
  */
-export type ScopedReverseFunction<TLocalRoutes, TGlobalRoutes = TLocalRoutes> = {
+export type ScopedReverseFunction<
+  TLocalRoutes,
+  TGlobalRoutes = TLocalRoutes,
+> = {
   /**
    * Global route without params
    */
   <TName extends keyof TGlobalRoutes & string>(
-    name: IsEmptyObject<ExtractParams<RoutePatternFor<TGlobalRoutes, TName>>> extends true ? TName : never
+    name: IsEmptyObject<
+      ExtractParams<RoutePatternFor<TGlobalRoutes, TName>>
+    > extends true
+      ? TName
+      : never,
   ): string;
 
   /**
@@ -202,7 +216,7 @@ export type ScopedReverseFunction<TLocalRoutes, TGlobalRoutes = TLocalRoutes> = 
    */
   <TName extends keyof TGlobalRoutes & string>(
     name: TName,
-    params: ExtractParams<RoutePatternFor<TGlobalRoutes, TName>>
+    params: ExtractParams<RoutePatternFor<TGlobalRoutes, TName>>,
   ): string;
 
   /**
@@ -211,14 +225,18 @@ export type ScopedReverseFunction<TLocalRoutes, TGlobalRoutes = TLocalRoutes> = 
   <TName extends keyof TGlobalRoutes & string>(
     name: TName,
     params: ExtractParams<RoutePatternFor<TGlobalRoutes, TName>>,
-    search: ResolveSearchSchema<ExtractSearchSchema<TGlobalRoutes, TName>>
+    search: ResolveSearchSchema<ExtractSearchSchema<TGlobalRoutes, TName>>,
   ): string;
 
   /**
    * Dot-prefixed local route without params
    */
   <TName extends keyof TLocalRoutes & string>(
-    name: IsEmptyObject<ExtractParams<RoutePatternFor<TLocalRoutes, TName>>> extends true ? `.${TName}` : never
+    name: IsEmptyObject<
+      ExtractParams<RoutePatternFor<TLocalRoutes, TName>>
+    > extends true
+      ? `.${TName}`
+      : never,
   ): string;
 
   /**
@@ -226,7 +244,7 @@ export type ScopedReverseFunction<TLocalRoutes, TGlobalRoutes = TLocalRoutes> = 
    */
   <TName extends keyof TLocalRoutes & string>(
     name: `.${TName}`,
-    params: ExtractParams<RoutePatternFor<TLocalRoutes, TName>>
+    params: ExtractParams<RoutePatternFor<TLocalRoutes, TName>>,
   ): string;
 
   /**
@@ -235,7 +253,7 @@ export type ScopedReverseFunction<TLocalRoutes, TGlobalRoutes = TLocalRoutes> = 
   <TName extends keyof TLocalRoutes & string>(
     name: `.${TName}`,
     params: ExtractParams<RoutePatternFor<TLocalRoutes, TName>>,
-    search: ResolveSearchSchema<ExtractSearchSchema<TLocalRoutes, TName>>
+    search: ResolveSearchSchema<ExtractSearchSchema<TLocalRoutes, TName>>,
   ): string;
 };
 
@@ -243,12 +261,13 @@ export type ScopedReverseFunction<TLocalRoutes, TGlobalRoutes = TLocalRoutes> = 
  * Extract local routes type from UrlPatterns
  * Used with scopedReverse() to get the routes type from patterns
  */
-export type ExtractLocalRoutes<TPatterns> =
-  TPatterns extends { readonly _routes?: infer TRoutes }
-    ? TRoutes
-    : TPatterns extends Record<string, string>
-      ? TPatterns
-      : Record<string, string>;
+export type ExtractLocalRoutes<TPatterns> = TPatterns extends {
+  readonly _routes?: infer TRoutes;
+}
+  ? TRoutes
+  : TPatterns extends Record<string, string>
+    ? TPatterns
+    : Record<string, string>;
 
 /**
  * Extract the response data type for a named route from a UrlPatterns instance.
@@ -285,7 +304,7 @@ export type { RouteResponse } from "./urls.js";
  * ```
  */
 export function scopedReverse<TPatterns>(
-  reverse: ((...args: any[]) => string)
+  reverse: (...args: any[]) => string,
 ): ScopedReverseFunction<ExtractLocalRoutes<TPatterns>> {
   return reverse as ScopedReverseFunction<ExtractLocalRoutes<TPatterns>>;
 }
@@ -306,7 +325,9 @@ export function scopedReverse<TPatterns>(
  */
 type RouteMapEntry = string | { path: string; search?: Record<string, string> };
 
-function resolveRoutePattern(entry: RouteMapEntry | undefined): string | undefined {
+function resolveRoutePattern(
+  entry: RouteMapEntry | undefined,
+): string | undefined {
   if (!entry) return undefined;
   return typeof entry === "string" ? entry : entry.path;
 }
@@ -314,8 +335,14 @@ function resolveRoutePattern(entry: RouteMapEntry | undefined): string | undefin
 export function createReverse<TRoutes extends Record<string, string>>(
   routeMap: TRoutes,
 ): ReverseFunction<TRoutes & Record<string, string>> {
-  return ((name: string, params?: Record<string, string>, search?: Record<string, unknown>) => {
-    const pattern = resolveRoutePattern(routeMap[name] as unknown as RouteMapEntry);
+  return ((
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ) => {
+    const pattern = resolveRoutePattern(
+      routeMap[name] as unknown as RouteMapEntry,
+    );
     if (!pattern) {
       // During build-time discovery, lazy includes haven't resolved yet.
       // Return a placeholder instead of crashing the build.

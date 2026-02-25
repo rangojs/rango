@@ -26,7 +26,9 @@ test.describe("app-middleware (dev)", () => {
 
       // Intercept the navigation request to check headers
       const responsePromise = page.waitForResponse(
-        (response) => response.url().includes("/middleware-test") && response.status() === 200
+        (response) =>
+          response.url().includes("/middleware-test") &&
+          response.status() === 200,
       );
 
       await page.goto(f.url("/middleware-test"));
@@ -42,7 +44,9 @@ test.describe("app-middleware (dev)", () => {
       expect(duration).toBeGreaterThanOrEqual(0);
 
       await waitForHydration(page);
-      await expect(page.locator('[data-testid="middleware-test-title"]')).toBeVisible();
+      await expect(
+        page.locator('[data-testid="middleware-test-title"]'),
+      ).toBeVisible();
     });
 
     test("global headers should be present on any route", async ({ page }) => {
@@ -50,7 +54,8 @@ test.describe("app-middleware (dev)", () => {
 
       // Test on the index page too
       const responsePromise = page.waitForResponse(
-        (response) => response.url() === f.url("/") && response.status() === 200
+        (response) =>
+          response.url() === f.url("/") && response.status() === 200,
       );
 
       await page.goto(f.url("/"));
@@ -65,14 +70,17 @@ test.describe("app-middleware (dev)", () => {
   });
 
   test.describe("pattern-based-middleware", () => {
-    test("pattern middleware should only apply to matching routes", async ({ page }) => {
+    test("pattern middleware should only apply to matching routes", async ({
+      page,
+    }) => {
       using _ = expectNoPageError(page);
 
       // Non-matching route should not have params header
       const response1Promise = page.waitForResponse(
-        (response) => response.url().includes("/middleware-test") &&
-                      !response.url().includes("/params/") &&
-                      response.status() === 200
+        (response) =>
+          response.url().includes("/middleware-test") &&
+          !response.url().includes("/params/") &&
+          response.status() === 200,
       );
 
       await page.goto(f.url("/middleware-test"));
@@ -88,7 +96,9 @@ test.describe("app-middleware (dev)", () => {
       using _ = expectNoPageError(page);
 
       const responsePromise = page.waitForResponse(
-        (response) => response.url().includes("/middleware-test/params/test-123") && response.status() === 200
+        (response) =>
+          response.url().includes("/middleware-test/params/test-123") &&
+          response.status() === 200,
       );
 
       await page.goto(f.url("/middleware-test/params/test-123"));
@@ -101,15 +111,23 @@ test.describe("app-middleware (dev)", () => {
 
       // Handler should also receive the middleware-set params
       await expect(page.locator('[data-testid="params-title"]')).toBeVisible();
-      await expect(page.locator('[data-testid="route-param-id"]')).toContainText("test-123");
-      await expect(page.locator('[data-testid="middleware-param-id"]')).toContainText("test-123");
+      await expect(
+        page.locator('[data-testid="route-param-id"]'),
+      ).toContainText("test-123");
+      await expect(
+        page.locator('[data-testid="middleware-param-id"]'),
+      ).toContainText("test-123");
     });
 
-    test("params middleware should work with different param values", async ({ page }) => {
+    test("params middleware should work with different param values", async ({
+      page,
+    }) => {
       using _ = expectNoPageError(page);
 
       const responsePromise = page.waitForResponse(
-        (response) => response.url().includes("/middleware-test/params/abc-xyz-789") && response.status() === 200
+        (response) =>
+          response.url().includes("/middleware-test/params/abc-xyz-789") &&
+          response.status() === 200,
       );
 
       await page.goto(f.url("/middleware-test/params/abc-xyz-789"));
@@ -118,12 +136,16 @@ test.describe("app-middleware (dev)", () => {
       expect(response.headers()["x-middleware-param-id"]).toBe("abc-xyz-789");
 
       await waitForHydration(page);
-      await expect(page.locator('[data-testid="middleware-param-id"]')).toContainText("abc-xyz-789");
+      await expect(
+        page.locator('[data-testid="middleware-param-id"]'),
+      ).toContainText("abc-xyz-789");
     });
   });
 
   test.describe("auth-redirect-middleware", () => {
-    test("protected route should redirect when not authenticated", async ({ page }) => {
+    test("protected route should redirect when not authenticated", async ({
+      page,
+    }) => {
       using _ = expectNoPageError(page);
 
       // Navigate to protected route without auth cookie
@@ -135,10 +157,14 @@ test.describe("app-middleware (dev)", () => {
       await waitForHydration(page);
 
       // Should show auth required message
-      await expect(page.locator('[data-testid="auth-required-message"]')).toBeVisible();
+      await expect(
+        page.locator('[data-testid="auth-required-message"]'),
+      ).toBeVisible();
     });
 
-    test("protected dashboard should also redirect when not authenticated", async ({ page }) => {
+    test("protected dashboard should also redirect when not authenticated", async ({
+      page,
+    }) => {
       using _ = expectNoPageError(page);
 
       await page.goto(f.url("/middleware-test/protected/dashboard"));
@@ -147,10 +173,15 @@ test.describe("app-middleware (dev)", () => {
       await expect(page).toHaveURL(/\/middleware-test\?auth=required/);
 
       await waitForHydration(page);
-      await expect(page.locator('[data-testid="auth-required-message"]')).toBeVisible();
+      await expect(
+        page.locator('[data-testid="auth-required-message"]'),
+      ).toBeVisible();
     });
 
-    test("protected route should allow access when authenticated", async ({ page, context }) => {
+    test("protected route should allow access when authenticated", async ({
+      page,
+      context,
+    }) => {
       using _ = expectNoPageError(page);
 
       // Set auth cookie before navigating
@@ -171,12 +202,21 @@ test.describe("app-middleware (dev)", () => {
       await waitForHydration(page);
 
       // Should show user info set by middleware
-      await expect(page.locator('[data-testid="protected-title"]')).toBeVisible();
-      await expect(page.locator('[data-testid="user-id"]')).toContainText("123");
-      await expect(page.locator('[data-testid="user-name"]')).toContainText("TestUser");
+      await expect(
+        page.locator('[data-testid="protected-title"]'),
+      ).toBeVisible();
+      await expect(page.locator('[data-testid="user-id"]')).toContainText(
+        "123",
+      );
+      await expect(page.locator('[data-testid="user-name"]')).toContainText(
+        "TestUser",
+      );
     });
 
-    test("protected dashboard should allow access when authenticated", async ({ page, context }) => {
+    test("protected dashboard should allow access when authenticated", async ({
+      page,
+      context,
+    }) => {
       using _ = expectNoPageError(page);
 
       await context.addCookies([
@@ -194,8 +234,12 @@ test.describe("app-middleware (dev)", () => {
 
       await waitForHydration(page);
 
-      await expect(page.locator('[data-testid="dashboard-title"]')).toBeVisible();
-      await expect(page.locator('[data-testid="dashboard-user"]')).toContainText("TestUser");
+      await expect(
+        page.locator('[data-testid="dashboard-title"]'),
+      ).toBeVisible();
+      await expect(
+        page.locator('[data-testid="dashboard-user"]'),
+      ).toContainText("TestUser");
     });
   });
 
@@ -212,9 +256,11 @@ test.describe("app-middleware (dev)", () => {
     //
     // For now, we test that the middleware IS applied (global headers present)
     // even when the route throws an error that's caught by error boundaries.
-    test("global middleware should still apply even when route has errors", async ({ page }) => {
-      const responsePromise = page.waitForResponse(
-        (response) => response.url().includes("/middleware-test/error-handler/trigger")
+    test("global middleware should still apply even when route has errors", async ({
+      page,
+    }) => {
+      const responsePromise = page.waitForResponse((response) =>
+        response.url().includes("/middleware-test/error-handler/trigger"),
       );
 
       await page.goto(f.url("/middleware-test/error-handler/trigger"));
@@ -229,10 +275,15 @@ test.describe("app-middleware (dev)", () => {
   });
 
   test.describe("cookie-middleware", () => {
-    test("middleware should set visit count cookie", async ({ page, context }) => {
+    test("middleware should set visit count cookie", async ({
+      page,
+      context,
+    }) => {
       // First visit - no cookie yet
       const response1Promise = page.waitForResponse(
-        (response) => response.url().includes("/middleware-test/cookies") && response.status() === 200
+        (response) =>
+          response.url().includes("/middleware-test/cookies") &&
+          response.status() === 200,
       );
 
       await page.goto(f.url("/middleware-test/cookies"));
@@ -247,11 +298,15 @@ test.describe("app-middleware (dev)", () => {
       await waitForHydration(page);
 
       // Handler should receive visit count from middleware
-      await expect(page.locator('[data-testid="visit-count"]')).toContainText("1");
+      await expect(page.locator('[data-testid="visit-count"]')).toContainText(
+        "1",
+      );
 
       // Second visit - cookie should be incremented
       const response2Promise = page.waitForResponse(
-        (response) => response.url().includes("/middleware-test/cookies") && response.status() === 200
+        (response) =>
+          response.url().includes("/middleware-test/cookies") &&
+          response.status() === 200,
       );
 
       await page.reload();
@@ -262,10 +317,15 @@ test.describe("app-middleware (dev)", () => {
       expect(setCookie2).toContain("visit-count=2");
 
       await waitForHydration(page);
-      await expect(page.locator('[data-testid="visit-count"]')).toContainText("2");
+      await expect(page.locator('[data-testid="visit-count"]')).toContainText(
+        "2",
+      );
     });
 
-    test("middleware should read existing cookies", async ({ page, context }) => {
+    test("middleware should read existing cookies", async ({
+      page,
+      context,
+    }) => {
       // Pre-set a visit count cookie
       await context.addCookies([
         {
@@ -277,7 +337,9 @@ test.describe("app-middleware (dev)", () => {
       ]);
 
       const responsePromise = page.waitForResponse(
-        (response) => response.url().includes("/middleware-test/cookies") && response.status() === 200
+        (response) =>
+          response.url().includes("/middleware-test/cookies") &&
+          response.status() === 200,
       );
 
       await page.goto(f.url("/middleware-test/cookies"));
@@ -289,12 +351,17 @@ test.describe("app-middleware (dev)", () => {
       expect(setCookie).toContain("visit-count=43");
 
       await waitForHydration(page);
-      await expect(page.locator('[data-testid="visit-count"]')).toContainText("43");
+      await expect(page.locator('[data-testid="visit-count"]')).toContainText(
+        "43",
+      );
     });
   });
 
   test.describe("shared-variables", () => {
-    test("middleware should share variables with handlers via ctx.set/get", async ({ page, context }) => {
+    test("middleware should share variables with handlers via ctx.set/get", async ({
+      page,
+      context,
+    }) => {
       using _ = expectNoPageError(page);
 
       // Test with protected route - middleware sets "user" variable
@@ -312,18 +379,26 @@ test.describe("app-middleware (dev)", () => {
 
       // Handler should receive user variable set by middleware
       await expect(page.locator('[data-testid="user-info"]')).toBeVisible();
-      await expect(page.locator('[data-testid="user-id"]')).toContainText("123");
-      await expect(page.locator('[data-testid="user-name"]')).toContainText("TestUser");
+      await expect(page.locator('[data-testid="user-id"]')).toContainText(
+        "123",
+      );
+      await expect(page.locator('[data-testid="user-name"]')).toContainText(
+        "TestUser",
+      );
     });
 
-    test("middleware params should be shared with handlers", async ({ page }) => {
+    test("middleware params should be shared with handlers", async ({
+      page,
+    }) => {
       using _ = expectNoPageError(page);
 
       await page.goto(f.url("/middleware-test/params/shared-test-value"));
       await waitForHydration(page);
 
       // Handler should receive middlewareParams variable
-      await expect(page.locator('[data-testid="middleware-param-id"]')).toContainText("shared-test-value");
+      await expect(
+        page.locator('[data-testid="middleware-param-id"]'),
+      ).toContainText("shared-test-value");
     });
   });
 
@@ -332,7 +407,9 @@ test.describe("app-middleware (dev)", () => {
       using _ = expectNoPageError(page);
 
       const responsePromise = page.waitForResponse(
-        (response) => response.url().includes("/middleware-test") && response.status() === 200
+        (response) =>
+          response.url().includes("/middleware-test") &&
+          response.status() === 200,
       );
 
       await page.goto(f.url("/middleware-test"));
@@ -346,11 +423,15 @@ test.describe("app-middleware (dev)", () => {
       await waitForHydration(page);
     });
 
-    test("global and pattern middlewares should both execute", async ({ page }) => {
+    test("global and pattern middlewares should both execute", async ({
+      page,
+    }) => {
       using _ = expectNoPageError(page);
 
       const responsePromise = page.waitForResponse(
-        (response) => response.url().includes("/middleware-test/params/combo-test") && response.status() === 200
+        (response) =>
+          response.url().includes("/middleware-test/params/combo-test") &&
+          response.status() === 200,
       );
 
       await page.goto(f.url("/middleware-test/params/combo-test"));
@@ -369,13 +450,16 @@ test.describe("app-middleware (dev)", () => {
   });
 
   test.describe("route-level-middleware", () => {
-    test("route-level middleware should set response header", async ({ page }) => {
+    test("route-level middleware should set response header", async ({
+      page,
+    }) => {
       using _ = expectNoPageError(page);
 
       const responsePromise = page.waitForResponse(
-        (response) => response.url().includes("/middleware-test/route-level") &&
-                      !response.url().includes("/middleware-test/route-level/") &&
-                      response.status() === 200
+        (response) =>
+          response.url().includes("/middleware-test/route-level") &&
+          !response.url().includes("/middleware-test/route-level/") &&
+          response.status() === 200,
       );
 
       await page.goto(f.url("/middleware-test/route-level"));
@@ -388,60 +472,92 @@ test.describe("app-middleware (dev)", () => {
       expect(response.headers()["x-global-middleware"]).toBe("applied");
 
       await waitForHydration(page);
-      await expect(page.locator('[data-testid="route-level-title"]')).toBeVisible();
+      await expect(
+        page.locator('[data-testid="route-level-title"]'),
+      ).toBeVisible();
     });
 
-    test("route-level middleware should share variables with handler", async ({ page }) => {
+    test("route-level middleware should share variables with handler", async ({
+      page,
+    }) => {
       using _ = expectNoPageError(page);
 
       await page.goto(f.url("/middleware-test/route-level"));
       await waitForHydration(page);
 
       // Handler should read the variable set by route-level middleware
-      await expect(page.locator('[data-testid="route-middleware-value"]')).toContainText("yes");
+      await expect(
+        page.locator('[data-testid="route-middleware-value"]'),
+      ).toContainText("yes");
     });
 
-    test("route-level middleware should have access to ctx.params", async ({ page }) => {
+    test("route-level middleware should have access to ctx.params", async ({
+      page,
+    }) => {
       using _ = expectNoPageError(page);
 
       const responsePromise = page.waitForResponse(
-        (response) => response.url().includes("/middleware-test/route-level/test-route-123") && response.status() === 200
+        (response) =>
+          response
+            .url()
+            .includes("/middleware-test/route-level/test-route-123") &&
+          response.status() === 200,
       );
 
       await page.goto(f.url("/middleware-test/route-level/test-route-123"));
       const response = await responsePromise;
 
       // Middleware should set header with the param value from ctx.params
-      expect(response.headers()["x-middleware-route-id"]).toBe("test-route-123");
+      expect(response.headers()["x-middleware-route-id"]).toBe(
+        "test-route-123",
+      );
 
       await waitForHydration(page);
 
       // Both handler and middleware should have access to the same param value
-      await expect(page.locator('[data-testid="handler-route-id"]')).toContainText("test-route-123");
-      await expect(page.locator('[data-testid="middleware-route-id"]')).toContainText("test-route-123");
-      await expect(page.locator('[data-testid="params-available"]')).toContainText("yes");
+      await expect(
+        page.locator('[data-testid="handler-route-id"]'),
+      ).toContainText("test-route-123");
+      await expect(
+        page.locator('[data-testid="middleware-route-id"]'),
+      ).toContainText("test-route-123");
+      await expect(
+        page.locator('[data-testid="params-available"]'),
+      ).toContainText("yes");
     });
 
-    test("route-level middleware params should work with different values", async ({ page }) => {
+    test("route-level middleware params should work with different values", async ({
+      page,
+    }) => {
       using _ = expectNoPageError(page);
 
       const responsePromise = page.waitForResponse(
-        (response) => response.url().includes("/middleware-test/route-level/another-value-xyz") && response.status() === 200
+        (response) =>
+          response
+            .url()
+            .includes("/middleware-test/route-level/another-value-xyz") &&
+          response.status() === 200,
       );
 
       await page.goto(f.url("/middleware-test/route-level/another-value-xyz"));
       const response = await responsePromise;
 
       // Verify different param value works
-      expect(response.headers()["x-middleware-route-id"]).toBe("another-value-xyz");
+      expect(response.headers()["x-middleware-route-id"]).toBe(
+        "another-value-xyz",
+      );
 
       await waitForHydration(page);
-      await expect(page.locator('[data-testid="middleware-route-id"]')).toContainText("another-value-xyz");
+      await expect(
+        page.locator('[data-testid="middleware-route-id"]'),
+      ).toContainText("another-value-xyz");
     });
   });
 
   test.describe("intercept-middleware", () => {
-    test("intercept middleware should set header on modal navigation", async ({ page }) => {
+    test("intercept middleware should set header on modal navigation", async ({
+      page,
+    }) => {
       using _ = expectNoPageError(page);
 
       // First go to index
@@ -451,7 +567,9 @@ test.describe("app-middleware (dev)", () => {
       // Click on a slow product to trigger intercept
       // The intercept middleware runs after the loader completes
       const responsePromise = page.waitForResponse(
-        (response) => response.url().includes("/slow-product/") && response.status() === 200
+        (response) =>
+          response.url().includes("/slow-product/") &&
+          response.status() === 200,
       );
 
       await page.click('[data-testid="slow-product-link"]');
@@ -461,10 +579,15 @@ test.describe("app-middleware (dev)", () => {
       expect(response.headers()["x-intercept-middleware"]).toBe("applied");
 
       // Wait for modal content to fully load (not just skeleton)
-      await expect(page.locator('[data-testid="slow-modal-product-name"]')).toBeVisible({ timeout: 10000 });
+      await expect(
+        page.locator('[data-testid="slow-modal-product-name"]'),
+      ).toBeVisible({ timeout: 10000 });
     });
 
-    test("intercept middleware should set cookie", async ({ page, context }) => {
+    test("intercept middleware should set cookie", async ({
+      page,
+      context,
+    }) => {
       using _ = expectNoPageError(page);
 
       // First go to index
@@ -476,24 +599,30 @@ test.describe("app-middleware (dev)", () => {
 
       // Wait for the full modal content to load (after the 2s loader delay)
       // The cookie is set when the middleware runs during the full render
-      await expect(page.locator('[data-testid="slow-modal-product-name"]')).toBeVisible({ timeout: 10000 });
+      await expect(
+        page.locator('[data-testid="slow-modal-product-name"]'),
+      ).toBeVisible({ timeout: 10000 });
 
       // Check that cookie was set by intercept middleware
       const cookies = await context.cookies();
-      const interceptCookie = cookies.find(c => c.name === "intercept-visited");
+      const interceptCookie = cookies.find(
+        (c) => c.name === "intercept-visited",
+      );
       expect(interceptCookie).toBeDefined();
       expect(interceptCookie?.value).toBe("true");
     });
   });
 
   test.describe("loader-middleware", () => {
-    test("loader middleware should reject unauthorized requests", async ({ request }) => {
+    test("loader middleware should reject unauthorized requests", async ({
+      request,
+    }) => {
       // Try to fetch protected loader without auth token
       const response = await request.get(
         f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader"),
         {
           headers: { Accept: "text/x-component" },
-        }
+        },
       );
 
       // Should fail with unauthorized error
@@ -502,14 +631,18 @@ test.describe("app-middleware (dev)", () => {
       expect(text).toContain("Unauthorized");
     });
 
-    test("loader middleware should allow authorized requests", async ({ request }) => {
+    test("loader middleware should allow authorized requests", async ({
+      request,
+    }) => {
       // Fetch protected loader with valid auth token
       const response = await request.get(
-        f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader&_rsc_loader_params=" +
-          encodeURIComponent(JSON.stringify({ authToken: "valid-token" }))),
+        f.url(
+          "/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader&_rsc_loader_params=" +
+            encodeURIComponent(JSON.stringify({ authToken: "valid-token" })),
+        ),
         {
           headers: { Accept: "text/x-component" },
-        }
+        },
       );
 
       expect(response.status()).toBe(200);
@@ -517,14 +650,18 @@ test.describe("app-middleware (dev)", () => {
       expect(text).toContain("protected");
     });
 
-    test("loader middleware should reject invalid auth token", async ({ request }) => {
+    test("loader middleware should reject invalid auth token", async ({
+      request,
+    }) => {
       // Fetch protected loader with invalid auth token
       const response = await request.get(
-        f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader&_rsc_loader_params=" +
-          encodeURIComponent(JSON.stringify({ authToken: "invalid-token" }))),
+        f.url(
+          "/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader&_rsc_loader_params=" +
+            encodeURIComponent(JSON.stringify({ authToken: "invalid-token" })),
+        ),
         {
           headers: { Accept: "text/x-component" },
-        }
+        },
       );
 
       expect(response.status()).toBe(500);
@@ -544,7 +681,9 @@ test.describe("app-middleware (production)", () => {
     using _ = expectNoPageError(page);
 
     const responsePromise = page.waitForResponse(
-      (response) => response.url().includes("/middleware-test") && response.status() === 200
+      (response) =>
+        response.url().includes("/middleware-test") &&
+        response.status() === 200,
     );
 
     await page.goto(f.url("/middleware-test"));
@@ -554,14 +693,20 @@ test.describe("app-middleware (production)", () => {
     expect(response.headers()["x-header-shorthand"]).toBe("works");
 
     await waitForHydration(page);
-    await expect(page.locator('[data-testid="middleware-test-title"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="middleware-test-title"]'),
+    ).toBeVisible();
   });
 
-  test("pattern-based middleware should work in production mode", async ({ page }) => {
+  test("pattern-based middleware should work in production mode", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     const responsePromise = page.waitForResponse(
-      (response) => response.url().includes("/middleware-test/params/prod-test") && response.status() === 200
+      (response) =>
+        response.url().includes("/middleware-test/params/prod-test") &&
+        response.status() === 200,
     );
 
     await page.goto(f.url("/middleware-test/params/prod-test"));
@@ -570,7 +715,9 @@ test.describe("app-middleware (production)", () => {
     expect(response.headers()["x-middleware-param-id"]).toBe("prod-test");
 
     await waitForHydration(page);
-    await expect(page.locator('[data-testid="middleware-param-id"]')).toContainText("prod-test");
+    await expect(
+      page.locator('[data-testid="middleware-param-id"]'),
+    ).toContainText("prod-test");
   });
 
   test("auth redirect should work in production mode", async ({ page }) => {
@@ -581,12 +728,16 @@ test.describe("app-middleware (production)", () => {
     await expect(page).toHaveURL(/\/middleware-test\?auth=required/);
 
     await waitForHydration(page);
-    await expect(page.locator('[data-testid="auth-required-message"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="auth-required-message"]'),
+    ).toBeVisible();
   });
 
-  test("global middleware should still apply even when route has errors in production", async ({ page }) => {
-    const responsePromise = page.waitForResponse(
-      (response) => response.url().includes("/middleware-test/error-handler/trigger")
+  test("global middleware should still apply even when route has errors in production", async ({
+    page,
+  }) => {
+    const responsePromise = page.waitForResponse((response) =>
+      response.url().includes("/middleware-test/error-handler/trigger"),
     );
 
     await page.goto(f.url("/middleware-test/error-handler/trigger"));

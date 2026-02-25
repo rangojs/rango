@@ -12,7 +12,9 @@ test.describe("theme", () => {
   });
 
   test.describe("server-side theme", () => {
-    test("should have access to ctx.theme in route handlers", async ({ page }) => {
+    test("should have access to ctx.theme in route handlers", async ({
+      page,
+    }) => {
       await page.goto(f.url("/theme"));
       await waitForHydration(page);
 
@@ -35,7 +37,9 @@ test.describe("theme", () => {
   });
 
   test.describe("client-side theme", () => {
-    test("should render theme toggle with all theme options", async ({ page }) => {
+    test("should render theme toggle with all theme options", async ({
+      page,
+    }) => {
       await page.goto(f.url("/theme/toggle"));
       await waitForHydration(page);
 
@@ -66,7 +70,9 @@ test.describe("theme", () => {
       await expect(systemTheme).toBeVisible();
     });
 
-    test("should switch theme when clicking theme buttons", async ({ page }) => {
+    test("should switch theme when clicking theme buttons", async ({
+      page,
+    }) => {
       await page.goto(f.url("/theme/toggle"));
       await waitForHydration(page);
 
@@ -116,14 +122,18 @@ test.describe("theme", () => {
       await testId(page, "theme-toggle-set-dark").click();
 
       // Check localStorage
-      const storedTheme = await page.evaluate(() => localStorage.getItem("theme"));
+      const storedTheme = await page.evaluate(() =>
+        localStorage.getItem("theme"),
+      );
       expect(storedTheme).toBe("dark");
 
       // Set light theme
       await testId(page, "theme-toggle-set-light").click();
 
       // Check localStorage
-      const storedTheme2 = await page.evaluate(() => localStorage.getItem("theme"));
+      const storedTheme2 = await page.evaluate(() =>
+        localStorage.getItem("theme"),
+      );
       expect(storedTheme2).toBe("light");
     });
 
@@ -149,14 +159,18 @@ test.describe("theme", () => {
       await testId(page, "theme-toggle-set-dark").click();
 
       // Verify it's set
-      await expect(testId(page, "theme-toggle-current-theme")).toContainText("dark");
+      await expect(testId(page, "theme-toggle-current-theme")).toContainText(
+        "dark",
+      );
 
       // Reload page
       await page.reload();
       await waitForHydration(page);
 
       // Theme should be restored
-      await expect(testId(page, "theme-toggle-current-theme")).toContainText("dark");
+      await expect(testId(page, "theme-toggle-current-theme")).toContainText(
+        "dark",
+      );
       await expect(page.locator("html")).toHaveClass(/dark/);
     });
   });
@@ -185,7 +199,9 @@ test.describe("theme", () => {
       expect(htmlClass).toContain("dark");
     });
 
-    test("should use inline script for immediate theme application", async ({ request }) => {
+    test("should use inline script for immediate theme application", async ({
+      request,
+    }) => {
       const response = await request.get(f.url("/theme/toggle"), {
         headers: { Accept: "text/html,application/xhtml+xml" },
       });
@@ -225,7 +241,9 @@ test.describe("theme", () => {
       await expect(systemTheme).toContainText("light");
     });
 
-    test("should resolve 'system' theme to actual preference", async ({ page }) => {
+    test("should resolve 'system' theme to actual preference", async ({
+      page,
+    }) => {
       // Emulate dark color scheme
       await page.emulateMedia({ colorScheme: "dark" });
 
@@ -236,10 +254,14 @@ test.describe("theme", () => {
       await testId(page, "theme-toggle-set-system").click();
 
       // Current theme should be "system"
-      await expect(testId(page, "theme-toggle-current-theme")).toContainText("system");
+      await expect(testId(page, "theme-toggle-current-theme")).toContainText(
+        "system",
+      );
 
       // Resolved theme should be "dark" (matching system preference)
-      await expect(testId(page, "theme-toggle-resolved-theme")).toContainText("dark");
+      await expect(testId(page, "theme-toggle-resolved-theme")).toContainText(
+        "dark",
+      );
 
       // HTML should have dark class
       await expect(page.locator("html")).toHaveClass(/dark/);
@@ -257,17 +279,23 @@ test.describe("theme", () => {
 
       // Navigate to theme index
       await testId(page, "back-link").click();
-      await expect(testId(page, "theme-index-page")).toBeVisible({ timeout: 5000 });
+      await expect(testId(page, "theme-index-page")).toBeVisible({
+        timeout: 5000,
+      });
 
       // Theme should be maintained
       await expect(page.locator("html")).toHaveClass(/dark/);
 
       // Navigate back to toggle
       await testId(page, "theme-toggle-link").click();
-      await expect(testId(page, "theme-toggle-page")).toBeVisible({ timeout: 5000 });
+      await expect(testId(page, "theme-toggle-page")).toBeVisible({
+        timeout: 5000,
+      });
 
       // Theme should still be dark
-      await expect(testId(page, "theme-toggle-current-theme")).toContainText("dark");
+      await expect(testId(page, "theme-toggle-current-theme")).toContainText(
+        "dark",
+      );
     });
 
     test("should read theme from cookie on SSR", async ({ page }) => {
@@ -291,7 +319,9 @@ test.describe("theme", () => {
   });
 
   test.describe("no hydration mismatch", () => {
-    test("should not have hydration errors on theme pages", async ({ page }) => {
+    test("should not have hydration errors on theme pages", async ({
+      page,
+    }) => {
       const hydrationErrors: string[] = [];
 
       page.on("console", (msg) => {
@@ -316,7 +346,9 @@ test.describe("theme", () => {
       expect(hydrationErrors).toEqual([]);
     });
 
-    test("should not have hydration errors with pre-set theme", async ({ page }) => {
+    test("should not have hydration errors with pre-set theme", async ({
+      page,
+    }) => {
       const hydrationErrors: string[] = [];
 
       page.on("console", (msg) => {

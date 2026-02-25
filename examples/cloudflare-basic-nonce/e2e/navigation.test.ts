@@ -25,7 +25,9 @@ test.describe("navigation", () => {
     await waitForHydration(page);
 
     await expect(testId(page, "home-page")).toBeVisible();
-    await expect(testId(page, "home-title")).toHaveText("Welcome to RSC Router with CSP");
+    await expect(testId(page, "home-title")).toHaveText(
+      "Welcome to RSC Router with CSP",
+    );
     await expect(testId(page, "nav")).toBeVisible();
   });
 
@@ -42,7 +44,9 @@ test.describe("navigation", () => {
     // Should navigate to about page
     await expect(page).toHaveURL(/\/about/);
     await expect(testId(page, "about-page")).toBeVisible();
-    await expect(testId(page, "about-title")).toHaveText("About CSP Nonce Support");
+    await expect(testId(page, "about-title")).toHaveText(
+      "About CSP Nonce Support",
+    );
   });
 
   test("should navigate to counter page via link", async ({ page }) => {
@@ -58,11 +62,15 @@ test.describe("navigation", () => {
     // Should navigate to counter page
     await expect(page).toHaveURL(/\/counter/);
     await expect(testId(page, "counter-page")).toBeVisible();
-    await expect(testId(page, "counter-title")).toHaveText("Counter Demo with CSP");
+    await expect(testId(page, "counter-title")).toHaveText(
+      "Counter Demo with CSP",
+    );
     await expect(testId(page, "counter")).toBeVisible();
   });
 
-  test("should preserve nav during navigation (no page reload)", async ({ page }) => {
+  test("should preserve nav during navigation (no page reload)", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
     using __ = expectNoCSPViolations(page);
 

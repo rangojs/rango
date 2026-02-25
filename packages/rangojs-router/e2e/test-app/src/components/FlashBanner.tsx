@@ -27,7 +27,10 @@ export function ActionRedirectButton() {
 
 export function ActionSimpleRedirectButton() {
   return (
-    <button data-testid="action-simple-redirect-btn" onClick={() => actionSimpleRedirect()}>
+    <button
+      data-testid="action-simple-redirect-btn"
+      onClick={() => actionSimpleRedirect()}
+    >
       Simple redirect
     </button>
   );

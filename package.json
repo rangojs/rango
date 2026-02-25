@@ -3,12 +3,33 @@
   "version": "0.0.0",
   "private": true,
   "license": "MIT",
-  "type": "module",
-  "packageManager": "pnpm@10.28.2+sha512.41872f037ad22f7348e3b1debbaf7e867cfd448f2726d9cf74c08f19507c31d2c8e7a11525b983febc2df640b5438dee6023ebb1f84ed43cc2d654d2bc326264",
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
+  "type": "module",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "preview": "turbo run preview",
+    "lint": "oxlint --deny-warnings",
+    "format": "oxfmt --check .",
+    "format:fix": "oxfmt .",
+    "tsc": "turbo run typecheck",
+    "typecheck": "turbo run typecheck",
+    "test": "pnpm test:clean-vite && pnpm --filter @rangojs/router build && pnpm test:unit && pnpm test:e2e",
+    "test:clean-vite": "find . -name '.vite' -type d -prune -exec rm -rf {} +",
+    "test:unit": "pnpm -r --if-present run test:unit",
+    "test:e2e": "pnpm --filter @rangojs/router test && pnpm --filter vite-rsc-demo test:full && pnpm --filter cloudflare-basic test:e2e && pnpm --filter cloudflare-basic-nonce test:e2e && pnpm --filter react-experimental test:e2e",
+    "build-router": "pnpm --filter @rangojs/router build"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.35.0",
+    "oxlint": "^1.0.0",
+    "turbo": "^2.6.0",
+    "typescript": "^5.7.3"
+  },
+  "packageManager": "pnpm@10.28.2+sha512.41872f037ad22f7348e3b1debbaf7e867cfd448f2726d9cf74c08f19507c31d2c8e7a11525b983febc2df640b5438dee6023ebb1f84ed43cc2d654d2bc326264",
   "pnpm": {
     "overrides": {
       "react": "^19.2.1",
@@ -23,23 +44,5 @@
       "sharp",
       "workerd"
     ]
-  },
-  "scripts": {
-    "dev": "turbo run dev",
-    "build": "turbo run build",
-    "preview": "turbo run preview",
-    "lint": "turbo run lint",
-    "tsc": "turbo run typecheck",
-    "typecheck": "turbo run typecheck",
-    "test": "pnpm test:clean-vite && pnpm --filter @rangojs/router build && pnpm test:unit && pnpm test:e2e",
-    "test:clean-vite": "find . -name '.vite' -type d -prune -exec rm -rf {} +",
-    "test:unit": "pnpm -r --if-present run test:unit",
-    "test:e2e": "pnpm --filter @rangojs/router test && pnpm --filter vite-rsc-demo test:full && pnpm --filter cloudflare-basic test:e2e && pnpm --filter cloudflare-basic-nonce test:e2e && pnpm --filter react-experimental test:e2e",
-    "build-router": "pnpm --filter @rangojs/router build"
-  },
-  "devDependencies": {
-    "prettier": "^3.7.3",
-    "turbo": "^2.6.0",
-    "typescript": "^5.7.3"
   }
 }

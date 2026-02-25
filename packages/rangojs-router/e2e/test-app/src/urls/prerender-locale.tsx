@@ -48,9 +48,7 @@ function PrerenderLocaleLayout(ctx: any) {
   const localeContent = ctx.get("localeContent");
   return (
     <div data-testid="locale-layout">
-      <p data-testid="locale-layout-content">
-        {localeContent ?? "undefined"}
-      </p>
+      <p data-testid="locale-layout-content">{localeContent ?? "undefined"}</p>
       <Outlet />
     </div>
   );
@@ -60,9 +58,7 @@ function PrerenderLocaleLayout(ctx: any) {
 function LocaleList(ctx: any) {
   return (
     <div data-testid="locale-list-page">
-      <h1 data-testid="locale-list-title">
-        Blog list for {ctx.params.locale}
-      </h1>
+      <h1 data-testid="locale-list-title">Blog list for {ctx.params.locale}</h1>
     </div>
   );
 }

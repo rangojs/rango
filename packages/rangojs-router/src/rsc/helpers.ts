@@ -27,7 +27,7 @@ export function hasBodyContent(body: FormData | string): boolean {
  */
 export function createResponseWithMergedHeaders(
   body: BodyInit | null,
-  init: ResponseInit
+  init: ResponseInit,
 ): Response {
   const ctx = getRequestContext();
   if (!ctx) {

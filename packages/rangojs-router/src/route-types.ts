@@ -222,9 +222,7 @@ export type RouteUseItem =
   | CacheItem
   | TransitionItem;
 /** Items that can be used inside a response route (path.json(), etc.) */
-export type ResponseRouteUseItem =
-  | MiddlewareItem
-  | CacheItem;
+export type ResponseRouteUseItem = MiddlewareItem | CacheItem;
 export type ParallelUseItem =
   | RevalidateItem
   | LoaderItem

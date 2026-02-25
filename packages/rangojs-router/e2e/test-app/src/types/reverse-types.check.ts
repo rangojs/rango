@@ -5,7 +5,13 @@
  * This file is type-checked by tsc to ensure the reverse system is properly typed.
  */
 
-import type { Handler, HandlerContext, Middleware, Revalidate, GenericParams } from "@rangojs/router";
+import type {
+  Handler,
+  HandlerContext,
+  Middleware,
+  Revalidate,
+  GenericParams,
+} from "@rangojs/router";
 
 // Test 1: ctx.reverse in handlers accepts route names
 const testHandlerReverse: Handler<"/"> = (ctx) => {
@@ -31,7 +37,9 @@ const testParamHandler: Handler<"/blog/:slug"> = (ctx) => {
 };
 
 // Test 3: Handler type with explicit params object
-const testExplicitParamsHandler: Handler<{ slug: string; tab?: string }> = (ctx) => {
+const testExplicitParamsHandler: Handler<{ slug: string; tab?: string }> = (
+  ctx,
+) => {
   const _slug: string = ctx.params.slug;
   const _tab: string | undefined = ctx.params.tab;
   return null;
@@ -46,13 +54,20 @@ const testMiddleware: Middleware = async (ctx, next) => {
 };
 
 // Test 5: Middleware with explicit params
-const testMiddlewareWithParams: Middleware<{ id: string }> = async (ctx, next) => {
+const testMiddlewareWithParams: Middleware<{ id: string }> = async (
+  ctx,
+  next,
+) => {
   const _id: string | undefined = ctx.params.id;
   await next();
 };
 
 // Test 6: Revalidate function type
-const testRevalidate: Revalidate<{ slug: string }> = ({ currentParams, nextParams, defaultShouldRevalidate }) => {
+const testRevalidate: Revalidate<{ slug: string }> = ({
+  currentParams,
+  nextParams,
+  defaultShouldRevalidate,
+}) => {
   const _currentSlug: string | undefined = currentParams.slug;
   const _nextSlug: string | undefined = nextParams.slug;
   return defaultShouldRevalidate;
@@ -61,7 +76,12 @@ const testRevalidate: Revalidate<{ slug: string }> = ({ currentParams, nextParam
 // Test 7: HandlerContext has typed reverse
 type CheckCtxReverse = HandlerContext<{ id: string }>["reverse"];
 // Verify reverse is a function type that returns string
-type _AssertReverseCallable = CheckCtxReverse extends (name: string, params?: any) => string ? true : never;
+type _AssertReverseCallable = CheckCtxReverse extends (
+  name: string,
+  params?: any,
+) => string
+  ? true
+  : never;
 const _checkReverseCallable: _AssertReverseCallable = true;
 
 // Test 8: GenericParams compatibility
@@ -94,7 +114,11 @@ if (false as boolean) {
 // UrlPatterns is only available from server (it requires server context)
 import type { UrlPatterns } from "@rangojs/router";
 // ScopedReverseFunction, ExtractLocalRoutes, ExtractParams are safe client types
-import type { ScopedReverseFunction, ExtractLocalRoutes, ExtractParams } from "@rangojs/router";
+import type {
+  ScopedReverseFunction,
+  ExtractLocalRoutes,
+  ExtractParams,
+} from "@rangojs/router";
 import { scopedReverse } from "@rangojs/router";
 
 // Simulate a local module's patterns type (like blogPatterns)
@@ -106,14 +130,16 @@ type LocalBlogRoutes = {
 type BlogPatternsType = UrlPatterns<unknown, LocalBlogRoutes>;
 
 // Type-level assertion: scopedReverse should extract local routes from UrlPatterns
-type ExtractedReverse = BlogPatternsType extends UrlPatterns<any, infer TRoutes>
-  ? ScopedReverseFunction<TRoutes>
-  : never;
+type ExtractedReverse =
+  BlogPatternsType extends UrlPatterns<any, infer TRoutes>
+    ? ScopedReverseFunction<TRoutes>
+    : never;
 
 // Verify the extracted type is ScopedReverseFunction with our local routes
-type _AssertExtractsLocalRoutes = ExtractedReverse extends ScopedReverseFunction<LocalBlogRoutes>
-  ? true
-  : never;
+type _AssertExtractsLocalRoutes =
+  ExtractedReverse extends ScopedReverseFunction<LocalBlogRoutes>
+    ? true
+    : never;
 const _checkExtractsLocalRoutes: _AssertExtractsLocalRoutes = true;
 
 // Test 11: Local route name validation in ScopedReverseFunction
@@ -143,9 +169,10 @@ type NestedRoutes = {
 };
 type NestedPatternsType = UrlPatterns<unknown, NestedRoutes>;
 
-type NestedExtractedReverse = NestedPatternsType extends UrlPatterns<any, infer TRoutes>
-  ? ScopedReverseFunction<TRoutes>
-  : never;
+type NestedExtractedReverse =
+  NestedPatternsType extends UrlPatterns<any, infer TRoutes>
+    ? ScopedReverseFunction<TRoutes>
+    : never;
 
 declare const nestedReverse: NestedExtractedReverse;
 
@@ -156,9 +183,10 @@ const _nestedDetail: string = nestedReverse("detail", { itemId: "abc" });
 // Test 14: Empty patterns edge case
 type EmptyRoutes = {};
 type EmptyPatternsType = UrlPatterns<unknown, EmptyRoutes>;
-type EmptyExtractedReverse = EmptyPatternsType extends UrlPatterns<any, infer TRoutes>
-  ? ScopedReverseFunction<TRoutes>
-  : never;
+type EmptyExtractedReverse =
+  EmptyPatternsType extends UrlPatterns<any, infer TRoutes>
+    ? ScopedReverseFunction<TRoutes>
+    : never;
 
 // Empty patterns with no routes - no valid names to call
 declare const emptyReverse: EmptyExtractedReverse;
@@ -174,7 +202,10 @@ const _emptyAbsolute: string = emptyReverse("other.module.route");
 // to get type-safe local route names.
 
 // Simulate ctx.reverse (global type)
-declare const globalReverse: (name: string, params?: Record<string, string>) => string;
+declare const globalReverse: (
+  name: string,
+  params?: Record<string, string>,
+) => string;
 
 // Use scopedReverse to narrow to local routes
 type TestLocalRoutes = {
@@ -186,7 +217,9 @@ type TestPatternsType = UrlPatterns<unknown, TestLocalRoutes>;
 
 // Test ExtractLocalRoutes extracts routes from UrlPatterns
 type ExtractedRoutes = ExtractLocalRoutes<TestPatternsType>;
-type _AssertExtractedRoutesMatch = ExtractedRoutes extends TestLocalRoutes ? true : never;
+type _AssertExtractedRoutesMatch = ExtractedRoutes extends TestLocalRoutes
+  ? true
+  : never;
 const _checkExtractedRoutesMatch: _AssertExtractedRoutesMatch = true;
 
 // Test scopedReverse returns properly typed function

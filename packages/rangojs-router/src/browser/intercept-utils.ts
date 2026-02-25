@@ -37,9 +37,7 @@ export function splitInterceptSegments(segments: ResolvedSegment[]): {
  * Active slots indicate an intercept response where a parallel segment
  * (e.g., @modal) has matched and should be rendered.
  */
-export function hasActiveIntercept(
-  slots?: Record<string, SlotState>,
-): boolean {
+export function hasActiveIntercept(slots?: Record<string, SlotState>): boolean {
   if (!slots) return false;
   return Object.values(slots).some((slot) => slot.active);
 }

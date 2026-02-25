@@ -37,7 +37,9 @@ import { isCachedFunction } from "./cache/taint.js";
 
 // -- Types ------------------------------------------------------------------
 
-export interface StaticHandlerDefinition<TParams extends Record<string, any> = any> {
+export interface StaticHandlerDefinition<
+  TParams extends Record<string, any> = any,
+> {
   readonly __brand: "staticHandler";
   /** Auto-generated unique ID (injected by Vite plugin). */
   $$id: string;
@@ -65,8 +67,8 @@ export function Static<TParams extends Record<string, any>>(
   if (isCachedFunction(handler)) {
     throw new Error(
       'A "use cache" function cannot be used as a Static() handler. ' +
-      'Static handlers are rendered once at build time. Remove the ' +
-      '"use cache" directive — Static already provides caching.',
+        "Static handlers are rendered once at build time. Remove the " +
+        '"use cache" directive — Static already provides caching.',
     );
   }
 

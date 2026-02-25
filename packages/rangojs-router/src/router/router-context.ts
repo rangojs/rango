@@ -62,7 +62,7 @@ export interface RouterContext<TEnv = any> {
     routeKey: string,
     pathname: string,
     metricsStore?: MetricsStore,
-    isSSR?: boolean
+    isSSR?: boolean,
   ) => Promise<EntryData>;
 
   // Entry traversal
@@ -77,18 +77,18 @@ export interface RouterContext<TEnv = any> {
     url: URL,
     bindings?: any,
     routeMap?: Record<string, string>,
-    routeName?: string
+    routeName?: string,
   ) => HandlerContext<any, TEnv>;
 
   // Loader setup
   setupLoaderAccess: (
     ctx: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>
+    loaderPromises: Map<string, Promise<any>>,
   ) => void;
 
   setupLoaderAccessSilent: (
     ctx: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>
+    loaderPromises: Map<string, Promise<any>>,
   ) => void;
 
   // Context access
@@ -98,7 +98,7 @@ export interface RouterContext<TEnv = any> {
       store: any,
       namespace: string,
       parent: any,
-      fn: () => T
+      fn: () => T,
     ) => T;
   };
 
@@ -108,7 +108,7 @@ export interface RouterContext<TEnv = any> {
   // Cache
   createCacheScope: (
     cacheConfig: any,
-    parent: CacheScope | null
+    parent: CacheScope | null,
   ) => CacheScope | null;
 
   // Intercept detection
@@ -116,7 +116,7 @@ export interface RouterContext<TEnv = any> {
     routeKey: string,
     parentEntry: EntryData | null,
     selectorContext: InterceptSelectorContext,
-    isAction: boolean
+    isAction: boolean,
   ) => InterceptResult | null;
 
   // Segment resolution (with revalidation)
@@ -134,7 +134,7 @@ export interface RouterContext<TEnv = any> {
     actionContext: any | undefined,
     interceptResult: InterceptResult | null,
     localRouteName: string,
-    pathname: string
+    pathname: string,
   ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
 
   // Generator-based segment resolution (for pipeline)
@@ -149,7 +149,7 @@ export interface RouterContext<TEnv = any> {
     prevUrl: URL,
     nextUrl: URL,
     loaderPromises: Map<string, Promise<any>>,
-    actionContext?: any
+    actionContext?: any,
   ) => AsyncGenerator<ResolvedSegment | { __type: "id"; id: string }>;
 
   // Intercept resolution
@@ -159,12 +159,12 @@ export interface RouterContext<TEnv = any> {
     params: Record<string, string>,
     handlerContext: HandlerContext<any, TEnv>,
     belongsToRoute: boolean,
-    revalidationContext?: RevalidationContext
+    revalidationContext?: RevalidationContext,
   ) => Promise<ResolvedSegment[]>;
 
   // Collect with markers
   collectWithMarkers?: <T>(
-    gen: AsyncGenerator<T | { __type: "id"; id: string }>
+    gen: AsyncGenerator<T | { __type: "id"; id: string }>,
   ) => Promise<{ items: T[]; matchedIds: string[] }>;
 
   // Revalidation evaluation
@@ -196,7 +196,7 @@ export interface RouterContext<TEnv = any> {
     routeKey: string,
     params: Record<string, string>,
     handlerContext: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>
+    loaderPromises: Map<string, Promise<any>>,
   ) => Promise<ResolvedSegment[]>;
 
   // Generator-based simple resolution
@@ -205,12 +205,12 @@ export interface RouterContext<TEnv = any> {
     routeKey: string,
     params: Record<string, string>,
     handlerContext: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>
+    loaderPromises: Map<string, Promise<any>>,
   ) => AsyncGenerator<ResolvedSegment | { __type: "id"; id: string }>;
 
   // Collect segments from generator
   collectSegmentsFromGenerator?: <T>(
-    gen: AsyncGenerator<T | { __type: "id"; id: string }>
+    gen: AsyncGenerator<T | { __type: "id"; id: string }>,
   ) => Promise<T[]>;
 
   // Handle store
@@ -219,7 +219,7 @@ export interface RouterContext<TEnv = any> {
   // Loaders-only resolution (for full match cache hit - no revalidation)
   resolveLoadersOnly?: (
     entries: EntryData[],
-    handlerContext: HandlerContext<any, TEnv>
+    handlerContext: HandlerContext<any, TEnv>,
   ) => Promise<ResolvedSegment[]>;
 
   // Loaders-only resolution (for cache hit scenarios)
@@ -232,12 +232,12 @@ export interface RouterContext<TEnv = any> {
     prevUrl: URL,
     nextUrl: URL,
     routeKey: string,
-    actionContext?: any
+    actionContext?: any,
   ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
 
   // Entry revalidation map
   buildEntryRevalidateMap?: (
-    entries: EntryData[]
+    entries: EntryData[],
   ) => Map<string, { revalidate: ShouldRevalidateFn[] }>;
 
   // Intercept loaders only (for cache hit + intercept scenarios)
@@ -256,7 +256,7 @@ export interface RouterContext<TEnv = any> {
       routeKey: string;
       actionContext?: any;
       stale?: boolean;
-    }
+    },
   ) => Promise<{
     loaderDataPromise: Promise<any[]> | any[];
     loaderIds: string[];
@@ -276,7 +276,7 @@ export function getRouterContext<TEnv = any>(): RouterContext<TEnv> {
   if (!deps) {
     throw new Error(
       "getRouterContext() called outside of router context. " +
-        "Ensure code is running inside runWithRouterContext()."
+        "Ensure code is running inside runWithRouterContext().",
     );
   }
   return deps as RouterContext<TEnv>;
@@ -294,8 +294,7 @@ export function getRouterContext<TEnv = any>(): RouterContext<TEnv> {
  */
 export function runWithRouterContext<T, TEnv = any>(
   deps: RouterContext<TEnv>,
-  fn: () => T
+  fn: () => T,
 ): T {
   return routerContext.run(deps, fn);
 }
-

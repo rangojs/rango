@@ -9,10 +9,7 @@
  */
 
 // Router registry (used by Vite plugin for build-time discovery)
-export {
-  RSC_ROUTER_BRAND,
-  RouterRegistry,
-} from "./router.js";
+export { RSC_ROUTER_BRAND, RouterRegistry } from "./router.js";
 
 // Route map builder (Vite plugin injects these via virtual modules)
 export {
@@ -33,7 +30,10 @@ export {
 } from "./route-map-builder.js";
 
 // Loader registry (Vite plugin registers lazy loader imports)
-export { registerLoaderById, setLoaderImports } from "./server/loader-registry.js";
+export {
+  registerLoaderById,
+  setLoaderImports,
+} from "./server/loader-registry.js";
 
 // Request context creation (used by RSC handler, not user-facing)
 export {
@@ -42,7 +42,4 @@ export {
 } from "./server/request-context.js";
 
 // Component utilities (used internally for server/client boundary checks)
-export {
-  isClientComponent,
-  assertClientComponent,
-} from "./component-utils.js";
+export { isClientComponent, assertClientComponent } from "./component-utils.js";

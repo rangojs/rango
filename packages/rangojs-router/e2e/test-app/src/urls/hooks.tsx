@@ -23,17 +23,25 @@ export const hooksPatterns = urls(({ path, loader }) => [
     "/hook-tests/route-a",
     HookTestsRouteAHandler,
     { name: "hookTests.routeA" },
-    () => [loader(HookTestLoader)]
+    () => [loader(HookTestLoader)],
   ),
   path(
     "/hook-tests/route-b",
     HookTestsRouteBHandler,
     { name: "hookTests.routeB" },
-    () => [loader(HookTestLoaderB)]
+    () => [loader(HookTestLoaderB)],
   ),
-  path("/hook-tests/no-loader", HookTestsNoLoaderHandler, { name: "hookTests.noLoader" }),
-  path("/hook-tests/form-action", HookTestsFormActionHandler, { name: "hookTests.formAction" }),
-  path("/loader-composition", LoaderCompositionHandler, { name: "loaderComposition" }),
+  path("/hook-tests/no-loader", HookTestsNoLoaderHandler, {
+    name: "hookTests.noLoader",
+  }),
+  path("/hook-tests/form-action", HookTestsFormActionHandler, {
+    name: "hookTests.formAction",
+  }),
+  path("/loader-composition", LoaderCompositionHandler, {
+    name: "loaderComposition",
+  }),
   path("/inline-action", InlineActionHandler, { name: "inlineAction" }),
-  path("/progressive-enhancement", ProgressiveEnhancementHandler, { name: "progressiveEnhancement" }),
+  path("/progressive-enhancement", ProgressiveEnhancementHandler, {
+    name: "progressiveEnhancement",
+  }),
 ]);

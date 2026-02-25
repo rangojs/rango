@@ -14,8 +14,9 @@ Loaders fetch data on the server and stream it to the client.
 import { createLoader } from "@rangojs/router";
 
 export const ProductLoader = createLoader("product", async (ctx) => {
-  const product = await ctx.env.Bindings.DB
-    .prepare("SELECT * FROM products WHERE slug = ?")
+  const product = await ctx.env.Bindings.DB.prepare(
+    "SELECT * FROM products WHERE slug = ?",
+  )
     .bind(ctx.params.slug)
     .first();
 
@@ -119,20 +120,18 @@ Add caching or revalidation to specific loaders:
 ```typescript
 path("/product/:slug", ProductPage, { name: "product" }, () => [
   // Cached loader
-  loader(ProductLoader, () => [
-    cache({ ttl: 300 }),
-  ]),
+  loader(ProductLoader, () => [cache({ ttl: 300 })]),
 
   // Loader with revalidation control
   loader(RelatedProductsLoader, () => [
-    revalidate(() => false),  // Never revalidate
+    revalidate(() => false), // Never revalidate
   ]),
 
   // Loader that revalidates after cart actions
   loader(CartLoader, () => [
     revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
   ]),
-])
+]);
 ```
 
 ## Multiple Loaders
@@ -144,7 +143,7 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
   loader(ProductLoader),
   loader(RelatedProductsLoader),
   loader(ReviewsLoader),
-])
+]);
 ```
 
 ## Layout Loaders

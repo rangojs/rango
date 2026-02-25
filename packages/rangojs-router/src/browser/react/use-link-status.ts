@@ -16,7 +16,9 @@ import { NavigationStoreContext } from "./context.js";
  * Context for Link component to provide its destination URL
  * Used by useLinkStatus to determine if this specific link is pending
  */
-export const LinkContext: Context<string | null> = createContext<string | null>(null);
+export const LinkContext: Context<string | null> = createContext<string | null>(
+  null,
+);
 
 /**
  * Link status returned by useLinkStatus hook
@@ -46,7 +48,7 @@ function normalizeUrl(url: string, origin: string): string {
 function isPendingFor(
   linkTo: string | null,
   pendingUrl: string | null,
-  origin: string
+  origin: string,
 ): boolean {
   if (linkTo === null || pendingUrl === null) {
     return false;
@@ -81,9 +83,8 @@ export function useLinkStatus(): LinkStatus {
   const ctx = useContext(NavigationStoreContext);
 
   // Get origin for URL normalization (stable across renders)
-  const origin = typeof window !== "undefined"
-    ? window.location.origin
-    : "http://localhost";
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : "http://localhost";
 
   // Base state for useOptimistic
   const [basePending, setBasePending] = useState<boolean>(() => {

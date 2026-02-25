@@ -19,10 +19,16 @@ export function MetaTemplateLayout(ctx: any) {
         <Link to="/meta-template/child" data-testid="meta-template-child-link">
           Child
         </Link>
-        <Link to="/meta-template/absolute" data-testid="meta-template-absolute-link">
+        <Link
+          to="/meta-template/absolute"
+          data-testid="meta-template-absolute-link"
+        >
           Absolute
         </Link>
-        <Link to="/meta-template/nested" data-testid="meta-template-nested-link">
+        <Link
+          to="/meta-template/nested"
+          data-testid="meta-template-nested-link"
+        >
           Nested
         </Link>
       </nav>
@@ -37,7 +43,9 @@ export function MetaTemplateLayout(ctx: any) {
 export function MetaTemplateNestedLayout(ctx: any) {
   const meta = ctx.use(Meta);
   // Override parent template with new one
-  meta({ title: { template: "%s | Nested Section", default: "Nested Section" } });
+  meta({
+    title: { template: "%s | Nested Section", default: "Nested Section" },
+  });
 
   return (
     <div data-testid="meta-template-nested-layout">

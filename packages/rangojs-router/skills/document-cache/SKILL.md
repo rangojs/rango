@@ -102,6 +102,7 @@ Request → Check Cache
 ## Cache Status Header
 
 Response includes `x-document-cache-status`:
+
 - `HIT` - Fresh cache hit
 - `STALE` - Served stale, revalidating in background
 - `MISS` - Cache miss, response was generated fresh
@@ -109,6 +110,7 @@ Response includes `x-document-cache-status`:
 ## Cache Key Generation
 
 Default keys differentiate:
+
 - HTML requests: `{pathname}:html`
 - RSC partials: `{pathname}:{segmentHash}:rsc`
 
@@ -170,11 +172,11 @@ export const urlpatterns = urls(({ path, layout, cache, loader }) => [
 
 ## Document Cache vs Segment Cache
 
-| Feature | Document Cache | Segment Cache |
-|---------|---------------|---------------|
-| Granularity | Full response | Individual segments |
-| Opt-in | `documentCache` in cache() | `cache({ ttl, swr })` |
-| Use case | Static pages | Dynamic compositions |
-| Key includes | URL + segment hash | Route params |
+| Feature      | Document Cache             | Segment Cache         |
+| ------------ | -------------------------- | --------------------- |
+| Granularity  | Full response              | Individual segments   |
+| Opt-in       | `documentCache` in cache() | `cache({ ttl, swr })` |
+| Use case     | Static pages               | Dynamic compositions  |
+| Key includes | URL + segment hash         | Route params          |
 
 Use document cache for mostly-static pages. Use segment cache when different parts of a page have different cache requirements.

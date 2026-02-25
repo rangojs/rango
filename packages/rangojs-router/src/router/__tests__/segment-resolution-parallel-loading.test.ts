@@ -92,7 +92,9 @@ describe("segment-resolution parallel loading", () => {
 
     const quickResult = await Promise.race([
       resultPromise.then(() => "resolved"),
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 30)),
+      new Promise<"timeout">((resolve) =>
+        setTimeout(() => resolve("timeout"), 30),
+      ),
     ]);
     expect(quickResult).toBe("resolved");
 
@@ -143,7 +145,9 @@ describe("segment-resolution parallel loading", () => {
 
     const quickResult = await Promise.race([
       resultPromise.then(() => "resolved"),
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 30)),
+      new Promise<"timeout">((resolve) =>
+        setTimeout(() => resolve("timeout"), 30),
+      ),
     ]);
     expect(quickResult).toBe("resolved");
 
@@ -197,7 +201,9 @@ describe("segment-resolution parallel loading", () => {
 
     const quickResult = await Promise.race([
       resultPromise.then(() => "resolved"),
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 30)),
+      new Promise<"timeout">((resolve) =>
+        setTimeout(() => resolve("timeout"), 30),
+      ),
     ]);
     expect(quickResult).toBe("timeout");
 

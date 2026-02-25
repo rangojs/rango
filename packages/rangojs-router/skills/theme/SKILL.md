@@ -25,11 +25,11 @@ const router = createRouter<Env>({
   document: Document,
   urls: urlpatterns,
   theme: {
-    defaultTheme: "system",      // "light" | "dark" | "system"
+    defaultTheme: "system", // "light" | "dark" | "system"
     themes: ["light", "dark"],
-    attribute: "class",          // or "data-theme"
+    attribute: "class", // or "data-theme"
     storageKey: "theme",
-  }
+  },
 });
 ```
 
@@ -40,7 +40,7 @@ import { createLoader, createMiddleware } from "@rangojs/router";
 
 // In a loader
 export const SettingsLoader = createLoader("settings", async (ctx) => {
-  const currentTheme = ctx.theme;    // read from cookie
+  const currentTheme = ctx.theme; // read from cookie
   return { theme: currentTheme };
 });
 

@@ -430,12 +430,15 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       if (!response) return null;
 
-      const staleAt = Number(response.headers.get(CACHE_STALE_AT_HEADER) ?? "0");
+      const staleAt = Number(
+        response.headers.get(CACHE_STALE_AT_HEADER) ?? "0",
+      );
       const status = response.headers.get(CACHE_STATUS_HEADER);
       const age = Number(response.headers.get("age") ?? "0");
 
       const isStale = staleAt > 0 && Date.now() > staleAt;
-      const isRevalidating = status === "REVALIDATING" && age < MAX_REVALIDATION_INTERVAL;
+      const isRevalidating =
+        status === "REVALIDATING" && age < MAX_REVALIDATION_INTERVAL;
 
       const data = (await response.json()) as {
         value: string;
@@ -443,7 +446,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       };
 
       if (!isStale || isRevalidating) {
-        return { value: data.value, handles: data.handles, shouldRevalidate: false };
+        return {
+          value: data.value,
+          handles: data.handles,
+          shouldRevalidate: false,
+        };
       }
 
       // Stale and needs revalidation — mark REVALIDATING atomically
@@ -454,7 +461,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         new Response(JSON.stringify(data), { status: 200, headers }),
       );
 
-      return { value: data.value, handles: data.handles, shouldRevalidate: true };
+      return {
+        value: data.value,
+        handles: data.handles,
+        shouldRevalidate: true,
+      };
     } catch (error) {
       console.error("[CFCacheStore] getItem failed:", error);
       return null;
@@ -464,7 +475,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   /**
    * Store a function result with TTL and optional SWR window.
    */
-  async setItem(key: string, value: string, options?: CacheItemOptions): Promise<void> {
+  async setItem(
+    key: string,
+    value: string,
+    options?: CacheItemOptions,
+  ): Promise<void> {
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(`fn:${key}`);
@@ -487,7 +502,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const putPromise = cache.put(request, response);
 
       if (this.waitUntil) {
-        this.waitUntil(async () => { await putPromise; });
+        this.waitUntil(async () => {
+          await putPromise;
+        });
       } else {
         await putPromise;
       }

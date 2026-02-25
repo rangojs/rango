@@ -8,7 +8,9 @@ function shopUrl(path: string) {
   return f.url(`/api/shop${path}`);
 }
 
-async function clearCart(request: typeof test extends { request: infer R } ? R : any) {
+async function clearCart(
+  request: typeof test extends { request: infer R } ? R : any,
+) {
   // Accept the Playwright request context directly
   await (request as any).delete(shopUrl("/cart"));
 }
@@ -38,7 +40,9 @@ test.describe("shop-api-client", () => {
       expect(body.data.product.name).toBe("Widget");
     });
 
-    test("GET /catalog/:productId returns 404 for unknown product", async ({ request }) => {
+    test("GET /catalog/:productId returns 404 for unknown product", async ({
+      request,
+    }) => {
       const res = await request.get(shopUrl("/catalog/nonexistent"));
       expect(res.status()).toBe(404);
       const body = await res.json();
@@ -212,7 +216,9 @@ test.describe("shop-api-client", () => {
       expect(res.status()).toBe(405);
     });
 
-    test("404 for missing resource includes error envelope", async ({ request }) => {
+    test("404 for missing resource includes error envelope", async ({
+      request,
+    }) => {
       const res = await request.get(shopUrl("/catalog/does-not-exist"));
       expect(res.status()).toBe(404);
       const body = await res.json();
@@ -240,13 +246,17 @@ test.describe("shop-playground-ui", () => {
     await waitForHydration(page);
 
     // Verify page loaded
-    await expect(page.locator('[data-testid="playground-title"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="playground-title"]'),
+    ).toBeVisible();
 
     // Click load catalog
     await page.click('[data-testid="load-catalog-btn"]');
 
     // Wait for products to appear
-    await expect(page.locator('[data-testid="product-p1"]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="product-p1"]')).toBeVisible({
+      timeout: 5000,
+    });
     await expect(page.locator('[data-testid="product-p2"]')).toBeVisible();
   });
 
@@ -260,7 +270,9 @@ test.describe("shop-playground-ui", () => {
 
     // Load catalog
     await page.click('[data-testid="load-catalog-btn"]');
-    await expect(page.locator('[data-testid="product-p1"]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="product-p1"]')).toBeVisible({
+      timeout: 5000,
+    });
 
     // Add product to cart
     await page.click('[data-testid="add-to-cart-p1"]');
@@ -269,7 +281,10 @@ test.describe("shop-playground-ui", () => {
     await page.click('[data-testid="load-cart-btn"]');
 
     // Wait for cart item to appear
-    await expect(page.locator('[data-testid="cart-section"]')).toContainText("1 items", { timeout: 5000 });
+    await expect(page.locator('[data-testid="cart-section"]')).toContainText(
+      "1 items",
+      { timeout: 5000 },
+    );
   });
 
   test("health check buttons work", async ({ page }) => {
@@ -279,10 +294,16 @@ test.describe("shop-playground-ui", () => {
 
     // HEAD check
     await page.click('[data-testid="health-head-btn"]');
-    await expect(page.locator('[data-testid="response-log"]')).toContainText('"ok": true', { timeout: 5000 });
+    await expect(page.locator('[data-testid="response-log"]')).toContainText(
+      '"ok": true',
+      { timeout: 5000 },
+    );
 
     // GET health
     await page.click('[data-testid="health-get-btn"]');
-    await expect(page.locator('[data-testid="response-log"]')).toContainText('"status": "ok"', { timeout: 5000 });
+    await expect(page.locator('[data-testid="response-log"]')).toContainText(
+      '"status": "ok"',
+      { timeout: 5000 },
+    );
   });
 });

@@ -12,7 +12,9 @@ export const StaticPage = Static((ctx) => {
   return (
     <div data-testid="static-page">
       <h1 data-testid="static-page-title">Static Page</h1>
-      <p data-testid="static-page-content">This is a statically pre-rendered page.</p>
+      <p data-testid="static-page-content">
+        This is a statically pre-rendered page.
+      </p>
       <p data-testid="static-page-timestamp">Built at: {Date.now()}</p>
     </div>
   );
@@ -24,23 +26,25 @@ export const StaticShell = Static<{ tag: string }>(() => {
   return (
     <div data-testid="static-shell">
       <h1 data-testid="static-shell-title">Static Shell</h1>
-      <p data-testid="static-shell-content">This content is the same for every param.</p>
+      <p data-testid="static-shell-content">
+        This content is the same for every param.
+      </p>
     </div>
   );
 });
 
 // Static page -- no params, renders on-demand in dev mode
-export const DocsPage = Prerender(
-  async (ctx) => {
-    return (
-      <div data-testid="docs-page">
-        <h1 data-testid="docs-title">Documentation</h1>
-        <p data-testid="docs-content">This is pre-rendered documentation content.</p>
-        <p data-testid="docs-pathname">Pathname: {ctx.pathname}</p>
-      </div>
-    );
-  }
-);
+export const DocsPage = Prerender(async (ctx) => {
+  return (
+    <div data-testid="docs-page">
+      <h1 data-testid="docs-title">Documentation</h1>
+      <p data-testid="docs-content">
+        This is pre-rendered documentation content.
+      </p>
+      <p data-testid="docs-pathname">Pathname: {ctx.pathname}</p>
+    </div>
+  );
+});
 
 // Dynamic page -- with params, includes client component with loader/action/locationState
 export const DocsArticle = Prerender(
@@ -53,7 +57,7 @@ export const DocsArticle = Prerender(
         <PrerenderClientTest loader={PrerenderTestLoader} />
       </div>
     );
-  }
+  },
 );
 
 export const prerenderPatterns = urls(({ path, loader }) => [

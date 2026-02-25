@@ -42,19 +42,19 @@ The base context is created once per request right after route matching. It hold
 
 ## Capability Matrix
 
-| Capability | Middleware | Handler / Layout / Parallel / Intercept | Loader | Action | Prerender |
-|---|---|---|---|---|---|
-| Request props | all | all | all | all | synthetic |
-| `get` (read vars) | yes | yes | yes | yes | no |
-| `set` (write vars) | yes | yes (route handler only) | no | no | no |
-| Response surface | yes | yes | no | yes | no |
-| `use(loader)` | no | yes | yes | yes | no |
-| `use(handle)` | no | yes | no | no | yes |
-| `reverse` | scoped+global | scoped+global | global | global | no |
-| `redirect` / `notFound` | yes | yes | yes | yes | no |
-| `setLocationState` | -- | yes | no | yes | no |
-| `theme` / `setTheme` | -- | yes | no | yes | no |
-| `body` / `formData` | -- | -- | yes (fetchable) | yes | no |
+| Capability              | Middleware    | Handler / Layout / Parallel / Intercept | Loader          | Action | Prerender |
+| ----------------------- | ------------- | --------------------------------------- | --------------- | ------ | --------- |
+| Request props           | all           | all                                     | all             | all    | synthetic |
+| `get` (read vars)       | yes           | yes                                     | yes             | yes    | no        |
+| `set` (write vars)      | yes           | yes (route handler only)                | no              | no     | no        |
+| Response surface        | yes           | yes                                     | no              | yes    | no        |
+| `use(loader)`           | no            | yes                                     | yes             | yes    | no        |
+| `use(handle)`           | no            | yes                                     | no              | no     | yes       |
+| `reverse`               | scoped+global | scoped+global                           | global          | global | no        |
+| `redirect` / `notFound` | yes           | yes                                     | yes             | yes    | no        |
+| `setLocationState`      | --            | yes                                     | no              | yes    | no        |
+| `theme` / `setTheme`    | --            | yes                                     | no              | yes    | no        |
+| `body` / `formData`     | --            | --                                      | yes (fetchable) | yes    | no        |
 
 ## Design Rationale
 

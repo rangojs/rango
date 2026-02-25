@@ -41,6 +41,7 @@ All middleware, handlers, loaders access context via getRequestContext()
 ```
 
 **Key Files:**
+
 - `rsc/index.ts` - Orchestrates request handling
 - `server/request-context.ts` - Context creation, AsyncLocalStorage, and `use()` implementation
 - `router/handler-context.ts` - HandlerContext creation (uses `getRequestContext().var`)
@@ -52,7 +53,7 @@ All middleware, handlers, loaders access context via getRequestContext()
 ```typescript
 // server/request-context.ts
 export function createRequestContext<TEnv>(
-  options: CreateRequestContextOptions<TEnv>
+  options: CreateRequestContextOptions<TEnv>,
 ): RequestContext<TEnv> {
   const { env, request, url, variables } = options;
 
@@ -69,12 +70,18 @@ export function createRequestContext<TEnv>(
     searchParams: url.searchParams,
     var: variables,
     get: (key) => variables[key],
-    set: (key, value) => { variables[key] = value; },
+    set: (key, value) => {
+      variables[key] = value;
+    },
     params: {},
     res: stubResponse,
     method: request.method,
     // Cookie/header methods...
-    use: createUseFunction({ handleStore, loaderPromises, getContext: () => ctx }),
+    use: createUseFunction({
+      handleStore,
+      loaderPromises,
+      getContext: () => ctx,
+    }),
     _handleStore: handleStore,
   };
 
@@ -88,7 +95,7 @@ export function createRequestContext<TEnv>(
 // server/request-context.ts
 export function runWithRequestContext<TEnv, T>(
   context: RequestContext<TEnv>,
-  fn: () => T
+  fn: () => T,
 ): T {
   return requestContextStorage.run(context, fn);
 }
@@ -175,14 +182,14 @@ const next = async (): Promise<Response> => {
 
 ### 2.2 Middleware Types and Execution Points
 
-| Type | Where Defined | Executed By | Location |
-|------|--------------|-------------|----------|
-| App-level (global) | `router.use()` | `executeMiddleware()` | `rsc/index.ts:208-215` |
-| App-level (pattern) | `router.use("/path/*", mw)` | `executeMiddleware()` | `rsc/index.ts:208-215` |
-| Route-level | `middleware(fn)` in route | `executeMiddleware()` | `rsc/index.ts:245-251` |
-| Intercept | Inside `intercept()` | `executeInterceptMiddleware()` | `router.ts:1048-1056` |
-| Loader (fetchable) | `createLoader(fn, { middleware })` | `executeLoaderMiddleware()` | `rsc/index.ts:579-623` |
-| Server Action | `createLoader(fn, { middleware })` | `executeServerActionMiddleware()` | `loader.rsc.ts:153-164` |
+| Type                | Where Defined                      | Executed By                       | Location                |
+| ------------------- | ---------------------------------- | --------------------------------- | ----------------------- |
+| App-level (global)  | `router.use()`                     | `executeMiddleware()`             | `rsc/index.ts:208-215`  |
+| App-level (pattern) | `router.use("/path/*", mw)`        | `executeMiddleware()`             | `rsc/index.ts:208-215`  |
+| Route-level         | `middleware(fn)` in route          | `executeMiddleware()`             | `rsc/index.ts:245-251`  |
+| Intercept           | Inside `intercept()`               | `executeInterceptMiddleware()`    | `router.ts:1048-1056`   |
+| Loader (fetchable)  | `createLoader(fn, { middleware })` | `executeLoaderMiddleware()`       | `rsc/index.ts:579-623`  |
+| Server Action       | `createLoader(fn, { middleware })` | `executeServerActionMiddleware()` | `loader.rsc.ts:153-164` |
 
 ### 2.3 Stub Response Pattern
 
@@ -197,6 +204,7 @@ const responseHolder: ResponseHolder = { response: stubResponse };
 ```
 
 This allows middleware to:
+
 1. Access `ctx.res` immediately (returns stub before `next()`, real response after)
 2. Set headers before `next()` via `ctx.header()` or `ctx.res.headers.set()`
 3. Set cookies before `next()` via `ctx.setCookie()` (uses `headers.append("Set-Cookie", ...)`)
@@ -204,6 +212,7 @@ This allows middleware to:
 5. Replace response via `ctx.res = newResponse` (setter)
 
 **Merge Logic:** After handler returns, stub headers are merged into the real response:
+
 - Regular headers: Use `set()` (overwrite)
 - Set-Cookie headers: Use `append()` (preserve multiple cookies)
 
@@ -215,7 +224,7 @@ This allows middleware to:
 // rsc/index.ts
 function createResponseWithMergedHeaders(
   body: BodyInit | null,
-  init: ResponseInit
+  init: ResponseInit,
 ): Response {
   const ctx = getRequestContext();
   if (!ctx) return new Response(body, init);
@@ -224,9 +233,9 @@ function createResponseWithMergedHeaders(
   const mergedHeaders = new Headers(init.headers);
   ctx.res.headers.forEach((value, name) => {
     if (name.toLowerCase() === "set-cookie") {
-      mergedHeaders.append(name, value);  // Preserve multiple cookies
+      mergedHeaders.append(name, value); // Preserve multiple cookies
     } else if (!mergedHeaders.has(name)) {
-      mergedHeaders.set(name, value);     // Don't overwrite explicit headers
+      mergedHeaders.set(name, value); // Don't overwrite explicit headers
     }
   });
 
@@ -235,6 +244,7 @@ function createResponseWithMergedHeaders(
 ```
 
 This ensures headers/cookies set via `ctx.header()` or `ctx.setCookie()` in middleware are included in:
+
 - RSC stream responses
 - HTML responses
 - Redirect responses
@@ -242,6 +252,7 @@ This ensures headers/cookies set via `ctx.header()` or `ctx.setCookie()` in midd
 - Loader responses
 
 **Example:**
+
 ```typescript
 const middleware: MiddlewareFn = async (ctx, next) => {
   // Set headers/cookies BEFORE next() - applied to stub, merged into real response
@@ -269,13 +280,13 @@ return await executeLoaderMiddleware(
   request,
   env,
   loaderParams,
-  requireRequestContext().var,  // Variables from unified context
-  requireRequestContext().res,  // Stub response for header merging
+  requireRequestContext().var, // Variables from unified context
+  requireRequestContext().res, // Stub response for header merging
   async () => {
     // Loader executes within request context
     // Variables accessed via getRequestContext().var
     return fn(loaderContext);
-  }
+  },
 );
 ```
 
@@ -290,7 +301,7 @@ export async function executeLoaderMiddleware<TEnv>(
   params: Record<string, string>,
   variables: Record<string, any>,
   stubResponse: Response,
-  finalHandler: () => Promise<Response>
+  finalHandler: () => Promise<Response>,
 ): Promise<Response> {
   if (middlewares.length === 0) {
     return finalHandler();
@@ -298,11 +309,24 @@ export async function executeLoaderMiddleware<TEnv>(
 
   // Convert to MiddlewareEntry format
   const middlewareEntries = middlewares.map((handler) => ({
-    entry: { pattern: null, regex: null, paramNames: [], handler, mountPrefix: null },
+    entry: {
+      pattern: null,
+      regex: null,
+      paramNames: [],
+      handler,
+      mountPrefix: null,
+    },
     params,
   }));
 
-  return executeMiddleware(middlewareEntries, request, env, variables, stubResponse, finalHandler);
+  return executeMiddleware(
+    middlewareEntries,
+    request,
+    env,
+    variables,
+    stubResponse,
+    finalHandler,
+  );
 }
 ```
 
@@ -317,7 +341,7 @@ if (registered.middleware.length > 0) {
     actionRequest,
     env,
     params,
-    variables
+    variables,
   );
 }
 ```
@@ -329,8 +353,8 @@ if (registered.middleware.length > 0) {
 if (result instanceof Response) {
   throw new Error(
     `Loader middleware returned a Response (status: ${result.status}). ` +
-    `Server actions cannot return Response. ` +
-    `Use GET-based loader fetching for redirects, or throw an error instead.`
+      `Server actions cannot return Response. ` +
+      `Use GET-based loader fetching for redirects, or throw an error instead.`,
   );
 }
 ```
@@ -344,6 +368,7 @@ if (result instanceof Response) {
 **Location:** `rsc/index.ts:287-393`
 
 Server actions run within the existing request context but:
+
 1. Do NOT have their own middleware execution
 2. Inherit app-level middleware context from `getRequestContext()`
 3. Can trigger loader middleware if using fetchable loaders
@@ -388,7 +413,7 @@ if (interceptEntry.middleware.length > 0) {
     context.request,
     context.env,
     params,
-    context.var as Record<string, any>
+    context.var as Record<string, any>,
   );
   if (middlewareResponse) throw middlewareResponse;
 }
@@ -399,6 +424,7 @@ if (interceptEntry.middleware.length > 0) {
 **FIXED**: `executeInterceptMiddleware()` now works correctly:
 
 1. **Cookies are properly applied:**
+
 ```typescript
 // Cookies collected via ctx.setCookie() are applied to early response
 if (earlyResponse) {
@@ -407,6 +433,7 @@ if (earlyResponse) {
 ```
 
 2. **ctx.res is available after next():**
+
 ```typescript
 // Uses stubResponse passed from request context
 const responseHolder: ResponseHolder = { response: stubResponse };
@@ -414,9 +441,10 @@ const responseHolder: ResponseHolder = { response: stubResponse };
 ```
 
 3. **ctx.header() works correctly:**
-After `next()`, `ctx.header()` sets headers on the real response.
+   After `next()`, `ctx.header()` sets headers on the real response.
 
 **Behavior matches normal middleware:**
+
 - Cookies ARE applied via `applyPendingCookies()`
 - `ctx.res` IS available after `next()`
 - `ctx.header()` works as expected
@@ -429,13 +457,13 @@ After `next()`, `ctx.header()` sets headers on the real response.
 
 **Tested scenarios:**
 
-| Return Type | Behavior | Status |
-|-------------|----------|--------|
-| `Response` object | Short-circuits, returns response | GOOD |
-| `undefined` (via no return) | Uses `ctx.res` if available | GOOD |
-| `void` (explicit return;) | Uses `ctx.res` if available | GOOD |
-| `Promise<undefined>` | Uses `ctx.res` if available | GOOD |
-| Any other value | UNKNOWN - No explicit handling | **ISSUE** |
+| Return Type                 | Behavior                         | Status    |
+| --------------------------- | -------------------------------- | --------- |
+| `Response` object           | Short-circuits, returns response | GOOD      |
+| `undefined` (via no return) | Uses `ctx.res` if available      | GOOD      |
+| `void` (explicit return;)   | Uses `ctx.res` if available      | GOOD      |
+| `Promise<undefined>`        | Uses `ctx.res` if available      | GOOD      |
+| Any other value             | UNKNOWN - No explicit handling   | **ISSUE** |
 
 **ISSUE IDENTIFIED**: Non-Response return values are not explicitly handled:
 
@@ -480,10 +508,14 @@ This handles cases like:
 
 ```typescript
 // Sync middleware - doesn't await
-(ctx, next) => { next(); }
+(ctx, next) => {
+  next();
+};
 
 // Async middleware - awaits
-async (ctx, next) => { await next(); }
+async (ctx, next) => {
+  await next();
+};
 ```
 
 ### 6.3 Middleware Not Calling next()
@@ -494,9 +526,9 @@ async (ctx, next) => { await next(); }
 // middleware.ts:459-466
 throw new Error(
   `Middleware must call next() or return a Response. ` +
-  `Function: ${fnName}, Pattern: ${entry.pattern ?? "(all)"}
+    `Function: ${fnName}, Pattern: ${entry.pattern ?? "(all)"}
   Source: ${import.meta.env.DEV ? entry.handler.toString().slice(0, 200) : "(source hidden in production)"}`,
-  { cause: { url: request.url, fn: entry.handler } }
+  { cause: { url: request.url, fn: entry.handler } },
 );
 ```
 
@@ -523,45 +555,53 @@ get res(): Response {
 ### 7.1 Maintainability
 
 **GOOD:**
+
 - Clear separation: `middleware.ts` handles all middleware logic
 - Well-documented interfaces with JSDoc comments
 - Type-safe context with generics
 - Consistent naming conventions
 
 **CONCERNS:**
+
 - `executeMiddleware`, `executeLoaderMiddleware`, `executeServerActionMiddleware`, `executeInterceptMiddleware` have similar but subtly different logic - potential for bugs when modifying one but not others
 - Some logic duplication in route middleware collection (`collectEntryMiddleware` defined 3 times in router.ts)
 
 ### 7.2 Readability
 
 **GOOD:**
+
 - Clear function names
 - Descriptive variable names
 - Logical code flow
 
 **CONCERNS:**
+
 - `rsc/index.ts` is very long (820+ lines) - middleware orchestration mixed with RSC rendering logic
 - Some deeply nested callbacks (e.g., loader middleware execution)
 
 ### 7.3 Type Safety
 
 **GOOD:**
+
 - Generic middleware types: `MiddlewareFn<TEnv, TParams>`
 - Typed context: `MiddlewareContext<TEnv, TParams>`
 - Proper type inference for route params
 
 **CONCERNS:**
+
 - Some `any` types in handler-context.ts
 - `ctx.get()` returns `any` - could be more strictly typed
 
 ### 7.4 Performance Considerations
 
 **GOOD:**
+
 - Lazy cookie parsing (only when accessed)
 - Short-circuit on early Response return
 - No unnecessary cloning of context
 
 **POTENTIAL OPTIMIZATION:**
+
 - Pattern regex compilation happens on every `.use()` call but could be memoized
 - Response cloning in `executeMiddleware` could be avoided in some cases
 
@@ -572,7 +612,8 @@ get res(): Response {
 ### 8.1 Unit Tests (`middleware.test.ts`)
 
 **Covered:**
-- [x] Pattern parsing (*, /path, /path/*, /path/:param, /path/:param/*)
+
+- [x] Pattern parsing (_, /path, /path/_, /path/:param, /path/:param/\*)
 - [x] Parameter extraction (single, multiple)
 - [x] Cookie parsing/serialization
 - [x] Middleware matching (global, pattern-based)
@@ -588,6 +629,7 @@ get res(): Response {
 - [x] Response replacement via ctx.res setter
 
 **COVERED (ADDED):**
+
 - [x] `executeLoaderMiddleware()` unit tests (7 tests)
 - [x] `executeServerActionMiddleware()` unit tests (8 tests)
 - [x] `executeInterceptMiddleware()` unit tests (15 tests)
@@ -596,11 +638,13 @@ get res(): Response {
 - [x] Multiple middleware chaining (tested)
 
 **REMAINING GAPS:**
+
 - [ ] Response body streaming with middleware (E2E)
 
 ### 8.2 E2E Tests (`app-middleware.test.ts`)
 
 **Covered:**
+
 - [x] Global headers on all routes
 - [x] Pattern-based middleware matching
 - [x] Parameter extraction from URL
@@ -612,6 +656,7 @@ get res(): Response {
 - [x] Production mode testing
 
 **MISSING:**
+
 - [ ] Route-level middleware (defined via `middleware()` in handlers)
 - [ ] Intercept middleware
 - [ ] Loader middleware (fetchable loaders)
@@ -628,11 +673,13 @@ get res(): Response {
 ### 9.1 Current Middleware Usage
 
 **Test App (`e2e/test-app/src/router.tsx`):**
+
 - Global middleware (3): timing, headers, shorthand
 - Pattern middleware (4): auth, error handler, cookies, params
 - Well-structured, good examples
 
 **Demo App (`examples/vite-rsc-demo/src/handlers/`):**
+
 - `dashboard.tsx`: Rate limit, analytics middleware
 - `protected.tsx`: Auth redirect middleware
 - Limited variety of middleware patterns
@@ -684,6 +731,7 @@ get res(): Response {
    Consider splitting middleware orchestration into a separate file to improve maintainability.
 
 5. **Add stricter types for ctx.get/set:** (Open)
+
 ```typescript
 interface TypedVariables {
   user?: { id: string; name: string };
@@ -719,6 +767,7 @@ All unit tests implemented (75 tests in `middleware.test.ts`):
 ### 10.4 E2E Test Actions - DONE
 
 All middleware E2E tests implemented in `e2e/app-middleware.test.ts`:
+
 - Route-level middleware with params
 - Loader middleware auth scenarios
 - Intercept middleware headers and cookies
@@ -726,6 +775,7 @@ All middleware E2E tests implemented in `e2e/app-middleware.test.ts`:
 #### Test App Changes Needed
 
 **1. Add route-level middleware to handlers.tsx:**
+
 ```typescript
 // In handlers.tsx, add a route with middleware()
 import { middleware } from "rsc-router";
@@ -745,11 +795,13 @@ export const RouteLevelMiddlewareTest = () => {
 ```
 
 **2. Add route to routes.ts:**
+
 ```typescript
 routeLevelMiddleware: "/route-level-middleware",
 ```
 
 **3. Add intercept with middleware to router.tsx:**
+
 ```typescript
 // Add intercept with middleware for testing
 .intercept("@modal", "slowProduct.detail", <ProductModal />, () => [
@@ -771,21 +823,27 @@ test.describe("middleware-features", () => {
   });
 
   // 2. Fetchable loader middleware - auth success
-  test("loader middleware should allow access with valid token", async ({ page }) => {
+  test("loader middleware should allow access with valid token", async ({
+    page,
+  }) => {
     // ProtectedLoader already has middleware checking authToken param
     await page.goto(f.url("/hook-tests"));
     // Use the ProtectedLoader with valid token
-    await page.fill('[data-testid="auth-token-input"]', 'valid-token');
+    await page.fill('[data-testid="auth-token-input"]', "valid-token");
     await page.click('[data-testid="fetch-protected-btn"]');
-    await expect(page.locator('[data-testid="protected-data"]')).toContainText("protected data");
+    await expect(page.locator('[data-testid="protected-data"]')).toContainText(
+      "protected data",
+    );
   });
 
   // 3. Fetchable loader middleware - auth failure
   test("loader middleware should reject invalid token", async ({ page }) => {
     await page.goto(f.url("/hook-tests"));
-    await page.fill('[data-testid="auth-token-input"]', 'invalid-token');
+    await page.fill('[data-testid="auth-token-input"]', "invalid-token");
     await page.click('[data-testid="fetch-protected-btn"]');
-    await expect(page.locator('[data-testid="loader-error"]')).toContainText("Unauthorized");
+    await expect(page.locator('[data-testid="loader-error"]')).toContainText(
+      "Unauthorized",
+    );
   });
 
   // 4. Server action middleware (form-based loader)
@@ -793,7 +851,9 @@ test.describe("middleware-features", () => {
     await page.goto(f.url("/hook-tests/form-action"));
     // Submit form without auth token
     await page.click('[data-testid="submit-protected-form"]');
-    await expect(page.locator('[data-testid="form-error"]')).toContainText("Unauthorized");
+    await expect(page.locator('[data-testid="form-error"]')).toContainText(
+      "Unauthorized",
+    );
   });
 
   // 5. Partial render middleware
@@ -802,8 +862,8 @@ test.describe("middleware-features", () => {
     await waitForHydration(page);
 
     // Navigate using Link (soft navigation)
-    const responsePromise = page.waitForResponse(
-      (r) => r.url().includes("/middleware-test/params/nav-test")
+    const responsePromise = page.waitForResponse((r) =>
+      r.url().includes("/middleware-test/params/nav-test"),
     );
     await page.click('[data-testid="link-to-params"]');
     const response = await responsePromise;
@@ -819,8 +879,8 @@ test.describe("middleware-features", () => {
     await waitForHydration(page);
 
     // Click to open intercept modal
-    const responsePromise = page.waitForResponse(
-      (r) => r.url().includes("/slow-product/slow-product-a")
+    const responsePromise = page.waitForResponse((r) =>
+      r.url().includes("/slow-product/slow-product-a"),
     );
     await page.click('[data-testid="product-link"]');
     const response = await responsePromise;
@@ -837,7 +897,7 @@ test.describe("middleware-features", () => {
 
     // Check that cookie was set by intercept middleware
     const cookies = await context.cookies();
-    const interceptCookie = cookies.find(c => c.name === "intercept-visit");
+    const interceptCookie = cookies.find((c) => c.name === "intercept-visit");
     expect(interceptCookie).toBeDefined();
   });
 });
@@ -845,17 +905,17 @@ test.describe("middleware-features", () => {
 
 #### Summary of Test Coverage
 
-| Feature | Current Coverage | Status |
-|---------|-----------------|--------|
-| App-level global middleware | ✅ Full | E2E tests in `app-middleware.test.ts` |
-| App-level pattern middleware | ✅ Full | E2E tests in `app-middleware.test.ts` |
-| Route-level middleware | ✅ Full | Tests for headers, variable sharing, and ctx.params access |
-| Route-level middleware with params | ✅ Full | Tests verify ctx.params is typesafe and available in middleware |
-| Fetchable loader middleware | ✅ Full | Tests for auth success, rejection, and invalid token |
-| Server action middleware | ⚠️ Partial | Throws error on cookie set (intended limitation) |
-| Partial render middleware | ✅ Full | Covered by soft navigation tests |
-| Intercept middleware headers | ✅ Full | Tests verify headers set after next() are merged |
-| Intercept middleware cookies | ✅ Full | Tests verify cookies set after next() are applied |
+| Feature                            | Current Coverage | Status                                                          |
+| ---------------------------------- | ---------------- | --------------------------------------------------------------- |
+| App-level global middleware        | ✅ Full          | E2E tests in `app-middleware.test.ts`                           |
+| App-level pattern middleware       | ✅ Full          | E2E tests in `app-middleware.test.ts`                           |
+| Route-level middleware             | ✅ Full          | Tests for headers, variable sharing, and ctx.params access      |
+| Route-level middleware with params | ✅ Full          | Tests verify ctx.params is typesafe and available in middleware |
+| Fetchable loader middleware        | ✅ Full          | Tests for auth success, rejection, and invalid token            |
+| Server action middleware           | ⚠️ Partial       | Throws error on cookie set (intended limitation)                |
+| Partial render middleware          | ✅ Full          | Covered by soft navigation tests                                |
+| Intercept middleware headers       | ✅ Full          | Tests verify headers set after next() are merged                |
+| Intercept middleware cookies       | ✅ Full          | Tests verify cookies set after next() are applied               |
 
 ### 10.5 Demo App Enhancements
 
@@ -875,23 +935,23 @@ test.describe("middleware-features", () => {
 
 ### Critical Bugs Found
 
-| Bug | Severity | Location | Impact | Status |
-|-----|----------|----------|--------|--------|
-| ~~Intercept cookies dropped~~ | HIGH | `executeInterceptMiddleware()` | ~~Cookies set in intercept middleware are silently ignored~~ | **FIXED** |
-| ~~Server action cookies dropped~~ | MEDIUM | `executeServerActionMiddleware()` | ~~Cookies set in server action middleware are silently ignored~~ Now throws clear error | **FIXED** |
-| ~~Intercept ctx.res unavailable~~ | MEDIUM | `executeInterceptMiddleware()` | ~~Cannot modify response headers in intercept middleware~~ | **FIXED** |
-| ~~Non-Response returns ignored~~ | LOW | `executeMiddleware()` | ~~User errors go undetected~~ Now logs warning | **FIXED** |
-| ~~Intercept middleware short-circuit~~ | HIGH | `executeInterceptMiddleware()` | ~~Headers set after next() break intercept flow~~ | **FIXED** |
+| Bug                                    | Severity | Location                          | Impact                                                                                  | Status    |
+| -------------------------------------- | -------- | --------------------------------- | --------------------------------------------------------------------------------------- | --------- |
+| ~~Intercept cookies dropped~~          | HIGH     | `executeInterceptMiddleware()`    | ~~Cookies set in intercept middleware are silently ignored~~                            | **FIXED** |
+| ~~Server action cookies dropped~~      | MEDIUM   | `executeServerActionMiddleware()` | ~~Cookies set in server action middleware are silently ignored~~ Now throws clear error | **FIXED** |
+| ~~Intercept ctx.res unavailable~~      | MEDIUM   | `executeInterceptMiddleware()`    | ~~Cannot modify response headers in intercept middleware~~                              | **FIXED** |
+| ~~Non-Response returns ignored~~       | LOW      | `executeMiddleware()`             | ~~User errors go undetected~~ Now logs warning                                          | **FIXED** |
+| ~~Intercept middleware short-circuit~~ | HIGH     | `executeInterceptMiddleware()`    | ~~Headers set after next() break intercept flow~~                                       | **FIXED** |
 
 ### Architecture Improvements
 
-| Improvement | Description | Status |
-|-------------|-------------|--------|
-| Unified Context | All context created via `createRequestContext()` with handleStore, loaderPromises, use(), stubResponse | **DONE** |
-| Context Access | All code uses `getRequestContext()` - no `__handleStore`/`__middlewareVariables` env passthrough | **DONE** |
-| Response Merging | `createResponseWithMergedHeaders()` ensures headers/cookies in all responses | **DONE** |
-| use() Method | `RequestContext.use()` for loader/handle composition available everywhere | **DONE** |
-| method Property | `RequestContext.method` for global HTTP method access | **DONE** |
+| Improvement      | Description                                                                                            | Status   |
+| ---------------- | ------------------------------------------------------------------------------------------------------ | -------- |
+| Unified Context  | All context created via `createRequestContext()` with handleStore, loaderPromises, use(), stubResponse | **DONE** |
+| Context Access   | All code uses `getRequestContext()` - no `__handleStore`/`__middlewareVariables` env passthrough       | **DONE** |
+| Response Merging | `createResponseWithMergedHeaders()` ensures headers/cookies in all responses                           | **DONE** |
+| use() Method     | `RequestContext.use()` for loader/handle composition available everywhere                              | **DONE** |
+| method Property  | `RequestContext.method` for global HTTP method access                                                  | **DONE** |
 
 ### What Works Well
 
@@ -914,15 +974,15 @@ test.describe("middleware-features", () => {
 
 ### Priority Actions
 
-| Priority | Action | Effort | Status |
-|----------|--------|--------|--------|
-| ~~P0~~ | ~~Fix intercept middleware cookie handling~~ | Low | **DONE** |
-| ~~P0~~ | ~~Fix intercept ctx.res limitation~~ | Low | **DONE** |
-| ~~P1~~ | ~~Decide on server action middleware cookies~~ - throws clear error | Medium | **DONE** |
-| ~~P1~~ | ~~Add unit tests for all execute* functions~~ | Medium | **DONE** (75 tests) |
-| ~~P1~~ | ~~Unify context architecture~~ | Medium | **DONE** |
-| ~~P2~~ | ~~Add validation for non-Response return values~~ - logs warning | Low | **DONE** |
-| ~~P2~~ | ~~Refactor duplicate `collectEntryMiddleware`~~ | Low | **DONE** |
-| ~~P2~~ | ~~Add `createResponseWithMergedHeaders()` utility~~ | Low | **DONE** |
-| P3 | Add E2E tests for route-level and loader middleware | Medium | Open |
-| P3 | Add more middleware examples to demo apps | Low | Open |
+| Priority | Action                                                              | Effort | Status              |
+| -------- | ------------------------------------------------------------------- | ------ | ------------------- |
+| ~~P0~~   | ~~Fix intercept middleware cookie handling~~                        | Low    | **DONE**            |
+| ~~P0~~   | ~~Fix intercept ctx.res limitation~~                                | Low    | **DONE**            |
+| ~~P1~~   | ~~Decide on server action middleware cookies~~ - throws clear error | Medium | **DONE**            |
+| ~~P1~~   | ~~Add unit tests for all execute\* functions~~                      | Medium | **DONE** (75 tests) |
+| ~~P1~~   | ~~Unify context architecture~~                                      | Medium | **DONE**            |
+| ~~P2~~   | ~~Add validation for non-Response return values~~ - logs warning    | Low    | **DONE**            |
+| ~~P2~~   | ~~Refactor duplicate `collectEntryMiddleware`~~                     | Low    | **DONE**            |
+| ~~P2~~   | ~~Add `createResponseWithMergedHeaders()` utility~~                 | Low    | **DONE**            |
+| P3       | Add E2E tests for route-level and loader middleware                 | Medium | Open                |
+| P3       | Add more middleware examples to demo apps                           | Low    | Open                |

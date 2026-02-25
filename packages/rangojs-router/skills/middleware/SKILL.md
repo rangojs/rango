@@ -70,13 +70,13 @@ layout(<ShopLayout />, () => [
 ```typescript
 export const myMiddleware = createMiddleware(async (ctx, next) => {
   // Access request
-  ctx.request;              // Request object
-  ctx.url;                  // Parsed URL
-  ctx.params;               // Route parameters
+  ctx.request; // Request object
+  ctx.url; // Parsed URL
+  ctx.params; // Route parameters
 
   // Access environment
-  ctx.env.Bindings.DB;      // Cloudflare bindings
-  ctx.env.Variables;        // Mutable variables
+  ctx.env.Bindings.DB; // Cloudflare bindings
+  ctx.env.Variables; // Mutable variables
 
   // Set variables for downstream handlers
   ctx.env.Variables.user = { id: "123", name: "John" };
@@ -123,9 +123,15 @@ route-local or feature-scoped data; use `env.Variables` for app-wide middleware 
 ## Redirect with State in Middleware
 
 ```typescript
-import { createMiddleware, redirect, createLocationState } from "@rangojs/router";
+import {
+  createMiddleware,
+  redirect,
+  createLocationState,
+} from "@rangojs/router";
 
-export const FlashMessage = createLocationState<{ text: string }>({ flash: true });
+export const FlashMessage = createLocationState<{ text: string }>({
+  flash: true,
+});
 
 export const requireAuthMiddleware = createMiddleware(async (ctx, next) => {
   const token = ctx.request.headers.get("Authorization");

@@ -35,19 +35,19 @@ export { getFetchableLoader };
 
 // Overload 1: With function only (not fetchable)
 export function createLoader<T>(
-  fn: LoaderFn<T, Record<string, string | undefined>, any>
+  fn: LoaderFn<T, Record<string, string | undefined>, any>,
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
 
 // Overload 2: Fetchable with `true` (no middleware)
 export function createLoader<T>(
   fn: LoaderFn<T, Record<string, string | undefined>, any>,
-  fetchable: true
+  fetchable: true,
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
 
 // Overload 3: Fetchable with middleware options
 export function createLoader<T>(
   fn: LoaderFn<T, Record<string, string | undefined>, any>,
-  options: FetchableLoaderOptions
+  options: FetchableLoaderOptions,
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
 
 // Implementation - the $$id parameter is injected by Vite plugin, not user-provided
@@ -55,7 +55,7 @@ export function createLoader<T>(
   fn: LoaderFn<T, Record<string, string | undefined>, any>,
   fetchable?: true | FetchableLoaderOptions,
   // Hidden parameter injected by Vite exposeInternalIds plugin
-  __injectedId?: string
+  __injectedId?: string,
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>> {
   // The $$id will be set on the returned object by Vite plugin
   // For fetchable loaders, __injectedId is also passed as a parameter

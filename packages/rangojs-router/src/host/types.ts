@@ -9,7 +9,7 @@
  */
 export type Handler = (
   request: Request,
-  context: any
+  context: any,
 ) => Response | Promise<Response>;
 
 /**
@@ -23,7 +23,7 @@ export type LazyHandler = () => Promise<{ default: Handler | HostRouter }>;
 export type Middleware = (
   request: Request,
   context: any,
-  next: () => Promise<Response>
+  next: () => Promise<Response>,
 ) => Promise<Response>;
 
 /**

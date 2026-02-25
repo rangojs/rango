@@ -15,15 +15,13 @@ import {
 
 // addTransitionType is only available in React experimental
 const addTransitionType: ((type: string) => void) | undefined =
-  "addTransitionType" in React
-    ? (React as any).addTransitionType
-    : undefined;
+  "addTransitionType" in React ? (React as any).addTransitionType : undefined;
 
 /**
  * Check if state is from typed LocationStateEntry[] (has __rsc_ls_ keys)
  */
 function isTypedLocationState(
-  state: unknown
+  state: unknown,
 ): state is Record<string, unknown> {
   if (state === null || typeof state !== "object") return false;
   return Object.keys(state).some((key) => key.startsWith("__rsc_ls_"));
@@ -166,7 +164,7 @@ export interface BoundTransaction {
   commit(
     segmentIds: string[],
     segments: ResolvedSegment[],
-    overrides?: BoundCommitOverrides
+    overrides?: BoundCommitOverrides,
   ): void;
 }
 
@@ -180,7 +178,7 @@ interface NavigationTransaction extends Disposable {
   /** Final commit with server data (or reconciliation after optimistic) */
   commit(options: CommitOptions): void;
   with(
-    options: Omit<CommitOptions, "segmentIds" | "segments">
+    options: Omit<CommitOptions, "segmentIds" | "segments">,
   ): BoundTransaction;
   /** The navigation handle from the event controller */
   handle: NavigationHandle;
@@ -197,7 +195,7 @@ function createNavigationTransaction(
   store: NavigationStore,
   eventController: EventController,
   url: string,
-  options?: NavigateOptions & { skipLoadingState?: boolean }
+  options?: NavigateOptions & { skipLoadingState?: boolean },
 ): NavigationTransaction {
   let committed = false;
   let optimisticallyCommitted = false;
@@ -346,7 +344,10 @@ function createNavigationTransaction(
       // Notify location state hooks when history state includes typed entries.
       // Needed for same-page redirects where components don't remount and
       // useState initializers don't re-run, even though history.state was updated.
-      if (historyState && Object.keys(historyState).some(k => k.startsWith("__rsc_ls_"))) {
+      if (
+        historyState &&
+        Object.keys(historyState).some((k) => k.startsWith("__rsc_ls_"))
+      ) {
         window.dispatchEvent(new Event("__rsc_locationstate"));
       }
     }
@@ -380,7 +381,7 @@ function createNavigationTransaction(
      * segmentIds and segments provided at commit time (after they're resolved)
      */
     with(
-      opts: Omit<CommitOptions, "segmentIds" | "segments">
+      opts: Omit<CommitOptions, "segmentIds" | "segments">,
     ): BoundTransaction {
       return {
         get currentUrl() {
@@ -392,7 +393,7 @@ function createNavigationTransaction(
         commit: (
           segmentIds: string[],
           segments: ResolvedSegment[],
-          overrides?: BoundCommitOverrides
+          overrides?: BoundCommitOverrides,
         ) => {
           // Allow overrides to disable scroll (e.g., for intercepts)
           const finalScroll =
@@ -475,9 +476,10 @@ export interface NavigationBridgeConfigWithController extends NavigationBridgeCo
  * @returns NavigationBridge instance
  */
 export function createNavigationBridge(
-  config: NavigationBridgeConfigWithController
+  config: NavigationBridgeConfigWithController,
 ): NavigationBridge {
-  const { store, client, eventController, onUpdate, renderSegments, version } = config;
+  const { store, client, eventController, onUpdate, renderSegments, version } =
+    config;
 
   // Create shared partial updater
   const fetchPartialUpdate = createPartialUpdater({
@@ -493,7 +495,10 @@ export function createNavigationBridge(
      * Navigate to a URL
      * Uses optimistic rendering from cache when available (SWR pattern)
      */
-    async navigate(url: string, options?: NavigateOptionsInternal): Promise<void> {
+    async navigate(
+      url: string,
+      options?: NavigateOptionsInternal,
+    ): Promise<void> {
       // Resolve LocationStateEntry[] to flat object if needed
       const resolvedState =
         options?.state !== undefined
@@ -516,7 +521,9 @@ export function createNavigationBridge(
       const isLeavingIntercept = isCurrentlyIntercept && isSamePathNavigation;
 
       if (isLeavingIntercept) {
-        debugLog("[Browser] Leaving intercept - same URL navigation from intercept");
+        debugLog(
+          "[Browser] Leaving intercept - same URL navigation from intercept",
+        );
         // Clear intercept source URL to ensure server doesn't treat this as intercept
         store.setInterceptSourceUrl(null);
       }
@@ -530,7 +537,7 @@ export function createNavigationBridge(
         store.cacheSegmentsForHistory(
           sourceHistoryKey,
           sourceCached.segments,
-          currentHandleData
+          currentHandleData,
         );
       }
 
@@ -545,7 +552,7 @@ export function createNavigationBridge(
       const cachedHandleData = cached?.handleData;
       if (cachedSegments && sourceCached?.segments) {
         const sourceSegmentMap = new Map(
-          sourceCached.segments.map((s) => [s.id, s])
+          sourceCached.segments.map((s) => [s.id, s]),
         );
         cachedSegments = cachedSegments.map((targetSeg) => {
           const sourceSeg = sourceSegmentMap.get(targetSeg.id);
@@ -584,7 +591,9 @@ export function createNavigationBridge(
         await fetchPartialUpdate(
           url,
           hasUsableCache
-            ? cachedSegments!.filter((s) => s.type !== "loader").map((s) => s.id)
+            ? cachedSegments!
+                .filter((s) => s.type !== "loader")
+                .map((s) => s.id)
             : undefined,
           false,
           tx.handle.signal,
@@ -601,10 +610,13 @@ export function createNavigationBridge(
           // Also pass cached handle data for restoring breadcrumbs when server returns empty diff.
           // When leaving intercept, pass the flag so fetchPartialUpdate knows to filter segments.
           hasUsableCache
-            ? { targetCacheSegments: cachedSegments, targetCacheHandleData: cachedHandleData }
+            ? {
+                targetCacheSegments: cachedSegments,
+                targetCacheHandleData: cachedHandleData,
+              }
             : isLeavingIntercept
               ? { leavingIntercept: true }
-              : undefined
+              : undefined,
         );
       } catch (error) {
         // Server-side redirect with location state: the current transaction's
@@ -623,9 +635,15 @@ export function createNavigationBridge(
           return;
         }
 
-        const networkError = toNetworkError(error, { url, operation: "navigation" });
+        const networkError = toNetworkError(error, {
+          url,
+          operation: "navigation",
+        });
         if (networkError) {
-          console.error("[Browser] Network error during navigation:", networkError);
+          console.error(
+            "[Browser] Network error during navigation:",
+            networkError,
+          );
           emitNetworkError(onUpdate, networkError, url);
           return;
         }
@@ -644,7 +662,7 @@ export function createNavigationBridge(
         store,
         eventController,
         window.location.href,
-        { replace: true }
+        { replace: true },
       );
 
       try {
@@ -654,7 +672,7 @@ export function createNavigationBridge(
           [],
           false,
           tx.handle.signal,
-          tx.with({ url: window.location.href, replace: true, scroll: false })
+          tx.with({ url: window.location.href, replace: true, scroll: false }),
         );
       } catch (error) {
         const networkError = toNetworkError(error, {
@@ -662,7 +680,10 @@ export function createNavigationBridge(
           operation: "revalidation",
         });
         if (networkError) {
-          console.error("[Browser] Network error during refresh:", networkError);
+          console.error(
+            "[Browser] Network error during refresh:",
+            networkError,
+          );
           emitNetworkError(onUpdate, networkError, window.location.href);
           return;
         }
@@ -775,7 +796,7 @@ export function createNavigationBridge(
               store,
               eventController,
               url,
-              { skipLoadingState: true, replace: true }
+              { skipLoadingState: true, replace: true },
             );
 
             fetchPartialUpdate(
@@ -791,19 +812,24 @@ export function createNavigationBridge(
                 interceptSourceUrl,
                 cacheOnly: true,
               }),
-              { staleRevalidation: true, interceptSourceUrl }
-            ).catch((error) => {
-              if (isBackgroundSuppressible(error)) return;
-              console.error("[Browser] Background revalidation failed:", error);
-            }).finally(() => {
-              tx[Symbol.dispose]();
-            });
+              { staleRevalidation: true, interceptSourceUrl },
+            )
+              .catch((error) => {
+                if (isBackgroundSuppressible(error)) return;
+                console.error(
+                  "[Browser] Background revalidation failed:",
+                  error,
+                );
+              })
+              .finally(() => {
+                tx[Symbol.dispose]();
+              });
           }
           return;
         } catch (error) {
           console.warn(
             "[Browser] Failed to render from cache, fetching:",
-            error
+            error,
           );
           // Fall through to fetch
         }
@@ -822,7 +848,7 @@ export function createNavigationBridge(
           undefined,
           false,
           tx.handle.signal,
-          tx.with({ url, replace: true, scroll: false })
+          tx.with({ url, replace: true, scroll: false }),
         );
         // Restore scroll position after fetch completes
         handleNavigationEnd({ restore: true, isStreaming });
@@ -832,9 +858,15 @@ export function createNavigationBridge(
           return;
         }
 
-        const networkError = toNetworkError(error, { url, operation: "navigation" });
+        const networkError = toNetworkError(error, {
+          url,
+          operation: "navigation",
+        });
         if (networkError) {
-          console.error("[Browser] Network error during popstate:", networkError);
+          console.error(
+            "[Browser] Network error during popstate:",
+            networkError,
+          );
           emitNetworkError(onUpdate, networkError, url);
           return;
         }
@@ -866,7 +898,9 @@ export function createNavigationBridge(
       // Abort the stale navigation to reset state to idle.
       const handlePageShow = (event: PageTransitionEvent) => {
         if (event.persisted) {
-          debugLog("[Browser] Page restored from bfcache, resetting navigation state");
+          debugLog(
+            "[Browser] Page restored from bfcache, resetting navigation state",
+          );
           eventController.abortNavigation();
         }
       };

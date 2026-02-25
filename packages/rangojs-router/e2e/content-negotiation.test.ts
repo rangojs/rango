@@ -6,7 +6,9 @@ const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
 test.describe("content-negotiation", () => {
   // /negotiate-test has: RSC (first), then JSON, then MD
   test.describe("client order as tiebreaker (equal q-values)", () => {
-    test("Accept: text/markdown,text/html,*/* prefers markdown (listed first)", async ({ request }) => {
+    test("Accept: text/markdown,text/html,*/* prefers markdown (listed first)", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/negotiate-test"), {
         headers: { Accept: "text/markdown, text/html, */*" },
       });
@@ -16,7 +18,9 @@ test.describe("content-negotiation", () => {
       expect(body).toContain("# Negotiate Test MD");
     });
 
-    test("Accept: text/html,text/markdown,*/* prefers HTML (listed first)", async ({ request }) => {
+    test("Accept: text/html,text/markdown,*/* prefers HTML (listed first)", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/negotiate-test"), {
         headers: { Accept: "text/html, text/markdown, */*" },
       });
@@ -24,7 +28,9 @@ test.describe("content-negotiation", () => {
       expect(res.headers()["content-type"]).toContain("text/html");
     });
 
-    test("Accept: application/json,text/html prefers JSON (listed first)", async ({ request }) => {
+    test("Accept: application/json,text/html prefers JSON (listed first)", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/negotiate-test"), {
         headers: { Accept: "application/json, text/html" },
       });
@@ -36,7 +42,9 @@ test.describe("content-negotiation", () => {
   });
 
   test.describe("q-value priority", () => {
-    test("text/markdown;q=0.5 loses to text/html;q=1.0", async ({ request }) => {
+    test("text/markdown;q=0.5 loses to text/html;q=1.0", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/negotiate-test"), {
         headers: { Accept: "text/markdown;q=0.5, text/html" },
       });
@@ -44,7 +52,9 @@ test.describe("content-negotiation", () => {
       expect(res.headers()["content-type"]).toContain("text/html");
     });
 
-    test("text/html;q=0.9 loses to text/markdown;q=1.0", async ({ request }) => {
+    test("text/html;q=0.9 loses to text/markdown;q=1.0", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/negotiate-test"), {
         headers: { Accept: "text/html;q=0.9, text/markdown" },
       });
@@ -52,7 +62,9 @@ test.describe("content-negotiation", () => {
       expect(res.headers()["content-type"]).toContain("text/markdown");
     });
 
-    test("application/json;q=0.8 loses to text/markdown;q=0.9", async ({ request }) => {
+    test("application/json;q=0.8 loses to text/markdown;q=0.9", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/negotiate-test"), {
         headers: { Accept: "application/json;q=0.8, text/markdown;q=0.9" },
       });
@@ -62,10 +74,13 @@ test.describe("content-negotiation", () => {
   });
 
   test.describe("browser-like Accept headers", () => {
-    test("browser Accept header returns HTML (text/html is q=1.0, first)", async ({ request }) => {
+    test("browser Accept header returns HTML (text/html is q=1.0, first)", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/negotiate-test"), {
         headers: {
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         },
       });
       expect(res.status()).toBe(200);
@@ -98,7 +113,9 @@ test.describe("content-negotiation", () => {
   // /negotiate-test has RSC defined first → */* returns RSC
   // /negotiate-test-json-first has JSON defined first → */* returns JSON
   test.describe("wildcard fallback follows definition order", () => {
-    test("Accept: */* returns RSC when RSC is defined first", async ({ request }) => {
+    test("Accept: */* returns RSC when RSC is defined first", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/negotiate-test"), {
         headers: { Accept: "*/*" },
       });
@@ -107,7 +124,9 @@ test.describe("content-negotiation", () => {
       expect(res.headers()["content-type"]).toContain("text/x-component");
     });
 
-    test("Accept: */* returns JSON when JSON is defined first", async ({ request }) => {
+    test("Accept: */* returns JSON when JSON is defined first", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/negotiate-test-json-first"), {
         headers: { Accept: "*/*" },
       });
@@ -118,7 +137,9 @@ test.describe("content-negotiation", () => {
       expect(body.data.source).toBe("json");
     });
 
-    test("no Accept header returns first defined (RSC)", async ({ request }) => {
+    test("no Accept header returns first defined (RSC)", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/negotiate-test"), {
         headers: { Accept: "" },
       });
@@ -126,7 +147,9 @@ test.describe("content-negotiation", () => {
       expect(res.headers()["content-type"]).toContain("text/x-component");
     });
 
-    test("no Accept header returns first defined (JSON)", async ({ request }) => {
+    test("no Accept header returns first defined (JSON)", async ({
+      request,
+    }) => {
       const res = await request.get(f.url("/negotiate-test-json-first"), {
         headers: { Accept: "" },
       });
@@ -136,7 +159,9 @@ test.describe("content-negotiation", () => {
   });
 
   test.describe("Vary header", () => {
-    test("all negotiated responses include Vary: Accept", async ({ request }) => {
+    test("all negotiated responses include Vary: Accept", async ({
+      request,
+    }) => {
       const html = await request.get(f.url("/negotiate-test"), {
         headers: { Accept: "text/html" },
       });

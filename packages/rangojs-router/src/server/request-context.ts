@@ -75,7 +75,10 @@ export interface RequestContext<
   /** Set a cookie on the response */
   setCookie(name: string, value: string, options?: CookieOptions): void;
   /** Delete a cookie */
-  deleteCookie(name: string, options?: Pick<CookieOptions, "domain" | "path">): void;
+  deleteCookie(
+    name: string,
+    options?: Pick<CookieOptions, "domain" | "path">,
+  ): void;
   /** Set a response header */
   header(name: string, value: string): void;
 
@@ -99,10 +102,12 @@ export interface RequestContext<
    * ```
    */
   use: {
-    <T, TLoaderParams = any>(loader: LoaderDefinition<T, TLoaderParams>): Promise<T>;
-    <TData, TAccumulated = TData[]>(handle: Handle<TData, TAccumulated>): (
-      data: TData | Promise<TData> | (() => Promise<TData>)
-    ) => void;
+    <T, TLoaderParams = any>(
+      loader: LoaderDefinition<T, TLoaderParams>,
+    ): Promise<T>;
+    <TData, TAccumulated = TData[]>(
+      handle: Handle<TData, TAccumulated>,
+    ): (data: TData | Promise<TData> | (() => Promise<TData>)) => void;
   };
 
   /** HTTP method (GET, POST, PUT, PATCH, DELETE, etc.) */
@@ -218,7 +223,7 @@ const requestContextStorage = new AsyncLocalStorage<RequestContext<any>>();
  */
 export function runWithRequestContext<TEnv, T>(
   context: RequestContext<TEnv>,
-  fn: () => T
+  fn: () => T,
 ): T {
   return requestContextStorage.run(context, fn);
 }
@@ -264,7 +269,7 @@ export function requireRequestContext<TEnv = unknown>(): RequestContext<TEnv> {
   if (!ctx) {
     throw new Error(
       "Request context not available. This function must be called from within a server action " +
-        "executed through the RSC handler."
+        "executed through the RSC handler.",
     );
   }
   return ctx;
@@ -303,9 +308,17 @@ export interface CreateRequestContextOptions<TEnv> {
  * - Passed to handlers as ctx
  */
 export function createRequestContext<TEnv>(
-  options: CreateRequestContextOptions<TEnv>
+  options: CreateRequestContextOptions<TEnv>,
 ): RequestContext<TEnv> {
-  const { env, request, url, variables, cacheStore, executionContext, themeConfig } = options;
+  const {
+    env,
+    request,
+    url,
+    variables,
+    cacheStore,
+    executionContext,
+    themeConfig,
+  } = options;
   const cookieHeader = request.headers.get("Cookie");
   let parsedCookies: Record<string, string> | null = null;
 
@@ -346,7 +359,9 @@ export function createRequestContext<TEnv>(
 
     // Validate theme value
     if (theme !== "system" && !themeConfig.themes.includes(theme)) {
-      console.warn(`[Theme] Invalid theme value: "${theme}". Valid values: system, ${themeConfig.themes.join(", ")}`);
+      console.warn(
+        `[Theme] Invalid theme value: "${theme}". Valid values: system, ${themeConfig.themes.join(", ")}`,
+      );
       return;
     }
 
@@ -357,7 +372,7 @@ export function createRequestContext<TEnv>(
         path: THEME_COOKIE.path,
         maxAge: THEME_COOKIE.maxAge,
         sameSite: THEME_COOKIE.sameSite,
-      })
+      }),
     );
   };
 
@@ -369,7 +384,8 @@ export function createRequestContext<TEnv>(
     pathname: url.pathname,
     searchParams: url.searchParams,
     var: variables,
-    get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as RequestContext<TEnv>["get"],
+    get: ((keyOrVar: any) =>
+      contextGet(variables, keyOrVar)) as RequestContext<TEnv>["get"],
     set: ((keyOrVar: any, value: any) => {
       assertNotInsideCacheExec(ctx, "set");
       contextSet(variables, keyOrVar, value);
@@ -389,18 +405,18 @@ export function createRequestContext<TEnv>(
       assertNotInsideCacheExec(ctx, "setCookie");
       stubResponse.headers.append(
         "Set-Cookie",
-        serializeCookieValue(name, value, options)
+        serializeCookieValue(name, value, options),
       );
     },
 
     deleteCookie(
       name: string,
-      options?: Pick<CookieOptions, "domain" | "path">
+      options?: Pick<CookieOptions, "domain" | "path">,
     ): void {
       assertNotInsideCacheExec(ctx, "deleteCookie");
       stubResponse.headers.append(
         "Set-Cookie",
-        serializeCookieValue(name, "", { ...options, maxAge: 0 })
+        serializeCookieValue(name, "", { ...options, maxAge: 0 }),
       );
     },
 
@@ -423,7 +439,9 @@ export function createRequestContext<TEnv>(
         executionContext.waitUntil(fn());
       } else {
         // Node.js / dev: fire-and-forget with error logging
-        fn().catch((err) => console.error("[waitUntil] Background task failed:", err));
+        fn().catch((err) =>
+          console.error("[waitUntil] Background task failed:", err),
+        );
       }
     },
 
@@ -436,10 +454,12 @@ export function createRequestContext<TEnv>(
 
     // Theme properties (only set when themeConfig is provided)
     theme: themeConfig ? getTheme() : undefined,
-    setTheme: themeConfig ? ((theme: Theme) => {
-      assertNotInsideCacheExec(ctx, "setTheme");
-      setTheme(theme);
-    }) : undefined,
+    setTheme: themeConfig
+      ? (theme: Theme) => {
+          assertNotInsideCacheExec(ctx, "setTheme");
+          setTheme(theme);
+        }
+      : undefined,
     _themeConfig: themeConfig,
 
     setLocationState(entries: LocationStateEntry[]): void {
@@ -467,7 +487,7 @@ export function createRequestContext<TEnv>(
  * Parse cookies from Cookie header
  */
 function parseCookiesFromHeader(
-  cookieHeader: string | null
+  cookieHeader: string | null,
 ): Record<string, string> {
   if (!cookieHeader) return {};
 
@@ -496,7 +516,7 @@ function parseCookiesFromHeader(
 function serializeCookieValue(
   name: string,
   value: string,
-  options: CookieOptions = {}
+  options: CookieOptions = {},
 ): string {
   let cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}`;
 
@@ -528,7 +548,7 @@ export interface CreateUseFunctionOptions<TEnv> {
  * - For handles: returns a push function to add handle data
  */
 export function createUseFunction<TEnv>(
-  options: CreateUseFunctionOptions<TEnv>
+  options: CreateUseFunctionOptions<TEnv>,
 ): RequestContext["use"] {
   const { handleStore, loaderPromises, getContext } = options;
 
@@ -542,16 +562,19 @@ export function createUseFunction<TEnv>(
       if (!segmentId) {
         throw new Error(
           `Handle "${handle.$$id}" used outside of handler context. ` +
-            `Handles must be used within route/layout handlers.`
+            `Handles must be used within route/layout handlers.`,
         );
       }
 
       // Return a push function bound to this handle and segment
-      return (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
+      return (
+        dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>),
+      ) => {
         // If it's a function, call it immediately to get the promise
-        const valueOrPromise = typeof dataOrFn === "function"
-          ? (dataOrFn as () => Promise<unknown>)()
-          : dataOrFn;
+        const valueOrPromise =
+          typeof dataOrFn === "function"
+            ? (dataOrFn as () => Promise<unknown>)()
+            : dataOrFn;
 
         // Push directly - promises will be serialized by RSC and streamed
         handleStore.push(handle.$$id, segmentId, valueOrPromise);
@@ -577,7 +600,7 @@ export function createUseFunction<TEnv>(
 
     if (!loaderFn) {
       throw new Error(
-        `Loader "${loader.$$id}" has no function. This usually means the loader was defined without "use server" and the function was not included in the build.`
+        `Loader "${loader.$$id}" has no function. This usually means the loader was defined without "use server" and the function was not included in the build.`,
       );
     }
 
@@ -595,7 +618,7 @@ export function createUseFunction<TEnv>(
       var: ctx.var as any,
       get: ctx.get as any,
       use: <TDep, TDepParams = any>(
-        dep: LoaderDefinition<TDep, TDepParams>
+        dep: LoaderDefinition<TDep, TDepParams>,
       ): Promise<TDep> => {
         // Recursive call - will start dep loader if not already started
         return ctx.use(dep);

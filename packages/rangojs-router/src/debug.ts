@@ -34,7 +34,7 @@ export interface SerializedManifest {
  * Serialize a manifest Map into a JSON-friendly structure
  */
 export function serializeManifest(
-  manifest: Map<string, EntryData>
+  manifest: Map<string, EntryData>,
 ): SerializedManifest {
   const routes: Record<string, SerializedEntry> = {};
   const layouts: Record<string, SerializedEntry> = {};
@@ -92,7 +92,7 @@ export function serializeManifest(
  */
 export function compareManifests(
   oldManifest: SerializedManifest,
-  newManifest: SerializedManifest
+  newManifest: SerializedManifest,
 ): {
   addedRoutes: string[];
   removedRoutes: string[];
@@ -113,10 +113,20 @@ export function compareManifests(
 } {
   const addedRoutes: string[] = [];
   const removedRoutes: string[] = [];
-  const changedRoutes: Array<{ key: string; field: string; old: any; new: any }> = [];
+  const changedRoutes: Array<{
+    key: string;
+    field: string;
+    old: any;
+    new: any;
+  }> = [];
   const addedLayouts: string[] = [];
   const removedLayouts: string[] = [];
-  const changedLayouts: Array<{ key: string; field: string; old: any; new: any }> = [];
+  const changedLayouts: Array<{
+    key: string;
+    field: string;
+    old: any;
+    new: any;
+  }> = [];
 
   // Compare routes
   const oldRouteKeys = new Set(Object.keys(oldManifest.routes));
@@ -191,7 +201,7 @@ export function compareManifests(
  * Format manifest diff as a human-readable string
  */
 export function formatManifestDiff(
-  diff: ReturnType<typeof compareManifests>
+  diff: ReturnType<typeof compareManifests>,
 ): string {
   const lines: string[] = [];
 
@@ -208,7 +218,7 @@ export function formatManifestDiff(
   if (diff.changedRoutes.length > 0) {
     lines.push("Changed routes:");
     diff.changedRoutes.forEach((c) =>
-      lines.push(`  ~ ${c.key}.${c.field}: ${c.old} -> ${c.new}`)
+      lines.push(`  ~ ${c.key}.${c.field}: ${c.old} -> ${c.new}`),
     );
   }
 
@@ -225,7 +235,7 @@ export function formatManifestDiff(
   if (diff.changedLayouts.length > 0) {
     lines.push("Changed layouts:");
     diff.changedLayouts.forEach((c) =>
-      lines.push(`  ~ ${c.key}.${c.field}: ${c.old} -> ${c.new}`)
+      lines.push(`  ~ ${c.key}.${c.field}: ${c.old} -> ${c.new}`),
     );
   }
 

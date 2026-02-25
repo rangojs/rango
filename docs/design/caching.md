@@ -3,6 +3,7 @@
 ## Implementation Status
 
 ### ✅ Completed
+
 - **Router-level cache integration** - Cache check before handler execution in `match()` and `matchPartial()`
 - **Cache provider in request context** - `SegmentCacheProvider` interface via AsyncLocalStorage
 - **Handle data caching** - Handles cached with segments, replayed on cache hit
@@ -15,12 +16,14 @@
 - **Per-section stores** - `cache({ store })` for dedicated stores per route section
 
 ### 🚧 Remaining
+
 - **Production storage backends** - Cloudflare KV, Redis adapters
 - **Cache invalidation API** - Tag-based invalidation, manual purge
 - **Proactive caching** - Render null-component segments in background for complete cache entries
 - **RSC stream caching** - Cache serialized stream directly (avoid deserialize/reserialize)
 
 ### Performance (Dev)
+
 - Cache HIT: ~12ms server time (3 entries × ~4ms deserialization each)
 - Browser sees: ~50-60ms (includes Vite dev server overhead)
 - Cache MISS: Handler execution time (e.g., 5500ms with slow loader)
@@ -69,26 +72,39 @@ RSC elements are serialized using React's flight protocol and can be cached at t
 The POC uses React's RSC APIs from `@vitejs/plugin-rsc/rsc`:
 
 **Serialization (cache write):**
+
 ```typescript
-import { renderToReadableStream, createTemporaryReferenceSet } from "@vitejs/plugin-rsc/rsc";
+import {
+  renderToReadableStream,
+  createTemporaryReferenceSet,
+} from "@vitejs/plugin-rsc/rsc";
 
 const temporaryReferences = createTemporaryReferenceSet();
-const stream = renderToReadableStream(segment.component, { temporaryReferences });
+const stream = renderToReadableStream(segment.component, {
+  temporaryReferences,
+});
 const encoded = await streamToString(stream);
 // Store `encoded` string in cache
 ```
 
 **Revival (cache read):**
+
 ```typescript
-import { createFromReadableStream, createTemporaryReferenceSet } from "@vitejs/plugin-rsc/rsc";
+import {
+  createFromReadableStream,
+  createTemporaryReferenceSet,
+} from "@vitejs/plugin-rsc/rsc";
 
 const temporaryReferences = createTemporaryReferenceSet();
 const stream = stringToStream(encoded);
-const component = await createFromReadableStream(stream, { temporaryReferences });
+const component = await createFromReadableStream(stream, {
+  temporaryReferences,
+});
 // `component` is now a valid React element that can be rendered
 ```
 
 Key points:
+
 - `temporaryReferences` handles client references (client components, server actions)
 - The encoded string is the RSC flight format (text-based, streamable)
 - Revival produces a React element identical to the original
@@ -135,16 +151,16 @@ Loaders can have their own cache configuration:
 
 ```typescript
 route("post/:slug", () => [
-  loader(PostLoader),  // inherits cache from boundary
+  loader(PostLoader), // inherits cache from boundary
 
   loader(ViewCount, () => [
-    cache({ ttl: 10 }),  // shorter TTL
+    cache({ ttl: 10 }), // shorter TTL
   ]),
 
   loader(UserSpecific, () => [
-    cache(false),  // always fresh
+    cache(false), // always fresh
   ]),
-])
+]);
 ```
 
 ## Caching Layers
@@ -165,6 +181,7 @@ cache({ ttl: 3600 }, () => [
 Cache synchronous shell, stream fresh data through Suspense boundaries.
 
 Similar to Next.js 16's PPR (Partial Prerendering) with `use cache`:
+
 - Components outside `<Suspense>` = cached shell
 - Components inside `<Suspense>` = stream fresh
 
@@ -178,6 +195,7 @@ cache({ ttl: 60 }, () => [
 ```
 
 Shell boundary detection:
+
 - Everything resolved within ~10ms / 1 event loop = shell (cacheable)
 - Pending Suspense boundaries = streaming (fresh each request)
 
@@ -204,9 +222,7 @@ Response: composed from cached segments
 Loader results cached independently:
 
 ```typescript
-loader(PostLoader, () => [
-  cache({ ttl: 30 }),
-])
+loader(PostLoader, () => [cache({ ttl: 30 })]);
 ```
 
 Allows same loader data to be reused across different segments/routes.
@@ -284,7 +300,10 @@ Compose cached + fresh segments into single RSC stream
 Cache keys combine entry namespace with sorted route params:
 
 ```typescript
-function getSegmentCacheKey(entryId: string, params?: Record<string, string>): string {
+function getSegmentCacheKey(
+  entryId: string,
+  params?: Record<string, string>,
+): string {
   const paramStr = params
     ? Object.entries(params)
         .sort(([a], [b]) => a.localeCompare(b))
@@ -314,7 +333,7 @@ interface SegmentCacheStore {
 }
 
 interface CachedEntryData {
-  segments: SerializedSegmentData[];  // RSC-encoded components
+  segments: SerializedSegmentData[]; // RSC-encoded components
   handles: Record<string, SegmentHandleData>;
   expiresAt: number;
 }
@@ -349,9 +368,11 @@ export default createRSCHandler({
 ### Implementations
 
 **Available:**
+
 - `MemorySegmentCacheStore` - In-memory Map, survives HMR via `globalThis`
 
 **Planned:**
+
 - Cloudflare KV adapter
 - Redis adapter
 
@@ -360,6 +381,7 @@ export default createRSCHandler({
 **Problem**: When serving cached segments, route handlers don't run. Handlers are what populate handle data via `ctx.use(Handle)` and `push()`. Without handlers running, handles have no data.
 
 Handle data flow (normal):
+
 ```
 1. router.match() runs route handlers
 2. Handler calls: const push = ctx.use(Breadcrumbs)
@@ -369,6 +391,7 @@ Handle data flow (normal):
 ```
 
 With cached segments (without handle caching):
+
 ```
 1. Cache HIT - skip router.match()
 2. Handlers never run
@@ -407,13 +430,17 @@ interface HandleStore {
   getDataForSegment(segmentId: string): Record<string, unknown[]>;
 
   // Replay cached handle data back into the store (for cache hits)
-  replaySegmentData(segmentId: string, segmentHandles: Record<string, unknown[]>): void;
+  replaySegmentData(
+    segmentId: string,
+    segmentHandles: Record<string, unknown[]>,
+  ): void;
 }
 ```
 
 **Cache flow:**
 
 On cache MISS:
+
 ```
 1. router.match() runs handlers
 2. Handlers push handle data to handleStore
@@ -423,6 +450,7 @@ On cache MISS:
 ```
 
 On cache HIT:
+
 ```
 1. Retrieve cached segment + handles
 2. handleStore.replaySegmentData(segmentId, cachedHandles)
@@ -454,9 +482,9 @@ Action:   |  serve   | serve+reval   |  miss       |
 interface CachedEntryData {
   segments: SerializedSegmentData[];
   handles: Record<string, SegmentHandleData>;
-  createdAt: number;        // When cached
-  staleAt: number;          // TTL boundary (serve but trigger revalidation)
-  expiresAt: number;        // Hard expiration (cache miss)
+  createdAt: number; // When cached
+  staleAt: number; // TTL boundary (serve but trigger revalidation)
+  expiresAt: number; // Hard expiration (cache miss)
   // For background revalidation
   revalidationContext: {
     entryId: string;
@@ -476,7 +504,7 @@ interface CachedEntryData {
 // On stale cache hit
 async function handleStaleCacheHit(
   cached: CachedEntryData,
-  requestCtx: RequestContext
+  requestCtx: RequestContext,
 ) {
   // 1. Serve stale immediately
   const segments = await deserializeSegments(cached.segments);
@@ -534,6 +562,7 @@ For distributed systems, consider Redis-based locking.
 Loaders fetch dynamic data and should run fresh by default. Only the component structure (layouts, routes) is cached.
 
 **Rationale:**
+
 - Loader data is often user-specific or time-sensitive
 - Caching loaders requires explicit opt-in for safety
 - Matches mental model: "cache the shell, fetch fresh data"
@@ -562,24 +591,24 @@ route("post/:slug", () => [
 
   // Cached loader (explicit opt-in)
   loader(StaticMetadata, () => [
-    cache({ ttl: 3600 }),      // ✅ Cached for 1 hour
+    cache({ ttl: 3600 }), // ✅ Cached for 1 hour
   ]),
 
   // Short-lived cache with SWR
-  loader(ViewCount, () => [
-    cache({ ttl: 10, swr: 60 }),
-  ]),
-])
+  loader(ViewCount, () => [cache({ ttl: 10, swr: 60 })]),
+]);
 ```
 
 ### Implementation Notes
 
 When serving cached segments:
+
 1. Deserialize cached component tree
 2. Run loaders fresh (unless loader has its own cache())
 3. Inject fresh loader data into cached component structure
 
 This requires separating:
+
 - **Segment cache**: Component structure, layouts, handles
 - **Loader cache**: Individual loader results (opt-in)
 
@@ -618,7 +647,10 @@ cache({ ttl: 60 }, () => [
 ```typescript
 // Both signatures supported:
 function cache(children: () => RouteChildren[]): RouteChild;
-function cache(options: CacheOptions | false, children?: () => RouteChildren[]): RouteChild;
+function cache(
+  options: CacheOptions | false,
+  children?: () => RouteChildren[],
+): RouteChild;
 
 interface CacheOptions {
   // Time-to-live in seconds (optional if store has defaults)
@@ -684,10 +716,12 @@ cache(() => [                               // Uses appStore (ttl: 60)
 ```
 
 **Store resolution priority:**
+
 1. Explicit store in `cache({ store })` → use it
 2. App-level store from handler config → fallback
 
 **TTL resolution priority:**
+
 1. Explicit TTL in `cache({ ttl })` → use it
 2. Resolved store's defaults → inherit
 3. Hardcoded fallback (60s)
@@ -695,43 +729,46 @@ cache(() => [                               // Uses appStore (ttl: 60)
 ### Conditional Caching
 
 ```typescript
-cache({
-  ttl: 300,
-  // Skip cache for preview mode or authenticated users
-  condition: (ctx) => {
-    if (ctx.request.headers.get('x-preview')) return false;
-    if (ctx.cookies.get('session')) return false;
-    return true;
+cache(
+  {
+    ttl: 300,
+    // Skip cache for preview mode or authenticated users
+    condition: (ctx) => {
+      if (ctx.request.headers.get("x-preview")) return false;
+      if (ctx.cookies.get("session")) return false;
+      return true;
+    },
   },
-}, () => [
-  route("product/:id"),
-])
+  () => [route("product/:id")],
+);
 ```
 
 ### Cache Key Customization
 
 ```typescript
-cache({
-  ttl: 300,
-  // Include query params in cache key
-  key: (ctx) => `product-${ctx.params.id}-${ctx.searchParams.get('variant')}`,
-}, () => [
-  route("product/:id"),
-])
+cache(
+  {
+    ttl: 300,
+    // Include query params in cache key
+    key: (ctx) => `product-${ctx.params.id}-${ctx.searchParams.get("variant")}`,
+  },
+  () => [route("product/:id")],
+);
 ```
 
 ### Tags for Invalidation
 
 ```typescript
-cache({
-  ttl: 300,
-  tags: (ctx) => [`product:${ctx.params.id}`, 'products', 'catalog'],
-}, () => [
-  route("product/:id"),
-])
+cache(
+  {
+    ttl: 300,
+    tags: (ctx) => [`product:${ctx.params.id}`, "products", "catalog"],
+  },
+  () => [route("product/:id")],
+);
 
 // Later, in a server action:
-await invalidateCache({ tags: ['products'] });
+await invalidateCache({ tags: ["products"] });
 ```
 
 ---
@@ -743,6 +780,7 @@ await invalidateCache({ tags: ['products'] });
 TBD - to be determined.
 
 Options under consideration:
+
 - TTL-based expiration
 - Tag-based invalidation
 - Manual purge API
@@ -751,12 +789,14 @@ Options under consideration:
 ### Handle Data with Promises
 
 Current implementation caches handle data after `handleStore.settled`. If handles push promises that resolve later, those resolved values aren't captured. Need to investigate:
+
 - Should we await promise resolution before caching?
 - Or cache the promise and accept it resolves immediately on replay?
 
 ### Dynamic Handle Data
 
 Handle data may depend on request context (cookies, headers, user state). Cached handle data won't reflect per-request variations. Consider:
+
 - Exclude dynamic handles from caching
 - Cache key variations based on context
 - Hybrid approach: cache static handles, fresh dynamic handles
@@ -787,6 +827,7 @@ for (const entry of traverseBack(manifestEntry)) {
 ```
 
 Key implementation details:
+
 - Cache check via `ctx._cacheProvider` from request context
 - Each entry caches all its segments (main + parallels) together
 - Handle data keyed by segment ID for proper replay
@@ -799,14 +840,14 @@ Key implementation details:
 
 ### Status Summary (Jan 2026)
 
-| Area | Status | Notes |
-|------|--------|-------|
-| Cache key generation | ✅ Good | Clear prefix strategy (doc/partial/intercept) |
-| Serialization | ✅ Good | RSC serialize/deserialize works correctly |
-| Proactive caching | ✅ Good | Background rendering of null-component segments |
-| SWR handling | ✅ Good | CFCacheStore handles atomicity for thundering herd |
-| Revalidation | ✅ Good | Soft/hard decision pattern is solid |
-| Handle data replay | ✅ Good | Breadcrumbs/meta properly cached and replayed |
+| Area                 | Status  | Notes                                              |
+| -------------------- | ------- | -------------------------------------------------- |
+| Cache key generation | ✅ Good | Clear prefix strategy (doc/partial/intercept)      |
+| Serialization        | ✅ Good | RSC serialize/deserialize works correctly          |
+| Proactive caching    | ✅ Good | Background rendering of null-component segments    |
+| SWR handling         | ✅ Good | CFCacheStore handles atomicity for thundering herd |
+| Revalidation         | ✅ Good | Soft/hard decision pattern is solid                |
+| Handle data replay   | ✅ Good | Breadcrumbs/meta properly cached and replayed      |
 
 ### Known Issues & Considerations
 
@@ -815,6 +856,7 @@ Key implementation details:
 **Design Decision**: Proactive caching writes to `partial:` key, which is correct.
 
 **Rationale:**
+
 - Document requests always render ALL segments (no null components possible)
 - Only partial requests can have null components (client already has some segments)
 - Proactive caching exists to ensure future partial requests get complete segments
@@ -822,6 +864,7 @@ Key implementation details:
 
 **Simplification Applied:**
 Removed the `hasCompleteDocEntry()` cache lookup check. The runtime `hasNullComponents` check is sufficient:
+
 - If cache already has complete segments → cache HIT → `hasNullComponents` is false → no proactive caching
 - If segments have nulls → proactive caching triggers
 
@@ -872,6 +915,7 @@ The proactive caching closure captures the original `request` object. If the req
 ### Console Logging
 
 The caching system has extensive `console.log` statements for debugging. Consider:
+
 - Adding a debug flag to control verbosity
 - Using structured logging for production
 - Log levels (debug/info/warn/error)

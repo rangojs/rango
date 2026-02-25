@@ -82,7 +82,7 @@ export interface SegmentCacheStore<TEnv = unknown> {
    */
   readonly keyGenerator?: (
     ctx: RequestContext<TEnv>,
-    defaultKey: string
+    defaultKey: string,
   ) => string | Promise<string>;
 
   /**
@@ -98,7 +98,12 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * @param ttl - Time-to-live in seconds
    * @param swr - Optional stale-while-revalidate window in seconds
    */
-  set(key: string, data: CachedEntryData, ttl: number, swr?: number): Promise<void>;
+  set(
+    key: string,
+    data: CachedEntryData,
+    ttl: number,
+    swr?: number,
+  ): Promise<void>;
 
   /**
    * Delete a cached entry
@@ -121,7 +126,9 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * Get a cached Response by key.
    * Returns the response and whether it should be revalidated (SWR).
    */
-  getResponse?(key: string): Promise<{ response: Response; shouldRevalidate: boolean } | null>;
+  getResponse?(
+    key: string,
+  ): Promise<{ response: Response; shouldRevalidate: boolean } | null>;
 
   /**
    * Store a Response with TTL and optional SWR window.
@@ -130,7 +137,12 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * @param ttl - Time-to-live in seconds
    * @param swr - Optional stale-while-revalidate window in seconds
    */
-  putResponse?(key: string, response: Response, ttl: number, swr?: number): Promise<void>;
+  putResponse?(
+    key: string,
+    response: Response,
+    ttl: number,
+    swr?: number,
+  ): Promise<void>;
 
   // ============================================================================
   // Function Cache Methods (optional, for "use cache" directive)
@@ -150,7 +162,11 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * @param value - RSC-serialized return value
    * @param options - TTL, SWR, handle data, and tags
    */
-  setItem?(key: string, value: string, options?: CacheItemOptions): Promise<void>;
+  setItem?(
+    key: string,
+    value: string,
+    options?: CacheItemOptions,
+  ): Promise<void>;
 }
 
 /**
@@ -197,7 +213,10 @@ export interface SerializedSegmentData {
   /** RSC-encoded loaderDataPromise (if present) */
   encodedLoaderDataPromise?: string;
   /** Segment metadata (everything except component, layout, loading, and loader data) */
-  metadata: Omit<ResolvedSegment, "component" | "layout" | "loading" | "loaderData" | "loaderDataPromise">;
+  metadata: Omit<
+    ResolvedSegment,
+    "component" | "layout" | "loading" | "loaderData" | "loaderDataPromise"
+  >;
 }
 
 /**
@@ -280,7 +299,6 @@ export interface CachedEntryResult {
   handles: Record<string, SegmentHandleData>;
 }
 
-
 /**
  * Segment cache provider interface
  *
@@ -308,7 +326,7 @@ export interface SegmentCacheProvider {
   restore(
     cacheKey: string,
     params: Record<string, string>,
-    loaderPromises: Map<string, Promise<any>>
+    loaderPromises: Map<string, Promise<any>>,
   ): Promise<[ResolvedSegment[], string[]] | null>;
 
   /**
@@ -426,7 +444,7 @@ export interface CacheStore {
   put<T extends CacheValue>(
     key: string,
     value: T,
-    options?: CachePutOptions
+    options?: CachePutOptions,
   ): Promise<void>;
 
   /**

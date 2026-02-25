@@ -11,6 +11,7 @@ route was pre-rendered.
 ## Implementation Status
 
 ### Completed
+
 - **Prerender handler** - `Prerender(getParams, handler, opts)` API
 - **Build-time segment resolution** - `matchForPrerender()` resolves segments with BuildContext
 - **Flight payload storage** - Serialized segments stored in `__PRERENDER_MANIFEST`
@@ -24,6 +25,7 @@ route was pre-rendered.
 - **Intercept pre-rendering** - Intercept variants stored under `/i` key
 
 ### Remaining
+
 - **Revalidation with passthrough** - Background re-render of stale prerender data
 - **ISR-style revalidation** - Time-based or on-demand re-rendering without full rebuild
 
@@ -165,7 +167,7 @@ with request-dependent fields replaced by descriptive error throwers:
 interface BuildContext<TParams> {
   params: TParams;
   use: <T>(handle: Handle<T>) => (data: T) => void;
-  url: URL;           // Synthetic: pattern + params
+  url: URL; // Synthetic: pattern + params
   pathname: string;
   // These throw descriptive errors if accessed:
   // req, headers, cookies, env, request, ctx.redirect, etc.
@@ -183,7 +185,10 @@ In production builds, `Prerender` exports are replaced with stubs:
 export const BlogPost = Prerender(getParams, handler);
 
 // Stubbed (passthrough: false)
-export const BlogPost = { __brand: "prerenderHandler", $$id: "abc123#BlogPost" };
+export const BlogPost = {
+  __brand: "prerenderHandler",
+  $$id: "abc123#BlogPost",
+};
 ```
 
 The entire original module and its imports are excluded from the RSC server
@@ -252,25 +257,30 @@ in the cached data.
 ## Interaction with Other Systems
 
 ### Loaders
+
 Loaders are NEVER pre-rendered. They run fresh at request time on every
 request. The `resolveLoadersOnly` / `resolveLoadersOnlyWithRevalidation`
 functions handle this after `yieldFromStore` yields cached segments.
 
 ### Runtime Cache (`cache()`)
+
 Orthogonal to pre-rendering. Runtime cache operates on segments resolved at
 request time. Pre-rendered segments bypass the runtime cache entirely (the
 prerender lookup happens first in `cache-lookup.ts`).
 
 ### Middleware
+
 Skipped during pre-rendering (no request object). Middleware runs at request
 time for loader resolution and any live handler execution.
 
 ### Actions
+
 Actions do not re-render pre-rendered segments. The frozen handler output
 stays. Loaders can be revalidated by actions. With `passthrough: true` and
 `revalidate()`, the handler itself can re-render live.
 
 ### Handle Data
+
 Values pushed via `ctx.use()` during pre-rendering are baked into the Flight
 payload. They are replayed into the HandleStore on cache hit via
 `handleStore.replaySegmentData()`.
@@ -285,6 +295,7 @@ Pre-rendered routes set flags on the route trie leaf at build time:
 - `pt: true` -- passthrough mode (handler available for live fallback)
 
 At runtime, the cache-lookup middleware uses these flags:
+
 - `pr + hit` -- serve pre-rendered Flight payload
 - `pr + pt + miss` -- fall through to live handler (handler kept in bundle)
 - `pr + miss` (no pt) -- fall through (handler stubbed, no live render)
@@ -293,12 +304,12 @@ At runtime, the cache-lookup middleware uses these flags:
 
 ## Key Files
 
-| File | Role |
-|------|------|
-| `src/router.ts` (`matchForPrerender`) | Build-time segment resolution + intercept resolution |
-| `src/router/match-middleware/cache-lookup.ts` | Runtime prerender store lookup |
-| `src/prerender/store.ts` | PrerenderStore interface + dev/prod implementations |
-| `src/prerender/param-hash.ts` | Deterministic param hashing for store keys |
-| `src/cache/cache-scope.ts` | RSC serialize/deserialize for segments |
-| `src/vite/index.ts` (`closeBundle`) | Collects prerender data + writes manifest |
+| File                                                  | Role                                                   |
+| ----------------------------------------------------- | ------------------------------------------------------ |
+| `src/router.ts` (`matchForPrerender`)                 | Build-time segment resolution + intercept resolution   |
+| `src/router/match-middleware/cache-lookup.ts`         | Runtime prerender store lookup                         |
+| `src/prerender/store.ts`                              | PrerenderStore interface + dev/prod implementations    |
+| `src/prerender/param-hash.ts`                         | Deterministic param hashing for store keys             |
+| `src/cache/cache-scope.ts`                            | RSC serialize/deserialize for segments                 |
+| `src/vite/index.ts` (`closeBundle`)                   | Collects prerender data + writes manifest              |
 | `src/router/match-middleware/intercept-resolution.ts` | Runtime intercept handling (`handleCacheHitIntercept`) |

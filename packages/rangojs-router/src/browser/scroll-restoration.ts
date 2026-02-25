@@ -52,9 +52,12 @@ let initialized = false;
 /**
  * Custom getKey function for determining scroll restoration key
  */
-type GetScrollKeyFunction = (
-  location: { pathname: string; search: string; hash: string; key: string }
-) => string;
+type GetScrollKeyFunction = (location: {
+  pathname: string;
+  search: string;
+  hash: string;
+  key: string;
+}) => string;
 
 let customGetKey: GetScrollKeyFunction | null = null;
 
@@ -136,7 +139,10 @@ export function initScrollRestoration(options?: {
 
   window.addEventListener("pagehide", handlePageHide);
 
-  console.log("[Scroll] Initialized, loaded positions:", Object.keys(savedScrollPositions).length);
+  console.log(
+    "[Scroll] Initialized, loaded positions:",
+    Object.keys(savedScrollPositions).length,
+  );
 
   return () => {
     window.removeEventListener("pagehide", handlePageHide);
@@ -180,7 +186,7 @@ function persistToSessionStorage(): void {
   try {
     sessionStorage.setItem(
       SCROLL_STORAGE_KEY,
-      JSON.stringify(savedScrollPositions)
+      JSON.stringify(savedScrollPositions),
     );
   } catch (e) {
     // Likely QuotaExceededError. Evict oldest entries and retry.
@@ -193,14 +199,14 @@ function persistToSessionStorage(): void {
     try {
       sessionStorage.setItem(
         SCROLL_STORAGE_KEY,
-        JSON.stringify(savedScrollPositions)
+        JSON.stringify(savedScrollPositions),
       );
     } catch (retryErr) {
       // Storage still full after eviction. Clear our key entirely so we
       // don't block other sessionStorage consumers.
       console.warn(
         "[Scroll] Failed to persist to sessionStorage after eviction, clearing scroll data:",
-        retryErr
+        retryErr,
       );
       try {
         sessionStorage.removeItem(SCROLL_STORAGE_KEY);
@@ -289,7 +295,8 @@ export function restoreScrollPosition(options?: {
       }
 
       // Check if we can now scroll to the target position
-      const currentMaxScrollY = document.documentElement.scrollHeight - window.innerHeight;
+      const currentMaxScrollY =
+        document.documentElement.scrollHeight - window.innerHeight;
       if (savedY <= currentMaxScrollY) {
         window.scrollTo(0, savedY);
         console.log("[Scroll] Poll restored position:", savedY);

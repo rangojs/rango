@@ -16,13 +16,16 @@ export function UseHrefDemo() {
       <h2>href() Demo</h2>
       <ul>
         <li data-testid="href-path">
-          Path-based: <code>href("/about")</code> → <span data-testid="href-path-result">{href("/about")}</span>
+          Path-based: <code>href("/about")</code> →{" "}
+          <span data-testid="href-path-result">{href("/about")}</span>
         </li>
         <li data-testid="href-absolute">
-          Absolute path: <code>href("/shop/cart")</code> → <span data-testid="href-absolute-result">{href("/shop/cart")}</span>
+          Absolute path: <code>href("/shop/cart")</code> →{" "}
+          <span data-testid="href-absolute-result">{href("/shop/cart")}</span>
         </li>
         <li data-testid="href-with-params">
-          With params: <code>href("/blog/test")</code> → <span data-testid="href-params-result">{href("/blog/test")}</span>
+          With params: <code>href("/blog/test")</code> →{" "}
+          <span data-testid="href-params-result">{href("/blog/test")}</span>
         </li>
       </ul>
     </div>

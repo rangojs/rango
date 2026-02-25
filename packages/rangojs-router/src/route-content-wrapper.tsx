@@ -31,7 +31,10 @@ export function RouteContentWrapper({
     return content as ReactNode;
   }
   return (
-    <Suspense fallback={fallback ?? null} key={segmentId ? "route-content-suspense-" + segmentId : undefined}>
+    <Suspense
+      fallback={fallback ?? null}
+      key={segmentId ? "route-content-suspense-" + segmentId : undefined}
+    >
       <Suspender content={content} key={segmentId} />
     </Suspense>
   );
@@ -50,11 +53,11 @@ export function RouteContentWrapperCallback<T>({
   invariant(children, "RouteContentWrapperCallback requires children");
   invariant(
     typeof children === "function",
-    "RouteContentWrapperCallback requires children to be a function"
+    "RouteContentWrapperCallback requires children to be a function",
   );
   invariant(
     resolve !== undefined,
-    "RouteContentWrapperCallback requires resolve"
+    "RouteContentWrapperCallback requires resolve",
   );
   return (
     <Suspense

@@ -1,6 +1,11 @@
 "use client";
 
-import { createContext, createElement, type Context, type ReactNode } from "react";
+import {
+  createContext,
+  createElement,
+  type Context,
+  type ReactNode,
+} from "react";
 
 /**
  * Context for the current include() mount path.

@@ -67,9 +67,7 @@ test.describe("use-cache basic", () => {
     await expect(page.getByTestId("use-cache-args-category")).toHaveText(
       "fruits",
     );
-    const fruitTs = await page
-      .getByTestId("use-cache-args-ts")
-      .textContent();
+    const fruitTs = await page.getByTestId("use-cache-args-ts").textContent();
     const fruitRand = await page
       .getByTestId("use-cache-args-rand")
       .textContent();
@@ -81,9 +79,7 @@ test.describe("use-cache basic", () => {
     await expect(page.getByTestId("use-cache-args-category")).toHaveText(
       "veggies",
     );
-    const veggieTs = await page
-      .getByTestId("use-cache-args-ts")
-      .textContent();
+    const veggieTs = await page.getByTestId("use-cache-args-ts").textContent();
 
     // Different category should have different timestamp (cache miss)
     expect(veggieTs).not.toBe(fruitTs);
@@ -92,9 +88,7 @@ test.describe("use-cache basic", () => {
     await page.goto(f.url("/use-cache-test/with-args/fruits"));
     await waitForHydration(page);
 
-    const fruitTs2 = await page
-      .getByTestId("use-cache-args-ts")
-      .textContent();
+    const fruitTs2 = await page.getByTestId("use-cache-args-ts").textContent();
     const fruitRand2 = await page
       .getByTestId("use-cache-args-rand")
       .textContent();
@@ -226,9 +220,7 @@ test.describe("use-cache basic", () => {
     await expect(page.getByTestId("use-cache-node-page")).toBeVisible({
       timeout: 10000,
     });
-    const cachedTs1 = await page
-      .getByTestId("cached-node-ts")
-      .textContent();
+    const cachedTs1 = await page.getByTestId("cached-node-ts").textContent();
     const cachedRand1 = await page
       .getByTestId("cached-node-rand")
       .textContent();
@@ -248,9 +240,7 @@ test.describe("use-cache basic", () => {
     await waitForHydration(page);
 
     await expect(page.getByTestId("use-cache-node-page")).toBeVisible();
-    const cachedTs2 = await page
-      .getByTestId("cached-node-ts")
-      .textContent();
+    const cachedTs2 = await page.getByTestId("cached-node-ts").textContent();
     const cachedRand2 = await page
       .getByTestId("cached-node-rand")
       .textContent();
@@ -277,9 +267,7 @@ test.describe("use-cache basic", () => {
     await expect(
       page.getByTestId("use-cache-inline-handler-page"),
     ).toBeVisible();
-    const cachedTs1 = await page
-      .getByTestId("inline-handler-ts")
-      .textContent();
+    const cachedTs1 = await page.getByTestId("inline-handler-ts").textContent();
 
     // Breadcrumb from inline "use cache" handler should appear
     const breadcrumbs = page.getByTestId("breadcrumbs");
@@ -293,9 +281,7 @@ test.describe("use-cache basic", () => {
     await page.goto(f.url("/use-cache-test/inline-handler"));
     await waitForHydration(page);
 
-    const cachedTs2 = await page
-      .getByTestId("inline-handler-ts")
-      .textContent();
+    const cachedTs2 = await page.getByTestId("inline-handler-ts").textContent();
     expect(cachedTs2).toBe(cachedTs1);
 
     // Breadcrumb still appears (handle replay from cached entry)
@@ -315,9 +301,7 @@ test.describe("use-cache basic", () => {
     await expect(
       page.getByTestId("use-cache-inline-layout-page"),
     ).toBeVisible();
-    const layoutTs1 = await page
-      .getByTestId("inline-layout-ts")
-      .textContent();
+    const layoutTs1 = await page.getByTestId("inline-layout-ts").textContent();
 
     // Meta title set by cached layout should be present
     await expect(page).toHaveTitle("Cached Layout Title");
@@ -334,9 +318,7 @@ test.describe("use-cache basic", () => {
     await page.goto(f.url("/use-cache-test/inline-layout"));
     await waitForHydration(page);
 
-    const layoutTs2 = await page
-      .getByTestId("inline-layout-ts")
-      .textContent();
+    const layoutTs2 = await page.getByTestId("inline-layout-ts").textContent();
     // Layout timestamp cached (same value)
     expect(layoutTs2).toBe(layoutTs1);
 
@@ -441,9 +423,7 @@ test.describe("use-cache basic", () => {
     await expect(
       page.getByTestId("use-cache-intercept-path-page"),
     ).toBeVisible();
-    const pathTs1 = await page
-      .getByTestId("intercept-path-ts")
-      .textContent();
+    const pathTs1 = await page.getByTestId("intercept-path-ts").textContent();
     const pathRand1 = await page
       .getByTestId("intercept-path-rand")
       .textContent();
@@ -458,9 +438,7 @@ test.describe("use-cache basic", () => {
     await page.goto(f.url("/use-cache-test/intercept-target/1"));
     await waitForHydration(page);
 
-    const pathTs2 = await page
-      .getByTestId("intercept-path-ts")
-      .textContent();
+    const pathTs2 = await page.getByTestId("intercept-path-ts").textContent();
     const pathRand2 = await page
       .getByTestId("intercept-path-rand")
       .textContent();
@@ -473,13 +451,9 @@ test.describe("use-cache basic", () => {
     await waitForHydration(page);
 
     await page.getByTestId("use-cache-intercept-link").click();
-    await expect(
-      page.getByTestId("use-cache-intercept-modal"),
-    ).toBeVisible();
+    await expect(page.getByTestId("use-cache-intercept-modal")).toBeVisible();
 
-    const modalTs1 = await page
-      .getByTestId("intercept-modal-ts")
-      .textContent();
+    const modalTs1 = await page.getByTestId("intercept-modal-ts").textContent();
     const modalRand1 = await page
       .getByTestId("intercept-modal-rand")
       .textContent();
@@ -489,18 +463,12 @@ test.describe("use-cache basic", () => {
 
     // Navigate back to index and trigger intercept again — intercept cache hit
     await goBack(page);
-    await expect(
-      page.getByTestId("use-cache-intercept-index"),
-    ).toBeVisible();
+    await expect(page.getByTestId("use-cache-intercept-index")).toBeVisible();
 
     await page.getByTestId("use-cache-intercept-link").click();
-    await expect(
-      page.getByTestId("use-cache-intercept-modal"),
-    ).toBeVisible();
+    await expect(page.getByTestId("use-cache-intercept-modal")).toBeVisible();
 
-    const modalTs2 = await page
-      .getByTestId("intercept-modal-ts")
-      .textContent();
+    const modalTs2 = await page.getByTestId("intercept-modal-ts").textContent();
     const modalRand2 = await page
       .getByTestId("intercept-modal-rand")
       .textContent();
@@ -509,7 +477,6 @@ test.describe("use-cache basic", () => {
     expect(modalTs2).toBe(modalTs1);
     expect(modalRand2).toBe(modalRand1);
   });
-
 });
 
 // ============================================================================
@@ -559,9 +526,7 @@ test.describe("use-cache (production)", () => {
     await expect(page.getByTestId("use-cache-args-category")).toHaveText(
       "fruits",
     );
-    const fruitTs = await page
-      .getByTestId("use-cache-args-ts")
-      .textContent();
+    const fruitTs = await page.getByTestId("use-cache-args-ts").textContent();
     const fruitRand = await page
       .getByTestId("use-cache-args-rand")
       .textContent();
@@ -572,17 +537,13 @@ test.describe("use-cache (production)", () => {
     await expect(page.getByTestId("use-cache-args-category")).toHaveText(
       "veggies",
     );
-    const veggieTs = await page
-      .getByTestId("use-cache-args-ts")
-      .textContent();
+    const veggieTs = await page.getByTestId("use-cache-args-ts").textContent();
     expect(veggieTs).not.toBe(fruitTs);
 
     await page.goto(f.url("/use-cache-test/with-args/fruits"));
     await waitForHydration(page);
 
-    const fruitTs2 = await page
-      .getByTestId("use-cache-args-ts")
-      .textContent();
+    const fruitTs2 = await page.getByTestId("use-cache-args-ts").textContent();
     const fruitRand2 = await page
       .getByTestId("use-cache-args-rand")
       .textContent();
@@ -661,9 +622,7 @@ test.describe("use-cache (production)", () => {
     await expect(page.getByTestId("use-cache-node-page")).toBeVisible({
       timeout: 10000,
     });
-    const cachedTs1 = await page
-      .getByTestId("cached-node-ts")
-      .textContent();
+    const cachedTs1 = await page.getByTestId("cached-node-ts").textContent();
     const cachedRand1 = await page
       .getByTestId("cached-node-rand")
       .textContent();
@@ -678,9 +637,7 @@ test.describe("use-cache (production)", () => {
     await waitForHydration(page);
 
     await expect(page.getByTestId("use-cache-node-page")).toBeVisible();
-    const cachedTs2 = await page
-      .getByTestId("cached-node-ts")
-      .textContent();
+    const cachedTs2 = await page.getByTestId("cached-node-ts").textContent();
     const cachedRand2 = await page
       .getByTestId("cached-node-rand")
       .textContent();
@@ -740,9 +697,7 @@ test.describe("use-cache (production)", () => {
     await expect(
       page.getByTestId("use-cache-inline-handler-page"),
     ).toBeVisible();
-    const cachedTs1 = await page
-      .getByTestId("inline-handler-ts")
-      .textContent();
+    const cachedTs1 = await page.getByTestId("inline-handler-ts").textContent();
 
     const breadcrumbs = page.getByTestId("breadcrumbs");
     await expect(breadcrumbs).toBeVisible();
@@ -754,9 +709,7 @@ test.describe("use-cache (production)", () => {
     await page.goto(f.url("/use-cache-test/inline-handler"));
     await waitForHydration(page);
 
-    const cachedTs2 = await page
-      .getByTestId("inline-handler-ts")
-      .textContent();
+    const cachedTs2 = await page.getByTestId("inline-handler-ts").textContent();
     expect(cachedTs2).toBe(cachedTs1);
 
     await expect(breadcrumbs).toBeVisible();
@@ -774,9 +727,7 @@ test.describe("use-cache (production)", () => {
     await expect(
       page.getByTestId("use-cache-inline-layout-page"),
     ).toBeVisible();
-    const layoutTs1 = await page
-      .getByTestId("inline-layout-ts")
-      .textContent();
+    const layoutTs1 = await page.getByTestId("inline-layout-ts").textContent();
 
     await expect(page).toHaveTitle("Cached Layout Title");
 
@@ -790,9 +741,7 @@ test.describe("use-cache (production)", () => {
     await page.goto(f.url("/use-cache-test/inline-layout"));
     await waitForHydration(page);
 
-    const layoutTs2 = await page
-      .getByTestId("inline-layout-ts")
-      .textContent();
+    const layoutTs2 = await page.getByTestId("inline-layout-ts").textContent();
     expect(layoutTs2).toBe(layoutTs1);
 
     await expect(page).toHaveTitle("Cached Layout Title");
@@ -883,9 +832,7 @@ test.describe("use-cache (production)", () => {
     await expect(
       page.getByTestId("use-cache-intercept-path-page"),
     ).toBeVisible();
-    const pathTs1 = await page
-      .getByTestId("intercept-path-ts")
-      .textContent();
+    const pathTs1 = await page.getByTestId("intercept-path-ts").textContent();
     const pathRand1 = await page
       .getByTestId("intercept-path-rand")
       .textContent();
@@ -899,9 +846,7 @@ test.describe("use-cache (production)", () => {
     await page.goto(f.url("/use-cache-test/intercept-target/1"));
     await waitForHydration(page);
 
-    const pathTs2 = await page
-      .getByTestId("intercept-path-ts")
-      .textContent();
+    const pathTs2 = await page.getByTestId("intercept-path-ts").textContent();
     const pathRand2 = await page
       .getByTestId("intercept-path-rand")
       .textContent();
@@ -913,13 +858,9 @@ test.describe("use-cache (production)", () => {
     await waitForHydration(page);
 
     await page.getByTestId("use-cache-intercept-link").click();
-    await expect(
-      page.getByTestId("use-cache-intercept-modal"),
-    ).toBeVisible();
+    await expect(page.getByTestId("use-cache-intercept-modal")).toBeVisible();
 
-    const modalTs1 = await page
-      .getByTestId("intercept-modal-ts")
-      .textContent();
+    const modalTs1 = await page.getByTestId("intercept-modal-ts").textContent();
     const modalRand1 = await page
       .getByTestId("intercept-modal-rand")
       .textContent();
@@ -927,18 +868,12 @@ test.describe("use-cache (production)", () => {
     expect(modalTs1).not.toBe(pathTs1);
 
     await goBack(page);
-    await expect(
-      page.getByTestId("use-cache-intercept-index"),
-    ).toBeVisible();
+    await expect(page.getByTestId("use-cache-intercept-index")).toBeVisible();
 
     await page.getByTestId("use-cache-intercept-link").click();
-    await expect(
-      page.getByTestId("use-cache-intercept-modal"),
-    ).toBeVisible();
+    await expect(page.getByTestId("use-cache-intercept-modal")).toBeVisible();
 
-    const modalTs2 = await page
-      .getByTestId("intercept-modal-ts")
-      .textContent();
+    const modalTs2 = await page.getByTestId("intercept-modal-ts").textContent();
     const modalRand2 = await page
       .getByTestId("intercept-modal-rand")
       .textContent();

@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { resolveThemeConfig, THEME_DEFAULTS, THEME_COOKIE } from "../constants.js";
+import {
+  resolveThemeConfig,
+  THEME_DEFAULTS,
+  THEME_COOKIE,
+} from "../constants.js";
 import { generateThemeScript } from "../theme-script.js";
 import type { ThemeConfig, ResolvedThemeConfig } from "../types.js";
 

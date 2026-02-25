@@ -57,7 +57,7 @@ interface EvaluateRevalidationOptions<TEnv> {
  * Optimized to use prevParams directly and avoid building previous segments
  */
 export async function evaluateRevalidation<TEnv>(
-  options: EvaluateRevalidationOptions<TEnv>
+  options: EvaluateRevalidationOptions<TEnv>,
 ): Promise<boolean> {
   const {
     segment,

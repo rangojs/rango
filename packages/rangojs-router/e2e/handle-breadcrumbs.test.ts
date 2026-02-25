@@ -22,7 +22,9 @@ test.describe("handle-breadcrumbs", () => {
     await expect(breadcrumbs.locator("text=Home")).toBeVisible();
   });
 
-  test("should display nested breadcrumbs on product page", async ({ page }) => {
+  test("should display nested breadcrumbs on product page", async ({
+    page,
+  }) => {
     await page.goto(f.url("/product/product-a"));
     await waitForHydration(page);
 
@@ -185,7 +187,9 @@ test.describe("handle-breadcrumbs", () => {
 
     // Navigate to post-2 via back-to-blog then post-2
     await testId(page, "back-to-blog").click();
-    await expect(testId(page, "blog-index-page")).toBeVisible({ timeout: 5000 });
+    await expect(testId(page, "blog-index-page")).toBeVisible({
+      timeout: 5000,
+    });
 
     // Post breadcrumb should be gone
     await expect(breadcrumbs.locator("text=Post post-1")).not.toBeVisible();
@@ -210,16 +214,22 @@ test.describe("handle-breadcrumbs", () => {
     await waitForHydration(page);
 
     // Wait for async breadcrumb content to fully load (1s delay in handler)
-    await expect(testId(page, "breadcrumb-async")).toBeVisible({ timeout: 10000 });
+    await expect(testId(page, "breadcrumb-async")).toBeVisible({
+      timeout: 10000,
+    });
 
     // Ensure skeleton is NOT visible before we trigger the action
-    await expect(testId(page, "breadcrumbs-skeleton")).not.toBeVisible({ timeout: 3000 });
+    await expect(testId(page, "breadcrumbs-skeleton")).not.toBeVisible({
+      timeout: 3000,
+    });
 
     // Click an action button to trigger revalidation
     await testId(page, "add-to-cart-btn").click();
 
     // Wait for action result to appear in UI (generous timeout for parallel execution)
-    await expect(page.locator("text=Added product-b to cart")).toBeVisible({ timeout: 15000 });
+    await expect(page.locator("text=Added product-b to cart")).toBeVisible({
+      timeout: 15000,
+    });
 
     // The async breadcrumb content should still be visible after the action
     await expect(testId(page, "breadcrumb-async")).toBeVisible();

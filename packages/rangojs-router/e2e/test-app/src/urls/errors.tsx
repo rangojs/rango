@@ -12,8 +12,12 @@ import {
  */
 export const errorsPatterns = urls(({ path, loading }) => [
   path("/errors", ErrorsIndexHandler, { name: "errors.index" }),
-  path("/errors/client-error", ErrorsClientErrorHandler, { name: "errors.clientError" }),
-  path("/errors/server-error", ErrorsServerErrorHandler, { name: "errors.serverError" }),
+  path("/errors/client-error", ErrorsClientErrorHandler, {
+    name: "errors.clientError",
+  }),
+  path("/errors/server-error", ErrorsServerErrorHandler, {
+    name: "errors.serverError",
+  }),
   path(
     "/errors/streaming-error",
     ErrorsStreamingErrorHandler,
@@ -22,8 +26,8 @@ export const errorsPatterns = urls(({ path, loading }) => [
       loading(
         <div data-testid="streaming-error-loading">
           <p>Loading streaming content...</p>
-        </div>
+        </div>,
       ),
-    ]
+    ],
   ),
 ]);

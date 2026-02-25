@@ -89,7 +89,10 @@ export function clearCachedManifest(): void {
  * @param entries - Array of { staticPrefix, routes } from build-time prefix tree leaves
  */
 export function setPrecomputedEntries(
-  entries: Array<{ staticPrefix: string; routes: Record<string, string> }> | null,
+  entries: Array<{
+    staticPrefix: string;
+    routes: Record<string, string>;
+  }> | null,
 ): void {
   cachedPrecomputedEntries = entries;
 }
@@ -117,7 +120,8 @@ export function getRouteTrie(): typeof cachedRouteTrie {
 // precomputed entries so multi-router setups (e.g. site + admin via
 // createHostRouter()) don't see each other's routes.
 const perRouterManifestMap: Map<string, Record<string, string>> = new Map();
-const perRouterTrieMap: Map<string, import("./build/route-trie.js").TrieNode> = new Map();
+const perRouterTrieMap: Map<string, import("./build/route-trie.js").TrieNode> =
+  new Map();
 const perRouterPrecomputedEntriesMap: Map<
   string,
   Array<{ staticPrefix: string; routes: Record<string, string> }>
@@ -135,20 +139,30 @@ export function clearAllRouterData(): void {
   cachedRouteTrie = null;
 }
 
-export function setRouterManifest(routerId: string, manifest: Record<string, string>): void {
+export function setRouterManifest(
+  routerId: string,
+  manifest: Record<string, string>,
+): void {
   perRouterManifestMap.set(routerId, manifest);
 }
 
 /** @internal */
-export function getRouterManifest(routerId: string): Record<string, string> | undefined {
+export function getRouterManifest(
+  routerId: string,
+): Record<string, string> | undefined {
   return perRouterManifestMap.get(routerId);
 }
 
-export function setRouterTrie(routerId: string, trie: import("./build/route-trie.js").TrieNode): void {
+export function setRouterTrie(
+  routerId: string,
+  trie: import("./build/route-trie.js").TrieNode,
+): void {
   perRouterTrieMap.set(routerId, trie);
 }
 
-export function getRouterTrie(routerId: string): import("./build/route-trie.js").TrieNode | undefined {
+export function getRouterTrie(
+  routerId: string,
+): import("./build/route-trie.js").TrieNode | undefined {
   return perRouterTrieMap.get(routerId);
 }
 
@@ -183,7 +197,8 @@ export async function ensureRouterManifest(routerId: string): Promise<void> {
     const mod = await loader();
     if (mod.manifest) perRouterManifestMap.set(routerId, mod.manifest);
     if (mod.trie) perRouterTrieMap.set(routerId, mod.trie);
-    if (mod.precomputedEntries) perRouterPrecomputedEntriesMap.set(routerId, mod.precomputedEntries);
+    if (mod.precomputedEntries)
+      perRouterPrecomputedEntriesMap.set(routerId, mod.precomputedEntries);
     routerManifestLoaders.delete(routerId);
   }
 }
@@ -219,8 +234,6 @@ export function registerSearchSchema(
   globalSearchSchemas.set(routeName, schema);
 }
 
-export function getSearchSchema(
-  routeName: string,
-): SearchSchema | undefined {
+export function getSearchSchema(routeName: string): SearchSchema | undefined {
   return globalSearchSchemas.get(routeName);
 }

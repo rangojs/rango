@@ -12,12 +12,9 @@ interface AddToCartButtonProps {
  * Add to cart button - imports action directly to preserve metadata
  */
 export function AddToCartButton({ productId, testId }: AddToCartButtonProps) {
-  const [state, formAction, isPending] = useActionState(
-    async () => {
-      return await addToCartWithResult(productId);
-    },
-    null
-  );
+  const [state, formAction, isPending] = useActionState(async () => {
+    return await addToCartWithResult(productId);
+  }, null);
 
   return (
     <div>

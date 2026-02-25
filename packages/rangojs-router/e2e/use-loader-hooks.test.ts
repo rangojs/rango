@@ -1,10 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import {
-  waitForHydration,
-  expectNoPageError,
-  testId,
-} from "./helper";
+import { waitForHydration, expectNoPageError, testId } from "./helper";
 
 /**
  * Tests for useLoader and useFetchLoader hooks:
@@ -45,14 +41,14 @@ test.describe("useLoader hook", () => {
 
     // Verify data values are present (not undefined)
     await expect(testId(page, "use-loader-route-id")).toContainText(
-      "Route ID:"
+      "Route ID:",
     );
     await expect(testId(page, "use-loader-count")).toContainText("Count:");
     await expect(testId(page, "use-loader-source")).toContainText(
-      "Source: server"
+      "Source: server",
     );
     await expect(testId(page, "use-loader-timestamp")).toContainText(
-      "Timestamp:"
+      "Timestamp:",
     );
 
     // Loading should NOT be visible initially (not fetching)
@@ -78,21 +74,19 @@ test.describe("useFetchLoader hook - with pre-loaded data", () => {
 
     // useFetchLoader should also have data from context (loader is registered)
     await expect(testId(page, "use-fetch-loader-preloaded-test")).toBeVisible();
-    await expect(
-      testId(page, "use-fetch-loader-preloaded-data")
-    ).toBeVisible();
+    await expect(testId(page, "use-fetch-loader-preloaded-data")).toBeVisible();
 
     // Verify data values are present
     await expect(
-      testId(page, "use-fetch-loader-preloaded-route-id")
+      testId(page, "use-fetch-loader-preloaded-route-id"),
     ).toContainText("Route ID:");
     await expect(
-      testId(page, "use-fetch-loader-preloaded-source")
+      testId(page, "use-fetch-loader-preloaded-source"),
     ).toContainText("Source: server");
 
     // "No data" should NOT be visible (we have context data)
     await expect(
-      testId(page, "use-fetch-loader-preloaded-no-data")
+      testId(page, "use-fetch-loader-preloaded-no-data"),
     ).not.toBeVisible();
   });
 });
@@ -115,15 +109,15 @@ test.describe("useFetchLoader hook - without pre-loaded data", () => {
 
     // UnregisteredLoader is NOT registered on route-a, so data should be undefined
     await expect(
-      testId(page, "use-fetch-loader-unregistered-test")
+      testId(page, "use-fetch-loader-unregistered-test"),
     ).toBeVisible();
     await expect(
-      testId(page, "use-fetch-loader-unregistered-no-data")
+      testId(page, "use-fetch-loader-unregistered-no-data"),
     ).toBeVisible();
 
     // Data container should NOT be visible
     await expect(
-      testId(page, "use-fetch-loader-unregistered-data")
+      testId(page, "use-fetch-loader-unregistered-data"),
     ).not.toBeVisible();
   });
 
@@ -135,7 +129,7 @@ test.describe("useFetchLoader hook - without pre-loaded data", () => {
 
     // Initially no data
     await expect(
-      testId(page, "use-fetch-loader-unregistered-no-data")
+      testId(page, "use-fetch-loader-unregistered-no-data"),
     ).toBeVisible();
 
     // Click fetch button
@@ -143,22 +137,22 @@ test.describe("useFetchLoader hook - without pre-loaded data", () => {
 
     // Should show loading
     await expect(
-      testId(page, "use-fetch-loader-unregistered-loading")
+      testId(page, "use-fetch-loader-unregistered-loading"),
     ).toBeVisible({ timeout: 1000 });
 
     // Wait for data to appear
     await expect(
-      testId(page, "use-fetch-loader-unregistered-data")
+      testId(page, "use-fetch-loader-unregistered-data"),
     ).toBeVisible({ timeout: 5000 });
 
     // "No data" should disappear
     await expect(
-      testId(page, "use-fetch-loader-unregistered-no-data")
+      testId(page, "use-fetch-loader-unregistered-no-data"),
     ).not.toBeVisible();
 
     // Verify fetched data
     await expect(
-      testId(page, "use-fetch-loader-unregistered-message")
+      testId(page, "use-fetch-loader-unregistered-message"),
     ).toContainText("Fetched from unregistered loader");
   });
 });
@@ -181,7 +175,7 @@ test.describe("Navigation updates loader data", () => {
 
     // Verify we're on route A with HookTestLoader data
     await expect(testId(page, "use-loader-source")).toContainText(
-      "Source: server"
+      "Source: server",
     );
 
     // Navigate to route B
@@ -192,7 +186,7 @@ test.describe("Navigation updates loader data", () => {
 
     // useLoaderB should have different data (source is "server-b")
     await expect(testId(page, "use-loader-source-b")).toContainText(
-      "Source: server-b"
+      "Source: server-b",
     );
   });
 
@@ -206,7 +200,7 @@ test.describe("Navigation updates loader data", () => {
 
     // Verify we're on route A
     await expect(
-      testId(page, "use-fetch-loader-preloaded-source")
+      testId(page, "use-fetch-loader-preloaded-source"),
     ).toContainText("Source: server");
 
     // Navigate to route B
@@ -217,7 +211,7 @@ test.describe("Navigation updates loader data", () => {
 
     // useFetchLoaderB should have different data
     await expect(testId(page, "use-fetch-loader-source-b")).toContainText(
-      "Source: server-b"
+      "Source: server-b",
     );
   });
 });
@@ -242,7 +236,7 @@ test.describe("SSR behavior", () => {
     // This tests that the SSR rendered the data correctly
     await expect(testId(page, "use-loader-data")).toBeVisible({ timeout: 500 });
     await expect(testId(page, "use-loader-source")).toContainText(
-      "Source: server"
+      "Source: server",
     );
 
     // Now wait for hydration and verify no errors
@@ -257,9 +251,9 @@ test.describe("SSR behavior", () => {
     await page.goto(f.url("/hook-tests/route-a"));
 
     // Preloaded data should be visible immediately
-    await expect(
-      testId(page, "use-fetch-loader-preloaded-data")
-    ).toBeVisible({ timeout: 500 });
+    await expect(testId(page, "use-fetch-loader-preloaded-data")).toBeVisible({
+      timeout: 500,
+    });
 
     await waitForHydration(page);
   });
@@ -271,7 +265,7 @@ test.describe("SSR behavior", () => {
 
     // Unregistered loader should show "no data" message on SSR
     await expect(
-      testId(page, "use-fetch-loader-unregistered-no-data")
+      testId(page, "use-fetch-loader-unregistered-no-data"),
     ).toBeVisible({ timeout: 500 });
 
     await waitForHydration(page);
@@ -316,7 +310,7 @@ test.describe("Refetch via load() for registered loaders", () => {
     // Get initial count
     const initialCount = await testId(
       page,
-      "use-fetch-loader-preloaded-count"
+      "use-fetch-loader-preloaded-count",
     ).textContent();
 
     // Click refetch button
@@ -326,7 +320,7 @@ test.describe("Refetch via load() for registered loaders", () => {
     await expect(async () => {
       const newCount = await testId(
         page,
-        "use-fetch-loader-preloaded-count"
+        "use-fetch-loader-preloaded-count",
       ).textContent();
       expect(newCount).not.toEqual(initialCount);
     }).toPass({ timeout: 5000 });
@@ -359,7 +353,7 @@ test.describe("Custom params via load()", () => {
 
     // Route ID should reflect the custom param
     await expect(testId(page, "use-loader-route-id")).toContainText(
-      "custom-via-load"
+      "custom-via-load",
     );
   });
 
@@ -376,12 +370,12 @@ test.describe("Custom params via load()", () => {
 
     // Wait for loading to finish
     await expect(
-      testId(page, "use-fetch-loader-preloaded-loading")
+      testId(page, "use-fetch-loader-preloaded-loading"),
     ).not.toBeVisible({ timeout: 5000 });
 
     // Route ID should reflect the custom param
     await expect(
-      testId(page, "use-fetch-loader-preloaded-route-id")
+      testId(page, "use-fetch-loader-preloaded-route-id"),
     ).toContainText("custom-fetched");
   });
 });
@@ -416,7 +410,7 @@ test.describe("Error handling - throwOnError: false", () => {
     // Error should be captured in state (not thrown)
     await expect(testId(page, "error-loader-error")).toBeVisible();
     await expect(testId(page, "error-loader-error")).toContainText(
-      "Intentional loader error"
+      "Intentional loader error",
     );
   });
 
@@ -444,7 +438,7 @@ test.describe("Error handling - throwOnError: false", () => {
     await expect(testId(page, "error-loader-error")).not.toBeVisible();
     await expect(testId(page, "error-loader-data")).toBeVisible();
     await expect(testId(page, "error-loader-message")).toContainText(
-      "Success - error was bypassed"
+      "Success - error was bypassed",
     );
   });
 });
@@ -467,27 +461,25 @@ test.describe("Error handling - throwOnError: true (default)", () => {
     await waitForHydration(page);
 
     // Initially shows the inner component with no data
+    await expect(testId(page, "unhandled-error-loader-inner")).toBeVisible();
     await expect(
-      testId(page, "unhandled-error-loader-inner")
-    ).toBeVisible();
-    await expect(
-      testId(page, "unhandled-error-error-boundary")
+      testId(page, "unhandled-error-error-boundary"),
     ).not.toBeVisible();
 
     // Trigger error
     await testId(page, "unhandled-error-trigger-btn").click();
 
     // ErrorBoundary should catch the error (thrown during render)
-    await expect(
-      testId(page, "unhandled-error-error-boundary")
-    ).toBeVisible({ timeout: 5000 });
-    await expect(
-      testId(page, "unhandled-error-error-message")
-    ).toContainText("Intentional loader error");
+    await expect(testId(page, "unhandled-error-error-boundary")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(testId(page, "unhandled-error-error-message")).toContainText(
+      "Intentional loader error",
+    );
 
     // Inner component should be replaced by error boundary fallback
     await expect(
-      testId(page, "unhandled-error-loader-inner")
+      testId(page, "unhandled-error-loader-inner"),
     ).not.toBeVisible();
   });
 });
@@ -522,7 +514,7 @@ test.describe("Middleware security for fetchable loaders", () => {
     // Should show error (unauthorized)
     await expect(testId(page, "protected-loader-error")).toBeVisible();
     await expect(testId(page, "protected-loader-error")).toContainText(
-      "Unauthorized"
+      "Unauthorized",
     );
 
     // Data should NOT be visible
@@ -546,7 +538,7 @@ test.describe("Middleware security for fetchable loaders", () => {
     // Should show error
     await expect(testId(page, "protected-loader-error")).toBeVisible();
     await expect(testId(page, "protected-loader-error")).toContainText(
-      "Unauthorized"
+      "Unauthorized",
     );
   });
 
@@ -567,10 +559,10 @@ test.describe("Middleware security for fetchable loaders", () => {
     // Should show data (protected content)
     await expect(testId(page, "protected-loader-data")).toBeVisible();
     await expect(testId(page, "protected-loader-secret")).toContainText(
-      "This is protected data"
+      "This is protected data",
     );
     await expect(testId(page, "protected-loader-user-id")).toContainText(
-      "User ID: user1"
+      "User ID: user1",
     );
 
     // Error should NOT be visible
@@ -597,12 +589,12 @@ test.describe("Fetched data resets on navigation", () => {
     // Fetch with custom params to get custom data
     await testId(page, "use-fetch-loader-preloaded-fetch-custom-btn").click();
     await expect(
-      testId(page, "use-fetch-loader-preloaded-loading")
+      testId(page, "use-fetch-loader-preloaded-loading"),
     ).not.toBeVisible({ timeout: 5000 });
 
     // Verify custom data was fetched
     await expect(
-      testId(page, "use-fetch-loader-preloaded-route-id")
+      testId(page, "use-fetch-loader-preloaded-route-id"),
     ).toContainText("custom-fetched");
 
     // Navigate to route B
@@ -616,10 +608,10 @@ test.describe("Fetched data resets on navigation", () => {
     // Data should be from context (server SSR), not the previously fetched custom data
     // The route ID should be "default" or similar, NOT "custom-fetched"
     await expect(
-      testId(page, "use-fetch-loader-preloaded-route-id")
+      testId(page, "use-fetch-loader-preloaded-route-id"),
     ).not.toContainText("custom-fetched");
     await expect(
-      testId(page, "use-fetch-loader-preloaded-source")
+      testId(page, "use-fetch-loader-preloaded-source"),
     ).toContainText("Source: server");
   });
 });
@@ -643,13 +635,13 @@ test.describe("useLoader throws when data missing", () => {
 
     // ErrorBoundary should catch the throw
     await expect(
-      testId(page, "use-loader-throws-error-boundary")
+      testId(page, "use-loader-throws-error-boundary"),
     ).toBeVisible();
 
     // Error message should indicate data not found in context
-    await expect(
-      testId(page, "use-loader-throws-error-message")
-    ).toContainText("data not found in context");
+    await expect(testId(page, "use-loader-throws-error-message")).toContainText(
+      "data not found in context",
+    );
 
     // The actual data should NOT be visible (component threw before rendering)
     await expect(testId(page, "use-loader-throws-data")).not.toBeVisible();
@@ -674,7 +666,7 @@ test.describe("isLoading state verification", () => {
 
     // Initially isLoading should be false
     await expect(testId(page, "is-loading-status")).toContainText(
-      "isLoading: false"
+      "isLoading: false",
     );
 
     // Click fetch button
@@ -682,15 +674,17 @@ test.describe("isLoading state verification", () => {
 
     // isLoading should become true
     await expect(testId(page, "is-loading-status")).toContainText(
-      "isLoading: true"
+      "isLoading: true",
     );
 
     // Wait for fetch to complete
-    await expect(testId(page, "is-loading-data")).toBeVisible({ timeout: 5000 });
+    await expect(testId(page, "is-loading-data")).toBeVisible({
+      timeout: 5000,
+    });
 
     // isLoading should be false again
     await expect(testId(page, "is-loading-status")).toContainText(
-      "isLoading: false"
+      "isLoading: false",
     );
   });
 });
@@ -722,7 +716,7 @@ test.describe("Form action support", () => {
 
     // Verify data was fetched
     await expect(testId(page, "form-action-message")).toContainText(
-      "Fetched from unregistered loader"
+      "Fetched from unregistered loader",
     );
   });
 
@@ -738,7 +732,7 @@ test.describe("Form action support", () => {
     // This form uses useActionState with loader.action directly
     const formHtml = await testId(
       page,
-      "form-action-progressive-form"
+      "form-action-progressive-form",
     ).evaluate((el) => el.outerHTML);
 
     // Should have method="POST" and enctype for server actions
@@ -774,52 +768,51 @@ test.describe("Form action support", () => {
 
     // Verify data was fetched via the loader action
     await expect(testId(page, "direct-import-message")).toContainText(
-      "Fetched from unregistered loader"
+      "Fetched from unregistered loader",
     );
     await expect(testId(page, "direct-import-id")).toContainText(
-      "direct-import-submitted"
+      "direct-import-submitted",
     );
   });
 
   // Progressive enhancement test: useActionState forms work without JavaScript.
   // The server decodes the action using decodeAction(), executes it, then passes
   // the form state to renderToReadableStream so useActionState hooks receive the result.
-  test(
-    "form action works without JavaScript (progressive enhancement)",
-    async ({ browser }) => {
-      // Create a new context with JavaScript disabled
-      const context = await browser.newContext({
-        javaScriptEnabled: false,
+  test("form action works without JavaScript (progressive enhancement)", async ({
+    browser,
+  }) => {
+    // Create a new context with JavaScript disabled
+    const context = await browser.newContext({
+      javaScriptEnabled: false,
+    });
+    const page = await context.newPage();
+
+    try {
+      await page.goto(f.url("/hook-tests/form-action"));
+
+      // The progressive enhancement form should render with no data
+      await expect(
+        testId(page, "form-action-progressive-no-data"),
+      ).toBeVisible();
+
+      // Submit the form - native POST submission
+      await testId(page, "form-action-progressive-submit-btn").click();
+
+      // Wait for navigation to complete
+      await page.waitForLoadState("networkidle");
+
+      // With progressive enhancement working, useActionState receives the result
+      await expect(testId(page, "form-action-progressive-data")).toBeVisible({
+        timeout: 5000,
       });
-      const page = await context.newPage();
 
-      try {
-        await page.goto(f.url("/hook-tests/form-action"));
-
-        // The progressive enhancement form should render with no data
-        await expect(
-          testId(page, "form-action-progressive-no-data")
-        ).toBeVisible();
-
-        // Submit the form - native POST submission
-        await testId(page, "form-action-progressive-submit-btn").click();
-
-        // Wait for navigation to complete
-        await page.waitForLoadState("networkidle");
-
-        // With progressive enhancement working, useActionState receives the result
-        await expect(
-          testId(page, "form-action-progressive-data")
-        ).toBeVisible({ timeout: 5000 });
-
-        await expect(
-          testId(page, "form-action-progressive-message")
-        ).toContainText("Fetched from unregistered loader");
-      } finally {
-        await context.close();
-      }
+      await expect(
+        testId(page, "form-action-progressive-message"),
+      ).toContainText("Fetched from unregistered loader");
+    } finally {
+      await context.close();
     }
-  );
+  });
 });
 
 /**
@@ -842,7 +835,9 @@ test.describe("useLoader hooks (production)", () => {
 
     // Data should be available immediately from SSR
     await expect(testId(page, "use-loader-data")).toBeVisible();
-    await expect(testId(page, "use-loader-route-id")).toContainText("Route ID:");
+    await expect(testId(page, "use-loader-route-id")).toContainText(
+      "Route ID:",
+    );
     await expect(testId(page, "use-loader-source")).toContainText("server");
   });
 
@@ -855,7 +850,7 @@ test.describe("useLoader hooks (production)", () => {
     // Preloaded data should be available
     await expect(testId(page, "use-fetch-loader-preloaded-data")).toBeVisible();
     await expect(
-      testId(page, "use-fetch-loader-preloaded-route-id")
+      testId(page, "use-fetch-loader-preloaded-route-id"),
     ).toContainText("Route ID:");
   });
 
@@ -891,12 +886,12 @@ test.describe("useLoader hooks (production)", () => {
 
     // Wait for data to appear
     await expect(
-      testId(page, "use-fetch-loader-unregistered-data")
+      testId(page, "use-fetch-loader-unregistered-data"),
     ).toBeVisible({
       timeout: 5000,
     });
     await expect(
-      testId(page, "use-fetch-loader-unregistered-message")
+      testId(page, "use-fetch-loader-unregistered-message"),
     ).toContainText("Fetched from unregistered loader");
   });
 
@@ -914,7 +909,7 @@ test.describe("useLoader hooks (production)", () => {
       timeout: 5000,
     });
     await expect(testId(page, "use-loader-route-id")).toContainText(
-      "custom-via-load"
+      "custom-via-load",
     );
   });
 
@@ -940,7 +935,7 @@ test.describe("useLoader hooks (production)", () => {
       timeout: 5000,
     });
     await expect(testId(page, "protected-loader-secret")).toContainText(
-      "This is protected data"
+      "This is protected data",
     );
   });
 
@@ -958,7 +953,7 @@ test.describe("useLoader hooks (production)", () => {
       timeout: 5000,
     });
     await expect(testId(page, "form-action-message")).toContainText(
-      "Fetched from unregistered loader"
+      "Fetched from unregistered loader",
     );
   });
 
@@ -972,7 +967,7 @@ test.describe("useLoader hooks (production)", () => {
 
     const formHtml = await testId(
       page,
-      "form-action-progressive-form"
+      "form-action-progressive-form",
     ).evaluate((el) => el.outerHTML);
 
     expect(formHtml).toContain('method="POST"');
@@ -996,42 +991,41 @@ test.describe("useLoader hooks (production)", () => {
       timeout: 5000,
     });
     await expect(testId(page, "direct-import-message")).toContainText(
-      "Fetched from unregistered loader"
+      "Fetched from unregistered loader",
     );
     await expect(testId(page, "direct-import-id")).toContainText(
-      "direct-import-submitted"
+      "direct-import-submitted",
     );
   });
 
-  test(
-    "form action works without JavaScript (progressive enhancement)",
-    async ({ browser }) => {
-      const context = await browser.newContext({
-        javaScriptEnabled: false,
+  test("form action works without JavaScript (progressive enhancement)", async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({
+      javaScriptEnabled: false,
+    });
+    const page = await context.newPage();
+
+    try {
+      await page.goto(f.url("/hook-tests/form-action"));
+
+      await expect(
+        testId(page, "form-action-progressive-no-data"),
+      ).toBeVisible();
+
+      await testId(page, "form-action-progressive-submit-btn").click();
+
+      await page.waitForLoadState("networkidle");
+
+      await expect(testId(page, "form-action-progressive-data")).toBeVisible({
+        timeout: 5000,
       });
-      const page = await context.newPage();
 
-      try {
-        await page.goto(f.url("/hook-tests/form-action"));
-
-        await expect(
-          testId(page, "form-action-progressive-no-data")
-        ).toBeVisible();
-
-        await testId(page, "form-action-progressive-submit-btn").click();
-
-        await page.waitForLoadState("networkidle");
-
-        await expect(
-          testId(page, "form-action-progressive-data")
-        ).toBeVisible({ timeout: 5000 });
-
-        await expect(
-          testId(page, "form-action-progressive-message")
-        ).toContainText("Fetched from unregistered loader");
-      } finally {
-        await context.close();
-      }
+      await expect(
+        testId(page, "form-action-progressive-message"),
+      ).toContainText("Fetched from unregistered loader");
+    } finally {
+      await context.close();
     }
-  );
+  });
 });

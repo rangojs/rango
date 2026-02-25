@@ -15,7 +15,9 @@ test.describe("Scoped Reverse Resolution", () => {
   });
 
   test.describe("Server-side ctx.reverse", () => {
-    test("should resolve local route name to correct path", async ({ page }) => {
+    test("should resolve local route name to correct path", async ({
+      page,
+    }) => {
       using _ = expectNoPageError(page);
 
       await page.goto(f.url("/href"));
@@ -88,7 +90,9 @@ test.describe("Scoped Reverse Resolution", () => {
   });
 
   test.describe("Client-side href + useMount", () => {
-    test("should resolve mount-relative path to correct URL", async ({ page }) => {
+    test("should resolve mount-relative path to correct URL", async ({
+      page,
+    }) => {
       using _ = expectNoPageError(page);
 
       await page.goto(f.url("/href"));
@@ -99,7 +103,9 @@ test.describe("Scoped Reverse Resolution", () => {
       await expect(clientLocalIndex).toContainText("/href/");
     });
 
-    test("should resolve mount-relative path with dynamic segment", async ({ page }) => {
+    test("should resolve mount-relative path with dynamic segment", async ({
+      page,
+    }) => {
       using _ = expectNoPageError(page);
 
       await page.goto(f.url("/href"));
@@ -137,7 +143,6 @@ test.describe("Scoped Reverse Resolution", () => {
       const clientLocalDetail = testId(page, "client-local-detail");
       await expect(clientLocalDetail).toContainText("/href/client-item");
     });
-
   });
 
   test.describe("Link navigation with reverse", () => {
@@ -197,43 +202,65 @@ test.describe("Scoped Reverse Resolution", () => {
       await expect(page).toHaveURL(/\/href\/from-nested/);
       await expect(testId(page, "href-detail-page")).toBeVisible();
       await expect(testId(page, "detail-title")).toContainText(
-        "Detail: from-nested"
+        "Detail: from-nested",
       );
     });
   });
 
   test.describe("Handler<'.filtered', routes> with params + search", () => {
-    test("should render filtered page with typed params and search", async ({ page }) => {
+    test("should render filtered page with typed params and search", async ({
+      page,
+    }) => {
       using _ = expectNoPageError(page);
 
-      await page.goto(f.url("/href/filtered/books?q=typescript&page=2&active=true"));
+      await page.goto(
+        f.url("/href/filtered/books?q=typescript&page=2&active=true"),
+      );
       await waitForHydration(page);
 
       // Params from route pattern
-      await expect(testId(page, "filtered-category")).toContainText("category: books");
+      await expect(testId(page, "filtered-category")).toContainText(
+        "category: books",
+      );
 
       // Search params from typed schema
       await expect(testId(page, "filtered-q")).toContainText("q: typescript");
       await expect(testId(page, "filtered-page")).toContainText("page: 2");
-      await expect(testId(page, "filtered-active")).toContainText("active: true");
+      await expect(testId(page, "filtered-active")).toContainText(
+        "active: true",
+      );
 
       // Types should be parsed (number, boolean — not strings)
-      await expect(testId(page, "filtered-q-type")).toContainText("q-type: string");
-      await expect(testId(page, "filtered-page-type")).toContainText("page-type: number");
-      await expect(testId(page, "filtered-active-type")).toContainText("active-type: boolean");
+      await expect(testId(page, "filtered-q-type")).toContainText(
+        "q-type: string",
+      );
+      await expect(testId(page, "filtered-page-type")).toContainText(
+        "page-type: number",
+      );
+      await expect(testId(page, "filtered-active-type")).toContainText(
+        "active-type: boolean",
+      );
     });
 
-    test("should handle optional search params as undefined", async ({ page }) => {
+    test("should handle optional search params as undefined", async ({
+      page,
+    }) => {
       using _ = expectNoPageError(page);
 
       // Only required q param, optional page and active omitted
       await page.goto(f.url("/href/filtered/shoes?q=nike"));
       await waitForHydration(page);
 
-      await expect(testId(page, "filtered-category")).toContainText("category: shoes");
+      await expect(testId(page, "filtered-category")).toContainText(
+        "category: shoes",
+      );
       await expect(testId(page, "filtered-q")).toContainText("q: nike");
-      await expect(testId(page, "filtered-page")).toContainText("page: undefined");
-      await expect(testId(page, "filtered-active")).toContainText("active: undefined");
+      await expect(testId(page, "filtered-page")).toContainText(
+        "page: undefined",
+      );
+      await expect(testId(page, "filtered-active")).toContainText(
+        "active: undefined",
+      );
     });
   });
 });
@@ -254,12 +281,16 @@ test.describe("Scoped Reverse Resolution (production)", () => {
 
     // Server-side hrefs
     await expect(testId(page, "server-local-index")).toContainText("/href");
-    await expect(testId(page, "server-local-detail")).toContainText("/href/123");
+    await expect(testId(page, "server-local-detail")).toContainText(
+      "/href/123",
+    );
     await expect(testId(page, "server-absolute-blog")).toContainText("/blog");
 
     // Client-side hrefs (href + useMount)
     await expect(testId(page, "client-local-index")).toContainText("/href/");
-    await expect(testId(page, "client-local-detail")).toContainText("/href/from-client");
+    await expect(testId(page, "client-local-detail")).toContainText(
+      "/href/from-client",
+    );
     await expect(testId(page, "client-absolute-blog")).toContainText("/blog");
   });
 

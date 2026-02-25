@@ -189,7 +189,9 @@ export const HookTestLoaderB = createLoader(
 export const UnregisteredLoader = createLoader(
   async (ctx) => {
     // Form actions provide data via formData, load() calls via params
-    const id = String(ctx.formData?.get("id") ?? ctx.params.id ?? "unregistered");
+    const id = String(
+      ctx.formData?.get("id") ?? ctx.params.id ?? "unregistered",
+    );
     // Delay to ensure loading state is visible in tests
     await new Promise((resolve) => setTimeout(resolve, 500));
     return {

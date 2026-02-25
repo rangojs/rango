@@ -1,5 +1,17 @@
-import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from "node:fs";
-import { join, dirname, resolve, relative, basename as pathBasename } from "node:path";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  readdirSync,
+  unlinkSync,
+} from "node:fs";
+import {
+  join,
+  dirname,
+  resolve,
+  relative,
+  basename as pathBasename,
+} from "node:path";
 // @ts-ignore -- picomatch ships no .d.ts; types are trivial
 import picomatch from "picomatch";
 import ts from "typescript";
@@ -8,7 +20,11 @@ import ts from "typescript";
 // Unresolvable include diagnostics
 // ---------------------------------------------------------------------------
 
-export type UnresolvableReason = "factory-call" | "dynamic-expression" | "unresolvable-import" | "file-not-found";
+export type UnresolvableReason =
+  | "factory-call"
+  | "dynamic-expression"
+  | "unresolvable-import"
+  | "file-not-found";
 
 export interface UnresolvableInclude {
   pathPrefix: string;
@@ -28,13 +44,17 @@ function getStringValue(node: ts.Node): string | null {
   return null;
 }
 
-function extractObjectStringProperties(node: ts.ObjectLiteralExpression): Record<string, string> {
+function extractObjectStringProperties(
+  node: ts.ObjectLiteralExpression,
+): Record<string, string> {
   const result: Record<string, string> = {};
   for (const prop of node.properties) {
     if (!ts.isPropertyAssignment(prop)) continue;
-    const key = ts.isIdentifier(prop.name) ? prop.name.text
-      : ts.isStringLiteral(prop.name) ? prop.name.text
-      : null;
+    const key = ts.isIdentifier(prop.name)
+      ? prop.name.text
+      : ts.isStringLiteral(prop.name)
+        ? prop.name.text
+        : null;
     if (!key) continue;
     const val = getStringValue(prop.initializer);
     if (val !== null) result[key] = val;
@@ -51,7 +71,9 @@ function extractObjectStringProperties(node: ts.ObjectLiteralExpression): Record
  * Matches `:paramName` and `:paramName?` (optional).
  * Custom regex constraints like `:id(\d+)` are ignored for type purposes.
  */
-export function extractParamsFromPattern(pattern: string): Record<string, string> | undefined {
+export function extractParamsFromPattern(
+  pattern: string,
+): Record<string, string> | undefined {
   const params: Record<string, string> = {};
   const regex = /:([a-zA-Z_$][\w$]*)(?:\([^)]+\))?(\?)?/g;
   let match;
@@ -99,11 +121,25 @@ export function formatRouteEntry(
  * the pattern, name, params, and optional search schema from each.
  * Skips unnamed paths (no { name: "..." }).
  */
-export function extractRoutesFromSource(
-  code: string
-): Array<{ name: string; pattern: string; params?: Record<string, string>; search?: Record<string, string> }> {
-  const sourceFile = ts.createSourceFile("input.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const routes: Array<{ name: string; pattern: string; params?: Record<string, string>; search?: Record<string, string> }> = [];
+export function extractRoutesFromSource(code: string): Array<{
+  name: string;
+  pattern: string;
+  params?: Record<string, string>;
+  search?: Record<string, string>;
+}> {
+  const sourceFile = ts.createSourceFile(
+    "input.tsx",
+    code,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  const routes: Array<{
+    name: string;
+    pattern: string;
+    params?: Record<string, string>;
+    search?: Record<string, string>;
+  }> = [];
 
   function visit(node: ts.Node) {
     if (ts.isCallExpression(node)) {
@@ -111,7 +147,8 @@ export function extractRoutesFromSource(
       const isPath =
         (ts.isIdentifier(callee) && callee.text === "path") ||
         (ts.isPropertyAccessExpression(callee) &&
-         ts.isIdentifier(callee.expression) && callee.expression.text === "path");
+          ts.isIdentifier(callee.expression) &&
+          callee.expression.text === "path");
 
       if (isPath && node.arguments.length >= 1) {
         const route = extractRouteFromCallExpression(node);
@@ -125,9 +162,12 @@ export function extractRoutesFromSource(
   return routes;
 }
 
-function extractRouteFromCallExpression(
-  node: ts.CallExpression
-): { name: string; pattern: string; params?: Record<string, string>; search?: Record<string, string> } | null {
+function extractRouteFromCallExpression(node: ts.CallExpression): {
+  name: string;
+  pattern: string;
+  params?: Record<string, string>;
+  search?: Record<string, string>;
+} | null {
   const patternNode = node.arguments[0];
   const pattern = getStringValue(patternNode);
   if (pattern === null) return null;
@@ -143,7 +183,10 @@ function extractRouteFromCallExpression(
         const propName = ts.isIdentifier(prop.name) ? prop.name.text : null;
         if (propName === "name") {
           name = getStringValue(prop.initializer);
-        } else if (propName === "search" && ts.isObjectLiteralExpression(prop.initializer)) {
+        } else if (
+          propName === "search" &&
+          ts.isObjectLiteralExpression(prop.initializer)
+        ) {
           search = extractObjectStringProperties(prop.initializer);
         }
       }
@@ -169,27 +212,42 @@ function extractRouteFromCallExpression(
  * Output has zero imports, preventing circular references.
  */
 export function generatePerModuleTypesSource(
-  routes: Array<{ name: string; pattern: string; params?: Record<string, string>; search?: Record<string, string> }>
+  routes: Array<{
+    name: string;
+    pattern: string;
+    params?: Record<string, string>;
+    search?: Record<string, string>;
+  }>,
 ): string {
   const valid = routes.filter(({ name }) => {
     if (!name || /["'\\`\n\r]/.test(name)) {
-      console.warn(`[rsc-router] Skipping route with invalid name: ${JSON.stringify(name)}`);
+      console.warn(
+        `[rsc-router] Skipping route with invalid name: ${JSON.stringify(name)}`,
+      );
       return false;
     }
     return true;
   });
 
   // Deduplicate by name (first definition wins — primary route before variants)
-  const deduped = new Map<string, { pattern: string; params?: Record<string, string>; search?: Record<string, string> }>();
+  const deduped = new Map<
+    string,
+    {
+      pattern: string;
+      params?: Record<string, string>;
+      search?: Record<string, string>;
+    }
+  >();
   for (const { name, pattern, params, search } of valid) {
     if (deduped.has(name)) {
-      console.warn(`[rsc-router] Duplicate route name "${name}" — keeping first definition`);
+      console.warn(
+        `[rsc-router] Duplicate route name "${name}" — keeping first definition`,
+      );
       continue;
     }
     deduped.set(name, { pattern, params, search });
   }
-  const sorted = [...deduped.entries()]
-    .sort(([a], [b]) => a.localeCompare(b));
+  const sorted = [...deduped.entries()].sort(([a], [b]) => a.localeCompare(b));
   const body = sorted
     .map(([name, { pattern, params, search }]) => {
       const key = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name) ? name : `"${name}"`;
@@ -206,10 +264,10 @@ export function generatePerModuleTypesSource(
  */
 export function generateRouteTypesSource(
   routeManifest: Record<string, string>,
-  searchSchemas?: Record<string, Record<string, string>>
+  searchSchemas?: Record<string, Record<string, string>>,
 ): string {
   const entries = Object.entries(routeManifest).sort(([a], [b]) =>
-    a.localeCompare(b)
+    a.localeCompare(b),
   );
 
   const objectBody = entries
@@ -263,7 +321,8 @@ export function createScanFilter(
 
   const effectiveExclude = exclude ?? DEFAULT_EXCLUDE_PATTERNS;
   const includeMatcher = hasInclude ? picomatch(include) : null;
-  const excludeMatcher = effectiveExclude.length > 0 ? picomatch(effectiveExclude) : null;
+  const excludeMatcher =
+    effectiveExclude.length > 0 ? picomatch(effectiveExclude) : null;
 
   return (absolutePath: string) => {
     const rel = relative(root, absolutePath);
@@ -283,7 +342,9 @@ export function findTsFiles(dir: string, filter?: ScanFilter): string[] {
   try {
     entries = readdirSync(dir, { withFileTypes: true });
   } catch (err) {
-    console.warn(`[rsc-router] Failed to scan directory ${dir}: ${(err as Error).message}`);
+    console.warn(
+      `[rsc-router] Failed to scan directory ${dir}: ${(err as Error).message}`,
+    );
     return results;
   }
   for (const entry of entries) {
@@ -292,8 +353,10 @@ export function findTsFiles(dir: string, filter?: ScanFilter): string[] {
       if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
       results.push(...findTsFiles(fullPath, filter));
     } else if (
-      (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx") ||
-       entry.name.endsWith(".js") || entry.name.endsWith(".jsx")) &&
+      (entry.name.endsWith(".ts") ||
+        entry.name.endsWith(".tsx") ||
+        entry.name.endsWith(".js") ||
+        entry.name.endsWith(".jsx")) &&
       !entry.name.includes(".gen.")
     ) {
       if (filter && !filter(fullPath)) continue;
@@ -308,7 +371,10 @@ export function findTsFiles(dir: string, filter?: ScanFilter): string[] {
  * Scans for files containing `urls(` and writes a sibling `.gen.ts` with the
  * extracted route name/pattern pairs. Only writes when content has changed.
  */
-export function writePerModuleRouteTypes(root: string, filter?: ScanFilter): void {
+export function writePerModuleRouteTypes(
+  root: string,
+  filter?: ScanFilter,
+): void {
   const files = findTsFiles(root, filter);
   for (const filePath of files) {
     writePerModuleRouteTypesForFile(filePath);
@@ -320,7 +386,13 @@ export function writePerModuleRouteTypes(root: string, filter?: ScanFilter): voi
  * e.g. `export const patterns = urls(...)` → ["patterns"]
  */
 function findUrlsVariableNames(code: string): string[] {
-  const sourceFile = ts.createSourceFile("input.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const sourceFile = ts.createSourceFile(
+    "input.tsx",
+    code,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
   const names: string[] = [];
 
   function visit(node: ts.Node) {
@@ -354,7 +426,12 @@ export function writePerModuleRouteTypesForFile(filePath: string): void {
 
     const varNames = findUrlsVariableNames(source);
 
-    type Route = { name: string; pattern: string; params?: Record<string, string>; search?: Record<string, string> };
+    type Route = {
+      name: string;
+      pattern: string;
+      params?: Record<string, string>;
+      search?: Record<string, string>;
+    };
     let routes: Route[];
 
     if (varNames.length > 0) {
@@ -362,7 +439,8 @@ export function writePerModuleRouteTypesForFile(filePath: string): void {
       // The visited set in buildCombinedRouteMapWithSearch prevents infinite loops.
       routes = [];
       for (const varName of varNames) {
-        const { routes: routeMap, searchSchemas } = buildCombinedRouteMapWithSearch(filePath, varName);
+        const { routes: routeMap, searchSchemas } =
+          buildCombinedRouteMapWithSearch(filePath, varName);
         for (const [name, pattern] of Object.entries(routeMap)) {
           const params = extractParamsFromPattern(pattern);
           routes.push({
@@ -382,13 +460,17 @@ export function writePerModuleRouteTypesForFile(filePath: string): void {
 
     const genPath = filePath.replace(/\.(tsx?)$/, ".gen.ts");
     const genSource = generatePerModuleTypesSource(routes);
-    const existing = existsSync(genPath) ? readFileSync(genPath, "utf-8") : null;
+    const existing = existsSync(genPath)
+      ? readFileSync(genPath, "utf-8")
+      : null;
     if (existing !== genSource) {
       writeFileSync(genPath, genSource);
       console.log(`[rsc-router] Generated route types -> ${genPath}`);
     }
   } catch (err) {
-    console.warn(`[rsc-router] Failed to generate route types for ${filePath}: ${(err as Error).message}`);
+    console.warn(
+      `[rsc-router] Failed to generate route types for ${filePath}: ${(err as Error).message}`,
+    );
   }
 }
 
@@ -417,15 +499,37 @@ function extractNamePrefixFromInclude(node: ts.CallExpression): string | null {
  * Returns both resolved includes (identifier second args) and unresolvable
  * includes (factory calls, etc.) with reasons.
  */
-export function extractIncludesWithDiagnostics(
-  code: string
-): {
-  resolved: Array<{ pathPrefix: string; variableName: string; namePrefix: string | null }>;
-  unresolvable: Array<{ pathPrefix: string; namePrefix: string | null; reason: UnresolvableReason; detail: string }>;
+export function extractIncludesWithDiagnostics(code: string): {
+  resolved: Array<{
+    pathPrefix: string;
+    variableName: string;
+    namePrefix: string | null;
+  }>;
+  unresolvable: Array<{
+    pathPrefix: string;
+    namePrefix: string | null;
+    reason: UnresolvableReason;
+    detail: string;
+  }>;
 } {
-  const sourceFile = ts.createSourceFile("input.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const resolved: Array<{ pathPrefix: string; variableName: string; namePrefix: string | null }> = [];
-  const unresolvable: Array<{ pathPrefix: string; namePrefix: string | null; reason: UnresolvableReason; detail: string }> = [];
+  const sourceFile = ts.createSourceFile(
+    "input.tsx",
+    code,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  const resolved: Array<{
+    pathPrefix: string;
+    variableName: string;
+    namePrefix: string | null;
+  }> = [];
+  const unresolvable: Array<{
+    pathPrefix: string;
+    namePrefix: string | null;
+    reason: UnresolvableReason;
+    detail: string;
+  }> = [];
 
   function visit(node: ts.Node) {
     if (ts.isCallExpression(node)) {
@@ -446,7 +550,11 @@ export function extractIncludesWithDiagnostics(
         const namePrefix = extractNamePrefixFromInclude(node);
 
         if (ts.isIdentifier(secondArg)) {
-          resolved.push({ pathPrefix, variableName: secondArg.text, namePrefix });
+          resolved.push({
+            pathPrefix,
+            variableName: secondArg.text,
+            namePrefix,
+          });
         } else if (ts.isCallExpression(secondArg)) {
           const callText = secondArg.expression.getText(sourceFile);
           unresolvable.push({
@@ -482,7 +590,7 @@ export function extractIncludesWithDiagnostics(
  */
 function resolveImportedVariable(
   code: string,
-  localName: string
+  localName: string,
 ): { specifier: string; exportedName: string } | null {
   const importRegex = /import\s*\{([^}]+)\}\s*from\s*["']([^"']+)["']/g;
   let match;
@@ -512,7 +620,7 @@ function resolveImportedVariable(
  */
 function resolveImportPath(
   importSpec: string,
-  fromFile: string
+  fromFile: string,
 ): string | null {
   if (!importSpec.startsWith(".")) return null;
 
@@ -549,9 +657,15 @@ function resolveImportPath(
  */
 function extractUrlsBlockForVariable(
   code: string,
-  varName: string
+  varName: string,
 ): string | null {
-  const sourceFile = ts.createSourceFile("input.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const sourceFile = ts.createSourceFile(
+    "input.tsx",
+    code,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
   let result: string | null = null;
 
   function visit(node: ts.Node) {
@@ -586,7 +700,7 @@ function buildRouteMapFromBlock(
   filePath: string,
   visited: Set<string>,
   searchSchemasOut?: Record<string, Record<string, string>>,
-  diagnosticsOut?: UnresolvableInclude[]
+  diagnosticsOut?: UnresolvableInclude[],
 ): Record<string, string> {
   const routeMap: Record<string, string> = {};
 
@@ -600,7 +714,8 @@ function buildRouteMapFromBlock(
   }
 
   // Extract include() calls with diagnostics for unresolvable ones
-  const { resolved: includes, unresolvable } = extractIncludesWithDiagnostics(block);
+  const { resolved: includes, unresolvable } =
+    extractIncludesWithDiagnostics(block);
 
   if (diagnosticsOut) {
     for (const entry of unresolvable) {
@@ -609,7 +724,10 @@ function buildRouteMapFromBlock(
   }
 
   for (const { pathPrefix, variableName, namePrefix } of includes) {
-    let childResult: { routes: Record<string, string>; searchSchemas: Record<string, Record<string, string>> };
+    let childResult: {
+      routes: Record<string, string>;
+      searchSchemas: Record<string, Record<string, string>>;
+    };
 
     // Try import resolution first
     const imported = resolveImportedVariable(fullSource, variableName);
@@ -631,11 +749,14 @@ function buildRouteMapFromBlock(
         targetFile,
         imported.exportedName,
         visited,
-        diagnosticsOut
+        diagnosticsOut,
       );
     } else {
       // Check if variable exists as a same-file urls() definition
-      const sameFileBlock = extractUrlsBlockForVariable(fullSource, variableName);
+      const sameFileBlock = extractUrlsBlockForVariable(
+        fullSource,
+        variableName,
+      );
       if (!sameFileBlock) {
         if (diagnosticsOut) {
           diagnosticsOut.push({
@@ -648,7 +769,12 @@ function buildRouteMapFromBlock(
         }
         continue;
       }
-      childResult = buildCombinedRouteMapWithSearch(filePath, variableName, visited, diagnosticsOut);
+      childResult = buildCombinedRouteMapWithSearch(
+        filePath,
+        variableName,
+        visited,
+        diagnosticsOut,
+      );
     }
 
     // Apply prefixes
@@ -681,8 +807,11 @@ function buildCombinedRouteMapWithSearch(
   filePath: string,
   variableName?: string,
   visited?: Set<string>,
-  diagnosticsOut?: UnresolvableInclude[]
-): { routes: Record<string, string>; searchSchemas: Record<string, Record<string, string>> } {
+  diagnosticsOut?: UnresolvableInclude[],
+): {
+  routes: Record<string, string>;
+  searchSchemas: Record<string, Record<string, string>>;
+} {
   visited = visited ?? new Set();
   const realPath = resolve(filePath);
   const key = variableName ? `${realPath}:${variableName}` : realPath;
@@ -709,7 +838,14 @@ function buildCombinedRouteMapWithSearch(
   }
 
   const searchSchemas: Record<string, Record<string, string>> = {};
-  const routes = buildRouteMapFromBlock(block, source, realPath, visited, searchSchemas, diagnosticsOut);
+  const routes = buildRouteMapFromBlock(
+    block,
+    source,
+    realPath,
+    visited,
+    searchSchemas,
+    diagnosticsOut,
+  );
   return { routes, searchSchemas };
 }
 
@@ -723,7 +859,7 @@ function buildCombinedRouteMapWithSearch(
  * Returns an array of diagnostics; empty means fully resolvable.
  */
 export function detectUnresolvableIncludes(
-  routerFilePath: string
+  routerFilePath: string,
 ): UnresolvableInclude[] {
   const realPath = resolve(routerFilePath);
   let source: string;
@@ -745,13 +881,15 @@ export function detectUnresolvableIncludes(
   if (imported) {
     const resolved = resolveImportPath(imported.specifier, realPath);
     if (!resolved) {
-      return [{
-        pathPrefix: "/",
-        namePrefix: null,
-        reason: "file-not-found",
-        sourceFile: realPath,
-        detail: `import "${imported.specifier}" resolved to no file`,
-      }];
+      return [
+        {
+          pathPrefix: "/",
+          namePrefix: null,
+          reason: "file-not-found",
+          sourceFile: realPath,
+          detail: `import "${imported.specifier}" resolved to no file`,
+        },
+      ];
     }
     targetFile = resolved;
     exportedName = imported.exportedName;
@@ -762,7 +900,12 @@ export function detectUnresolvableIncludes(
   }
 
   const diagnostics: UnresolvableInclude[] = [];
-  buildCombinedRouteMapWithSearch(targetFile, exportedName, new Set(), diagnostics);
+  buildCombinedRouteMapWithSearch(
+    targetFile,
+    exportedName,
+    new Set(),
+    diagnostics,
+  );
   return diagnostics;
 }
 
@@ -777,10 +920,14 @@ export function detectUnresolvableIncludes(
  *   2. createRouter({ urls: variableName, ... })
  * Returns the local variable name.
  */
-export function extractUrlsVariableFromRouter(
-  code: string
-): string | null {
-  const sourceFile = ts.createSourceFile("router.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+export function extractUrlsVariableFromRouter(code: string): string | null {
+  const sourceFile = ts.createSourceFile(
+    "router.tsx",
+    code,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
   let result: string | null = null;
 
   function isCreateRouterCall(node: ts.Node): boolean {
@@ -804,7 +951,10 @@ export function extractUrlsVariableFromRouter(
       // Walk up the chain: createRouter().middleware(...).routes(x) etc.
       // The innermost call should be createRouter(...)
       let inner: ts.Expression = node.expression.expression;
-      while (ts.isCallExpression(inner) && ts.isPropertyAccessExpression(inner.expression)) {
+      while (
+        ts.isCallExpression(inner) &&
+        ts.isPropertyAccessExpression(inner.expression)
+      ) {
         inner = inner.expression.expression;
       }
       if (isCreateRouterCall(inner)) {
@@ -844,9 +994,10 @@ export function extractUrlsVariableFromRouter(
  * Resolve routes and search schemas from a router source file by following the
  * variable passed to `.routes(...)` or `urls: ...` in createRouter options.
  */
-export function buildCombinedRouteMapForRouterFile(
-  routerFilePath: string,
-): { routes: Record<string, string>; searchSchemas: Record<string, Record<string, string>> } {
+export function buildCombinedRouteMapForRouterFile(routerFilePath: string): {
+  routes: Record<string, string>;
+  searchSchemas: Record<string, Record<string, string>>;
+} {
   let routerSource: string;
   try {
     routerSource = readFileSync(routerFilePath, "utf-8");
@@ -909,13 +1060,19 @@ export function findRouterFiles(root: string, filter?: ScanFilter): string[] {
  * discovery runs. Must NOT be called during production builds — runtime
  * discovery in buildStart produces the definitive file.
  */
-export function writeCombinedRouteTypes(root: string, knownRouterFiles?: string[], opts?: { preserveIfLarger?: boolean }): void {
+export function writeCombinedRouteTypes(
+  root: string,
+  knownRouterFiles?: string[],
+  opts?: { preserveIfLarger?: boolean },
+): void {
   // Delete old combined named-routes.gen.ts if it exists (stale from older versions)
   try {
     const oldCombinedPath = join(root, "src", "named-routes.gen.ts");
     if (existsSync(oldCombinedPath)) {
       unlinkSync(oldCombinedPath);
-      console.log(`[rsc-router] Removed stale combined route types: ${oldCombinedPath}`);
+      console.log(
+        `[rsc-router] Removed stale combined route types: ${oldCombinedPath}`,
+      );
     }
   } catch {}
 
@@ -934,22 +1091,36 @@ export function writeCombinedRouteTypes(root: string, knownRouterFiles?: string[
     if (!urlsVarName) continue;
 
     // Resolve the variable to its source module
-    let result: { routes: Record<string, string>; searchSchemas: Record<string, Record<string, string>> };
+    let result: {
+      routes: Record<string, string>;
+      searchSchemas: Record<string, Record<string, string>>;
+    };
 
     const imported = resolveImportedVariable(routerSource, urlsVarName);
     if (imported) {
       // Variable is imported from another module
       const targetFile = resolveImportPath(imported.specifier, routerFilePath);
       if (!targetFile) continue;
-      result = buildCombinedRouteMapWithSearch(targetFile, imported.exportedName);
+      result = buildCombinedRouteMapWithSearch(
+        targetFile,
+        imported.exportedName,
+      );
     } else {
       // Variable is defined in the same file
       result = buildCombinedRouteMapWithSearch(routerFilePath, urlsVarName);
     }
 
-    const routerBasename = pathBasename(routerFilePath).replace(/\.(tsx?|jsx?)$/, "");
-    const outPath = join(dirname(routerFilePath), `${routerBasename}.named-routes.gen.ts`);
-    const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
+    const routerBasename = pathBasename(routerFilePath).replace(
+      /\.(tsx?|jsx?)$/,
+      "",
+    );
+    const outPath = join(
+      dirname(routerFilePath),
+      `${routerBasename}.named-routes.gen.ts`,
+    );
+    const existing = existsSync(outPath)
+      ? readFileSync(outPath, "utf-8")
+      : null;
 
     // When the static parser can't extract routes (e.g. callback-style urls()),
     // write an empty placeholder so the build-time transform's injected import
@@ -965,7 +1136,7 @@ export function writeCombinedRouteTypes(root: string, knownRouterFiles?: string[
     const hasSearchSchemas = Object.keys(result.searchSchemas).length > 0;
     const source = generateRouteTypesSource(
       result.routes,
-      hasSearchSchemas ? result.searchSchemas : undefined
+      hasSearchSchemas ? result.searchSchemas : undefined,
     );
     if (existing !== source) {
       // On initial dev startup, don't overwrite a file from runtime discovery
@@ -974,14 +1145,18 @@ export function writeCombinedRouteTypes(root: string, knownRouterFiles?: string[
       // or other dynamic code. During HMR (file watcher), always write so
       // newly added routes appear immediately.
       if (opts?.preserveIfLarger && existing) {
-        const existingCount = (existing.match(/^\s+["a-zA-Z_$][^:]*:\s*["{]/gm) || []).length;
+        const existingCount = (
+          existing.match(/^\s+["a-zA-Z_$][^:]*:\s*["{]/gm) || []
+        ).length;
         const newCount = Object.keys(result.routes).length;
         if (existingCount > newCount) {
           continue;
         }
       }
       writeFileSync(outPath, source);
-      console.log(`[rsc-router] Generated route types (${Object.keys(result.routes).length} routes) -> ${outPath}`);
+      console.log(
+        `[rsc-router] Generated route types (${Object.keys(result.routes).length} routes) -> ${outPath}`,
+      );
     }
   }
 }

@@ -11,13 +11,16 @@ export interface PrerenderTestState {
   tag: string;
 }
 
-export const PrerenderTestLocationState = createLocationState<PrerenderTestState>();
+export const PrerenderTestLocationState =
+  createLocationState<PrerenderTestState>();
 
 export interface FlashMessageState {
   text: string;
 }
 
-export const FlashMessage = createLocationState<FlashMessageState>({ flash: true });
+export const FlashMessage = createLocationState<FlashMessageState>({
+  flash: true,
+});
 
 export interface ServerInfoState {
   data: string;

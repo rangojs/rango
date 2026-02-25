@@ -14,12 +14,7 @@ import {
  * it has an intercept that needs to share the same parent context.
  */
 export const slowPatternsWithoutDetail = urls(({ path, loader, loading }) => [
-  path(
-    "/slow",
-    SlowHandler,
-    { name: "slow" },
-    () => [loader(SlowLoader)],
-  ),
+  path("/slow", SlowHandler, { name: "slow" }, () => [loader(SlowLoader)]),
 
   path(
     "/slow-streaming",

@@ -73,7 +73,7 @@ export function createLocationState<TState>(
       throw new Error(
         "[rsc-router] createLocationState key not set. " +
           "Make sure the exposeInternalIds Vite plugin is enabled and " +
-          "the state is exported with: export const MyState = createLocationState(...)"
+          "the state is exported with: export const MyState = createLocationState(...)",
       );
     }
     return _key!;
@@ -92,7 +92,9 @@ export function createLocationState<TState>(
   // the getter during construction (before the Vite plugin sets the key).
   Object.defineProperty(fn, "__rsc_ls_key", {
     get: () => getKey(),
-    set: (k: string) => { _key = k; },
+    set: (k: string) => {
+      _key = k;
+    },
     enumerable: true,
     configurable: true,
   });

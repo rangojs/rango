@@ -43,7 +43,7 @@ export async function addToCart(productId: string): Promise<void> {
  * Add item to cart with result - returns confirmation
  */
 export async function addToCartWithResult(
-  productId: string
+  productId: string,
 ): Promise<{ success: boolean; quantity: number; message: string }> {
   await delay(100);
   const cart = getCart(getCartId());
@@ -62,7 +62,7 @@ export async function addToCartWithResult(
  */
 export async function updateQuantity(
   productId: string,
-  delta: number
+  delta: number,
 ): Promise<{ quantity: number }> {
   await delay(50);
   const cart = getCart(getCartId());
@@ -88,7 +88,7 @@ export async function getCartQuantity(productId: string): Promise<number> {
  * Streaming action - takes 3 seconds to complete
  */
 export async function streamingAction(
-  productId: string
+  productId: string,
 ): Promise<{ success: boolean; timestamp: string }> {
   await delay(3000);
   return {
@@ -114,7 +114,10 @@ export async function prerenderTestAction(): Promise<{ ok: true }> {
  * Simple action that triggers revalidation
  * Used to test that loaders registered with loader() are revalidated
  */
-export async function triggerRevalidation(): Promise<{ triggered: boolean; timestamp: string }> {
+export async function triggerRevalidation(): Promise<{
+  triggered: boolean;
+  timestamp: string;
+}> {
   await delay(100);
   return {
     triggered: true,
@@ -162,7 +165,7 @@ export const StreamingAction = async (_data: FormData) => {
             >
               <h4 style={{ margin: "0 0 0.5rem 0" }}>Completed!</h4>
             </div>
-          </>
+          </>,
         );
       }, 2000); // 2s streaming delay
     }),

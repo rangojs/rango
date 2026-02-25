@@ -10,12 +10,16 @@ export function ClientErrorThrower({ testId }: { testId: string }) {
   const [shouldThrow, setShouldThrow] = useState(false);
 
   if (shouldThrow) {
-    throw new Error("Client-side error: This error was thrown in a client component");
+    throw new Error(
+      "Client-side error: This error was thrown in a client component",
+    );
   }
 
   return (
     <div data-testid={testId}>
-      <p data-testid={`${testId}-info`}>Click the button to trigger a client-side error.</p>
+      <p data-testid={`${testId}-info`}>
+        Click the button to trigger a client-side error.
+      </p>
       <button
         type="button"
         onClick={() => setShouldThrow(true)}
@@ -41,7 +45,9 @@ export function ClientErrorThrower({ testId }: { testId: string }) {
  */
 export function ClientErrorOnMount({ testId }: { testId: string }) {
   // Always throw on render
-  throw new Error("Client mount error: This error was thrown during component mount");
+  throw new Error(
+    "Client mount error: This error was thrown during component mount",
+  );
 
   // This code is unreachable but TypeScript needs a return
   return <div data-testid={testId}>This should never render</div>;

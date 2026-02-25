@@ -86,10 +86,7 @@ export function buildRouteTree(
   const manifest = new Map<string, EntryData>();
   const patterns = new Map<string, string>();
   const patternsByPrefix = new Map<string, Map<string, string>>();
-  const trailingSlashMap = new Map<
-    string,
-    "never" | "always" | "ignore"
-  >();
+  const trailingSlashMap = new Map<string, "never" | "always" | "ignore">();
   const mountIndex = options?.mountIndex ?? 0;
 
   // Synthetic root layout to match createRouter behavior
@@ -363,12 +360,18 @@ export class RouteTree {
     const entry = this.entry(name);
     if (!entry) return [];
     // Parallel entry handler is Record<`@${string}`, Handler>
-    return entry.parallel.map((p) => {
-      if (p.type === "parallel" && typeof p.handler === "object" && p.handler !== null) {
-        return Object.keys(p.handler as Record<string, unknown>);
-      }
-      return [];
-    }).flat();
+    return entry.parallel
+      .map((p) => {
+        if (
+          p.type === "parallel" &&
+          typeof p.handler === "object" &&
+          p.handler !== null
+        ) {
+          return Object.keys(p.handler as Record<string, unknown>);
+        }
+        return [];
+      })
+      .flat();
   }
 
   // --- Error/NotFound boundaries ---
@@ -412,14 +415,20 @@ export class RouteTree {
       const segPath = this.segmentPath(name);
       const ids = segPath.map((s) => s.id).join(" > ");
       const extras: string[] = [];
-      if (entry && entry.middleware.length > 0) extras.push(`mw:${entry.middleware.length}`);
-      if (entry && entry.loader.length > 0) extras.push(`ld:${entry.loader.length}`);
-      if (entry && entry.intercept.length > 0) extras.push(`int:${entry.intercept.length}`);
-      if (entry && entry.parallel.length > 0) extras.push(`par:${entry.parallel.length}`);
+      if (entry && entry.middleware.length > 0)
+        extras.push(`mw:${entry.middleware.length}`);
+      if (entry && entry.loader.length > 0)
+        extras.push(`ld:${entry.loader.length}`);
+      if (entry && entry.intercept.length > 0)
+        extras.push(`int:${entry.intercept.length}`);
+      if (entry && entry.parallel.length > 0)
+        extras.push(`par:${entry.parallel.length}`);
       if (entry?.errorBoundary?.length) extras.push("err");
       if (entry?.cache) extras.push("cache");
       const suffix = extras.length > 0 ? ` {${extras.join(", ")}}` : "";
-      lines.push(`  ${name}: ${pattern} [${entry?.shortCode}] (${ids})${suffix}`);
+      lines.push(
+        `  ${name}: ${pattern} [${entry?.shortCode}] (${ids})${suffix}`,
+      );
     }
     return lines.join("\n");
   }

@@ -130,7 +130,9 @@ export const HookTestsNoLoaderHandler: Handler<"hookTests.noLoader"> = () => (
   </div>
 );
 
-export const HookTestsFormActionHandler: Handler<"hookTests.formAction"> = () => (
+export const HookTestsFormActionHandler: Handler<
+  "hookTests.formAction"
+> = () => (
   <div data-testid="hook-tests-form-action">
     <Link to="/" data-testid="back-link">
       ← Back to Home
@@ -146,7 +148,9 @@ export const HookTestsFormActionHandler: Handler<"hookTests.formAction"> = () =>
   </div>
 );
 
-export const LoaderCompositionHandler: Handler<"loaderComposition"> = async (ctx) => {
+export const LoaderCompositionHandler: Handler<"loaderComposition"> = async (
+  ctx,
+) => {
   // Load all four composition scenarios
   const nfUsesNf = await ctx.use(ComposingNonFetchableUsesNonFetchable);
   const nfUsesF = await ctx.use(ComposingNonFetchableUsesFetchable);
@@ -160,32 +164,56 @@ export const LoaderCompositionHandler: Handler<"loaderComposition"> = async (ctx
       </Link>
       <h1 data-testid="page-title">Loader Composition Test</h1>
 
-      <div data-testid="nf-uses-nf" data-composer={nfUsesNf.composerType} data-dependency={nfUsesNf.dependencyType}>
+      <div
+        data-testid="nf-uses-nf"
+        data-composer={nfUsesNf.composerType}
+        data-dependency={nfUsesNf.dependencyType}
+      >
         <h2>Non-Fetchable uses Non-Fetchable</h2>
         <p data-testid="nf-uses-nf-base">Base value: {nfUsesNf.baseValue}</p>
         <p data-testid="nf-uses-nf-computed">Computed: {nfUsesNf.computed}</p>
-        <p data-testid="nf-uses-nf-invocations">Invocations: {nfUsesNf.baseInvocationCount}</p>
+        <p data-testid="nf-uses-nf-invocations">
+          Invocations: {nfUsesNf.baseInvocationCount}
+        </p>
       </div>
 
-      <div data-testid="nf-uses-f" data-composer={nfUsesF.composerType} data-dependency={nfUsesF.dependencyType}>
+      <div
+        data-testid="nf-uses-f"
+        data-composer={nfUsesF.composerType}
+        data-dependency={nfUsesF.dependencyType}
+      >
         <h2>Non-Fetchable uses Fetchable</h2>
         <p data-testid="nf-uses-f-base">Base value: {nfUsesF.baseValue}</p>
         <p data-testid="nf-uses-f-computed">Computed: {nfUsesF.computed}</p>
-        <p data-testid="nf-uses-f-invocations">Invocations: {nfUsesF.baseInvocationCount}</p>
+        <p data-testid="nf-uses-f-invocations">
+          Invocations: {nfUsesF.baseInvocationCount}
+        </p>
       </div>
 
-      <div data-testid="f-uses-f" data-composer={fUsesF.composerType} data-dependency={fUsesF.dependencyType}>
+      <div
+        data-testid="f-uses-f"
+        data-composer={fUsesF.composerType}
+        data-dependency={fUsesF.dependencyType}
+      >
         <h2>Fetchable uses Fetchable</h2>
         <p data-testid="f-uses-f-base">Base value: {fUsesF.baseValue}</p>
         <p data-testid="f-uses-f-computed">Computed: {fUsesF.computed}</p>
-        <p data-testid="f-uses-f-invocations">Invocations: {fUsesF.baseInvocationCount}</p>
+        <p data-testid="f-uses-f-invocations">
+          Invocations: {fUsesF.baseInvocationCount}
+        </p>
       </div>
 
-      <div data-testid="f-uses-nf" data-composer={fUsesNf.composerType} data-dependency={fUsesNf.dependencyType}>
+      <div
+        data-testid="f-uses-nf"
+        data-composer={fUsesNf.composerType}
+        data-dependency={fUsesNf.dependencyType}
+      >
         <h2>Fetchable uses Non-Fetchable</h2>
         <p data-testid="f-uses-nf-base">Base value: {fUsesNf.baseValue}</p>
         <p data-testid="f-uses-nf-computed">Computed: {fUsesNf.computed}</p>
-        <p data-testid="f-uses-nf-invocations">Invocations: {fUsesNf.baseInvocationCount}</p>
+        <p data-testid="f-uses-nf-invocations">
+          Invocations: {fUsesNf.baseInvocationCount}
+        </p>
       </div>
     </div>
   );
@@ -211,7 +239,8 @@ export const InlineActionHandler: Handler<"inlineAction"> = () => {
       </Link>
       <h1 data-testid="inline-action-title">Inline Action Test</h1>
       <p data-testid="inline-action-description">
-        Tests an action defined directly in the RSC (not imported from a "use server" module).
+        Tests an action defined directly in the RSC (not imported from a "use
+        server" module).
       </p>
       <form action={inlineTestAction} data-testid="inline-action-form">
         <input
@@ -228,8 +257,11 @@ export const InlineActionHandler: Handler<"inlineAction"> = () => {
   );
 };
 
-export const ProgressiveEnhancementHandler: Handler<"progressiveEnhancement"> = async () => {
-  const { submitNameAction, getLastSubmittedName } = await import("../actions.js");
+export const ProgressiveEnhancementHandler: Handler<
+  "progressiveEnhancement"
+> = async () => {
+  const { submitNameAction, getLastSubmittedName } =
+    await import("../actions.js");
   const lastSubmitted = await getLastSubmittedName();
 
   return (
@@ -258,7 +290,10 @@ export const ProgressiveEnhancementHandler: Handler<"progressiveEnhancement"> = 
 
       {lastSubmitted && (
         <div data-testid="pe-result">
-          <p>Last submitted name: <span data-testid="pe-result-name">{lastSubmitted}</span></p>
+          <p>
+            Last submitted name:{" "}
+            <span data-testid="pe-result-name">{lastSubmitted}</span>
+          </p>
         </div>
       )}
     </div>

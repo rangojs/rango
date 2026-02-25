@@ -10,6 +10,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run oxlint
+        run: pnpm lint
+
+  format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Check formatting
+        run: pnpm format
+
   install-playwright:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -141,7 +183,7 @@ jobs:
         if: failure()
         with:
           name: playwright-report-demo-${{ matrix.project }}
-          path: examples/vite-rsc-demo/playwright-report/
+          path: tests/vite-rsc-demo/playwright-report/
           retention-days: 7
 
   rangojs-router-e2e:
@@ -253,7 +295,7 @@ jobs:
         if: failure()
         with:
           name: playwright-report-cloudflare-basic
-          path: examples/cloudflare-basic/playwright-report/
+          path: tests/cloudflare-basic/playwright-report/
           retention-days: 7
 
   react-experimental-e2e:
@@ -299,7 +341,7 @@ jobs:
         if: failure()
         with:
           name: playwright-report-react-experimental
-          path: examples/react-experimental/playwright-report/
+          path: tests/react-experimental/playwright-report/
           retention-days: 7
 
   cloudflare-stress-demo-e2e:
@@ -345,5 +387,5 @@ jobs:
         if: failure()
         with:
           name: playwright-report-cloudflare-stress-demo
-          path: examples/cloudflare-stress-demo/playwright-report/
+          path: tests/cloudflare-stress-demo/playwright-report/
           retention-days: 7

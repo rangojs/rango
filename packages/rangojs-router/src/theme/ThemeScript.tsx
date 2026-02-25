@@ -49,13 +49,13 @@ export interface ThemeScriptProps {
  * This renders a synchronous inline script that applies the theme
  * to the HTML element before React hydration, preventing FOUC.
  */
-export function ThemeScript({ config, nonce }: ThemeScriptProps): React.ReactNode {
+export function ThemeScript({
+  config,
+  nonce,
+}: ThemeScriptProps): React.ReactNode {
   const scriptContent = generateThemeScript(config);
 
   return (
-    <script
-      nonce={nonce}
-      dangerouslySetInnerHTML={{ __html: scriptContent }}
-    />
+    <script nonce={nonce} dangerouslySetInnerHTML={{ __html: scriptContent }} />
   );
 }

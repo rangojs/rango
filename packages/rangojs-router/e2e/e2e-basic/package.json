@@ -11,9 +11,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@rangojs/router": "workspace:*",
     "react": "catalog:",
-    "react-dom": "catalog:",
-    "@rangojs/router": "workspace:*"
+    "react-dom": "catalog:"
   },
   "devDependencies": {
     "@types/react": "catalog:",

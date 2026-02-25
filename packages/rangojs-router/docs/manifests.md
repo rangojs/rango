@@ -35,22 +35,29 @@ export const NamedRoutes = {
   "blog.index": "/blog",
   "blog.post": "/blog/:postId",
   // Routes with search schemas use object format:
-  "href.filtered": { path: "/href/:filterId", search: { tag: "string", draft: "boolean?" } },
+  "href.filtered": {
+    path: "/href/:filterId",
+    search: { tag: "string", draft: "boolean?" },
+  },
 } as const;
 
 // Module augmentation for typed Handler<"blog.post"> and href()
 declare module "@rangojs/router" {
-  interface GeneratedRouteMap { /* ... */ }
+  interface GeneratedRouteMap {
+    /* ... */
+  }
 }
 
 export type NamedRoutes = typeof NamedRoutes;
 ```
 
 **Dual purpose:**
+
 - **Runtime data** -- the virtual module imports `NamedRoutes` and calls `setCachedManifest()`
 - **Static types** -- TypeScript uses the `GeneratedRouteMap` augmentation for IDE autocomplete
 
 **Two creation paths:**
+
 - `writeCombinedRouteTypes()` -- static parser, runs in `configResolved` (before server starts)
 - `writeRouteTypesFiles()` -- runtime discovery output, runs after `discoverRouters()` completes
 
@@ -59,6 +66,7 @@ export type NamedRoutes = typeof NamedRoutes;
 `virtual:rsc-router/routes-manifest` is the bridge between gen files and the runtime.
 
 Generated code (simplified):
+
 ```javascript
 import { NamedRoutes as _r0 } from "/abs/path/to/router.named-routes.gen.js";
 import { setCachedManifest, setRouterManifest, ... } from "@rangojs/router/server";
@@ -117,6 +125,7 @@ reverse() returns updated URLs
 ### Gen File Deletion Recovery
 
 The watcher listens for `unlink` events on `.gen.ts` files:
+
 - If runtime discovery data is available (`perRouterManifests`), calls `writeRouteTypesFiles()`
 - Otherwise falls back to `writeCombinedRouteTypes()` (static parser)
 - The file is recreated synchronously before the next request
@@ -136,6 +145,7 @@ Routes from factory functions (e.g., `createDocsPatterns()`) are invisible to th
 ## Multi-Router
 
 Each `createRouter()` gets isolated data:
+
 - `setRouterManifest(routerId, manifest)` -- per-router route map
 - `setRouterTrie(routerId, trie)` -- per-router matching trie
 - `setRouterPrecomputedEntries(routerId, entries)` -- per-router precomputed leaf entries
@@ -157,17 +167,17 @@ rscRouter({
   // Glob patterns to include/exclude from scanning.
   include: ["src/**"],
   exclude: ["src/legacy/**"],
-})
+});
 ```
 
 ## Build vs Dev
 
-| Aspect | Dev | Build |
-|--------|-----|-------|
-| Discovery | `configureServer` hook, live RSC runner | `buildStart` hook, temp Vite server |
-| Gen file updates | File watcher + supplement | Single write after discovery |
-| Virtual module | Re-evaluated on each request after HMR | Bundled by Rollup (gen file inlined) |
-| Manifest readiness | `manifestReadyPromise` gate | Synchronous (discovery completes before build) |
+| Aspect             | Dev                                     | Build                                          |
+| ------------------ | --------------------------------------- | ---------------------------------------------- |
+| Discovery          | `configureServer` hook, live RSC runner | `buildStart` hook, temp Vite server            |
+| Gen file updates   | File watcher + supplement               | Single write after discovery                   |
+| Virtual module     | Re-evaluated on each request after HMR  | Bundled by Rollup (gen file inlined)           |
+| Manifest readiness | `manifestReadyPromise` gate             | Synchronous (discovery completes before build) |
 
 Both modes produce the same virtual module output. The `import` from gen file works in both:
 Vite resolves it in dev, Rollup bundles it in build.
@@ -176,11 +186,11 @@ Vite resolves it in dev, Rollup bundles it in build.
 
 Three tiers in `route-map-builder.ts`:
 
-| Storage | API | Purpose |
-|---------|-----|---------|
-| `cachedManifest` | `setCachedManifest()` / `getGlobalRouteMap()` | Global merged manifest from all routers |
-| `perRouterManifestMap` | `setRouterManifest()` / `getRouterManifest()` | Per-router isolated manifests |
-| `globalRouteMap` | `registerRouteMap()` | Runtime-accumulated fallback (used before virtual module evaluates) |
+| Storage                | API                                           | Purpose                                                             |
+| ---------------------- | --------------------------------------------- | ------------------------------------------------------------------- |
+| `cachedManifest`       | `setCachedManifest()` / `getGlobalRouteMap()` | Global merged manifest from all routers                             |
+| `perRouterManifestMap` | `setRouterManifest()` / `getRouterManifest()` | Per-router isolated manifests                                       |
+| `globalRouteMap`       | `registerRouteMap()`                          | Runtime-accumulated fallback (used before virtual module evaluates) |
 
 `getGlobalRouteMap()` returns `cachedManifest` if available, otherwise `globalRouteMap`.
 
@@ -193,25 +203,30 @@ never access the manifest storage directly.
 ## Testing
 
 ### Unit tests
+
 ```bash
 pnpm --filter @rangojs/router exec vitest run
 ```
+
 - `src/build/__tests__/generate-route-types.test.ts` -- static parser, `writeCombinedRouteTypes`, `preserveIfLarger`
 - `src/build/__tests__/generate-manifest.test.ts` -- runtime manifest generation
 - `src/build/__tests__/per-router-manifest.test.ts` -- multi-router isolation, lazy loading
 
 ### E2E tests
+
 ```bash
 pnpm --filter @rangojs/router exec playwright test route-types-hmr
 pnpm --filter @rangojs/router exec playwright test route-types
 pnpm --filter @rangojs/router exec playwright test reverse
 ```
+
 - `e2e/route-types-hmr.test.ts` -- HMR: add/remove/rename routes, search schema, include, gen file deletion recovery, reverse() sync
 - `e2e/route-types.test.ts` -- gen file content in dev and production
 - `e2e/reverse.test.ts` -- `ctx.reverse()`, `href()`, mount context in dev and production
 - `e2e/reverse-fallback.test.ts` -- module-level `reverse()` via `NamedRoutes` fallback
 
 ### Full suite
+
 ```bash
 pnpm test  # unit tests run first, then e2e
 ```

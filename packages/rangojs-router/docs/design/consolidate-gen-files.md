@@ -25,12 +25,13 @@ import type { routes } from "./blog.gen.js";
 
 export const BlogIndexHandler: Handler<"index", routes> = (ctx) => {
   const href = scopedReverse<routes>(ctx.reverse);
-  href("post", { postId: "1" });        // short name
-  ctx.reverse("shop.cart");              // global name
+  href("post", { postId: "1" }); // short name
+  ctx.reverse("shop.cart"); // global name
 };
 ```
 
 The per-module gen file provided:
+
 - Short route names (`"index"` instead of `"blog.index"`)
 - Scoped `scopedReverse<routes>()` autocomplete limited to local routes
 
@@ -46,8 +47,8 @@ Handlers use the global `GeneratedRouteMap` with full dotted names:
 ```typescript
 // urls/blog.handlers.tsx — no gen import needed
 export const BlogIndexHandler: Handler<"blog.index"> = (ctx) => {
-  ctx.reverse("blog.post", { postId: "1" });   // full dotted name
-  ctx.reverse("shop.cart");                      // same as before
+  ctx.reverse("blog.post", { postId: "1" }); // full dotted name
+  ctx.reverse("shop.cart"); // same as before
 };
 ```
 
@@ -75,6 +76,7 @@ re-run the CLI command when they change routes in that module.
 3. **Removed** unused imports of both functions
 
 Everything related to `router.named-routes.gen.ts` remains unchanged:
+
 - `writeRouteTypesFiles()` — runtime discovery writes named-routes (kept as-is)
 - Static parser pre-generation on startup for IDE support (kept as-is)
 - `staticRouteTypesGeneration` config option (kept as-is, still controls
@@ -97,20 +99,20 @@ just invoked manually.
 Existing handlers using `Handler<"index", routes>` continue to work if
 their `.gen.ts` file exists. For the default (no per-module gen file):
 
-| Before | After |
-|--------|-------|
-| `Handler<"index", routes>` | `Handler<"blog.index">` |
-| `scopedReverse<routes>(ctx.reverse)` | `ctx.reverse` directly |
-| `href("post", { postId })` | `ctx.reverse("blog.post", { postId })` |
-| `import type { routes } from "./blog.gen.js"` | (removed) |
+| Before                                        | After                                  |
+| --------------------------------------------- | -------------------------------------- |
+| `Handler<"index", routes>`                    | `Handler<"blog.index">`                |
+| `scopedReverse<routes>(ctx.reverse)`          | `ctx.reverse` directly                 |
+| `href("post", { postId })`                    | `ctx.reverse("blog.post", { postId })` |
+| `import type { routes } from "./blog.gen.js"` | (removed)                              |
 
 ### Files Removed from Auto-Generation
 
-| File pattern | Action |
-|---|---|
-| `urls/*.gen.ts` (per-module) | No longer auto-generated |
-| `urls.gen.ts` (root aggregation) | No longer auto-generated |
-| `router.named-routes.gen.ts` | **Kept** — the single source of truth |
+| File pattern                     | Action                                |
+| -------------------------------- | ------------------------------------- |
+| `urls/*.gen.ts` (per-module)     | No longer auto-generated              |
+| `urls.gen.ts` (root aggregation) | No longer auto-generated              |
+| `router.named-routes.gen.ts`     | **Kept** — the single source of truth |
 
 ### Build Pipeline
 

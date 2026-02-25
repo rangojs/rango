@@ -39,7 +39,7 @@ import type {
  * Type guard for unset descriptor
  */
 function isUnsetDescriptor(
-  descriptor: MetaDescriptor
+  descriptor: MetaDescriptor,
 ): descriptor is UnsetDescriptor {
   return (
     typeof descriptor === "object" &&
@@ -53,7 +53,7 @@ function isUnsetDescriptor(
  * Type guard for title descriptor (any form)
  */
 function isTitleDescriptor(
-  descriptor: MetaDescriptor
+  descriptor: MetaDescriptor,
 ): descriptor is { title: TitleDescriptor } {
   return (
     typeof descriptor === "object" &&
@@ -66,7 +66,7 @@ function isTitleDescriptor(
  * Type guard for title template descriptor
  */
 function isTitleTemplate(
-  title: TitleDescriptor
+  title: TitleDescriptor,
 ): title is { template: string; default: string } {
   return (
     typeof title === "object" &&
@@ -79,7 +79,9 @@ function isTitleTemplate(
 /**
  * Type guard for absolute title descriptor
  */
-function isAbsoluteTitle(title: TitleDescriptor): title is { absolute: string } {
+function isAbsoluteTitle(
+  title: TitleDescriptor,
+): title is { absolute: string } {
   return typeof title === "object" && title !== null && "absolute" in title;
 }
 
@@ -141,7 +143,7 @@ function addOrReplace(
   result: MetaDescriptor[],
   keyToIndex: Map<string, number>,
   descriptor: MetaDescriptor,
-  key: string | undefined
+  key: string | undefined,
 ): void {
   if (key !== undefined && keyToIndex.has(key)) {
     result[keyToIndex.get(key)!] = descriptor;
@@ -158,7 +160,7 @@ function addOrReplace(
  */
 function updateIndicesAfterRemoval(
   keyToIndex: Map<string, number>,
-  removedIndex: number
+  removedIndex: number,
 ): void {
   for (const [key, index] of keyToIndex) {
     if (index > removedIndex) {
@@ -208,13 +210,23 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
           // Store template for subsequent title descriptors in child segments
           titleTemplate = titleValue.template;
           // Set the default title
-          addOrReplace(result, keyToIndex, { title: titleValue.default }, "title");
+          addOrReplace(
+            result,
+            keyToIndex,
+            { title: titleValue.default },
+            "title",
+          );
           continue;
         }
 
         if (isAbsoluteTitle(titleValue)) {
           // Absolute title bypasses any template
-          addOrReplace(result, keyToIndex, { title: titleValue.absolute }, "title");
+          addOrReplace(
+            result,
+            keyToIndex,
+            { title: titleValue.absolute },
+            "title",
+          );
           continue;
         }
 
@@ -222,7 +234,12 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
         const finalTitle = titleTemplate
           ? titleTemplate.replace("%s", titleValue as string)
           : titleValue;
-        addOrReplace(result, keyToIndex, { title: finalTitle as string }, "title");
+        addOrReplace(
+          result,
+          keyToIndex,
+          { title: finalTitle as string },
+          "title",
+        );
         continue;
       }
 
@@ -241,7 +258,7 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
  * Use `ctx.use(Meta)` in route handlers to push meta descriptors.
  * Use `<MetaTags />` component to render them in the document head.
  */
-export const Meta: Handle<MetaDescriptor, MetaDescriptor[]> = createHandle<MetaDescriptor, MetaDescriptor[]>(
-  collectMeta,
-  "__rsc_router_meta__"
-);
+export const Meta: Handle<MetaDescriptor, MetaDescriptor[]> = createHandle<
+  MetaDescriptor,
+  MetaDescriptor[]
+>(collectMeta, "__rsc_router_meta__");

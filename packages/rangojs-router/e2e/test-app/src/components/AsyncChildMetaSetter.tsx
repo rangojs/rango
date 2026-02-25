@@ -31,8 +31,12 @@ export async function AsyncChildMetaSetter({
 
   return (
     <div data-testid="async-child-meta-setter">
-      <p data-testid="async-child-set-title">Set title after {delayMs}ms: {title}</p>
-      <p data-testid="async-child-set-description">Set description: {description}</p>
+      <p data-testid="async-child-set-title">
+        Set title after {delayMs}ms: {title}
+      </p>
+      <p data-testid="async-child-set-description">
+        Set description: {description}
+      </p>
     </div>
   );
 }

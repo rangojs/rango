@@ -44,7 +44,7 @@ function normalizeActionId(actionId: string): string {
 export function getActionId(action: ServerActionFunction | string): string {
   invariant(
     typeof action === "function" || typeof action === "string",
-    `useAction: action must be a function or string, got ${typeof action}`
+    `useAction: action must be a function or string, got ${typeof action}`,
   );
   const actionId = (action as any)?.$$id;
   if (actionId) {
@@ -72,7 +72,7 @@ Solutions:
 2. Use the action name as a string:
    const state = useAction("myAction");
 
-The string must match the exported function name from your "use server" file.`
+The string must match the exported function name from your "use server" file.`,
   );
 }
 
@@ -130,15 +130,15 @@ export type ServerActionFunction = ((...args: any[]) => Promise<any>) & {
  * during RSC serialization. Use a string action name or import directly.
  */
 export function useAction(
-  action: ServerActionFunction | string
+  action: ServerActionFunction | string,
 ): TrackedActionState;
 export function useAction<T>(
   action: ServerActionFunction | string,
-  selector: (state: TrackedActionState) => T
+  selector: (state: TrackedActionState) => T,
 ): T;
 export function useAction<T>(
   action: ServerActionFunction | string,
-  selector?: (state: TrackedActionState) => T
+  selector?: (state: TrackedActionState) => T,
 ): T | TrackedActionState {
   const ctx = useContext(NavigationStoreContext);
   const actionId =
@@ -184,7 +184,7 @@ export function useAction<T>(
             setOptimisticState(selectedState);
           });
         }
-      }
+      },
     );
 
     return () => {

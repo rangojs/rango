@@ -60,7 +60,10 @@ import {
  * RouterError messages are always exposed (developer-crafted).
  * Standard Error messages are hidden in production.
  */
-function createResponseErrorPayload(error: unknown, isDev: boolean): ResponseError {
+function createResponseErrorPayload(
+  error: unknown,
+  isDev: boolean,
+): ResponseError {
   if (error instanceof RouterError) {
     return {
       message: error.message,
@@ -92,8 +95,7 @@ function createResponseErrorPayload(error: unknown, isDev: boolean): ResponseErr
  * it, the regex fallback matches catch-all patterns before specific routes.
  */
 async function buildRouterTrieFromUrlpatterns(router: any): Promise<void> {
-  const { generateManifest } =
-    await import("../build/generate-manifest.js");
+  const { generateManifest } = await import("../build/generate-manifest.js");
   const generated = generateManifest(router.urlpatterns);
   if (
     generated._routeAncestry &&
@@ -112,7 +114,7 @@ async function buildRouterTrieFromUrlpatterns(router: any): Promise<void> {
     if (generated.prefixTree) {
       const visitPrefixNode = (node: any): void => {
         const sp = node.staticPrefix || "";
-        for (const route of (node.routes || [])) {
+        for (const route of node.routes || []) {
           routeToStaticPrefix[route] = sp;
         }
         for (const child of Object.values(node.children || {})) {
@@ -128,8 +130,12 @@ async function buildRouterTrieFromUrlpatterns(router: any): Promise<void> {
       generated._routeAncestry,
       routeToStaticPrefix,
       generated.routeTrailingSlash,
-      generated.prerenderRoutes ? new Set(generated.prerenderRoutes) : undefined,
-      generated.passthroughRoutes ? new Set(generated.passthroughRoutes) : undefined,
+      generated.prerenderRoutes
+        ? new Set(generated.prerenderRoutes)
+        : undefined,
+      generated.passthroughRoutes
+        ? new Set(generated.passthroughRoutes)
+        : undefined,
       generated.responseTypeRoutes,
     );
     setRouterTrie(router.id, trie);
@@ -231,7 +237,6 @@ export function createRSCHandler<
     locationState?: Record<string, unknown>,
   ): Response {
     const redirectPayload: RscPayload = {
-
       metadata: {
         pathname: redirectUrl,
         segments: [],
@@ -406,7 +411,8 @@ export function createRSCHandler<
         // fetch auto-follows the 3xx and the state is lost.
         const isPartial = url.searchParams.has("_rsc_partial");
         const redirectUrl = mwResponse.headers.get("Location");
-        const isRedirect = mwResponse.status >= 300 && mwResponse.status < 400 && redirectUrl;
+        const isRedirect =
+          mwResponse.status >= 300 && mwResponse.status < 400 && redirectUrl;
         if (isPartial && isRedirect) {
           const locationState = getLocationState();
           if (locationState) {
@@ -477,7 +483,8 @@ export function createRSCHandler<
             if (!hrefParams) return name;
             return name.replace(/:([^/]+)/g, (_, key) => {
               const value = hrefParams[key];
-              if (value === undefined) throw new Error(`Missing param "${key}" for path "${name}"`);
+              if (value === undefined)
+                throw new Error(`Missing param "${key}" for path "${name}"`);
               return encodeURIComponent(value);
             });
           }
@@ -485,7 +492,8 @@ export function createRSCHandler<
         },
         get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
         header: (name: string, value: string) => reqCtx.header(name, value),
-        setCookie: (name: string, value: string, options?: any) => reqCtx.setCookie(name, value, options),
+        setCookie: (name: string, value: string, options?: any) =>
+          reqCtx.setCookie(name, value, options),
       };
 
       // Call handler directly, wrapped by route middleware if present
@@ -494,7 +502,9 @@ export function createRSCHandler<
         if (preview.responseType === "json") {
           const errorCtx = { request, url, env };
           try {
-            const result = await (preview.handler as Function)(responseHandlerCtx);
+            const result = await (preview.handler as Function)(
+              responseHandlerCtx,
+            );
             if (result instanceof Response) {
               const mergedHeaders: Record<string, string> = {};
               result.headers.forEach((value, key) => {
@@ -507,15 +517,23 @@ export function createRSCHandler<
             }
             return createResponseWithMergedHeaders(
               JSON.stringify({ data: result }),
-              { status: 200, headers: { "content-type": "application/json;charset=utf-8" } },
+              {
+                status: 200,
+                headers: { "content-type": "application/json;charset=utf-8" },
+              },
             );
           } catch (error) {
             callOnError(error, "handler", errorCtx);
             const isDev = process.env.NODE_ENV !== "production";
             const status = error instanceof RouterError ? error.status : 500;
             return createResponseWithMergedHeaders(
-              JSON.stringify({ error: createResponseErrorPayload(error, isDev) }),
-              { status, headers: { "content-type": "application/json;charset=utf-8" } },
+              JSON.stringify({
+                error: createResponseErrorPayload(error, isDev),
+              }),
+              {
+                status,
+                headers: { "content-type": "application/json;charset=utf-8" },
+              },
             );
           }
         }
@@ -523,7 +541,9 @@ export function createRSCHandler<
         // Non-JSON response routes: catch errors and return plain Response
         const errorCtx = { request, url, env };
         try {
-          const result = await (preview.handler as Function)(responseHandlerCtx);
+          const result = await (preview.handler as Function)(
+            responseHandlerCtx,
+          );
 
           if (result instanceof Response) {
             // Handler returned a Response directly -- pass through
@@ -540,40 +560,41 @@ export function createRSCHandler<
           // Auto-wrap based on response type tag
           switch (preview.responseType) {
             case "text":
-              return createResponseWithMergedHeaders(
-                String(result),
-                { status: 200, headers: { "content-type": "text/plain;charset=utf-8" } },
-              );
+              return createResponseWithMergedHeaders(String(result), {
+                status: 200,
+                headers: { "content-type": "text/plain;charset=utf-8" },
+              });
             case "html":
-              return createResponseWithMergedHeaders(
-                String(result),
-                { status: 200, headers: { "content-type": "text/html;charset=utf-8" } },
-              );
+              return createResponseWithMergedHeaders(String(result), {
+                status: 200,
+                headers: { "content-type": "text/html;charset=utf-8" },
+              });
             case "xml":
-              return createResponseWithMergedHeaders(
-                String(result),
-                { status: 200, headers: { "content-type": "application/xml;charset=utf-8" } },
-              );
+              return createResponseWithMergedHeaders(String(result), {
+                status: 200,
+                headers: { "content-type": "application/xml;charset=utf-8" },
+              });
             case "md":
-              return createResponseWithMergedHeaders(
-                String(result),
-                { status: 200, headers: { "content-type": "text/markdown;charset=utf-8" } },
-              );
+              return createResponseWithMergedHeaders(String(result), {
+                status: 200,
+                headers: { "content-type": "text/markdown;charset=utf-8" },
+              });
             default:
               // image, stream, any -- must return Response
               throw new Error(
-                `Response route handler for "${preview.responseType}" must return a Response object, got ${typeof result}`
+                `Response route handler for "${preview.responseType}" must return a Response object, got ${typeof result}`,
               );
           }
         } catch (error) {
           callOnError(error, "handler", errorCtx);
           const isDev = process.env.NODE_ENV !== "production";
           const status = error instanceof RouterError ? error.status : 500;
-          const message = error instanceof RouterError
-            ? error.message
-            : isDev && error instanceof Error
+          const message =
+            error instanceof RouterError
               ? error.message
-              : "Internal Server Error";
+              : isDev && error instanceof Error
+                ? error.message
+                : "Internal Server Error";
           return createResponseWithMergedHeaders(message, {
             status,
             headers: { "content-type": "text/plain;charset=utf-8" },
@@ -660,7 +681,10 @@ export function createRSCHandler<
                       );
                     }
                   } catch (error) {
-                    console.error(`[ResponseCache] Revalidation failed:`, error);
+                    console.error(
+                      `[ResponseCache] Revalidation failed:`,
+                      error,
+                    );
                   }
                 });
 
@@ -698,7 +722,14 @@ export function createRSCHandler<
 
     // Wrap RSC handler to append Vary: Accept on content-negotiated routes
     const rscHandler = async () => {
-      const response = await coreRequestHandlerInner(request, env, url, variables, nonce, preview?.params);
+      const response = await coreRequestHandlerInner(
+        request,
+        env,
+        url,
+        variables,
+        nonce,
+        preview?.params,
+      );
       if (preview?.negotiated) {
         response.headers.append("Vary", "Accept");
       }
@@ -734,7 +765,8 @@ export function createRSCHandler<
       // fetch auto-follows the 3xx, losing the state.
       const isPartial = url.searchParams.has("_rsc_partial");
       const mwRedirectUrl = mwResponse.headers.get("Location");
-      const isMwRedirect = mwResponse.status >= 300 && mwResponse.status < 400 && mwRedirectUrl;
+      const isMwRedirect =
+        mwResponse.status >= 300 && mwResponse.status < 400 && mwRedirectUrl;
       if (isPartial && isMwRedirect) {
         const locationState = getLocationState();
         if (locationState) {
@@ -808,7 +840,8 @@ export function createRSCHandler<
     ) {
       const trie = getRouterTrie(router.id) ?? getRouteTrie();
       const routeManifest = getRequiredRouteMap();
-      const { extractAncestryFromTrie } = await import("../build/route-trie.js");
+      const { extractAncestryFromTrie } =
+        await import("../build/route-trie.js");
       return new Response(
         JSON.stringify(
           {
@@ -891,7 +924,7 @@ export function createRSCHandler<
         if (isPartial && error.status === 200) {
           console.warn(
             `[RSC] Route handler at ${url.pathname} returned a Response during client-side navigation. ` +
-            `Falling back to hard navigation. Use data-external on the <Link> to avoid the extra round-trip.`,
+              `Falling back to hard navigation. Use data-external on the <Link> to avoid the extra round-trip.`,
           );
           const cleanUrl = new URL(url);
           cleanUrl.searchParams.delete("_rsc_partial");
@@ -914,7 +947,8 @@ export function createRSCHandler<
         // Instead, return a 200 with a Flight payload containing the redirect
         // URL and state so the browser can perform the redirect with pushState.
         const redirectUrl = error.headers.get("Location");
-        const isRedirect = error.status >= 300 && error.status < 400 && redirectUrl;
+        const isRedirect =
+          error.status >= 300 && error.status < 400 && redirectUrl;
         if (isPartial && isRedirect) {
           const locationState = getLocationState();
           if (locationState) {
@@ -959,7 +993,6 @@ export function createRSCHandler<
         };
 
         const payload: RscPayload = {
-    
           metadata: {
             pathname: url.pathname,
             segments: [notFoundSegment],
@@ -1130,7 +1163,6 @@ export function createRSCHandler<
     }
 
     const payload: RscPayload = {
-
       metadata: {
         pathname: url.pathname,
         segments: match.segments,
@@ -1215,7 +1247,8 @@ export function createRSCHandler<
       // and the revalidation step would run unnecessarily.
       if (data instanceof Response) {
         const redirectUrl = data.headers.get("Location");
-        const isRedirect = data.status >= 300 && data.status < 400 && redirectUrl;
+        const isRedirect =
+          data.status >= 300 && data.status < 400 && redirectUrl;
         if (isRedirect) {
           const locationState = getLocationState();
           if (locationState) {
@@ -1254,7 +1287,6 @@ export function createRSCHandler<
         setRequestContextParams(errorResult.params);
 
         const payload: RscPayload = {
-    
           metadata: {
             pathname: url.pathname,
             segments: errorResult.segments,
@@ -1308,7 +1340,6 @@ export function createRSCHandler<
       const serverTiming = fullMatch.serverTiming;
 
       const payload: RscPayload = {
-  
         metadata: {
           pathname: url.pathname,
           segments: fullMatch.segments,
@@ -1344,7 +1375,6 @@ export function createRSCHandler<
     const serverTiming = matchResult.serverTiming;
 
     const payload: RscPayload = {
-
       metadata: {
         pathname: url.pathname,
         segments: matchResult.segments,
@@ -1568,7 +1598,6 @@ export function createRSCHandler<
         serverTiming = match.serverTiming;
 
         payload = {
-    
           metadata: {
             pathname: url.pathname,
             segments: match.segments,
@@ -1587,7 +1616,6 @@ export function createRSCHandler<
         serverTiming = result.serverTiming;
 
         payload = {
-    
           metadata: {
             pathname: url.pathname,
             segments: result.segments,
@@ -1619,7 +1647,9 @@ export function createRSCHandler<
         // Build-time prerender collection: serialize segments and handle data
         // to JSON for storage as build artifacts. At runtime the worker
         // deserializes these and feeds them through the normal segment pipeline.
-        const nonLoaderSegments = match.segments.filter((s) => s.type !== "loader");
+        const nonLoaderSegments = match.segments.filter(
+          (s) => s.type !== "loader",
+        );
         await handleStore.settled;
         const { serializeSegments } = await import("../cache/segment-codec.js");
         const serializedSegments = await serializeSegments(nonLoaderSegments);
@@ -1645,7 +1675,7 @@ export function createRSCHandler<
         payload = {
           // Initial SSR can reconstruct the tree from segments + rootLayout,
           // so we omit root to avoid sending the same structure twice.
-    
+
           metadata: {
             pathname: url.pathname,
             segments: match.segments,
@@ -1668,7 +1698,8 @@ export function createRSCHandler<
     if (isPartial && payload.metadata) {
       const locationState = getLocationState();
       if (locationState) {
-        payload.metadata.locationState = resolveLocationStateEntries(locationState);
+        payload.metadata.locationState =
+          resolveLocationStateEntries(locationState);
       }
     }
 

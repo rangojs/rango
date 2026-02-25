@@ -17,7 +17,10 @@ describe("computeProductionHash", () => {
   });
 
   it("hashes /@fs/ absolute paths relative to root", () => {
-    const result = computeProductionHash(root, "/@fs/home/user/project/src/Card.tsx");
+    const result = computeProductionHash(
+      root,
+      "/@fs/home/user/project/src/Card.tsx",
+    );
     expect(result).toBe(sha256_12("src/Card.tsx"));
   });
 
@@ -43,7 +46,9 @@ describe("computeProductionHash", () => {
   });
 
   it("hashes client-in-server-package-proxy IDs relative to root", () => {
-    const encodedPath = encodeURIComponent("/home/user/project/node_modules/foo/index.js");
+    const encodedPath = encodeURIComponent(
+      "/home/user/project/node_modules/foo/index.js",
+    );
     const result = computeProductionHash(
       root,
       `/@id/__x00__virtual:vite-rsc/client-in-server-package-proxy/${encodedPath}`,
@@ -57,7 +62,9 @@ describe("computeProductionHash", () => {
   });
 
   it("returns unknown format IDs unchanged", () => {
-    expect(computeProductionHash(root, "some-random-id")).toBe("some-random-id");
+    expect(computeProductionHash(root, "some-random-id")).toBe(
+      "some-random-id",
+    );
   });
 });
 

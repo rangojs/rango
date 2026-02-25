@@ -11,7 +11,11 @@ export {
 export { useAction, type TrackedActionState } from "./use-action.js";
 
 // Segments state hook
-export { useSegments, initSegmentsSync, type SegmentsState } from "./use-segments.js";
+export {
+  useSegments,
+  initSegmentsSync,
+  type SegmentsState,
+} from "./use-segments.js";
 
 // Handle data hook
 export { useHandle, initHandleDataSync } from "./use-handle.js";
@@ -35,11 +39,7 @@ export {
 } from "./context.js";
 
 // Link component
-export {
-  Link,
-  type LinkProps,
-  type PrefetchStrategy,
-} from "./Link.js";
+export { Link, type LinkProps, type PrefetchStrategy } from "./Link.js";
 
 // Link status hook
 export { useLinkStatus, type LinkStatus } from "./use-link-status.js";

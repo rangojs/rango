@@ -241,7 +241,7 @@ const stressTestPatterns = urls(({ path, layout, include }) => [
   ]),
 ]);
 
-type Routes = NonNullable<typeof stressTestPatterns["_routes"]>;
+type Routes = NonNullable<(typeof stressTestPatterns)["_routes"]>;
 
 // Test nested layout routes
 type T1 = Routes["l1.r1"];

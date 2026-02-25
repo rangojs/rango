@@ -125,23 +125,25 @@ export function generateThemeScript(config: ResolvedThemeConfig): string {
  * Removes comments, extra whitespace, and unnecessary newlines
  */
 function minifyScript(script: string): string {
-  return script
-    // Remove single-line comments
-    .replace(/\/\/.*$/gm, "")
-    // Remove multi-line comments
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    // Remove leading/trailing whitespace from lines
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .join("")
-    // Collapse multiple spaces to single space
-    .replace(/\s+/g, " ")
-    // Remove spaces around operators and punctuation
-    .replace(/\s*([{};,=!<>()[\]+\-*/&|?:])\s*/g, "$1")
-    // Add back necessary spaces (e.g., "var x")
-    .replace(/(var|function|return|if|for|try|catch|typeof|else)\(/g, "$1 (")
-    .replace(/\)([a-zA-Z])/g, ") $1");
+  return (
+    script
+      // Remove single-line comments
+      .replace(/\/\/.*$/gm, "")
+      // Remove multi-line comments
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      // Remove leading/trailing whitespace from lines
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .join("")
+      // Collapse multiple spaces to single space
+      .replace(/\s+/g, " ")
+      // Remove spaces around operators and punctuation
+      .replace(/\s*([{};,=!<>()[\]+\-*/&|?:])\s*/g, "$1")
+      // Add back necessary spaces (e.g., "var x")
+      .replace(/(var|function|return|if|for|try|catch|typeof|else)\(/g, "$1 (")
+      .replace(/\)([a-zA-Z])/g, ") $1")
+  );
 }
 
 /**

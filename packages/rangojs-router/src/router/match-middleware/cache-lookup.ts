@@ -100,10 +100,18 @@ import { getRequestContext } from "../../server/request-context.js";
 // Dynamic imports prevent pulling in @vitejs/plugin-rsc/rsc virtual module at
 // top-level, which breaks vitest (only URLs with file:, data:, node: schemes).
 let prerenderStoreInstance: PrerenderStore | null | undefined;
-let _deserializeSegments: typeof import("../../cache/segment-codec.js").deserializeSegments | undefined;
-let _restoreHandles: typeof import("../../cache/handle-snapshot.js").restoreHandles | undefined;
-let _hashParams: typeof import("../../prerender/param-hash.js").hashParams | undefined;
-let _getRequestContext: typeof import("../../server/request-context.js").getRequestContext | undefined;
+let _deserializeSegments:
+  | typeof import("../../cache/segment-codec.js").deserializeSegments
+  | undefined;
+let _restoreHandles:
+  | typeof import("../../cache/handle-snapshot.js").restoreHandles
+  | undefined;
+let _hashParams:
+  | typeof import("../../prerender/param-hash.js").hashParams
+  | undefined;
+let _getRequestContext:
+  | typeof import("../../server/request-context.js").getRequestContext
+  | undefined;
 
 function paramsEqual(
   a: Record<string, string>,
@@ -152,12 +160,15 @@ async function* yieldFromStore<TEnv>(
   pipelineStart: number,
   handleStoreRef?: HandleStore,
 ): AsyncGenerator<ResolvedSegment> {
-  const {
-    resolveLoadersOnlyWithRevalidation,
-    resolveLoadersOnly,
-  } = getRouterContext<TEnv>();
+  const { resolveLoadersOnlyWithRevalidation, resolveLoadersOnly } =
+    getRouterContext<TEnv>();
 
-  if (!_deserializeSegments || !_restoreHandles || !_hashParams || !_getRequestContext) {
+  if (
+    !_deserializeSegments ||
+    !_restoreHandles ||
+    !_hashParams ||
+    !_getRequestContext
+  ) {
     throw new Error("yieldFromStore called before ensurePrerenderDeps");
   }
 
@@ -178,10 +189,14 @@ async function* yieldFromStore<TEnv>(
   // so parent layouts stay live (client keeps its existing versions).
   // When params changed (e.g., different guide slug), the segments have
   // different content, so we must NOT nullify.
-  const paramsChanged = !ctx.isFullMatch &&
-    !paramsEqual(ctx.matched.params, ctx.prevParams);
+  const paramsChanged =
+    !ctx.isFullMatch && !paramsEqual(ctx.matched.params, ctx.prevParams);
   for (const segment of segments) {
-    if (!ctx.isFullMatch && !paramsChanged && ctx.clientSegmentSet.has(segment.id)) {
+    if (
+      !ctx.isFullMatch &&
+      !paramsChanged &&
+      ctx.clientSegmentSet.has(segment.id)
+    ) {
       segment.component = null;
       segment.loading = undefined;
     }
@@ -230,7 +245,11 @@ async function* yieldFromStore<TEnv>(
 
   const ms = ctx.metricsStore;
   if (ms) {
-    ms.metrics.push({ label: "pipeline:cache-lookup", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+    ms.metrics.push({
+      label: "pipeline:cache-lookup",
+      duration: performance.now() - pipelineStart,
+      startTime: pipelineStart - ms.requestStart,
+    });
   }
 }
 
@@ -238,7 +257,7 @@ async function* yieldFromStore<TEnv>(
  * Async generator middleware type
  */
 export type GeneratorMiddleware<T> = (
-  source: AsyncGenerator<T>
+  source: AsyncGenerator<T>,
 ) => AsyncGenerator<T>;
 
 /**
@@ -256,10 +275,10 @@ export type GeneratorMiddleware<T> = (
  */
 export function withCacheLookup<TEnv>(
   ctx: MatchContext<TEnv>,
-  state: MatchPipelineState
+  state: MatchPipelineState,
 ): GeneratorMiddleware<ResolvedSegment> {
   return async function* (
-    source: AsyncGenerator<ResolvedSegment>
+    source: AsyncGenerator<ResolvedSegment>,
   ): AsyncGenerator<ResolvedSegment> {
     const pipelineStart = performance.now();
     const ms = ctx.metricsStore;
@@ -288,10 +307,18 @@ export function withCacheLookup<TEnv>(
         if (ctx.isIntercept) {
           // Intercept navigation: try intercept-specific prerender entry
           const entry = await prerenderStoreInstance.get(
-            ctx.matched.routeKey, paramHash + "/i", { pathname: ctx.pathname }
+            ctx.matched.routeKey,
+            paramHash + "/i",
+            { pathname: ctx.pathname },
           );
           if (entry) {
-            yield* yieldFromStore(entry, ctx, state, pipelineStart, handleStoreRef);
+            yield* yieldFromStore(
+              entry,
+              ctx,
+              state,
+              pipelineStart,
+              handleStoreRef,
+            );
             return;
           }
           // No intercept prerender -- fall through to normal pipeline
@@ -299,10 +326,18 @@ export function withCacheLookup<TEnv>(
         } else {
           // Normal navigation: existing behavior
           const entry = await prerenderStoreInstance.get(
-            ctx.matched.routeKey, paramHash, { pathname: ctx.pathname }
+            ctx.matched.routeKey,
+            paramHash,
+            { pathname: ctx.pathname },
           );
           if (entry) {
-            yield* yieldFromStore(entry, ctx, state, pipelineStart, handleStoreRef);
+            yield* yieldFromStore(
+              entry,
+              ctx,
+              state,
+              pipelineStart,
+              handleStoreRef,
+            );
             return;
           }
         }
@@ -319,7 +354,11 @@ export function withCacheLookup<TEnv>(
     // in-process where Node APIs work, so no interception is needed.
     if (!ctx.isAction && !ctx.matched.pr && globalThis.__PRERENDER_DEV_URL) {
       const hasStatic = ctx.entries.some(
-        (e) => (e.type === "layout" || e.type === "route" || e.type === "parallel") && e.isStaticPrerender
+        (e) =>
+          (e.type === "layout" ||
+            e.type === "route" ||
+            e.type === "parallel") &&
+          e.isStaticPrerender,
       );
       if (hasStatic) {
         await ensurePrerenderDeps();
@@ -328,19 +367,35 @@ export function withCacheLookup<TEnv>(
 
           if (ctx.isIntercept) {
             const entry = await prerenderStoreInstance.get(
-              ctx.matched.routeKey, paramHash + "/i", { pathname: ctx.pathname }
+              ctx.matched.routeKey,
+              paramHash + "/i",
+              { pathname: ctx.pathname },
             );
             if (entry) {
-              yield* yieldFromStore(entry, ctx, state, pipelineStart, handleStoreRef);
+              yield* yieldFromStore(
+                entry,
+                ctx,
+                state,
+                pipelineStart,
+                handleStoreRef,
+              );
               return;
             }
             // No intercept prerender -- fall through to normal pipeline
           } else {
             const entry = await prerenderStoreInstance.get(
-              ctx.matched.routeKey, paramHash, { pathname: ctx.pathname }
+              ctx.matched.routeKey,
+              paramHash,
+              { pathname: ctx.pathname },
             );
             if (entry) {
-              yield* yieldFromStore(entry, ctx, state, pipelineStart, handleStoreRef);
+              yield* yieldFromStore(
+                entry,
+                ctx,
+                state,
+                pipelineStart,
+                handleStoreRef,
+              );
               return;
             }
           }
@@ -353,7 +408,11 @@ export function withCacheLookup<TEnv>(
       // Cache miss - pass through to segment resolution
       yield* source;
       if (ms) {
-        ms.metrics.push({ label: "pipeline:cache-lookup", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+        ms.metrics.push({
+          label: "pipeline:cache-lookup",
+          duration: performance.now() - pipelineStart,
+          startTime: pipelineStart - ms.requestStart,
+        });
       }
       return;
     }
@@ -362,14 +421,18 @@ export function withCacheLookup<TEnv>(
     const cacheResult = await ctx.cacheScope.lookupRoute(
       ctx.pathname,
       ctx.matched.params,
-      ctx.isIntercept
+      ctx.isIntercept,
     );
 
     if (!cacheResult) {
       // Cache miss - pass through to segment resolution
       yield* source;
       if (ms) {
-        ms.metrics.push({ label: "pipeline:cache-lookup", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+        ms.metrics.push({
+          label: "pipeline:cache-lookup",
+          duration: performance.now() - pipelineStart,
+          startTime: pipelineStart - ms.requestStart,
+        });
       }
       return;
     }
@@ -448,7 +511,7 @@ export function withCacheLookup<TEnv>(
       // Full match (document request) - simple loader resolution without revalidation
       if (resolveLoadersOnly) {
         const loaderSegments = await Store.run(() =>
-          resolveLoadersOnly(ctx.entries, ctx.handlerContext)
+          resolveLoadersOnly(ctx.entries, ctx.handlerContext),
         );
 
         // Update state - full match doesn't track matchedIds separately
@@ -474,8 +537,8 @@ export function withCacheLookup<TEnv>(
             ctx.prevUrl,
             ctx.url,
             ctx.routeKey,
-            ctx.actionContext
-          )
+            ctx.actionContext,
+          ),
         );
 
         // Update state with fresh loader matchedIds
@@ -493,7 +556,11 @@ export function withCacheLookup<TEnv>(
       }
     }
     if (ms) {
-      ms.metrics.push({ label: "pipeline:cache-lookup", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+      ms.metrics.push({
+        label: "pipeline:cache-lookup",
+        duration: performance.now() - pipelineStart,
+        startTime: pipelineStart - ms.requestStart,
+      });
     }
   };
 }
