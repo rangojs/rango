@@ -9,6 +9,7 @@ import { getRequestContext } from "../server/request-context.js";
 import { getSearchSchema } from "../route-map-builder.js";
 import { parseSearchParams, serializeSearchParams } from "../search-params.js";
 import { contextGet, contextSet } from "../context-var.js";
+import { NOCACHE_SYMBOL } from "../cache/taint.js";
 
 /**
  * Resolve route name with namespace prefix support.
@@ -148,7 +149,7 @@ export function createHandlerContext<TEnv>(
   // Get stub response from request context for setting headers
   const stubResponse = requestContext?.res ?? new Response(null, { status: 200 });
 
-  return {
+  const ctx: InternalHandlerContext<any, TEnv> = {
     params,
     build: false,
     request,
@@ -185,6 +186,9 @@ export function createHandlerContext<TEnv>(
     // Scoped reverse for URL generation (auto-fills current request params)
     reverse: createReverseFunction(routeMap, routeName, params),
   };
+  // Brand with taint symbol so "use cache" excludes ctx from cache keys
+  (ctx as any)[NOCACHE_SYMBOL] = true;
+  return ctx;
 }
 
 /**

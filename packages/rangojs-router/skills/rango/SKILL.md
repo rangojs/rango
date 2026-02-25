@@ -20,6 +20,7 @@ Django-inspired RSC router with composable URL patterns, type-safe href, and ser
 | `/intercept` | Modal/slide-over patterns for soft navigation |
 | `/parallel` | Multi-column layouts and sidebars |
 | `/caching` | Segment caching with memory or KV stores |
+| `/use-cache` | Function-level caching with `"use cache"` directive |
 | `/document-cache` | Edge caching with Cache-Control headers |
 | `/theme` | Light/dark mode with FOUC prevention |
 | `/links` | URL generation: ctx.reverse, href, useHref, useMount, scopedReverse |

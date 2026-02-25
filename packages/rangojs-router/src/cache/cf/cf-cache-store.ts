@@ -25,6 +25,8 @@ import type {
   CachedEntryData,
   CacheDefaults,
   CacheGetResult,
+  CacheItemResult,
+  CacheItemOptions,
 } from "../types.js";
 import {
   getRequestContext,
@@ -409,6 +411,88 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       }
     } catch (error) {
       console.error("[CFCacheStore] putResponse failed:", error);
+    }
+  }
+
+  // ============================================================================
+  // Function Cache Methods (for "use cache" directive)
+  // ============================================================================
+
+  /**
+   * Get a cached function result by key.
+   * Follows the same SWR pattern as get() for segment caching.
+   */
+  async getItem(key: string): Promise<CacheItemResult | null> {
+    try {
+      const cache = await this.getCache();
+      const request = this.keyToRequest(`fn:${key}`);
+      const response = await cache.match(request);
+
+      if (!response) return null;
+
+      const staleAt = Number(response.headers.get(CACHE_STALE_AT_HEADER) ?? "0");
+      const status = response.headers.get(CACHE_STATUS_HEADER);
+      const age = Number(response.headers.get("age") ?? "0");
+
+      const isStale = staleAt > 0 && Date.now() > staleAt;
+      const isRevalidating = status === "REVALIDATING" && age < MAX_REVALIDATION_INTERVAL;
+
+      const data = (await response.json()) as {
+        value: string;
+        handles?: Record<string, Record<string, unknown[]>>;
+      };
+
+      if (!isStale || isRevalidating) {
+        return { value: data.value, handles: data.handles, shouldRevalidate: false };
+      }
+
+      // Stale and needs revalidation — mark REVALIDATING atomically
+      const headers = new Headers(response.headers);
+      headers.set(CACHE_STATUS_HEADER, "REVALIDATING");
+      await cache.put(
+        request,
+        new Response(JSON.stringify(data), { status: 200, headers }),
+      );
+
+      return { value: data.value, handles: data.handles, shouldRevalidate: true };
+    } catch (error) {
+      console.error("[CFCacheStore] getItem failed:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Store a function result with TTL and optional SWR window.
+   */
+  async setItem(key: string, value: string, options?: CacheItemOptions): Promise<void> {
+    try {
+      const cache = await this.getCache();
+      const request = this.keyToRequest(`fn:${key}`);
+
+      const ttl = options?.ttl ?? this.defaults?.ttl ?? 900;
+      const swrWindow = options?.swr ?? this.defaults?.swr ?? 0;
+      const totalTtl = ttl + swrWindow;
+      const staleAt = Date.now() + ttl * 1000;
+
+      const body = JSON.stringify({ value, handles: options?.handles });
+      const response = new Response(body, {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": `public, max-age=${totalTtl}`,
+          [CACHE_STALE_AT_HEADER]: String(staleAt),
+          [CACHE_STATUS_HEADER]: "HIT",
+        },
+      });
+
+      const putPromise = cache.put(request, response);
+
+      if (this.waitUntil) {
+        this.waitUntil(async () => { await putPromise; });
+      } else {
+        await putPromise;
+      }
+    } catch (error) {
+      console.error("[CFCacheStore] setItem failed:", error);
     }
   }
 

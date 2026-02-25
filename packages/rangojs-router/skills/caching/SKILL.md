@@ -38,6 +38,36 @@ cache({
 ])
 ```
 
+## Named Profile Shorthand
+
+Use a named cache profile string instead of an options object. The profile must be
+defined in `createRouter({ cacheProfiles })`. Unknown names throw at boot time.
+
+```typescript
+// Define profiles in router
+createRouter({
+  cacheProfiles: {
+    default: { ttl: 900, swr: 1800 },
+    short:   { ttl: 60, swr: 120 },
+    long:    { ttl: 3600, swr: 7200 },
+  },
+})
+
+// Use by name in urls
+export const urlpatterns = urls(({ path, cache }) => [
+  cache('long', () => [
+    path("/blog", BlogIndex, { name: "blog" }),
+  ]),
+
+  // Also works without children (orphan cache boundary)
+  cache('short'),
+  path("/feed", FeedPage, { name: "feed" }),
+])
+```
+
+These profile names are shared with the `"use cache: <name>"` directive. See
+`/use-cache` for function-level caching.
+
 ## Loader-Level Caching
 
 Cache individual loaders:

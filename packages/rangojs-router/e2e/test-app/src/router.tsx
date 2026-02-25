@@ -145,6 +145,9 @@ const headerShorthandMiddleware: Middleware = async (ctx, next) => {
 
 export const router = createRouter<AppEnv>({
   cache: { store: cacheStore },
+  cacheProfiles: {
+    short: { ttl: 10, swr: 20 },
+  },
   theme: {
     defaultTheme: "light",
     themes: ["light", "dark", "system"],

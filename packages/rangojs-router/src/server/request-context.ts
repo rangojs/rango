@@ -23,6 +23,7 @@ import type { SegmentCacheStore } from "../cache/types.js";
 import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import { THEME_COOKIE } from "../theme/constants.js";
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
+import { NOCACHE_SYMBOL, assertNotInsideCacheExec } from "../cache/taint.js";
 
 /**
  * Unified request context available via getRequestContext()
@@ -370,6 +371,7 @@ export function createRequestContext<TEnv>(
     var: variables,
     get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as RequestContext<TEnv>["get"],
     set: ((keyOrVar: any, value: any) => {
+      assertNotInsideCacheExec(ctx, "set");
       contextSet(variables, keyOrVar, value);
     }) as RequestContext<TEnv>["set"],
     params: {} as Record<string, string>,
@@ -384,6 +386,7 @@ export function createRequestContext<TEnv>(
     },
 
     setCookie(name: string, value: string, options?: CookieOptions): void {
+      assertNotInsideCacheExec(ctx, "setCookie");
       stubResponse.headers.append(
         "Set-Cookie",
         serializeCookieValue(name, value, options)
@@ -394,6 +397,7 @@ export function createRequestContext<TEnv>(
       name: string,
       options?: Pick<CookieOptions, "domain" | "path">
     ): void {
+      assertNotInsideCacheExec(ctx, "deleteCookie");
       stubResponse.headers.append(
         "Set-Cookie",
         serializeCookieValue(name, "", { ...options, maxAge: 0 })
@@ -401,6 +405,7 @@ export function createRequestContext<TEnv>(
     },
 
     header(name: string, value: string): void {
+      assertNotInsideCacheExec(ctx, "header");
       stubResponse.headers.set(name, value);
     },
 
@@ -425,15 +430,20 @@ export function createRequestContext<TEnv>(
     _onResponseCallbacks: [],
 
     onResponse(callback: (response: Response) => Response): void {
+      assertNotInsideCacheExec(ctx, "onResponse");
       this._onResponseCallbacks.push(callback);
     },
 
     // Theme properties (only set when themeConfig is provided)
     theme: themeConfig ? getTheme() : undefined,
-    setTheme: themeConfig ? setTheme : undefined,
+    setTheme: themeConfig ? ((theme: Theme) => {
+      assertNotInsideCacheExec(ctx, "setTheme");
+      setTheme(theme);
+    }) : undefined,
     _themeConfig: themeConfig,
 
     setLocationState(entries: LocationStateEntry[]): void {
+      assertNotInsideCacheExec(ctx, "setLocationState");
       this._locationState = this._locationState
         ? [...this._locationState, ...entries]
         : entries;
@@ -448,6 +458,8 @@ export function createRequestContext<TEnv>(
     getContext: () => ctx,
   });
 
+  // Brand with taint symbol so "use cache" excludes ctx from cache keys
+  (ctx as any)[NOCACHE_SYMBOL] = true;
   return ctx;
 }
 

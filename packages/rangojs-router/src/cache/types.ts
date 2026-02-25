@@ -131,6 +131,52 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * @param swr - Optional stale-while-revalidate window in seconds
    */
   putResponse?(key: string, response: Response, ttl: number, swr?: number): Promise<void>;
+
+  // ============================================================================
+  // Function Cache Methods (optional, for "use cache" directive)
+  // ============================================================================
+  // These methods cache individual function/component return values.
+  // Stores that support "use cache" should implement these methods.
+
+  /**
+   * Get a cached function result by key.
+   * Returns the serialized value, optional handle data, and staleness flag.
+   */
+  getItem?(key: string): Promise<CacheItemResult | null>;
+
+  /**
+   * Store a function result with TTL and optional SWR window.
+   * @param key - Cache key (format: use-cache:{functionId}:{serializedArgs})
+   * @param value - RSC-serialized return value
+   * @param options - TTL, SWR, handle data, and tags
+   */
+  setItem?(key: string, value: string, options?: CacheItemOptions): Promise<void>;
+}
+
+/**
+ * Result from getItem() for function-level caching ("use cache").
+ */
+export interface CacheItemResult {
+  /** RSC-serialized return value */
+  value: string;
+  /** Handle data captured during execution (breadcrumbs, metadata, etc.) */
+  handles?: Record<string, SegmentHandleData>;
+  /** Whether the entry is stale and should be revalidated */
+  shouldRevalidate: boolean;
+}
+
+/**
+ * Options for setItem() for function-level caching ("use cache").
+ */
+export interface CacheItemOptions {
+  /** Handle data to store alongside the value */
+  handles?: Record<string, SegmentHandleData>;
+  /** Time-to-live in seconds */
+  ttl?: number;
+  /** Stale-while-revalidate window in seconds */
+  swr?: number;
+  /** Cache tags for invalidation */
+  tags?: string[];
 }
 
 /**

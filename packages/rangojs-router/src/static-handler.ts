@@ -33,6 +33,7 @@
 import type { ReactNode } from "react";
 import type { Handler } from "./types.js";
 import type { PrerenderOptions, StaticBuildContext } from "./prerender.js";
+import { isCachedFunction } from "./cache/taint.js";
 
 // -- Types ------------------------------------------------------------------
 
@@ -61,6 +62,14 @@ export function Static<TParams extends Record<string, any>>(
   optionsOrId?: PrerenderOptions | string,
   maybeId?: string,
 ): StaticHandlerDefinition<TParams> {
+  if (isCachedFunction(handler)) {
+    throw new Error(
+      'A "use cache" function cannot be used as a Static() handler. ' +
+      'Static handlers are rendered once at build time. Remove the ' +
+      '"use cache" directive — Static already provides caching.',
+    );
+  }
+
   let options: PrerenderOptions | undefined;
   let id: string;
 

@@ -2,6 +2,8 @@ import type { ComponentType } from "react";
 import { type ReactNode } from "react";
 import { createCacheScope } from "./cache/cache-scope.js";
 import type { SegmentCacheStore } from "./cache/types.js";
+import { setCacheProfiles } from "./cache/profile-registry.js";
+import { isCachedFunction } from "./cache/taint.js";
 import { assertClientComponent } from "./component-utils.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
 import {
@@ -455,6 +457,27 @@ export interface RSCRouterOptions<TEnv = any> {
         store: SegmentCacheStore;
         enabled?: boolean;
       });
+
+  /**
+   * Named cache profiles for "use cache" directive.
+   * Profile names map to TTL/SWR configuration.
+   *
+   * - `"use cache"` (no name) resolves to the `default` profile.
+   * - `"use cache: short"` resolves to the `short` profile.
+   *
+   * @example
+   * ```typescript
+   * createRouter({
+   *   cacheProfiles: {
+   *     default: { ttl: 900, swr: 1800 },
+   *     short:   { ttl: 60, swr: 120 },
+   *     long:    { ttl: 3600, swr: 7200 },
+   *     products: { ttl: 300, swr: 600, tags: ['products'] },
+   *   },
+   * });
+   * ```
+   */
+  cacheProfiles?: Record<string, import("./cache/profile-registry.js").CacheProfile>;
 
   /**
    * Theme configuration for automatic theme management.
@@ -1177,6 +1200,7 @@ export function createRouter<TEnv = any>(
     notFound,
     onError,
     cache,
+    cacheProfiles: cacheProfilesOption,
     theme: themeOption,
     urls: urlsOption,
     $$routeNames: staticRouteNames,
@@ -1185,6 +1209,11 @@ export function createRouter<TEnv = any>(
     warmup: warmupOption,
     allowDebugManifest: allowDebugManifestOption = false,
   } = options;
+
+  // Set cache profiles for "use cache" directive
+  if (cacheProfilesOption) {
+    setCacheProfiles(cacheProfilesOption);
+  }
 
   // Capture the source file that called createRouter() via stack trace parsing.
   // Used by the Vite plugin to write per-router named-routes.gen.ts files.
@@ -1267,6 +1296,18 @@ export function createRouter<TEnv = any>(
     } else {
       // Just middleware (no pattern)
       handler = patternOrMiddleware;
+    }
+
+    // Prevent "use cache" functions from being used as middleware.
+    // They return data/JSX and do not call next() — silently accepting
+    // them would be a confusing no-op.
+    if (isCachedFunction(handler)) {
+      throw new Error(
+        `A "use cache" function cannot be used as middleware. ` +
+        `Cached functions return data and do not participate in the ` +
+        `middleware chain. Remove the "use cache" directive or use a ` +
+        `regular middleware function instead.`,
+      );
     }
 
     // If mount-scoped, prepend mount prefix to pattern
