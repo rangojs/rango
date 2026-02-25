@@ -9,7 +9,7 @@ import {
   findStatementEnd,
   buildExportMap,
   escapeRegExp,
-} from "../expose-id-utils.ts";
+} from "../plugins/expose-id-utils.ts";
 
 describe("normalizePath", () => {
   it("returns forward-slash paths unchanged", () => {

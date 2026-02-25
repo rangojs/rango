@@ -7,7 +7,7 @@
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import packageJson from "../../package.json" with { type: "json" };
+import packageJson from "../../../package.json" with { type: "json" };
 
 /**
  * The canonical name used in virtual entries (without scope)

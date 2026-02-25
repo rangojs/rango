@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from "vitest";
-import { exposeActionId } from "../expose-action-id.ts";
+import { exposeActionId } from "../plugins/expose-action-id.ts";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";

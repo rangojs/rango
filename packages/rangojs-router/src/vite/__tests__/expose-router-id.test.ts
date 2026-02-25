@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { exposeRouterId } from "../expose-internal-ids.ts";
+import { exposeRouterId } from "../plugins/expose-internal-ids.ts";
 
 function createPlugin() {
   const plugin = exposeRouterId();

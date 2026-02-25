@@ -1,5 +1,5 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
-/// <reference path="../vite/version.d.ts" />
+/// <reference path="../vite/plugins/version.d.ts" />
 /**
  * RSC Request Handler
  *

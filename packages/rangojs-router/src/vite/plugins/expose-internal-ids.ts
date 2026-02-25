@@ -16,7 +16,7 @@ import {
 import {
   transformInlineHandlers,
   type VirtualHandlerEntry,
-} from "./ast-handler-extract.ts";
+} from "../utils/ast-handler-extract.ts";
 
 // ---------------------------------------------------------------------------
 // Virtual module for loader manifest

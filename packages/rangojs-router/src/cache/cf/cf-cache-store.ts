@@ -1,4 +1,4 @@
-/// <reference path="../../vite/version.d.ts" />
+/// <reference path="../../vite/plugins/version.d.ts" />
 
 // Extend CacheStorage with Cloudflare's default cache property
 declare global {
