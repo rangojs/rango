@@ -37,6 +37,8 @@ export interface AppVariables {
   includeLayoutMw?: string;
   // Handler-first execution order test variable
   handlerData?: string;
+  // Prerender ctx test variable
+  sharedFromGetParams?: string;
 }
 
 export type AppEnv = RouterEnv<AppBindings, AppVariables>;
