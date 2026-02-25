@@ -118,6 +118,7 @@ export {
   Prerender,
   isPrerenderHandler,
   type PrerenderHandlerDefinition,
+  type PrerenderPassthroughContext,
   type PrerenderOptions,
   type BuildContext,
   type StaticBuildContext,
