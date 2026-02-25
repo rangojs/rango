@@ -34,11 +34,17 @@ export default defineConfig({
   projects: isUIMode
     ? [
         {
+          name: "smoke",
+          testMatch: "**/smoke.test.ts",
+          use: browserConfig,
+        },
+        {
           name: "dev",
           // Exclude any production-tagged describe blocks, including
           // variants like "(production build)".
           grep: /^(?!.*\(production)/,
           testIgnore: [
+            "**/smoke.test.ts",
             "**/loader-hmr.test.ts",
             "**/route-types-hmr.test.ts",
             "**/client-component-hmr.test.ts",
@@ -52,6 +58,7 @@ export default defineConfig({
         {
           name: "production",
           grep: /\(production/,
+          testIgnore: ["**/smoke.test.ts"],
           use: browserConfig,
           fullyParallel: false,
         },
@@ -70,8 +77,14 @@ export default defineConfig({
       ]
     : [
         {
+          name: "smoke",
+          testMatch: "**/smoke.test.ts",
+          use: browserConfig,
+        },
+        {
           name: "build",
           testMatch: "**/build-test-app.setup.ts",
+          dependencies: ["smoke"],
         },
         {
           name: "dev-warmup",
@@ -89,6 +102,7 @@ export default defineConfig({
           // Exclude production tests (by test name) and HMR test files (by file name)
           grep: /^(?!.*\(production)/,
           testIgnore: [
+            "**/smoke.test.ts",
             "**/loader-hmr.test.ts",
             "**/route-types-hmr.test.ts",
             "**/client-component-hmr.test.ts",
@@ -103,6 +117,7 @@ export default defineConfig({
         {
           name: "production",
           grep: /\(production/,
+          testIgnore: ["**/smoke.test.ts"],
           use: browserConfig,
           // Run production tests serially to avoid port conflicts
           // Each test file spins up its own preview server

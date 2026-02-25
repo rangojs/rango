@@ -15,6 +15,7 @@ export default defineConfig({
     sourcemap: true,
   },
   resolve: {
+    dedupe: ["react", "react-dom"],
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
