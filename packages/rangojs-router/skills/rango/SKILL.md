@@ -10,28 +10,28 @@ Django-inspired RSC router with composable URL patterns, type-safe href, and ser
 
 ## Skills
 
-| Skill | Description |
-|-------|-------------|
-| `/router-setup` | Create and configure the RSC router |
-| `/route` | Define routes with `urls()` and `path()` |
-| `/layout` | Layouts that wrap child routes |
-| `/loader` | Data loaders with `createLoader()` |
-| `/middleware` | Request processing and authentication |
-| `/intercept` | Modal/slide-over patterns for soft navigation |
-| `/parallel` | Multi-column layouts and sidebars |
-| `/caching` | Segment caching with memory or KV stores |
-| `/use-cache` | Function-level caching with `"use cache"` directive |
-| `/document-cache` | Edge caching with Cache-Control headers |
-| `/theme` | Light/dark mode with FOUC prevention |
-| `/links` | URL generation: ctx.reverse, href, useHref, useMount, scopedReverse |
-| `/hooks` | Client-side React hooks |
-| `/typesafety` | Type-safe routes, params, href, and environment |
-| `/host-router` | Multi-app host routing with domain/subdomain patterns |
-| `/tailwind` | Set up Tailwind CSS v4 with `?url` imports |
-| `/response-routes` | JSON/text/HTML/XML/stream endpoints with `path.json()`, `path.text()` |
-| `/mime-routes` | Content negotiation — same URL, different response types via Accept header |
-| `/fonts` | Load web fonts with preload hints |
-| `/testing` | Unit test route trees with `buildRouteTree()` |
+| Skill              | Description                                                                |
+| ------------------ | -------------------------------------------------------------------------- |
+| `/router-setup`    | Create and configure the RSC router                                        |
+| `/route`           | Define routes with `urls()` and `path()`                                   |
+| `/layout`          | Layouts that wrap child routes                                             |
+| `/loader`          | Data loaders with `createLoader()`                                         |
+| `/middleware`      | Request processing and authentication                                      |
+| `/intercept`       | Modal/slide-over patterns for soft navigation                              |
+| `/parallel`        | Multi-column layouts and sidebars                                          |
+| `/caching`         | Segment caching with memory or KV stores                                   |
+| `/use-cache`       | Function-level caching with `"use cache"` directive                        |
+| `/document-cache`  | Edge caching with Cache-Control headers                                    |
+| `/theme`           | Light/dark mode with FOUC prevention                                       |
+| `/links`           | URL generation: ctx.reverse, href, useHref, useMount, scopedReverse        |
+| `/hooks`           | Client-side React hooks                                                    |
+| `/typesafety`      | Type-safe routes, params, href, and environment                            |
+| `/host-router`     | Multi-app host routing with domain/subdomain patterns                      |
+| `/tailwind`        | Set up Tailwind CSS v4 with `?url` imports                                 |
+| `/response-routes` | JSON/text/HTML/XML/stream endpoints with `path.json()`, `path.text()`      |
+| `/mime-routes`     | Content negotiation — same URL, different response types via Accept header |
+| `/fonts`           | Load web fonts with preload hints                                          |
+| `/testing`         | Unit test route trees with `buildRouteTree()`                              |
 
 ## Quick Start
 
@@ -78,11 +78,11 @@ npx rango generate src/urls.tsx src/api/
 
 Each file is classified by its contents:
 
-| Contains | Generated output |
-|----------|-----------------|
-| `urls(` | Per-module `*.gen.ts` with route names, patterns, params, search |
-| `createRouter` | Per-router `*.named-routes.gen.ts` with global route map |
-| Both | Both files |
+| Contains       | Generated output                                                 |
+| -------------- | ---------------------------------------------------------------- |
+| `urls(`        | Per-module `*.gen.ts` with route names, patterns, params, search |
+| `createRouter` | Per-router `*.named-routes.gen.ts` with global route map         |
+| Both           | Both files                                                       |
 
 Directories are scanned recursively for `.ts`/`.tsx` files, skipping `node_modules`,
 dotfiles, and existing `.gen.` files.

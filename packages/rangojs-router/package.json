@@ -109,8 +109,8 @@
       "default": "./src/cache/index.ts"
     },
     "./cache-runtime": {
-      "react-server": "./src/cache/cache-runtime.ts",
       "types": "./src/cache/cache-runtime.ts",
+      "react-server": "./src/cache/cache-runtime.ts",
       "default": "./src/cache/cache-runtime.ts"
     },
     "./theme": {

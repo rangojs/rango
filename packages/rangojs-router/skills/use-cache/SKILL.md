@@ -15,14 +15,14 @@ return values with TTL + stale-while-revalidate. Complementary to the route-leve
 ### File-level (all exports cached with default profile)
 
 ```typescript
-"use cache"
+"use cache";
 
 export async function getProducts() {
-  return await db.query('SELECT * FROM products');
+  return await db.query("SELECT * FROM products");
 }
 
 export async function getCategories() {
-  return await db.query('SELECT * FROM categories');
+  return await db.query("SELECT * FROM categories");
 }
 ```
 
@@ -30,13 +30,13 @@ export async function getCategories() {
 
 ```typescript
 export async function getProducts() {
-  "use cache: short"
-  return await db.query('SELECT * FROM products');
+  "use cache: short";
+  return await db.query("SELECT * FROM products");
 }
 
 export async function getCategories() {
-  "use cache: long"
-  return await db.query('SELECT * FROM categories');
+  "use cache: long";
+  return await db.query("SELECT * FROM categories");
 }
 ```
 
@@ -59,11 +59,11 @@ Define profiles in createRouter. Profile names map to `"use cache: <name>"` and
 createRouter({
   cacheProfiles: {
     default: { ttl: 900, swr: 1800 },
-    short:   { ttl: 60, swr: 120 },
-    long:    { ttl: 3600, swr: 7200 },
-    products: { ttl: 300, swr: 600, tags: ['products'] },
+    short: { ttl: 60, swr: 120 },
+    long: { ttl: 3600, swr: 7200 },
+    products: { ttl: 300, swr: 600, tags: ["products"] },
   },
-})
+});
 ```
 
 - `"use cache"` (no name) resolves to `default`.
@@ -94,10 +94,10 @@ When detected:
 
 ```typescript
 export async function getProductData(ctx) {
-  "use cache: short"
+  "use cache: short";
   const breadcrumb = ctx.use(Breadcrumbs);
   breadcrumb({ label: "Products", href: "/products" });
-  return await db.query('SELECT * FROM products');
+  return await db.query("SELECT * FROM products");
 }
 // On hit: return value restored, breadcrumb replayed.
 ```
@@ -115,6 +115,7 @@ are lost on cache hit (the function body is skipped):
 - `ctx.onResponse()`
 
 The error message recommends two alternatives:
+
 1. Extract the data fetch into a separate cached function and call ctx methods outside it.
 2. Use the route-level `cache()` DSL which caches all segments together.
 
@@ -147,14 +148,14 @@ request (onion model) and must not be cached.
 
 ```typescript
 // WRONG -- throws at boot time
-middleware(cachedFn)
+middleware(cachedFn);
 
 // RIGHT -- call cached function inside middleware
 middleware(async (ctx, next) => {
   const data = await getCachedData();
   ctx.set("data", data);
   await next();
-})
+});
 ```
 
 ### Cannot use as Static() handler
@@ -196,16 +197,17 @@ The cache **store write** (`setItem`) is deferred to `waitUntil` and does NOT bl
 the response.
 
 On stale hit, stale data is returned immediately. Background revalidation (re-execute
-+ store) runs entirely inside `waitUntil`.
 
-| Phase | Blocks response? |
-|-------|-----------------|
-| Function execution (miss) | Yes |
-| Result serialization (miss) | Yes |
-| Cache store write (miss) | No (waitUntil) |
-| Stale value return (stale hit) | No (immediate) |
-| Background revalidation (stale) | No (waitUntil) |
-| Cache lookup + deserialization (hit) | Yes (fast) |
+- store) runs entirely inside `waitUntil`.
+
+| Phase                                | Blocks response? |
+| ------------------------------------ | ---------------- |
+| Function execution (miss)            | Yes              |
+| Result serialization (miss)          | Yes              |
+| Cache store write (miss)             | No (waitUntil)   |
+| Stale value return (stale hit)       | No (immediate)   |
+| Background revalidation (stale)      | No (waitUntil)   |
+| Cache lookup + deserialization (hit) | Yes (fast)       |
 
 ## Using with Loaders
 
@@ -215,8 +217,8 @@ cached function returns cached data:
 ```typescript
 // Cached data function
 export async function getProductData(slug: string) {
-  "use cache"
-  return await db.query('SELECT * FROM products WHERE slug = ?', [slug]);
+  "use cache";
+  return await db.query("SELECT * FROM products WHERE slug = ?", [slug]);
 }
 
 // Loader runs every request, but inner call is cached
@@ -268,15 +270,17 @@ Function-level directives are hoisted:
 ```typescript
 // Input
 export async function getProducts() {
-  "use cache: short"
-  return await db.query('...');
+  "use cache: short";
+  return await db.query("...");
 }
 
 // Output
 const __rango_cached_getProducts = registerCachedFunction(
-  async function getProducts() { return await db.query('...'); },
+  async function getProducts() {
+    return await db.query("...");
+  },
   "src/data/products.ts#getProducts",
-  "short"
+  "short",
 );
 export async function getProducts() {
   return __rango_cached_getProducts();
@@ -291,13 +295,13 @@ One store, one configuration, one invalidation API. Tag-based invalidation
 
 ## Interaction with Other Caching
 
-| Mechanism | Granularity | When | Use case |
-|-----------|------------|------|----------|
-| `"use cache"` | Function/component | Runtime | Cache individual data fetches or components |
-| `cache()` DSL | Route segment | Runtime | Cache entire route subtrees with children |
-| `cache('profile')` | Route segment | Runtime | Same as cache() with a named profile |
-| `Static()` | Route segment | Build-time | Render once, never re-render |
-| `Prerender()` | Route segment | Build-time | Pre-render known params, optional live fallback |
+| Mechanism          | Granularity        | When       | Use case                                        |
+| ------------------ | ------------------ | ---------- | ----------------------------------------------- |
+| `"use cache"`      | Function/component | Runtime    | Cache individual data fetches or components     |
+| `cache()` DSL      | Route segment      | Runtime    | Cache entire route subtrees with children       |
+| `cache('profile')` | Route segment      | Runtime    | Same as cache() with a named profile            |
+| `Static()`         | Route segment      | Build-time | Render once, never re-render                    |
+| `Prerender()`      | Route segment      | Build-time | Pre-render known params, optional live fallback |
 
 ## Dev Mode
 

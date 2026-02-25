@@ -66,7 +66,10 @@ function getItemCacheRegistry(): Map<string, Map<string, CachedItemEntry>> {
 /**
  * Returns the globalThis-backed registry of named response cache Maps.
  */
-function getResponseCacheRegistry(): Map<string, Map<string, CachedResponseEntry>> {
+function getResponseCacheRegistry(): Map<
+  string,
+  Map<string, CachedResponseEntry>
+> {
   let registry = (globalThis as any)[RESPONSE_CACHE_REGISTRY_KEY] as
     | Map<string, Map<string, CachedResponseEntry>>
     | undefined;
@@ -126,7 +129,7 @@ export interface MemorySegmentCacheStoreOptions<TEnv = unknown> {
    */
   keyGenerator?: (
     ctx: RequestContext<TEnv>,
-    defaultKey: string
+    defaultKey: string,
   ) => string | Promise<string>;
 }
 
@@ -153,14 +156,16 @@ export interface MemorySegmentCacheStoreOptions<TEnv = unknown> {
  * })
  * ```
  */
-export class MemorySegmentCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
+export class MemorySegmentCacheStore<
+  TEnv = unknown,
+> implements SegmentCacheStore<TEnv> {
   private cache: Map<string, CachedEntryData>;
   private responseCache: Map<string, CachedResponseEntry>;
   private itemCache: Map<string, CachedItemEntry>;
   readonly defaults?: CacheDefaults;
   readonly keyGenerator?: (
     ctx: RequestContext<TEnv>,
-    defaultKey: string
+    defaultKey: string,
   ) => string | Promise<string>;
 
   constructor(options?: MemorySegmentCacheStoreOptions<TEnv>) {
@@ -217,7 +222,12 @@ export class MemorySegmentCacheStore<TEnv = unknown> implements SegmentCacheStor
     return { data: cached, shouldRevalidate: false };
   }
 
-  async set(key: string, data: CachedEntryData, ttl: number, _swr?: number): Promise<void> {
+  async set(
+    key: string,
+    data: CachedEntryData,
+    ttl: number,
+    _swr?: number,
+  ): Promise<void> {
     // Note: Memory store doesn't implement SWR - entries just expire at TTL
     // For SWR support, use CFCacheStore or similar distributed cache
     const entry: CachedEntryData = {
@@ -300,7 +310,11 @@ export class MemorySegmentCacheStore<TEnv = unknown> implements SegmentCacheStor
     };
   }
 
-  async setItem(key: string, value: string, options?: CacheItemOptions): Promise<void> {
+  async setItem(
+    key: string,
+    value: string,
+    options?: CacheItemOptions,
+  ): Promise<void> {
     const ttl = options?.ttl ?? this.defaults?.ttl ?? 900;
     this.itemCache.set(key, {
       value,

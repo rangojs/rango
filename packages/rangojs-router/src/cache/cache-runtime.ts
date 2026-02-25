@@ -24,7 +24,12 @@ import {
   createClientTemporaryReferenceSet,
 } from "@vitejs/plugin-rsc/rsc";
 import { getRequestContext } from "../server/request-context.js";
-import { isTainted, CACHED_FN_SYMBOL, isCachedFunction, INSIDE_CACHE_EXEC } from "./taint.js";
+import {
+  isTainted,
+  CACHED_FN_SYMBOL,
+  isCachedFunction,
+  INSIDE_CACHE_EXEC,
+} from "./taint.js";
 
 export { isCachedFunction };
 import { getCacheProfile } from "./profile-registry.js";
@@ -80,7 +85,11 @@ function startHandleCapture(handleStore: HandleStore): HandleCapture {
   const originalPush = handleStore.push.bind(handleStore);
 
   // Intercept push() calls to record them
-  handleStore.push = (handleName: string, segmentId: string, value: unknown) => {
+  handleStore.push = (
+    handleName: string,
+    segmentId: string,
+    value: unknown,
+  ) => {
     if (!capture.data[segmentId]) {
       capture.data[segmentId] = {};
     }
@@ -95,7 +104,10 @@ function startHandleCapture(handleStore: HandleStore): HandleCapture {
   return capture;
 }
 
-function stopHandleCapture(handleStore: HandleStore, _capture: HandleCapture): void {
+function stopHandleCapture(
+  handleStore: HandleStore,
+  _capture: HandleCapture,
+): void {
   // Restore original push by deleting the override
   // (the original is on the prototype/closure, our override is an own property)
   delete (handleStore as any).push;
@@ -156,11 +168,11 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     if (hasTaintedArgs && !requestCtx?._handleStore) {
       throw new Error(
         `[use cache] "${id}" receives a tainted argument (ctx/env/req) but the ` +
-        `HandleStore is not available. This typically happens when a "use cache" ` +
-        `function with ctx runs outside the request context (e.g., during late ` +
-        `streaming after AsyncLocalStorage context is lost). Move the "use cache" ` +
-        `directive to a function that does not receive request-scoped objects, or ` +
-        `use the route-level cache() DSL instead.`,
+          `HandleStore is not available. This typically happens when a "use cache" ` +
+          `function with ctx runs outside the request context (e.g., during late ` +
+          `streaming after AsyncLocalStorage context is lost). Move the "use cache" ` +
+          `directive to a function that does not receive request-scoped objects, or ` +
+          `use the route-level cache() DSL instead.`,
       );
     }
 

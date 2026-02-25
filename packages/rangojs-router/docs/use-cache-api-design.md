@@ -11,14 +11,14 @@ This is complementary to the existing `cache()` DSL (route-segment-level) and `S
 ### File-level (default profile, applies to all exports)
 
 ```ts
-"use cache"
+"use cache";
 
 export async function getProducts() {
-  return await db.query('SELECT * FROM products');
+  return await db.query("SELECT * FROM products");
 }
 
 export async function getCategories() {
-  return await db.query('SELECT * FROM categories');
+  return await db.query("SELECT * FROM categories");
 }
 ```
 
@@ -26,13 +26,13 @@ export async function getCategories() {
 
 ```ts
 export async function getProducts() {
-  "use cache: short"
-  return await db.query('SELECT * FROM products');
+  "use cache: short";
+  return await db.query("SELECT * FROM products");
 }
 
 export async function getCategories() {
-  "use cache: long"
-  return await db.query('SELECT * FROM categories');
+  "use cache: long";
+  return await db.query("SELECT * FROM categories");
 }
 ```
 
@@ -54,11 +54,11 @@ Profiles are defined centrally in the router config. A profile specifies TTL, SW
 createRouter({
   cacheProfiles: {
     default: { ttl: 900, swr: 1800 },
-    short:   { ttl: 60, swr: 120 },
-    long:    { ttl: 3600, swr: 7200 },
-    products: { ttl: 300, swr: 600, tags: ['products'] },
+    short: { ttl: 60, swr: 120 },
+    long: { ttl: 3600, swr: 7200 },
+    products: { ttl: 300, swr: 600, tags: ["products"] },
   },
-})
+});
 ```
 
 - `"use cache"` (no name) resolves to the `default` profile.
@@ -88,8 +88,8 @@ This means handlers that call `ctx.breadcrumb()`, `ctx.set()`, etc. work correct
 
 ```ts
 export const handle = createHandle(({ ctx }) => {
-  "use cache: short"
-  ctx.breadcrumb('Products');
+  "use cache: short";
+  ctx.breadcrumb("Products");
   return await getExpensiveData();
 });
 // On cache hit: return value restored, breadcrumb replayed.
@@ -108,6 +108,7 @@ export const handle = createHandle(({ ctx }) => {
 A Vite plugin (`rango:use-cache`) detects the directive and wraps exports.
 
 Uses existing helpers from `@vitejs/plugin-rsc/transforms`:
+
 - `hasDirective()` / `findDirectives()` -- detect `"use cache"` in source
 - `transformWrapExport()` -- wrap file-level exports
 - `transformHoistInlineDirective()` -- hoist function-level directives
@@ -134,17 +135,17 @@ export const getProducts = registerCachedFunction(
 ```ts
 // Input
 export async function getProducts() {
-  "use cache: short"
-  return await db.query('...');
+  "use cache: short";
+  return await db.query("...");
 }
 
 // Output (function hoisted and wrapped)
 const __rango_cached_getProducts = registerCachedFunction(
   async function getProducts() {
-    return await db.query('...');
+    return await db.query("...");
   },
   "src/data/products.ts#getProducts",
-  "short"
+  "short",
 );
 export async function getProducts() {
   return __rango_cached_getProducts();
@@ -154,7 +155,7 @@ export async function getProducts() {
 ## Runtime: `registerCachedFunction`
 
 ```ts
-registerCachedFunction(fn, id, profileName)
+registerCachedFunction(fn, id, profileName);
 ```
 
 1. Receive call with `args`.
@@ -177,11 +178,11 @@ Shared cache is bypassed in development so HMR changes are immediately visible. 
 
 ## Interaction with Existing Caching
 
-| Mechanism | Granularity | Side effects | When |
-|-----------|------------|--------------|------|
-| `cache()` DSL | Route segment | Captured via HandleStore | Runtime |
-| `Static()` / `Prerender()` | Route segment | Captured via HandleStore | Build-time |
-| `"use cache"` | Function / component | Captured if tainted ctx detected | Runtime |
+| Mechanism                  | Granularity          | Side effects                     | When       |
+| -------------------------- | -------------------- | -------------------------------- | ---------- |
+| `cache()` DSL              | Route segment        | Captured via HandleStore         | Runtime    |
+| `Static()` / `Prerender()` | Route segment        | Captured via HandleStore         | Build-time |
+| `"use cache"`              | Function / component | Captured if tainted ctx detected | Runtime    |
 
 All three write to the same `SegmentCacheStore`. Tag-based invalidation (`revalidateTag`) works across all mechanisms.
 

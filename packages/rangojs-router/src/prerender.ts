@@ -360,15 +360,15 @@ export function Prerender<TParams extends Record<string, any>>(
   if (isCachedFunction(handler)) {
     throw new Error(
       'A "use cache" function cannot be used as a Prerender() handler. ' +
-      'Prerender handlers are rendered at build time. Remove the ' +
-      '"use cache" directive — Prerender already provides caching.',
+        "Prerender handlers are rendered at build time. Remove the " +
+        '"use cache" directive — Prerender already provides caching.',
     );
   }
   if (getParams && isCachedFunction(getParams)) {
     throw new Error(
       'A "use cache" function cannot be used as Prerender() getParams. ' +
-      'getParams runs at build time to enumerate params. Remove the ' +
-      '"use cache" directive.',
+        "getParams runs at build time to enumerate params. Remove the " +
+        '"use cache" directive.',
     );
   }
 

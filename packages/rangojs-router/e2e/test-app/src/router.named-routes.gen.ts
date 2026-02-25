@@ -150,7 +150,8 @@ export const NamedRoutes = {
   "useCacheTest.useCacheTest.inlineHandler": "/use-cache-test/inline-handler",
   "useCacheTest.useCacheTest.inlineLayout": "/use-cache-test/inline-layout",
   "useCacheTest.useCacheTest.interceptIndex": "/use-cache-test/intercept-index",
-  "useCacheTest.useCacheTest.interceptTarget": "/use-cache-test/intercept-target/:id",
+  "useCacheTest.useCacheTest.interceptTarget":
+    "/use-cache-test/intercept-target/:id",
   "useCacheTest.useCacheTest.namedProfile": "/use-cache-test/named-profile",
   "useCacheTest.useCacheTest.plainData": "/use-cache-test/plain-data",
   "useCacheTest.useCacheTest.streaming": "/use-cache-test/streaming",

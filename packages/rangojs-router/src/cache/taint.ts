@@ -6,9 +6,7 @@
  * effects (breadcrumbs, metadata) are recorded and replayed on cache hit.
  */
 
-export const NOCACHE_SYMBOL: unique symbol = Symbol.for(
-  "rango:nocache",
-) as any;
+export const NOCACHE_SYMBOL: unique symbol = Symbol.for("rango:nocache") as any;
 
 /**
  * Check if a value is tainted (request-scoped, should not be in cache key).
@@ -47,11 +45,11 @@ export function assertNotInsideCacheExec(
   ) {
     throw new Error(
       `ctx.${methodName}() cannot be called inside a "use cache" function. ` +
-      `Side effects on the request context are lost on cache hit because ` +
-      `the function body is skipped. Extract the data fetch into a separate ` +
-      `cached function and call ctx.${methodName}() outside it, or use the ` +
-      `route-level cache() DSL which caches all segments (handler + children) ` +
-      `together.`,
+        `Side effects on the request context are lost on cache hit because ` +
+        `the function body is skipped. Extract the data fetch into a separate ` +
+        `cached function and call ctx.${methodName}() outside it, or use the ` +
+        `route-level cache() DSL which caches all segments (handler + children) ` +
+        `together.`,
     );
   }
 }
@@ -69,8 +67,5 @@ export const CACHED_FN_SYMBOL: unique symbol = Symbol.for(
  * Check if a value is a "use cache" wrapped function.
  */
 export function isCachedFunction(value: unknown): boolean {
-  return (
-    typeof value === "function" &&
-    (CACHED_FN_SYMBOL as symbol) in value
-  );
+  return typeof value === "function" && (CACHED_FN_SYMBOL as symbol) in value;
 }

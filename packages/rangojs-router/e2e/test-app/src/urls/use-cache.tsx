@@ -1,10 +1,7 @@
 import { urls, Meta } from "@rangojs/router";
 import { isCachedFunction } from "@rangojs/router/cache-runtime";
 import { Link, Outlet } from "@rangojs/router/client";
-import {
-  getBasicTimestamp,
-  getDataForCategory,
-} from "./use-cache-data.js";
+import { getBasicTimestamp, getDataForCategory } from "./use-cache-data.js";
 import {
   getShortCachedData,
   fetchWithBreadcrumbs,
@@ -313,6 +310,5 @@ export const useCachePatterns = urls(
         ),
       ],
     ),
-
   ],
 );

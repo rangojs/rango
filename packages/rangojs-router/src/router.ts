@@ -483,7 +483,10 @@ export interface RSCRouterOptions<TEnv = any> {
    * });
    * ```
    */
-  cacheProfiles?: Record<string, import("./cache/profile-registry.js").CacheProfile>;
+  cacheProfiles?: Record<
+    string,
+    import("./cache/profile-registry.js").CacheProfile
+  >;
 
   /**
    * Theme configuration for automatic theme management.
@@ -1323,9 +1326,9 @@ export function createRouter<TEnv = any>(
     if (isCachedFunction(handler)) {
       throw new Error(
         `A "use cache" function cannot be used as middleware. ` +
-        `Cached functions return data and do not participate in the ` +
-        `middleware chain. Remove the "use cache" directive or use a ` +
-        `regular middleware function instead.`,
+          `Cached functions return data and do not participate in the ` +
+          `middleware chain. Remove the "use cache" directive or use a ` +
+          `regular middleware function instead.`,
       );
     }
 

@@ -454,10 +454,12 @@ export function createRequestContext<TEnv>(
 
     // Theme properties (only set when themeConfig is provided)
     theme: themeConfig ? getTheme() : undefined,
-    setTheme: themeConfig ? ((theme: Theme) => {
-      assertNotInsideCacheExec(ctx, "setTheme");
-      setTheme(theme);
-    }) : undefined,
+    setTheme: themeConfig
+      ? (theme: Theme) => {
+          assertNotInsideCacheExec(ctx, "setTheme");
+          setTheme(theme);
+        }
+      : undefined,
     _themeConfig: themeConfig,
 
     setLocationState(entries: LocationStateEntry[]): void {
