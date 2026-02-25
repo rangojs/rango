@@ -3,6 +3,18 @@ import { Breadcrumbs } from "../handles.js";
 // Function-level "use cache" — each function has its own directive.
 
 /**
+ * Cached data function used inside a createLoader.
+ * Proves that "use cache" works through the loader layer.
+ */
+export async function getCachedLoaderData(): Promise<{
+  ts: number;
+  rand: number;
+}> {
+  "use cache";
+  return { ts: Date.now(), rand: Math.random() };
+}
+
+/**
  * Named cache profile. Uses "use cache: short" which maps to the
  * "short" profile configured in createRouter({ cacheProfiles }).
  */

@@ -1,5 +1,6 @@
 import { urls, Meta } from "@rangojs/router";
-import { Outlet } from "@rangojs/router/client";
+import { isCachedFunction } from "@rangojs/router/cache-runtime";
+import { Link, Outlet } from "@rangojs/router/client";
 import {
   getBasicTimestamp,
   getDataForCategory,
@@ -11,6 +12,7 @@ import {
   getCachedReactNode,
 } from "./use-cache-fn.js";
 import { Breadcrumbs } from "../handles.js";
+import { UseCacheTestLoader } from "../loaders.js";
 
 /**
  * "use cache" test routes.
@@ -20,7 +22,7 @@ import { Breadcrumbs } from "../handles.js";
  * and inline "use cache" in handlers and layouts with handle data.
  */
 export const useCachePatterns = urls(
-  ({ path, layout, loading }) => [
+  ({ path, layout, loading, intercept, loader, when }) => [
     // Basic: file-level "use cache", no args
     path(
       "/basic",
@@ -207,5 +209,110 @@ export const useCachePatterns = urls(
       },
       { name: "useCacheTest.plainData" },
     ),
+
+    // Branding: verify that "use cache" functions are branded at runtime.
+    // getBasicTimestamp has file-level "use cache" so the Vite transform
+    // wraps it with registerCachedFunction(), which stamps CACHED_FN_SYMBOL.
+    path.json(
+      "/brand-check",
+      () => {
+        return {
+          cachedFnBranded: isCachedFunction(getBasicTimestamp),
+          plainFnBranded: isCachedFunction(() => {}),
+        };
+      },
+      { name: "useCacheTest.brandCheck" },
+    ),
+
+    // Loader: "use cache" function called inside a createLoader.
+    // The loader runs on every request but the inner cached function
+    // returns cached data on subsequent calls.
+    path(
+      "/with-loader",
+      async (ctx) => {
+        const data = await ctx.use(UseCacheTestLoader);
+        const serverNow = Date.now();
+        return (
+          <div data-testid="use-cache-loader-page">
+            <h1>Use Cache With Loader</h1>
+            <span data-testid="use-cache-loader-ts">{data.ts}</span>
+            <span data-testid="use-cache-loader-rand">{data.rand}</span>
+            <span data-testid="use-cache-loader-server-ts">{serverNow}</span>
+          </div>
+        );
+      },
+      { name: "useCacheTest.withLoader" },
+      () => [loader(UseCacheTestLoader)],
+    ),
+
+    // Intercept: inline "use cache" in path handler vs intercept handler.
+    // The path and intercept handlers are different functions, so they get
+    // different cache keys even though they render the same route.
+    layout(
+      () => (
+        <div data-testid="use-cache-intercept-layout">
+          <Outlet />
+          <Outlet name="@useCacheModal" />
+        </div>
+      ),
+      () => [
+        path(
+          "/intercept-index",
+          () => (
+            <div data-testid="use-cache-intercept-index">
+              <h1>Intercept Cache Test</h1>
+              <Link
+                to="/use-cache-test/intercept-target/1"
+                data-testid="use-cache-intercept-link"
+              >
+                Open modal for item 1
+              </Link>
+            </div>
+          ),
+          { name: "useCacheTest.interceptIndex" },
+        ),
+
+        // Path handler with inline "use cache" — renders a full page view.
+        path(
+          "/intercept-target/:id",
+          async (ctx) => {
+            "use cache";
+            return (
+              <div data-testid="use-cache-intercept-path-page">
+                <h1>Full Page View</h1>
+                <span data-testid="intercept-path-id">{ctx.params.id}</span>
+                <span data-testid="intercept-path-ts">{Date.now()}</span>
+                <span data-testid="intercept-path-rand">{Math.random()}</span>
+              </div>
+            );
+          },
+          { name: "useCacheTest.interceptTarget" },
+        ),
+
+        // Intercept handler with inline "use cache" — renders a modal view.
+        // Different function = different cache key from the path handler.
+        intercept(
+          "@useCacheModal",
+          ".useCacheTest.interceptTarget",
+          async (ctx) => {
+            "use cache";
+            return (
+              <div data-testid="use-cache-intercept-modal">
+                <h2>Modal View</h2>
+                <span data-testid="intercept-modal-id">{ctx.params.id}</span>
+                <span data-testid="intercept-modal-ts">{Date.now()}</span>
+                <span data-testid="intercept-modal-rand">{Math.random()}</span>
+              </div>
+            );
+          },
+          () => [
+            when(({ from }) =>
+              from.pathname.startsWith("/use-cache-test/intercept-"),
+            ),
+          ],
+        ),
+      ],
+    ),
+
   ],
 );

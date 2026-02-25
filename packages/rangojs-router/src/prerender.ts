@@ -29,6 +29,7 @@ import type { ReactNode } from "react";
 import type { Handler, HandlerContext, DefaultEnv } from "./types.js";
 import type { Handle } from "./handle.js";
 import type { ContextVar } from "./context-var.js";
+import { isCachedFunction } from "./cache/taint.js";
 
 
 // -- Types ------------------------------------------------------------------
@@ -242,6 +243,21 @@ export function Prerender<TParams extends Record<string, any>>(
     } else {
       id = maybeId ?? "";
     }
+  }
+
+  if (isCachedFunction(handler)) {
+    throw new Error(
+      'A "use cache" function cannot be used as a Prerender() handler. ' +
+      'Prerender handlers are rendered at build time. Remove the ' +
+      '"use cache" directive — Prerender already provides caching.',
+    );
+  }
+  if (getParams && isCachedFunction(getParams)) {
+    throw new Error(
+      'A "use cache" function cannot be used as Prerender() getParams. ' +
+      'getParams runs at build time to enumerate params. Remove the ' +
+      '"use cache" directive.',
+    );
   }
 
   if (!id) {

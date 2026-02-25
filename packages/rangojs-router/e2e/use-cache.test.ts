@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError } from "./helper";
+import { waitForHydration, expectNoPageError, goBack } from "./helper";
 
 /**
  * Tests for the "use cache" directive.
@@ -369,6 +369,147 @@ test.describe("use-cache basic", () => {
     expect(body2.data.ts).toBe(body1.data.ts);
     expect(body2.data.rand).toBe(body1.data.rand);
   });
+
+  test("use cache functions are branded at runtime", async ({ request }) => {
+    const res = await request.get(f.url("/use-cache-test/brand-check"));
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+
+    // File-level "use cache" function should be branded
+    expect(body.data.cachedFnBranded).toBe(true);
+    // Plain function should not be branded
+    expect(body.data.plainFnBranded).toBe(false);
+  });
+
+  test("cached function inside loader returns cached data", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // First visit — cache miss: getCachedLoaderData() runs
+    await page.goto(f.url("/use-cache-test/with-loader"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("use-cache-loader-page")).toBeVisible();
+    const cachedTs1 = await page
+      .getByTestId("use-cache-loader-ts")
+      .textContent();
+    const cachedRand1 = await page
+      .getByTestId("use-cache-loader-rand")
+      .textContent();
+    const serverTs1 = await page
+      .getByTestId("use-cache-loader-server-ts")
+      .textContent();
+
+    expect(cachedTs1).toBeTruthy();
+    expect(cachedRand1).toBeTruthy();
+
+    // Navigate away
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Second visit — cache hit: inner cached function returns same data
+    await page.goto(f.url("/use-cache-test/with-loader"));
+    await waitForHydration(page);
+
+    const cachedTs2 = await page
+      .getByTestId("use-cache-loader-ts")
+      .textContent();
+    const cachedRand2 = await page
+      .getByTestId("use-cache-loader-rand")
+      .textContent();
+    const serverTs2 = await page
+      .getByTestId("use-cache-loader-server-ts")
+      .textContent();
+
+    // Cached function returned same data (cache hit)
+    expect(cachedTs2).toBe(cachedTs1);
+    expect(cachedRand2).toBe(cachedRand1);
+    // Handler ran fresh (server time advanced)
+    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
+  });
+
+  test("intercept handler has distinct cache from path handler", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Direct visit to path — cache miss for path handler
+    await page.goto(f.url("/use-cache-test/intercept-target/1"));
+    await waitForHydration(page);
+
+    await expect(
+      page.getByTestId("use-cache-intercept-path-page"),
+    ).toBeVisible();
+    const pathTs1 = await page
+      .getByTestId("intercept-path-ts")
+      .textContent();
+    const pathRand1 = await page
+      .getByTestId("intercept-path-rand")
+      .textContent();
+
+    expect(pathTs1).toBeTruthy();
+    expect(pathRand1).toBeTruthy();
+
+    // Navigate away and back — path handler cache hit
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await page.goto(f.url("/use-cache-test/intercept-target/1"));
+    await waitForHydration(page);
+
+    const pathTs2 = await page
+      .getByTestId("intercept-path-ts")
+      .textContent();
+    const pathRand2 = await page
+      .getByTestId("intercept-path-rand")
+      .textContent();
+
+    expect(pathTs2).toBe(pathTs1);
+    expect(pathRand2).toBe(pathRand1);
+
+    // Now navigate to intercept index and trigger intercept
+    await page.goto(f.url("/use-cache-test/intercept-index"));
+    await waitForHydration(page);
+
+    await page.getByTestId("use-cache-intercept-link").click();
+    await expect(
+      page.getByTestId("use-cache-intercept-modal"),
+    ).toBeVisible();
+
+    const modalTs1 = await page
+      .getByTestId("intercept-modal-ts")
+      .textContent();
+    const modalRand1 = await page
+      .getByTestId("intercept-modal-rand")
+      .textContent();
+
+    // Modal values must differ from path values (distinct cache entries)
+    expect(modalTs1).not.toBe(pathTs1);
+
+    // Navigate back to index and trigger intercept again — intercept cache hit
+    await goBack(page);
+    await expect(
+      page.getByTestId("use-cache-intercept-index"),
+    ).toBeVisible();
+
+    await page.getByTestId("use-cache-intercept-link").click();
+    await expect(
+      page.getByTestId("use-cache-intercept-modal"),
+    ).toBeVisible();
+
+    const modalTs2 = await page
+      .getByTestId("intercept-modal-ts")
+      .textContent();
+    const modalRand2 = await page
+      .getByTestId("intercept-modal-rand")
+      .textContent();
+
+    // Intercept handler cache hit — same values
+    expect(modalTs2).toBe(modalTs1);
+    expect(modalRand2).toBe(modalRand1);
+  });
+
 });
 
 // ============================================================================
@@ -677,5 +818,132 @@ test.describe("use-cache (production)", () => {
 
     expect(body2.data.ts).toBe(body1.data.ts);
     expect(body2.data.rand).toBe(body1.data.rand);
+  });
+
+  test("use cache functions are branded at runtime", async ({ request }) => {
+    const res = await request.get(f.url("/use-cache-test/brand-check"));
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+
+    expect(body.data.cachedFnBranded).toBe(true);
+    expect(body.data.plainFnBranded).toBe(false);
+  });
+
+  test("cached function inside loader returns cached data", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/use-cache-test/with-loader"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("use-cache-loader-page")).toBeVisible();
+    const cachedTs1 = await page
+      .getByTestId("use-cache-loader-ts")
+      .textContent();
+    const cachedRand1 = await page
+      .getByTestId("use-cache-loader-rand")
+      .textContent();
+    const serverTs1 = await page
+      .getByTestId("use-cache-loader-server-ts")
+      .textContent();
+
+    expect(cachedTs1).toBeTruthy();
+    expect(cachedRand1).toBeTruthy();
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await page.goto(f.url("/use-cache-test/with-loader"));
+    await waitForHydration(page);
+
+    const cachedTs2 = await page
+      .getByTestId("use-cache-loader-ts")
+      .textContent();
+    const cachedRand2 = await page
+      .getByTestId("use-cache-loader-rand")
+      .textContent();
+    const serverTs2 = await page
+      .getByTestId("use-cache-loader-server-ts")
+      .textContent();
+
+    expect(cachedTs2).toBe(cachedTs1);
+    expect(cachedRand2).toBe(cachedRand1);
+    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
+  });
+
+  test("intercept handler has distinct cache from path handler", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/use-cache-test/intercept-target/1"));
+    await waitForHydration(page);
+
+    await expect(
+      page.getByTestId("use-cache-intercept-path-page"),
+    ).toBeVisible();
+    const pathTs1 = await page
+      .getByTestId("intercept-path-ts")
+      .textContent();
+    const pathRand1 = await page
+      .getByTestId("intercept-path-rand")
+      .textContent();
+
+    expect(pathTs1).toBeTruthy();
+    expect(pathRand1).toBeTruthy();
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await page.goto(f.url("/use-cache-test/intercept-target/1"));
+    await waitForHydration(page);
+
+    const pathTs2 = await page
+      .getByTestId("intercept-path-ts")
+      .textContent();
+    const pathRand2 = await page
+      .getByTestId("intercept-path-rand")
+      .textContent();
+
+    expect(pathTs2).toBe(pathTs1);
+    expect(pathRand2).toBe(pathRand1);
+
+    await page.goto(f.url("/use-cache-test/intercept-index"));
+    await waitForHydration(page);
+
+    await page.getByTestId("use-cache-intercept-link").click();
+    await expect(
+      page.getByTestId("use-cache-intercept-modal"),
+    ).toBeVisible();
+
+    const modalTs1 = await page
+      .getByTestId("intercept-modal-ts")
+      .textContent();
+    const modalRand1 = await page
+      .getByTestId("intercept-modal-rand")
+      .textContent();
+
+    expect(modalTs1).not.toBe(pathTs1);
+
+    await goBack(page);
+    await expect(
+      page.getByTestId("use-cache-intercept-index"),
+    ).toBeVisible();
+
+    await page.getByTestId("use-cache-intercept-link").click();
+    await expect(
+      page.getByTestId("use-cache-intercept-modal"),
+    ).toBeVisible();
+
+    const modalTs2 = await page
+      .getByTestId("intercept-modal-ts")
+      .textContent();
+    const modalRand2 = await page
+      .getByTestId("intercept-modal-rand")
+      .textContent();
+
+    expect(modalTs2).toBe(modalTs1);
+    expect(modalRand2).toBe(modalRand1);
   });
 });

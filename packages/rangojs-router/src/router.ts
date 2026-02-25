@@ -3,6 +3,7 @@ import { type ReactNode } from "react";
 import { createCacheScope } from "./cache/cache-scope.js";
 import type { SegmentCacheStore } from "./cache/types.js";
 import { setCacheProfiles } from "./cache/profile-registry.js";
+import { isCachedFunction } from "./cache/taint.js";
 import { assertClientComponent } from "./component-utils.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
 import {
@@ -1295,6 +1296,18 @@ export function createRouter<TEnv = any>(
     } else {
       // Just middleware (no pattern)
       handler = patternOrMiddleware;
+    }
+
+    // Prevent "use cache" functions from being used as middleware.
+    // They return data/JSX and do not call next() — silently accepting
+    // them would be a confusing no-op.
+    if (isCachedFunction(handler)) {
+      throw new Error(
+        `A "use cache" function cannot be used as middleware. ` +
+        `Cached functions return data and do not participate in the ` +
+        `middleware chain. Remove the "use cache" directive or use a ` +
+        `regular middleware function instead.`,
+      );
     }
 
     // If mount-scoped, prepend mount prefix to pattern

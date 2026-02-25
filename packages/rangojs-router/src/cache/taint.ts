@@ -21,3 +21,22 @@ export function isTainted(value: unknown): boolean {
     (NOCACHE_SYMBOL as symbol) in (value as Record<symbol, unknown>)
   );
 }
+
+/**
+ * Brand symbol for functions wrapped by registerCachedFunction().
+ * Used at runtime to detect when a "use cache" function is misused
+ * (e.g., passed as middleware).
+ */
+export const CACHED_FN_SYMBOL: unique symbol = Symbol.for(
+  "rango:cached-fn",
+) as any;
+
+/**
+ * Check if a value is a "use cache" wrapped function.
+ */
+export function isCachedFunction(value: unknown): boolean {
+  return (
+    typeof value === "function" &&
+    (CACHED_FN_SYMBOL as symbol) in value
+  );
+}

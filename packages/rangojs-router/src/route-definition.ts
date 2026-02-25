@@ -28,6 +28,7 @@ import {
   type InterceptSelectorContext,
 } from "./server/context";
 import { invariant } from "./errors";
+import { isCachedFunction } from "./cache/taint.js";
 import { isStaticHandler } from "./static-handler.js";
 import type { LocationStateEntry } from "./browser/react/location-state-shared.js";
 import { requireRequestContext, getRequestContext } from "./server/request-context.js";
@@ -853,6 +854,19 @@ const cache: RouteHelpers<any, any>["cache"] = (
 };
 
 const middleware: RouteHelpers<any, any>["middleware"] = (...fn) => {
+  // Prevent "use cache" functions from being used as middleware.
+  // Checked before context validation — this is a static invariant.
+  for (const f of fn) {
+    if (isCachedFunction(f)) {
+      throw new Error(
+        `A "use cache" function cannot be used as middleware. ` +
+        `Cached functions return data and do not participate in the ` +
+        `middleware chain. Remove the "use cache" directive or use a ` +
+        `regular middleware function instead.`,
+      );
+    }
+  }
+
   const ctx = getContext().getStore();
   if (!ctx) throw new Error("middleware() must be called inside map()");
 

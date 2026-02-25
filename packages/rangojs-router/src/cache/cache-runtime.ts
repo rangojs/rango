@@ -24,7 +24,9 @@ import {
   createClientTemporaryReferenceSet,
 } from "@vitejs/plugin-rsc/rsc";
 import { getRequestContext } from "../server/request-context.js";
-import { isTainted } from "./taint.js";
+import { isTainted, CACHED_FN_SYMBOL, isCachedFunction } from "./taint.js";
+
+export { isCachedFunction };
 import { getCacheProfile } from "./profile-registry.js";
 import { streamToString, stringToStream } from "./segment-codec.js";
 import type { SegmentHandleData } from "./types.js";
@@ -267,6 +269,10 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
 
     return result;
   };
+
+  // Brand the wrapper so it can be detected at runtime (e.g., to prevent
+  // accidental use as middleware).
+  (wrapped as any)[CACHED_FN_SYMBOL] = true;
 
   return wrapped as unknown as T;
 }

@@ -433,3 +433,11 @@ export type InterceptCacheTestLoaderData = {
   message: string;
   loadedAt: string;
 };
+
+// "use cache" loader test — wraps a cached function inside createLoader.
+// The loader itself runs every request; the inner getCachedLoaderData()
+// returns cached data on subsequent calls.
+export const UseCacheTestLoader = createLoader(async () => {
+  const { getCachedLoaderData } = await import("./urls/use-cache-fn.js");
+  return getCachedLoaderData();
+});
