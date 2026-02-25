@@ -31,6 +31,7 @@ import { handlerFirstPatterns } from "./urls/handler-first.js";
 import { buildSkipPatterns } from "./urls/prerender-build-skip.js";
 import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
+import { prerenderLocalePatterns } from "./urls/prerender-locale.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -469,6 +470,9 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
 
     // Reverse auto-fill test patterns (parameterized include prefix)
     include("/reverse-autofill/:tenantId", reverseAutofillPatterns, { name: "reverseAutofill" }),
+
+    // Prerender with parent route params (locale in include prefix)
+    include("/:locale", prerenderLocalePatterns, { name: "locale" }),
 
     // Include under layout with middleware — tests that layout middleware
     // is applied to routes inside include() even when include() is the
