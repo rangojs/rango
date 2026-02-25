@@ -23,6 +23,40 @@ export function isTainted(value: unknown): boolean {
 }
 
 /**
+ * Symbol stamped on tainted ctx during "use cache" function execution.
+ * ctx.set(), ctx.header(), ctx.setCookie(), etc. check this flag and
+ * throw if present — those side effects would be lost on cache hit.
+ */
+export const INSIDE_CACHE_EXEC: unique symbol = Symbol.for(
+  "rango:inside-cache-exec",
+) as any;
+
+/**
+ * Throw if ctx is inside a "use cache" execution.
+ * Call from side-effecting ctx methods (set, header, setCookie, etc.).
+ */
+export function assertNotInsideCacheExec(
+  ctx: unknown,
+  methodName: string,
+): void {
+  if (
+    ctx !== null &&
+    ctx !== undefined &&
+    typeof ctx === "object" &&
+    (INSIDE_CACHE_EXEC as symbol) in (ctx as Record<symbol, unknown>)
+  ) {
+    throw new Error(
+      `ctx.${methodName}() cannot be called inside a "use cache" function. ` +
+      `Side effects on the request context are lost on cache hit because ` +
+      `the function body is skipped. Extract the data fetch into a separate ` +
+      `cached function and call ctx.${methodName}() outside it, or use the ` +
+      `route-level cache() DSL which caches all segments (handler + children) ` +
+      `together.`,
+    );
+  }
+}
+
+/**
  * Brand symbol for functions wrapped by registerCachedFunction().
  * Used at runtime to detect when a "use cache" function is misused
  * (e.g., passed as middleware).

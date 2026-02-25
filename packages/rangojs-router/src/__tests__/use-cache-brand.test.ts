@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { CACHED_FN_SYMBOL, isCachedFunction } from "../cache/taint";
+import { CACHED_FN_SYMBOL, isCachedFunction, INSIDE_CACHE_EXEC, assertNotInsideCacheExec } from "../cache/taint";
 import { createRouteHelpers } from "../route-definition";
 import { Static } from "../static-handler";
 import { Prerender } from "../prerender";
@@ -78,7 +78,7 @@ describe("use-cache branding", () => {
       (cachedFn as any)[CACHED_FN_SYMBOL] = true;
 
       expect(() => {
-        Static(cachedFn as any, "__test-id__");
+        Static(cachedFn as any, undefined, "__test-id__");
       }).toThrow(/cannot be used as a Static/);
     });
 
@@ -87,7 +87,7 @@ describe("use-cache branding", () => {
 
       // Should not throw the cached function error
       expect(() => {
-        Static(normalFn as any, "__test-id__");
+        Static(normalFn as any, undefined, "__test-id__");
       }).not.toThrow(/cannot be used as a Static/);
     });
   });
@@ -128,6 +128,44 @@ describe("use-cache branding", () => {
       expect(() => {
         Prerender(normalFn as any, {}, "__test-id__");
       }).not.toThrow(/cannot be used as a Prerender/);
+    });
+  });
+
+  describe("assertNotInsideCacheExec", () => {
+    it("does not throw when INSIDE_CACHE_EXEC is not set", () => {
+      const ctx = { someField: true };
+      expect(() => {
+        assertNotInsideCacheExec(ctx, "set");
+      }).not.toThrow();
+    });
+
+    it("throws when INSIDE_CACHE_EXEC is set on ctx", () => {
+      const ctx: any = { someField: true };
+      ctx[INSIDE_CACHE_EXEC] = true;
+      expect(() => {
+        assertNotInsideCacheExec(ctx, "set");
+      }).toThrow(/ctx\.set\(\) cannot be called inside a "use cache" function/);
+    });
+
+    it("includes the method name in the error message", () => {
+      const ctx: any = {};
+      ctx[INSIDE_CACHE_EXEC] = true;
+      expect(() => {
+        assertNotInsideCacheExec(ctx, "header");
+      }).toThrow(/ctx\.header\(\)/);
+    });
+
+    it("recommends the cache() DSL in the error message", () => {
+      const ctx: any = {};
+      ctx[INSIDE_CACHE_EXEC] = true;
+      expect(() => {
+        assertNotInsideCacheExec(ctx, "set");
+      }).toThrow(/route-level cache\(\) DSL/);
+    });
+
+    it("does not throw for null or undefined", () => {
+      expect(() => assertNotInsideCacheExec(null, "set")).not.toThrow();
+      expect(() => assertNotInsideCacheExec(undefined, "set")).not.toThrow();
     });
   });
 });

@@ -29,6 +29,7 @@ import {
 } from "./server/context";
 import { invariant } from "./errors";
 import { isCachedFunction } from "./cache/taint.js";
+import { getCacheProfile } from "./cache/profile-registry.js";
 import { isStaticHandler } from "./static-handler.js";
 import type { LocationStateEntry } from "./browser/react/location-state-shared.js";
 import { requireRequestContext, getRequestContext } from "./server/request-context.js";
@@ -520,6 +521,8 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
   cache: {
     (): CacheItem;
     (children: () => UseItems<AllUseItems>): CacheItem;
+    (profileName: string): CacheItem;
+    (profileName: string, use: () => UseItems<AllUseItems>): CacheItem;
     (
       options: PartialCacheOptions | false,
       use?: () => UseItems<AllUseItems>
@@ -718,20 +721,22 @@ const when: RouteHelpers<any, any>["when"] = (fn) => {
  * When used without children, attaches cache config to the parent entry
  * (e.g., for loader-specific caching).
  *
- * Supports three call signatures:
+ * Supports these call signatures:
  * - cache() - no args, uses app-level defaults (for loader caching)
  * - cache(() => [...]) - wraps children with app-level defaults
+ * - cache('profileName') - uses a named cache profile
+ * - cache('profileName', () => [...]) - named profile with children
  * - cache({ ttl: 60 }, () => [...]) - with explicit options
  */
 const cache: RouteHelpers<any, any>["cache"] = (
-  optionsOrChildren?: PartialCacheOptions | false | (() => UseItems<AllUseItems>),
+  optionsOrChildren?: PartialCacheOptions | false | string | (() => UseItems<AllUseItems>),
   maybeChildren?: () => UseItems<AllUseItems>
 ) => {
   const store = getContext();
   const ctx = store.getStore();
   if (!ctx) throw new Error("cache() must be called inside map()");
 
-  // Handle overloaded signature: cache(), cache(children), or cache(options, children)
+  // Handle overloaded signature
   let options: PartialCacheOptions | false;
   let children: (() => UseItems<AllUseItems>) | undefined;
 
@@ -739,6 +744,16 @@ const cache: RouteHelpers<any, any>["cache"] = (
     // cache() - no args, use defaults
     options = {};
     children = undefined;
+  } else if (typeof optionsOrChildren === "string") {
+    // cache('profileName') or cache('profileName', () => [...])
+    const profile = getCacheProfile(optionsOrChildren);
+    invariant(
+      profile,
+      `cache("${optionsOrChildren}"): unknown cache profile. ` +
+      `Define it in createRouter({ cacheProfiles: { "${optionsOrChildren}": { ttl: ... } } }).`
+    );
+    options = { ttl: profile.ttl, swr: profile.swr, tags: profile.tags };
+    children = maybeChildren;
   } else if (typeof optionsOrChildren === "function") {
     // cache(() => [...]) - use empty options (will use defaults)
     options = {};

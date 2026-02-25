@@ -24,7 +24,7 @@ import {
   createClientTemporaryReferenceSet,
 } from "@vitejs/plugin-rsc/rsc";
 import { getRequestContext } from "../server/request-context.js";
-import { isTainted, CACHED_FN_SYMBOL, isCachedFunction } from "./taint.js";
+import { isTainted, CACHED_FN_SYMBOL, isCachedFunction, INSIDE_CACHE_EXEC } from "./taint.js";
 
 export { isCachedFunction };
 import { getCacheProfile } from "./profile-registry.js";
@@ -243,7 +243,25 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       capture = startHandleCapture(handleStore);
     }
 
-    const result = await fn.apply(this, args);
+    // Stamp tainted args so ctx.set(), ctx.header(), etc. throw if called
+    // inside the cached function body (those side effects are lost on hit).
+    const taintedArgs: unknown[] = [];
+    for (const arg of args) {
+      if (isTainted(arg)) {
+        (arg as any)[INSIDE_CACHE_EXEC] = true;
+        taintedArgs.push(arg);
+      }
+    }
+
+    let result: any;
+    try {
+      result = await fn.apply(this, args);
+    } finally {
+      // Always remove the flag, even if the function throws
+      for (const arg of taintedArgs) {
+        delete (arg as any)[INSIDE_CACHE_EXEC];
+      }
+    }
 
     if (capture && handleStore) {
       stopHandleCapture(handleStore, capture);
