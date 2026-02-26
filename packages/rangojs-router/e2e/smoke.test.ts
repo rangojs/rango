@@ -8,16 +8,18 @@ import { waitForHydration, expectNoPageError } from "./helper";
  * Lightweight checks covering core routing features: SSR, navigation,
  * include(), URL params, intercept (modal), and client-side href().
  * Runs before the full test suite to fail fast on fundamental regressions.
+ *
+ * Both dev and production describes target the same e2e-basic directory.
+ * Serial mode at the file level prevents concurrent `pnpm dev` and
+ * `pnpm build` from corrupting the shared .vite optimizer cache.
  */
+test.describe.configure({ mode: "serial" });
 
 // ============================================================================
 // Dev mode
 // ============================================================================
 
 test.describe("smoke", () => {
-  // Serial: first test warms up the isolated dev server's Vite optimizer,
-  // preventing transient React errors from cold-start module resolution.
-  test.describe.configure({ mode: "serial" });
 
   const f = useFixture({
     root: "./e2e/e2e-basic",

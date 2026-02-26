@@ -292,6 +292,15 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                 },
                 // Always exclude rsc-router modules, conditionally add virtual entry
                 optimizeDeps: {
+                  // Pre-bundle React and rsc-html-stream to prevent late discovery
+                  // triggering ERR_OUTDATED_OPTIMIZED_DEP on cold starts
+                  include: [
+                    "react",
+                    "react-dom",
+                    "react/jsx-runtime",
+                    "react/jsx-dev-runtime",
+                    "rsc-html-stream/client",
+                  ],
                   exclude: excludeDeps,
                   esbuildOptions: sharedEsbuildOptions,
                   ...(useVirtualClient && {

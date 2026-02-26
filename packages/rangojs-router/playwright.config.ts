@@ -16,7 +16,10 @@ export default defineConfig({
   globalTimeout: 600000, // 10 minutes max
   timeout: process.env.CI ? 60000 : 30000, // 60s on CI, 30s locally
   webServer: {
-    command: `rm -rf node_modules/.vite && pnpm dev --port ${DEV_SERVER_PORT}`,
+    // Build first (for production tests), then clean optimizer cache and start
+    // dev server. Building before the dev server prevents `vite build` from
+    // overwriting the running server's optimizer cache (node_modules/.vite/deps).
+    command: `pnpm build && rm -rf node_modules/.vite && pnpm dev --port ${DEV_SERVER_PORT}`,
     cwd: "./e2e/test-app",
     port: DEV_SERVER_PORT,
     reuseExistingServer: !process.env.CI,
@@ -93,8 +96,6 @@ export default defineConfig({
             ...browserConfig,
             baseURL: `http://localhost:${DEV_SERVER_PORT}`,
           },
-          // Must run after build: both write to node_modules/.vite/deps_ssr and the
-          // build overwrites the dev server's optimizer cache, causing ERR_OUTDATED_OPTIMIZED_DEP.
           dependencies: ["build"],
         },
         {
@@ -119,8 +120,8 @@ export default defineConfig({
           grep: /\(production/,
           testIgnore: ["**/smoke.test.ts"],
           use: browserConfig,
-          // Run production tests serially to avoid port conflicts
-          // Each test file spins up its own preview server
+          // Run production tests serially to avoid port conflicts.
+          // Each test file spins up its own preview server.
           fullyParallel: false,
           dependencies: ["build"],
         },
