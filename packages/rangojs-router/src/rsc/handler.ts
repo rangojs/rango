@@ -9,13 +9,7 @@
 
 import { createElement } from "react";
 import { RouteNotFoundError, RouterError } from "../errors.js";
-import type { ResponseError } from "../urls.js";
-import { getLoaderLazy } from "../server/loader-registry.js";
-import {
-  matchMiddleware,
-  executeMiddleware,
-  executeLoaderMiddleware,
-} from "../router/middleware.js";
+import { matchMiddleware, executeMiddleware } from "../router/middleware.js";
 import {
   runWithRequestContext,
   setRequestContextParams,
@@ -27,12 +21,8 @@ import {
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
-import type {
-  RscPayload,
-  ReactFormState,
-  CreateRSCHandlerOptions,
-} from "./types.js";
-import { hasBodyContent, createResponseWithMergedHeaders } from "./helpers.js";
+import type { RscPayload, CreateRSCHandlerOptions } from "./types.js";
+import { createResponseWithMergedHeaders } from "./helpers.js";
 import { generateNonce } from "./nonce.js";
 import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
@@ -42,113 +32,20 @@ import { contextGet } from "../context-var.js";
 import { traverseBack } from "../router/pattern-matching.js";
 import { createCacheScope } from "../cache/cache-scope.js";
 import {
-  getGlobalRouteMap,
   hasCachedManifest,
-  setCachedManifest,
   getRouteTrie,
-  setRouteTrie,
   getPrecomputedEntries,
   waitForManifestReady,
   getRouterManifest,
   getRouterTrie,
-  setRouterManifest,
-  setRouterTrie,
 } from "../route-map-builder.js";
-
-/**
- * Build a ResponseError payload from a caught error.
- * RouterError messages are always exposed (developer-crafted).
- * Standard Error messages are hidden in production.
- */
-function createResponseErrorPayload(
-  error: unknown,
-  isDev: boolean,
-): ResponseError {
-  if (error instanceof RouterError) {
-    return {
-      message: error.message,
-      code: error.code,
-      ...(error.type ? { type: error.type } : {}),
-      ...(isDev && error.stack ? { stack: error.stack } : {}),
-    };
-  }
-  if (error instanceof Error) {
-    return {
-      message: isDev ? error.message : "Internal Server Error",
-      ...(isDev && error.stack ? { stack: error.stack } : {}),
-    };
-  }
-  return {
-    message: isDev ? String(error) : "Internal Server Error",
-  };
-}
-
-/**
- * Build a fresh route trie from router.urlpatterns and store it in the
- * per-router cache. Also sets the per-router manifest and merges into
- * the global manifest for reverse()/href().
- *
- * Called when manifest data may exist but the per-router trie is missing,
- * which happens in dev mode after HMR: the virtual module sets the manifest
- * from fresh gen files but skips the trie (which would be stale from initial
- * discovery). The trie is essential for correct wildcard priority — without
- * it, the regex fallback matches catch-all patterns before specific routes.
- */
-async function buildRouterTrieFromUrlpatterns(router: any): Promise<void> {
-  const { generateManifest } = await import("../build/generate-manifest.js");
-  const generated = generateManifest(router.urlpatterns);
-  if (
-    generated._routeAncestry &&
-    Object.keys(generated._routeAncestry).length > 0
-  ) {
-    const { buildRouteTrie } = await import("../build/route-trie.js");
-    // Map each route to its include() staticPrefix so the trie
-    // returns the correct sp for lazy entry lookup in findMatch.
-    const routeToStaticPrefix: Record<string, string> = {};
-    for (const name of Object.keys(generated.routeManifest)) {
-      routeToStaticPrefix[name] = "";
-    }
-    // Override with prefix from include() entries so the trie
-    // returns the correct sp for lazy entry lookup in findMatch.
-    // Walk recursively to include routes in nested includes.
-    if (generated.prefixTree) {
-      const visitPrefixNode = (node: any): void => {
-        const sp = node.staticPrefix || "";
-        for (const route of node.routes || []) {
-          routeToStaticPrefix[route] = sp;
-        }
-        for (const child of Object.values(node.children || {})) {
-          visitPrefixNode(child);
-        }
-      };
-      for (const node of Object.values(generated.prefixTree)) {
-        visitPrefixNode(node);
-      }
-    }
-    const trie = buildRouteTrie(
-      generated.routeManifest,
-      generated._routeAncestry,
-      routeToStaticPrefix,
-      generated.routeTrailingSlash,
-      generated.prerenderRoutes
-        ? new Set(generated.prerenderRoutes)
-        : undefined,
-      generated.passthroughRoutes
-        ? new Set(generated.passthroughRoutes)
-        : undefined,
-      generated.responseTypeRoutes,
-    );
-    setRouterTrie(router.id, trie);
-    // Set global trie only if not already set by another router
-    if (!getRouteTrie()) {
-      setRouteTrie(trie);
-    }
-  }
-  setRouterManifest(router.id, generated.routeManifest);
-  // Merge into global manifest (needed for reverse/href across routers)
-  const existing = hasCachedManifest() ? getGlobalRouteMap() : {};
-  setCachedManifest({ ...existing, ...generated.routeManifest });
-}
+import type { HandlerContext } from "./handler-context.js";
+import { createResponseErrorPayload } from "./response-error.js";
+import { buildRouterTrieFromUrlpatterns } from "./manifest-init.js";
+import { handleProgressiveEnhancement } from "./progressive-enhancement.js";
+import { handleServerAction } from "./server-action.js";
+import { handleLoaderFetch } from "./loader-fetch.js";
+import { handleRscRendering } from "./rsc-rendering.js";
 
 /**
  * Create an RSC request handler.
@@ -250,6 +147,22 @@ export function createRSCHandler<
       headers: { "content-type": "text/x-component;charset=utf-8" },
     });
   }
+
+  // Bundle shared dependencies for extracted handler functions
+  const handlerCtx: HandlerContext<TEnv> = {
+    router,
+    version,
+    renderToReadableStream,
+    decodeReply,
+    createTemporaryReferenceSet,
+    loadServerAction,
+    decodeAction,
+    decodeFormState,
+    loadSSRModule,
+    callOnError,
+    getRequiredRouteMap,
+    createRedirectFlightResponse,
+  };
 
   return async function handler(
     request: Request,
@@ -875,6 +788,7 @@ export function createRSCHandler<
       // PROGRESSIVE ENHANCEMENT: No-JS Form Submissions
       // ============================================================================
       const progressiveResult = await handleProgressiveEnhancement(
+        handlerCtx,
         request,
         env,
         url,
@@ -890,7 +804,14 @@ export function createRSCHandler<
       // SERVER ACTION EXECUTION (JavaScript-enabled client)
       // ============================================================================
       if (isAction && actionId) {
-        return handleServerAction(request, env, url, actionId, handleStore);
+        return handleServerAction(
+          handlerCtx,
+          request,
+          env,
+          url,
+          actionId,
+          handleStore,
+        );
       }
 
       // ============================================================================
@@ -898,7 +819,14 @@ export function createRSCHandler<
       // ============================================================================
       const isLoaderRequest = url.searchParams.has("_rsc_loader");
       if (isLoaderRequest) {
-        return handleLoaderFetch(request, env, url, variables, routeParams);
+        return handleLoaderFetch(
+          handlerCtx,
+          request,
+          env,
+          url,
+          variables,
+          routeParams,
+        );
       }
 
       // ============================================================================
@@ -906,6 +834,7 @@ export function createRSCHandler<
       // ============================================================================
       // Note: Must use "return await" for try/catch to catch async rejections
       return await handleRscRendering(
+        handlerCtx,
         request,
         env,
         url,
@@ -1046,726 +975,5 @@ export function createRSCHandler<
       console.error(`[RSC] Error:`, error);
       throw error;
     }
-  }
-
-  // ============================================================================
-  // PROGRESSIVE ENHANCEMENT HANDLER
-  // When JavaScript is disabled, React renders forms with hidden fields
-  // ($ACTION_REF_*, $ACTION_KEY) containing the action reference.
-  // We detect these and return HTML instead of RSC stream.
-  // ============================================================================
-  async function handleProgressiveEnhancement(
-    request: Request,
-    env: TEnv,
-    url: URL,
-    isAction: boolean,
-    handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
-    nonce: string | undefined,
-  ): Promise<Response | null> {
-    const contentType = request.headers.get("content-type") || "";
-    const isFormSubmission =
-      contentType.includes("multipart/form-data") ||
-      contentType.includes("application/x-www-form-urlencoded");
-
-    if (request.method !== "POST" || isAction || !isFormSubmission) {
-      return null;
-    }
-
-    // Clone the request to read FormData without consuming it
-    const formData = await request.clone().formData();
-
-    // Look for React's progressive enhancement hidden fields
-    let isDirectAction = false;
-    let isUseActionState = false;
-    let directActionId: string | null = null;
-
-    formData.forEach((_value, key) => {
-      if (key.startsWith("$ACTION_ID_")) {
-        isDirectAction = true;
-        directActionId = key.slice("$ACTION_ID_".length);
-      } else if (key.startsWith("$ACTION_REF_")) {
-        isUseActionState = true;
-      }
-    });
-
-    if (!isDirectAction && !isUseActionState) {
-      return null;
-    }
-
-    // Execute action and return HTML
-    let actionResult: unknown = undefined;
-    let reactFormState: ReactFormState | null = null;
-
-    if (isUseActionState) {
-      try {
-        const boundAction = await decodeAction(formData);
-        actionResult = await boundAction();
-      } catch (error) {
-        callOnError(error, "action", {
-          request,
-          url,
-          env,
-          handledByBoundary: false,
-        });
-        console.error("[RSC] Progressive enhancement action error:", error);
-      }
-    } else if (isDirectAction && directActionId) {
-      const temporaryReferences = createTemporaryReferenceSet();
-
-      let args: unknown[] = [];
-      try {
-        args = await decodeReply(formData, { temporaryReferences });
-      } catch {
-        args = [formData];
-      }
-
-      try {
-        const loadedAction = await loadServerAction(directActionId);
-        actionResult = await loadedAction.apply(null, args);
-      } catch (error) {
-        callOnError(error, "action", {
-          request,
-          url,
-          env,
-          actionId: directActionId,
-          handledByBoundary: false,
-        });
-        console.error("[RSC] Progressive enhancement action error:", error);
-      }
-    }
-
-    // Decode form state for useActionState progressive enhancement
-    try {
-      reactFormState = await decodeFormState(actionResult, formData);
-    } catch (error) {
-      callOnError(error, "action", {
-        request,
-        url,
-        env,
-        handledByBoundary: false,
-      });
-      console.error("[RSC] Failed to decode form state:", error);
-    }
-
-    // Re-render the page and return HTML
-    const renderRequest = new Request(url.toString(), {
-      method: "GET",
-      headers: new Headers({ accept: "text/html" }),
-    });
-
-    const match = await router.match(renderRequest, env);
-
-    if (match.redirect) {
-      return createResponseWithMergedHeaders(null, {
-        status: 308,
-        headers: { Location: match.redirect },
-      });
-    }
-
-    const payload: RscPayload = {
-      metadata: {
-        pathname: url.pathname,
-        segments: match.segments,
-        matched: match.matched,
-        diff: match.diff,
-        isPartial: false,
-        rootLayout: router.rootLayout,
-        handles: handleStore.stream(),
-        version,
-        themeConfig: router.themeConfig,
-        warmupEnabled: router.warmupEnabled,
-        initialTheme: requireRequestContext().theme,
-      },
-      formState: actionResult,
-    };
-
-    const rscStream = renderToReadableStream<RscPayload>(payload);
-    const ssrModule = await loadSSRModule();
-    const htmlStream = await ssrModule.renderHTML(rscStream, {
-      formState: reactFormState,
-      nonce,
-    });
-
-    return createResponseWithMergedHeaders(htmlStream, {
-      headers: { "content-type": "text/html;charset=utf-8" },
-    });
-  }
-
-  // ============================================================================
-  // SERVER ACTION HANDLER
-  // ============================================================================
-  async function handleServerAction(
-    request: Request,
-    env: TEnv,
-    url: URL,
-    actionId: string,
-    handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
-  ): Promise<Response> {
-    const temporaryReferences = createTemporaryReferenceSet();
-
-    // Decode action arguments from request body
-    const contentType = request.headers.get("content-type") || "";
-    let args: unknown[] = [];
-    let actionFormData: FormData | undefined;
-
-    try {
-      const body = contentType.includes("multipart/form-data")
-        ? await request.formData()
-        : await request.text();
-
-      if (body instanceof FormData) {
-        actionFormData = body;
-      }
-
-      if (hasBodyContent(body)) {
-        args = await decodeReply(body, { temporaryReferences });
-      }
-    } catch (error) {
-      callOnError(error, "action", {
-        request,
-        url,
-        env,
-        actionId,
-        handledByBoundary: false,
-      });
-      throw new Error(`Failed to decode action arguments: ${error}`, {
-        cause: error,
-      });
-    }
-
-    // Execute the server action
-    let returnValue: { ok: boolean; data: unknown };
-    let actionStatus = 200;
-    let loadedAction: Function | undefined;
-
-    try {
-      loadedAction = await loadServerAction(actionId);
-      const data = await loadedAction!.apply(null, args);
-
-      // Intercept redirect responses from actions. Without this, the redirect
-      // Response would be serialized as the action returnValue (which fails)
-      // and the revalidation step would run unnecessarily.
-      if (data instanceof Response) {
-        const redirectUrl = data.headers.get("Location");
-        const isRedirect =
-          data.status >= 300 && data.status < 400 && redirectUrl;
-        if (isRedirect) {
-          const locationState = getLocationState();
-          if (locationState) {
-            // Redirect with state: needs Flight payload to carry state
-            return createRedirectFlightResponse(
-              redirectUrl,
-              resolveLocationStateEntries(locationState),
-            );
-          }
-          // Simple redirect: short-circuit with a header, no RSC serialization
-          return createResponseWithMergedHeaders(null, {
-            status: 204,
-            headers: { "X-RSC-Redirect": redirectUrl },
-          });
-        }
-      }
-
-      returnValue = { ok: true, data };
-    } catch (error) {
-      returnValue = { ok: false, data: error };
-      actionStatus = 500;
-
-      // Try to render error boundary
-      const errorResult = await router.matchError(request, env, error, "route");
-
-      // Report the action error (handledByBoundary indicates if error boundary will render)
-      callOnError(error, "action", {
-        request,
-        url,
-        env,
-        actionId,
-        handledByBoundary: !!errorResult,
-      });
-
-      if (errorResult) {
-        setRequestContextParams(errorResult.params);
-
-        const payload: RscPayload = {
-          metadata: {
-            pathname: url.pathname,
-            segments: errorResult.segments,
-            isPartial: true,
-            matched: errorResult.matched,
-            diff: errorResult.diff,
-            isError: true,
-            handles: handleStore.stream(),
-            version,
-          },
-          returnValue,
-        };
-
-        const rscStream = renderToReadableStream<RscPayload>(payload, {
-          temporaryReferences,
-        });
-
-        return createResponseWithMergedHeaders(rscStream, {
-          status: actionStatus,
-          headers: { "content-type": "text/x-component;charset=utf-8" },
-        });
-      }
-    }
-
-    // Revalidate after action
-    const resolvedActionId =
-      (loadedAction as { $id?: string; $$id?: string } | undefined)?.$id ??
-      (loadedAction as { $$id?: string } | undefined)?.$$id ??
-      actionId;
-    const actionContext = {
-      actionId: resolvedActionId,
-      actionUrl: new URL(request.url),
-      actionResult: returnValue.data,
-      formData: actionFormData,
-    };
-
-    const matchResult = await router.matchPartial(request, env, actionContext);
-
-    if (!matchResult) {
-      // Fall back to full render
-      const fullMatch = await router.match(request, env);
-      setRequestContextParams(fullMatch.params);
-
-      if (fullMatch.redirect) {
-        return createResponseWithMergedHeaders(null, {
-          status: 308,
-          headers: { Location: fullMatch.redirect },
-        });
-      }
-
-      const serverTiming = fullMatch.serverTiming;
-
-      const payload: RscPayload = {
-        metadata: {
-          pathname: url.pathname,
-          segments: fullMatch.segments,
-          matched: fullMatch.matched,
-          diff: fullMatch.diff,
-          rootLayout: router.rootLayout,
-          handles: handleStore.stream(),
-          version,
-        },
-        returnValue,
-      };
-
-      const rscStream = renderToReadableStream<RscPayload>(payload, {
-        temporaryReferences,
-      });
-
-      const headers: Record<string, string> = {
-        "content-type": "text/x-component;charset=utf-8",
-      };
-      if (serverTiming) {
-        headers["Server-Timing"] = serverTiming;
-      }
-
-      return createResponseWithMergedHeaders(rscStream, {
-        status: actionStatus,
-        headers,
-      });
-    }
-
-    // Return updated segments
-    setRequestContextParams(matchResult.params);
-
-    const serverTiming = matchResult.serverTiming;
-
-    const payload: RscPayload = {
-      metadata: {
-        pathname: url.pathname,
-        segments: matchResult.segments,
-        isPartial: true,
-        matched: matchResult.matched,
-        diff: matchResult.diff,
-        slots: matchResult.slots,
-        handles: handleStore.stream(),
-        version,
-      },
-      returnValue,
-    };
-
-    const rscStream = renderToReadableStream<RscPayload>(payload, {
-      temporaryReferences,
-    });
-
-    const actionHeaders: Record<string, string> = {
-      "content-type": "text/x-component;charset=utf-8",
-    };
-    if (serverTiming) {
-      actionHeaders["Server-Timing"] = serverTiming;
-    }
-
-    return createResponseWithMergedHeaders(rscStream, {
-      status: actionStatus,
-      headers: actionHeaders,
-    });
-  }
-
-  // ============================================================================
-  // LOADER FETCH HANDLER
-  // Supports GET (params in query string) and POST/PUT/PATCH/DELETE (JSON body)
-  // ============================================================================
-  // LOADER FETCH HANDLER
-  // ============================================================================
-  // Handles load() (GET) requests from the client. load.action() uses a proper
-  // server action instead (invokeFetchableLoaderAction from
-  // fetchable-loader-action.ts).
-  //
-  // Route params (e.g. slug from /blog/:slug) come from previewMatch() in the
-  // outer coreRequestHandler, threaded through coreRequestHandlerInner as
-  // routeParams. This is necessary because handleLoaderFetch doesn't do its
-  // own route matching -- the URL is the page's pathname, and previewMatch
-  // has already extracted params from it.
-  // ============================================================================
-  async function handleLoaderFetch(
-    request: Request,
-    env: TEnv,
-    url: URL,
-    variables: Record<string, any>,
-    routeParams?: Record<string, string>,
-  ): Promise<Response> {
-    const loaderId = url.searchParams.get("_rsc_loader");
-
-    if (!loaderId) {
-      return createResponseWithMergedHeaders("Missing _rsc_loader parameter", {
-        status: 400,
-      });
-    }
-
-    // Look up loader lazily
-    const registeredLoader = await getLoaderLazy(loaderId);
-    if (!registeredLoader) {
-      return createResponseWithMergedHeaders(
-        `Loader "${loaderId}" not found in registry`,
-        { status: 404 },
-      );
-    }
-
-    // Parse params, body, and formData based on request method and content type
-    let loaderParams: Record<string, string> = {};
-    let loaderBody: unknown = undefined;
-    let loaderFormData: FormData | undefined;
-    const isBodyMethod = request.method !== "GET" && request.method !== "HEAD";
-
-    if (isBodyMethod) {
-      try {
-        const contentType = request.headers.get("content-type") || "";
-        if (contentType.includes("application/json")) {
-          const jsonBody = (await request.json()) as {
-            params?: Record<string, string>;
-            body?: unknown;
-            formEntries?: Record<string, string>;
-          };
-          loaderParams = jsonBody.params ?? {};
-          loaderBody = jsonBody.body;
-          // Reconstruct FormData from JSON-serialized entries (from load.action)
-          if (jsonBody.formEntries) {
-            loaderFormData = new FormData();
-            for (const [key, value] of Object.entries(jsonBody.formEntries)) {
-              loaderFormData.append(key, value);
-            }
-          }
-        }
-      } catch {
-        return createResponseWithMergedHeaders("Invalid request body", {
-          status: 400,
-        });
-      }
-    } else {
-      const loaderParamsJson = url.searchParams.get("_rsc_loader_params");
-      if (loaderParamsJson) {
-        try {
-          loaderParams = JSON.parse(loaderParamsJson);
-        } catch {
-          return createResponseWithMergedHeaders(
-            "Invalid _rsc_loader_params JSON",
-            { status: 400 },
-          );
-        }
-      }
-    }
-
-    // Execute the loader with middleware
-    try {
-      const { fn, middleware } = registeredLoader;
-
-      return await executeLoaderMiddleware(
-        middleware,
-        request,
-        env,
-        loaderParams,
-        variables,
-        async () => {
-          const ctx = requireRequestContext();
-          // Merge route params (from previewMatch) with explicit loader params.
-          // Explicit params take precedence over route-matched params.
-          const mergedParams = {
-            ...(routeParams ?? {}),
-            ...loaderParams,
-          };
-          const loaderCtx: any = {
-            ...ctx,
-            params: mergedParams,
-            body: loaderBody,
-            method: request.method,
-            ...(loaderFormData ? { formData: loaderFormData } : {}),
-          };
-
-          const result = await fn(loaderCtx);
-
-          interface LoaderPayload {
-            loaderResult: unknown;
-          }
-          const loaderPayload: LoaderPayload = { loaderResult: result };
-          const rscStream =
-            renderToReadableStream<LoaderPayload>(loaderPayload);
-
-          return createResponseWithMergedHeaders(rscStream, {
-            headers: { "content-type": "text/x-component;charset=utf-8" },
-          });
-        },
-        createReverseFunction(getRequiredRouteMap()),
-      );
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      const isDev = process.env.NODE_ENV !== "production";
-
-      console.error("[RSC] Loader error:", error);
-
-      callOnError(error, "loader", {
-        request,
-        url,
-        env,
-        loaderName: loaderId,
-        handledByBoundary: false,
-      });
-
-      const errorPayload = {
-        loaderResult: null,
-        loaderError: {
-          message: isDev ? err.message : "An error occurred",
-          name: err.name,
-        },
-      };
-      const rscStream = renderToReadableStream(errorPayload);
-
-      return createResponseWithMergedHeaders(rscStream, {
-        status: 500,
-        headers: { "content-type": "text/x-component;charset=utf-8" },
-      });
-    }
-  }
-
-  // ============================================================================
-  // RSC RENDERING HANDLER (Navigation)
-  // ============================================================================
-  async function handleRscRendering(
-    request: Request,
-    env: TEnv,
-    url: URL,
-    isPartial: boolean,
-    handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
-    nonce: string | undefined,
-  ): Promise<Response> {
-    // Retrieve handler-level timing from variables
-    const reqCtx = requireRequestContext();
-    const handlerTimingArr: string[] = reqCtx.var.__handlerTiming || [];
-    const handlerStart: number = reqCtx.var.__handlerStart || 0;
-
-    let payload: RscPayload;
-    let serverTiming: string | undefined;
-
-    if (isPartial) {
-      // Partial render (navigation)
-      const result = await router.matchPartial(request, env);
-
-      if (!result) {
-        // Fall back to full render
-        const match = await router.match(request, env);
-        setRequestContextParams(match.params);
-
-        if (match.redirect) {
-          return createResponseWithMergedHeaders(null, {
-            status: 308,
-            headers: { Location: match.redirect },
-          });
-        }
-
-        serverTiming = match.serverTiming;
-
-        payload = {
-          metadata: {
-            pathname: url.pathname,
-            segments: match.segments,
-            matched: match.matched,
-            diff: match.diff,
-            isPartial: false,
-            rootLayout: router.rootLayout,
-            handles: handleStore.stream(),
-            version,
-            themeConfig: router.themeConfig,
-            initialTheme: reqCtx.theme,
-          },
-        };
-      } else {
-        setRequestContextParams(result.params);
-        serverTiming = result.serverTiming;
-
-        payload = {
-          metadata: {
-            pathname: url.pathname,
-            segments: result.segments,
-            matched: result.matched,
-            diff: result.diff,
-            isPartial: true,
-            slots: result.slots,
-            handles: handleStore.stream(),
-            version,
-          },
-        };
-      }
-    } else {
-      // Full render (initial page load)
-      const match = await router.match(request, env);
-      setRequestContextParams(match.params);
-
-      if (match.redirect) {
-        return createResponseWithMergedHeaders(null, {
-          status: 308,
-          headers: { Location: match.redirect },
-        });
-      }
-
-      // Caching is now handled in router.match() via cache provider in request context
-      // match.segments already contains cached or fresh segments as appropriate
-
-      if (url.searchParams.has("__prerender_collect")) {
-        // Build-time prerender collection: serialize segments and handle data
-        // to JSON for storage as build artifacts. At runtime the worker
-        // deserializes these and feeds them through the normal segment pipeline.
-        const nonLoaderSegments = match.segments.filter(
-          (s) => s.type !== "loader",
-        );
-        await handleStore.settled;
-        const { serializeSegments } = await import("../cache/segment-codec.js");
-        const serializedSegments = await serializeSegments(nonLoaderSegments);
-        const handles: Record<string, Record<string, unknown[]>> = {};
-        for (const seg of nonLoaderSegments) {
-          const segHandles = handleStore.getDataForSegment(seg.id);
-          if (Object.keys(segHandles).length > 0) {
-            handles[seg.id] = segHandles;
-          }
-        }
-        return new Response(
-          JSON.stringify({
-            segments: serializedSegments,
-            handles,
-            routeName: match.routeName,
-            params: match.params,
-          }),
-          { headers: { "Content-Type": "application/json" } },
-        );
-      } else {
-        serverTiming = match.serverTiming;
-
-        payload = {
-          // Initial SSR can reconstruct the tree from segments + rootLayout,
-          // so we omit root to avoid sending the same structure twice.
-
-          metadata: {
-            pathname: url.pathname,
-            segments: match.segments,
-            matched: match.matched,
-            diff: match.diff,
-            isPartial: false,
-            rootLayout: router.rootLayout,
-            handles: handleStore.stream(),
-            version,
-            themeConfig: router.themeConfig,
-            initialTheme: reqCtx.theme,
-          },
-        };
-      }
-    }
-
-    // For partial requests, include any server-set location state in the payload.
-    // SSR (full page) requests ignore location state since there's no history.state
-    // to write to on a fresh page load.
-    if (isPartial && payload.metadata) {
-      const locationState = getLocationState();
-      if (locationState) {
-        payload.metadata.locationState =
-          resolveLocationStateEntries(locationState);
-      }
-    }
-
-    // Serialize to RSC stream
-    const rscSerializeStart = performance.now();
-    const rscStream = renderToReadableStream<RscPayload>(payload);
-    const rscSerializeDur = performance.now() - rscSerializeStart;
-
-    // Determine if this is an RSC request or HTML request.
-    // Partial requests (_rsc_partial) are always RSC — they come from client-side
-    // navigation or <link rel="prefetch">. Chrome sends Accept: text/html for
-    // prefetch links despite as="fetch", so we cannot rely on Accept alone.
-    const isRscRequest =
-      isPartial ||
-      (!request.headers.get("accept")?.includes("text/html") &&
-        !url.searchParams.has("__html")) ||
-      url.searchParams.has("__rsc");
-
-    // Build complete Server-Timing: handler phases + match/manifest + RSC serialize
-    const timingParts: string[] = [...handlerTimingArr];
-    if (serverTiming) {
-      timingParts.push(serverTiming);
-    }
-    timingParts.push(`rsc-serialize;dur=${rscSerializeDur.toFixed(2)}`);
-
-    if (isRscRequest) {
-      const fullTiming = timingParts.join(", ");
-      const rscHeaders: Record<string, string> = {
-        "content-type": "text/x-component;charset=utf-8",
-        vary: "accept",
-      };
-      if (fullTiming) {
-        rscHeaders["Server-Timing"] = fullTiming;
-      }
-      return createResponseWithMergedHeaders(rscStream, {
-        headers: rscHeaders,
-      });
-    }
-
-    // Delegate to SSR for HTML response
-    const ssrModuleStart = performance.now();
-    const ssrModule = await loadSSRModule();
-    const ssrModuleDur = performance.now() - ssrModuleStart;
-    timingParts.push(`ssr-module-load;dur=${ssrModuleDur.toFixed(2)}`);
-
-    const ssrRenderStart = performance.now();
-    const htmlStream = await ssrModule.renderHTML(rscStream, { nonce });
-    const ssrRenderDur = performance.now() - ssrRenderStart;
-    timingParts.push(`ssr-render-html;dur=${ssrRenderDur.toFixed(2)}`);
-
-    // Add total handler duration
-    if (handlerStart) {
-      const totalHandler = performance.now() - handlerStart;
-      timingParts.push(`handler-total;dur=${totalHandler.toFixed(2)}`);
-    }
-
-    const fullTiming = timingParts.join(", ");
-    const htmlHeaders: Record<string, string> = {
-      "content-type": "text/html;charset=utf-8",
-    };
-    if (fullTiming) {
-      htmlHeaders["Server-Timing"] = fullTiming;
-    }
-
-    return createResponseWithMergedHeaders(htmlStream, {
-      headers: htmlHeaders,
-    });
   }
 }
