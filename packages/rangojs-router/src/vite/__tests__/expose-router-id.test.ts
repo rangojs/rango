@@ -18,7 +18,7 @@ function initPlugin(root = "/project") {
 describe("exposeRouterId", () => {
   // ---- Basic injection ----
 
-  it("injects $$id and $$routeNames into createRouter({...})", () => {
+  it("injects $$id, $$sourceFile and $$routeNames into createRouter({...})", () => {
     const plugin = initPlugin();
     const code = `import { createRouter } from "@rangojs/router";
 export const router = createRouter({ routes: [] });
@@ -29,6 +29,10 @@ export const router = createRouter({ routes: [] });
     const idMatch = result.code.match(/\$\$id:\s*"([^"]+)"/);
     expect(idMatch).toBeDefined();
     expect(idMatch![1]).toMatch(/^[0-9a-f]{8}$/);
+    // $$sourceFile should be the absolute path
+    expect(result.code).toMatch(
+      /\$\$sourceFile:\s*"\/project\/src\/router\.tsx"/,
+    );
     // $$routeNames should reference the imported variable
     expect(result.code).toMatch(/\$\$routeNames:\s*__rsc_rn/);
     // Should import named-routes.gen with correct filename

@@ -36,6 +36,14 @@ export interface RSCRouterOptions<TEnv = any> {
   $$id?: string;
 
   /**
+   * Injected by the Vite transform at compile time.
+   * Absolute path of the source file that defines this router,
+   * relative to project root. Eliminates runtime stack trace parsing.
+   * @internal
+   */
+  $$sourceFile?: string;
+
+  /**
    * Enable performance metrics collection
    * When enabled, metrics are output to console and available via Server-Timing header
    */

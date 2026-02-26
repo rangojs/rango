@@ -170,6 +170,7 @@ export function createRouter<TEnv = any>(
     theme: themeOption,
     urls: urlsOption,
     $$routeNames: staticRouteNames,
+    $$sourceFile: injectedSourceFile,
     nonce,
     version,
     warmup: warmupOption,
@@ -181,30 +182,31 @@ export function createRouter<TEnv = any>(
     setCacheProfiles(cacheProfilesOption);
   }
 
-  // Capture the source file that called createRouter() via stack trace parsing.
-  // Used by the Vite plugin to write per-router named-routes.gen.ts files.
-  let __sourceFile: string | undefined;
-  try {
-    const stack = new Error().stack;
-    if (stack) {
-      const lines = stack.split("\n");
-      for (const line of lines) {
-        const match = line.match(/\((.+?\.(ts|tsx|js|jsx)):\d+:\d+\)/);
-        if (
-          match &&
-          !match[1].endsWith("/router.ts") &&
-          !match[1].includes("@rangojs/router") &&
-          !match[1].includes("node_modules")
-        ) {
-          // Strip file: URL protocol prefix from Vite module runner stack traces
-          __sourceFile = match[1].startsWith("file:")
-            ? match[1].slice(5)
-            : match[1];
-          break;
+  // Source file: prefer Vite-injected path (zero cost), fall back to
+  // stack trace parsing for non-Vite environments (e.g. tests).
+  let __sourceFile: string | undefined = injectedSourceFile;
+  if (!__sourceFile) {
+    try {
+      const stack = new Error().stack;
+      if (stack) {
+        const lines = stack.split("\n");
+        for (const line of lines) {
+          const match = line.match(/\((.+?\.(ts|tsx|js|jsx)):\d+:\d+\)/);
+          if (
+            match &&
+            !match[1].endsWith("/router.ts") &&
+            !match[1].includes("@rangojs/router") &&
+            !match[1].includes("node_modules")
+          ) {
+            __sourceFile = match[1].startsWith("file:")
+              ? match[1].slice(5)
+              : match[1];
+            break;
+          }
         }
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
   // Router ID priority: explicit id > Vite-injected $$id > counter fallback.
   // $$id is a hash of filename+line injected by the Vite transform at compile

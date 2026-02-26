@@ -9,6 +9,7 @@ export function transformRouter(
   code: string,
   filePath: string,
   routerFnNames: string[],
+  absolutePath?: string,
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
   const pat = new RegExp(
     `\\b(?:${routerFnNames.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\s*(?:<[^>]*>)?\\s*\\(`,
@@ -44,7 +45,11 @@ export function transformRouter(
       .slice(0, 8);
 
     changed = true;
-    const injected = ` $$id: "${hash}", $$routeNames: ${routeNamesVar},`;
+    // $$sourceFile uses the absolute path so that downstream consumers
+    // (virtual-module-codegen, runtime-discovery) can resolve gen file
+    // imports correctly via path.dirname / path.join.
+    const sourceFilePath = absolutePath ?? filePath;
+    const injected = ` $$id: "${hash}", $$sourceFile: "${sourceFilePath}", $$routeNames: ${routeNamesVar},`;
 
     const afterParen = callArgs.trimStart();
     if (afterParen.startsWith("{")) {
@@ -99,7 +104,7 @@ export function exposeRouterId(): Plugin {
 
       const filePath = normalizePath(path.relative(projectRoot, id));
       const routerFnNames = getImportedFnNames(code, "createRouter");
-      return transformRouter(code, filePath, routerFnNames);
+      return transformRouter(code, filePath, routerFnNames, normalizePath(id));
     },
   };
 }
