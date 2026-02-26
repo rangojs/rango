@@ -20,7 +20,6 @@ test.describe.configure({ mode: "serial" });
 // ============================================================================
 
 test.describe("smoke", () => {
-
   const f = useFixture({
     root: "./e2e/e2e-basic",
     mode: "dev",
