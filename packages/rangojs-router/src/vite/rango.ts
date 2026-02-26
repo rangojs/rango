@@ -1,36 +1,36 @@
 import type { PluginOption } from "vite";
 import { readFileSync } from "node:fs";
-import { exposeActionId } from "./plugins/expose-action-id.ts";
+import { exposeActionId } from "./plugins/expose-action-id.js";
 import {
   exposeInternalIds,
   exposeRouterId,
-} from "./plugins/expose-internal-ids.ts";
-import { useCacheTransform } from "./plugins/use-cache-transform.ts";
-import { VIRTUAL_IDS } from "./plugins/virtual-entries.ts";
+} from "./plugins/expose-internal-ids.js";
+import { useCacheTransform } from "./plugins/use-cache-transform.js";
+import { VIRTUAL_IDS } from "./plugins/virtual-entries.js";
 import {
   getExcludeDeps,
   getPackageAliases,
-} from "./utils/package-resolution.ts";
+} from "./utils/package-resolution.js";
 import {
   createScanFilter,
   findRouterFiles,
-} from "../build/generate-route-types.ts";
-import { createVersionPlugin } from "./plugins/version-plugin.ts";
+} from "../build/generate-route-types.js";
+import { createVersionPlugin } from "./plugins/version-plugin.js";
 import {
   sharedEsbuildOptions,
   createVirtualEntriesPlugin,
   onwarn,
   getManualChunks,
-} from "./utils/shared-utils.ts";
+} from "./utils/shared-utils.js";
 import type {
   RangoOptions,
   RangoNodeOptions,
   RscPluginOptions,
-} from "./plugin-types.ts";
-import { printBanner, rangoVersion } from "./utils/banner.ts";
-import { createVersionInjectorPlugin } from "./plugins/version-injector.ts";
-import { createCjsToEsmPlugin } from "./plugins/cjs-to-esm.ts";
-import { createRouterDiscoveryPlugin } from "./router-discovery.ts";
+} from "./plugin-types.js";
+import { printBanner, rangoVersion } from "./utils/banner.js";
+import { createVersionInjectorPlugin } from "./plugins/version-injector.js";
+import { createCjsToEsmPlugin } from "./plugins/cjs-to-esm.js";
+import { createRouterDiscoveryPlugin } from "./router-discovery.js";
 
 /**
  * Vite plugin for @rangojs/router.

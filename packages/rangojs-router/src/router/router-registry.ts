@@ -1,4 +1,4 @@
-import type { RSCRouter } from "./router-interfaces.ts";
+import type { RSCRouter } from "./router-interfaces.js";
 
 /**
  * Brand marker for identifying router instances at build time.

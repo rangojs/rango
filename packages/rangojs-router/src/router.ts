@@ -145,31 +145,31 @@ import {
   parseAcceptTypes,
   RSC_RESPONSE_TYPE,
   pickNegotiateVariant,
-} from "./router/content-negotiation.ts";
+} from "./router/content-negotiation.js";
 
 // Extracted router types and registry
 import {
   RSC_ROUTER_BRAND,
   RouterRegistry,
   nextRouterAutoId,
-} from "./router/router-registry.ts";
+} from "./router/router-registry.js";
 import type {
   RSCRouterOptions,
   RootLayoutProps,
-} from "./router/router-options.ts";
+} from "./router/router-options.js";
 import type {
   RSCRouter,
   RouteBuilder,
   InlineRouteHelpers,
-} from "./router/router-interfaces.ts";
+} from "./router/router-interfaces.js";
 
 // Re-export public types and values from extracted modules
-export { RSC_ROUTER_BRAND, RouterRegistry } from "./router/router-registry.ts";
+export { RSC_ROUTER_BRAND, RouterRegistry } from "./router/router-registry.js";
 export type {
   RSCRouterOptions,
   RootLayoutProps,
-} from "./router/router-options.ts";
-export type { RSCRouter } from "./router/router-interfaces.ts";
+} from "./router/router-options.js";
+export type { RSCRouter } from "./router/router-interfaces.js";
 
 export function createRouter<TEnv = any>(
   options: RSCRouterOptions<TEnv> = {},

@@ -8,7 +8,7 @@ import type {
 import type { NonceProvider } from "../rsc/types.js";
 import type { ExecutionContext } from "../server/request-context.js";
 import type { UrlPatterns } from "../urls.js";
-import type { NamedRouteEntry } from "./content-negotiation.ts";
+import type { NamedRouteEntry } from "./content-negotiation.js";
 
 /**
  * Props passed to the root layout component

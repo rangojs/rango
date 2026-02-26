@@ -44,14 +44,14 @@ import type {
   ResponseHandler,
   ResponseHandlerContext,
   TextResponseHandler,
-} from "./response-types.ts";
+} from "./response-types.js";
 import type {
   UnnamedRoute,
   PathOptions,
   UrlPatterns,
   IncludeOptions,
-} from "./pattern-types.ts";
-import type { ExtractRoutes, ExtractResponses } from "./type-extraction.ts";
+} from "./pattern-types.js";
+import type { ExtractRoutes, ExtractResponses } from "./type-extraction.js";
 
 /**
  * Base path function signature for defining routes with URL patterns.

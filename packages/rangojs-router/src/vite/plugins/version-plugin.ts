@@ -1,5 +1,5 @@
 import type { Plugin } from "vite";
-import { VIRTUAL_IDS, getVirtualVersionContent } from "./virtual-entries.ts";
+import { VIRTUAL_IDS, getVirtualVersionContent } from "./virtual-entries.js";
 
 /**
  * Plugin providing rsc-router:version virtual module.

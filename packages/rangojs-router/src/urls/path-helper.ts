@@ -17,14 +17,14 @@ import {
   type StaticHandlerDefinition,
 } from "../static-handler.js";
 import { registerSearchSchema } from "../route-map-builder.js";
-import { RESPONSE_TYPE } from "./response-types.ts";
-import type { PathOptions } from "./pattern-types.ts";
+import { RESPONSE_TYPE } from "./response-types.js";
+import type { PathOptions } from "./pattern-types.js";
 import type {
   PathFn,
   ResponsePathFn,
   JsonResponsePathFn,
   TextResponsePathFn,
-} from "./path-helper-types.ts";
+} from "./path-helper-types.js";
 
 /**
  * Check if a value is a valid use item

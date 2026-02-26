@@ -1,6 +1,6 @@
 import type { RouteDefinition, DefaultEnv } from "../types.js";
 import type { AllUseItems } from "../route-types.js";
-import type { RouteHelpers } from "./helpers-types.ts";
+import type { RouteHelpers } from "./helpers-types.js";
 import {
   layout,
   cache,
@@ -15,7 +15,7 @@ import {
   loadingFn,
   transitionFn,
   routeFn,
-} from "./dsl-helpers.ts";
+} from "./dsl-helpers.js";
 import RootLayout from "../server/root-layout";
 import { invariant } from "../errors";
 

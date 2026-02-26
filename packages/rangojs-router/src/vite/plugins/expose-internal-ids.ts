@@ -12,11 +12,11 @@ import {
   findStatementEnd,
   buildExportMap,
   escapeRegExp,
-} from "./expose-id-utils.ts";
+} from "./expose-id-utils.js";
 import {
   transformInlineHandlers,
   type VirtualHandlerEntry,
-} from "../utils/ast-handler-extract.ts";
+} from "../utils/ast-handler-extract.js";
 
 // ---------------------------------------------------------------------------
 // Virtual module for loader manifest

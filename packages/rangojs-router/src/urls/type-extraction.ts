@@ -6,7 +6,7 @@ import type {
   TypedCacheItem,
   TypedTransitionItem,
 } from "../route-types.js";
-import type { UnnamedRoute, UrlPatterns } from "./pattern-types.ts";
+import type { UnnamedRoute, UrlPatterns } from "./pattern-types.js";
 
 // ============================================================================
 // Route Type Extraction Utilities

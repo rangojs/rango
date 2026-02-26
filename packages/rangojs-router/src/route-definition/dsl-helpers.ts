@@ -36,7 +36,7 @@ import type {
   TransitionItem,
   UseItems,
 } from "../route-types.js";
-import type { RouteHelpers } from "./helpers-types.ts";
+import type { RouteHelpers } from "./helpers-types.js";
 
 /**
  * Check if an item contains routes (directly or inside nested structures like cache).

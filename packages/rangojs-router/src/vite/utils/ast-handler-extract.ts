@@ -1,5 +1,5 @@
 import type MagicString from "magic-string";
-import { hashInlineId, buildExportMap } from "../plugins/expose-id-utils.ts";
+import { hashInlineId, buildExportMap } from "../plugins/expose-id-utils.js";
 
 // ---------------------------------------------------------------------------
 // Types

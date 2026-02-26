@@ -1,7 +1,7 @@
 import {
   skipStringOrComment,
   escapeRegExp,
-} from "../plugins/expose-id-utils.ts";
+} from "../plugins/expose-id-utils.js";
 
 /**
  * Find matching close paren in bundled code using depth counting.

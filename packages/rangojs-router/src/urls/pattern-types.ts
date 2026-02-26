@@ -6,7 +6,7 @@ import type {
   UrlPatternsBrand,
 } from "../route-types.js";
 import type { SearchSchema } from "../search-params.js";
-import { RESPONSE_TYPE } from "./response-types.ts";
+import { RESPONSE_TYPE } from "./response-types.js";
 
 /**
  * Sentinel type for unnamed routes.

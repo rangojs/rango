@@ -18,8 +18,8 @@ import type {
   SegmentHandleData,
 } from "../cache/types.js";
 import type { MiddlewareEntry, MiddlewareFn } from "./middleware.js";
-import { RSC_ROUTER_BRAND } from "./router-registry.ts";
-import type { RSCRouterOptions, RootLayoutProps } from "./router-options.ts";
+import { RSC_ROUTER_BRAND } from "./router-registry.js";
+import type { RSCRouterOptions, RootLayoutProps } from "./router-options.js";
 
 /**
  * Merge route patterns with response types into a single route map.

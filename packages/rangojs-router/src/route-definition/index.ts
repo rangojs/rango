@@ -1,8 +1,8 @@
 // Route definition
-export { route, type RouteDefinitionResult } from "./route-function.ts";
+export { route, type RouteDefinitionResult } from "./route-function.js";
 
 // Type definitions
-export type { RouteHelpers } from "./helpers-types.ts";
+export type { RouteHelpers } from "./helpers-types.js";
 export type {
   AllUseItems,
   LayoutItem,
@@ -23,7 +23,7 @@ export type {
   InterceptSelectorContext,
   InterceptSegmentsState,
   InterceptWhenFn,
-} from "./helpers-types.ts";
+} from "./helpers-types.js";
 
 // DSL helpers
 export {
@@ -39,17 +39,17 @@ export {
   loader,
   loading,
   transition,
-} from "./dsl-helpers.ts";
+} from "./dsl-helpers.js";
 
 // Helper factories and map
 export {
   map,
   createRouteHelpers,
   type RouteHandlers,
-} from "./helper-factories.ts";
+} from "./helper-factories.js";
 
 // Redirect
-export { redirect } from "./redirect.ts";
+export { redirect } from "./redirect.js";
 
 // Re-export createLoader from loader.rsc.ts for RSC/server context
 export { createLoader } from "../loader.rsc.js";

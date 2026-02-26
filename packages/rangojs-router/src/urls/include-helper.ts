@@ -5,8 +5,8 @@ import {
   getUrlPrefix,
   getNamePrefix,
 } from "../server/context";
-import type { UrlPatterns, IncludeOptions } from "./pattern-types.ts";
-import type { IncludeFn } from "./path-helper-types.ts";
+import type { UrlPatterns, IncludeOptions } from "./pattern-types.js";
+import type { IncludeFn } from "./path-helper-types.js";
 
 /**
  * Process an IncludeItem by executing its nested patterns with prefixes

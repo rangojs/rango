@@ -1,12 +1,12 @@
 import type { Plugin } from "vite";
 import * as Vite from "vite";
-import { getPublishedPackageName } from "./package-resolution.ts";
+import { getPublishedPackageName } from "./package-resolution.js";
 import {
   VIRTUAL_ENTRY_BROWSER,
   VIRTUAL_ENTRY_SSR,
   getVirtualEntryRSC,
   VIRTUAL_IDS,
-} from "../plugins/virtual-entries.ts";
+} from "../plugins/virtual-entries.js";
 
 /**
  * esbuild plugin to provide rsc-router:version virtual module during optimization.

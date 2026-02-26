@@ -16,31 +16,31 @@ import {
   createScanFilter,
   buildCombinedRouteMapForRouterFile,
   type ScanFilter,
-} from "../build/generate-route-types.ts";
-import { VIRTUAL_IDS } from "./plugins/virtual-entries.ts";
+} from "../build/generate-route-types.js";
+import { VIRTUAL_IDS } from "./plugins/virtual-entries.js";
 import { contextSet } from "../context-var.js";
-import { createVersionPlugin } from "./plugins/version-plugin.ts";
-import { createVirtualStubPlugin } from "./plugins/virtual-stub-plugin.ts";
+import { createVersionPlugin } from "./plugins/version-plugin.js";
+import { createVirtualStubPlugin } from "./plugins/virtual-stub-plugin.js";
 import {
   exposeInternalIds,
   exposeRouterId,
-} from "./plugins/expose-internal-ids.ts";
-import { hashClientRefs } from "./plugins/client-ref-hashing.ts";
+} from "./plugins/expose-internal-ids.js";
+import { hashClientRefs } from "./plugins/client-ref-hashing.js";
 import {
   flattenLeafEntries,
   buildRouteToStaticPrefix,
   jsonParseExpression,
-} from "./utils/manifest-utils.ts";
+} from "./utils/manifest-utils.js";
 import {
   encodePathParam,
   runWithConcurrency,
   groupByConcurrency,
   notifyOnError,
-} from "./utils/prerender-utils.ts";
+} from "./utils/prerender-utils.js";
 import {
   extractHandlerExportsFromChunk,
   evictHandlerCode,
-} from "./utils/bundle-analysis.ts";
+} from "./utils/bundle-analysis.js";
 
 export const VIRTUAL_ROUTES_MANIFEST_ID = "virtual:rsc-router/routes-manifest";
 // VIRTUAL_PRERENDER_PATHS_ID removed: prerender data is served through the worker

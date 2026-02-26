@@ -6,7 +6,7 @@ export {
   type JsonResponseHandler,
   type TextResponseHandler,
   type ResponseHandlerContext,
-} from "./response-types.ts";
+} from "./response-types.js";
 
 // Pattern types
 export type {
@@ -15,7 +15,7 @@ export type {
   PathDefinition,
   UrlPatterns,
   IncludeOptions,
-} from "./pattern-types.ts";
+} from "./pattern-types.js";
 
 // Type extraction utilities
 export type {
@@ -26,7 +26,7 @@ export type {
   ResponseError,
   ResponseEnvelope,
   RouteResponse,
-} from "./type-extraction.ts";
+} from "./type-extraction.js";
 
 // Path helper types
 export type {
@@ -36,10 +36,10 @@ export type {
   TextResponsePathFn,
   IncludeFn,
   PathHelpers,
-} from "./path-helper-types.ts";
+} from "./path-helper-types.js";
 
 // Main entry point
-export { urls } from "./urls-function.ts";
+export { urls } from "./urls-function.js";
 
 // Re-exports from route-types
 export type {
