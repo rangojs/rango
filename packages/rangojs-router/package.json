@@ -68,7 +68,7 @@
       "import": "./dist/vite/index.js"
     },
     "./types": {
-      "types": "./src/vite/version.d.ts"
+      "types": "./src/vite/plugins/version.d.ts"
     },
     "./__internal": {
       "types": "./src/__internal.ts",

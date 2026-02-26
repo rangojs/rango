@@ -40,10 +40,7 @@ export const NamedRoutes = {
   productReviews: "/item/:productId/reviews",
   "releases.index": "/releases",
   robots: "/robots.txt",
-  search: {
-    path: "/search",
-    search: { q: "string", page: "number?", sort: "string?" },
-  },
+  search: { path: "/search", search: { q: "string", page: "number?", sort: "string?" } },
   slow1: "/slow/1",
   slow2: "/slow/2",
   slowCache: "/slow-cache",

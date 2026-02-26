@@ -55,9 +55,10 @@ export async function discoverAndWriteRouteTypes(
     );
   }
 
-  const { createVersionPlugin } = await import("../vite/version-plugin.ts");
+  const { createVersionPlugin } =
+    await import("../vite/plugins/version-plugin.ts");
   const { createVirtualStubPlugin } =
-    await import("../vite/virtual-stub-plugin.ts");
+    await import("../vite/plugins/virtual-stub-plugin.ts");
 
   // Load user's vite config to get resolve.alias (unless provided directly)
   let userResolveAlias: any = opts.resolveAlias;

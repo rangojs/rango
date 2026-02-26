@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   exposeInternalIds,
   type ExposeInternalIdsApi,
-} from "../expose-internal-ids.ts";
+} from "../plugins/expose-internal-ids.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

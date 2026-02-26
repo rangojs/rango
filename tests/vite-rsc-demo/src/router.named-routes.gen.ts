@@ -46,10 +46,8 @@ export const NamedRoutes = {
   "shop.checkout.payment": "/shop/checkout/payment",
   "shop.index": "/shop",
   "shop.products.category": "/shop/products/:category",
-  "shop.products.detail.reviews.detail":
-    "/shop/product/:slug/reviews/:reviewId",
-  "shop.products.detail.reviews.edit.index":
-    "/shop/product/:slug/reviews/:reviewId/edit",
+  "shop.products.detail.reviews.detail": "/shop/product/:slug/reviews/:reviewId",
+  "shop.products.detail.reviews.edit.index": "/shop/product/:slug/reviews/:reviewId/edit",
   "shop.products.detail.reviews.index": "/shop/product/:slug/reviews",
   "shop.products.detail.view": "/shop/product/:slug",
   "todos.detail": "/todos/:id",

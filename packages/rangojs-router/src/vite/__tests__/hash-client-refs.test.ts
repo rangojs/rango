@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
-import { computeProductionHash, transformClientRefs } from "../index.ts";
+import { computeProductionHash, transformClientRefs } from "../index.js";
 
 function sha256_12(input: string): string {
   return createHash("sha256").update(input).digest("hex").slice(0, 12);

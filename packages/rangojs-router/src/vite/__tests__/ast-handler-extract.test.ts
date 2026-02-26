@@ -7,8 +7,8 @@ import {
   extractModuleLevelDeclarations,
   transformInlineHandlers,
   type VirtualHandlerEntry,
-} from "../ast-handler-extract.ts";
-import { hashInlineId } from "../expose-id-utils.ts";
+} from "../utils/ast-handler-extract.js";
+import { hashInlineId } from "../plugins/expose-id-utils.js";
 
 // ---------------------------------------------------------------------------
 // findHandlerCalls (parameterized)

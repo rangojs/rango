@@ -2,7 +2,7 @@ import type { Plugin, ResolvedConfig } from "vite";
 import MagicString from "magic-string";
 import path from "node:path";
 import fs from "node:fs";
-import { normalizePath } from "./expose-id-utils.ts";
+import { normalizePath } from "./expose-id-utils.js";
 
 /**
  * Type for the RSC plugin's manager API
