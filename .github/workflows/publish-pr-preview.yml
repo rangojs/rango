@@ -50,7 +50,7 @@ jobs:
       - name: Set version and publish
         working-directory: packages/rangojs-router
         run: |
-          pnpm version "${{ steps.version.outputs.version }}" --no-git-tag-version
+          node -e "const p=require('./package.json');p.version='${{ steps.version.outputs.version }}';require('fs').writeFileSync('./package.json',JSON.stringify(p,null,2)+'\n')"
           pnpm publish --tag "pr-${{ github.event.pull_request.number }}" --provenance --no-git-checks
 
       - name: Comment on PR
