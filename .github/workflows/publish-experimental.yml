@@ -15,6 +15,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -56,9 +57,7 @@ jobs:
         working-directory: packages/rangojs-router
         run: |
           npm version "${{ steps.version.outputs.version }}" --no-git-tag-version
-          npm publish --tag experimental
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          npm publish --tag experimental --provenance
 
       - name: Comment on merged PR
         run: |
