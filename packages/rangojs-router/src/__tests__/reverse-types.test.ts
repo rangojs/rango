@@ -10,9 +10,6 @@ import type {
   ReverseFunction,
   ScopedReverseFunction,
   ParamsFor,
-  PrefixedRoutes,
-  PrefixRoutePatterns,
-  PrefixRouteKeys,
 } from "../reverse.js";
 import type { ExtractParams, Handler } from "../types.js";
 import type {
@@ -93,55 +90,6 @@ describe("ParamsFor", () => {
   it("should handle optional params", () => {
     type Params = ParamsFor<TestRoutes, "user.settings">;
     expectTypeOf<Params>().toEqualTypeOf<{ userId: string; tab?: string }>();
-  });
-});
-
-describe("PrefixRoutePatterns", () => {
-  it("should prefix patterns", () => {
-    type Prefixed = PrefixRoutePatterns<BlogRoutes, "/blog">;
-    expectTypeOf<Prefixed>().toEqualTypeOf<{
-      index: "/blog";
-      post: "/blog/:slug";
-      category: "/blog/category/:categoryId";
-    }>();
-  });
-
-  it("should handle empty prefix", () => {
-    type Prefixed = PrefixRoutePatterns<BlogRoutes, "">;
-    expectTypeOf<Prefixed>().toEqualTypeOf<BlogRoutes>();
-  });
-
-  it("should handle root pattern", () => {
-    type Routes = { index: "/" };
-    type Prefixed = PrefixRoutePatterns<Routes, "/blog">;
-    expectTypeOf<Prefixed>().toEqualTypeOf<{ index: "/blog" }>();
-  });
-});
-
-describe("PrefixRouteKeys", () => {
-  it("should prefix keys", () => {
-    type Prefixed = PrefixRouteKeys<BlogRoutes, "blog">;
-    expectTypeOf<Prefixed>().toEqualTypeOf<{
-      "blog.index": "/";
-      "blog.post": "/:slug";
-      "blog.category": "/category/:categoryId";
-    }>();
-  });
-
-  it("should handle empty prefix", () => {
-    type Prefixed = PrefixRouteKeys<BlogRoutes, "">;
-    expectTypeOf<Prefixed>().toEqualTypeOf<BlogRoutes>();
-  });
-});
-
-describe("PrefixedRoutes", () => {
-  it("should prefix both keys and patterns", () => {
-    type Prefixed = PrefixedRoutes<BlogRoutes, "blog">;
-    expectTypeOf<Prefixed>().toEqualTypeOf<{
-      "blog.index": "/blog";
-      "blog.post": "/blog/:slug";
-      "blog.category": "/blog/category/:categoryId";
-    }>();
   });
 });
 
@@ -365,19 +313,6 @@ type _Test5 = AssertTrue<
   AssertEqual<ParamsFor<TestRoutes, "blog.post">, { slug: string }>
 >;
 type _Test6 = AssertTrue<AssertEqual<ParamsFor<TestRoutes, "about">, {}>>;
-
-// Verify PrefixRoutePatterns works correctly
-type _Test7 = AssertTrue<
-  AssertEqual<PrefixRoutePatterns<{ index: "/" }, "/blog">, { index: "/blog" }>
->;
-
-// Verify PrefixedRoutes works correctly
-type _Test8 = AssertTrue<
-  AssertEqual<
-    PrefixedRoutes<{ index: "/"; post: "/:slug" }, "blog">,
-    { "blog.index": "/blog"; "blog.post": "/blog/:slug" }
-  >
->;
 
 // ============================================================================
 // PathResponse — full type chain through path.json() → createRouter().routes()

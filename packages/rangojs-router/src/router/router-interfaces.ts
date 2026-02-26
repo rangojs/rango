@@ -1,16 +1,9 @@
 import type { ComponentType, ReactNode } from "react";
 import type { SerializedManifest } from "../debug.js";
-import type { PrefixRoutePatterns, ReverseFunction } from "../reverse.js";
-import type { AllUseItems } from "../route-types.js";
-import type { RouteHandlers } from "../route-definition.js";
+import type { ReverseFunction } from "../reverse.js";
 import type { UrlPatterns } from "../urls.js";
 import type { EntryData } from "../server/context";
-import type {
-  ErrorInfo,
-  HandlerContext,
-  MatchResult,
-  RouteDefinition,
-} from "../types";
+import type { ErrorInfo, MatchResult } from "../types";
 import type { NonceProvider } from "../rsc/types.js";
 import type { ExecutionContext } from "../server/request-context.js";
 import type {
@@ -43,232 +36,6 @@ type MergeRoutesWithResponses<
 };
 
 /**
- * Extract the URL pattern from a route entry (string or { path, response } object)
- */
-type PatternOfEntry<V> = V extends string
-  ? V
-  : V extends { readonly path: infer P extends string }
-    ? P
-    : never;
-
-/**
- * Type-level detection of conflicting route keys.
- * Extracts keys that exist in both TExisting and TNew but with different URL patterns.
- * Returns `never` if no conflicts exist.
- * Compares patterns (not full entries) to handle both string and { path, response } values.
- *
- * @example
- * ```typescript
- * ConflictingKeys<{ a: "/a" }, { a: "/b" }> // "a" (conflict - same key, different URLs)
- * ConflictingKeys<{ a: "/a" }, { a: "/a" }> // never (no conflict - same key and URL)
- * ConflictingKeys<{ a: "/a" }, { b: "/b" }> // never (no conflict - different keys)
- * ```
- */
-type ConflictingKeys<
-  TExisting extends Record<string, unknown>,
-  TNew extends Record<string, unknown>,
-> = {
-  [K in keyof TExisting & keyof TNew]: PatternOfEntry<
-    TExisting[K]
-  > extends PatternOfEntry<TNew[K]>
-    ? PatternOfEntry<TNew[K]> extends PatternOfEntry<TExisting[K]>
-      ? never // Same pattern, no conflict
-      : K // Different patterns, conflict
-    : K; // Different patterns, conflict
-}[keyof TExisting & keyof TNew];
-
-/**
- * Error type returned when route keys conflict.
- * Methods require an impossible `never` parameter so TypeScript errors at the call site.
- */
-type RouteConflictError<TConflicts extends string> = {
-  __error: `Route key conflict! Key "${TConflicts}" already exists with a different URL pattern.`;
-  hint: "Route keys must be globally unique. Use prefixed names like 'blog.index' instead of 'index'.";
-  conflictingKeys: TConflicts;
-  // These methods require `never` so calling them produces an error at the call site
-  routes: (
-    __conflict: `Fix route key conflict: "${TConflicts}" is already defined with a different URL pattern`,
-  ) => never;
-  map: (
-    __conflict: `Fix route key conflict: "${TConflicts}" is already defined with a different URL pattern`,
-  ) => never;
-};
-
-/**
- * Simplified route helpers for inline route definitions.
- * Uses TRoutes (Record<string, string>) instead of RouteDefinition.
- *
- * Note: Some helpers use `any` for context types as a trade-off for simpler usage.
- * The main type safety is in the `route` helper which enforces valid route names.
- * For full type safety, use the standard map() API with separate handler files.
- */
-export type InlineRouteHelpers<TRoutes extends Record<string, string>, TEnv> = {
-  /**
-   * Define a route handler for a specific route pattern
-   */
-  route: <K extends keyof TRoutes & string>(
-    name: K,
-    handler:
-      | ((ctx: HandlerContext<{}, TEnv>) => ReactNode | Promise<ReactNode>)
-      | ReactNode,
-  ) => AllUseItems;
-
-  /**
-   * Define a layout that wraps child routes
-   */
-  layout: (
-    component:
-      | ReactNode
-      | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>),
-    use?: () => AllUseItems[],
-  ) => AllUseItems;
-
-  /**
-   * Define parallel routes
-   */
-  parallel: (
-    slots: Record<
-      `@${string}`,
-      | ReactNode
-      | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>)
-    >,
-    use?: () => AllUseItems[],
-  ) => AllUseItems;
-
-  /**
-   * Define route middleware
-   */
-  middleware: (
-    fn: (ctx: any, next: () => Promise<void>) => Promise<void>,
-  ) => AllUseItems;
-
-  /**
-   * Define revalidation handlers
-   */
-  revalidate: (fn: (ctx: any) => boolean | Promise<boolean>) => AllUseItems;
-
-  /**
-   * Define data loaders
-   */
-  loader: (loader: any, use?: () => AllUseItems[]) => AllUseItems;
-
-  /**
-   * Define loading states
-   */
-  loading: (component: ReactNode) => AllUseItems;
-
-  /**
-   * Define error boundaries
-   */
-  errorBoundary: (
-    handler: ReactNode | ((props: { error: Error }) => ReactNode),
-  ) => AllUseItems;
-
-  /**
-   * Define not found boundaries
-   */
-  notFoundBoundary: (
-    handler: ReactNode | ((props: { pathname: string }) => ReactNode),
-  ) => AllUseItems;
-
-  /**
-   * Define intercept routes
-   */
-  intercept: (
-    name: string,
-    handler:
-      | ReactNode
-      | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>),
-    use?: () => AllUseItems[],
-  ) => AllUseItems;
-
-  /**
-   * Define when conditions for intercepts
-   */
-  when: (condition: (ctx: any) => boolean | Promise<boolean>) => AllUseItems;
-
-  /**
-   * Define cache configuration
-   */
-  cache: (
-    config: { ttl?: number; swr?: number } | false,
-    use?: () => AllUseItems[],
-  ) => AllUseItems;
-};
-
-/**
- * Router builder for chaining .use() and .map()
- * TRoutes accumulates all registered route types through the chain
- * TLocalRoutes contains the routes for the current .routes() call (for inline handler typing)
- */
-export interface RouteBuilder<
-  T extends RouteDefinition,
-  TEnv,
-  TRoutes extends Record<string, unknown>,
-  TLocalRoutes extends Record<string, string> = Record<string, string>,
-> {
-  /**
-   * Add middleware scoped to this mount
-   * Called between .routes() and .map()
-   *
-   * @example
-   * ```typescript
-   * .routes("/admin", adminRoutes)
-   * .use(authMiddleware)           // All of /admin/*
-   * .use("/danger/*", superAuth)   // Only /admin/danger/*
-   * .map(() => import("./admin"))
-   * ```
-   */
-  use(
-    patternOrMiddleware: string | MiddlewareFn<TEnv>,
-    middleware?: MiddlewareFn<TEnv>,
-  ): RouteBuilder<T, TEnv, TRoutes, TLocalRoutes>;
-
-  /**
-   * Map routes to handlers
-   *
-   * Supports two patterns:
-   *
-   * 1. Lazy loading (code-split):
-   * ```typescript
-   * .routes(homeRoutes)
-   * .map(() => import("./handlers/home"))
-   * ```
-   *
-   * 2. Inline definition:
-   * ```typescript
-   * .routes({ index: "/", about: "/about" })
-   * .map(({ route }) => [
-   *   route("index", () => <HomePage />),
-   *   route("about", () => <AboutPage />),
-   * ])
-   * ```
-   */
-  // Inline definition overload - handler receives helpers (must be first for correct inference)
-  // Uses TLocalRoutes so route names don't need the prefix
-  map<
-    H extends (
-      helpers: InlineRouteHelpers<TLocalRoutes, TEnv>,
-    ) => Array<AllUseItems>,
-  >(
-    handler: H,
-  ): RSCRouter<TEnv, TRoutes>;
-  // Lazy loading overload - verifies imported handlers match route definition
-  map(
-    handler: () =>
-      | Array<AllUseItems>
-      | Promise<{ default: RouteHandlers<TLocalRoutes> }>
-      | Promise<RouteHandlers<TLocalRoutes>>,
-  ): RSCRouter<TEnv, TRoutes>;
-
-  /**
-   * Accumulated route map for typeof extraction
-   * Used for module augmentation: `type AppRoutes = typeof _router.routeMap`
-   */
-  readonly routeMap: TRoutes;
-}
-
-/**
  * RSC Router interface
  * TRoutes accumulates all registered route types through the builder chain
  */
@@ -289,46 +56,12 @@ export interface RSCRouter<
   readonly id: string;
 
   /**
-   * Register routes with a prefix
-   * Route keys stay unchanged, only URL patterns get the prefix applied.
-   * This enables composable route modules that work regardless of mount point.
-   *
-   * @throws Compile-time error if route keys conflict with previously registered routes
-   */
-  routes<const TPrefix extends string, const T extends Record<string, string>>(
-    prefix: TPrefix,
-    routes: T,
-  ): ConflictingKeys<TRoutes, PrefixRoutePatterns<T, TPrefix>> extends never
-    ? RouteBuilder<
-        RouteDefinition,
-        TEnv,
-        TRoutes & PrefixRoutePatterns<T, TPrefix>,
-        T
-      >
-    : RouteConflictError<
-        ConflictingKeys<TRoutes, PrefixRoutePatterns<T, TPrefix>> & string
-      >;
-
-  /**
-   * Register routes without a prefix
-   * Route types are accumulated through the chain
-   *
-   * @throws Compile-time error if route keys conflict with previously registered routes
-   */
-  routes<const T extends Record<string, string>>(
-    routes: T,
-  ): ConflictingKeys<TRoutes, T> extends never
-    ? RouteBuilder<RouteDefinition, TEnv, TRoutes & T, T>
-    : RouteConflictError<ConflictingKeys<TRoutes, T> & string>;
-
-  /**
-   * Register routes using Django-style URL patterns
-   * This is the new API for @rangojs/router - call once with urls() result
+   * Register routes using URL patterns from urls()
    *
    * @example
    * ```typescript
    * createRouter({})
-   *   .routes(urlpatterns)  // Single call with urls() result
+   *   .routes(urlpatterns)
    * ```
    */
   routes<T extends UrlPatterns<TEnv, any>>(
@@ -343,15 +76,13 @@ export interface RSCRouter<
 
   /**
    * Add global middleware that runs on all routes
-   * Position matters: middleware before any .routes() is global
    *
    * @example
    * ```typescript
    * createRouter({ document: RootLayout })
    *   .use(loggerMiddleware)           // All routes
    *   .use("/api/*", rateLimiter)      // Pattern match
-   *   .routes(homeRoutes)
-   *   .map(() => import("./home"))
+   *   .routes(urlpatterns)
    * ```
    */
   use(
@@ -362,11 +93,9 @@ export interface RSCRouter<
   /**
    * Type-safe URL builder for registered routes
    * Types are inferred from the accumulated route registrations
-   * Route keys stay unchanged regardless of mount prefix.
    *
    * @example
    * ```typescript
-   * // Given: .routes("/shop", { cart: "/cart", detail: "/product/:slug" })
    * router.reverse("cart"); // "/shop/cart"
    * router.reverse("detail", { slug: "widget" }); // "/shop/product/widget"
    * ```
@@ -379,9 +108,9 @@ export interface RSCRouter<
    *
    * @example
    * ```typescript
-   * const _router = createRouter<AppEnv>()
-   *   .routes(homeRoutes).map(() => import('./home'))
-   *   .routes('/shop', shopRoutes).map(() => import('./shop'));
+   * const _router = createRouter<AppEnv>({
+   *   urls: urlpatterns,
+   * });
    *
    * type AppRoutes = typeof _router.routeMap;
    *
