@@ -11,23 +11,17 @@ describe("contextVar", () => {
 
     it("rejects __proto__ key", () => {
       const vars: Record<string, any> = {};
-      expect(() => contextSet(vars, "__proto__", {})).toThrow(
-        /reserved key/,
-      );
+      expect(() => contextSet(vars, "__proto__", {})).toThrow(/reserved key/);
     });
 
     it("rejects constructor key", () => {
       const vars: Record<string, any> = {};
-      expect(() => contextSet(vars, "constructor", {})).toThrow(
-        /reserved key/,
-      );
+      expect(() => contextSet(vars, "constructor", {})).toThrow(/reserved key/);
     });
 
     it("rejects prototype key", () => {
       const vars: Record<string, any> = {};
-      expect(() => contextSet(vars, "prototype", {})).toThrow(
-        /reserved key/,
-      );
+      expect(() => contextSet(vars, "prototype", {})).toThrow(/reserved key/);
     });
   });
 

@@ -99,7 +99,10 @@ export async function expandPrerenderRoutes(
                 const encoded = encodePathParam(value);
                 // Strip constraint syntax: :param(a|b) -> value
                 const escaped = escapeRegExp(key);
-                url = url.replace(new RegExp(`:${escaped}(\\([^)]*\\))?`), encoded);
+                url = url.replace(
+                  new RegExp(`:${escaped}(\\([^)]*\\))?`),
+                  encoded,
+                );
                 url = url.replace(`*${key}`, encoded);
               }
               // Anonymous wildcard fallback: use conventional keys if provided
