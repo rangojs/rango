@@ -1,20 +1,13 @@
 name: Publish PR Preview
 
 on:
-  workflow_dispatch:
-
-concurrency:
-  group: publish-pr-preview
-  cancel-in-progress: false
+  pull_request:
+    branches: [main]
 
 jobs:
-  publish-preview:
+  preview:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      contents: read
-      pull-requests: write
-      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +20,6 @@ jobs:
         with:
           node-version: 22
           cache: "pnpm"
-          registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
         run: pnpm install
@@ -35,40 +27,5 @@ jobs:
       - name: Build @rangojs/router
         run: pnpm --filter @rangojs/router build
 
-      - name: Compute preview version
-        id: version
-        run: |
-          # Find PR number for current branch
-          BRANCH="${GITHUB_REF_NAME}"
-          PR_NUMBER=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
-
-          if [ -z "$PR_NUMBER" ]; then
-            echo "No open PR found for branch $BRANCH"
-            PR_NUMBER="0"
-          fi
-
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          VERSION="0.0.0-pr.${PR_NUMBER}.${SHORT_SHA}"
-
-          echo "Preview version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Set version and publish
-        working-directory: packages/rangojs-router
-        run: |
-          node -e "const p=require('./package.json');p.version='${{ steps.version.outputs.version }}';require('fs').writeFileSync('./package.json',JSON.stringify(p,null,2)+'\n')"
-          pnpm publish --tag "pr-${{ steps.version.outputs.pr_number }}" --provenance --no-git-checks
-
-      - name: Comment on PR
-        if: steps.version.outputs.pr_number != '0'
-        run: |
-          gh pr comment "${{ steps.version.outputs.pr_number }}" --body "Published preview as \`@rangojs/router@${{ steps.version.outputs.version }}\`
-
-          \`\`\`
-          pnpm add @rangojs/router@${{ steps.version.outputs.version }}
-          \`\`\`"
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Publish preview
+        run: npx pkg-pr-new publish ./packages/rangojs-router
