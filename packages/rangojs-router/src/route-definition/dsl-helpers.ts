@@ -571,18 +571,24 @@ const loaderFn: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
     revalidate: [] as ShouldRevalidateFn<any, any>[],
   };
 
-  // If use() callback provided, run it to collect revalidation rules
+  // If use() callback provided, run it to collect revalidation rules and cache config
   if (use && typeof use === "function") {
-    // Temporarily set context for revalidate() calls to target this loader
+    // Temporarily set context for revalidate()/cache() calls to target this loader
     const originalParent = ctx.parent;
-    // Create a temporary "parent" that has the revalidate array we want to populate
+    // Create a temporary "parent" with type "loader" so cache() can detect it
     const tempParent = {
       ...originalParent,
+      type: "loader",
       revalidate: loaderEntry.revalidate,
     };
     ctx.parent = tempParent as EntryData;
 
     const result = use()?.flat(3);
+
+    // Copy cache config from tempParent back to loaderEntry
+    if ((tempParent as any).cache) {
+      (loaderEntry as any).cache = (tempParent as any).cache;
+    }
 
     // Restore original parent
     ctx.parent = originalParent;

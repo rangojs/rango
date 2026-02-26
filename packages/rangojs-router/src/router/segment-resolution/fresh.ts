@@ -25,6 +25,7 @@ import type {
 import type { SegmentResolutionDeps } from "../types.js";
 import { debugLog } from "../logging.js";
 import { tryStaticLookup } from "./static-store.js";
+import { resolveLoaderData } from "./loader-cache.js";
 
 /**
  * Handle Response returns from handlers.
@@ -71,7 +72,8 @@ export async function resolveLoaders<TEnv>(
   const loadingDisabled = hasLoading && entry.loading === false;
 
   if (!loadingDisabled) {
-    return loaderEntries.map(({ loader }, i) => {
+    return loaderEntries.map((loaderEntry, i) => {
+      const { loader } = loaderEntry;
       const segmentId = `${shortCode}D${i}.${loader.$$id}`;
       return {
         id: segmentId,
@@ -82,7 +84,7 @@ export async function resolveLoaders<TEnv>(
         params: ctx.params,
         loaderId: loader.$$id,
         loaderData: deps.wrapLoaderPromise(
-          ctx.use(loader),
+          resolveLoaderData(loaderEntry, ctx, ctx.pathname),
           entry,
           segmentId,
           ctx.pathname,
@@ -94,10 +96,13 @@ export async function resolveLoaders<TEnv>(
 
   // Loading disabled: still start all loaders in parallel, but only emit
   // settled promises so handlers don't stream loading placeholders.
-  const pendingLoaderData = loaderEntries.map(({ loader }) => ctx.use(loader));
+  const pendingLoaderData = loaderEntries.map((loaderEntry) =>
+    resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+  );
   await Promise.all(pendingLoaderData);
 
-  return loaderEntries.map(({ loader }, i) => {
+  return loaderEntries.map((loaderEntry, i) => {
+    const { loader } = loaderEntry;
     const segmentId = `${shortCode}D${i}.${loader.$$id}`;
     return {
       id: segmentId,
