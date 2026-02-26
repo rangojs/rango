@@ -134,7 +134,7 @@ jobs:
         run: pnpm --filter @rangojs/router test:unit
 
   vite-rsc-demo-e2e:
-    needs: [install-playwright]
+    needs: [install-playwright, smoke-e2e]
     if: github.event.pull_request.draft == false || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -296,7 +296,7 @@ jobs:
           retention-days: 7
 
   cloudflare-basic-e2e:
-    needs: [install-playwright]
+    needs: [install-playwright, smoke-e2e]
     if: github.event.pull_request.draft == false || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -344,7 +344,7 @@ jobs:
           retention-days: 7
 
   react-experimental-e2e:
-    needs: [install-playwright]
+    needs: [install-playwright, smoke-e2e]
     if: github.event.pull_request.draft == false || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -390,7 +390,7 @@ jobs:
           retention-days: 7
 
   cloudflare-stress-demo-e2e:
-    needs: [install-playwright]
+    needs: [install-playwright, smoke-e2e]
     if: github.event.pull_request.draft == false || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
