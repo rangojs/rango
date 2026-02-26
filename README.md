@@ -6,23 +6,24 @@ A code-first, type-safe React Server Components router for serverless deployment
 
 - **Code-first routing** - No file-based conventions
 - **Type-safe params** - Automatic inference from route patterns
+- **Django-style URL patterns** - `urls()` and `include()` for composition
 - **Partial rendering** - Optimal performance with RSC
 - **Parallel routes** - First-class support for complex layouts
 - **Intercepting routes** - Modal patterns with soft navigation
 - **Server Actions** - Mutations with automatic revalidation
 - **Middleware** - Auth, logging, rate limiting
 - **Error/NotFound boundaries** - Graceful error handling
+- **Pre-rendering** - Build-time caching for static content
 
 ## Structure
 
 ```
 .
 ├── packages/
-│   ├── rsc-router/       # Main RSC router package
-│   └── host-router/      # Host router utilities
+│   └── rangojs-router/    # Main RSC router package
 ├── examples/
-│   └── vite-rsc-demo/    # Demo app with shop example
-└── docs/                 # API documentation
+│   └── vite-rsc-demo/     # Demo app
+└── docs/                  # Design documents
 ```
 
 ## Getting Started
@@ -43,29 +44,27 @@ pnpm dev
 ## Quick Example
 
 ```typescript
-import { route, map, createRouter } from "rsc-router/server";
+import { createRouter, urls, include } from "@rangojs/router";
 
-// Define routes
-export const shopRoutes = route({
-  index: "/",
-  products: { detail: "/product/:slug" },
-});
-
-// Create router
-const router = createRouter();
-router.route("/shop", shopRoutes).map(() => import("./handlers/shop"));
-
-// Define handlers
-export default map<typeof shopRoutes>(({ route, layout }) => [
-  layout(<ShopLayout />),
-  route("index", () => <ProductList />),
-  route("products.detail", (ctx) => <ProductPage slug={ctx.params.slug} />),
+// Define URL patterns (Django-style)
+const shopPatterns = urls(({ path }) => [
+  path("", () => <ShopIndex />),
+  path("cart", () => <CartPage />),
+  path("product/:slug", async (ctx) => {
+    const product = await getProduct(ctx.params.slug);
+    return <ProductDetail product={product} />;
+  }),
 ]);
+
+// Create router and register patterns
+const router = createRouter();
+router.routes(
+  urls(({ path }) => [
+    path("", () => <Home />),
+    path("shop/*", include(shopPatterns)),
+  ])
+);
 ```
-
-## Documentation
-
-See [docs/README.md](./docs/README.md) for API reference.
 
 ## Debug Logging
 
@@ -92,9 +91,8 @@ This produces structured output for server-side and client-side router operation
 ## Built With
 
 - [React 19](https://react.dev/) - React Server Components
-- [Vite](https://vitejs.dev/) + [@vitejs/plugin-rsc](https://github.com/nickreese/vite-plugin-rsc)
+- [Vite](https://vitejs.dev/) + [@anthropic-ai/vite-plugin-rsc](https://github.com/anthropics/vite-plugin-rsc)
 - [TypeScript](https://www.typescriptlang.org/)
-- [Turbo](https://turbo.build/) - Monorepo orchestration
 
 ## License
 
