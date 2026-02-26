@@ -57,7 +57,7 @@ jobs:
         working-directory: packages/rangojs-router
         run: |
           npm version "${{ steps.version.outputs.version }}" --no-git-tag-version
-          npm publish --tag experimental --provenance
+          pnpm publish --tag experimental --provenance --no-git-checks
 
       - name: Comment on merged PR
         run: |
