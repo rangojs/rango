@@ -178,7 +178,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
   /**
    * Derive base URL from request hostname via requestContext.
-   * Uses internal fallback for dev/preview environments.
+   * Uses internal fallback for dev/preview environments and untrusted hostnames.
    * @internal
    */
   private deriveBaseUrl(): string {
@@ -200,6 +200,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         hostname.endsWith(".workers.dev") ||
         hostname.endsWith(".pages.dev")
       ) {
+        return fallback;
+      }
+
+      // Validate hostname: must be a valid domain (alphanumeric, hyphens, dots)
+      // to prevent host header injection into cache keys
+      if (!/^[a-zA-Z0-9.-]+$/.test(hostname) || hostname.length > 253) {
         return fallback;
       }
 

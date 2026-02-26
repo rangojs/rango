@@ -9,6 +9,7 @@
 import { contextSet } from "../../context-var.js";
 import {
   encodePathParam,
+  escapeRegExp,
   runWithConcurrency,
   groupByConcurrency,
   notifyOnError,
@@ -47,8 +48,9 @@ export async function expandPrerenderRoutes(
     if (params) {
       for (const [key, value] of Object.entries(params)) {
         // Strip constraint syntax: :param(a|b) -> value
+        const escaped = escapeRegExp(key);
         result = result.replace(
-          new RegExp(`:${key}(\\([^)]*\\))?`),
+          new RegExp(`:${escaped}(\\([^)]*\\))?`),
           encodeURIComponent(value),
         );
         result = result.replace(`*${key}`, encodeURIComponent(value));
@@ -96,7 +98,11 @@ export async function expandPrerenderRoutes(
               )) {
                 const encoded = encodePathParam(value);
                 // Strip constraint syntax: :param(a|b) -> value
-                url = url.replace(new RegExp(`:${key}(\\([^)]*\\))?`), encoded);
+                const escaped = escapeRegExp(key);
+                url = url.replace(
+                  new RegExp(`:${escaped}(\\([^)]*\\))?`),
+                  encoded,
+                );
                 url = url.replace(`*${key}`, encoded);
               }
               // Anonymous wildcard fallback: use conventional keys if provided

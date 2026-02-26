@@ -111,6 +111,11 @@ describe("middleware", () => {
       const cookies = parseCookies(null);
       expect(cookies).toEqual({});
     });
+
+    it("should handle malformed percent-encoded values", () => {
+      const cookies = parseCookies("bad=%zz; good=hello%20world");
+      expect(cookies).toEqual({ bad: "%zz", good: "hello world" });
+    });
   });
 
   describe("serializeCookie", () => {
