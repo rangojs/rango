@@ -57,7 +57,7 @@ jobs:
       - name: Set version and publish
         working-directory: packages/rangojs-router
         run: |
-          node -e "const p=require('./package.json');p.version='${{ steps.version.outputs.version }}';require('fs').writeFileSync('./package.json',JSON.stringify(p,null,2)+'\n')"
+          pnpm version "${{ steps.version.outputs.version }}" --no-git-tag-version
           pnpm publish --tag experimental --provenance --no-git-checks
 
       - name: Comment on merged PR
