@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { x } from "tinyexec";
+import path from "node:path";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
 
@@ -12,8 +14,20 @@ import { waitForHydration, expectNoPageError } from "./helper";
  * Both dev and production describes target the same e2e-basic directory.
  * Serial mode at the file level prevents concurrent `pnpm dev` and
  * `pnpm build` from corrupting the shared .vite optimizer cache.
+ *
+ * The build runs once at file level so the production describe just starts
+ * `pnpm preview` without rebuilding.
  */
 test.describe.configure({ mode: "serial" });
+
+const E2E_BASIC_ROOT = "./e2e/e2e-basic";
+
+// Build once for the entire file — both dev and production reuse it.
+// Dev mode doesn't need a build, but production does.
+test.beforeAll(async () => {
+  const cwd = path.resolve(E2E_BASIC_ROOT);
+  await x("pnpm", ["build"], { nodeOptions: { cwd } });
+});
 
 // ============================================================================
 // Dev mode
@@ -21,7 +35,7 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("smoke", () => {
   const f = useFixture({
-    root: "./e2e/e2e-basic",
+    root: E2E_BASIC_ROOT,
     mode: "dev",
     isolatedServer: true,
   });
@@ -148,8 +162,9 @@ test.describe("smoke", () => {
 
 test.describe("smoke (production)", () => {
   const f = useFixture({
-    root: "./e2e/e2e-basic",
+    root: E2E_BASIC_ROOT,
     mode: "build",
+    buildCommand: "true", // already built at file level
   });
 
   test("SSR renders home page", async ({ page }) => {
