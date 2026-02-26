@@ -34,6 +34,7 @@ import type {
 import { debugLog } from "../logging.js";
 import { tryStaticLookup } from "./static-store.js";
 import { handleHandlerResult } from "./fresh.js";
+import { resolveLoaderData } from "./loader-cache.js";
 
 // ---------------------------------------------------------------------------
 // Revalidation path (partial match)
@@ -63,20 +64,19 @@ export async function resolveLoadersWithRevalidation<TEnv>(
 
   const shortCode = shortCodeOverride ?? entry.shortCode;
 
-  const loaderMeta = loaderEntries.map(
-    ({ loader, revalidate: loaderRevalidateFns }, i) => ({
-      loader,
-      loaderRevalidateFns,
-      segmentId: `${shortCode}D${i}.${loader.$$id}`,
-      index: i,
-    }),
-  );
+  const loaderMeta = loaderEntries.map((loaderEntry, i) => ({
+    loaderEntry,
+    loader: loaderEntry.loader,
+    loaderRevalidateFns: loaderEntry.revalidate,
+    segmentId: `${shortCode}D${i}.${loaderEntry.loader.$$id}`,
+    index: i,
+  }));
 
   const matchedIds = loaderMeta.map((m) => m.segmentId);
 
   const revalidationChecks = await Promise.all(
     loaderMeta.map(
-      async ({ loader, loaderRevalidateFns, segmentId, index }) => {
+      async ({ loaderEntry, loader, loaderRevalidateFns, segmentId, index }) => {
         const shouldRun = await revalidate(
           async () => {
             if (!clientSegmentIds.has(segmentId)) return true;
@@ -112,14 +112,14 @@ export async function resolveLoadersWithRevalidation<TEnv>(
           async () => true,
           () => false,
         );
-        return { shouldRun, loader, segmentId, index };
+        return { shouldRun, loaderEntry, loader, segmentId, index };
       },
     ),
   );
 
   const loadersToRun = revalidationChecks.filter((c) => c.shouldRun);
   const segments: ResolvedSegment[] = loadersToRun.map(
-    ({ loader, segmentId, index }) => ({
+    ({ loaderEntry, loader, segmentId, index }) => ({
       id: segmentId,
       namespace: entry.id,
       type: "loader" as const,
@@ -128,7 +128,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
       params: ctx.params,
       loaderId: loader.$$id,
       loaderData: deps.wrapLoaderPromise(
-        ctx.use(loader),
+        resolveLoaderData(loaderEntry, ctx, ctx.pathname),
         entry,
         segmentId,
         ctx.pathname,

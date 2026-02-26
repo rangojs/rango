@@ -264,6 +264,10 @@ test.describe("cache-server-logs", () => {
   });
 });
 
+// ============================================================================
+// Loader-level caching (dev)
+// ============================================================================
+
 test.describe("cache-loader-behavior", () => {
   const f = useFixture({
     root: "./e2e/test-app",
@@ -271,9 +275,7 @@ test.describe("cache-loader-behavior", () => {
     isolatedServer: true,
   });
 
-  test("non-cached loader should run on every request (default behavior)", async ({
-    page,
-  }) => {
+  test("non-cached loader runs on every request", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     // First visit - loader runs, count should be 1
@@ -293,43 +295,96 @@ test.describe("cache-loader-behavior", () => {
 
     const secondCount = await page.getByTestId("loader-count").textContent();
     expect(secondCount).toContain("2");
-
-    // The loadedAt should be different (new timestamp)
-    // Loaders are NOT cached by default - they run fresh every time
   });
 
-  test("loaders are excluded from route-level caching by design", async ({
+  test("loader with cache() returns cached data on second request", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
 
-    // Even with cache() wrapper on the loader, loaders run fresh by design
-    // This is intentional - loaders can have their own cache() config but
-    // are excluded from the route segment cache to ensure data freshness
-
-    // First visit
+    // First visit — cache miss, loader runs
     await page.goto(f.url("/cache-test/cached-loader"));
     await waitForHydration(page);
 
     const firstCount = await page.getByTestId("loader-count").textContent();
     const firstLoadedAt = await page.getByTestId("loaded-at").textContent();
 
+    // Allow non-blocking cache write to complete
+    await page.waitForTimeout(500);
+
     // Navigate away
     await page.goto(f.url("/"));
     await waitForHydration(page);
 
-    // Second visit - loader should still run (excluded from cache)
+    // Second visit — cache hit, same data
     await page.goto(f.url("/cache-test/cached-loader"));
     await waitForHydration(page);
 
     const secondCount = await page.getByTestId("loader-count").textContent();
     const secondLoadedAt = await page.getByTestId("loaded-at").textContent();
 
-    // Count should increase (loader ran again)
-    expect(secondCount).not.toBe(firstCount);
+    // Count should be the same (loader did NOT run again)
+    expect(secondCount).toBe(firstCount);
 
-    // loadedAt should be different (fresh data)
-    expect(secondLoadedAt).not.toBe(firstLoadedAt);
+    // loadedAt should be identical (cached data)
+    expect(secondLoadedAt).toBe(firstLoadedAt);
+  });
+});
+
+// ============================================================================
+// Loader-level caching (production)
+// ============================================================================
+
+test.describe("cache-loader-behavior (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+    isolatedServer: true,
+  });
+
+  test("non-cached loader runs on every request", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/non-cached-loader"));
+    await waitForHydration(page);
+
+    const firstCount = await page.getByTestId("loader-count").textContent();
+    expect(firstCount).toContain("1");
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await page.goto(f.url("/cache-test/non-cached-loader"));
+    await waitForHydration(page);
+
+    const secondCount = await page.getByTestId("loader-count").textContent();
+    expect(secondCount).toContain("2");
+  });
+
+  test("loader with cache() returns cached data on second request", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/cached-loader"));
+    await waitForHydration(page);
+
+    const firstCount = await page.getByTestId("loader-count").textContent();
+    const firstLoadedAt = await page.getByTestId("loaded-at").textContent();
+
+    await page.waitForTimeout(500);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await page.goto(f.url("/cache-test/cached-loader"));
+    await waitForHydration(page);
+
+    const secondCount = await page.getByTestId("loader-count").textContent();
+    const secondLoadedAt = await page.getByTestId("loaded-at").textContent();
+
+    expect(secondCount).toBe(firstCount);
+    expect(secondLoadedAt).toBe(firstLoadedAt);
   });
 });
 
