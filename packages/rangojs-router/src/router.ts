@@ -1,4 +1,3 @@
-import type { ComponentType } from "react";
 import { type ReactNode } from "react";
 import { createCacheScope } from "./cache/cache-scope.js";
 import { setCacheProfiles } from "./cache/profile-registry.js";
@@ -15,16 +14,13 @@ import {
 import {
   registerRouteMap,
   getPrecomputedEntries,
-  getRouteTrie,
   getRouterManifest,
-  getRouterTrie,
   getRouterPrecomputedEntries,
   ensureRouterManifest,
 } from "./route-map-builder.js";
-import { tryTrieMatch } from "./router/trie-matching.js";
 import { createRouteHelpers, type RouteHandlers } from "./route-definition.js";
 import MapRootLayout from "./server/root-layout.js";
-import type { AllUseItems, IncludeItem } from "./route-types.js";
+import type { AllUseItems } from "./route-types.js";
 import type { UrlPatterns } from "./urls.js";
 import {
   EntryData,
@@ -45,20 +41,10 @@ import type {
   MatchResult,
   ResolvedRouteMap,
   RouteDefinition,
-  ResolvedSegment,
   RouteEntry,
   TrailingSlashMode,
-  InternalHandlerContext,
 } from "./types";
-import {
-  runWithRequestContext,
-  type RequestContext,
-  type ExecutionContext,
-} from "./server/request-context.js";
-import type {
-  SerializedSegmentData,
-  SegmentHandleData,
-} from "./cache/types.js";
+import type { ExecutionContext } from "./server/request-context.js";
 
 // Extracted router utilities
 import {
@@ -92,32 +78,22 @@ import {
 } from "./router/match-api.js";
 
 import type { SegmentResolutionDeps, MatchApiDeps } from "./router/types.js";
-import {
-  createHandlerContext,
-  createPrerenderContext,
-  createStaticContext,
-} from "./router/handler-context.js";
-import { contextGet, contextSet } from "./context-var.js";
+import { createHandlerContext } from "./router/handler-context.js";
 import {
   setupLoaderAccess,
   setupLoaderAccessSilent,
-  setupBuildUse,
   wrapLoaderWithErrorHandling,
 } from "./router/loader-resolution.js";
 import { loadManifest } from "./router/manifest.js";
 import { createMetricsStore } from "./router/metrics.js";
 import {
-  collectRouteMiddleware,
   parsePattern,
   type MiddlewareEntry,
   type MiddlewareFn,
 } from "./router/middleware.js";
 import {
   extractStaticPrefix,
-  findMatch as findRouteMatch,
-  isLazyEvaluationNeeded,
   traverseBack,
-  type RouteMatchResult,
 } from "./router/pattern-matching.js";
 import { evaluateRevalidation } from "./router/revalidation.js";
 import {
@@ -138,14 +114,7 @@ import {
 import { resolveThemeConfig } from "./theme/constants.js";
 
 // Extracted content negotiation utilities
-import {
-  RESPONSE_TYPE_MIME,
-  MIME_RESPONSE_TYPE,
-  flattenNamedRoutes,
-  parseAcceptTypes,
-  RSC_RESPONSE_TYPE,
-  pickNegotiateVariant,
-} from "./router/content-negotiation.js";
+import { flattenNamedRoutes } from "./router/content-negotiation.js";
 
 // Extracted router types and registry
 import {
@@ -162,6 +131,19 @@ import type {
   RouteBuilder,
   InlineRouteHelpers,
 } from "./router/router-interfaces.js";
+
+// Extracted closure functions
+import {
+  findLazyIncludes,
+  evaluateLazyEntry as _evaluateLazyEntry,
+  type LazyEvalDeps,
+} from "./router/lazy-includes.js";
+import { createFindMatch } from "./router/find-match.js";
+import {
+  matchForPrerender as _matchForPrerender,
+  renderStaticSegment as _renderStaticSegment,
+} from "./router/prerender-match.js";
+import { previewMatch as _previewMatch } from "./router/preview-match.js";
 
 // Re-export public types and values from extracted modules
 export { RSC_ROUTER_BRAND, RouterRegistry } from "./router/router-registry.js";
@@ -610,372 +592,28 @@ export function createRouter<TEnv = any>(
     );
   }
 
-  // Detect lazy includes in handler result and create placeholder entries
-  // Lazy includes are IncludeItem with lazy: true and _lazyContext
-  // Moved to outer scope so it can be reused by evaluateLazyEntry for nested includes
-  function findLazyIncludes(items: AllUseItems[]): Array<{
-    prefix: string;
-    patterns: UrlPatterns<TEnv>;
-    context: {
-      urlPrefix: string;
-      namePrefix: string | undefined;
-      parent: unknown;
-    };
-  }> {
-    const lazyItems: Array<{
-      prefix: string;
-      patterns: UrlPatterns<TEnv>;
-      context: {
-        urlPrefix: string;
-        namePrefix: string | undefined;
-        parent: unknown;
-      };
-    }> = [];
+  // Lazy evaluation deps — captures closure state for extracted evaluateLazyEntry
+  const lazyEvalDeps: LazyEvalDeps<TEnv> = {
+    routesEntries,
+    mergedRouteMap,
+    nextMountIndex: () => mountIndex++,
+    getPrecomputedByPrefix,
+  };
 
-    for (const item of items) {
-      if (!item) continue;
-      if (item.type === "include") {
-        const includeItem = item as IncludeItem;
-        if (includeItem.lazy === true && includeItem._lazyContext) {
-          lazyItems.push({
-            prefix: includeItem.prefix,
-            patterns: includeItem.patterns as UrlPatterns<TEnv>,
-            context: includeItem._lazyContext,
-          });
-        }
-      }
-      // Recursively check nested items (in layouts, etc.)
-      if ((item as any).uses && Array.isArray((item as any).uses)) {
-        lazyItems.push(...findLazyIncludes((item as any).uses));
-      }
-    }
-
-    return lazyItems;
-  }
-
-  /**
-   * Evaluate a lazy entry's patterns and populate its routes
-   * This runs the lazy patterns handler and updates the entry in-place
-   * Also detects nested lazy includes and registers them as new entries
-   */
   function evaluateLazyEntry(entry: RouteEntry<TEnv>): void {
-    if (!entry.lazy || entry.lazyEvaluated || !entry.lazyPatterns) {
-      return;
-    }
-
-    // Check for pre-computed routes from build-time data.
-    // Only leaf nodes (no nested includes) are precomputed, so entries with
-    // nested lazy includes fall through to the handler below.
-    // When multiple entries share the same staticPrefix (e.g., several
-    // include("/", ...) calls), the precomputed data merges all their routes
-    // into one entry. Assigning that merged set to the first matching entry
-    // causes findMatch to pick the wrong handler for routes belonging to a
-    // different include. Skip the shortcut when the prefix is shared.
-    const currentPrecomputed = getPrecomputedByPrefix();
-    if (currentPrecomputed) {
-      const routes = currentPrecomputed.get(entry.staticPrefix);
-      if (routes) {
-        const prefixIsShared =
-          routesEntries.filter((e) => e.staticPrefix === entry.staticPrefix)
-            .length > 1;
-        if (!prefixIsShared) {
-          entry.lazyEvaluated = true;
-          entry.routes = routes as ResolvedRouteMap<any>;
-          for (const [name, pattern] of Object.entries(routes)) {
-            mergedRouteMap[name] = pattern;
-          }
-          registerRouteMap(mergedRouteMap);
-          return;
-        }
-      }
-    }
-
-    // Mark as evaluated immediately to prevent concurrent evaluation.
-    // JS is single-threaded but handlers.handler() could theoretically yield,
-    // and the while-loop in findMatch retries after evaluation.
-    entry.lazyEvaluated = true;
-
-    const lazyPatterns = entry.lazyPatterns as UrlPatterns<TEnv>;
-    const lazyContext = entry.lazyContext;
-
-    // Create a new context for evaluating the lazy patterns
-    const manifest = new Map<string, EntryData>();
-    const patterns = new Map<string, string>();
-    const patternsByPrefix = new Map<string, Map<string, string>>();
-    const trailingSlashMap = new Map<string, TrailingSlashMode>();
-
-    // Capture the handler result to detect nested lazy includes
-    let handlerResult: AllUseItems[] = [];
-
-    // Merge captured counters from include() to maintain consistent
-    // shortCode indices with sibling entries from pattern extraction
-    const lazyCounters: Record<string, number> = {};
-    if (lazyContext && (lazyContext as any).counters) {
-      const captured = (lazyContext as any).counters as Record<string, number>;
-      for (const [key, value] of Object.entries(captured)) {
-        lazyCounters[key] = value;
-      }
-    }
-
-    RSCRouterContext.run(
-      {
-        manifest,
-        patterns,
-        patternsByPrefix,
-        trailingSlash: trailingSlashMap,
-        namespace: "lazy",
-        parent: (lazyContext?.parent as EntryData | null) ?? null,
-        counters: lazyCounters,
-      },
-      () => {
-        // Run the lazy patterns handler with the original context prefixes
-        // The prefix comes from the IncludeItem stored in lazyPatterns
-        const includePrefix = (entry as any)._lazyPrefix || "";
-        const fullPrefix = (lazyContext?.urlPrefix || "") + includePrefix;
-
-        if (fullPrefix || lazyContext?.namePrefix) {
-          runWithPrefixes(fullPrefix, lazyContext?.namePrefix, () => {
-            handlerResult = lazyPatterns.handler() as AllUseItems[];
-          });
-        } else {
-          handlerResult = lazyPatterns.handler() as AllUseItems[];
-        }
-      },
-    );
-
-    // Populate the entry's routes from the patterns
-    const routesObject: Record<string, string> = {};
-    for (const [name, pattern] of patterns.entries()) {
-      routesObject[name] = pattern;
-      // Also add to merged route map for reverse() support
-      const existingPattern = mergedRouteMap[name];
-      if (existingPattern !== undefined && existingPattern !== pattern) {
-        console.warn(
-          `[@rangojs/router] Route name conflict: "${name}" already maps to "${existingPattern}", ` +
-            `overwriting with "${pattern}" (from lazy include). Use unique route names to avoid this.`,
-        );
-      }
-      mergedRouteMap[name] = pattern;
-    }
-
-    // Update the entry in-place
-    entry.routes = routesObject as ResolvedRouteMap<any>;
-
-    // Note: Do NOT clear lazyPatterns/lazyContext here.
-    // loadManifest() needs them on every request to re-run the handler
-    // in the correct AsyncLocalStorage context (Store.manifest).
-
-    // Update trailing slash config if available
-    if (trailingSlashMap.size > 0) {
-      entry.trailingSlash = Object.fromEntries(trailingSlashMap);
-    }
-
-    // Detect nested lazy includes and register them as new entries
-    const nestedLazyIncludes = findLazyIncludes(handlerResult);
-    for (const lazyInclude of nestedLazyIncludes) {
-      // Compute the full URL prefix (combining parent prefix if any)
-      const fullPrefix = lazyInclude.context.urlPrefix
-        ? lazyInclude.context.urlPrefix + lazyInclude.prefix
-        : lazyInclude.prefix;
-
-      const nestedEntry: RouteEntry<TEnv> & { _lazyPrefix?: string } = {
-        prefix: "",
-        staticPrefix: extractStaticPrefix(fullPrefix),
-        routes: {} as ResolvedRouteMap<any>, // Empty until first match
-        trailingSlash: entry.trailingSlash,
-        handler: (lazyInclude.patterns as UrlPatterns<TEnv>).handler,
-        mountIndex: mountIndex++,
-        // Lazy evaluation fields
-        lazy: true,
-        lazyPatterns: lazyInclude.patterns,
-        lazyContext: lazyInclude.context,
-        lazyEvaluated: false,
-        // Store the include prefix for evaluation
-        _lazyPrefix: lazyInclude.prefix,
-      };
-      // Insert nested lazy entry before any entry whose staticPrefix is a
-      // prefix of (but shorter than) this lazy entry's staticPrefix.
-      // This ensures more specific lazy includes are matched before
-      // less specific eager entries (e.g., "/href/nested" before "/href/:id").
-      const nestedPrefix = nestedEntry.staticPrefix;
-      let insertIndex = routesEntries.length;
-      if (nestedPrefix) {
-        for (let i = 0; i < routesEntries.length; i++) {
-          const existing = routesEntries[i]!;
-          if (
-            nestedPrefix.startsWith(existing.staticPrefix) &&
-            nestedPrefix.length > existing.staticPrefix.length
-          ) {
-            insertIndex = i;
-            break;
-          }
-        }
-      }
-      routesEntries.splice(insertIndex, 0, nestedEntry);
-    }
-
-    // Re-register route map for runtime reverse() usage
-    registerRouteMap(mergedRouteMap);
+    _evaluateLazyEntry(entry, lazyEvalDeps);
   }
 
-  // Single-entry cache for findMatch to avoid redundant matching within the same request.
-  // previewMatch and match both call findMatch with the same pathname — this ensures
-  // the route matching work (which may check thousands of routes) only happens once.
-  let lastFindMatchPathname: string | null = null;
-  let lastFindMatchResult: RouteMatchResult<TEnv> | null = null;
+  // Create findMatch with single-entry cache, bound to router state
+  const findMatch = createFindMatch<TEnv>({
+    routesEntries,
+    evaluateLazyEntry,
+    routerId,
+  });
 
-  // Wrapper for findMatch that uses routesEntries
-  // Handles lazy evaluation by evaluating lazy entries on first match.
-  // Phase 1: try O(path_length) trie match.
-  // Phase 2: fall back to regex iteration.
-  function findMatch(
-    pathname: string,
-    ms?: MetricsStore,
-  ): RouteMatchResult<TEnv> | null {
-    // Return cached result if same pathname (avoids double-match per request)
-    if (lastFindMatchPathname === pathname) {
-      return lastFindMatchResult;
-    }
-
-    // Helper to push sub-metrics
-    const pushMetric = ms
-      ? (label: string, start: number) => {
-          ms.metrics.push({
-            label,
-            duration: performance.now() - start,
-            startTime: start - ms.requestStart,
-          });
-        }
-      : undefined;
-
-    // Phase 1: Try trie match (O(path_length))
-    // Prefer per-router trie (isolated) over global trie (merged).
-    const routeTrie = getRouterTrie(routerId) ?? getRouteTrie();
-    if (routeTrie) {
-      const trieStart = performance.now();
-      const trieResult = tryTrieMatch(routeTrie, pathname);
-      pushMetric?.("match:trie", trieStart);
-
-      if (trieResult) {
-        // Find the RouteEntry that contains this route.
-        // Multiple entries can share the same staticPrefix (e.g., several
-        // include("/", patterns) calls all produce staticPrefix=""). Evaluate
-        // each candidate and pick the one whose routes include the matched key.
-        const entryStart = performance.now();
-        let entry: RouteEntry<TEnv> | undefined;
-        let fallbackEntry: RouteEntry<TEnv> | undefined;
-
-        for (const e of routesEntries) {
-          if (e.staticPrefix !== trieResult.sp) continue;
-          if (!fallbackEntry) fallbackEntry = e;
-          evaluateLazyEntry(e);
-          if (
-            e.routes &&
-            trieResult.routeKey in (e.routes as Record<string, unknown>)
-          ) {
-            entry = e;
-            break;
-          }
-        }
-
-        // If no entry had the route in its routes map, use the first matching
-        // entry as fallback (handles main entry with inline routes not yet
-        // reflected in its routes object).
-        if (!entry) entry = fallbackEntry;
-
-        // If entry not found (nested include not yet discovered), evaluate parent
-        if (!entry) {
-          const parent = routesEntries.find(
-            (e) =>
-              trieResult.sp.startsWith(e.staticPrefix) &&
-              e.staticPrefix !== trieResult.sp,
-          );
-          if (parent) {
-            const lazyStart = performance.now();
-            evaluateLazyEntry(parent);
-            pushMetric?.("match:lazy-eval", lazyStart);
-          }
-          entry = routesEntries.find((e) => e.staticPrefix === trieResult.sp);
-        }
-        pushMetric?.("match:entry-resolve", entryStart);
-
-        if (entry) {
-          lastFindMatchPathname = pathname;
-          lastFindMatchResult = {
-            entry,
-            routeKey: trieResult.routeKey,
-            params: trieResult.params,
-            optionalParams: new Set(trieResult.optionalParams || []),
-            redirectTo: trieResult.redirectTo,
-            ancestry: trieResult.ancestry,
-            ...(trieResult.pr ? { pr: true } : {}),
-            ...(trieResult.pt ? { pt: true } : {}),
-            ...(trieResult.responseType
-              ? { responseType: trieResult.responseType }
-              : {}),
-            ...(trieResult.negotiateVariants
-              ? { negotiateVariants: trieResult.negotiateVariants }
-              : {}),
-            ...(trieResult.rscFirst ? { rscFirst: true } : {}),
-          };
-          return lastFindMatchResult;
-        }
-      }
-    }
-
-    // Phase 2: Fall back to existing matching (regex iteration)
-    const regexStart = performance.now();
-    let result = findRouteMatch(pathname, routesEntries);
-
-    // If we hit a lazy entry that needs evaluation, evaluate and retry.
-    // Cap iterations to prevent infinite loops from pathological nesting.
-    const MAX_LAZY_ITERATIONS = 100;
-    let iterations = 0;
-    while (isLazyEvaluationNeeded(result)) {
-      if (++iterations > MAX_LAZY_ITERATIONS) {
-        console.error(
-          `[@rangojs/router] Exceeded ${MAX_LAZY_ITERATIONS} lazy evaluation iterations ` +
-            `for pathname "${pathname}". This likely indicates circular lazy includes.`,
-        );
-        lastFindMatchPathname = pathname;
-        lastFindMatchResult = null;
-        return null;
-      }
-      evaluateLazyEntry(result.lazyEntry);
-      result = findRouteMatch(pathname, routesEntries);
-    }
-    pushMetric?.("match:regex-fallback", regexStart);
-
-    lastFindMatchPathname = pathname;
-    lastFindMatchResult = result;
-    return result;
-  }
-
-  /**
-   * Build-time pre-render match. Resolves segments with a BuildContext
-   * (no request/env/headers/cookies), skipping middleware and loaders.
-   */
-  async function matchForPrerender(
-    pathname: string,
-    params: Record<string, string>,
-    buildVars?: Record<string, any>,
-  ): Promise<{
-    segments: SerializedSegmentData[];
-    handles: Record<string, SegmentHandleData>;
-    routeName: string;
-    params: Record<string, string>;
-    interceptSegments?: SerializedSegmentData[];
-    interceptHandles?: Record<string, SegmentHandleData>;
-  } | null> {
-    // 1. Find the matching route entry
-    const matched = findMatch(pathname);
-    if (!matched) return null;
-
-    // Use params from trie match if available, fall back to provided params
-    const matchedParams = matched.params ?? params;
-
-    // Build a minimal RouterContext for loadManifest/traverseBack
-    const routerCtx: RouterContext<TEnv> = {
+  // Build a RouterContext once — shared by match, matchPartial, matchForPrerender
+  function buildRouterContext(): RouterContext<TEnv> {
+    return {
       findMatch,
       loadManifest,
       traverseBack,
@@ -997,300 +635,35 @@ export function createRouter<TEnv = any>(
       resolveInterceptLoadersOnly,
       resolveLoadersOnly,
     };
-
-    return runWithRouterContext(routerCtx, async () => {
-      // 2. Load the manifest entry tree
-      const manifestEntry = await loadManifest(
-        matched.entry,
-        matched.routeKey,
-        pathname,
-        undefined,
-        false,
-      );
-
-      // 3. Build ancestor chain [root, ..., route]
-      const entries: EntryData[] = [];
-      for (const entry of traverseBack(manifestEntry)) {
-        entries.push(entry);
-      }
-
-      // 4. Create handle store for collecting handle data
-      const handleStore = createHandleStore();
-
-      // 5. Create a minimal request context with the handle store
-      // Shallow-copy getParams vars so each param set is independent
-      const variables: Record<string, any> = buildVars ? { ...buildVars } : {};
-      const stubRes = new Response(null, { status: 200 });
-      const minimalRequestContext: RequestContext<TEnv> = {
-        env: {} as TEnv,
-        request: new Request("http://prerender" + pathname),
-        url: new URL("http://prerender" + pathname),
-        pathname,
-        searchParams: new URLSearchParams(),
-        var: variables,
-        get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
-        set: ((keyOrVar: any, value: any) => {
-          contextSet(variables, keyOrVar, value);
-        }) as any,
-        params: matchedParams,
-        res: stubRes,
-        cookie: () => undefined,
-        cookies: () => ({}),
-        setCookie: () => {},
-        deleteCookie: () => {},
-        header: () => {},
-        use: (() => {
-          throw new Error("use() not available during pre-rendering");
-        }) as any,
-        method: "GET",
-        _handleStore: handleStore,
-        waitUntil: () => {},
-        onResponse: () => {},
-        _onResponseCallbacks: [],
-        setLocationState() {},
-        _locationState: undefined,
-      };
-
-      return runWithRequestContext(minimalRequestContext, async () => {
-        // 6. Create prerender context with synthetic URL.
-        // Prerender handlers get params, pathname, url, searchParams, search,
-        // reverse, and use(handle) — but no request, env, headers, or cookies.
-        const buildCtx = createPrerenderContext<TEnv>(
-          matchedParams,
-          pathname,
-          mergedRouteMap,
-          matched.routeKey,
-          variables,
-        );
-
-        // 7. Wire use() for handles only (loaders throw)
-        setupBuildUse(buildCtx);
-
-        // 8. Resolve all segments with skipLoaders
-        const loaderPromises = new Map<string, Promise<any>>();
-        const allSegments = await resolveAllSegments(
-          entries,
-          matched.routeKey,
-          matchedParams,
-          buildCtx,
-          loaderPromises,
-          { skipLoaders: true },
-        );
-
-        // 9. Filter out any loader segments (belt-and-suspenders)
-        const nonLoaderSegments = allSegments.filter(
-          (s) => s.type !== "loader",
-        );
-
-        // 10. Wait for handles to settle
-        await handleStore.settled;
-
-        // 11. Serialize segments using the cache serializer
-        const { serializeSegments } = await import("./cache/segment-codec.js");
-        const serializedSegments = await serializeSegments(nonLoaderSegments);
-
-        // 12. Collect handle data per segment (skip segments with no handle data)
-        const handles: Record<string, SegmentHandleData> = {};
-        for (const seg of nonLoaderSegments) {
-          const segHandles = handleStore.getDataForSegment(seg.id);
-          if (Object.keys(segHandles).length > 0) {
-            handles[seg.id] = segHandles;
-          }
-        }
-
-        // Use the trie-level route key (e.g., "docs", "docs.article")
-        const routeName = matched.routeKey;
-
-        // 13. Resolve intercept segments for this route (if any ancestor defines
-        //     an intercept targeting this route). At build time we skip when()
-        //     evaluation -- we pre-render all intercepts unconditionally and let
-        //     runtime matching decide which to serve.
-        let interceptSegments: SerializedSegmentData[] | undefined;
-        let interceptHandles: Record<string, SegmentHandleData> | undefined;
-
-        const foundIntercepts: {
-          intercept: InterceptEntry;
-          entry: EntryData;
-        }[] = [];
-        let current: EntryData | null = manifestEntry;
-        while (current) {
-          if (current.intercept && current.intercept.length > 0) {
-            for (const ic of current.intercept) {
-              if (ic.routeName === matched.routeKey) {
-                foundIntercepts.push({ intercept: ic, entry: current });
-              }
-            }
-          }
-          if (current.layout && current.layout.length > 0) {
-            for (const siblingLayout of current.layout) {
-              if (
-                siblingLayout.intercept &&
-                siblingLayout.intercept.length > 0
-              ) {
-                for (const ic of siblingLayout.intercept) {
-                  if (ic.routeName === matched.routeKey) {
-                    foundIntercepts.push({
-                      intercept: ic,
-                      entry: siblingLayout,
-                    });
-                  }
-                }
-              }
-            }
-          }
-          current = current.parent;
-        }
-
-        if (foundIntercepts.length > 0) {
-          const interceptResolvedSegments: typeof nonLoaderSegments = [];
-
-          for (const { intercept, entry: parentEntry } of foundIntercepts) {
-            // Resolve handler
-            const handlerRaw =
-              typeof intercept.handler === "function"
-                ? intercept.handler(buildCtx)
-                : intercept.handler;
-            const handlerResolved =
-              handlerRaw instanceof Promise ? await handlerRaw : handlerRaw;
-            if (handlerResolved instanceof Response) {
-              // Handler returned a redirect/response -- skip this intercept
-              continue;
-            }
-            const component: ReactNode = handlerResolved;
-
-            // Resolve layout (if any)
-            let layoutElement: ReactNode | undefined;
-            if (intercept.layout) {
-              if (typeof intercept.layout === "function") {
-                const layoutResult = await intercept.layout(buildCtx);
-                if (layoutResult instanceof Response) continue;
-                layoutElement = layoutResult;
-              } else {
-                layoutElement = intercept.layout;
-              }
-            }
-
-            interceptResolvedSegments.push({
-              id: `${parentEntry.shortCode}.${intercept.slotName}`,
-              namespace: `intercept:${intercept.routeName}`,
-              type: "parallel" as const,
-              index: 0,
-              component,
-              loading: intercept.loading === false ? null : intercept.loading,
-              layout: layoutElement,
-              params: matchedParams,
-              slot: intercept.slotName,
-              belongsToRoute: true,
-              parallelName: `intercept:${intercept.routeName}.${intercept.slotName}`,
-            });
-          }
-
-          if (interceptResolvedSegments.length > 0) {
-            // Wait for handles again (intercept handlers may have called use())
-            await handleStore.settled;
-            interceptSegments = await serializeSegments(
-              interceptResolvedSegments,
-            );
-            interceptHandles = {};
-            for (const seg of interceptResolvedSegments) {
-              const segHandles = handleStore.getDataForSegment(seg.id);
-              if (Object.keys(segHandles).length > 0) {
-                interceptHandles[seg.id] = segHandles;
-              }
-            }
-          }
-        }
-
-        return {
-          segments: serializedSegments,
-          handles,
-          routeName,
-          params: matchedParams,
-          interceptSegments,
-          interceptHandles,
-        };
-      });
-    });
   }
 
-  /**
-   * Render a single Static handler at build time.
-   * Creates a minimal BuildContext, calls the handler, and RSC-serializes
-   * the component. Returns the encoded Flight string (or null on failure).
-   * Used by the Vite plugin to collect static segment data at build time.
-   */
+  // Prerender/static match deps (bind closure state for extracted functions)
+  const prerenderDeps = {
+    findMatch,
+    buildRouterContext,
+    mergedRouteMap,
+    resolveAllSegments,
+  };
+
+  async function matchForPrerender(
+    pathname: string,
+    params: Record<string, string>,
+    buildVars?: Record<string, any>,
+  ) {
+    return _matchForPrerender(pathname, params, prerenderDeps, buildVars);
+  }
+
   async function renderStaticSegment(
     handler: Function,
     handlerId: string,
     routeName?: string,
-  ): Promise<{ encoded: string; handles: Record<string, unknown[]> } | null> {
-    const syntheticUrl = new URL("http://prerender/");
-    const syntheticRequest = new Request(syntheticUrl);
-
-    // Create a HandleStore to capture handle data pushed during rendering
-    const handleStore = createHandleStore();
-
-    // Minimal request context so setupBuildUse can find the HandleStore
-    const stubRes = new Response(null, { status: 200 });
-    const minimalRequestContext: RequestContext<TEnv> = {
-      env: {} as TEnv,
-      request: syntheticRequest,
-      url: syntheticUrl,
-      pathname: "/",
-      searchParams: syntheticUrl.searchParams,
-      var: {},
-      get: () => undefined as any,
-      set: () => {},
-      params: {},
-      res: stubRes,
-      cookie: () => undefined,
-      cookies: () => ({}),
-      setCookie: () => {},
-      deleteCookie: () => {},
-      header: () => {},
-      use: (() => {
-        throw new Error("use() not available during static pre-rendering");
-      }) as any,
-      method: "GET",
-      _handleStore: handleStore,
-      waitUntil: () => {},
-      onResponse: () => {},
-      _onResponseCallbacks: [],
-      setLocationState() {},
-      _locationState: undefined,
-    };
-
-    return runWithRequestContext(minimalRequestContext, async () => {
-      // Static handlers get only reverse and use(handle) — no URL, params,
-      // request, env, headers, or cookies.
-      const buildCtx = createStaticContext<TEnv>(mergedRouteMap, routeName);
-
-      // Set segment ID so handle pushes are keyed correctly
-      (buildCtx as InternalHandlerContext)._currentSegmentId = handlerId;
-
-      setupBuildUse(buildCtx);
-
-      const raw = await handler(buildCtx);
-      const component = raw?.type ? raw : raw;
-
-      const segment: ResolvedSegment = {
-        id: handlerId,
-        namespace: handlerId,
-        type: "layout",
-        index: 0,
-        component,
-        params: {},
-        belongsToRoute: false,
-      };
-
-      const { serializeSegments } = await import("./cache/segment-codec.js");
-      const [serialized] = await serializeSegments([segment]);
-
-      // Collect handle data pushed during rendering
-      const handles = handleStore.getDataForSegment(handlerId);
-
-      return { encoded: serialized.encoded, handles };
-    });
+  ) {
+    return _renderStaticSegment<TEnv>(
+      handler,
+      handlerId,
+      mergedRouteMap,
+      routeName,
+    );
   }
 
   /**
@@ -1303,32 +676,8 @@ export function createRouter<TEnv = any>(
    * - background-revalidation: SWR revalidation
    */
   async function match(request: Request, env: TEnv): Promise<MatchResult> {
-    // Build RouterContext with all closure functions needed by middleware
-    const routerCtx: RouterContext<TEnv> = {
-      findMatch,
-      loadManifest,
-      traverseBack,
-      createHandlerContext,
-      setupLoaderAccess,
-      setupLoaderAccessSilent,
-      getContext,
-      getMetricsStore,
-      createCacheScope,
-      findInterceptForRoute,
-      resolveAllSegmentsWithRevalidation,
-      resolveInterceptEntry,
-      evaluateRevalidation,
-      getRequestContext,
-      resolveAllSegments,
-      createHandleStore,
-      buildEntryRevalidateMap,
-      resolveLoadersOnlyWithRevalidation,
-      resolveInterceptLoadersOnly,
-      resolveLoadersOnly,
-    };
-
     return runWithRouterLogContext({ request, transaction: "match" }, () =>
-      runWithRouterContext(routerCtx, async () =>
+      runWithRouterContext(buildRouterContext(), async () =>
         withRouterLogScope("match", async () => {
           const result = await createMatchContextForFull(request, env);
 
@@ -1429,33 +778,10 @@ export function createRouter<TEnv = any>(
     context: TEnv,
     actionContext?: ActionContext,
   ): Promise<MatchResult | null> {
-    // Build RouterContext with all closure functions needed by middleware
-    const routerCtx: RouterContext<TEnv> = {
-      findMatch,
-      loadManifest,
-      traverseBack,
-      createHandlerContext,
-      setupLoaderAccess,
-      setupLoaderAccessSilent,
-      getContext,
-      getMetricsStore,
-      createCacheScope,
-      findInterceptForRoute,
-      resolveAllSegmentsWithRevalidation,
-      resolveInterceptEntry,
-      evaluateRevalidation,
-      getRequestContext,
-      resolveAllSegments,
-      createHandleStore,
-      buildEntryRevalidateMap,
-      resolveLoadersOnlyWithRevalidation,
-      resolveInterceptLoadersOnly,
-    };
-
     return runWithRouterLogContext(
       { request, transaction: "matchPartial" },
       () =>
-        runWithRouterContext(routerCtx, async () =>
+        runWithRouterContext(buildRouterContext(), async () =>
           withRouterLogScope("matchPartial", async () => {
             const ctx = await createMatchContextForPartial(
               request,
@@ -1486,151 +812,8 @@ export function createRouter<TEnv = any>(
     );
   }
 
-  /**
-   * Preview match - returns route middleware without segment resolution.
-   * Also returns responseType and handler for response routes (non-RSC short-circuit).
-   */
-  async function previewMatch(
-    request: Request,
-    _context: TEnv,
-  ): Promise<{
-    routeMiddleware?: Array<{
-      handler: import("./router/middleware.js").MiddlewareFn;
-      params: Record<string, string>;
-    }>;
-    responseType?: string;
-    handler?: Function;
-    params?: Record<string, string>;
-    negotiated?: boolean;
-    manifestEntry?: EntryData;
-  } | null> {
-    return runWithRouterLogContext(
-      { request, transaction: "previewMatch" },
-      async () =>
-        withRouterLogScope("previewMatch", async () => {
-          const url = new URL(request.url);
-          const pathname = url.pathname;
-
-          // Quick route matching
-          const matched = findMatch(pathname);
-          if (!matched) {
-            return null;
-          }
-
-          // Skip redirect check - will be handled in full match
-          if (matched.redirectTo) {
-            return { routeMiddleware: undefined };
-          }
-
-          // Load manifest (without segment resolution)
-          const manifestEntry = await loadManifest(
-            matched.entry,
-            matched.routeKey,
-            pathname,
-            undefined, // No metrics store for preview
-            false, // isSSR - doesn't matter for preview
-          );
-
-          // Collect route-level middleware from entry tree
-          // Includes middleware from orphan layouts (inline layouts within routes)
-          const routeMiddleware = collectRouteMiddleware(
-            traverseBack(manifestEntry),
-            matched.params,
-          );
-
-          // Check for response type (from trie match or manifest entry)
-          const responseType =
-            matched.responseType ||
-            (manifestEntry.type === "route"
-              ? manifestEntry.responseType
-              : undefined);
-
-          // Content negotiation: when negotiate variants exist, pick the best
-          // handler based on the Accept header. Uses q-values and client order
-          // as tiebreaker (matching Express/Hono behavior). RSC routes participate
-          // as text/html candidates so browsers naturally get HTML without
-          // special-casing.
-          if (
-            matched.negotiateVariants &&
-            matched.negotiateVariants.length > 0
-          ) {
-            const acceptEntries = parseAcceptTypes(
-              request.headers.get("accept") || "",
-            );
-
-            // Build candidate list preserving definition order.
-            // For wildcard (*/*) and no-Accept fallback, the first candidate wins.
-            const variants = matched.negotiateVariants;
-            let candidates: Array<{ routeKey: string; responseType: string }>;
-            if (responseType) {
-              // Primary is response-type — include it as a candidate
-              candidates = [
-                ...variants,
-                { routeKey: matched.routeKey, responseType },
-              ];
-            } else {
-              // Primary is RSC — insert as text/html candidate in definition order
-              const rscCandidate = {
-                routeKey: matched.routeKey,
-                responseType: RSC_RESPONSE_TYPE,
-              };
-              candidates = matched.rscFirst
-                ? [rscCandidate, ...variants]
-                : [...variants, rscCandidate];
-            }
-
-            const variant = pickNegotiateVariant(acceptEntries, candidates);
-
-            // If the winner is RSC, fall through to default RSC handling
-            if (variant.responseType === RSC_RESPONSE_TYPE) {
-              // Fall through — RSC won negotiation
-            } else if (responseType && variant.routeKey === matched.routeKey) {
-              // Fall through — response-type primary won, already set
-            } else {
-              const negotiateEntry = await loadManifest(
-                matched.entry,
-                variant.routeKey,
-                pathname,
-                undefined,
-                false,
-              );
-              return {
-                routeMiddleware:
-                  routeMiddleware.length > 0 ? routeMiddleware : undefined,
-                responseType: variant.responseType,
-                handler:
-                  negotiateEntry.type === "route"
-                    ? negotiateEntry.handler
-                    : undefined,
-                params: matched.params,
-                negotiated: true,
-                manifestEntry: negotiateEntry,
-              };
-            }
-          }
-
-          // If we passed through the negotiation block (variants exist), mark as
-          // negotiated so the handler sets Vary: Accept on the response.
-          const hasVariants =
-            matched.negotiateVariants && matched.negotiateVariants.length > 0;
-          return {
-            routeMiddleware:
-              routeMiddleware.length > 0 ? routeMiddleware : undefined,
-            params: matched.params,
-            ...(responseType
-              ? {
-                  responseType,
-                  handler:
-                    manifestEntry.type === "route"
-                      ? manifestEntry.handler
-                      : undefined,
-                  manifestEntry,
-                }
-              : {}),
-            ...(hasVariants ? { negotiated: true } : {}),
-          };
-        }),
-    );
+  async function previewMatch(request: Request, _context: TEnv) {
+    return _previewMatch(request, _context, { findMatch });
   }
 
   /**
