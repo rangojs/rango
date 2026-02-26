@@ -11,17 +11,17 @@ invalidation. They differ in scope, cache key, execution model, and runtime cont
 
 ## Key Differences
 
-| | `cache()` DSL | `"use cache"` directive |
-| ------------------- | ---------------------------------------------------- | --------------------------------------------------- |
-| **Scope** | Route segment tree (handler + children + parallels) | Single function return value |
-| **Defined at** | Route definition site (`urls.ts`) | Inside function body or at file top |
-| **Cache key** | Request type + pathname + params (+ optional custom) | Function identity + serialized non-tainted args |
-| **Execution on hit** | All-or-nothing: entire handler skipped | Partial: function body skipped, calling code runs |
-| **Runtime control** | `condition` to disable, custom `key` function | None — if the directive is present, it caches |
-| **Side effects** | No guards needed — handler doesn't run on hit | `ctx.header()`, `ctx.set()`, etc. throw at runtime |
-| **Handle data** | Captured and replayed | Captured and replayed |
-| **Loaders** | Always fresh — excluded from cache, opt-in per loader | Can be used inside loaders |
-| **Nesting** | Nest `cache()` boundaries with different TTLs | Compose by calling cached functions from uncached |
+|                      | `cache()` DSL                                         | `"use cache"` directive                            |
+| -------------------- | ----------------------------------------------------- | -------------------------------------------------- |
+| **Scope**            | Route segment tree (handler + children + parallels)   | Single function return value                       |
+| **Defined at**       | Route definition site (`urls.ts`)                     | Inside function body or at file top                |
+| **Cache key**        | Request type + pathname + params (+ optional custom)  | Function identity + serialized non-tainted args    |
+| **Execution on hit** | All-or-nothing: entire handler skipped                | Partial: function body skipped, calling code runs  |
+| **Runtime control**  | `condition` to disable, custom `key` function         | None — if the directive is present, it caches      |
+| **Side effects**     | No guards needed — handler doesn't run on hit         | `ctx.header()`, `ctx.set()`, etc. throw at runtime |
+| **Handle data**      | Captured and replayed                                 | Captured and replayed                              |
+| **Loaders**          | Always fresh — excluded from cache, opt-in per loader | Can be used inside loaders                         |
+| **Nesting**          | Nest `cache()` boundaries with different TTLs         | Compose by calling cached functions from uncached  |
 
 ### cache() Cache Key
 

@@ -76,7 +76,13 @@ export async function resolveLoadersWithRevalidation<TEnv>(
 
   const revalidationChecks = await Promise.all(
     loaderMeta.map(
-      async ({ loaderEntry, loader, loaderRevalidateFns, segmentId, index }) => {
+      async ({
+        loaderEntry,
+        loader,
+        loaderRevalidateFns,
+        segmentId,
+        index,
+      }) => {
         const shouldRun = await revalidate(
           async () => {
             if (!clientSegmentIds.has(segmentId)) return true;

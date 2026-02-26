@@ -40,9 +40,7 @@ function getLoaderCacheKey(
   return `loader:${loaderId}:${base}`;
 }
 
-function getLoaderStore(
-  loaderEntry: LoaderEntry,
-): SegmentCacheStore | null {
+function getLoaderStore(loaderEntry: LoaderEntry): SegmentCacheStore | null {
   const cacheConfig = loaderEntry.cache;
   if (!cacheConfig || cacheConfig.options === false) return null;
   const options = cacheConfig.options;
