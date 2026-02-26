@@ -8,7 +8,11 @@ import type {
   TrailingSlashMode,
 } from "../types";
 import type { MiddlewareFn } from "./middleware.js";
-import type { RSCRouter, RouteBuilder, InlineRouteHelpers } from "./router-interfaces.js";
+import type {
+  RSCRouter,
+  RouteBuilder,
+  InlineRouteHelpers,
+} from "./router-interfaces.js";
 
 export interface RouteBuilderDeps<TEnv = any> {
   mergedRouteMap: Record<string, string>;
@@ -58,10 +62,7 @@ export function createRouteBuilder<
 
     // Runtime validation: warn if key already exists with different pattern
     const existingPattern = mergedRouteMap[key];
-    if (
-      existingPattern !== undefined &&
-      existingPattern !== prefixedPattern
-    ) {
+    if (existingPattern !== undefined && existingPattern !== prefixedPattern) {
       console.warn(
         `[rsc-router] Route key conflict: "${key}" already maps to "${existingPattern}", ` +
           `overwriting with "${prefixedPattern}". Use unique key names to avoid this.`,

@@ -1,5 +1,9 @@
 import type { EntryData, InterceptEntry } from "../server/context";
-import type { HandlerContext, ResolvedSegment, ShouldRevalidateFn } from "../types";
+import type {
+  HandlerContext,
+  ResolvedSegment,
+  ShouldRevalidateFn,
+} from "../types";
 import type { SegmentResolutionDeps } from "./types.js";
 
 import {
@@ -49,7 +53,10 @@ export interface SegmentWrappers<TEnv = any> {
   ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
   buildEntryRevalidateMap: (
     entries: EntryData[],
-  ) => Map<string, { entry: EntryData; revalidate: ShouldRevalidateFn<any, any>[] }>;
+  ) => Map<
+    string,
+    { entry: EntryData; revalidate: ShouldRevalidateFn<any, any>[] }
+  >;
   resolveAllSegmentsWithRevalidation: (
     entries: EntryData[],
     routeKey: string,
@@ -166,7 +173,9 @@ export function createSegmentWrappers<TEnv = any>(
     );
   }
 
-  function buildEntryRevalidateMap(entries: EntryData[]): ReturnType<typeof _buildEntryRevalidateMap> {
+  function buildEntryRevalidateMap(
+    entries: EntryData[],
+  ): ReturnType<typeof _buildEntryRevalidateMap> {
     return _buildEntryRevalidateMap(entries);
   }
 

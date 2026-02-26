@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
 import { sanitizeError } from "../errors";
+import type { ErrorInfo, ErrorPhase, MatchResult } from "../types";
 import type {
-  ErrorInfo,
-  ErrorPhase,
-  MatchResult,
-} from "../types";
-import type { EntryData, InterceptEntry, InterceptSelectorContext } from "../server/context";
+  EntryData,
+  InterceptEntry,
+  InterceptSelectorContext,
+} from "../server/context";
 import type { MatchApiDeps } from "./types.js";
 import type { RouterContext } from "./router-context.js";
 import { runWithRouterContext } from "./router-context.js";
@@ -22,10 +22,7 @@ import {
   matchError as _matchError,
 } from "./match-api.js";
 import { previewMatch as _previewMatch } from "./preview-match.js";
-import {
-  runWithRouterLogContext,
-  withRouterLogScope,
-} from "./logging.js";
+import { runWithRouterLogContext, withRouterLogScope } from "./logging.js";
 import type { ErrorBoundaryHandler, NotFoundBoundaryHandler } from "../types";
 import type { MiddlewareFn } from "./middleware.js";
 
@@ -33,10 +30,7 @@ export interface MatchHandlerDeps<TEnv = any> {
   buildRouterContext: () => RouterContext<TEnv>;
   callOnError: (error: unknown, phase: ErrorPhase, context: any) => void;
   matchApiDeps: MatchApiDeps<TEnv>;
-  defaultErrorBoundary:
-    | ReactNode
-    | ErrorBoundaryHandler
-    | undefined;
+  defaultErrorBoundary: ReactNode | ErrorBoundaryHandler | undefined;
   findMatch: (pathname: string, ms?: any) => any;
   findInterceptForRoute: (
     routeKey: string,
@@ -94,7 +88,9 @@ export interface MatchHandlers<TEnv = any> {
  * These are the main request-handling entry points for SSR, navigation,
  * error recovery, and preview matching.
  */
-export function createMatchHandlers<TEnv = any>(deps: MatchHandlerDeps<TEnv>): MatchHandlers<TEnv> {
+export function createMatchHandlers<TEnv = any>(
+  deps: MatchHandlerDeps<TEnv>,
+): MatchHandlers<TEnv> {
   const {
     buildRouterContext,
     callOnError,
@@ -103,7 +99,10 @@ export function createMatchHandlers<TEnv = any>(deps: MatchHandlerDeps<TEnv>): M
     findInterceptForRoute,
   } = deps;
 
-  async function createMatchContextForFull(request: Request, env: TEnv): Promise<MatchContext<TEnv> | { type: "redirect"; redirectUrl: string }> {
+  async function createMatchContextForFull(
+    request: Request,
+    env: TEnv,
+  ): Promise<MatchContext<TEnv> | { type: "redirect"; redirectUrl: string }> {
     return _createMatchContextForFull(
       request,
       env,
@@ -249,7 +248,10 @@ export function createMatchHandlers<TEnv = any>(deps: MatchHandlerDeps<TEnv>): M
     );
   }
 
-  async function previewMatch(request: Request, _context: TEnv): ReturnType<typeof _previewMatch> {
+  async function previewMatch(
+    request: Request,
+    _context: TEnv,
+  ): ReturnType<typeof _previewMatch> {
     return _previewMatch(request, _context, { findMatch: deps.findMatch });
   }
 

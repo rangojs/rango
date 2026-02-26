@@ -497,12 +497,7 @@ export function createRouter<TEnv = any>(
     findInterceptForRoute,
   });
 
-  const {
-    match,
-    matchPartial,
-    matchError,
-    previewMatch,
-  } = matchHandlers;
+  const { match, matchPartial, matchError, previewMatch } = matchHandlers;
 
   // Route builder deps for extracted createRouteBuilder
   const routeBuilderDeps = {

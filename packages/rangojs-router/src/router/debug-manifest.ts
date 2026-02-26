@@ -1,7 +1,4 @@
-import {
-  type EntryData,
-  getContext,
-} from "../server/context";
+import { type EntryData, getContext } from "../server/context";
 import { serializeManifest, type SerializedManifest } from "../debug.js";
 import { createRouteHelpers } from "../route-definition.js";
 import MapRootLayout from "../server/root-layout.js";
