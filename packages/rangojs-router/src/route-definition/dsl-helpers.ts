@@ -575,7 +575,9 @@ const loaderFn: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
   if (use && typeof use === "function") {
     // Temporarily set context for revalidate()/cache() calls to target this loader
     const originalParent = ctx.parent;
-    // Create a temporary "parent" with type "loader" so cache() can detect it
+    // Create a temporary "parent" with type "loader" so cache() can detect it.
+    // Save existing .cache to distinguish inherited config from newly set config.
+    const parentCache = (originalParent as any).cache;
     const tempParent = {
       ...originalParent,
       type: "loader",
@@ -585,8 +587,13 @@ const loaderFn: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
 
     const result = use()?.flat(3);
 
-    // Copy cache config from tempParent back to loaderEntry
-    if ((tempParent as any).cache) {
+    // Copy cache config only if cache() was called during the use() callback.
+    // The spread from originalParent may carry an inherited .cache from
+    // a parent cache() boundary — only copy if it was newly set.
+    if (
+      (tempParent as any).cache &&
+      (tempParent as any).cache !== parentCache
+    ) {
       (loaderEntry as any).cache = (tempParent as any).cache;
     }
 
