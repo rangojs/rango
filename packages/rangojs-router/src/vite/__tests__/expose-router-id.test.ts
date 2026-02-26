@@ -30,7 +30,9 @@ export const router = createRouter({ routes: [] });
     expect(idMatch).toBeDefined();
     expect(idMatch![1]).toMatch(/^[0-9a-f]{8}$/);
     // $$sourceFile should be the absolute path
-    expect(result.code).toMatch(/\$\$sourceFile:\s*"\/project\/src\/router\.tsx"/);
+    expect(result.code).toMatch(
+      /\$\$sourceFile:\s*"\/project\/src\/router\.tsx"/,
+    );
     // $$routeNames should reference the imported variable
     expect(result.code).toMatch(/\$\$routeNames:\s*__rsc_rn/);
     // Should import named-routes.gen with correct filename
