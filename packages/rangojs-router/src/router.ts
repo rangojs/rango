@@ -4,8 +4,7 @@ import { setCacheProfiles } from "./cache/profile-registry.js";
 import { isCachedFunction } from "./cache/taint.js";
 import { assertClientComponent } from "./component-utils.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
-import { sanitizeError } from "./errors";
-import { serializeManifest, type SerializedManifest } from "./debug.js";
+import type { SerializedManifest } from "./debug.js";
 import {
   createReverse,
   type ReverseFunction,
@@ -18,27 +17,22 @@ import {
   getRouterPrecomputedEntries,
   ensureRouterManifest,
 } from "./route-map-builder.js";
-import { createRouteHelpers, type RouteHandlers } from "./route-definition.js";
 import MapRootLayout from "./server/root-layout.js";
 import type { AllUseItems } from "./route-types.js";
 import type { UrlPatterns } from "./urls.js";
 import {
   EntryData,
-  InterceptEntry,
   InterceptSelectorContext,
   getContext,
   RSCRouterContext,
-  runWithPrefixes,
   type MetricsStore,
 } from "./server/context";
 import { createHandleStore, type HandleStore } from "./server/handle-store.js";
 import { getRequestContext } from "./server/request-context.js";
 import type {
-  ErrorInfo,
   ErrorPhase,
   HandlerContext,
   LoaderDataResult,
-  MatchResult,
   ResolvedRouteMap,
   RouteDefinition,
   RouteEntry,
@@ -54,28 +48,11 @@ import {
   invokeOnError,
 } from "./router/error-handling.js";
 
-// Extracted segment resolution functions
-import {
-  resolveAllSegments as _resolveAllSegments,
-  resolveLoadersOnly as _resolveLoadersOnly,
-  resolveLoadersOnlyWithRevalidation as _resolveLoadersOnlyWithRevalidation,
-  buildEntryRevalidateMap as _buildEntryRevalidateMap,
-  resolveAllSegmentsWithRevalidation as _resolveAllSegmentsWithRevalidation,
-} from "./router/segment-resolution.js";
-
-// Extracted intercept resolution functions
-import {
-  findInterceptForRoute as _findInterceptForRoute,
-  resolveInterceptEntry as _resolveInterceptEntry,
-  resolveInterceptLoadersOnly as _resolveInterceptLoadersOnly,
-} from "./router/intercept-resolution.js";
-
-// Extracted match API functions
-import {
-  createMatchContextForFull as _createMatchContextForFull,
-  createMatchContextForPartial as _createMatchContextForPartial,
-  matchError as _matchError,
-} from "./router/match-api.js";
+// Extracted module factories
+import { createSegmentWrappers } from "./router/segment-wrappers.js";
+import { createMatchHandlers } from "./router/match-handlers.js";
+import { createRouteBuilder as _createRouteBuilder } from "./router/route-builder.js";
+import { buildDebugManifest } from "./router/debug-manifest.js";
 
 import type { SegmentResolutionDeps, MatchApiDeps } from "./router/types.js";
 import { createHandlerContext } from "./router/handler-context.js";
@@ -100,17 +77,6 @@ import {
   type RouterContext,
   runWithRouterContext,
 } from "./router/router-context.js";
-import {
-  type ActionContext,
-  type MatchContext,
-  createPipelineState,
-} from "./router/match-context.js";
-import { createMatchPartialPipeline } from "./router/match-pipelines.js";
-import { collectMatchResult } from "./router/match-result.js";
-import {
-  runWithRouterLogContext,
-  withRouterLogScope,
-} from "./router/logging.js";
 import { resolveThemeConfig } from "./theme/constants.js";
 
 // Extracted content negotiation utilities
@@ -143,7 +109,6 @@ import {
   matchForPrerender as _matchForPrerender,
   renderStaticSegment as _renderStaticSegment,
 } from "./router/prerender-match.js";
-import { previewMatch as _previewMatch } from "./router/preview-match.js";
 
 // Re-export public types and values from extracted modules
 export { RSC_ROUTER_BRAND, RouterRegistry } from "./router/router-registry.js";
@@ -436,163 +401,17 @@ export function createRouter<TEnv = any>(
     getRouteMap: () => getRouterManifest(routerId) ?? mergedRouteMap,
   };
 
-  // Thin wrappers that bind the deps to extracted functions.
-  // These maintain the same signatures as the original inline functions
-  // so that RouterContext and call sites don't need to change.
-
-  function resolveAllSegments(
-    entries: EntryData[],
-    routeKey: string,
-    params: Record<string, string>,
-    context: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>,
-    options?: { skipLoaders?: boolean },
-  ) {
-    return _resolveAllSegments(
-      entries,
-      routeKey,
-      params,
-      context,
-      loaderPromises,
-      segmentDeps,
-      options,
-    );
-  }
-
-  function resolveLoadersOnly(
-    entries: EntryData[],
-    context: HandlerContext<any, TEnv>,
-  ) {
-    return _resolveLoadersOnly(entries, context, segmentDeps);
-  }
-
-  function resolveLoadersOnlyWithRevalidation(
-    entries: EntryData[],
-    context: HandlerContext<any, TEnv>,
-    clientSegmentIds: Set<string>,
-    prevParams: Record<string, string>,
-    request: Request,
-    prevUrl: URL,
-    nextUrl: URL,
-    routeKey: string,
-    actionContext?: {
-      actionId?: string;
-      actionUrl?: URL;
-      actionResult?: any;
-      formData?: FormData;
-    },
-  ) {
-    return _resolveLoadersOnlyWithRevalidation(
-      entries,
-      context,
-      clientSegmentIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      routeKey,
-      segmentDeps,
-      actionContext,
-    );
-  }
-
-  function buildEntryRevalidateMap(entries: EntryData[]) {
-    return _buildEntryRevalidateMap(entries);
-  }
-
-  function resolveAllSegmentsWithRevalidation(
-    entries: EntryData[],
-    routeKey: string,
-    params: Record<string, string>,
-    context: HandlerContext<any, TEnv>,
-    clientSegmentSet: Set<string>,
-    prevParams: Record<string, string>,
-    request: Request,
-    prevUrl: URL,
-    nextUrl: URL,
-    loaderPromises: Map<string, Promise<any>>,
-    actionContext:
-      | {
-          actionId?: string;
-          actionUrl?: URL;
-          actionResult?: any;
-          formData?: FormData;
-        }
-      | undefined,
-    interceptResult: { intercept: InterceptEntry; entry: EntryData } | null,
-    localRouteName: string,
-    pathname: string,
-  ) {
-    return _resolveAllSegmentsWithRevalidation(
-      entries,
-      routeKey,
-      params,
-      context,
-      clientSegmentSet,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      loaderPromises,
-      actionContext,
-      interceptResult,
-      localRouteName,
-      pathname,
-      segmentDeps,
-    );
-  }
-
-  function findInterceptForRoute(
-    targetRouteKey: string,
-    fromEntry: EntryData | null,
-    selectorContext: InterceptSelectorContext | null = null,
-    isAction: boolean = false,
-  ) {
-    return _findInterceptForRoute(
-      targetRouteKey,
-      fromEntry,
-      selectorContext,
-      isAction,
-    );
-  }
-
-  function resolveInterceptEntry(
-    interceptEntry: InterceptEntry,
-    parentEntry: EntryData,
-    params: Record<string, string>,
-    context: HandlerContext<any, TEnv>,
-    belongsToRoute: boolean = true,
-    revalidationContext?: any,
-  ) {
-    return _resolveInterceptEntry(
-      interceptEntry,
-      parentEntry,
-      params,
-      context,
-      belongsToRoute,
-      segmentDeps,
-      revalidationContext,
-    );
-  }
-
-  function resolveInterceptLoadersOnly(
-    interceptEntry: InterceptEntry,
-    parentEntry: EntryData,
-    params: Record<string, string>,
-    context: HandlerContext<any, TEnv>,
-    belongsToRoute: boolean = true,
-    revalidationContext: any,
-  ) {
-    return _resolveInterceptLoadersOnly(
-      interceptEntry,
-      parentEntry,
-      params,
-      context,
-      belongsToRoute,
-      segmentDeps,
-      revalidationContext,
-    );
-  }
+  // Create segment resolution wrappers bound to segmentDeps
+  const {
+    resolveAllSegments,
+    resolveLoadersOnly,
+    resolveLoadersOnlyWithRevalidation,
+    buildEntryRevalidateMap,
+    resolveAllSegmentsWithRevalidation,
+    findInterceptForRoute,
+    resolveInterceptEntry,
+    resolveInterceptLoadersOnly,
+  } = createSegmentWrappers<TEnv>(segmentDeps);
 
   // Lazy evaluation deps — captures closure state for extracted evaluateLazyEntry
   const lazyEvalDeps: LazyEvalDeps<TEnv> = {
@@ -668,255 +487,42 @@ export function createRouter<TEnv = any>(
     );
   }
 
-  /**
-   * Match request and return segments (document/SSR requests)
-   *
-   * Uses generator middleware pipeline for clean separation of concerns:
-   * - cache-lookup: Check cache first
-   * - segment-resolution: Resolve segments on cache miss
-   * - cache-store: Store results in cache
-   * - background-revalidation: SWR revalidation
-   */
-  async function match(request: Request, env: TEnv): Promise<MatchResult> {
-    return runWithRouterLogContext({ request, transaction: "match" }, () =>
-      runWithRouterContext(buildRouterContext(), async () =>
-        withRouterLogScope("match", async () => {
-          const result = await createMatchContextForFull(request, env);
+  // Create match handler functions bound to router state
+  const matchHandlers = createMatchHandlers<TEnv>({
+    buildRouterContext,
+    callOnError,
+    matchApiDeps,
+    defaultErrorBoundary,
+    findMatch,
+    findInterceptForRoute,
+  });
 
-          // Handle redirect case
-          if ("type" in result && result.type === "redirect") {
-            return {
-              segments: [],
-              matched: [],
-              diff: [],
-              params: {},
-              redirect: result.redirectUrl,
-            };
-          }
+  const {
+    match,
+    matchPartial,
+    matchError,
+    previewMatch,
+  } = matchHandlers;
 
-          const ctx = result as MatchContext<TEnv>;
+  // Route builder deps for extracted createRouteBuilder
+  const routeBuilderDeps = {
+    mergedRouteMap,
+    routesEntries,
+    addMiddleware,
+    // router is set after the router object is created (circular ref)
+    router: null as any as RSCRouter<TEnv, any>,
+  };
 
-          try {
-            const state = createPipelineState();
-            const pipeline = createMatchPartialPipeline(ctx, state);
-            return await collectMatchResult(pipeline, ctx, state);
-          } catch (error) {
-            if (error instanceof Response) throw error;
-            // Report unhandled errors during full match pipeline
-            callOnError(error, "routing", {
-              request,
-              url: ctx.url,
-              env,
-              isPartial: false,
-              handledByBoundary: false,
-            });
-            throw sanitizeError(error);
-          }
-        }),
-      ),
-    );
-  }
-
-  async function matchError(
-    request: Request,
-    _context: TEnv,
-    error: unknown,
-    segmentType: ErrorInfo["segmentType"] = "route",
-  ): Promise<MatchResult | null> {
-    return runWithRouterLogContext({ request, transaction: "matchError" }, () =>
-      withRouterLogScope("matchError", () =>
-        _matchError(
-          request,
-          _context,
-          error,
-          matchApiDeps,
-          defaultErrorBoundary,
-          segmentType,
-        ),
-      ),
-    );
-  }
-
-  async function createMatchContextForFull(request: Request, env: TEnv) {
-    return _createMatchContextForFull(
-      request,
-      env,
-      matchApiDeps,
-      findInterceptForRoute,
-    );
-  }
-
-  async function createMatchContextForPartial(
-    request: Request,
-    env: TEnv,
-    actionContext?: {
-      actionId?: string;
-      actionUrl?: URL;
-      actionResult?: any;
-      formData?: FormData;
-    },
-  ) {
-    return _createMatchContextForPartial(
-      request,
-      env,
-      matchApiDeps,
-      findInterceptForRoute,
-      actionContext,
-    );
-  }
-
-  /**
-   * Match partial request with revalidation
-   *
-   * Uses generator middleware pipeline for clean separation of concerns:
-   * - cache-lookup: Check cache first
-   * - segment-resolution: Resolve segments on cache miss
-   * - intercept-resolution: Handle intercept routes
-   * - cache-store: Store results in cache
-   * - background-revalidation: SWR revalidation
-   */
-  async function matchPartial(
-    request: Request,
-    context: TEnv,
-    actionContext?: ActionContext,
-  ): Promise<MatchResult | null> {
-    return runWithRouterLogContext(
-      { request, transaction: "matchPartial" },
-      () =>
-        runWithRouterContext(buildRouterContext(), async () =>
-          withRouterLogScope("matchPartial", async () => {
-            const ctx = await createMatchContextForPartial(
-              request,
-              context,
-              actionContext,
-            );
-            if (!ctx) return null;
-
-            try {
-              const state = createPipelineState();
-              const pipeline = createMatchPartialPipeline(ctx, state);
-              return await collectMatchResult(pipeline, ctx, state);
-            } catch (error) {
-              if (error instanceof Response) throw error;
-              // Report unhandled errors during partial match pipeline
-              callOnError(error, actionContext ? "action" : "revalidation", {
-                request,
-                url: ctx.url,
-                env: context,
-                actionId: actionContext?.actionId,
-                isPartial: true,
-                handledByBoundary: false,
-              });
-              throw sanitizeError(error);
-            }
-          }),
-        ),
-    );
-  }
-
-  async function previewMatch(request: Request, _context: TEnv) {
-    return _previewMatch(request, _context, { findMatch });
-  }
-
-  /**
-   * Create route builder with accumulated route types
-   * The TNewRoutes type parameter captures the new routes being added
-   */
   function createRouteBuilder<TNewRoutes extends Record<string, string>>(
     prefix: string,
     routes: TNewRoutes,
   ): RouteBuilder<RouteDefinition, TEnv, any, TNewRoutes> {
-    const currentMountIndex = mountIndex++;
-
-    // Merge routes into the reverse map
-    // Keys stay unchanged for composability - only URL patterns get prefixed
-    if (routes == null) {
-      throw new Error(
-        `[rsc-router] createRouteBuilder received null/undefined routes for prefix "${prefix}". ` +
-          `This is an invariant violation — the route builder callback must return a Record<string, string>.`,
-      );
-    }
-    const routeEntries = routes as Record<string, string>;
-    for (const [key, pattern] of Object.entries(routeEntries)) {
-      // Build prefixed pattern: "/shop" + "/cart" -> "/shop/cart"
-      // Root prefix "/" is a no-op — don't double the leading slash.
-      const effectivePrefix = prefix === "/" ? "" : prefix;
-      const prefixedPattern =
-        effectivePrefix && pattern !== "/"
-          ? `${effectivePrefix}${pattern}`
-          : effectivePrefix && pattern === "/"
-            ? effectivePrefix
-            : pattern;
-
-      // Runtime validation: warn if key already exists with different pattern
-      const existingPattern = mergedRouteMap[key];
-      if (
-        existingPattern !== undefined &&
-        existingPattern !== prefixedPattern
-      ) {
-        console.warn(
-          `[rsc-router] Route key conflict: "${key}" already maps to "${existingPattern}", ` +
-            `overwriting with "${prefixedPattern}". Use unique key names to avoid this.`,
-        );
-      }
-
-      // Use original key - enables reusable route modules
-      mergedRouteMap[key] = prefixedPattern;
-    }
-
-    // Auto-register route map for runtime reverse() usage
-    registerRouteMap(mergedRouteMap);
-
-    // Extract trailing slash config if present (attached by route())
-    const trailingSlashConfig = (routes as any).__trailingSlash as
-      | Record<string, TrailingSlashMode>
-      | undefined;
-
-    // Create builder object so .use() can return it
-    const builder: RouteBuilder<RouteDefinition, TEnv, any, TNewRoutes> = {
-      use(
-        patternOrMiddleware: string | MiddlewareFn<TEnv>,
-        middleware?: MiddlewareFn<TEnv>,
-      ) {
-        // Mount-scoped middleware - prefix is the mount prefix
-        addMiddleware(patternOrMiddleware, middleware, prefix || null);
-        return builder;
-      },
-
-      map(
-        handler:
-          | ((
-              helpers: InlineRouteHelpers<TNewRoutes, TEnv>,
-            ) => Array<AllUseItems>)
-          | (() =>
-              | Array<AllUseItems>
-              | Promise<{ default: () => Array<AllUseItems> }>
-              | Promise<() => Array<AllUseItems>>),
-      ) {
-        // Store handler as-is - detection happens at call time based on return type
-        // Both patterns use the same signature:
-        // - Inline: ({ route }) => [...] - receives helpers, returns Array
-        // - Lazy: () => import(...) - ignores helpers, returns Promise
-        routesEntries.push({
-          prefix,
-          staticPrefix: extractStaticPrefix(prefix),
-          routes: routes as ResolvedRouteMap<any>,
-          trailingSlash: trailingSlashConfig,
-          handler: handler as any,
-          mountIndex: currentMountIndex,
-        });
-        // Return router with accumulated types
-        // At runtime this is the same object, but TypeScript tracks the accumulated route types
-        return router as any;
-      },
-
-      // Expose accumulated route map for typeof extraction
-      get routeMap() {
-        return mergedRouteMap as TNewRoutes;
-      },
-    };
-
-    return builder;
+    return _createRouteBuilder<TEnv, TNewRoutes>(
+      prefix,
+      routes,
+      mountIndex++,
+      routeBuilderDeps,
+    );
   }
 
   /**
@@ -1226,54 +832,11 @@ export function createRouter<TEnv = any>(
     })(),
 
     // Debug utility for manifest inspection
-    async debugManifest(): Promise<SerializedManifest> {
-      const manifest = new Map<string, EntryData>();
-
-      for (const entry of routesEntries) {
-        const Store = {
-          manifest,
-          namespace: `debug.M${entry.mountIndex}`,
-          parent: null as EntryData | null,
-          counters: {} as Record<string, number>,
-          mountIndex: entry.mountIndex,
-          patterns: new Map<string, string>(),
-          trailingSlash: new Map<string, TrailingSlashMode>(),
-        };
-
-        await getContext().runWithStore(
-          Store,
-          `debug.M${entry.mountIndex}`,
-          null,
-          async () => {
-            const helpers = createRouteHelpers();
-
-            // Wrap handler execution in root layout (same as loadManifest)
-            let promiseResult: Promise<any> | null = null;
-            helpers.layout(MapRootLayout, () => {
-              const result = entry.handler();
-              if (result instanceof Promise) {
-                promiseResult = result;
-                return [];
-              }
-              return result;
-            });
-
-            if (promiseResult !== null) {
-              const load = await (promiseResult as Promise<any>);
-              if (load && typeof load === "object" && "default" in load) {
-                const useItems = load.default;
-                if (typeof useItems === "function") {
-                  useItems(helpers);
-                }
-              }
-            }
-          },
-        );
-      }
-
-      return serializeManifest(manifest);
-    },
+    debugManifest: () => buildDebugManifest<TEnv>(routesEntries),
   };
+
+  // Wire circular reference: routeBuilderDeps needs router for .map() return
+  routeBuilderDeps.router = router;
 
   // Register router in the global registry for build-time discovery
   RouterRegistry.set(routerId, router);
