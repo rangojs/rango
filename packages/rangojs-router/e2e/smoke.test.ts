@@ -16,9 +16,9 @@ import { waitForHydration, expectNoPageError } from "./helper";
  * `pnpm build` from corrupting the shared .vite optimizer cache.
  *
  * The build runs once at file level so the production describe just starts
- * `pnpm preview` without rebuilding.
+ * `pnpm preview` without rebuilding. Dev and production run in parallel
+ * on separate workers since the build is done up front.
  */
-test.describe.configure({ mode: "serial" });
 
 const E2E_BASIC_ROOT = "./e2e/e2e-basic";
 
@@ -34,6 +34,8 @@ test.beforeAll(async () => {
 // ============================================================================
 
 test.describe("smoke", () => {
+  test.describe.configure({ mode: "serial" });
+
   const f = useFixture({
     root: E2E_BASIC_ROOT,
     mode: "dev",
