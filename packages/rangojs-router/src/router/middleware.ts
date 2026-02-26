@@ -272,7 +272,13 @@ export function parseCookies(
   for (const pair of pairs) {
     const [name, ...rest] = pair.trim().split("=");
     if (name) {
-      cookies[name] = decodeURIComponent(rest.join("="));
+      const raw = rest.join("=");
+      try {
+        cookies[name] = decodeURIComponent(raw);
+      } catch {
+        // Malformed percent-encoded value (e.g. %zz) - fall back to raw value
+        cookies[name] = raw;
+      }
     }
   }
 

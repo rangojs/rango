@@ -61,6 +61,9 @@ export function contextGet(
   return variables[keyOrVar.key];
 }
 
+/** Keys that must never be used as string variable names */
+const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 /**
  * Write a variable to the variables store.
  * Accepts either a string key (legacy) or a ContextVar token (typed).
@@ -71,6 +74,11 @@ export function contextSet(
   value: any,
 ): void {
   if (typeof keyOrVar === "string") {
+    if (FORBIDDEN_KEYS.has(keyOrVar)) {
+      throw new Error(
+        `ctx.set(): "${keyOrVar}" is a reserved key and cannot be used as a variable name.`,
+      );
+    }
     variables[keyOrVar] = value;
   } else {
     variables[keyOrVar.key] = value;

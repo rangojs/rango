@@ -1,4 +1,12 @@
 /**
+ * Escape special RegExp characters in a string for safe interpolation
+ * into new RegExp() patterns.
+ */
+export function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
  * Encode route param values for path interpolation while preserving path
  * separators for wildcard params (splat-style values can include `/`).
  */
