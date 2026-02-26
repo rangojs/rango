@@ -9,185 +9,29 @@
  * - Forgiving API: if middleware doesn't return, original response is used
  */
 
-import type { RouterEnv } from "../types.js";
-import { type ContextVar, contextGet, contextSet } from "../context-var.js";
+import { contextGet, contextSet } from "../context-var.js";
+import type {
+  CookieOptions,
+  CollectedMiddleware,
+  MiddlewareCollectableEntry,
+  MiddlewareContext,
+  MiddlewareEntry,
+  MiddlewareFn,
+  ResponseHolder,
+} from "./middleware-types.js";
+import { parseCookies, serializeCookie } from "./middleware-cookies.js";
 
-/**
- * Helper type to extract Variables from RouterEnv
- * Uses 0 extends 1 & TEnv to detect `any` type and fall back to Record<string, unknown>
- */
-type ExtractVariables<TEnv> = 0 extends 1 & TEnv
-  ? Record<string, unknown> // TEnv is any
-  : TEnv extends RouterEnv<unknown, infer V>
-    ? V
-    : Record<string, unknown>;
-
-/**
- * Get variable function type
- */
-type GetVariableFn<TEnv> = {
-  <T>(contextVar: ContextVar<T>): T | undefined;
-  <K extends keyof ExtractVariables<TEnv>>(key: K): ExtractVariables<TEnv>[K];
-};
-
-/**
- * Set variable function type
- */
-type SetVariableFn<TEnv> = {
-  <T>(contextVar: ContextVar<T>, value: T): void;
-  <K extends keyof ExtractVariables<TEnv>>(
-    key: K,
-    value: ExtractVariables<TEnv>[K],
-  ): void;
-};
-
-/**
- * Cookie options for setting cookies
- */
-export interface CookieOptions {
-  domain?: string;
-  path?: string;
-  maxAge?: number;
-  expires?: Date;
-  httpOnly?: boolean;
-  secure?: boolean;
-  sameSite?: "strict" | "lax" | "none";
-}
-
-/**
- * Context passed to middleware
- *
- * @template TEnv - Environment type (bindings, variables) - defaults to any for internal flexibility
- * @template TParams - URL params type (typed for route middleware, Record<string, string> for global middleware)
- */
-export interface MiddlewareContext<
-  TEnv = any,
-  TParams = Record<string, string>,
-> {
-  /** Original request */
-  request: Request;
-
-  /** Parsed URL */
-  url: URL;
-
-  /** URL pathname */
-  pathname: string;
-
-  /** URL search params */
-  searchParams: URLSearchParams;
-
-  /** Platform bindings (Cloudflare, etc.) */
-  env: TEnv extends RouterEnv<infer B, unknown> ? B : {};
-
-  /** URL params extracted from route/middleware pattern */
-  params: TParams;
-
-  /**
-   * Response object - available immediately via stub, real response after `await next()`
-   *
-   * Headers set before `next()` are merged into the final response.
-   * Can be used to modify headers directly like Hono's `c.res`.
-   *
-   * @example
-   * ```typescript
-   * middleware(async (ctx, next) => {
-   *   // Set headers BEFORE next() - will be merged into final response
-   *   ctx.res.headers.set('X-Request-Id', generateId());
-   *
-   *   await next();
-   *
-   *   // Set headers AFTER next() - applied directly
-   *   ctx.res.headers.set('X-Custom', 'value');
-   *   // No return needed!
-   * });
-   * ```
-   */
-  res: Response;
-
-  /** Get a cookie value */
-  cookie(name: string): string | undefined;
-
-  /** Get all cookies as object */
-  cookies(): Record<string, string>;
-
-  /** Set a cookie on the response */
-  setCookie(name: string, value: string, options?: CookieOptions): void;
-
-  /** Delete a cookie */
-  deleteCookie(
-    name: string,
-    options?: Pick<CookieOptions, "domain" | "path">,
-  ): void;
-
-  /** Get a context variable (shared with route handlers) */
-  get: GetVariableFn<TEnv>;
-
-  /** Set a context variable (shared with route handlers) */
-  set: SetVariableFn<TEnv>;
-
-  /**
-   * Set a response header - can be called before or after `next()`
-   *
-   * When called before `next()`, headers are queued and merged into the final response.
-   * When called after `next()`, headers are set directly on the response.
-   * Shorthand for `ctx.res.headers.set()`.
-   */
-  header(name: string, value: string): void;
-
-  /**
-   * Generate URLs from route names.
-   * - `name` — global route, from the named-routes definition
-   */
-  reverse(
-    name: string,
-    params?: Record<string, string>,
-    search?: Record<string, unknown>,
-  ): string;
-}
-
-/**
- * Middleware function signature
- *
- * @template TEnv - Environment type - defaults to any for internal flexibility
- * @template TParams - URL params type (typed for route middleware)
- *
- * When using middleware with global augmentation (RSCRouter.Env), explicitly
- * annotate your middleware functions, or the types will be inferred from context:
- *
- * @example
- * ```typescript
- * // With explicit annotation (recommended for reusable middleware)
- * const authMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {...}
- *
- * // Types inferred from router.use() call
- * router.use((ctx, next) => {...}) // ctx is typed from router's TEnv
- * ```
- */
-export type MiddlewareFn<TEnv = any, TParams = Record<string, string>> = (
-  ctx: MiddlewareContext<TEnv, TParams>,
-  next: () => Promise<Response>,
-) => Response | void | Promise<Response | void>;
-
-/**
- * Stored middleware entry with pattern matching info
- * @internal - uses any for internal flexibility
- */
-export interface MiddlewareEntry<TEnv = any> {
-  /** Original pattern string */
-  pattern: string | null;
-
-  /** Compiled regex for matching */
-  regex: RegExp | null;
-
-  /** Param names extracted from pattern */
-  paramNames: string[];
-
-  /** The middleware function */
-  handler: MiddlewareFn<TEnv>;
-
-  /** Mount prefix this middleware is scoped to (null = global) */
-  mountPrefix: string | null;
-}
+// Re-export types and cookie utilities for backward compatibility
+export type {
+  CookieOptions,
+  CollectedMiddleware,
+  MiddlewareCollectableEntry,
+  MiddlewareContext,
+  MiddlewareEntry,
+  MiddlewareFn,
+  ResponseHolder,
+} from "./middleware-types.js";
+export { parseCookies, serializeCookie } from "./middleware-cookies.js";
 
 /**
  * Parse a route pattern into regex and param names
@@ -256,61 +100,6 @@ export function extractParams(
     params[paramNames[i]] = match[i + 1] || "";
   }
   return params;
-}
-
-/**
- * Parse cookies from Cookie header
- */
-export function parseCookies(
-  cookieHeader: string | null,
-): Record<string, string> {
-  if (!cookieHeader) return {};
-
-  const cookies: Record<string, string> = {};
-  const pairs = cookieHeader.split(";");
-
-  for (const pair of pairs) {
-    const [name, ...rest] = pair.trim().split("=");
-    if (name) {
-      const raw = rest.join("=");
-      try {
-        cookies[name] = decodeURIComponent(raw);
-      } catch {
-        // Malformed percent-encoded value (e.g. %zz) - fall back to raw value
-        cookies[name] = raw;
-      }
-    }
-  }
-
-  return cookies;
-}
-
-/**
- * Serialize a cookie for Set-Cookie header
- */
-export function serializeCookie(
-  name: string,
-  value: string,
-  options: CookieOptions = {},
-): string {
-  let cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}`;
-
-  if (options.domain) cookie += `; Domain=${options.domain}`;
-  if (options.path) cookie += `; Path=${options.path}`;
-  if (options.maxAge !== undefined) cookie += `; Max-Age=${options.maxAge}`;
-  if (options.expires) cookie += `; Expires=${options.expires.toUTCString()}`;
-  if (options.httpOnly) cookie += "; HttpOnly";
-  if (options.secure) cookie += "; Secure";
-  if (options.sameSite) cookie += `; SameSite=${options.sameSite}`;
-
-  return cookie;
-}
-
-/**
- * Mutable response holder - allows ctx.res to be updated after next() is called
- */
-export interface ResponseHolder {
-  response: Response | null;
 }
 
 /**
@@ -792,23 +581,6 @@ export async function executeLoaderMiddleware<TEnv>(
     finalHandler,
     reverse,
   );
-}
-
-/**
- * Entry type for middleware collection
- * Matches the shape of EntryData used in router.ts
- */
-export interface MiddlewareCollectableEntry {
-  middleware?: MiddlewareFn<any, any>[];
-  layout?: MiddlewareCollectableEntry[];
-}
-
-/**
- * Collected route middleware with params
- */
-export interface CollectedMiddleware {
-  handler: MiddlewareFn<any, any>;
-  params: Record<string, string>;
 }
 
 /**
