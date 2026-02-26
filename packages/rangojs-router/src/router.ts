@@ -5,11 +5,7 @@ import { isCachedFunction } from "./cache/taint.js";
 import { assertClientComponent } from "./component-utils.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
 import type { SerializedManifest } from "./debug.js";
-import {
-  createReverse,
-  type ReverseFunction,
-  type PrefixRoutePatterns,
-} from "./reverse.js";
+import { createReverse, type ReverseFunction } from "./reverse.js";
 import {
   registerRouteMap,
   getPrecomputedEntries,
@@ -34,7 +30,6 @@ import type {
   HandlerContext,
   LoaderDataResult,
   ResolvedRouteMap,
-  RouteDefinition,
   RouteEntry,
   TrailingSlashMode,
 } from "./types";
@@ -51,7 +46,6 @@ import {
 // Extracted module factories
 import { createSegmentWrappers } from "./router/segment-wrappers.js";
 import { createMatchHandlers } from "./router/match-handlers.js";
-import { createRouteBuilder as _createRouteBuilder } from "./router/route-builder.js";
 import { buildDebugManifest } from "./router/debug-manifest.js";
 
 import type { SegmentResolutionDeps, MatchApiDeps } from "./router/types.js";
@@ -92,11 +86,7 @@ import type {
   RSCRouterOptions,
   RootLayoutProps,
 } from "./router/router-options.js";
-import type {
-  RSCRouter,
-  RouteBuilder,
-  InlineRouteHelpers,
-} from "./router/router-interfaces.js";
+import type { RSCRouter } from "./router/router-interfaces.js";
 
 // Extracted closure functions
 import {
@@ -499,27 +489,6 @@ export function createRouter<TEnv = any>(
 
   const { match, matchPartial, matchError, previewMatch } = matchHandlers;
 
-  // Route builder deps for extracted createRouteBuilder
-  const routeBuilderDeps = {
-    mergedRouteMap,
-    routesEntries,
-    addMiddleware,
-    // router is set after the router object is created (circular ref)
-    router: null as any as RSCRouter<TEnv, any>,
-  };
-
-  function createRouteBuilder<TNewRoutes extends Record<string, string>>(
-    prefix: string,
-    routes: TNewRoutes,
-  ): RouteBuilder<RouteDefinition, TEnv, any, TNewRoutes> {
-    return _createRouteBuilder<TEnv, TNewRoutes>(
-      prefix,
-      routes,
-      mountIndex++,
-      routeBuilderDeps,
-    );
-  }
-
   /**
    * Router instance
    * The type system tracks accumulated routes through the builder chain
@@ -529,123 +498,89 @@ export function createRouter<TEnv = any>(
     __brand: RSC_ROUTER_BRAND,
     id: routerId,
 
-    routes(
-      prefixOrRoutes: string | Record<string, string> | UrlPatterns<TEnv>,
-      maybeRoutes?: Record<string, string>,
-    ): any {
-      // Note: Multiple .routes() calls are allowed for backwards compatibility
-      // with the old map() pattern. For new code, prefer urls() with include().
+    routes(urlPatterns: UrlPatterns<TEnv>): any {
+      // Store reference for runtime manifest generation
+      storedUrlPatterns = urlPatterns;
+      const currentMountIndex = mountIndex++;
 
-      // Check if argument is UrlPatterns (new Django-style API)
-      // Detect by checking for handler and definitions properties
-      if (
-        typeof prefixOrRoutes === "object" &&
-        prefixOrRoutes !== null &&
-        "handler" in prefixOrRoutes &&
-        "definitions" in prefixOrRoutes &&
-        typeof (prefixOrRoutes as UrlPatterns<TEnv>).handler === "function"
-      ) {
-        const urlPatterns = prefixOrRoutes as UrlPatterns<TEnv>;
-        // Store reference for runtime manifest generation
-        storedUrlPatterns = urlPatterns;
-        const currentMountIndex = mountIndex++;
+      // Create manifest and patterns maps for route registration
+      const manifest = new Map<string, EntryData>();
+      const routePatterns = new Map<string, string>();
+      const patternsByPrefix = new Map<string, Map<string, string>>();
+      const trailingSlashMap = new Map<string, TrailingSlashMode>();
 
-        // Create manifest and patterns maps for route registration
-        const manifest = new Map<string, EntryData>();
-        const patterns = new Map<string, string>();
-        const patternsByPrefix = new Map<string, Map<string, string>>();
-        const trailingSlashMap = new Map<string, TrailingSlashMode>();
+      // Run the handler once to extract patterns for route matching.
+      // Note: loadManifest will re-run the handler to register entries in its context.
+      // Lazy includes are detected in the return value and handled separately.
+      //
+      // Pattern extraction must use the same mountIndex and MapRootLayout root
+      // parent as loadManifest so that shortCodes produced here match those at
+      // runtime.  include() captures the current parent and counters; if those
+      // shortCodes diverge from the runtime tree the segment reconciliation on
+      // the client will see a full mismatch and remount the entire page.
+      const syntheticMapRoot: EntryData = {
+        type: "layout",
+        id: `#synthetic-maproot-M${currentMountIndex}`,
+        shortCode: `M${currentMountIndex}L0`,
+        parent: null,
+        handler: MapRootLayout,
+        middleware: [],
+        revalidate: [],
+        errorBoundary: [],
+        notFoundBoundary: [],
+        layout: [],
+        parallel: [],
+        intercept: [],
+        loader: [],
+      };
 
-        // Run the handler once to extract patterns for route matching.
-        // Note: loadManifest will re-run the handler to register entries in its context.
-        // Lazy includes are detected in the return value and handled separately.
-        //
-        // Pattern extraction must use the same mountIndex and MapRootLayout root
-        // parent as loadManifest so that shortCodes produced here match those at
-        // runtime.  include() captures the current parent and counters; if those
-        // shortCodes diverge from the runtime tree the segment reconciliation on
-        // the client will see a full mismatch and remount the entire page.
-        const syntheticMapRoot: EntryData = {
-          type: "layout",
-          id: `#synthetic-maproot-M${currentMountIndex}`,
-          shortCode: `M${currentMountIndex}L0`,
-          parent: null,
-          handler: MapRootLayout,
-          middleware: [],
-          revalidate: [],
-          errorBoundary: [],
-          notFoundBoundary: [],
-          layout: [],
-          parallel: [],
-          intercept: [],
-          loader: [],
-        };
+      let handlerResult: AllUseItems[] = [];
+      RSCRouterContext.run(
+        {
+          manifest,
+          patterns: routePatterns,
+          patternsByPrefix,
+          trailingSlash: trailingSlashMap,
+          namespace: "root",
+          parent: syntheticMapRoot,
+          counters: {},
+          mountIndex: currentMountIndex,
+        },
+        () => {
+          handlerResult = urlPatterns.handler() as AllUseItems[];
+        },
+      );
 
-        let handlerResult: AllUseItems[] = [];
-        RSCRouterContext.run(
-          {
-            manifest,
-            patterns,
-            patternsByPrefix,
-            trailingSlash: trailingSlashMap,
-            namespace: "root",
-            parent: syntheticMapRoot,
-            counters: {},
-            mountIndex: currentMountIndex,
-          },
-          () => {
-            handlerResult = urlPatterns.handler() as AllUseItems[];
-          },
-        );
+      // Convert trailingSlash map to object for the router
+      const trailingSlashConfig =
+        trailingSlashMap.size > 0
+          ? Object.fromEntries(trailingSlashMap)
+          : undefined;
 
-        // Store the ORIGINAL handler - loadManifest will re-run it to register manifest entries
-        // Convert trailingSlash map to object for the router
-        const trailingSlashConfig =
-          trailingSlashMap.size > 0
-            ? Object.fromEntries(trailingSlashMap)
-            : undefined;
-
-        // Collect route keys that have prerender handlers (for non-trie match path)
-        let prerenderRouteKeys: Set<string> | undefined;
-        for (const [name, entry] of manifest.entries()) {
-          if (entry.type === "route" && entry.isPrerender) {
-            if (!prerenderRouteKeys) prerenderRouteKeys = new Set();
-            prerenderRouteKeys.add(name);
-          }
+      // Collect route keys that have prerender handlers (for non-trie match path)
+      let prerenderRouteKeys: Set<string> | undefined;
+      for (const [name, entry] of manifest.entries()) {
+        if (entry.type === "route" && entry.isPrerender) {
+          if (!prerenderRouteKeys) prerenderRouteKeys = new Set();
+          prerenderRouteKeys.add(name);
         }
+      }
 
-        // Create separate RouteEntry for each URL prefix group
-        // This enables prefix-based short-circuit optimization
-        if (patternsByPrefix.size > 0) {
-          for (const [prefix, prefixPatterns] of patternsByPrefix.entries()) {
-            const routesObject: Record<string, string> = {};
-            for (const [name, pattern] of prefixPatterns.entries()) {
-              routesObject[name] = pattern;
-            }
-
-            routesEntries.push({
-              // prefix is "" because patterns already include the URL prefix
-              // (e.g., "/site/:locale/user1/:id" not just "/user1/:id")
-              prefix: "",
-              // staticPrefix is the actual prefix for short-circuit optimization
-              staticPrefix: extractStaticPrefix(prefix),
-              routes: routesObject as ResolvedRouteMap<any>,
-              trailingSlash: trailingSlashConfig,
-              handler: urlPatterns.handler,
-              mountIndex: currentMountIndex,
-              ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
-            });
-          }
-        } else {
-          // Fallback: no prefix grouping, use flat patterns map
+      // Create separate RouteEntry for each URL prefix group
+      // This enables prefix-based short-circuit optimization
+      if (patternsByPrefix.size > 0) {
+        for (const [prefix, prefixPatterns] of patternsByPrefix.entries()) {
           const routesObject: Record<string, string> = {};
-          for (const [name, pattern] of patterns.entries()) {
+          for (const [name, pattern] of prefixPatterns.entries()) {
             routesObject[name] = pattern;
           }
 
           routesEntries.push({
+            // prefix is "" because patterns already include the URL prefix
+            // (e.g., "/site/:locale/user1/:id" not just "/user1/:id")
             prefix: "",
-            staticPrefix: "",
+            // staticPrefix is the actual prefix for short-circuit optimization
+            staticPrefix: extractStaticPrefix(prefix),
             routes: routesObject as ResolvedRouteMap<any>,
             trailingSlash: trailingSlashConfig,
             handler: urlPatterns.handler,
@@ -653,81 +588,86 @@ export function createRouter<TEnv = any>(
             ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
           });
         }
-
-        // Build route map from registered patterns
-        for (const [name, pattern] of patterns.entries()) {
-          // Runtime validation: warn if key already exists with different pattern
-          const existingPattern = mergedRouteMap[name];
-          if (existingPattern !== undefined && existingPattern !== pattern) {
-            console.warn(
-              `[@rangojs/router] Route name conflict: "${name}" already maps to "${existingPattern}", ` +
-                `overwriting with "${pattern}". Use unique route names to avoid this.`,
-            );
-          }
-          mergedRouteMap[name] = pattern;
+      } else {
+        // Fallback: no prefix grouping, use flat patterns map
+        const routesObject: Record<string, string> = {};
+        for (const [name, pattern] of routePatterns.entries()) {
+          routesObject[name] = pattern;
         }
 
-        // Detect lazy includes in handler result and create placeholder entries
-        // Uses findLazyIncludes from outer scope (shared with evaluateLazyEntry)
-        const lazyIncludes = findLazyIncludes(handlerResult);
+        routesEntries.push({
+          prefix: "",
+          staticPrefix: "",
+          routes: routesObject as ResolvedRouteMap<any>,
+          trailingSlash: trailingSlashConfig,
+          handler: urlPatterns.handler,
+          mountIndex: currentMountIndex,
+          ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
+        });
+      }
 
-        // Create placeholder RouteEntry for each lazy include
-        for (const lazyInclude of lazyIncludes) {
-          // Compute the full URL prefix (combining parent prefix if any)
-          const fullPrefix = lazyInclude.context.urlPrefix
-            ? lazyInclude.context.urlPrefix + lazyInclude.prefix
-            : lazyInclude.prefix;
+      // Build route map from registered patterns
+      for (const [name, pattern] of routePatterns.entries()) {
+        // Runtime validation: warn if key already exists with different pattern
+        const existingPattern = mergedRouteMap[name];
+        if (existingPattern !== undefined && existingPattern !== pattern) {
+          console.warn(
+            `[@rangojs/router] Route name conflict: "${name}" already maps to "${existingPattern}", ` +
+              `overwriting with "${pattern}". Use unique route names to avoid this.`,
+          );
+        }
+        mergedRouteMap[name] = pattern;
+      }
 
-          const lazyEntry: RouteEntry<TEnv> & { _lazyPrefix?: string } = {
-            prefix: "",
-            staticPrefix: extractStaticPrefix(fullPrefix),
-            routes: {} as ResolvedRouteMap<any>, // Empty until first match
-            trailingSlash: trailingSlashConfig,
-            handler: urlPatterns.handler,
-            mountIndex: mountIndex++,
-            // Lazy evaluation fields
-            lazy: true,
-            lazyPatterns: lazyInclude.patterns,
-            lazyContext: lazyInclude.context,
-            lazyEvaluated: false,
-            // Store the include prefix for evaluation
-            _lazyPrefix: lazyInclude.prefix,
-          };
-          // Insert lazy entry before any entry whose staticPrefix is a
-          // prefix of (but shorter than) this lazy entry's staticPrefix.
-          // This ensures more specific lazy includes are matched before
-          // less specific eager entries (e.g., "/href/nested" before "/href/:id").
-          const lazyPrefix = lazyEntry.staticPrefix;
-          let insertIndex = routesEntries.length;
-          if (lazyPrefix) {
-            for (let i = 0; i < routesEntries.length; i++) {
-              const existing = routesEntries[i]!;
-              if (
-                lazyPrefix.startsWith(existing.staticPrefix) &&
-                lazyPrefix.length > existing.staticPrefix.length
-              ) {
-                insertIndex = i;
-                break;
-              }
+      // Detect lazy includes in handler result and create placeholder entries
+      const lazyIncludes = findLazyIncludes(handlerResult);
+
+      // Create placeholder RouteEntry for each lazy include
+      for (const lazyInclude of lazyIncludes) {
+        // Compute the full URL prefix (combining parent prefix if any)
+        const fullPrefix = lazyInclude.context.urlPrefix
+          ? lazyInclude.context.urlPrefix + lazyInclude.prefix
+          : lazyInclude.prefix;
+
+        const lazyEntry: RouteEntry<TEnv> & { _lazyPrefix?: string } = {
+          prefix: "",
+          staticPrefix: extractStaticPrefix(fullPrefix),
+          routes: {} as ResolvedRouteMap<any>, // Empty until first match
+          trailingSlash: trailingSlashConfig,
+          handler: urlPatterns.handler,
+          mountIndex: mountIndex++,
+          // Lazy evaluation fields
+          lazy: true,
+          lazyPatterns: lazyInclude.patterns,
+          lazyContext: lazyInclude.context,
+          lazyEvaluated: false,
+          _lazyPrefix: lazyInclude.prefix,
+        };
+        // Insert lazy entry before any entry whose staticPrefix is a
+        // prefix of (but shorter than) this lazy entry's staticPrefix.
+        // This ensures more specific lazy includes are matched before
+        // less specific eager entries (e.g., "/href/nested" before "/href/:id").
+        const lazyPrefix = lazyEntry.staticPrefix;
+        let insertIndex = routesEntries.length;
+        if (lazyPrefix) {
+          for (let i = 0; i < routesEntries.length; i++) {
+            const existing = routesEntries[i]!;
+            if (
+              lazyPrefix.startsWith(existing.staticPrefix) &&
+              lazyPrefix.length > existing.staticPrefix.length
+            ) {
+              insertIndex = i;
+              break;
             }
           }
-          routesEntries.splice(insertIndex, 0, lazyEntry);
         }
-
-        // Auto-register route map for runtime reverse() usage
-        registerRouteMap(mergedRouteMap);
-
-        // Return the router (no .map() needed for UrlPatterns)
-        return router;
+        routesEntries.splice(insertIndex, 0, lazyEntry);
       }
 
-      // Legacy API: route() + map() pattern
-      // If second argument exists, first is prefix
-      if (maybeRoutes !== undefined) {
-        return createRouteBuilder(prefixOrRoutes as string, maybeRoutes);
-      }
-      // Otherwise, first argument is routes with empty prefix
-      return createRouteBuilder("", prefixOrRoutes as Record<string, string>);
+      // Auto-register route map for runtime reverse() usage
+      registerRouteMap(mergedRouteMap);
+
+      return router;
     },
 
     use(
@@ -829,9 +769,6 @@ export function createRouter<TEnv = any>(
     // Debug utility for manifest inspection
     debugManifest: () => buildDebugManifest<TEnv>(routesEntries),
   };
-
-  // Wire circular reference: routeBuilderDeps needs router for .map() return
-  routeBuilderDeps.router = router;
 
   // Register router in the global registry for build-time discovery
   RouterRegistry.set(routerId, router);

@@ -185,8 +185,6 @@ export type {
   ScopedReverseFunction,
   ReverseFunction,
   ExtractLocalRoutes,
-  PrefixedRoutes,
-  PrefixRoutePatterns,
   ParamsFor,
   SanitizePrefix,
   MergeRoutes,

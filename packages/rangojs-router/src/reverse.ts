@@ -10,22 +10,10 @@ export type SanitizePrefix<T extends string> = T extends `/${infer P}` ? P : T;
 
 /**
  * Helper type to merge multiple route definitions into a single accumulated type.
- * Note: When using createRouter, types accumulate automatically through the
- * builder chain, so this type is typically not needed.
  *
  * @example
  * ```typescript
- * // Manual type merging (rarely needed):
- * type AppRoutes = MergeRoutes<[
- *   typeof homeRoutes,
- *   PrefixRoutePatterns<typeof blogRoutes, "/blog">,
- * ]>;
- *
- * // Preferred: Let router accumulate types automatically
- * const router = createRouter<AppEnv>()
- *   .routes(homeRoutes).map(...)
- *   .routes("/blog", blogRoutes).map(...);
- * type AppRoutes = typeof router.routeMap;
+ * type AppRoutes = MergeRoutes<[typeof siteRoutes, typeof apiRoutes]>;
  * ```
  */
 export type MergeRoutes<T extends unknown[]> = T extends [
@@ -34,45 +22,6 @@ export type MergeRoutes<T extends unknown[]> = T extends [
 ]
   ? First & MergeRoutes<Rest>
   : {};
-
-/**
- * Add key prefix to all entries in a route map
- * { "cart": "/cart" } with prefix "shop" -> { "shop.cart": "/shop/cart" }
- */
-export type PrefixRouteKeys<T, Prefix extends string> = Prefix extends ""
-  ? T
-  : { [K in keyof T as `${Prefix}.${K & string}`]: T[K] };
-
-/**
- * Add path prefix to all patterns in a route map
- * { "cart": "/cart" } with prefix "/shop" -> { "cart": "/shop/cart" }
- */
-export type PrefixRoutePatterns<T, PathPrefix extends string> = {
-  [K in keyof T]: PathPrefix extends "" | "/"
-    ? T[K]
-    : T[K] extends "/"
-      ? PathPrefix
-      : T[K] extends string
-        ? `${PathPrefix}${T[K]}`
-        : T[K];
-};
-
-/**
- * Combined: prefix both keys and patterns
- * Used for module augmentation registration
- *
- * @example
- * ```typescript
- * // Given shopRoutes = { "index": "/", "cart": "/cart", "products.detail": "/product/:slug" }
- * // PrefixedRoutes<typeof shopRoutes, "shop"> produces:
- * // { "shop.index": "/shop", "shop.cart": "/shop/cart", "shop.products.detail": "/shop/product/:slug" }
- * ```
- */
-export type PrefixedRoutes<
-  T,
-  KeyPrefix extends string,
-  PathPrefix extends string = KeyPrefix extends "" ? "" : `/${KeyPrefix}`,
-> = PrefixRouteKeys<PrefixRoutePatterns<T, PathPrefix>, KeyPrefix>;
 
 /**
  * Helper to safely extract route patterns from a routes object
