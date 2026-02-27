@@ -4,6 +4,8 @@ packages:
   - "packages/rangojs-router/e2e/e2e-basic"
   - "examples/*"
   - "tests/*"
+  - "tests/vite8-compat/e2e/test-app"
+  - "tests/vite8-compat/e2e/e2e-basic"
 
 catalog:
   "@vitejs/plugin-react": ^5.1.4

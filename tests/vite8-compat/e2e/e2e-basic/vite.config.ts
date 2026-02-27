@@ -1,0 +1,1 @@
+../../../../packages/rangojs-router/e2e/e2e-basic/vite.config.ts

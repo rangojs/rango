@@ -1,0 +1,1 @@
+../../../../packages/rangojs-router/e2e/test-app/vite.config.ts

@@ -1,0 +1,24 @@
+{
+  "name": "vite8-e2e-basic",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "extract": "npx rango extract-names ./",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@rangojs/router": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "typescript": "^5.3.0",
+    "vite": "catalog:"
+  }
+}
