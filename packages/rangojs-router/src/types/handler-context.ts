@@ -363,6 +363,8 @@ export type InternalHandlerContext<
   _originalRequest: Request;
   /** Current segment ID for handle data attribution. */
   _currentSegmentId?: string;
+  /** Response type tag (json, text, html, etc.) for cache key differentiation. */
+  _responseType?: string;
 };
 
 /**

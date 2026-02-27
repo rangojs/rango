@@ -78,6 +78,7 @@ export interface RouterContext<TEnv = any> {
     bindings?: any,
     routeMap?: Record<string, string>,
     routeName?: string,
+    responseType?: string,
   ) => HandlerContext<any, TEnv>;
 
   // Loader setup

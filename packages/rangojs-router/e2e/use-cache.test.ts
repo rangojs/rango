@@ -521,6 +521,33 @@ test.describe("use-cache basic", () => {
     expect(modalTs2).toBe(modalTs1);
     expect(modalRand2).toBe(modalRand1);
   });
+
+  test("path.json with use cache: params differentiate entries", async ({
+    request,
+  }) => {
+    // First request — cache miss for id=1
+    const res1 = await request.get(f.url("/use-cache-test/json-cached/1"));
+    expect(res1.status()).toBe(200);
+    const body1 = await res1.json();
+    expect(body1.data.id).toBe("1");
+
+    // Small delay for async cache write
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Second request with same id — cache hit
+    const res2 = await request.get(f.url("/use-cache-test/json-cached/1"));
+    expect(res2.status()).toBe(200);
+    const body2 = await res2.json();
+    expect(body2.data.ts).toBe(body1.data.ts);
+    expect(body2.data.rand).toBe(body1.data.rand);
+
+    // Different id — cache miss, different entry
+    const res3 = await request.get(f.url("/use-cache-test/json-cached/2"));
+    expect(res3.status()).toBe(200);
+    const body3 = await res3.json();
+    expect(body3.data.id).toBe("2");
+    expect(body3.data.ts).not.toBe(body1.data.ts);
+  });
 });
 
 // ============================================================================
@@ -964,5 +991,28 @@ test.describe("use-cache (production)", () => {
 
     expect(modalTs2).toBe(modalTs1);
     expect(modalRand2).toBe(modalRand1);
+  });
+
+  test("path.json with use cache: params differentiate entries", async ({
+    request,
+  }) => {
+    const res1 = await request.get(f.url("/use-cache-test/json-cached/1"));
+    expect(res1.status()).toBe(200);
+    const body1 = await res1.json();
+    expect(body1.data.id).toBe("1");
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    const res2 = await request.get(f.url("/use-cache-test/json-cached/1"));
+    expect(res2.status()).toBe(200);
+    const body2 = await res2.json();
+    expect(body2.data.ts).toBe(body1.data.ts);
+    expect(body2.data.rand).toBe(body1.data.rand);
+
+    const res3 = await request.get(f.url("/use-cache-test/json-cached/2"));
+    expect(res3.status()).toBe(200);
+    const body3 = await res3.json();
+    expect(body3.data.id).toBe("2");
+    expect(body3.data.ts).not.toBe(body1.data.ts);
   });
 });

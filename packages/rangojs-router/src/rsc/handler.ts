@@ -29,6 +29,7 @@ import type { ErrorPhase } from "../types.js";
 import { invokeOnError } from "../router/error-handling.js";
 import { createReverseFunction } from "../router/handler-context.js";
 import { contextGet } from "../context-var.js";
+import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import { traverseBack } from "../router/pattern-matching.js";
 import { createCacheScope } from "../cache/cache-scope.js";
 import {
@@ -80,6 +81,13 @@ import { handleRscRendering } from "./rsc-rendering.js";
  * });
  * ```
  */
+// Statuses that are safe to cache for response routes.
+// 200: success, 404: not found (expensive lookups), 301/308: permanent redirects.
+// Temporary redirects (302/307) and errors (5xx) are never cached.
+function isCacheableStatus(status: number): boolean {
+  return status === 200 || status === 404 || status === 301 || status === 308;
+}
+
 export function createRSCHandler<
   TEnv = unknown,
   TRoutes extends Record<string, string> = Record<string, string>,
@@ -407,7 +415,11 @@ export function createRSCHandler<
         header: (name: string, value: string) => reqCtx.header(name, value),
         setCookie: (name: string, value: string, options?: any) =>
           reqCtx.setCookie(name, value, options),
+        _responseType: preview.responseType,
       };
+      // Brand with taint symbol so "use cache" detects it as request-scoped
+      // and extracts route-identifying properties (params, pathname, _responseType)
+      (responseHandlerCtx as any)[NOCACHE_SYMBOL] = true;
 
       // Call handler directly, wrapped by route middleware if present
       const callHandler = async () => {
@@ -562,8 +574,9 @@ export function createRSCHandler<
         if (cacheScope?.enabled) {
           const store = cacheScope.getStore() ?? reqCtx._cacheStore;
           if (store?.getResponse && store?.putResponse) {
-            // Build cache key with response: prefix to avoid collision with segment keys
-            let cacheKey = `response:${url.pathname}`;
+            // Build cache key with response:{type}: prefix to avoid collision
+            // with segment keys and differentiate between response types
+            let cacheKey = `response:${preview.responseType}:${url.pathname}`;
             if (store.keyGenerator) {
               try {
                 cacheKey = await store.keyGenerator(reqCtx, cacheKey);
@@ -575,7 +588,7 @@ export function createRSCHandler<
             try {
               const cached = await store.getResponse(cacheKey);
 
-              if (cached && cached.response.status === 200) {
+              if (cached && isCacheableStatus(cached.response.status)) {
                 if (!cached.shouldRevalidate) {
                   // Fresh hit
                   return cached.response;
@@ -585,7 +598,7 @@ export function createRSCHandler<
                 reqCtx.waitUntil(async () => {
                   try {
                     const fresh = await executeHandler();
-                    if (fresh.status === 200) {
+                    if (isCacheableStatus(fresh.status)) {
                       await store.putResponse!(
                         cacheKey,
                         fresh,
@@ -610,7 +623,7 @@ export function createRSCHandler<
             // Cache miss - execute handler and cache the result
             const response = await executeHandler();
 
-            if (response.status === 200) {
+            if (isCacheableStatus(response.status)) {
               reqCtx.waitUntil(async () => {
                 try {
                   await store.putResponse!(

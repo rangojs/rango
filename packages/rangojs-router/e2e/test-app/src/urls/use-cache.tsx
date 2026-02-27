@@ -327,5 +327,16 @@ export const useCachePatterns = urls(
         ),
       ],
     ),
+
+    // path.json with "use cache" — responseType must be in cache key,
+    // params must differentiate entries, response handler ctx must be tainted.
+    path.json(
+      "/json-cached/:id",
+      async (ctx) => {
+        "use cache";
+        return { id: ctx.params.id, ts: Date.now(), rand: Math.random() };
+      },
+      { name: "useCacheTest.jsonCached" },
+    ),
   ],
 );

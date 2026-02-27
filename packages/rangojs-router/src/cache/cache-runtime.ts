@@ -163,6 +163,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         const ctx = arg as any;
         if (ctx.params && typeof ctx.params === "object") {
           keyArgs.push(ctx.pathname, ctx.params);
+          if (ctx._responseType) {
+            keyArgs.push(ctx._responseType);
+          }
         }
       } else {
         keyArgs.push(arg);
