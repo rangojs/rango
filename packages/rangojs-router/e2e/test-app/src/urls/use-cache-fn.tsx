@@ -76,3 +76,42 @@ export async function getCachedReactNode(): Promise<React.ReactNode> {
     </>
   );
 }
+
+/**
+ * Cached function that accepts ReactNode slots (header, children).
+ * Internal data (ts, rand) should be cached. Slot content should pass
+ * through as temporary references, resolved from current call args
+ * on cache hit (interleaving).
+ */
+export async function CachedWithSlots({
+  header,
+  children,
+}: {
+  header: React.ReactNode;
+  children: React.ReactNode;
+}): Promise<React.ReactNode> {
+  "use cache";
+  const cachedTs = Date.now();
+  const cachedRand = Math.random();
+  return (
+    <div data-testid="cached-with-slots">
+      <div data-testid="cached-slots-header">{header}</div>
+      <span data-testid="cached-slots-ts">{cachedTs}</span>
+      <span data-testid="cached-slots-rand">{cachedRand}</span>
+      <div data-testid="cached-slots-children">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * Cached data function for the action interleaving test.
+ * Returns plain data (not JSX). The caller renders the client component
+ * alongside this data, testing that server actions work next to cached data.
+ */
+export async function getCachedActionData(): Promise<{
+  ts: number;
+  rand: number;
+}> {
+  "use cache";
+  return { ts: Date.now(), rand: Math.random() };
+}
