@@ -13,7 +13,7 @@ describe("cacheTag", () => {
       cacheTag("a", "b");
       cacheTag("c");
     });
-    expect(tags).toEqual(["a", "b", "c"]);
+    expect(tags).toEqual(new Set(["a", "b", "c"]));
   });
 
   it("deduplicates tags", () => {
@@ -21,7 +21,7 @@ describe("cacheTag", () => {
       cacheTag("a", "b");
       cacheTag("a");
     });
-    expect(tags).toEqual(["a", "b"]);
+    expect(tags).toEqual(new Set(["a", "b"]));
   });
 
   it("returns the function result", () => {
@@ -30,13 +30,13 @@ describe("cacheTag", () => {
       return 42;
     });
     expect(result).toBe(42);
-    expect(tags).toEqual(["x"]);
+    expect(tags).toEqual(new Set(["x"]));
   });
 
   it("returns empty tags when none are added", () => {
     const { result, tags } = runWithCacheTagScope(() => "hello");
     expect(result).toBe("hello");
-    expect(tags).toEqual([]);
+    expect(tags.size).toBe(0);
   });
 
   it("scopes are isolated between runs", () => {
@@ -46,7 +46,22 @@ describe("cacheTag", () => {
     const { tags: tags2 } = runWithCacheTagScope(() => {
       cacheTag("second");
     });
-    expect(tags1).toEqual(["first"]);
-    expect(tags2).toEqual(["second"]);
+    expect(tags1).toEqual(new Set(["first"]));
+    expect(tags2).toEqual(new Set(["second"]));
+  });
+
+  it("captures tags added after an async boundary", async () => {
+    const { result, tags } = runWithCacheTagScope(() => {
+      cacheTag("before");
+      return (async () => {
+        await Promise.resolve();
+        cacheTag("after-await");
+        return "done";
+      })();
+    });
+    // Tags must be read after awaiting the result
+    const value = await result;
+    expect(value).toBe("done");
+    expect(tags).toEqual(new Set(["before", "after-await"]));
   });
 });

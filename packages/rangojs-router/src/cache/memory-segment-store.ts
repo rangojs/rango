@@ -389,9 +389,14 @@ export class MemorySegmentCacheStore<
 
   /**
    * Register tags for a prefixed cache key.
+   * Removes any stale tag mappings from a previous write to the same key
+   * before adding the new ones.
    * @internal
    */
   private registerTags(tags: string[], prefixedKey: string): void {
+    // Remove old tag mappings for this key to prevent stale invalidation
+    this.unregisterTags(prefixedKey);
+
     for (const tag of tags) {
       let keys = this.tagIndex.get(tag);
       if (!keys) {
@@ -399,6 +404,19 @@ export class MemorySegmentCacheStore<
         this.tagIndex.set(tag, keys);
       }
       keys.add(prefixedKey);
+    }
+  }
+
+  /**
+   * Remove a prefixed cache key from all tag sets.
+   * @internal
+   */
+  private unregisterTags(prefixedKey: string): void {
+    for (const [tag, keys] of this.tagIndex) {
+      keys.delete(prefixedKey);
+      if (keys.size === 0) {
+        this.tagIndex.delete(tag);
+      }
     }
   }
 

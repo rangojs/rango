@@ -113,6 +113,72 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
     });
   });
 
+  describe("tag cleanup on key overwrite", () => {
+    it("does not invalidate new entry when old tag is revalidated", async () => {
+      await store.setItem("key1", "old-value", {
+        ttl: 60,
+        tags: ["old-tag"],
+      });
+      // Overwrite same key with a different tag
+      await store.setItem("key1", "new-value", {
+        ttl: 60,
+        tags: ["new-tag"],
+      });
+
+      // Revalidating old tag should NOT delete the new entry
+      const count = await store.revalidateTag("old-tag");
+      expect(count).toBe(0);
+
+      const cached = await store.getItem("key1");
+      expect(cached).not.toBeNull();
+      expect(cached!.value).toBe("new-value");
+    });
+
+    it("cleans up stale segment tag mappings on overwrite", async () => {
+      await store.set(
+        "seg-key",
+        {
+          segments: [],
+          handles: {},
+          expiresAt: Date.now() + 60000,
+          tags: ["old"],
+        },
+        60,
+      );
+      await store.set(
+        "seg-key",
+        {
+          segments: [],
+          handles: {},
+          expiresAt: Date.now() + 60000,
+          tags: ["new"],
+        },
+        60,
+      );
+
+      expect(await store.revalidateTag("old")).toBe(0);
+      expect(await store.get("seg-key")).not.toBeNull();
+
+      expect(await store.revalidateTag("new")).toBe(1);
+      expect(await store.get("seg-key")).toBeNull();
+    });
+
+    it("cleans up stale response tag mappings on overwrite", async () => {
+      await store.putResponse("res-key", new Response("v1"), 60, undefined, [
+        "old",
+      ]);
+      await store.putResponse("res-key", new Response("v2"), 60, undefined, [
+        "new",
+      ]);
+
+      expect(await store.revalidateTag("old")).toBe(0);
+      expect(await store.getResponse("res-key")).not.toBeNull();
+
+      expect(await store.revalidateTag("new")).toBe(1);
+      expect(await store.getResponse("res-key")).toBeNull();
+    });
+  });
+
   describe("clear cleans tag index", () => {
     it("revalidateTag returns 0 after clear", async () => {
       await store.setItem("key1", "value1", {

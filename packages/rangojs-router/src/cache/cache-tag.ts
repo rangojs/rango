@@ -47,9 +47,11 @@ export function cacheTag(...tags: string[]): void {
  */
 export function runWithCacheTagScope<T>(fn: () => T): {
   result: T;
-  tags: string[];
+  tags: Set<string>;
 } {
   const tagSet = new Set<string>();
   const result = cacheTagStorage.run(tagSet, fn);
-  return { result, tags: [...tagSet] };
+  // Return the live Set reference — caller must await result before reading tags,
+  // since async functions may call cacheTag() after await boundaries.
+  return { result, tags: tagSet };
 }

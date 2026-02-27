@@ -241,7 +241,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             try {
               const scoped = runWithCacheTagScope(() => fn.apply(this, args));
               const freshResult = await scoped.result;
-              const freshTags = [...(profile.tags ?? []), ...scoped.tags];
+              const freshTags = [...(profile.tags ?? []), ...scoped.tags];  // read tags after await
               const serialized = await serializeResult(freshResult);
               if (serialized !== null) {
                 await store.setItem!(cacheKey, serialized, {
@@ -279,11 +279,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     }
 
     let result: any;
-    let runtimeTags: string[] = [];
+    const scoped = runWithCacheTagScope(() => fn.apply(this, args));
     try {
-      const scoped = runWithCacheTagScope(() => fn.apply(this, args));
       result = await scoped.result;
-      runtimeTags = scoped.tags;
     } finally {
       // Always remove the flag, even if the function throws
       for (const arg of taintedArgs) {
@@ -296,7 +294,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     }
 
     // Merge profile tags with runtime tags from cacheTag() calls
-    const allTags = [...(profile.tags ?? []), ...runtimeTags];
+    // Read scoped.tags after awaiting result so post-await cacheTag() calls are included
+    const allTags = [...(profile.tags ?? []), ...scoped.tags];
 
     // Serialize and store — fully non-blocking when waitUntil is available.
     // The response does not need to wait for serialization or the store write.
