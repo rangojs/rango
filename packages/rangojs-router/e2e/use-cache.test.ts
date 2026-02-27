@@ -477,6 +477,138 @@ test.describe("use-cache basic", () => {
     expect(modalTs2).toBe(modalTs1);
     expect(modalRand2).toBe(modalRand1);
   });
+
+  test("interleave: cached function with ReactNode slots returns frozen output on cache hit", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // First visit — CachedWithSlots receives dynamic ReactNode slots.
+    // The entire cached function output (including rendered slot content)
+    // is serialized and stored. On cache hit, the stored output is returned
+    // as-is — slot content is NOT interleaved separately.
+    await page.goto(f.url("/use-cache-test/interleave-slots"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("interleave-slots-page")).toBeVisible();
+
+    const cachedTs1 = await page
+      .getByTestId("cached-slots-ts")
+      .textContent();
+    const cachedRand1 = await page
+      .getByTestId("cached-slots-rand")
+      .textContent();
+    const headerContent1 = await page
+      .getByTestId("interleave-slots-header-content")
+      .textContent();
+    const childrenContent1 = await page
+      .getByTestId("interleave-slots-children-content")
+      .textContent();
+    const serverTs1 = await page
+      .getByTestId("interleave-slots-server-ts")
+      .textContent();
+
+    expect(cachedTs1).toBeTruthy();
+    expect(cachedRand1).toBeTruthy();
+    expect(headerContent1).toBeTruthy();
+
+    // Header and children should show the same dynamicTs
+    expect(headerContent1).toBe(childrenContent1);
+
+    // Navigate away
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Second visit — cached function returns frozen result (cache hit).
+    // Both the function's own data and the rendered slot content are frozen.
+    await page.goto(f.url("/use-cache-test/interleave-slots"));
+    await waitForHydration(page);
+
+    const cachedTs2 = await page
+      .getByTestId("cached-slots-ts")
+      .textContent();
+    const cachedRand2 = await page
+      .getByTestId("cached-slots-rand")
+      .textContent();
+    const headerContent2 = await page
+      .getByTestId("interleave-slots-header-content")
+      .textContent();
+    const childrenContent2 = await page
+      .getByTestId("interleave-slots-children-content")
+      .textContent();
+    const serverTs2 = await page
+      .getByTestId("interleave-slots-server-ts")
+      .textContent();
+
+    // Cached function data is frozen (cache hit)
+    expect(cachedTs2).toBe(cachedTs1);
+    expect(cachedRand2).toBe(cachedRand1);
+
+    // Slot content is also frozen (part of cached output)
+    expect(headerContent2).toBe(headerContent1);
+    expect(childrenContent2).toBe(childrenContent1);
+
+    // Handler's own timestamp is fresh (handler runs on every request,
+    // only the CachedWithSlots call returns cached output)
+    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
+  });
+
+  test("interleave: server action works alongside cached data", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Visit page — getCachedActionData() runs (cache miss), client component renders
+    await page.goto(f.url("/use-cache-test/interleave-action"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("interleave-action-page")).toBeVisible();
+
+    const cachedTs1 = await page
+      .getByTestId("cached-action-ts")
+      .textContent();
+    const cachedRand1 = await page
+      .getByTestId("cached-action-rand")
+      .textContent();
+    const serverTs1 = await page
+      .getByTestId("interleave-action-server-ts")
+      .textContent();
+
+    expect(cachedTs1).toBeTruthy();
+    expect(cachedRand1).toBeTruthy();
+
+    // Client component with server action renders alongside cached data
+    await expect(page.getByTestId("interleave-action-btn")).toBeVisible();
+    await expect(page.getByTestId("interleave-action-btn")).toBeEnabled();
+
+    // Navigate away
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Second visit — cached data should be stable (cache hit)
+    await page.goto(f.url("/use-cache-test/interleave-action"));
+    await waitForHydration(page);
+
+    const cachedTs2 = await page
+      .getByTestId("cached-action-ts")
+      .textContent();
+    const cachedRand2 = await page
+      .getByTestId("cached-action-rand")
+      .textContent();
+    const serverTs2 = await page
+      .getByTestId("interleave-action-server-ts")
+      .textContent();
+
+    // Cached function data is frozen (cache hit)
+    expect(cachedTs2).toBe(cachedTs1);
+    expect(cachedRand2).toBe(cachedRand1);
+    // Handler ran fresh (server time advanced)
+    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
+
+    // Client component still renders correctly on cache hit
+    await expect(page.getByTestId("interleave-action-btn")).toBeVisible();
+    await expect(page.getByTestId("interleave-action-btn")).toBeEnabled();
+  });
 });
 
 // ============================================================================
@@ -880,5 +1012,128 @@ test.describe("use-cache (production)", () => {
 
     expect(modalTs2).toBe(modalTs1);
     expect(modalRand2).toBe(modalRand1);
+  });
+
+  test("interleave: cached function with ReactNode slots returns frozen output on cache hit", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/use-cache-test/interleave-slots"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("interleave-slots-page")).toBeVisible();
+
+    const cachedTs1 = await page
+      .getByTestId("cached-slots-ts")
+      .textContent();
+    const cachedRand1 = await page
+      .getByTestId("cached-slots-rand")
+      .textContent();
+    const headerContent1 = await page
+      .getByTestId("interleave-slots-header-content")
+      .textContent();
+    const childrenContent1 = await page
+      .getByTestId("interleave-slots-children-content")
+      .textContent();
+    const serverTs1 = await page
+      .getByTestId("interleave-slots-server-ts")
+      .textContent();
+
+    expect(cachedTs1).toBeTruthy();
+    expect(cachedRand1).toBeTruthy();
+    expect(headerContent1).toBeTruthy();
+
+    expect(headerContent1).toBe(childrenContent1);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await page.goto(f.url("/use-cache-test/interleave-slots"));
+    await waitForHydration(page);
+
+    const cachedTs2 = await page
+      .getByTestId("cached-slots-ts")
+      .textContent();
+    const cachedRand2 = await page
+      .getByTestId("cached-slots-rand")
+      .textContent();
+    const headerContent2 = await page
+      .getByTestId("interleave-slots-header-content")
+      .textContent();
+    const childrenContent2 = await page
+      .getByTestId("interleave-slots-children-content")
+      .textContent();
+    const serverTs2 = await page
+      .getByTestId("interleave-slots-server-ts")
+      .textContent();
+
+    // Cached function data is frozen (cache hit)
+    expect(cachedTs2).toBe(cachedTs1);
+    expect(cachedRand2).toBe(cachedRand1);
+
+    // Slot content is also frozen (part of cached output)
+    expect(headerContent2).toBe(headerContent1);
+    expect(childrenContent2).toBe(childrenContent1);
+
+    // Handler's own timestamp is fresh (handler runs on every request)
+    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
+  });
+
+  test("interleave: server action works alongside cached data", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Visit page — getCachedActionData() runs (cache miss), client component renders
+    await page.goto(f.url("/use-cache-test/interleave-action"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("interleave-action-page")).toBeVisible();
+
+    const cachedTs1 = await page
+      .getByTestId("cached-action-ts")
+      .textContent();
+    const cachedRand1 = await page
+      .getByTestId("cached-action-rand")
+      .textContent();
+    const serverTs1 = await page
+      .getByTestId("interleave-action-server-ts")
+      .textContent();
+
+    expect(cachedTs1).toBeTruthy();
+    expect(cachedRand1).toBeTruthy();
+
+    // Client component with server action renders alongside cached data
+    await expect(page.getByTestId("interleave-action-btn")).toBeVisible();
+    await expect(page.getByTestId("interleave-action-btn")).toBeEnabled();
+
+    // Navigate away
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Second visit — cached data should be stable (cache hit)
+    await page.goto(f.url("/use-cache-test/interleave-action"));
+    await waitForHydration(page);
+
+    const cachedTs2 = await page
+      .getByTestId("cached-action-ts")
+      .textContent();
+    const cachedRand2 = await page
+      .getByTestId("cached-action-rand")
+      .textContent();
+    const serverTs2 = await page
+      .getByTestId("interleave-action-server-ts")
+      .textContent();
+
+    // Cached function data is frozen (cache hit)
+    expect(cachedTs2).toBe(cachedTs1);
+    expect(cachedRand2).toBe(cachedRand1);
+    // Handler ran fresh (server time advanced)
+    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
+
+    // Client component still renders correctly on cache hit
+    await expect(page.getByTestId("interleave-action-btn")).toBeVisible();
+    await expect(page.getByTestId("interleave-action-btn")).toBeEnabled();
   });
 });

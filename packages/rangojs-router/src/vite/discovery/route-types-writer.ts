@@ -17,6 +17,25 @@ import type { DiscoveryState } from "./state.js";
 import { markSelfGenWrite } from "./self-gen-tracking.js";
 
 /**
+ * Filter out auto-generated route names from a manifest.
+ * Routes with names starting with "$" are internal (auto-generated from
+ * patterns for unnamed routes) and should not appear in the typed gen file.
+ * This keeps the runtime writer's output consistent with the static parser,
+ * which never produces these names.
+ */
+function filterUserNamedRoutes(
+  manifest: Record<string, string>,
+): Record<string, string> {
+  const filtered: Record<string, string> = {};
+  for (const [name, pattern] of Object.entries(manifest)) {
+    if (!name.startsWith("$")) {
+      filtered[name] = pattern;
+    }
+  }
+  return filtered;
+}
+
+/**
  * Write combined route types for all router files.
  * Only writes when content has changed to avoid triggering HMR loops.
  */
@@ -112,6 +131,10 @@ export function writeRouteTypesFiles(state: DiscoveryState): void {
     const routerDir = dirname(sourceFile);
     const routerBasename = basename(sourceFile).replace(/\.(tsx?|jsx?)$/, "");
     const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
+
+    // Filter out auto-generated route names (e.g. "$path____debug_reverse-test")
+    // to match the static parser's output and prevent HMR oscillation.
+    const userRoutes = filterUserNamedRoutes(routeManifest);
     let effectiveSearchSchemas = routeSearchSchemas;
 
     // Runtime manifest may omit search schema metadata in some module-runner
@@ -124,7 +147,7 @@ export function writeRouteTypesFiles(state: DiscoveryState): void {
       const staticParsed = buildCombinedRouteMapForRouterFile(sourceFile);
       if (Object.keys(staticParsed.searchSchemas).length > 0) {
         const filtered: Record<string, Record<string, string>> = {};
-        for (const name of Object.keys(routeManifest)) {
+        for (const name of Object.keys(userRoutes)) {
           const schema = staticParsed.searchSchemas[name];
           if (schema) filtered[name] = schema;
         }
@@ -135,7 +158,7 @@ export function writeRouteTypesFiles(state: DiscoveryState): void {
     }
 
     const source = generateRouteTypesSource(
-      routeManifest,
+      userRoutes,
       effectiveSearchSchemas && Object.keys(effectiveSearchSchemas).length > 0
         ? effectiveSearchSchemas
         : undefined,
@@ -199,6 +222,8 @@ export function supplementGenFilesWithRuntimeRoutes(
     };
 
     for (const [name, pattern] of Object.entries(routeManifest)) {
+      // Skip auto-generated names
+      if (name.startsWith("$")) continue;
       const dotIdx = name.indexOf(".");
       if (dotIdx <= 0) continue;
       const prefix = name.substring(0, dotIdx + 1);

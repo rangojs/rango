@@ -188,3 +188,14 @@ export async function saveAndRedirect(): Promise<void> {
 export async function actionSimpleRedirect(): Promise<void> {
   return redirect("/location-state/target") as any;
 }
+
+/**
+ * Test action for "use cache" interleaving.
+ * Returns the input and a timestamp so tests can verify
+ * the action was actually invoked (different ts each call).
+ */
+export async function interleaveTestAction(
+  input: string,
+): Promise<{ result: string; ts: number }> {
+  return { result: `action-result:${input}`, ts: Date.now() };
+}

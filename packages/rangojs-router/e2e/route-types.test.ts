@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { useFixture } from "./fixture";
 
 const genFilePath = path.resolve(
   "./e2e/test-app/src/router.named-routes.gen.ts",
@@ -120,5 +121,61 @@ test.describe("route-types (production)", () => {
     const routeLines = content.match(/^\s+["a-zA-Z_$][^:]*: "[^"]+",$/gm);
     expect(routeLines).not.toBeNull();
     expect(routeLines!.length).toBeGreaterThanOrEqual(30);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Unnamed routes: auto-generated $path names excluded from gen file,
+// but routes still serve content at runtime.
+// ---------------------------------------------------------------------------
+
+test.describe("unnamed routes", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+
+  test("gen file should not contain auto-generated $path route names", async () => {
+    const content = await fs.readFile(genFilePath, "utf-8");
+
+    // Routes without an explicit name: property get auto-generated names
+    // starting with "$" at runtime. These should be filtered from the gen
+    // file to prevent HMR oscillation between static and runtime writers.
+    const dollarRoutes = content.match(/"\$path/gm);
+    expect(dollarRoutes).toBeNull();
+  });
+
+  test("unnamed route serves JSON content", async ({ request }) => {
+    // The /__debug/reverse-test endpoint is an unnamed path.json() route.
+    // It should respond correctly even though it's excluded from the gen file.
+    const res = await request.get(
+      f.url("/__debug/reverse-test?name=index&name=blog.index"),
+    );
+    expect(res.status()).toBe(200);
+    expect(res.headers()["content-type"]).toContain("application/json");
+
+    const body = await res.json();
+    expect(body.data.index).toBe("/");
+    expect(body.data["blog.index"]).toBe("/blog");
+  });
+});
+
+test.describe("unnamed routes (production)", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
+
+  test("gen file should not contain auto-generated $path route names", async () => {
+    const content = await fs.readFile(genFilePath, "utf-8");
+
+    const dollarRoutes = content.match(/"\$path/gm);
+    expect(dollarRoutes).toBeNull();
+  });
+
+  test("unnamed route serves JSON content", async ({ request }) => {
+    const res = await request.get(
+      f.url("/__debug/reverse-test?name=index&name=blog.index"),
+    );
+    expect(res.status()).toBe(200);
+    expect(res.headers()["content-type"]).toContain("application/json");
+
+    const body = await res.json();
+    expect(body.data.index).toBe("/");
+    expect(body.data["blog.index"]).toBe("/blog");
   });
 });

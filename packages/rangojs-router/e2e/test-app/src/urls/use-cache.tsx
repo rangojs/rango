@@ -7,7 +7,10 @@ import {
   fetchWithBreadcrumbs,
   getSlowCachedData,
   getCachedReactNode,
+  CachedWithSlots,
+  getCachedActionData,
 } from "./use-cache-fn.js";
+import { InterleaveActionButton } from "../components/InterleaveActionButton.js";
 import { Breadcrumbs } from "../handles.js";
 import { UseCacheTestLoader } from "../loaders.js";
 
@@ -309,6 +312,58 @@ export const useCachePatterns = urls(
           ],
         ),
       ],
+    ),
+
+    // Interleave: compositional slots through "use cache" function.
+    // header and children are ReactNode props -- they should pass through
+    // the cache as temporary references. The cached function's own ts/rand
+    // should be stable on cache hit, while slot content should be fresh.
+    path(
+      "/interleave-slots",
+      async () => {
+        const dynamicTs = Date.now();
+        const node = await CachedWithSlots({
+          header: (
+            <h2 data-testid="interleave-slots-header-content">{dynamicTs}</h2>
+          ),
+          children: (
+            <span data-testid="interleave-slots-children-content">
+              {dynamicTs}
+            </span>
+          ),
+        });
+        const serverTs = Date.now();
+        return (
+          <div data-testid="interleave-slots-page">
+            <h1>Interleave Slots Test</h1>
+            {node}
+            <span data-testid="interleave-slots-server-ts">{serverTs}</span>
+          </div>
+        );
+      },
+      { name: "useCacheTest.interleaveSlots" },
+    ),
+
+    // Interleave: server action works alongside cached data.
+    // The cached function returns plain data; the client component (with
+    // its own directly-imported action) is rendered next to the cached data.
+    // Tests that actions work correctly when the route also uses "use cache".
+    path(
+      "/interleave-action",
+      async () => {
+        const data = await getCachedActionData();
+        const serverTs = Date.now();
+        return (
+          <div data-testid="interleave-action-page">
+            <h1>Interleave Action Test</h1>
+            <span data-testid="cached-action-ts">{data.ts}</span>
+            <span data-testid="cached-action-rand">{data.rand}</span>
+            <InterleaveActionButton />
+            <span data-testid="interleave-action-server-ts">{serverTs}</span>
+          </div>
+        );
+      },
+      { name: "useCacheTest.interleaveAction" },
     ),
   ],
 );
