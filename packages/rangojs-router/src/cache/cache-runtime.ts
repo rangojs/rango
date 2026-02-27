@@ -241,7 +241,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             try {
               const scoped = runWithCacheTagScope(() => fn.apply(this, args));
               const freshResult = await scoped.result;
-              const freshTags = [...(profile.tags ?? []), ...scoped.tags];  // read tags after await
+              const freshTags = [...(profile.tags ?? []), ...scoped.tags]; // read tags after await
               const serialized = await serializeResult(freshResult);
               if (serialized !== null) {
                 await store.setItem!(cacheKey, serialized, {
