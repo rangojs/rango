@@ -139,6 +139,7 @@ export const NamedRoutes = {
   "useCacheTest.useCacheTest.cachedNode": "/use-cache-test/cached-node",
   "useCacheTest.useCacheTest.inlineHandler": "/use-cache-test/inline-handler",
   "useCacheTest.useCacheTest.inlineLayout": "/use-cache-test/inline-layout",
+  "useCacheTest.useCacheTest.inlineParams": "/use-cache-test/inline-params/:slug",
   "useCacheTest.useCacheTest.interceptIndex": "/use-cache-test/intercept-index",
   "useCacheTest.useCacheTest.interceptTarget": "/use-cache-test/intercept-target/:id",
   "useCacheTest.useCacheTest.namedProfile": "/use-cache-test/named-profile",
