@@ -81,11 +81,11 @@ import { handleRscRendering } from "./rsc-rendering.js";
  * });
  * ```
  */
-// Statuses that are safe to cache for response routes.
-// 200: success, 404: not found (expensive lookups), 301/308: permanent redirects.
-// Temporary redirects (302/307) and errors (5xx) are never cached.
+// Only cache successful responses. Non-200 statuses (errors, redirects) are
+// not cached — notFound() produces 500 in response routes, and explicit
+// non-200 Responses are rare enough that caching them would be surprising.
 function isCacheableStatus(status: number): boolean {
-  return status === 200 || status === 404 || status === 301 || status === 308;
+  return status === 200;
 }
 
 export function createRSCHandler<

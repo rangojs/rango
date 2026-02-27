@@ -852,7 +852,7 @@ test.describe("cache-response-type", () => {
 // ============================================================================
 
 // ============================================================================
-// Non-200 status caching for response routes (dev)
+// Non-200 status responses are NOT cached (dev)
 // ============================================================================
 
 test.describe("cache-status-json", () => {
@@ -862,22 +862,21 @@ test.describe("cache-status-json", () => {
     isolatedServer: true,
   });
 
-  test("404 response is cached on second request", async ({ request }) => {
-    // First request — cache miss, handler executes
+  test("404 response is NOT cached", async ({ request }) => {
+    // First request — handler executes
     const res1 = await request.get(f.url("/cache-status-json/not-found"));
     expect(res1.status()).toBe(404);
     const body1 = await res1.json();
     expect(body1.error).toBe("not found");
 
-    // Wait for async cache write
+    // Wait to give cache write a chance (it shouldn't happen)
     await new Promise((r) => setTimeout(r, 300));
 
-    // Second request — cache hit, same response
+    // Second request — handler re-executes (NOT cached, only 200 is cached)
     const res2 = await request.get(f.url("/cache-status-json/not-found"));
     expect(res2.status()).toBe(404);
     const body2 = await res2.json();
-    expect(body2.ts).toBe(body1.ts);
-    expect(body2.rand).toBe(body1.rand);
+    expect(body2.ts).not.toBe(body1.ts);
   });
 
   test("500 response is NOT cached", async ({ request }) => {
@@ -900,7 +899,7 @@ test.describe("cache-status-json", () => {
 });
 
 // ============================================================================
-// Non-200 status caching for response routes (production)
+// Non-200 status responses are NOT cached (production)
 // ============================================================================
 
 test.describe("cache-status-json (production)", () => {
@@ -909,7 +908,7 @@ test.describe("cache-status-json (production)", () => {
     mode: "build",
   });
 
-  test("404 response is cached on second request", async ({ request }) => {
+  test("404 response is NOT cached", async ({ request }) => {
     const res1 = await request.get(f.url("/cache-status-json/not-found"));
     expect(res1.status()).toBe(404);
     const body1 = await res1.json();
@@ -920,8 +919,7 @@ test.describe("cache-status-json (production)", () => {
     const res2 = await request.get(f.url("/cache-status-json/not-found"));
     expect(res2.status()).toBe(404);
     const body2 = await res2.json();
-    expect(body2.ts).toBe(body1.ts);
-    expect(body2.rand).toBe(body1.rand);
+    expect(body2.ts).not.toBe(body1.ts);
   });
 
   test("500 response is NOT cached", async ({ request }) => {
