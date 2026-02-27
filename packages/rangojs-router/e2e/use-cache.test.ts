@@ -536,9 +536,7 @@ test.describe("use-cache basic", () => {
 
     await expect(page.getByTestId("interleave-slots-page")).toBeVisible();
 
-    const cachedTs1 = await page
-      .getByTestId("cached-slots-ts")
-      .textContent();
+    const cachedTs1 = await page.getByTestId("cached-slots-ts").textContent();
     const cachedRand1 = await page
       .getByTestId("cached-slots-rand")
       .textContent();
@@ -568,9 +566,7 @@ test.describe("use-cache basic", () => {
     await page.goto(f.url("/use-cache-test/interleave-slots"));
     await waitForHydration(page);
 
-    const cachedTs2 = await page
-      .getByTestId("cached-slots-ts")
-      .textContent();
+    const cachedTs2 = await page.getByTestId("cached-slots-ts").textContent();
     const cachedRand2 = await page
       .getByTestId("cached-slots-rand")
       .textContent();
@@ -608,9 +604,7 @@ test.describe("use-cache basic", () => {
 
     await expect(page.getByTestId("interleave-action-page")).toBeVisible();
 
-    const cachedTs1 = await page
-      .getByTestId("cached-action-ts")
-      .textContent();
+    const cachedTs1 = await page.getByTestId("cached-action-ts").textContent();
     const cachedRand1 = await page
       .getByTestId("cached-action-rand")
       .textContent();
@@ -633,9 +627,7 @@ test.describe("use-cache basic", () => {
     await page.goto(f.url("/use-cache-test/interleave-action"));
     await waitForHydration(page);
 
-    const cachedTs2 = await page
-      .getByTestId("cached-action-ts")
-      .textContent();
+    const cachedTs2 = await page.getByTestId("cached-action-ts").textContent();
     const cachedRand2 = await page
       .getByTestId("cached-action-rand")
       .textContent();
@@ -1135,9 +1127,7 @@ test.describe("use-cache (production)", () => {
 
     await expect(page.getByTestId("interleave-slots-page")).toBeVisible();
 
-    const cachedTs1 = await page
-      .getByTestId("cached-slots-ts")
-      .textContent();
+    const cachedTs1 = await page.getByTestId("cached-slots-ts").textContent();
     const cachedRand1 = await page
       .getByTestId("cached-slots-rand")
       .textContent();
@@ -1163,9 +1153,7 @@ test.describe("use-cache (production)", () => {
     await page.goto(f.url("/use-cache-test/interleave-slots"));
     await waitForHydration(page);
 
-    const cachedTs2 = await page
-      .getByTestId("cached-slots-ts")
-      .textContent();
+    const cachedTs2 = await page.getByTestId("cached-slots-ts").textContent();
     const cachedRand2 = await page
       .getByTestId("cached-slots-rand")
       .textContent();
@@ -1202,9 +1190,7 @@ test.describe("use-cache (production)", () => {
 
     await expect(page.getByTestId("interleave-action-page")).toBeVisible();
 
-    const cachedTs1 = await page
-      .getByTestId("cached-action-ts")
-      .textContent();
+    const cachedTs1 = await page.getByTestId("cached-action-ts").textContent();
     const cachedRand1 = await page
       .getByTestId("cached-action-rand")
       .textContent();
@@ -1227,9 +1213,7 @@ test.describe("use-cache (production)", () => {
     await page.goto(f.url("/use-cache-test/interleave-action"));
     await waitForHydration(page);
 
-    const cachedTs2 = await page
-      .getByTestId("cached-action-ts")
-      .textContent();
+    const cachedTs2 = await page.getByTestId("cached-action-ts").textContent();
     const cachedRand2 = await page
       .getByTestId("cached-action-rand")
       .textContent();
