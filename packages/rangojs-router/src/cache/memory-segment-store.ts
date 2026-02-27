@@ -19,6 +19,7 @@ import type { RequestContext } from "../server/request-context.js";
 const CACHE_REGISTRY_KEY = "__rsc_router_segment_cache_registry__";
 const RESPONSE_CACHE_REGISTRY_KEY = "__rsc_router_response_cache_registry__";
 const ITEM_CACHE_REGISTRY_KEY = "__rsc_router_item_cache_registry__";
+const TAG_INDEX_REGISTRY_KEY = "__rsc_router_tag_index_registry__";
 
 /**
  * Returns the globalThis-backed registry of named cache Maps.
@@ -76,6 +77,21 @@ function getResponseCacheRegistry(): Map<
   if (!registry) {
     registry = new Map();
     (globalThis as any)[RESPONSE_CACHE_REGISTRY_KEY] = registry;
+  }
+  return registry;
+}
+
+/**
+ * Returns the globalThis-backed registry of named tag index Maps.
+ * Each tag maps to a set of prefixed cache keys (seg:, res:, item:).
+ */
+function getTagIndexRegistry(): Map<string, Map<string, Set<string>>> {
+  let registry = (globalThis as any)[TAG_INDEX_REGISTRY_KEY] as
+    | Map<string, Map<string, Set<string>>>
+    | undefined;
+  if (!registry) {
+    registry = new Map();
+    (globalThis as any)[TAG_INDEX_REGISTRY_KEY] = registry;
   }
   return registry;
 }
@@ -162,6 +178,8 @@ export class MemorySegmentCacheStore<
   private cache: Map<string, CachedEntryData>;
   private responseCache: Map<string, CachedResponseEntry>;
   private itemCache: Map<string, CachedItemEntry>;
+  /** Tag → Set of prefixed cache keys (seg:key, res:key, item:key) */
+  private tagIndex: Map<string, Set<string>>;
   readonly defaults?: CacheDefaults;
   readonly keyGenerator?: (
     ctx: RequestContext<TEnv>,
@@ -195,11 +213,20 @@ export class MemorySegmentCacheStore<
         itemRegistry.set(options.name, itemMap);
       }
       this.itemCache = itemMap;
+
+      const tagRegistry = getTagIndexRegistry();
+      let tagMap = tagRegistry.get(options.name);
+      if (!tagMap) {
+        tagMap = new Map<string, Set<string>>();
+        tagRegistry.set(options.name, tagMap);
+      }
+      this.tagIndex = tagMap;
     } else {
       // Unnamed stores get a plain instance-level Map (no globalThis sharing).
       this.cache = new Map<string, CachedEntryData>();
       this.responseCache = new Map<string, CachedResponseEntry>();
       this.itemCache = new Map<string, CachedItemEntry>();
+      this.tagIndex = new Map<string, Set<string>>();
     }
     this.defaults = options?.defaults;
     this.keyGenerator = options?.keyGenerator;
@@ -235,6 +262,9 @@ export class MemorySegmentCacheStore<
       expiresAt: Date.now() + ttl * 1000,
     };
     this.cache.set(key, entry);
+    if (data.tags && data.tags.length > 0) {
+      this.registerTags(data.tags, `seg:${key}`);
+    }
   }
 
   async delete(key: string): Promise<boolean> {
@@ -245,6 +275,7 @@ export class MemorySegmentCacheStore<
     this.cache.clear();
     this.responseCache.clear();
     this.itemCache.clear();
+    this.tagIndex.clear();
   }
 
   async getResponse(
@@ -274,6 +305,7 @@ export class MemorySegmentCacheStore<
     response: Response,
     ttl: number,
     swr?: number,
+    tags?: string[],
   ): Promise<void> {
     const body = await response.clone().arrayBuffer();
     const headers: [string, string][] = [];
@@ -292,6 +324,9 @@ export class MemorySegmentCacheStore<
       expiresAt,
       staleAt,
     });
+    if (tags && tags.length > 0) {
+      this.registerTags(tags, `res:${key}`);
+    }
   }
 
   async getItem(key: string): Promise<CacheItemResult | null> {
@@ -321,6 +356,50 @@ export class MemorySegmentCacheStore<
       handles: options?.handles,
       expiresAt: Date.now() + ttl * 1000,
     });
+    if (options?.tags && options.tags.length > 0) {
+      this.registerTags(options.tags, `item:${key}`);
+    }
+  }
+
+  async revalidateTag(tag: string): Promise<number> {
+    const keys = this.tagIndex.get(tag);
+    if (!keys || keys.size === 0) return 0;
+
+    let count = 0;
+    for (const prefixedKey of keys) {
+      const colonIdx = prefixedKey.indexOf(":");
+      const prefix = prefixedKey.slice(0, colonIdx);
+      const rawKey = prefixedKey.slice(colonIdx + 1);
+
+      let deleted = false;
+      if (prefix === "seg") {
+        deleted = this.cache.delete(rawKey);
+      } else if (prefix === "res") {
+        deleted = this.responseCache.delete(rawKey);
+      } else if (prefix === "item") {
+        deleted = this.itemCache.delete(rawKey);
+      }
+      if (deleted) count++;
+    }
+
+    // Clean up the tag entry itself
+    this.tagIndex.delete(tag);
+    return count;
+  }
+
+  /**
+   * Register tags for a prefixed cache key.
+   * @internal
+   */
+  private registerTags(tags: string[], prefixedKey: string): void {
+    for (const tag of tags) {
+      let keys = this.tagIndex.get(tag);
+      if (!keys) {
+        keys = new Set();
+        this.tagIndex.set(tag, keys);
+      }
+      keys.add(prefixedKey);
+    }
   }
 
   /**
@@ -350,5 +429,6 @@ export class MemorySegmentCacheStore<
     delete (globalThis as any)[CACHE_REGISTRY_KEY];
     delete (globalThis as any)[RESPONSE_CACHE_REGISTRY_KEY];
     delete (globalThis as any)[ITEM_CACHE_REGISTRY_KEY];
+    delete (globalThis as any)[TAG_INDEX_REGISTRY_KEY];
   }
 }

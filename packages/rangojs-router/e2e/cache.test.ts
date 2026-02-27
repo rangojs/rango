@@ -1137,3 +1137,242 @@ test.describe("cache-response-type (production)", () => {
     expect(body3.data.ts).toBe(body1.data.ts);
   });
 });
+
+// ============================================================================
+// Tag invalidation: cacheTag() + revalidateTag() (dev)
+// ============================================================================
+
+test.describe("cache-tag invalidation", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+    isolatedServer: true,
+  });
+
+  test('"use cache" + cacheTag: entries are cached and invalidated by tag', async ({
+    request,
+  }) => {
+    // First request — cache miss
+    const res1 = await request.get(f.url("/cache-tag-test/item/1"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(res1.status()).toBe(200);
+    const data1 = await res1.json();
+
+    // Wait for async cache write
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Second request — cache hit (same ts/rand)
+    const res2 = await request.get(f.url("/cache-tag-test/item/1"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(res2.status()).toBe(200);
+    const data2 = await res2.json();
+    expect(data2.data.ts).toBe(data1.data.ts);
+    expect(data2.data.rand).toBe(data1.data.rand);
+
+    // Invalidate the "items" tag
+    const invalidateRes = await request.get(
+      f.url("/cache-tag-test/invalidate/items"),
+      { headers: { Accept: "application/json" } },
+    );
+    expect(invalidateRes.status()).toBe(200);
+
+    // Wait for async invalidation
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Third request — cache miss (different ts/rand after invalidation)
+    const res3 = await request.get(f.url("/cache-tag-test/item/1"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(res3.status()).toBe(200);
+    const data3 = await res3.json();
+    expect(data3.data.ts).not.toBe(data1.data.ts);
+  });
+
+  test('"use cache" + cacheTag: specific item tag only invalidates that item', async ({
+    request,
+  }) => {
+    // Populate two items
+    const resA1 = await request.get(f.url("/cache-tag-test/item/a"), {
+      headers: { Accept: "application/json" },
+    });
+    const dataA1 = await resA1.json();
+
+    const resB1 = await request.get(f.url("/cache-tag-test/item/b"), {
+      headers: { Accept: "application/json" },
+    });
+    const dataB1 = await resB1.json();
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Invalidate only item:a
+    await request.get(f.url("/cache-tag-test/invalidate/item:a"), {
+      headers: { Accept: "application/json" },
+    });
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Item A should be fresh (different ts)
+    const resA2 = await request.get(f.url("/cache-tag-test/item/a"), {
+      headers: { Accept: "application/json" },
+    });
+    const dataA2 = await resA2.json();
+    expect(dataA2.data.ts).not.toBe(dataA1.data.ts);
+
+    // Item B should still be cached (same ts)
+    const resB2 = await request.get(f.url("/cache-tag-test/item/b"), {
+      headers: { Accept: "application/json" },
+    });
+    const dataB2 = await resB2.json();
+    expect(dataB2.data.ts).toBe(dataB1.data.ts);
+  });
+
+  test("cache() DSL with tags: entries are cached and invalidated by tag", async ({
+    request,
+  }) => {
+    // First request — cache miss
+    const res1 = await request.get(f.url("/cache-tag-test/catalog/x"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(res1.status()).toBe(200);
+    const data1 = await res1.json();
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Second request — cache hit
+    const res2 = await request.get(f.url("/cache-tag-test/catalog/x"), {
+      headers: { Accept: "application/json" },
+    });
+    const data2 = await res2.json();
+    expect(data2.data.ts).toBe(data1.data.ts);
+
+    // Invalidate the "catalog" tag
+    await request.get(f.url("/cache-tag-test/invalidate/catalog"), {
+      headers: { Accept: "application/json" },
+    });
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Third request — cache miss after invalidation
+    const res3 = await request.get(f.url("/cache-tag-test/catalog/x"), {
+      headers: { Accept: "application/json" },
+    });
+    const data3 = await res3.json();
+    expect(data3.data.ts).not.toBe(data1.data.ts);
+  });
+});
+
+// ============================================================================
+// Tag invalidation: cacheTag() + revalidateTag() (production)
+// ============================================================================
+
+test.describe("cache-tag invalidation (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+    isolatedServer: true,
+  });
+
+  test('"use cache" + cacheTag: entries are cached and invalidated by tag', async ({
+    request,
+  }) => {
+    // First request — cache miss
+    const res1 = await request.get(f.url("/cache-tag-test/item/1"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(res1.status()).toBe(200);
+    const data1 = await res1.json();
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Second request — cache hit
+    const res2 = await request.get(f.url("/cache-tag-test/item/1"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(res2.status()).toBe(200);
+    const data2 = await res2.json();
+    expect(data2.data.ts).toBe(data1.data.ts);
+    expect(data2.data.rand).toBe(data1.data.rand);
+
+    // Invalidate the "items" tag
+    await request.get(f.url("/cache-tag-test/invalidate/items"), {
+      headers: { Accept: "application/json" },
+    });
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Third request — fresh data
+    const res3 = await request.get(f.url("/cache-tag-test/item/1"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(res3.status()).toBe(200);
+    const data3 = await res3.json();
+    expect(data3.data.ts).not.toBe(data1.data.ts);
+  });
+
+  test('"use cache" + cacheTag: specific item tag only invalidates that item', async ({
+    request,
+  }) => {
+    const resA1 = await request.get(f.url("/cache-tag-test/item/a"), {
+      headers: { Accept: "application/json" },
+    });
+    const dataA1 = await resA1.json();
+
+    const resB1 = await request.get(f.url("/cache-tag-test/item/b"), {
+      headers: { Accept: "application/json" },
+    });
+    const dataB1 = await resB1.json();
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Invalidate only item:a
+    await request.get(f.url("/cache-tag-test/invalidate/item:a"), {
+      headers: { Accept: "application/json" },
+    });
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    const resA2 = await request.get(f.url("/cache-tag-test/item/a"), {
+      headers: { Accept: "application/json" },
+    });
+    const dataA2 = await resA2.json();
+    expect(dataA2.data.ts).not.toBe(dataA1.data.ts);
+
+    const resB2 = await request.get(f.url("/cache-tag-test/item/b"), {
+      headers: { Accept: "application/json" },
+    });
+    const dataB2 = await resB2.json();
+    expect(dataB2.data.ts).toBe(dataB1.data.ts);
+  });
+
+  test("cache() DSL with tags: entries are cached and invalidated by tag", async ({
+    request,
+  }) => {
+    const res1 = await request.get(f.url("/cache-tag-test/catalog/x"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(res1.status()).toBe(200);
+    const data1 = await res1.json();
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    const res2 = await request.get(f.url("/cache-tag-test/catalog/x"), {
+      headers: { Accept: "application/json" },
+    });
+    const data2 = await res2.json();
+    expect(data2.data.ts).toBe(data1.data.ts);
+
+    await request.get(f.url("/cache-tag-test/invalidate/catalog"), {
+      headers: { Accept: "application/json" },
+    });
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    const res3 = await request.get(f.url("/cache-tag-test/catalog/x"), {
+      headers: { Accept: "application/json" },
+    });
+    const data3 = await res3.json();
+    expect(data3.data.ts).not.toBe(data1.data.ts);
+  });
+});

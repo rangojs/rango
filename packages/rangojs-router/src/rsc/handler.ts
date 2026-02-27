@@ -574,6 +574,15 @@ export function createRSCHandler<
         if (cacheScope?.enabled) {
           const store = cacheScope.getStore() ?? reqCtx._cacheStore;
           if (store?.getResponse && store?.putResponse) {
+            // Resolve tags for response cache entries
+            let responseTags: string[] | undefined;
+            if (cacheScope.config !== false && cacheScope.config.tags) {
+              responseTags =
+                typeof cacheScope.config.tags === "function"
+                  ? cacheScope.config.tags(reqCtx)
+                  : cacheScope.config.tags;
+            }
+
             // Build cache key with response:{type}: prefix to avoid collision
             // with segment keys and differentiate between response types
             let cacheKey = `response:${preview.responseType}:${url.pathname}`;
@@ -604,6 +613,7 @@ export function createRSCHandler<
                         fresh,
                         cacheScope!.ttl,
                         cacheScope!.swr,
+                        responseTags,
                       );
                     }
                   } catch (error) {
@@ -631,6 +641,7 @@ export function createRSCHandler<
                     response.clone(),
                     cacheScope!.ttl,
                     cacheScope!.swr,
+                    responseTags,
                   );
                 } catch (error) {
                   console.error(`[ResponseCache] Cache write failed:`, error);

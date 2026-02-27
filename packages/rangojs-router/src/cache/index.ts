@@ -45,7 +45,7 @@ export {
   CFCacheStore,
   type CFCacheStoreOptions,
   CACHE_STALE_AT_HEADER,
-  CACHE_STATUS_HEADER,
+  CACHE_TAGS_HEADER,
 } from "./cf/index.js";
 
 // Cache scope

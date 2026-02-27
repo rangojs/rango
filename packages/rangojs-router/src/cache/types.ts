@@ -136,12 +136,14 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * @param response - Response to cache (will be cloned)
    * @param ttl - Time-to-live in seconds
    * @param swr - Optional stale-while-revalidate window in seconds
+   * @param tags - Optional cache tags for invalidation
    */
   putResponse?(
     key: string,
     response: Response,
     ttl: number,
     swr?: number,
+    tags?: string[],
   ): Promise<void>;
 
   // ============================================================================
@@ -167,6 +169,18 @@ export interface SegmentCacheStore<TEnv = unknown> {
     value: string,
     options?: CacheItemOptions,
   ): Promise<void>;
+
+  // ============================================================================
+  // Tag-based Invalidation (optional)
+  // ============================================================================
+
+  /**
+   * Invalidate all cache entries tagged with the given tag.
+   * Deletes entries across all cache types (segment, response, item).
+   * @param tag - The cache tag to invalidate
+   * @returns Number of entries deleted
+   */
+  revalidateTag?(tag: string): Promise<number>;
 }
 
 /**
@@ -231,6 +245,8 @@ export interface CachedEntryData {
   handles: Record<string, SegmentHandleData>;
   /** Expiration timestamp (ms since epoch) */
   expiresAt: number;
+  /** Cache tags for invalidation */
+  tags?: string[];
 }
 
 // ============================================================================

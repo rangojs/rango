@@ -6,7 +6,7 @@
  *
  * Header constants (for inspection/debugging):
  * - CACHE_STALE_AT_HEADER - Header containing staleness timestamp
- * - CACHE_STATUS_HEADER - Header containing HIT/REVALIDATING status
+ * - CACHE_TAGS_HEADER - Header containing comma-separated cache tags
  */
 
 // Public API
@@ -15,11 +15,6 @@ export { CFCacheStore, type CFCacheStoreOptions } from "./cf-cache-store.js";
 // Header constants for debugging and inspection
 export {
   CACHE_STALE_AT_HEADER,
-  CACHE_STATUS_HEADER,
-} from "./cf-cache-store.js";
-
-// Internal exports (re-exported for backwards compatibility, marked @internal in source)
-export {
-  type CacheStatus,
-  MAX_REVALIDATION_INTERVAL,
+  CACHE_TAGS_HEADER,
+  REVALIDATION_LOCK_TTL,
 } from "./cf-cache-store.js";

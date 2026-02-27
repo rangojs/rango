@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   CFCacheStore,
   CACHE_STALE_AT_HEADER,
-  CACHE_STATUS_HEADER,
+  REVALIDATION_LOCK_TTL,
 } from "../cf-cache-store";
 import type { CachedEntryData } from "../../types";
 
@@ -245,7 +245,7 @@ describe("CFCacheStore", () => {
       expect(staleAt).toBe(expectedStaleAt);
     });
 
-    it("should set status header to HIT", async () => {
+    it("should not include status header on stored entries", async () => {
       const mockCtx = createMockCtx();
       const store = new CFCacheStore({ ctx: mockCtx });
       const data = createTestData();
@@ -257,7 +257,8 @@ describe("CFCacheStore", () => {
       const request = new Request("https://rsc-cache.internal.com/test-key");
       const response = await cache.match(request);
 
-      expect(response?.headers.get(CACHE_STATUS_HEADER)).toBe("HIT");
+      // Revalidation state is now tracked via separate lock keys, not on the entry itself
+      expect(response?.headers.has("x-edge-cache-status")).toBe(false);
     });
   });
 
@@ -279,7 +280,7 @@ describe("CFCacheStore", () => {
       expect(result?.shouldRevalidate).toBe(false);
     });
 
-    it("should return shouldRevalidate=true and atomically mark REVALIDATING for stale entries", async () => {
+    it("should return shouldRevalidate=true and write revalidation lock for stale entries", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const mockCtx = createMockCtx();
@@ -292,20 +293,23 @@ describe("CFCacheStore", () => {
       // Past TTL but within SWR window
       vi.advanceTimersByTime(120 * 1000);
 
-      // First get should return shouldRevalidate=true and mark as REVALIDATING
+      // First get should return shouldRevalidate=true and write a lock
       const result = await store.get("test-key");
       expect(result?.shouldRevalidate).toBe(true);
 
-      // Verify the entry is now marked as REVALIDATING
+      // Verify a revalidation lock key was written
       const cache = mockCaches.default;
-      const request = new Request(
-        "https://rsc-cache.internal.com/" + encodeURIComponent("test-key"),
+      const lockRequest = new Request(
+        "https://rsc-cache.internal.com/" +
+          encodeURIComponent("__revalidation:test-key"),
       );
-      const response = await cache.match(request);
-      expect(response?.headers.get(CACHE_STATUS_HEADER)).toBe("REVALIDATING");
+      const lockResponse = await cache.match(lockRequest);
+      expect(lockResponse).toBeDefined();
+      const lockTimestamp = Number(await lockResponse!.text());
+      expect(lockTimestamp).toBe(Date.now());
     });
 
-    it("should return shouldRevalidate=false when already REVALIDATING", async () => {
+    it("should return shouldRevalidate=false when revalidation lock exists and is fresh", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const mockCtx = createMockCtx();
@@ -318,19 +322,16 @@ describe("CFCacheStore", () => {
       // Make it stale
       vi.advanceTimersByTime(120 * 1000);
 
-      // First get - atomically marks as REVALIDATING
+      // First get - writes the revalidation lock
       const result1 = await store.get("test-key");
       expect(result1?.shouldRevalidate).toBe(true);
 
-      // Second get - already REVALIDATING, should not trigger again
+      // Second get - lock exists and is fresh, skip revalidation
       const result2 = await store.get("test-key");
       expect(result2?.shouldRevalidate).toBe(false);
     });
 
-    it("should prevent thundering herd with sequential requests", async () => {
-      // Note: Real thundering herd prevention relies on CF Cache API's atomic semantics.
-      // This test verifies sequential requests work correctly - first triggers revalidation,
-      // subsequent ones see REVALIDATING status and don't trigger again.
+    it("should allow revalidation after lock expires", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const mockCtx = createMockCtx();
@@ -343,12 +344,37 @@ describe("CFCacheStore", () => {
       // Make it stale
       vi.advanceTimersByTime(120 * 1000);
 
-      // Sequential requests - first triggers revalidation
+      // First get - writes the lock
+      const result1 = await store.get("test-key");
+      expect(result1?.shouldRevalidate).toBe(true);
+
+      // Advance past lock TTL (30s)
+      vi.advanceTimersByTime(REVALIDATION_LOCK_TTL * 1000 + 1);
+
+      // Lock expired - should allow revalidation again
+      const result2 = await store.get("test-key");
+      expect(result2?.shouldRevalidate).toBe(true);
+    });
+
+    it("should prevent thundering herd with sequential requests", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+      const data = createTestData();
+
+      await store.set("test-key", data, 60, 300);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      // Make it stale
+      vi.advanceTimersByTime(120 * 1000);
+
+      // First request triggers revalidation
       const result1 = await store.get("test-key");
       expect(result1?.shouldRevalidate).toBe(true);
       expect(result1?.data).toBeDefined();
 
-      // Subsequent requests see REVALIDATING status
+      // Subsequent requests see the lock and skip revalidation
       const result2 = await store.get("test-key");
       expect(result2?.shouldRevalidate).toBe(false);
       expect(result2?.data).toBeDefined();
@@ -430,6 +456,77 @@ describe("CFCacheStore", () => {
       const result = await store.get("fallback-key");
       expect(result).not.toBeNull();
       expect(result!.data).toEqual(data);
+    });
+  });
+
+  describe("getItem revalidation lock", () => {
+    it("should return shouldRevalidate=true for stale item and write lock", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.setItem("fn-key", "serialized-value", {
+        ttl: 60,
+        swr: 300,
+      });
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      // Past TTL but within SWR window
+      vi.advanceTimersByTime(120 * 1000);
+
+      const result = await store.getItem("fn-key");
+      expect(result?.shouldRevalidate).toBe(true);
+      expect(result?.value).toBe("serialized-value");
+    });
+
+    it("should return shouldRevalidate=false when lock exists for item", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.setItem("fn-key", "serialized-value", {
+        ttl: 60,
+        swr: 300,
+      });
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      vi.advanceTimersByTime(120 * 1000);
+
+      // First get - writes the lock
+      const result1 = await store.getItem("fn-key");
+      expect(result1?.shouldRevalidate).toBe(true);
+
+      // Second get - lock exists, skip revalidation
+      const result2 = await store.getItem("fn-key");
+      expect(result2?.shouldRevalidate).toBe(false);
+    });
+
+    it("should allow item revalidation after lock expires", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.setItem("fn-key", "serialized-value", {
+        ttl: 60,
+        swr: 300,
+      });
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      vi.advanceTimersByTime(120 * 1000);
+
+      // First get - writes lock
+      const result1 = await store.getItem("fn-key");
+      expect(result1?.shouldRevalidate).toBe(true);
+
+      // Advance past lock TTL
+      vi.advanceTimersByTime(REVALIDATION_LOCK_TTL * 1000 + 1);
+
+      // Lock expired - should allow revalidation again
+      const result2 = await store.getItem("fn-key");
+      expect(result2?.shouldRevalidate).toBe(true);
     });
   });
 });

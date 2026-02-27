@@ -33,6 +33,7 @@ import {
 
 export { isCachedFunction };
 import { getCacheProfile } from "./profile-registry.js";
+import { runWithCacheTagScope } from "./cache-tag.js";
 import { streamToString, stringToStream } from "./segment-codec.js";
 import type { SegmentHandleData } from "./types.js";
 import type { HandleStore } from "../server/handle-store.js";
@@ -238,13 +239,15 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         if (requestCtx?.waitUntil) {
           requestCtx.waitUntil(async () => {
             try {
-              const freshResult = await fn.apply(this, args);
+              const scoped = runWithCacheTagScope(() => fn.apply(this, args));
+              const freshResult = await scoped.result;
+              const freshTags = [...(profile.tags ?? []), ...scoped.tags];
               const serialized = await serializeResult(freshResult);
               if (serialized !== null) {
                 await store.setItem!(cacheKey, serialized, {
                   ttl: profile.ttl,
                   swr: profile.swr,
-                  tags: profile.tags,
+                  tags: freshTags.length > 0 ? freshTags : undefined,
                 });
               }
             } catch {
@@ -276,8 +279,11 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     }
 
     let result: any;
+    let runtimeTags: string[] = [];
     try {
-      result = await fn.apply(this, args);
+      const scoped = runWithCacheTagScope(() => fn.apply(this, args));
+      result = await scoped.result;
+      runtimeTags = scoped.tags;
     } finally {
       // Always remove the flag, even if the function throws
       for (const arg of taintedArgs) {
@@ -289,6 +295,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       stopHandleCapture(handleStore, capture);
     }
 
+    // Merge profile tags with runtime tags from cacheTag() calls
+    const allTags = [...(profile.tags ?? []), ...runtimeTags];
+
     // Serialize and store — fully non-blocking when waitUntil is available.
     // The response does not need to wait for serialization or the store write.
     const cacheWrite = async () => {
@@ -299,7 +308,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             handles: capture?.data,
             ttl: profile.ttl,
             swr: profile.swr,
-            tags: profile.tags,
+            tags: allTags.length > 0 ? allTags : undefined,
           });
         }
       } catch {

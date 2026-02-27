@@ -174,6 +174,10 @@ export {
   type RequestContext,
 } from "./server/request-context.js";
 
+// Cache tag APIs (server-only)
+export { cacheTag } from "./cache/cache-tag.js";
+export { revalidateTag } from "./cache/revalidate-tag.js";
+
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 

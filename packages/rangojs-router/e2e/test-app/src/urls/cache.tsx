@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { urls, cacheTag, revalidateTag } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import {
   NonCachedTestLoader,
@@ -211,6 +211,40 @@ export const cachePatterns = urls(
           );
         },
         { name: "cacheTest.statusJson500" },
+      ),
+    ]),
+
+    // Tag invalidation endpoint: call revalidateTag() for the given tag
+    path.json(
+      "/cache-tag-test/invalidate/:tag",
+      async (ctx) => {
+        revalidateTag(ctx.params.tag);
+        return { invalidated: true, tag: ctx.params.tag };
+      },
+      { name: "cacheTagTest.invalidate" },
+    ),
+
+    // Tag invalidation test: "use cache" + cacheTag() + revalidateTag()
+    path.json(
+      "/cache-tag-test/item/:id",
+      async (ctx) => {
+        "use cache";
+        cacheTag(`item:${ctx.params.id}`, "items");
+        return { id: ctx.params.id, ts: Date.now(), rand: Math.random() };
+      },
+      { name: "cacheTagTest.item" },
+    ),
+
+    // Tag invalidation test: cache() DSL with tags
+    cache({ ttl: 600, tags: ["catalog"] }, () => [
+      path.json(
+        "/cache-tag-test/catalog/:id",
+        async (ctx) => ({
+          id: ctx.params.id,
+          ts: Date.now(),
+          rand: Math.random(),
+        }),
+        { name: "cacheTagTest.catalog" },
       ),
     ]),
   ],

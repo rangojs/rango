@@ -332,6 +332,15 @@ export class CacheScope {
     // Resolve cache key early (while request context is available)
     const key = await this.resolveKey(pathname, params, isIntercept);
 
+    // Resolve tags early (while request context is available)
+    let tags: string[] | undefined;
+    if (this.config !== false && this.config.tags) {
+      tags =
+        typeof this.config.tags === "function"
+          ? this.config.tags(requestCtx)
+          : this.config.tags;
+    }
+
     // Check if this is a partial request (navigation) vs document request
     const isPartial = requestCtx.url.searchParams.has("_rsc_partial");
 
@@ -358,6 +367,7 @@ export class CacheScope {
           segments: serializedSegments,
           handles,
           expiresAt: Date.now() + ttl * 1000,
+          tags,
         };
 
         await store.set(key, data, ttl, swr);

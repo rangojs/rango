@@ -41,15 +41,16 @@ import { VERSION } from "@rangojs/router:version";
 /** Header storing timestamp when entry becomes stale */
 export const CACHE_STALE_AT_HEADER = "x-edge-cache-stale-at";
 
-/** Header storing cache status: HIT | REVALIDATING */
-export const CACHE_STATUS_HEADER = "x-edge-cache-status";
+/** Header storing comma-separated cache tags (CF's purge-by-tag API uses this) */
+export const CACHE_TAGS_HEADER = "Cache-Tag";
 
 /**
- * Maximum age in seconds for REVALIDATING status before allowing new revalidation.
- * After this period, a stale entry in REVALIDATING status will trigger revalidation again.
+ * Maximum age in seconds for a revalidation lock before it expires.
+ * After this period, a new revalidation attempt is allowed even if the
+ * previous one hasn't completed (it may have failed silently).
  * @internal
  */
-export const MAX_REVALIDATION_INTERVAL = 30;
+export const REVALIDATION_LOCK_TTL = 30;
 
 // ============================================================================
 // Types
@@ -135,13 +136,27 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
     ctx: RequestContext<TEnv>,
     defaultKey: string,
   ) => string | Promise<string>;
-}
 
-/**
- * Cache status values for the x-edge-cache-status header.
- * @internal
- */
-export type CacheStatus = "HIT" | "REVALIDATING";
+  /**
+   * Callback invoked when revalidateTag() is called.
+   * Runs asynchronously via waitUntil so it does not block the response.
+   *
+   * Use this to trigger global cache invalidation beyond the local colo,
+   * e.g. calling Cloudflare's purge-by-tag API or updating a KV-based index.
+   *
+   * @example Using Cloudflare's Cache Purge API
+   * ```typescript
+   * onTagInvalidation: async (tags) => {
+   *   await fetch(`https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/purge_cache`, {
+   *     method: "POST",
+   *     headers: { Authorization: `Bearer ${API_TOKEN}` },
+   *     body: JSON.stringify({ tags }),
+   *   });
+   * }
+   * ```
+   */
+  onTagInvalidation?: (tags: string[]) => Promise<void>;
+}
 
 // ============================================================================
 // CFCacheStore Implementation
@@ -158,6 +173,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly baseUrl: string;
   private readonly waitUntil?: (fn: () => Promise<void>) => void;
   private readonly version?: string;
+  private readonly onTagInvalidation?: (tags: string[]) => Promise<void>;
 
   constructor(options: CFCacheStoreOptions<TEnv>) {
     if (!options.ctx) {
@@ -173,6 +189,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     this.defaults = options.defaults;
     this.version = options.version ?? VERSION;
     this.keyGenerator = options.keyGenerator;
+    this.onTagInvalidation = options.onTagInvalidation;
     this.waitUntil = (fn) => options.ctx.waitUntil(fn());
   }
 
@@ -228,14 +245,52 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
+   * Check if a revalidation lock exists and is still fresh (< REVALIDATION_LOCK_TTL).
+   * Returns true if another worker is already revalidating this key.
+   * @internal
+   */
+  private async isRevalidating(cache: Cache, key: string): Promise<boolean> {
+    try {
+      const lockRes = await cache.match(
+        this.keyToRequest(`__revalidation:${key}`),
+      );
+      if (!lockRes) return false;
+      const timestamp = Number(await lockRes.text());
+      if (Number.isNaN(timestamp)) return false;
+      return Date.now() - timestamp < REVALIDATION_LOCK_TTL * 1000;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Write a revalidation lock for the given key.
+   * The lock auto-expires via Cache-Control max-age after REVALIDATION_LOCK_TTL
+   * seconds, so failed revalidations don't permanently block retries.
+   * @internal
+   */
+  private async markRevalidating(cache: Cache, key: string): Promise<void> {
+    await cache.put(
+      this.keyToRequest(`__revalidation:${key}`),
+      new Response(String(Date.now()), {
+        headers: {
+          "Content-Type": "text/plain",
+          "Cache-Control": `public, max-age=${REVALIDATION_LOCK_TTL}`,
+        },
+      }),
+    );
+  }
+
+  /**
    * Get cached entry data by key.
    *
-   * Handles SWR atomically:
-   * - If stale and not already revalidating, marks as REVALIDATING and returns shouldRevalidate: true
-   * - If already REVALIDATING (and recent), returns shouldRevalidate: false
-   * - If fresh, returns shouldRevalidate: false
+   * Handles SWR via a separate revalidation lock key:
+   * - If fresh: returns data with shouldRevalidate: false
+   * - If stale and lock exists (< 30s): another worker is revalidating, skip
+   * - If stale and no lock (or lock expired): write lock, return shouldRevalidate: true
    *
-   * The atomic mark prevents thundering herd - only first request triggers revalidation.
+   * The lock is a lightweight cache entry (`__revalidation:{key}`) with a short
+   * TTL that auto-expires if the revalidation fails or takes too long.
    */
   async get(key: string): Promise<CacheGetResult | null> {
     try {
@@ -247,36 +302,26 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return null;
       }
 
-      // Read status headers
-      const status = response.headers.get(CACHE_STATUS_HEADER);
-      const age = Number(response.headers.get("age") ?? "0");
       const staleAt = Number(
         response.headers.get(CACHE_STALE_AT_HEADER) ?? "0",
       );
-
       const isStale = staleAt > 0 && Date.now() > staleAt;
-      const isRevalidating =
-        status === "REVALIDATING" && age < MAX_REVALIDATION_INTERVAL;
 
-      // Case 1: Fresh or already being revalidated - just return data
-      if (!isStale || isRevalidating) {
+      if (!isStale) {
         const data = (await response.json()) as CachedEntryData;
         return { data, shouldRevalidate: false };
       }
 
-      // Case 2: Stale and needs revalidation - atomically mark REVALIDATING
-      const [b1, b2] = response.body!.tee();
+      // Stale: check if another worker is already revalidating
+      if (await this.isRevalidating(cache, key)) {
+        const data = (await response.json()) as CachedEntryData;
+        return { data, shouldRevalidate: false };
+      }
 
-      const headers = new Headers(response.headers);
-      headers.set(CACHE_STATUS_HEADER, "REVALIDATING");
+      // Claim revalidation by writing the lock
+      await this.markRevalidating(cache, key);
 
-      // Blocking write - must complete before returning to prevent race
-      await cache.put(
-        request,
-        new Response(b1, { status: response.status, headers }),
-      );
-
-      const data = (await new Response(b2).json()) as CachedEntryData;
+      const data = (await response.json()) as CachedEntryData;
       return { data, shouldRevalidate: true };
     } catch (error) {
       console.error("[CFCacheStore] get failed:", error);
@@ -303,16 +348,21 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const totalTtl = ttl + swrWindow;
       const staleAt = Date.now() + ttl * 1000;
 
-      const response = new Response(JSON.stringify(data), {
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": `public, max-age=${totalTtl}`,
-          [CACHE_STALE_AT_HEADER]: String(staleAt),
-          [CACHE_STATUS_HEADER]: "HIT",
-        },
-      });
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "Cache-Control": `public, max-age=${totalTtl}`,
+        [CACHE_STALE_AT_HEADER]: String(staleAt),
+      };
+      if (data.tags?.length) {
+        headers[CACHE_TAGS_HEADER] = data.tags.join(",");
+      }
 
-      const putPromise = cache.put(request, response);
+      const response = new Response(JSON.stringify(data), { headers });
+
+      const lockRequest = this.keyToRequest(`__revalidation:${key}`);
+      const putPromise = cache
+        .put(request, response)
+        .then(() => cache.delete(lockRequest));
 
       if (this.waitUntil) {
         // Non-blocking write
@@ -383,6 +433,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     response: Response,
     ttl: number,
     swr?: number,
+    tags?: string[],
   ): Promise<void> {
     try {
       const cache = await this.getCache();
@@ -397,6 +448,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const headers = new Headers(response.headers);
       headers.set("Cache-Control", `public, max-age=${totalTtl}`);
       headers.set(CACHE_STALE_AT_HEADER, String(staleAt));
+      if (tags?.length) {
+        headers.set(CACHE_TAGS_HEADER, tags.join(","));
+      }
 
       const toCache = new Response(response.body, {
         status: response.status,
@@ -426,12 +480,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
   /**
    * Get a cached function result by key.
-   * Follows the same SWR pattern as get() for segment caching.
+   * Follows the same revalidation lock pattern as get() for segment caching.
    */
   async getItem(key: string): Promise<CacheItemResult | null> {
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(`fn:${key}`);
+      const cacheKey = `fn:${key}`;
+      const request = this.keyToRequest(cacheKey);
       const response = await cache.match(request);
 
       if (!response) return null;
@@ -439,19 +494,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const staleAt = Number(
         response.headers.get(CACHE_STALE_AT_HEADER) ?? "0",
       );
-      const status = response.headers.get(CACHE_STATUS_HEADER);
-      const age = Number(response.headers.get("age") ?? "0");
-
       const isStale = staleAt > 0 && Date.now() > staleAt;
-      const isRevalidating =
-        status === "REVALIDATING" && age < MAX_REVALIDATION_INTERVAL;
 
       const data = (await response.json()) as {
         value: string;
         handles?: Record<string, Record<string, unknown[]>>;
       };
 
-      if (!isStale || isRevalidating) {
+      if (!isStale) {
         return {
           value: data.value,
           handles: data.handles,
@@ -459,13 +509,17 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         };
       }
 
-      // Stale and needs revalidation — mark REVALIDATING atomically
-      const headers = new Headers(response.headers);
-      headers.set(CACHE_STATUS_HEADER, "REVALIDATING");
-      await cache.put(
-        request,
-        new Response(JSON.stringify(data), { status: 200, headers }),
-      );
+      // Stale: check if another worker is already revalidating
+      if (await this.isRevalidating(cache, cacheKey)) {
+        return {
+          value: data.value,
+          handles: data.handles,
+          shouldRevalidate: false,
+        };
+      }
+
+      // Claim revalidation by writing the lock
+      await this.markRevalidating(cache, cacheKey);
 
       return {
         value: data.value,
@@ -496,16 +550,20 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const staleAt = Date.now() + ttl * 1000;
 
       const body = JSON.stringify({ value, handles: options?.handles });
-      const response = new Response(body, {
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": `public, max-age=${totalTtl}`,
-          [CACHE_STALE_AT_HEADER]: String(staleAt),
-          [CACHE_STATUS_HEADER]: "HIT",
-        },
-      });
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "Cache-Control": `public, max-age=${totalTtl}`,
+        [CACHE_STALE_AT_HEADER]: String(staleAt),
+      };
+      if (options?.tags?.length) {
+        headers[CACHE_TAGS_HEADER] = options.tags.join(",");
+      }
+      const response = new Response(body, { headers });
 
-      const putPromise = cache.put(request, response);
+      const lockRequest = this.keyToRequest(`__revalidation:fn:${key}`);
+      const putPromise = cache
+        .put(request, response)
+        .then(() => cache.delete(lockRequest));
 
       if (this.waitUntil) {
         this.waitUntil(async () => {
@@ -516,6 +574,44 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       }
     } catch (error) {
       console.error("[CFCacheStore] setItem failed:", error);
+    }
+  }
+
+  /**
+   * Invalidate cache entries tagged with the given tag.
+   *
+   * The CF Cache API has no built-in tag query/purge mechanism, so this
+   * delegates to the `onTagInvalidation` callback provided in the store
+   * options. The callback runs via waitUntil so it does not block the
+   * response. Use it to call Cloudflare's purge-by-tag API, update a
+   * KV-based index, or any custom invalidation logic.
+   *
+   * Tags are stored as `x-edge-cache-tags` headers on cached responses,
+   * making them available for Cloudflare's Cache-Tag purge endpoint.
+   */
+  async revalidateTag(tag: string): Promise<number> {
+    if (!this.onTagInvalidation) {
+      console.warn(
+        `[CFCacheStore] revalidateTag("${tag}") called but no onTagInvalidation ` +
+          `callback is configured. Provide onTagInvalidation in CFCacheStoreOptions ` +
+          `to handle tag-based cache invalidation (e.g., via Cloudflare's purge API).`,
+      );
+      return 0;
+    }
+
+    try {
+      const callback = this.onTagInvalidation;
+      if (this.waitUntil) {
+        this.waitUntil(async () => {
+          await callback([tag]);
+        });
+      } else {
+        await callback([tag]);
+      }
+      return 0;
+    } catch (error) {
+      console.error("[CFCacheStore] revalidateTag failed:", error);
+      return 0;
     }
   }
 
