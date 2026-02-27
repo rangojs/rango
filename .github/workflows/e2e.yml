@@ -437,7 +437,10 @@ jobs:
 
   vite8-compat-e2e:
     needs: [install-playwright, smoke-e2e]
-    if: github.event.pull_request.draft == false || github.event_name == 'push'
+    # Disabled until Vite 8 + @vitejs/plugin-rsc support the new environment API.
+    # Enable by changing 'false' to the draft/push condition below:
+    # if: github.event.pull_request.draft == false || github.event_name == 'push'
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
