@@ -166,6 +166,23 @@ export const useCachePatterns = urls(
       { name: "useCacheTest.inlineHandler" },
     ),
 
+    // Inline "use cache" on parameterized path: ctx.params must be included
+    // in the cache key so different slugs produce different cache entries.
+    path(
+      "/inline-params/:slug",
+      async (ctx) => {
+        "use cache";
+        return (
+          <div data-testid="use-cache-inline-params-page">
+            <span data-testid="inline-params-slug">{ctx.params.slug}</span>
+            <span data-testid="inline-params-ts">{Date.now()}</span>
+            <span data-testid="inline-params-rand">{Math.random()}</span>
+          </div>
+        );
+      },
+      { name: "useCacheTest.inlineParams" },
+    ),
+
     // Inline "use cache" in layout handler: the layout itself has the directive.
     // ctx is tainted. Meta is set via ctx.use(Meta) — should be captured on
     // miss and replayed on hit so the page title is correct from cache.
@@ -309,6 +326,17 @@ export const useCachePatterns = urls(
           ],
         ),
       ],
+    ),
+
+    // path.json with "use cache" — responseType must be in cache key,
+    // params must differentiate entries, response handler ctx must be tainted.
+    path.json(
+      "/json-cached/:id",
+      async (ctx) => {
+        "use cache";
+        return { id: ctx.params.id, ts: Date.now(), rand: Math.random() };
+      },
+      { name: "useCacheTest.jsonCached" },
     ),
   ],
 );

@@ -158,5 +158,60 @@ export const cachePatterns = urls(
         name: "cacheStatus.redirectTarget",
       }),
     ]),
+    // Response route caching test: cache() DSL with path.json()
+    // responseType must be part of the cache key so different response types
+    // at the same path produce distinct cache entries.
+    cache({ ttl: 600 }, () => [
+      path.json(
+        "/cache-response-type/data/:id",
+        async (ctx) => ({
+          id: ctx.params.id,
+          ts: Date.now(),
+          rand: Math.random(),
+          type: "json",
+        }),
+        { name: "cacheTest.responseTypeJson" },
+      ),
+      path.text(
+        "/cache-response-type/data/:id",
+        async (ctx) => `text:${ctx.params.id}:${Date.now()}:${Math.random()}`,
+        { name: "cacheTest.responseTypeText" },
+      ),
+    ]),
+
+    // Non-200 status caching test: verify isCacheableStatus behavior.
+    // 404 responses are cacheable, 500 responses are not.
+    cache({ ttl: 600 }, () => [
+      // Handler returns a 404 Response directly — should be cached
+      path.json(
+        "/cache-status-json/not-found",
+        async () => {
+          return new Response(
+            JSON.stringify({
+              error: "not found",
+              ts: Date.now(),
+              rand: Math.random(),
+            }),
+            { status: 404, headers: { "content-type": "application/json" } },
+          );
+        },
+        { name: "cacheTest.statusJson404" },
+      ),
+      // Handler returns a 500 Response directly — should NOT be cached
+      path.json(
+        "/cache-status-json/server-error",
+        async () => {
+          return new Response(
+            JSON.stringify({
+              error: "server error",
+              ts: Date.now(),
+              rand: Math.random(),
+            }),
+            { status: 500, headers: { "content-type": "application/json" } },
+          );
+        },
+        { name: "cacheTest.statusJson500" },
+      ),
+    ]),
   ],
 );
