@@ -210,6 +210,7 @@ export function withCacheStore<TEnv>(
               ctx.bindings,
               ctx.routeMap,
               ctx.matched.routeKey,
+              ctx.matched.responseType,
             );
             const proactiveLoaderPromises = new Map<string, Promise<any>>();
 

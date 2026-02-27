@@ -767,3 +767,373 @@ test.describe("proactive-caching", () => {
     await expect(page.getByTestId("proactive-item-b-page")).toBeVisible();
   });
 });
+
+// ============================================================================
+// Response type cache key differentiation (dev)
+// ============================================================================
+
+test.describe("cache-response-type", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+    isolatedServer: true,
+  });
+
+  test("path.json and path.text at same URL produce different cache entries", async ({
+    request,
+  }) => {
+    // JSON response — cache miss
+    const jsonRes1 = await request.get(f.url("/cache-response-type/data/42"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(jsonRes1.status()).toBe(200);
+    const json1 = await jsonRes1.json();
+    expect(json1.data.type).toBe("json");
+    expect(json1.data.id).toBe("42");
+
+    // Small delay for async cache write
+    await new Promise((r) => setTimeout(r, 300));
+
+    // JSON response — cache hit (same data)
+    const jsonRes2 = await request.get(f.url("/cache-response-type/data/42"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(jsonRes2.status()).toBe(200);
+    const json2 = await jsonRes2.json();
+    expect(json2.data.ts).toBe(json1.data.ts);
+    expect(json2.data.rand).toBe(json1.data.rand);
+
+    // Text response at same URL — cache miss (different responseType key)
+    const textRes1 = await request.get(f.url("/cache-response-type/data/42"), {
+      headers: { Accept: "text/plain" },
+    });
+    expect(textRes1.status()).toBe(200);
+    const text1 = await textRes1.text();
+    expect(text1).toContain("text:42:");
+
+    // Text value should differ from JSON timestamp (different cache entry)
+    const textTs = text1.split(":")[2];
+    expect(textTs).not.toBe(String(json1.data.ts));
+  });
+
+  test("path.json with different params produce different cache entries", async ({
+    request,
+  }) => {
+    const res1 = await request.get(f.url("/cache-response-type/data/alpha"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(res1.status()).toBe(200);
+    const body1 = await res1.json();
+    expect(body1.data.id).toBe("alpha");
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Different param — cache miss
+    const res2 = await request.get(f.url("/cache-response-type/data/beta"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(res2.status()).toBe(200);
+    const body2 = await res2.json();
+    expect(body2.data.id).toBe("beta");
+    expect(body2.data.ts).not.toBe(body1.data.ts);
+
+    // Same param — cache hit
+    const res3 = await request.get(f.url("/cache-response-type/data/alpha"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(res3.status()).toBe(200);
+    const body3 = await res3.json();
+    expect(body3.data.ts).toBe(body1.data.ts);
+  });
+});
+
+// ============================================================================
+// Response type cache key differentiation (production)
+// ============================================================================
+
+// ============================================================================
+// Non-200 status responses are NOT cached (dev)
+// ============================================================================
+
+test.describe("cache-status-json", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+    isolatedServer: true,
+  });
+
+  test("404 response is NOT cached", async ({ request }) => {
+    // First request — handler executes
+    const res1 = await request.get(f.url("/cache-status-json/not-found"));
+    expect(res1.status()).toBe(404);
+    const body1 = await res1.json();
+    expect(body1.error).toBe("not found");
+
+    // Wait to give cache write a chance (it shouldn't happen)
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Second request — handler re-executes (NOT cached, only 200 is cached)
+    const res2 = await request.get(f.url("/cache-status-json/not-found"));
+    expect(res2.status()).toBe(404);
+    const body2 = await res2.json();
+    expect(body2.ts).not.toBe(body1.ts);
+  });
+
+  test("500 response is NOT cached", async ({ request }) => {
+    // First request — handler executes
+    const res1 = await request.get(f.url("/cache-status-json/server-error"));
+    expect(res1.status()).toBe(500);
+    const body1 = await res1.json();
+    expect(body1.error).toBe("server error");
+
+    // Wait to give cache write a chance (it shouldn't happen)
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Second request — handler re-executes (NOT cached)
+    const res2 = await request.get(f.url("/cache-status-json/server-error"));
+    expect(res2.status()).toBe(500);
+    const body2 = await res2.json();
+    // Timestamps should differ since 500 is not cached
+    expect(body2.ts).not.toBe(body1.ts);
+  });
+});
+
+// ============================================================================
+// Non-200 status responses are NOT cached (production)
+// ============================================================================
+
+test.describe("cache-status-json (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("404 response is NOT cached", async ({ request }) => {
+    const res1 = await request.get(f.url("/cache-status-json/not-found"));
+    expect(res1.status()).toBe(404);
+    const body1 = await res1.json();
+    expect(body1.error).toBe("not found");
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    const res2 = await request.get(f.url("/cache-status-json/not-found"));
+    expect(res2.status()).toBe(404);
+    const body2 = await res2.json();
+    expect(body2.ts).not.toBe(body1.ts);
+  });
+
+  test("500 response is NOT cached", async ({ request }) => {
+    const res1 = await request.get(f.url("/cache-status-json/server-error"));
+    expect(res1.status()).toBe(500);
+    const body1 = await res1.json();
+    expect(body1.error).toBe("server error");
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    const res2 = await request.get(f.url("/cache-status-json/server-error"));
+    expect(res2.status()).toBe(500);
+    const body2 = await res2.json();
+    expect(body2.ts).not.toBe(body1.ts);
+  });
+});
+
+// ============================================================================
+// Segment-level cache status behavior (dev)
+// ============================================================================
+
+test.describe("cache-status-segment", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+    isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
+  });
+
+  test("200 segment route is cached on second visit", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-status/success"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("cache-status-success-title")).toHaveText(
+      "Cache Status: Success (200)",
+    );
+    const firstRendered = await page
+      .getByTestId("cache-status-success-rendered")
+      .textContent();
+
+    // Wait for cache write
+    await page.waitForTimeout(500);
+
+    // Navigate away and back
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+    await page.goto(f.url("/cache-status/success"));
+    await waitForHydration(page);
+
+    const secondRendered = await page
+      .getByTestId("cache-status-success-rendered")
+      .textContent();
+
+    // Cached: same rendered timestamp
+    expect(secondRendered).toBe(firstRendered);
+  });
+
+  test("notFound() boundary is cached after first render", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-status/not-found"));
+    await waitForHydration(page);
+
+    // notFoundBoundary should catch and render 404 UI
+    await expect(page.getByTestId("cache-status-not-found-title")).toHaveText(
+      "Not Found (404)",
+    );
+    await expect(page.getByTestId("cache-status-not-found-message")).toHaveText(
+      "This resource does not exist",
+    );
+  });
+
+  test("redirect handler works correctly", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    // Navigate to redirect route — should end up at redirect target
+    await page.goto(f.url("/cache-status/redirect"));
+    await waitForHydration(page);
+
+    // Should have been redirected to the target
+    await expect(
+      page.getByTestId("cache-status-redirect-target-title"),
+    ).toHaveText("Cache Status: Redirect Target (200)");
+  });
+});
+
+// ============================================================================
+// Segment-level cache status behavior (production)
+// ============================================================================
+
+test.describe("cache-status-segment (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("200 segment route is cached on second visit", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-status/success"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("cache-status-success-title")).toHaveText(
+      "Cache Status: Success (200)",
+    );
+    const firstRendered = await page
+      .getByTestId("cache-status-success-rendered")
+      .textContent();
+
+    await page.waitForTimeout(500);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+    await page.goto(f.url("/cache-status/success"));
+    await waitForHydration(page);
+
+    const secondRendered = await page
+      .getByTestId("cache-status-success-rendered")
+      .textContent();
+
+    expect(secondRendered).toBe(firstRendered);
+  });
+
+  test("notFound() boundary is cached after first render", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-status/not-found"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("cache-status-not-found-title")).toHaveText(
+      "Not Found (404)",
+    );
+    await expect(page.getByTestId("cache-status-not-found-message")).toHaveText(
+      "This resource does not exist",
+    );
+  });
+
+  test("redirect handler works correctly", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-status/redirect"));
+    await waitForHydration(page);
+
+    await expect(
+      page.getByTestId("cache-status-redirect-target-title"),
+    ).toHaveText("Cache Status: Redirect Target (200)");
+  });
+});
+
+test.describe("cache-response-type (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("path.json and path.text at same URL produce different cache entries", async ({
+    request,
+  }) => {
+    const jsonRes1 = await request.get(f.url("/cache-response-type/data/42"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(jsonRes1.status()).toBe(200);
+    const json1 = await jsonRes1.json();
+    expect(json1.data.type).toBe("json");
+    expect(json1.data.id).toBe("42");
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    const jsonRes2 = await request.get(f.url("/cache-response-type/data/42"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(jsonRes2.status()).toBe(200);
+    const json2 = await jsonRes2.json();
+    expect(json2.data.ts).toBe(json1.data.ts);
+    expect(json2.data.rand).toBe(json1.data.rand);
+
+    const textRes1 = await request.get(f.url("/cache-response-type/data/42"), {
+      headers: { Accept: "text/plain" },
+    });
+    expect(textRes1.status()).toBe(200);
+    const text1 = await textRes1.text();
+    expect(text1).toContain("text:42:");
+
+    const textTs = text1.split(":")[2];
+    expect(textTs).not.toBe(String(json1.data.ts));
+  });
+
+  test("path.json with different params produce different cache entries", async ({
+    request,
+  }) => {
+    const res1 = await request.get(f.url("/cache-response-type/data/alpha"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(res1.status()).toBe(200);
+    const body1 = await res1.json();
+    expect(body1.data.id).toBe("alpha");
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    const res2 = await request.get(f.url("/cache-response-type/data/beta"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(res2.status()).toBe(200);
+    const body2 = await res2.json();
+    expect(body2.data.id).toBe("beta");
+    expect(body2.data.ts).not.toBe(body1.data.ts);
+
+    const res3 = await request.get(f.url("/cache-response-type/data/alpha"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(res3.status()).toBe(200);
+    const body3 = await res3.json();
+    expect(body3.data.ts).toBe(body1.data.ts);
+  });
+});

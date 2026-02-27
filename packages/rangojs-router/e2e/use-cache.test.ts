@@ -289,6 +289,50 @@ test.describe("use-cache basic", () => {
     await expect(breadcrumbs).toContainText("Inline Cached Handler");
   });
 
+  test("inline use cache on parameterized path differentiates by params", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Visit slug "alpha" — cache miss
+    await page.goto(f.url("/use-cache-test/inline-params/alpha"));
+    await waitForHydration(page);
+
+    await expect(
+      page.getByTestId("use-cache-inline-params-page"),
+    ).toBeVisible();
+    await expect(page.getByTestId("inline-params-slug")).toHaveText("alpha");
+    const alphaTs = await page.getByTestId("inline-params-ts").textContent();
+    const alphaRand = await page
+      .getByTestId("inline-params-rand")
+      .textContent();
+
+    expect(alphaTs).toBeTruthy();
+
+    // Visit slug "beta" — different cache entry
+    await page.goto(f.url("/use-cache-test/inline-params/beta"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("inline-params-slug")).toHaveText("beta");
+    const betaTs = await page.getByTestId("inline-params-ts").textContent();
+
+    // Different slug must produce different cache entry
+    expect(betaTs).not.toBe(alphaTs);
+
+    // Revisit slug "alpha" — cache hit
+    await page.goto(f.url("/use-cache-test/inline-params/alpha"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("inline-params-slug")).toHaveText("alpha");
+    const alphaTs2 = await page.getByTestId("inline-params-ts").textContent();
+    const alphaRand2 = await page
+      .getByTestId("inline-params-rand")
+      .textContent();
+
+    expect(alphaTs2).toBe(alphaTs);
+    expect(alphaRand2).toBe(alphaRand);
+  });
+
   test("inline use cache in layout: meta captured and replayed", async ({
     page,
   }) => {
@@ -609,6 +653,33 @@ test.describe("use-cache basic", () => {
     await expect(page.getByTestId("interleave-action-btn")).toBeVisible();
     await expect(page.getByTestId("interleave-action-btn")).toBeEnabled();
   });
+
+  test("path.json with use cache: params differentiate entries", async ({
+    request,
+  }) => {
+    // First request — cache miss for id=1
+    const res1 = await request.get(f.url("/use-cache-test/json-cached/1"));
+    expect(res1.status()).toBe(200);
+    const body1 = await res1.json();
+    expect(body1.data.id).toBe("1");
+
+    // Small delay for async cache write
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Second request with same id — cache hit
+    const res2 = await request.get(f.url("/use-cache-test/json-cached/1"));
+    expect(res2.status()).toBe(200);
+    const body2 = await res2.json();
+    expect(body2.data.ts).toBe(body1.data.ts);
+    expect(body2.data.rand).toBe(body1.data.rand);
+
+    // Different id — cache miss, different entry
+    const res3 = await request.get(f.url("/use-cache-test/json-cached/2"));
+    expect(res3.status()).toBe(200);
+    const body3 = await res3.json();
+    expect(body3.data.id).toBe("2");
+    expect(body3.data.ts).not.toBe(body1.data.ts);
+  });
 });
 
 // ============================================================================
@@ -846,6 +917,46 @@ test.describe("use-cache (production)", () => {
 
     await expect(breadcrumbs).toBeVisible();
     await expect(breadcrumbs).toContainText("Inline Cached Handler");
+  });
+
+  test("inline use cache on parameterized path differentiates by params", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/use-cache-test/inline-params/alpha"));
+    await waitForHydration(page);
+
+    await expect(
+      page.getByTestId("use-cache-inline-params-page"),
+    ).toBeVisible();
+    await expect(page.getByTestId("inline-params-slug")).toHaveText("alpha");
+    const alphaTs = await page.getByTestId("inline-params-ts").textContent();
+    const alphaRand = await page
+      .getByTestId("inline-params-rand")
+      .textContent();
+
+    expect(alphaTs).toBeTruthy();
+
+    await page.goto(f.url("/use-cache-test/inline-params/beta"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("inline-params-slug")).toHaveText("beta");
+    const betaTs = await page.getByTestId("inline-params-ts").textContent();
+
+    expect(betaTs).not.toBe(alphaTs);
+
+    await page.goto(f.url("/use-cache-test/inline-params/alpha"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("inline-params-slug")).toHaveText("alpha");
+    const alphaTs2 = await page.getByTestId("inline-params-ts").textContent();
+    const alphaRand2 = await page
+      .getByTestId("inline-params-rand")
+      .textContent();
+
+    expect(alphaTs2).toBe(alphaTs);
+    expect(alphaRand2).toBe(alphaRand);
   });
 
   test("inline use cache in layout: meta captured and replayed", async ({
@@ -1135,5 +1246,28 @@ test.describe("use-cache (production)", () => {
     // Client component still renders correctly on cache hit
     await expect(page.getByTestId("interleave-action-btn")).toBeVisible();
     await expect(page.getByTestId("interleave-action-btn")).toBeEnabled();
+  });
+
+  test("path.json with use cache: params differentiate entries", async ({
+    request,
+  }) => {
+    const res1 = await request.get(f.url("/use-cache-test/json-cached/1"));
+    expect(res1.status()).toBe(200);
+    const body1 = await res1.json();
+    expect(body1.data.id).toBe("1");
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    const res2 = await request.get(f.url("/use-cache-test/json-cached/1"));
+    expect(res2.status()).toBe(200);
+    const body2 = await res2.json();
+    expect(body2.data.ts).toBe(body1.data.ts);
+    expect(body2.data.rand).toBe(body1.data.rand);
+
+    const res3 = await request.get(f.url("/use-cache-test/json-cached/2"));
+    expect(res3.status()).toBe(200);
+    const body3 = await res3.json();
+    expect(body3.data.id).toBe("2");
+    expect(body3.data.ts).not.toBe(body1.data.ts);
   });
 });

@@ -112,6 +112,7 @@ export async function createMatchContextForFull<TEnv>(
     bindings,
     deps.getRouteMap(),
     matched.routeKey,
+    matched.responseType,
   );
 
   const loaderPromises = new Map<string, Promise<any>>();
@@ -286,6 +287,7 @@ export async function createMatchContextForPartial<TEnv>(
     bindings,
     deps.getRouteMap(),
     matched.routeKey,
+    matched.responseType,
   );
 
   const clientSegmentSet = new Set(clientSegmentIds);

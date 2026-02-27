@@ -151,12 +151,22 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       return fn.apply(this, args);
     }
 
-    // Separate tainted args (ctx, env, req) from key-generating args
+    // Separate tainted args (ctx, env, req) from key-generating args.
+    // For tainted objects that carry route context (params, pathname),
+    // extract those serializable values into the key so different routes
+    // and param combinations produce distinct cache entries.
     const keyArgs: unknown[] = [];
     let hasTaintedArgs = false;
     for (const arg of args) {
       if (isTainted(arg)) {
         hasTaintedArgs = true;
+        const ctx = arg as any;
+        if (ctx.params && typeof ctx.params === "object") {
+          keyArgs.push(ctx.pathname, ctx.params);
+          if (ctx._responseType) {
+            keyArgs.push(ctx._responseType);
+          }
+        }
       } else {
         keyArgs.push(arg);
       }

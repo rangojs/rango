@@ -131,6 +131,7 @@ export function createHandlerContext<TEnv>(
   bindings: any = {},
   routeMap: Record<string, string> = {},
   routeName?: string,
+  responseType?: string,
 ): InternalHandlerContext<any, TEnv> {
   // Get variables from request context - this is the unified context
   // shared between middleware and route handlers
@@ -198,6 +199,7 @@ export function createHandlerContext<TEnv>(
     },
     // Scoped reverse for URL generation (auto-fills current request params)
     reverse: createReverseFunction(routeMap, routeName, params),
+    _responseType: responseType,
   };
   // Brand with taint symbol so "use cache" excludes ctx from cache keys
   (ctx as any)[NOCACHE_SYMBOL] = true;
