@@ -26,6 +26,8 @@ export const NamedRoutes = {
   "cacheTest.useLoaderDetail": "/cache-test/useloader/:itemId",
   "cacheTest.useLoaderIndex": "/cache-test/useloader",
   changelog: "/changelog",
+  "ctxClean.index": "/ctx-clean",
+  "ctxClean.source": "/ctx-clean/source",
   docs: "/docs",
   "docs.article": "/docs/:slug",
   "errors.clientError": "/errors/client-error",

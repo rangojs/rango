@@ -12,6 +12,20 @@ import { contextGet, contextSet } from "../context-var.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
 
 /**
+ * Strip internal _rsc* query params from a URL.
+ * Returns a new URL with only user-facing params.
+ */
+export function stripInternalParams(url: URL): URL {
+  const clean = new URL(url);
+  for (const key of [...clean.searchParams.keys()]) {
+    if (key.startsWith("_rsc")) {
+      clean.searchParams.delete(key);
+    }
+  }
+  return clean;
+}
+
+/**
  * Resolve route name with namespace prefix support.
  * Supports local names (dot-prefixed) and absolute names (global lookup).
  */
@@ -138,24 +152,11 @@ export function createHandlerContext<TEnv>(
   const requestContext = getRequestContext();
   const variables: any = requestContext?.var ?? {};
 
-  // Filter system parameters (starting with _rsc) from searchParams
-  // This ensures handlers only see user-facing query params
-  const cleanSearchParams = new URLSearchParams();
-  searchParams.forEach((value, key) => {
-    if (!key.startsWith("_rsc")) {
-      cleanSearchParams.append(key, value);
-    }
-  });
-
-  // Create clean URL without system params
-  const cleanUrl = new URL(url);
-  cleanUrl.search = cleanSearchParams.toString();
-
   // If route has a search schema, parse URLSearchParams into typed object
   const searchSchema = routeName ? getSearchSchema(routeName) : undefined;
   const resolvedSearchParams = searchSchema
-    ? parseSearchParams(cleanSearchParams, searchSchema)
-    : cleanSearchParams;
+    ? parseSearchParams(searchParams, searchSchema)
+    : searchParams;
 
   // Get stub response from request context for setting headers
   const stubResponse =
@@ -165,10 +166,10 @@ export function createHandlerContext<TEnv>(
     params,
     build: false,
     request,
-    searchParams: cleanSearchParams,
+    searchParams,
     search: searchSchema ? resolvedSearchParams : {},
     pathname,
-    url: cleanUrl, // Clean URL
+    url,
     env: bindings,
     var: variables,
     get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as HandlerContext<
