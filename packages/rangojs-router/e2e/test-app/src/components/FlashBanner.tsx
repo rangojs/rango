@@ -2,7 +2,12 @@
 
 import { useLocationState } from "@rangojs/router/client";
 import { FlashMessage, ServerInfo } from "../location-states.js";
-import { saveAndRedirect, actionSimpleRedirect } from "../actions.js";
+import {
+  saveAndRedirect,
+  actionSimpleRedirect,
+  throwRedirectWithState,
+  throwSimpleRedirect,
+} from "../actions.js";
 
 export function FlashBanner() {
   const flash = useLocationState(FlashMessage);
@@ -32,6 +37,28 @@ export function ActionSimpleRedirectButton() {
       onClick={() => actionSimpleRedirect()}
     >
       Simple redirect
+    </button>
+  );
+}
+
+export function ThrowRedirectButton() {
+  return (
+    <button
+      data-testid="throw-redirect-btn"
+      onClick={() => throwRedirectWithState()}
+    >
+      Throw redirect with state
+    </button>
+  );
+}
+
+export function ThrowSimpleRedirectButton() {
+  return (
+    <button
+      data-testid="throw-simple-redirect-btn"
+      onClick={() => throwSimpleRedirect()}
+    >
+      Throw simple redirect
     </button>
   );
 }

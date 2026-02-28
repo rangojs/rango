@@ -6,6 +6,8 @@ import {
   ServerInfoDisplay,
   ActionRedirectButton,
   ActionSimpleRedirectButton,
+  ThrowRedirectButton,
+  ThrowSimpleRedirectButton,
 } from "../components/FlashBanner.js";
 
 /**
@@ -62,6 +64,8 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
         </ul>
         <ActionRedirectButton />
         <ActionSimpleRedirectButton />
+        <ThrowRedirectButton />
+        <ThrowSimpleRedirectButton />
       </div>
     ),
     { name: "index" },

@@ -190,6 +190,23 @@ export async function actionSimpleRedirect(): Promise<void> {
 }
 
 /**
+ * Action that throws a redirect with flash state.
+ * Tests that thrown redirect() from actions is handled correctly.
+ */
+export async function throwRedirectWithState(): Promise<void> {
+  throw redirect("/location-state", {
+    state: [FlashMessage({ text: "Thrown redirect flash!" })],
+  });
+}
+
+/**
+ * Action that throws a redirect without state.
+ */
+export async function throwSimpleRedirect(): Promise<void> {
+  throw redirect("/location-state/target");
+}
+
+/**
  * Test action for "use cache" interleaving.
  * Returns the input and a timestamp so tests can verify
  * the action was actually invoked (different ts each call).
