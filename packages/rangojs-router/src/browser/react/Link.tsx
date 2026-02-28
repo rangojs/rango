@@ -30,7 +30,6 @@ export type StateOrGetter<T = unknown> = T | (() => T);
 export type LinkState = LocationStateEntry[] | StateOrGetter;
 
 import {
-  prefetchCacheKey,
   hasPrefetch,
   markPrefetchInflight,
   clearPrefetchInflight,
@@ -73,12 +72,11 @@ function prefetchUrlBrowser(url: string, segmentIds: string[]): void {
  * collisions between prefetch and navigation requests.
  */
 function prefetchUrlRouter(url: string, segmentIds: string[]): void {
-  const key = prefetchCacheKey(url);
+  const targetUrl = buildPrefetchUrl(url, segmentIds);
+  const key = targetUrl.pathname;
   if (hasPrefetch(key)) return;
 
   markPrefetchInflight(key);
-
-  const targetUrl = buildPrefetchUrl(url, segmentIds);
 
   fetch(targetUrl.toString(), {
     priority: "low" as RequestPriority,

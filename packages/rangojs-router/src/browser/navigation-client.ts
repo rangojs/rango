@@ -11,7 +11,7 @@ import {
   isBrowserDebugEnabled,
   startBrowserTransaction,
 } from "./logging.js";
-import { prefetchCacheKey, consumePrefetchResponse } from "./prefetch-cache.js";
+import { consumePrefetchResponse } from "./prefetch-cache.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -98,12 +98,13 @@ export function createNavigationClient(
         resolveStreamComplete = resolve;
       });
 
-      // Check prefetch cache before making a network request
-      const cacheKey = prefetchCacheKey(targetUrl);
-      const cachedResponse = consumePrefetchResponse(cacheKey);
+      // Check prefetch cache before making a network request.
+      // Use fetchUrl.pathname directly — same as prefetchCacheKey() but
+      // avoids re-parsing the URL that was already parsed above.
+      const cachedResponse = consumePrefetchResponse(fetchUrl.pathname);
 
       if (tx && cachedResponse) {
-        browserDebugLog(tx, "prefetch cache hit", { path: targetUrl });
+        browserDebugLog(tx, "prefetch cache hit", { path: fetchUrl.pathname });
       }
 
       // Create a response promise that tracks stream completion

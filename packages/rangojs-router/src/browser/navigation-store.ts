@@ -655,10 +655,7 @@ export function createNavigationStore(
      * Called after server actions to indicate data may be outdated
      */
     markCacheAsStale(): void {
-      for (let i = 0; i < historyCache.length; i++) {
-        historyCache[i][2] = true;
-      }
-      clearPrefetchCache();
+      markCacheAsStaleInternal();
       console.log(
         "[Browser] Marked",
         historyCache.length,
