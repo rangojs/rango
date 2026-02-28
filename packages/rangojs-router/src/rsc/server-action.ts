@@ -49,6 +49,28 @@ export async function handleServerAction<TEnv>(
     });
   }
 
+  // Intercept a redirect Response (returned or thrown) and short-circuit
+  // before revalidation. Returns a Flight response with state or a 204
+  // with the X-RSC-Redirect header.
+  function interceptRedirect(response: Response): Response | undefined {
+    const redirectUrl = response.headers.get("Location");
+    const isRedirect =
+      response.status >= 300 && response.status < 400 && redirectUrl;
+    if (!isRedirect) return undefined;
+
+    const locationState = getLocationState();
+    if (locationState) {
+      return ctx.createRedirectFlightResponse(
+        redirectUrl,
+        resolveLocationStateEntries(locationState),
+      );
+    }
+    return createResponseWithMergedHeaders(null, {
+      status: 204,
+      headers: { "X-RSC-Redirect": redirectUrl },
+    });
+  }
+
   // Execute the server action
   let returnValue: { ok: boolean; data: unknown };
   let actionStatus = 200;
@@ -62,45 +84,16 @@ export async function handleServerAction<TEnv>(
     // Response would be serialized as the action returnValue (which fails)
     // and the revalidation step would run unnecessarily.
     if (data instanceof Response) {
-      const redirectUrl = data.headers.get("Location");
-      const isRedirect = data.status >= 300 && data.status < 400 && redirectUrl;
-      if (isRedirect) {
-        const locationState = getLocationState();
-        if (locationState) {
-          // Redirect with state: needs Flight payload to carry state
-          return ctx.createRedirectFlightResponse(
-            redirectUrl,
-            resolveLocationStateEntries(locationState),
-          );
-        }
-        // Simple redirect: short-circuit with a header, no RSC serialization
-        return createResponseWithMergedHeaders(null, {
-          status: 204,
-          headers: { "X-RSC-Redirect": redirectUrl },
-        });
-      }
+      const result = interceptRedirect(data);
+      if (result) return result;
     }
 
     returnValue = { ok: true, data };
   } catch (error) {
     // Handle thrown redirect (e.g., throw redirect('/path'))
     if (error instanceof Response) {
-      const redirectUrl = error.headers.get("Location");
-      const isRedirect =
-        error.status >= 300 && error.status < 400 && redirectUrl;
-      if (isRedirect) {
-        const locationState = getLocationState();
-        if (locationState) {
-          return ctx.createRedirectFlightResponse(
-            redirectUrl,
-            resolveLocationStateEntries(locationState),
-          );
-        }
-        return createResponseWithMergedHeaders(null, {
-          status: 204,
-          headers: { "X-RSC-Redirect": redirectUrl },
-        });
-      }
+      const result = interceptRedirect(error);
+      if (result) return result;
     }
 
     returnValue = { ok: false, data: error };

@@ -581,15 +581,18 @@ export const urlpatterns = urls(
         },
       ),
 
-      // Test utils: read and reset last onError call for e2e verification
+      // Test utils: read last onError call for e2e verification.
+      // Pass ?reset to clear the stored error.
       path.json(
         "/__test/last-error",
-        async () => {
+        async (ctx) => {
           const { lastOnErrorCall, resetLastOnErrorCall } =
             await import("./router.js");
-          const result = lastOnErrorCall;
-          resetLastOnErrorCall();
-          return result;
+          if (ctx.searchParams.has("reset")) {
+            resetLastOnErrorCall();
+            return null;
+          }
+          return lastOnErrorCall;
         },
         { name: "testLastError" },
       ),
