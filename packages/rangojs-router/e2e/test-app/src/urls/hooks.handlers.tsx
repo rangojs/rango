@@ -24,9 +24,7 @@ import {
   UnhandledErrorLoaderTest,
   UseLoaderThrowsTest,
   IsLoadingTest,
-  FormActionTest,
-  FormActionProgressiveTest,
-  DirectImportFormActionTest,
+  ServerActionFormTest,
 } from "../components/HookTests.js";
 
 export const FetchLoaderHandler: Handler<"fetchLoader"> = () => (
@@ -141,9 +139,7 @@ export const HookTestsFormActionHandler: Handler<
 
     <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
       <IsLoadingTest loader={UnregisteredLoader} />
-      <FormActionTest loader={UnregisteredLoader} />
-      <FormActionProgressiveTest loader={UnregisteredLoader} />
-      <DirectImportFormActionTest />
+      <ServerActionFormTest />
     </div>
   </div>
 );

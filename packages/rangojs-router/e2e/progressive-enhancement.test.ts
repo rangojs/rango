@@ -98,38 +98,6 @@ test.describe("progressive-enhancement", () => {
       expect(content).toMatch(/<html/i);
     });
 
-    // useActionState progressive enhancement - form state is passed to renderToReadableStream
-    test("useActionState form submission should work without JavaScript", async ({
-      page,
-    }) => {
-      // Navigate to the form-action page which uses useActionState
-      await page.goto(f.url("/hook-tests/form-action"));
-
-      // The progressive enhancement form should render with no data initially
-      await expect(
-        page.locator('[data-testid="form-action-progressive-no-data"]'),
-      ).toBeVisible();
-
-      // Submit the form - native POST submission
-      await page
-        .locator('[data-testid="form-action-progressive-submit-btn"]')
-        .click();
-
-      // Wait for navigation to complete
-      await page.waitForLoadState("domcontentloaded");
-
-      // After submission, the form state should be updated with the action result.
-      // This currently fails because useActionState needs the formState to be
-      // passed to renderToReadableStream, which requires deeper SSR integration.
-      await expect(
-        page.locator('[data-testid="form-action-progressive-data"]'),
-      ).toBeVisible({ timeout: 5000 });
-
-      await expect(
-        page.locator('[data-testid="form-action-progressive-message"]'),
-      ).toContainText("Fetched from unregistered loader");
-    });
-
     test("form should preserve input values after submission error", async ({
       page,
     }) => {

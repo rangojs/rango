@@ -1,9 +1,8 @@
 /**
  * Loader Fetch Handler
  *
- * Handles load() (GET) requests from the client. load.action() uses a proper
- * server action instead (invokeFetchableLoaderAction from
- * fetchable-loader-action.ts).
+ * Handles load() requests (GET, POST, PUT, PATCH, DELETE) from the client.
+ * All loader data fetching and mutations go through this endpoint.
  *
  * Route params (e.g. slug from /blog/:slug) come from previewMatch() in the
  * outer coreRequestHandler, threaded through coreRequestHandlerInner as
@@ -61,7 +60,7 @@ export async function handleLoaderFetch<TEnv>(
         };
         loaderParams = jsonBody.params ?? {};
         loaderBody = jsonBody.body;
-        // Reconstruct FormData from JSON-serialized entries (from load.action)
+        // Reconstruct FormData from JSON-serialized entries
         if (jsonBody.formEntries) {
           loaderFormData = new FormData();
           for (const [key, value] of Object.entries(jsonBody.formEntries)) {

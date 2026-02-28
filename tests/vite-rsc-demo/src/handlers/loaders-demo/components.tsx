@@ -366,28 +366,35 @@ if (result.success) {
 }
 
 /**
- * FormActionSearch - Demonstrates load.action for progressive enhancement
+ * FormActionSearch - Demonstrates load() with POST for form-based mutations
  *
  * Shows how to use useFetchLoader with forms for:
- * - Progressive enhancement (works without JS)
  * - Automatic loading states
- * - Server-side execution
+ * - Server-side execution via POST
  */
 export function FormActionSearch() {
   const { data, isLoading, error, load } = useFetchLoader(UserSearchLoader, {
     throwOnError: false,
   });
 
+  const handleSubmit = async (formData: FormData) => {
+    const query = formData.get("query") as string;
+    const role = formData.get("role") as string;
+    await load({
+      method: "POST",
+      body: { query, role },
+    });
+  };
+
   return (
     <div style={cardStyle}>
-      <h3 style={headingStyle}>load.action - Progressive Enhancement</h3>
+      <h3 style={headingStyle}>load() with POST - Form Search</h3>
       <p style={descStyle}>
-        Use <code>load.action</code> as a form action for progressive
-        enhancement. Works without JavaScript, enhanced with loading states when
-        JS is available.
+        Use <code>load({"{"} method: "POST", body: ... {"}"})</code> to send
+        form data to a fetchable loader. Enhanced with loading states.
       </p>
 
-      <form action={load.action} style={{ marginBottom: "1rem" }}>
+      <form action={handleSubmit} style={{ marginBottom: "1rem" }}>
         <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
           <input
             type="text"
@@ -444,7 +451,11 @@ export function FormActionSearch() {
         <pre style={{ margin: "0.5rem 0 0 0", whiteSpace: "pre-wrap" }}>
           {`const { load, isLoading } = useFetchLoader(UserSearchLoader);
 
-<form action={load.action}>
+const handleSubmit = async (formData) => {
+  await load({ method: "POST", body: Object.fromEntries(formData) });
+};
+
+<form action={handleSubmit}>
   <input name="query" />
   <button type="submit" disabled={isLoading}>
     {isLoading ? "Searching..." : "Search"}
@@ -599,12 +610,12 @@ return <div>{data.content}</div>;`}
 }
 
 /**
- * NotesManager - Demonstrates loader as both GET (on mount) and form action
+ * NotesManager - Demonstrates loader as both GET (on mount) and POST (mutation)
  *
  * Key pattern: a single loader handles both fetching and mutations.
  * - useEffect(() => load(), []) fetches notes on mount
- * - load.action handles form submissions
- * - No refetch needed! The action returns updated data automatically
+ * - load({ method: "POST", body }) handles form submissions
+ * - No refetch needed! The POST returns updated data automatically
  */
 export function NotesManager() {
   const { data, isLoading, error, load } = useFetchLoader<NotesLoaderData>(
@@ -618,18 +629,20 @@ export function NotesManager() {
     load();
   }, [load]);
 
-  // Handle form submission - wraps formAction to clear input after success
+  // Handle form submission via POST
   const handleSubmit = async (formData: FormData) => {
-    await load.action(formData);
+    const note = formData.get("note") as string;
+    await load({ method: "POST", body: { note } });
     formRef.current?.reset();
   };
 
   return (
     <div style={cardStyle}>
-      <h3 style={headingStyle}>Loader as GET + Form Action</h3>
+      <h3 style={headingStyle}>Loader as GET + POST</h3>
       <p style={descStyle}>
         Single loader handles both fetching (via <code>useEffect</code>) and
-        mutations (via <code>load.action</code>). Unified data flow pattern.
+        mutations (via <code>load({"{"} method: "POST" {"}"})</code>). Unified
+        data flow pattern.
       </p>
 
       <form
@@ -709,9 +722,12 @@ export function NotesManager() {
 // GET on mount
 useEffect(() => { load(); }, [load]);
 
-// Form action for mutations - no refetch needed!
-// load.action returns updated data automatically
-<form action={load.action}>
+// POST for mutations - no refetch needed!
+// load() with POST returns updated data automatically
+const handleAdd = async (formData) => {
+  await load({ method: "POST", body: { note: formData.get("note") } });
+};
+<form action={handleAdd}>
   <input name="note" />
   <button type="submit">Add</button>
 </form>`}
@@ -722,10 +738,10 @@ useEffect(() => { load(); }, [load]);
 }
 
 /**
- * FileUploader - Demonstrates file upload via load.action
+ * FileUploader - Demonstrates file upload via load() with POST
  *
  * - useEffect fetches existing files on mount
- * - load.action uploads file via FormData
+ * - load({ method: "POST", body }) uploads file
  * - No refetch needed! Server returns updated file list automatically
  */
 export function FileUploader() {
@@ -741,9 +757,13 @@ export function FileUploader() {
     load();
   }, [load]);
 
-  // Handle form submission
+  // Handle form submission via POST — sends file metadata to the loader
   const handleSubmit = async (formData: FormData) => {
-    await load.action(formData);
+    const file = formData.get("file") as File;
+    await load({
+      method: "POST",
+      body: { fileName: file.name, fileSize: file.size, fileType: file.type },
+    });
     formRef.current?.reset();
     setSelectedFile(null);
   };
@@ -757,10 +777,9 @@ export function FileUploader() {
 
   return (
     <div style={cardStyle}>
-      <h3 style={headingStyle}>File Upload via load.action</h3>
+      <h3 style={headingStyle}>File Upload via load() POST</h3>
       <p style={descStyle}>
-        Upload files using <code>load.action</code>. The server receives the
-        file via <code>ctx.formData.get("file")</code> as a File object.
+        Upload files using <code>load({"{"} method: "POST" {"}"})</code>.
       </p>
 
       <form
@@ -874,13 +893,12 @@ export function FileUploader() {
         <pre style={{ margin: "0.5rem 0 0 0", whiteSpace: "pre-wrap" }}>
           {`// Server loader handles upload AND returns updated list
 async (ctx) => {
-  const file = ctx.formData?.get("file") as File;
-  if (file) await saveFile(file); // mutation
+  if (ctx.body?.fileName) await saveFile(ctx.body); // mutation
   return { files: getFiles() };   // updated data
 };
 
-// Client - load.action updates state automatically
-await load.action(formData); // data now has new file`}
+// Client - load() with POST updates state automatically
+await load({ method: "POST", body: { fileName } }); // data now has new file`}
         </pre>
       </div>
     </div>

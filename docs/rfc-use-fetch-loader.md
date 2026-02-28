@@ -127,42 +127,50 @@ export const FileLoader = createLoader(
 );
 ```
 
-### Form Action (Progressive Enhancement)
+### Mutations via POST
 
-```typescript
-function FileUpload() {
-  const { data, load } = useFetchLoader(FileLoader);
-
-  return (
-    <form action={load.action}>
-      <input type="file" name="file" />
-      <button type="submit">Upload</button>
-    </form>
-  );
-}
-```
-
-### Key Benefit: No Refetch Needed
-
-When using `load.action`, the loader handles both the mutation AND returns updated data. No separate refetch call is required:
+Use `load()` with POST for form-based mutations. The loader handles both the mutation and returns updated data:
 
 ```typescript
 // Server loader handles mutation + returns updated data
 export const NotesLoader = createLoader(async (ctx) => {
-  const noteText = ctx.formData?.get("note");
-  if (noteText) addNote(noteText);  // mutation
+  if (ctx.body?.note) addNote(ctx.body.note);  // mutation
 
   return { notes: getAllNotes() };  // returns updated data
 }, true);
 
-// Client - no refetch needed!
+// Client - no refetch needed! POST returns updated data automatically.
 const { data, load } = useFetchLoader(NotesLoader);
 
 useEffect(() => { load(); }, [load]);  // initial GET
 
-<form action={load.action}>  {/* mutation updates data automatically */}
+const handleSubmit = async (formData) => {
+  await load({ method: "POST", body: { note: formData.get("note") } });
+};
+
+<form action={handleSubmit}>
   <input name="note" />
 </form>
+```
+
+### Progressive Enhancement with Server Actions
+
+For forms that must work without JavaScript, use regular server actions with `useActionState`:
+
+```typescript
+import { useActionState } from "react";
+import { myServerAction } from "./actions";
+
+function MyForm() {
+  const [state, formAction, isPending] = useActionState(myServerAction, null);
+
+  return (
+    <form action={formAction}>
+      <input name="value" />
+      <button type="submit" disabled={isPending}>Submit</button>
+    </form>
+  );
+}
 ```
 
 ## Implementation
@@ -185,19 +193,9 @@ function createLoader<T>(
     registerFetchableLoader(loaderId, fn, middleware);
   }
 
-  // Create server action that looks up fn from registry
-  async function loaderAction(formData: FormData): Promise<T> {
-    "use server";
-    const registered = fetchableLoaderRegistry.get(loaderId);
-    const ctx = buildContext(formData);
-    await executeMiddleware(registered.middleware, ctx);
-    return registered.fn(ctx);
-  }
-
   return {
     __brand: "loader",
     $$id: loaderId,
-    action: loaderAction,
   };
 }
 ```
@@ -219,18 +217,13 @@ function useFetchLoader<T>(loader: LoaderDefinition<T>) {
   const [error, setError] = useState<Error | null>(null);
 
   const load = useCallback(
-    async (options?: { params?: Record<string, string> }) => {
+    async (options?: LoadOptions) => {
       setIsLoading(true);
       setError(null);
 
       try {
-        const formData = new FormData();
-        if (options?.params) {
-          for (const [key, value] of Object.entries(options.params)) {
-            formData.set(key, value);
-          }
-        }
-        const result = await loader.action(formData);
+        // Fetches via ?_rsc_loader endpoint (GET or POST)
+        const result = await fetchLoader(loader.$$id, options);
         setData(result);
       } catch (e) {
         setError(e as Error);
@@ -240,9 +233,6 @@ function useFetchLoader<T>(loader: LoaderDefinition<T>) {
     },
     [loader],
   );
-
-  // Attach action for form usage
-  load.action = loader.action;
 
   return { data, isLoading, error, load, refetch: load };
 }
@@ -389,8 +379,8 @@ export function useFetchLoader<T>(loader: LoaderDefinition<T>) {
         setData(payload.loaderResult);
         return payload.loaderResult;
       } else {
-        // Use server action for mutations (POST, PUT, DELETE, etc.)
-        const result = await loader.action(options);
+        // POST/PUT/DELETE go through the same ?_rsc_loader endpoint
+        const result = await fetchLoader(loader.$$id, options);
         setData(result);
         return result;
       }
@@ -455,6 +445,6 @@ Demo includes:
 
 - `useLoader` - SSR/navigation data access
 - `useFetchLoader` - Client-side GET fetching
-- `load.action` - Form-based mutations
-- File uploads via FormData
+- `load({ method: "POST", body })` - Form-based mutations
+- File uploads via `load()` with POST
 - RSC content (loaders returning ReactNode)

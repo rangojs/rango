@@ -1,29 +1,3 @@
-// ============================================================================
-// load.action Architecture
-// ============================================================================
-//
-// load.action() calls the loader's server action (loader.action) directly.
-// This is a real "use server" function dispatched via React's server action
-// protocol — NOT a custom fetch.
-//
-// Two paths provide the action depending on how the loader reaches the client:
-//
-// 1. Flight-serialized (loader passed as props from server component):
-//    loader.rsc.ts createLoader() creates an inline "use server" loaderAction
-//    that captures loaderId in closure. Flight serializes it as a server action
-//    reference. The RSC build sees it because it traverses loader.rsc.ts.
-//
-// 2. Client-imported (direct import in "use client" file):
-//    The Vite plugin replaces the file with a stub. The stub imports
-//    invokeFetchableLoaderAction from a "use server" MODULE and wraps it
-//    per-loader: (prev, fd) => __ifa(loaderId, prev, fd). loader.rsc.ts
-//    has a side-effect import of the module so the RSC build discovers it
-//    and registers it in the action manifest (serverReferenceMetaMap).
-//
-// load() (data fetching without mutation) uses fetch-based dispatch to the
-// ?_rsc_loader endpoint - that path does not need a server action reference.
-// ============================================================================
-
 "use client";
 
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
@@ -39,12 +13,9 @@ interface LoaderRscPayload<T = unknown> {
 }
 
 /**
- * Load function type with form action support
+ * Load function type for fetching loader data from the client
  */
-export type LoadFunction<T> = ((options?: LoadOptions) => Promise<T>) & {
-  /** Form action for progressive enhancement - can be passed to form action prop */
-  action: (formData: FormData) => Promise<void>;
-};
+export type LoadFunction<T> = (options?: LoadOptions) => Promise<T>;
 
 /**
  * Result type for useLoader hook (strict - data is required)
@@ -134,7 +105,8 @@ function useLoaderInternal<T>(
 
   const throwOnError = options?.throwOnError ?? true;
 
-  // Load function for fetching data
+  // Load function for fetching data via the ?_rsc_loader endpoint.
+  // Supports GET (data fetching) and POST/PUT/PATCH/DELETE (mutations).
   const load = useCallback(
     async (loadOptions?: LoadOptions): Promise<T> => {
       // Verify the loader has $$id
@@ -231,41 +203,6 @@ function useLoaderInternal<T>(
     [throwOnError],
   );
 
-  // Form action for mutations. Calls the loader's server action directly.
-  // See architecture comment at the top of this file for the two paths
-  // (Flight-serialized vs client-imported) that provide loader.action.
-  const action = useCallback(
-    async (formData: FormData): Promise<void> => {
-      if (!loader.action) {
-        throw new Error(
-          `Loader "${loader.$$id}" does not have an action. ` +
-            `Make sure the loader is fetchable: createLoader(fn, true).`,
-        );
-      }
-
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const result = await loader.action(null, formData);
-        setFetchedData(result as T);
-      } catch (e) {
-        const err = e instanceof Error ? e : new Error(String(e));
-        setError(err);
-        if (throwOnError) {
-          throw err;
-        }
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [throwOnError, loader.action, loader.$$id],
-  );
-
-  // Attach action to load function
-  const loadWithAction = load as LoadFunction<T>;
-  loadWithAction.action = action;
-
   // Throw during render if there's an error and throwOnError is true
   // This allows ErrorBoundaries to catch async errors from load()
   if (error && throwOnError) {
@@ -276,8 +213,8 @@ function useLoaderInternal<T>(
     data,
     isLoading,
     error,
-    load: loadWithAction,
-    refetch: loadWithAction,
+    load,
+    refetch: load,
   };
 }
 

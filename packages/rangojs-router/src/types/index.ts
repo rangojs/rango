@@ -69,9 +69,6 @@ export type {
   LoaderFn,
   FetchableLoaderOptions,
   LoadOptions,
-  LoaderActionContext,
-  LoaderMiddlewareFn,
-  LoaderAction,
   LoaderDefinition,
 } from "./loader-types.js";
 

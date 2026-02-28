@@ -7,7 +7,7 @@ import {
   ErrorBoundary,
   type LoaderDefinition,
 } from "@rangojs/router/client";
-import { UnregisteredLoader } from "../loaders.js";
+import { formTestAction } from "../actions.js";
 
 // Type for the hook test loader data
 interface HookTestLoaderData {
@@ -529,44 +529,44 @@ export function IsLoadingTest({ loader }: UseFetchLoaderUnregisteredTestProps) {
 }
 
 /**
- * Tests form action support with load.action (client-side state management)
- * This uses the hook's action wrapper for isLoading/error state tracking
+ * Tests server action form submission via useActionState.
+ * Covers both JS-enhanced submission and progressive enhancement (no-JS).
  */
-export function FormActionTest({
-  loader,
-}: UseFetchLoaderUnregisteredTestProps) {
-  const { data, load, isLoading, error } = useFetchLoader<{
-    id: string;
-    message: string;
-    timestamp: string;
-  }>(loader);
+export function ServerActionFormTest() {
+  const [state, formAction, isPending] = useActionState(formTestAction, null);
 
   return (
-    <div data-testid="form-action-test">
-      <h3>Form Action Test (load.action)</h3>
+    <div data-testid="server-action-form-test">
+      <h3>Server Action Form Test (useActionState)</h3>
 
-      {data ? (
-        <div data-testid="form-action-data">
-          <p data-testid="form-action-message">Message: {data.message}</p>
-          <p data-testid="form-action-id">ID: {data.id}</p>
+      {state ? (
+        <div data-testid="server-action-form-data">
+          <p data-testid="server-action-form-message">
+            Message: {state.message}
+          </p>
+          <p data-testid="server-action-form-id">ID: {state.id}</p>
+          <p data-testid="server-action-form-timestamp">
+            Timestamp: {state.timestamp}
+          </p>
         </div>
       ) : (
-        <p data-testid="form-action-no-data">No data</p>
+        <p data-testid="server-action-form-no-data">No data</p>
       )}
 
-      {isLoading && <p data-testid="form-action-loading">Loading...</p>}
-      {error && <p data-testid="form-action-error">Error: {error.message}</p>}
+      {isPending && (
+        <p data-testid="server-action-form-loading">Loading...</p>
+      )}
 
       <form
-        data-testid="form-action-form"
-        action={load.action}
+        data-testid="server-action-form"
+        action={formAction}
         style={{ marginTop: "1rem" }}
       >
         <input type="hidden" name="id" value="form-submitted" />
         <button
           type="submit"
-          data-testid="form-action-submit-btn"
-          disabled={isLoading}
+          data-testid="server-action-form-submit-btn"
+          disabled={isPending}
         >
           Submit Form
         </button>
@@ -575,98 +575,3 @@ export function FormActionTest({
   );
 }
 
-/**
- * Tests true progressive enhancement using loader.action directly
- * This uses the server action directly for no-JS support
- */
-export function FormActionProgressiveTest({
-  loader,
-}: UseFetchLoaderUnregisteredTestProps) {
-  // Use useActionState with the server action directly (not a wrapper)
-  // The server action must be passed directly to preserve PE semantics
-  const [state, formAction, isPending] = useActionState(
-    loader.action!,
-    null as { id: string; message: string; timestamp: string } | null,
-  );
-
-  return (
-    <div data-testid="form-action-progressive-test">
-      <h3>Form Action Test (Progressive Enhancement)</h3>
-
-      {state ? (
-        <div data-testid="form-action-progressive-data">
-          <p data-testid="form-action-progressive-message">
-            Message: {state.message}
-          </p>
-          <p data-testid="form-action-progressive-id">ID: {state.id}</p>
-        </div>
-      ) : (
-        <p data-testid="form-action-progressive-no-data">No data</p>
-      )}
-
-      {isPending && (
-        <p data-testid="form-action-progressive-loading">Loading...</p>
-      )}
-
-      <form
-        data-testid="form-action-progressive-form"
-        action={formAction}
-        style={{ marginTop: "1rem" }}
-      >
-        <input type="hidden" name="id" value="form-submitted-progressive" />
-        <button
-          type="submit"
-          data-testid="form-action-progressive-submit-btn"
-          disabled={isPending}
-        >
-          Submit Form (PE)
-        </button>
-      </form>
-    </div>
-  );
-}
-
-/**
- * Tests load.action with a directly imported loader (not passed as prop).
- * This is the pattern where a client component imports the loader module
- * directly instead of receiving the loader definition through Flight props.
- */
-export function DirectImportFormActionTest() {
-  const { data, load, isLoading } = useFetchLoader<{
-    id: string;
-    message: string;
-    timestamp: string;
-  }>(UnregisteredLoader);
-
-  return (
-    <div data-testid="direct-import-form-action-test">
-      <h3>Direct Import Form Action Test</h3>
-
-      {data ? (
-        <div data-testid="direct-import-data">
-          <p data-testid="direct-import-message">Message: {data.message}</p>
-          <p data-testid="direct-import-id">ID: {data.id}</p>
-        </div>
-      ) : (
-        <p data-testid="direct-import-no-data">No data</p>
-      )}
-
-      {isLoading && <p data-testid="direct-import-loading">Loading...</p>}
-
-      <form
-        data-testid="direct-import-form"
-        action={load.action}
-        style={{ marginTop: "1rem" }}
-      >
-        <input type="hidden" name="id" value="direct-import-submitted" />
-        <button
-          type="submit"
-          data-testid="direct-import-submit-btn"
-          disabled={isLoading}
-        >
-          Submit (Direct Import)
-        </button>
-      </form>
-    </div>
-  );
-}
