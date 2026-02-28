@@ -10,6 +10,11 @@ import {
   LoaderCompositionHandler,
   InlineActionHandler,
   ProgressiveEnhancementHandler,
+  UseRouterHandler,
+  UseRouterTargetAHandler,
+  UseRouterTargetBHandler,
+  UrlHooksHandler,
+  UrlHooksNestedHandler,
 } from "./hooks.handlers.js";
 
 /**
@@ -43,5 +48,33 @@ export const hooksPatterns = urls(({ path, loader }) => [
   path("/inline-action", InlineActionHandler, { name: "inlineAction" }),
   path("/progressive-enhancement", ProgressiveEnhancementHandler, {
     name: "progressiveEnhancement",
+  }),
+
+  // useRouter hook test routes
+  path(
+    "/hook-tests/use-router",
+    UseRouterHandler,
+    { name: "hookTests.useRouter" },
+    () => [loader(HookTestLoader)],
+  ),
+  path(
+    "/hook-tests/use-router/target-a",
+    UseRouterTargetAHandler,
+    { name: "hookTests.useRouterTargetA" },
+    () => [loader(HookTestLoader)],
+  ),
+  path(
+    "/hook-tests/use-router/target-b",
+    UseRouterTargetBHandler,
+    { name: "hookTests.useRouterTargetB" },
+    () => [loader(HookTestLoaderB)],
+  ),
+
+  // URL hooks test routes (useParams, usePathname, useSearchParams)
+  path("/hook-tests/url-hooks/:slug", UrlHooksHandler, {
+    name: "hookTests.urlHooks",
+  }),
+  path("/hook-tests/url-hooks/:slug/:id", UrlHooksNestedHandler, {
+    name: "hookTests.urlHooksNested",
   }),
 ]);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition, useEffect, useOptimistic } from "react";
-import { useLoader, Link, useNavigation, href } from "@rangojs/router/client";
+import { useLoader, Link, useRouter, href } from "@rangojs/router/client";
 import { CardDetailLoader } from "./loader.js";
 import { kanbanUpdateCard, kanbanDeleteCard } from "./actions.js";
 import { labelColors } from "./data.js";
@@ -213,7 +213,7 @@ export function CardDetailSkeleton() {
 
 export function CardDetailContent() {
   const { data } = useLoader(CardDetailLoader);
-  const { navigate } = useNavigation();
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   const { card, columnTitle } = data;
@@ -243,7 +243,7 @@ export function CardDetailContent() {
   }, [card.labels, card.title, card.description]);
 
   function handleClose() {
-    navigate("/kanban");
+    router.push("/kanban");
   }
 
   function handleSaveTitle() {
@@ -293,7 +293,7 @@ export function CardDetailContent() {
 
     startTransition(async () => {
       await kanbanDeleteCard(card.id);
-      navigate("/kanban");
+      router.push("/kanban");
     });
   }
 

@@ -36,6 +36,8 @@ export interface RscMetadata {
   isError?: boolean;
   matched?: string[];
   diff?: string[];
+  /** Merged route params from the matched route */
+  params?: Record<string, string>;
   /**
    * State of named slots for this route match
    * Key is slot name (e.g., "@modal"), value is slot state
@@ -250,6 +252,40 @@ export interface NavigateOptionsInternal extends NavigateOptions {
   /** Skip segment cache (used by redirect-with-state to force re-render) */
   _skipCache?: boolean;
 }
+
+/**
+ * Options for useRouter push/replace methods.
+ * Same as NavigateOptions but without `replace` (implicit in push vs replace).
+ */
+export type RouterNavigateOptions = Omit<NavigateOptions, "replace">;
+
+/**
+ * Router instance returned by useRouter hook.
+ * Provides stable action methods that never cause re-renders.
+ */
+export interface RouterInstance {
+  /** Navigate to a URL, pushing a new entry to the history stack */
+  push(url: string, options?: RouterNavigateOptions): Promise<void>;
+  /** Navigate to a URL, replacing the current history entry */
+  replace(url: string, options?: RouterNavigateOptions): Promise<void>;
+  /** Refresh the current route (re-fetch server data, preserve client state) */
+  refresh(): Promise<void>;
+  /** Prefetch a URL for faster client-side transition */
+  prefetch(url: string): void;
+  /** Go back in browser history */
+  back(): void;
+  /** Go forward in browser history */
+  forward(): void;
+}
+
+/**
+ * URLSearchParams without mutation methods.
+ * Matches Next.js convention for useSearchParams return type.
+ */
+export type ReadonlyURLSearchParams = Omit<
+  URLSearchParams,
+  "append" | "delete" | "set" | "sort"
+>;
 
 // ============================================================================
 // RSC Browser Dependencies

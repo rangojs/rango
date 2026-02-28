@@ -9,7 +9,7 @@ import {
   useRef,
 } from "react";
 import { NavigationStoreContext } from "./context.js";
-import type { PublicNavigationState, NavigateOptions } from "../types.js";
+import type { PublicNavigationState } from "../types.js";
 import type { DerivedNavigationState } from "../event-controller.js";
 
 /**
@@ -48,37 +48,24 @@ function toPublicState(state: DerivedNavigationState): PublicNavigationState {
 }
 
 /**
- * Navigation methods returned by useNavigation
- */
-export interface NavigationMethods {
-  navigate: (url: string, options?: NavigateOptions) => Promise<void>;
-  refresh: () => Promise<void>;
-}
-
-/**
- * Full value returned when no selector is provided
- */
-export type NavigationValue = PublicNavigationState & NavigationMethods;
-
-/**
- * Hook to access navigation state with optional selector for performance
+ * Hook to access reactive navigation state with optional selector for performance.
  *
- * Uses the event controller for reactive state management.
- * State is derived from source of truth (currentNavigation, inflightActions).
+ * Returns state only. For actions (push, replace, refresh, prefetch),
+ * use useRouter() instead.
  *
  * @example
  * ```tsx
- * const state = useNavigation(nav => nav.state);
+ * const { state, location } = useNavigation();
  * const isLoading = useNavigation(nav => nav.state === 'loading');
  * ```
  */
-export function useNavigation(): NavigationValue;
+export function useNavigation(): PublicNavigationState;
 export function useNavigation<T>(
   selector: (state: PublicNavigationState) => T,
 ): T;
 export function useNavigation<T>(
   selector?: (state: PublicNavigationState) => T,
-): T | NavigationValue {
+): T | PublicNavigationState {
   const ctx = useContext(NavigationStoreContext);
 
   if (!ctx) {
@@ -133,14 +120,5 @@ export function useNavigation<T>(
     });
   }, []);
 
-  // If no selector, include navigation methods
-  if (!selector) {
-    return {
-      ...(value as PublicNavigationState),
-      navigate: ctx.navigate,
-      refresh: ctx.refresh,
-    };
-  }
-
-  return value as T;
+  return value as T | PublicNavigationState;
 }

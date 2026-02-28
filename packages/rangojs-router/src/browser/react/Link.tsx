@@ -10,6 +10,7 @@ import React, {
 } from "react";
 import { NavigationStoreContext } from "./context.js";
 import { LinkContext } from "./use-link-status.js";
+import { prefetchUrl } from "./prefetch.js";
 import type { NavigateOptions } from "../types.js";
 import {
   type LocationStateEntry,
@@ -28,32 +29,6 @@ export type StateOrGetter<T = unknown> = T | (() => T);
  * - StateOrGetter: Legacy format for backwards compatibility
  */
 export type LinkState = LocationStateEntry[] | StateOrGetter;
-
-// Track prefetched URLs to avoid duplicate <link> elements
-const prefetchedUrls = new Set<string>();
-
-/**
- * Inject a <link rel="prefetch"> element into the document head
- * for the given URL with RSC partial request parameters.
- */
-function prefetchUrl(url: string, segmentIds: string[]): void {
-  if (prefetchedUrls.has(url)) return;
-  prefetchedUrls.add(url);
-
-  // Build RSC partial URL with segment IDs
-  const targetUrl = new URL(url, window.location.origin);
-  targetUrl.searchParams.set("_rsc_partial", "true");
-  if (segmentIds.length > 0) {
-    targetUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
-  }
-
-  // Inject <link rel="prefetch"> into head
-  const link = document.createElement("link");
-  link.rel = "prefetch";
-  link.href = targetUrl.toString();
-  link.as = "fetch";
-  document.head.appendChild(link);
-}
 
 /**
  * Prefetch strategy for the Link component

@@ -284,6 +284,9 @@ export function NavigationProvider({
         metadata: update.metadata,
       });
 
+      // Update route params
+      eventController.setParams(update.metadata.params ?? {});
+
       // Update handle data progressively as it streams in
       if (update.metadata.handles) {
         // Capture historyKey now - by the time async processing completes,
