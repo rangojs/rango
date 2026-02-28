@@ -178,9 +178,8 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * Invalidate all cache entries tagged with the given tag.
    * Deletes entries across all cache types (segment, response, item).
    * @param tag - The cache tag to invalidate
-   * @returns Number of entries deleted
    */
-  revalidateTag?(tag: string): Promise<number>;
+  revalidateTag?(tag: string): Promise<void>;
 }
 
 /**

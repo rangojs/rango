@@ -1,11 +1,7 @@
 "use server";
 
 import { ReactNode } from "react";
-import {
-  requireRequestContext,
-  redirect,
-  revalidateTag,
-} from "@rangojs/router";
+import { requireRequestContext, redirect } from "@rangojs/router";
 import { FlashMessage } from "./location-states.js";
 
 // Simulated delay helper
@@ -202,15 +198,4 @@ export async function interleaveTestAction(
   input: string,
 ): Promise<{ result: string; ts: number }> {
   return { result: `action-result:${input}`, ts: Date.now() };
-}
-
-/**
- * Invalidate cache entries by tag.
- * Used by cache tag e2e tests.
- */
-export async function invalidateCacheTag(
-  tag: string,
-): Promise<{ invalidated: boolean; tag: string }> {
-  revalidateTag(tag);
-  return { invalidated: true, tag };
 }

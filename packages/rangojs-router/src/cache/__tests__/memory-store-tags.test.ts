@@ -21,17 +21,19 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
       });
       await store.setItem("key3", "value3", { ttl: 60 });
 
-      const count = await store.revalidateTag("products");
-      expect(count).toBe(2);
+      await store.revalidateTag("products");
 
       expect(await store.getItem("key1")).toBeNull();
       expect(await store.getItem("key2")).toBeNull();
       expect(await store.getItem("key3")).not.toBeNull();
     });
 
-    it("returns 0 for unknown tag", async () => {
-      const count = await store.revalidateTag("nonexistent");
-      expect(count).toBe(0);
+    it("is a no-op for unknown tag", async () => {
+      await store.setItem("key1", "value1", { ttl: 60, tags: ["keep"] });
+
+      await store.revalidateTag("nonexistent");
+
+      expect(await store.getItem("key1")).not.toBeNull();
     });
   });
 
@@ -57,8 +59,7 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
         60,
       );
 
-      const count = await store.revalidateTag("page");
-      expect(count).toBe(1);
+      await store.revalidateTag("page");
 
       expect(await store.get("seg-key1")).toBeNull();
       expect(await store.get("seg-key2")).not.toBeNull();
@@ -76,8 +77,7 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
       );
       await store.putResponse("res-key2", new Response("body2"), 60);
 
-      const count = await store.revalidateTag("api");
-      expect(count).toBe(1);
+      await store.revalidateTag("api");
 
       expect(await store.getResponse("res-key1")).toBeNull();
       expect(await store.getResponse("res-key2")).not.toBeNull();
@@ -104,8 +104,7 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
         tags: ["shared-tag"],
       });
 
-      const count = await store.revalidateTag("shared-tag");
-      expect(count).toBe(3);
+      await store.revalidateTag("shared-tag");
 
       expect(await store.get("seg-key")).toBeNull();
       expect(await store.getResponse("res-key")).toBeNull();
@@ -126,8 +125,7 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
       });
 
       // Revalidating old tag should NOT delete the new entry
-      const count = await store.revalidateTag("old-tag");
-      expect(count).toBe(0);
+      await store.revalidateTag("old-tag");
 
       const cached = await store.getItem("key1");
       expect(cached).not.toBeNull();
@@ -156,10 +154,10 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
         60,
       );
 
-      expect(await store.revalidateTag("old")).toBe(0);
+      await store.revalidateTag("old");
       expect(await store.get("seg-key")).not.toBeNull();
 
-      expect(await store.revalidateTag("new")).toBe(1);
+      await store.revalidateTag("new");
       expect(await store.get("seg-key")).toBeNull();
     });
 
@@ -171,16 +169,16 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
         "new",
       ]);
 
-      expect(await store.revalidateTag("old")).toBe(0);
+      await store.revalidateTag("old");
       expect(await store.getResponse("res-key")).not.toBeNull();
 
-      expect(await store.revalidateTag("new")).toBe(1);
+      await store.revalidateTag("new");
       expect(await store.getResponse("res-key")).toBeNull();
     });
   });
 
   describe("clear cleans tag index", () => {
-    it("revalidateTag returns 0 after clear", async () => {
+    it("entries are gone after clear", async () => {
       await store.setItem("key1", "value1", {
         ttl: 60,
         tags: ["tag1"],
@@ -188,8 +186,7 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
 
       await store.clear();
 
-      const count = await store.revalidateTag("tag1");
-      expect(count).toBe(0);
+      expect(await store.getItem("key1")).toBeNull();
     });
   });
 });

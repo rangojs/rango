@@ -361,30 +361,26 @@ export class MemorySegmentCacheStore<
     }
   }
 
-  async revalidateTag(tag: string): Promise<number> {
+  async revalidateTag(tag: string): Promise<void> {
     const keys = this.tagIndex.get(tag);
-    if (!keys || keys.size === 0) return 0;
+    if (!keys || keys.size === 0) return;
 
-    let count = 0;
     for (const prefixedKey of keys) {
       const colonIdx = prefixedKey.indexOf(":");
       const prefix = prefixedKey.slice(0, colonIdx);
       const rawKey = prefixedKey.slice(colonIdx + 1);
 
-      let deleted = false;
       if (prefix === "seg") {
-        deleted = this.cache.delete(rawKey);
+        this.cache.delete(rawKey);
       } else if (prefix === "res") {
-        deleted = this.responseCache.delete(rawKey);
+        this.responseCache.delete(rawKey);
       } else if (prefix === "item") {
-        deleted = this.itemCache.delete(rawKey);
+        this.itemCache.delete(rawKey);
       }
-      if (deleted) count++;
     }
 
     // Clean up the tag entry itself
     this.tagIndex.delete(tag);
-    return count;
   }
 
   /**

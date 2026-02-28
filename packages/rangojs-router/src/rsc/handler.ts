@@ -31,7 +31,7 @@ import { createReverseFunction } from "../router/handler-context.js";
 import { contextGet } from "../context-var.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import { traverseBack } from "../router/pattern-matching.js";
-import { createCacheScope } from "../cache/cache-scope.js";
+import { createCacheScope, resolveCacheTags } from "../cache/cache-scope.js";
 import {
   hasCachedManifest,
   getRouteTrie,
@@ -575,13 +575,7 @@ export function createRSCHandler<
           const store = cacheScope.getStore() ?? reqCtx._cacheStore;
           if (store?.getResponse && store?.putResponse) {
             // Resolve tags for response cache entries
-            let responseTags: string[] | undefined;
-            if (cacheScope.config !== false && cacheScope.config.tags) {
-              responseTags =
-                typeof cacheScope.config.tags === "function"
-                  ? cacheScope.config.tags(reqCtx)
-                  : cacheScope.config.tags;
-            }
+            const responseTags = resolveCacheTags(cacheScope.config, reqCtx);
 
             // Build cache key with response:{type}: prefix to avoid collision
             // with segment keys and differentiate between response types

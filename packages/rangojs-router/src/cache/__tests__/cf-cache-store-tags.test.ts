@@ -56,12 +56,12 @@ describe("CFCacheStore tag support", () => {
     (globalThis as any).caches = { default: mockCache };
   });
 
-  function createStore(onTagInvalidation?: (tags: string[]) => Promise<void>) {
+  function createStore(onRevalidateTag?: (tags: string[]) => Promise<void>) {
     return new CFCacheStore({
       ctx: mockCtx,
       baseUrl: "https://test.internal/",
       version: "v1",
-      onTagInvalidation,
+      onRevalidateTag,
     });
   }
 
@@ -157,11 +157,11 @@ describe("CFCacheStore tag support", () => {
   });
 
   // ========================================================================
-  // onTagInvalidation callback
+  // onRevalidateTag callback
   // ========================================================================
 
   describe("revalidateTag()", () => {
-    it("calls onTagInvalidation via waitUntil with the tag", async () => {
+    it("calls onRevalidateTag via waitUntil with the tag", async () => {
       const onInvalidation = vi.fn(async () => {});
       const store = createStore(onInvalidation);
 
@@ -172,14 +172,14 @@ describe("CFCacheStore tag support", () => {
       expect(mockCtx.waitUntil).toHaveBeenCalled();
     });
 
-    it("warns when no onTagInvalidation callback is configured", async () => {
+    it("warns when no onRevalidateTag callback is configured", async () => {
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const store = createStore();
 
       await store.revalidateTag("products");
 
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("no onTagInvalidation"),
+        expect.stringContaining("no onRevalidateTag"),
       );
       warnSpy.mockRestore();
     });

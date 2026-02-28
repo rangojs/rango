@@ -31,6 +31,19 @@ export {
 /** Default TTL when no explicit value or store defaults are configured */
 const DEFAULT_TTL_SECONDS = 60;
 
+/**
+ * Resolve tags from cache config.
+ * Tags can be a static array or a function of RequestContext.
+ * @internal
+ */
+export function resolveCacheTags<TEnv>(
+  config: PartialCacheOptions<TEnv> | false,
+  ctx: import("../server/request-context.js").RequestContext<TEnv>,
+): string[] | undefined {
+  if (config === false || !config.tags) return undefined;
+  return typeof config.tags === "function" ? config.tags(ctx) : config.tags;
+}
+
 function debugCacheLog(message: string): void {
   if (INTERNAL_RANGO_DEBUG) {
     console.log(message);
@@ -333,13 +346,7 @@ export class CacheScope {
     const key = await this.resolveKey(pathname, params, isIntercept);
 
     // Resolve tags early (while request context is available)
-    let tags: string[] | undefined;
-    if (this.config !== false && this.config.tags) {
-      tags =
-        typeof this.config.tags === "function"
-          ? this.config.tags(requestCtx)
-          : this.config.tags;
-    }
+    const tags = resolveCacheTags(this.config, requestCtx);
 
     // Check if this is a partial request (navigation) vs document request
     const isPartial = requestCtx.url.searchParams.has("_rsc_partial");

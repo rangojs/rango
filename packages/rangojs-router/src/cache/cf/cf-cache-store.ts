@@ -146,7 +146,7 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    *
    * @example Using Cloudflare's Cache Purge API
    * ```typescript
-   * onTagInvalidation: async (tags) => {
+   * onRevalidateTag: async (tags) => {
    *   await fetch(`https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/purge_cache`, {
    *     method: "POST",
    *     headers: { Authorization: `Bearer ${API_TOKEN}` },
@@ -155,7 +155,7 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    * }
    * ```
    */
-  onTagInvalidation?: (tags: string[]) => Promise<void>;
+  onRevalidateTag?: (tags: string[]) => Promise<void>;
 }
 
 // ============================================================================
@@ -173,7 +173,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly baseUrl: string;
   private readonly waitUntil?: (fn: () => Promise<void>) => void;
   private readonly version?: string;
-  private readonly onTagInvalidation?: (tags: string[]) => Promise<void>;
+  private readonly onRevalidateTag?: (tags: string[]) => Promise<void>;
 
   constructor(options: CFCacheStoreOptions<TEnv>) {
     if (!options.ctx) {
@@ -189,7 +189,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     this.defaults = options.defaults;
     this.version = options.version ?? VERSION;
     this.keyGenerator = options.keyGenerator;
-    this.onTagInvalidation = options.onTagInvalidation;
+    this.onRevalidateTag = options.onRevalidateTag;
     this.waitUntil = (fn) => options.ctx.waitUntil(fn());
   }
 
@@ -581,7 +581,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * Invalidate cache entries tagged with the given tag.
    *
    * The CF Cache API has no built-in tag query/purge mechanism, so this
-   * delegates to the `onTagInvalidation` callback provided in the store
+   * delegates to the `onRevalidateTag` callback provided in the store
    * options. The callback runs via waitUntil so it does not block the
    * response. Use it to call Cloudflare's purge-by-tag API, update a
    * KV-based index, or any custom invalidation logic.
@@ -589,18 +589,18 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * Tags are stored as `x-edge-cache-tags` headers on cached responses,
    * making them available for Cloudflare's Cache-Tag purge endpoint.
    */
-  async revalidateTag(tag: string): Promise<number> {
-    if (!this.onTagInvalidation) {
+  async revalidateTag(tag: string): Promise<void> {
+    if (!this.onRevalidateTag) {
       console.warn(
-        `[CFCacheStore] revalidateTag("${tag}") called but no onTagInvalidation ` +
-          `callback is configured. Provide onTagInvalidation in CFCacheStoreOptions ` +
+        `[CFCacheStore] revalidateTag("${tag}") called but no onRevalidateTag ` +
+          `callback is configured. Provide onRevalidateTag in CFCacheStoreOptions ` +
           `to handle tag-based cache invalidation (e.g., via Cloudflare's purge API).`,
       );
-      return 0;
+      return;
     }
 
     try {
-      const callback = this.onTagInvalidation;
+      const callback = this.onRevalidateTag;
       if (this.waitUntil) {
         this.waitUntil(async () => {
           await callback([tag]);
@@ -608,10 +608,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       } else {
         await callback([tag]);
       }
-      return 0;
     } catch (error) {
       console.error("[CFCacheStore] revalidateTag failed:", error);
-      return 0;
     }
   }
 
