@@ -585,9 +585,8 @@ export const urlpatterns = urls(
       path.json(
         "/__test/last-error",
         async () => {
-          const { lastOnErrorCall, resetLastOnErrorCall } = await import(
-            "./router.js"
-          );
+          const { lastOnErrorCall, resetLastOnErrorCall } =
+            await import("./router.js");
           const result = lastOnErrorCall;
           resetLastOnErrorCall();
           return result;
