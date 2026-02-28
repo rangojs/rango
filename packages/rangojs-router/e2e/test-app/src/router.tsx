@@ -12,6 +12,17 @@ export const cacheStore = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 120 },
 });
 
+// Store the last onError call for e2e test verification
+export interface OnErrorRecord {
+  phase: string;
+  message: string;
+  actionId?: string;
+}
+export let lastOnErrorCall: OnErrorRecord | null = null;
+export function resetLastOnErrorCall() {
+  lastOnErrorCall = null;
+}
+
 /**
  * App-level bindings (platform resources like DB, KV, etc.)
  */
@@ -155,6 +166,13 @@ export const router = createRouter<AppEnv>({
     storageKey: "theme",
     enableSystem: true,
     enableColorScheme: true,
+  },
+  onError: (context) => {
+    lastOnErrorCall = {
+      phase: context.phase,
+      message: context.error.message,
+      actionId: context.actionId,
+    };
   },
 })
   // Global middleware - applied to ALL routes

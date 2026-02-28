@@ -581,6 +581,19 @@ export const urlpatterns = urls(
         },
       ),
 
+      // Test utils: read and reset last onError call for e2e verification
+      path.json(
+        "/__test/last-error",
+        async () => {
+          const { lastOnErrorCall, resetLastOnErrorCall } =
+            await import("./router.js");
+          const result = lastOnErrorCall;
+          resetLastOnErrorCall();
+          return result;
+        },
+        { name: "testLastError" },
+      ),
+
       // Content negotiation test: RSC + JSON + MD on same URL
       path(
         "/negotiate-test",

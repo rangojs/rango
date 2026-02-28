@@ -44,13 +44,6 @@ export async function handleServerAction<TEnv>(
       args = await ctx.decodeReply(body, { temporaryReferences });
     }
   } catch (error) {
-    ctx.callOnError(error, "action", {
-      request,
-      url,
-      env,
-      actionId,
-      handledByBoundary: false,
-    });
     throw new Error(`Failed to decode action arguments: ${error}`, {
       cause: error,
     });
@@ -90,6 +83,26 @@ export async function handleServerAction<TEnv>(
 
     returnValue = { ok: true, data };
   } catch (error) {
+    // Handle thrown redirect (e.g., throw redirect('/path'))
+    if (error instanceof Response) {
+      const redirectUrl = error.headers.get("Location");
+      const isRedirect =
+        error.status >= 300 && error.status < 400 && redirectUrl;
+      if (isRedirect) {
+        const locationState = getLocationState();
+        if (locationState) {
+          return ctx.createRedirectFlightResponse(
+            redirectUrl,
+            resolveLocationStateEntries(locationState),
+          );
+        }
+        return createResponseWithMergedHeaders(null, {
+          status: 204,
+          headers: { "X-RSC-Redirect": redirectUrl },
+        });
+      }
+    }
+
     returnValue = { ok: false, data: error };
     actionStatus = 500;
 
