@@ -603,7 +603,11 @@ function SearchResults() {
   const query = searchParams.get("q"); // "react"
   const page = searchParams.get("page"); // "2"
 
-  return <div>Searching for: {query}, page {page}</div>;
+  return (
+    <div>
+      Searching for: {query}, page {page}
+    </div>
+  );
 }
 ```
 
@@ -658,7 +662,7 @@ See `/links` for full URL generation guide including server-side `ctx.reverse`.
 | `useSearchParams()`  | URL search params                 | `ReadonlyURLSearchParams`                       |
 | `useHref()`          | Mount-aware href                  | `(path) => string`                              |
 | `useMount()`         | Current include() mount path      | `string`                                        |
-| `useNavigation()`    | Reactive navigation state         | state, location, isStreaming                     |
+| `useNavigation()`    | Reactive navigation state         | state, location, isStreaming                    |
 | `useRouter()`        | Stable router actions             | push, replace, refresh, prefetch, back, forward |
 | `useSegments()`      | URL path & segment IDs            | path, segmentIds, location                      |
 | `useLinkStatus()`    | Link pending state                | { pending }                                     |

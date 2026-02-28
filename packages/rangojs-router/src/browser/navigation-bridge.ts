@@ -758,11 +758,15 @@ export function createNavigationBridge(
           const root = await renderSegments(cachedSegments, {
             forceAwait: true,
           });
-          // Merge params from cached segments for useParams restoration
+          // Merge params from cached segments for useParams restoration.
+          // Set params on event controller before onUpdate so both location
+          // and params are current when the debounced notify() fires.
           const cachedParams: Record<string, string> = {};
           for (const s of cachedSegments) {
             if (s.params) Object.assign(cachedParams, s.params);
           }
+          eventController.setParams(cachedParams);
+
           const popstateUpdate = {
             root,
             metadata: {

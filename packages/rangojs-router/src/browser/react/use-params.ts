@@ -5,17 +5,31 @@ import { NavigationStoreContext } from "./context.js";
 import { getSsrParams } from "./use-segments.js";
 
 /**
- * Shallow equality check for params objects
+ * Shallow equality check for selector results
  */
-function paramsEqual(
-  a: Record<string, string>,
-  b: Record<string, string>,
-): boolean {
+function shallowEqual<T>(a: T, b: T): boolean {
+  if (Object.is(a, b)) return true;
+  if (
+    typeof a !== "object" ||
+    a === null ||
+    typeof b !== "object" ||
+    b === null
+  ) {
+    return false;
+  }
   const keysA = Object.keys(a);
   const keysB = Object.keys(b);
   if (keysA.length !== keysB.length) return false;
   for (const key of keysA) {
-    if (a[key] !== b[key]) return false;
+    if (
+      !Object.hasOwn(b, key) ||
+      !Object.is(
+        (a as Record<string, unknown>)[key],
+        (b as Record<string, unknown>)[key],
+      )
+    ) {
+      return false;
+    }
   }
   return true;
 }
@@ -65,16 +79,7 @@ export function useParams<T>(
       const params = ctx.eventController.getParams();
       const next = selectorRef.current ? selectorRef.current(params) : params;
 
-      // Use shallow equality for objects, strict equality for primitives
-      const changed =
-        typeof next === "object" && next !== null
-          ? !paramsEqual(
-              next as Record<string, string>,
-              prevValue.current as Record<string, string>,
-            )
-          : !Object.is(next, prevValue.current);
-
-      if (changed) {
+      if (!shallowEqual(next, prevValue.current)) {
         prevValue.current = next;
         setValue(next);
       }
