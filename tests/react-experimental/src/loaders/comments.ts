@@ -16,10 +16,9 @@ export const CommentsLoader = createLoader(async (ctx) => {
 
   const slug = ctx.params.slug as string;
 
-  // Handle POST mutation (JSON body from load({ method: "POST", body: {...} }))
-  const body = ctx.body as { name?: string; text?: string } | undefined;
-  const name = body?.name ?? null;
-  const text = body?.text ?? null;
+  // Handle form submission (mutation via FormData)
+  const name = ctx.formData?.get("name") as string | null;
+  const text = ctx.formData?.get("text") as string | null;
 
   if (name?.trim() && text?.trim()) {
     const comments = commentsBySlug.get(slug) ?? [];

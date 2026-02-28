@@ -13,9 +13,7 @@ export function Comments({ slug }: CommentsProps) {
   const formRef = useRef<HTMLFormElement>(null);
 
   const handleSubmit = async (formData: FormData) => {
-    const name = formData.get("name") as string;
-    const text = formData.get("text") as string;
-    await load({ method: "POST", body: { slug, name, text } });
+    await load({ method: "POST", body: formData });
     formRef.current?.reset();
   };
 
