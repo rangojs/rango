@@ -214,6 +214,9 @@ export interface RequestContext<
 
   /** @internal Accumulated location state entries */
   _locationState?: LocationStateEntry[];
+
+  /** @internal Route name from route matching, used for scoped reverse resolution */
+  _routeName?: string;
 }
 
 // AsyncLocalStorage instance for request context
@@ -242,12 +245,18 @@ export function getRequestContext<TEnv = unknown>():
 
 /**
  * Update params on the current request context
- * Called after route matching to populate route params
+ * Called after route matching to populate route params and route name
  */
-export function setRequestContextParams(params: Record<string, string>): void {
+export function setRequestContextParams(
+  params: Record<string, string>,
+  routeName?: string,
+): void {
   const ctx = requestContextStorage.getStore();
   if (ctx) {
     ctx.params = params;
+    if (routeName !== undefined) {
+      ctx._routeName = routeName;
+    }
   }
 }
 
@@ -627,13 +636,9 @@ export function createUseFunction<TEnv>(
       },
       method: "GET",
       body: undefined,
-      // Global-only reverse: RequestContext doesn't have a route name,
-      // so dot-prefixed (.name) scoped resolution is not available here.
-      // The main handler ctx.use() path in loader-resolution.ts passes
-      // the handler's fully scoped reverse instead.
       reverse: createReverseFunction(
         getGlobalRouteMap(),
-        undefined,
+        ctx._routeName,
         ctx.params as Record<string, string>,
       ),
     };

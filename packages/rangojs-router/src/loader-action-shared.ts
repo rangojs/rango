@@ -77,6 +77,7 @@ export async function executeLoaderAction(
   // Build loader context. Route params come from request context (URL matching),
   // not from FormData. Form data is available separately via ctx.formData.
   const { createHandlerContext } = await import("./router/handler-context.js");
+  const { getGlobalRouteMap } = await import("./route-map-builder.js");
   const baseCtx = createHandlerContext(
     requestCtx?.params ?? {},
     actionRequest,
@@ -84,6 +85,8 @@ export async function executeLoaderAction(
     actionUrl.pathname,
     actionUrl,
     env,
+    getGlobalRouteMap(),
+    requestCtx?._routeName,
   );
 
   const ctx: any = {
