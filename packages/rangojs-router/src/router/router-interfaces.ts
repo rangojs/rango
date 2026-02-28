@@ -244,6 +244,7 @@ export interface RSCRouter<
     params?: Record<string, string>;
     negotiated?: boolean;
     manifestEntry?: EntryData;
+    routeKey?: string;
   } | null>;
 
   matchPartial(

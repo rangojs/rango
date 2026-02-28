@@ -663,6 +663,7 @@ export function createRSCHandler<
         variables,
         nonce,
         preview?.params,
+        preview?.routeKey,
       );
       if (preview?.negotiated) {
         response.headers.append("Vary", "Accept");
@@ -726,6 +727,7 @@ export function createRSCHandler<
     variables: Record<string, any>,
     nonce: string | undefined,
     routeParams?: Record<string, string>,
+    routeKey?: string,
   ): Promise<Response> {
     const isPartial = url.searchParams.has("_rsc_partial");
     const isAction =
@@ -814,7 +816,7 @@ export function createRSCHandler<
       // server actions, loader fetches) can access ctx.params via getRequestContext().
       // Previously this was only done for JS actions, leaving PE actions with empty params.
       if (routeParams) {
-        setRequestContextParams(routeParams);
+        setRequestContextParams(routeParams, routeKey);
       }
 
       // ============================================================================

@@ -124,7 +124,7 @@ export async function handleServerAction<TEnv>(
     });
 
     if (errorResult) {
-      setRequestContextParams(errorResult.params);
+      setRequestContextParams(errorResult.params, errorResult.routeName);
 
       const payload: RscPayload = {
         metadata: {
@@ -172,7 +172,7 @@ export async function handleServerAction<TEnv>(
   if (!matchResult) {
     // Fall back to full render
     const fullMatch = await ctx.router.match(request, env);
-    setRequestContextParams(fullMatch.params);
+    setRequestContextParams(fullMatch.params, fullMatch.routeName);
 
     if (fullMatch.redirect) {
       return createResponseWithMergedHeaders(null, {
@@ -214,7 +214,7 @@ export async function handleServerAction<TEnv>(
   }
 
   // Return updated segments
-  setRequestContextParams(matchResult.params);
+  setRequestContextParams(matchResult.params, matchResult.routeName);
 
   const serverTiming = matchResult.serverTiming;
 

@@ -33,6 +33,7 @@ import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
 import { useCachePatterns } from "./urls/use-cache.js";
 import { prerenderLocalePatterns } from "./urls/prerender-locale.js";
+import { loaderReversePatterns } from "./urls/loader-reverse.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -520,6 +521,11 @@ export const urlpatterns = urls(
 
       // "use cache" directive test patterns (file-level, function-level, named profiles)
       include("/use-cache-test", useCachePatterns, { name: "useCacheTest" }),
+
+      // Loader reverse test patterns (ctx.reverse inside loaders)
+      include("/loader-reverse", loaderReversePatterns, {
+        name: "loaderReverse",
+      }),
 
       // Prerender with parent route params (locale in include prefix)
       include("/:locale", prerenderLocalePatterns, { name: "locale" }),
