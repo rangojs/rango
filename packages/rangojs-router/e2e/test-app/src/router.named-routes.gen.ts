@@ -129,6 +129,7 @@ export const NamedRoutes = {
   slowStreamingSkipSsr: "/slow-streaming-skip-ssr",
   "static-page": "/static-page",
   "static-shell": "/static-shell/:tag",
+  testLastError: "/__test/last-error",
   "theme.index": "/theme",
   "theme.toggle": "/theme/toggle",
   "trailingSlash.always": "/ts-always",

@@ -7,6 +7,7 @@ import {
   actionSimpleRedirect,
   throwRedirectWithState,
   throwSimpleRedirect,
+  throwActionError,
 } from "../actions.js";
 
 export function FlashBanner() {
@@ -59,6 +60,17 @@ export function ThrowSimpleRedirectButton() {
       onClick={() => throwSimpleRedirect()}
     >
       Throw simple redirect
+    </button>
+  );
+}
+
+export function ThrowErrorButton() {
+  return (
+    <button
+      data-testid="throw-error-btn"
+      onClick={() => throwActionError().catch(() => {})}
+    >
+      Throw action error
     </button>
   );
 }

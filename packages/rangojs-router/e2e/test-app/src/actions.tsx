@@ -207,6 +207,14 @@ export async function throwSimpleRedirect(): Promise<void> {
 }
 
 /**
+ * Action that throws a regular error.
+ * Used to verify onError receives phase="action".
+ */
+export async function throwActionError(): Promise<void> {
+  throw new Error("Action error for onError test");
+}
+
+/**
  * Test action for "use cache" interleaving.
  * Returns the input and a timestamp so tests can verify
  * the action was actually invoked (different ts each call).

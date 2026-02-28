@@ -44,13 +44,6 @@ export async function handleServerAction<TEnv>(
       args = await ctx.decodeReply(body, { temporaryReferences });
     }
   } catch (error) {
-    ctx.callOnError(error, "action", {
-      request,
-      url,
-      env,
-      actionId,
-      handledByBoundary: false,
-    });
     throw new Error(`Failed to decode action arguments: ${error}`, {
       cause: error,
     });
