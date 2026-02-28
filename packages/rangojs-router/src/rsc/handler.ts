@@ -742,11 +742,23 @@ export function createRSCHandler<
       cleanUrl.searchParams.delete("_rsc_action");
       cleanUrl.searchParams.delete("_rsc_prev");
 
-      // For actions, reload current page (referer)
-      // For navigation, load the target URL
-      const reloadUrl = isAction
-        ? request.headers.get("referer") || cleanUrl.toString()
-        : cleanUrl.toString();
+      // For actions, reload current page (referer) if same origin.
+      // For navigation, load the target URL.
+      // Validate referer origin to prevent open redirect via crafted header.
+      let reloadUrl = cleanUrl.toString();
+      if (isAction) {
+        const referer = request.headers.get("referer");
+        if (referer) {
+          try {
+            const refererUrl = new URL(referer);
+            if (refererUrl.origin === url.origin) {
+              reloadUrl = referer;
+            }
+          } catch {
+            // Malformed referer, fall back to cleanUrl
+          }
+        }
+      }
 
       // Return special response that tells client to reload
       return createResponseWithMergedHeaders(null, {
