@@ -134,8 +134,7 @@ function useLoaderInternal<T>(
               ? (loadOptions as any).body
               : undefined;
           const hasParams =
-            loadOptions?.params &&
-            Object.keys(loadOptions.params).length > 0;
+            loadOptions?.params && Object.keys(loadOptions.params).length > 0;
 
           if (bodyValue instanceof FormData) {
             // FormData body — send as multipart/form-data (preserves File objects).

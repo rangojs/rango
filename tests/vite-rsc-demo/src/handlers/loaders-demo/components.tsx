@@ -390,8 +390,11 @@ export function FormActionSearch() {
     <div style={cardStyle}>
       <h3 style={headingStyle}>load() with POST - Form Search</h3>
       <p style={descStyle}>
-        Use <code>load({"{"} method: "POST", body: ... {"}"})</code> to send
-        form data to a fetchable loader. Enhanced with loading states.
+        Use{" "}
+        <code>
+          load({"{"} method: "POST", body: ... {"}"})
+        </code>{" "}
+        to send form data to a fetchable loader. Enhanced with loading states.
       </p>
 
       <form action={handleSubmit} style={{ marginBottom: "1rem" }}>
@@ -641,8 +644,11 @@ export function NotesManager() {
       <h3 style={headingStyle}>Loader as GET + POST</h3>
       <p style={descStyle}>
         Single loader handles both fetching (via <code>useEffect</code>) and
-        mutations (via <code>load({"{"} method: "POST" {"}"})</code>). Unified
-        data flow pattern.
+        mutations (via{" "}
+        <code>
+          load({"{"} method: "POST" {"}"})
+        </code>
+        ). Unified data flow pattern.
       </p>
 
       <form
@@ -776,8 +782,10 @@ export function FileUploader() {
       <h3 style={headingStyle}>File Upload via load() POST</h3>
       <p style={descStyle}>
         Upload files using{" "}
-        <code>load({"{"} method: "POST", body: formData {"}"})</code>. FormData
-        is sent as multipart/form-data, preserving File objects.
+        <code>
+          load({"{"} method: "POST", body: formData {"}"})
+        </code>
+        . FormData is sent as multipart/form-data, preserving File objects.
       </p>
 
       <form

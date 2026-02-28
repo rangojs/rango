@@ -553,9 +553,7 @@ export function ServerActionFormTest() {
         <p data-testid="server-action-form-no-data">No data</p>
       )}
 
-      {isPending && (
-        <p data-testid="server-action-form-loading">Loading...</p>
-      )}
+      {isPending && <p data-testid="server-action-form-loading">Loading...</p>}
 
       <form
         data-testid="server-action-form"
@@ -574,4 +572,3 @@ export function ServerActionFormTest() {
     </div>
   );
 }
-

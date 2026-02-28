@@ -707,9 +707,7 @@ test.describe("Server action form (useActionState)", () => {
 
     // Initially no data
     await expect(testId(page, "server-action-form-no-data")).toBeVisible();
-    await expect(
-      testId(page, "server-action-form-data"),
-    ).not.toBeVisible();
+    await expect(testId(page, "server-action-form-data")).not.toBeVisible();
 
     // Submit the form
     await testId(page, "server-action-form-submit-btn").click();
@@ -737,10 +735,7 @@ test.describe("Server action form (useActionState)", () => {
     await waitForHydration(page);
 
     // The form should have React's hidden fields for server action PE
-    const formHtml = await testId(
-      page,
-      "server-action-form",
-    ).innerHTML();
+    const formHtml = await testId(page, "server-action-form").innerHTML();
 
     // React adds hidden inputs with $ACTION prefix for progressive enhancement
     expect(formHtml).toMatch(/\$ACTION/);
@@ -952,10 +947,7 @@ test.describe("useLoader hooks (production)", () => {
     await page.goto(f.url("/hook-tests/form-action"));
     await waitForHydration(page);
 
-    const formHtml = await testId(
-      page,
-      "server-action-form",
-    ).innerHTML();
+    const formHtml = await testId(page, "server-action-form").innerHTML();
 
     expect(formHtml).toMatch(/\$ACTION/);
   });
