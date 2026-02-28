@@ -255,10 +255,7 @@ export interface NavigateOptionsInternal extends NavigateOptions {
  * Options for useRouter push/replace methods.
  * Same as NavigateOptions but without `replace` (implicit in push vs replace).
  */
-export interface RouterNavigateOptions {
-  scroll?: boolean;
-  state?: HistoryState;
-}
+export type RouterNavigateOptions = Omit<NavigateOptions, "replace">;
 
 /**
  * Router instance returned by useRouter hook.

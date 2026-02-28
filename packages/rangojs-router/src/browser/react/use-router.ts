@@ -34,19 +34,11 @@ export function useRouter(): RouterInstance {
   return useMemo<RouterInstance>(
     () => ({
       push(url: string, options?: RouterNavigateOptions): Promise<void> {
-        return ctx.navigate(url, {
-          replace: false,
-          scroll: options?.scroll,
-          state: options?.state,
-        });
+        return ctx.navigate(url, { ...options, replace: false });
       },
 
       replace(url: string, options?: RouterNavigateOptions): Promise<void> {
-        return ctx.navigate(url, {
-          replace: true,
-          scroll: options?.scroll,
-          state: options?.state,
-        });
+        return ctx.navigate(url, { ...options, replace: true });
       },
 
       refresh(): Promise<void> {

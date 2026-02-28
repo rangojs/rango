@@ -4,6 +4,11 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter, useNavigation, useLoader } from "@rangojs/router/client";
 import type { LoaderDefinition } from "@rangojs/router/client";
 
+type HookTestLoaderDef = LoaderDefinition<
+  { routeId: string; count: number; source: string; timestamp: string },
+  Record<string, string | undefined>
+>;
+
 /**
  * Test component for useRouter hook.
  * Exposes all 6 methods via buttons with data-testid attributes.
@@ -11,10 +16,7 @@ import type { LoaderDefinition } from "@rangojs/router/client";
 export function UseRouterTest({
   loader,
 }: {
-  loader: LoaderDefinition<
-    { routeId: string; count: number; source: string; timestamp: string },
-    Record<string, string | undefined>
-  >;
+  loader: HookTestLoaderDef;
 }) {
   const router = useRouter();
   const routerRef = useRef(router);
@@ -110,10 +112,7 @@ export function UseRouterTargetPage({
   loader,
 }: {
   targetId: string;
-  loader: LoaderDefinition<
-    { routeId: string; count: number; source: string; timestamp: string },
-    Record<string, string | undefined>
-  >;
+  loader: HookTestLoaderDef;
 }) {
   const router = useRouter();
   const { data } = useLoader(loader);

@@ -6,8 +6,6 @@ import {
   expectNoReload,
   testId,
   goBack,
-  goForward,
-  waitForNavigation,
   waitForNumericChange,
   getNumericContent,
 } from "./helper";
@@ -548,12 +546,11 @@ test.describe("useRouter (production)", () => {
       "ref-stable:true",
     );
 
-    // Trigger re-render via refresh
-    await testId(page, "router-refresh-btn").click();
-
+    // Trigger re-render via refresh (read count before clicking)
     const initialCount = await getNumericContent(
       testId(page, "router-loader-count"),
     );
+    await testId(page, "router-refresh-btn").click();
     await waitForNumericChange(
       testId(page, "router-loader-count"),
       initialCount,
@@ -601,5 +598,30 @@ test.describe("useNavigation state-only API (production)", () => {
     await expect(testId(page, "nav-has-refresh")).toContainText(
       "has-refresh:false",
     );
+  });
+
+  test("useNavigation should still reflect state during router.push navigation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/hook-tests/use-router"));
+    await waitForHydration(page);
+
+    // Initial state should be idle
+    await expect(testId(page, "nav-current-state")).toContainText(
+      "nav-state:idle",
+    );
+
+    // Push to target A (triggers navigation state change)
+    await testId(page, "router-push-btn").click();
+
+    // After navigation completes, state should return to idle
+    await expect(testId(page, "router-target-a")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(testId(page, "nav-status-state")).toContainText("state:idle", {
+      timeout: 2000,
+    });
   });
 });
