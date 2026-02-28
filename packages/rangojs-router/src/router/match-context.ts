@@ -45,7 +45,7 @@
  *   - request, url, pathname: The incoming HTTP request
  *
  * Environment:
- *   - env, bindings: Server environment (Cloudflare bindings, etc.)
+ *   - env: Server environment bindings (Cloudflare bindings, etc.)
  *
  * Client State (from RSC request headers):
  *   - clientSegmentIds: Segments the client currently has
@@ -140,7 +140,6 @@ export interface MatchContext<TEnv = any> {
 
   // Environment
   env: TEnv;
-  bindings: TEnv;
 
   // Client state
   clientSegmentIds: string[];

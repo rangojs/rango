@@ -87,7 +87,7 @@ Response route handlers receive a lighter context (no `ctx.use()`, no `ctx.res`)
 interface ResponseHandlerContext<TParams, TEnv> {
   request: Request;
   params: TParams; // Typed from URL pattern
-  env: Bindings; // Extracted from RouterEnv (DB, KV, etc.)
+  env: TEnv; // Platform bindings (DB, KV, etc.)
   searchParams: URLSearchParams;
   url: URL;
   pathname: string;
@@ -118,20 +118,19 @@ Headers and cookies set via `ctx.header()` / `ctx.setCookie()` are merged into t
 auto-wrapped Response. If the handler returns a `Response` directly, these are ignored
 (use the Response headers instead).
 
-### Environment Type Extraction
+### Environment Access
 
-`env` extracts bindings from `RouterEnv`, not the full env:
+`env` is the bindings object passed to `router.fetch()`. Variables are
+accessed via `ctx.get()`:
 
 ```typescript
-type AppEnv = RouterEnv<{ DB: D1Database; KV: KVNamespace }, { user: User }>;
-
 // In a response handler:
 path.json(
   "/api/data",
   (ctx) => {
-    ctx.env.DB; // D1Database (bindings extracted)
+    ctx.env.DB; // D1Database (bindings)
     ctx.env.KV; // KVNamespace
-    // ctx.env.user  -- NOT available (variables are not on response ctx.env)
+    ctx.get("user"); // Variables set by middleware
     return { data: "ok" };
   },
   { name: "data" },

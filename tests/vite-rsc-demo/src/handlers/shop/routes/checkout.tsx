@@ -1,8 +1,7 @@
 import type { Handler } from "@rangojs/router";
-import type { AppEnv } from "@/router.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 
-export const CheckoutIndexRoute: Handler<"/checkout", AppEnv> = (ctx) => (
+export const CheckoutIndexRoute: Handler<"/checkout"> = (ctx) => (
   <div style={{ display: "flex", gap: "2rem" }}>
     <div style={{ flex: 1 }}>
       <h2>Checkout</h2>

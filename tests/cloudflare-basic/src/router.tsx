@@ -5,12 +5,12 @@ import {
 } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
 import { Document } from "./document.js";
-import type { AppEnv } from "./env.js";
+import type { AppBindings } from "./env.js";
 
 // Create the router with document component
 // Document is a server component that wraps the HTML shell
 // Navigation is handled by NavLayout in urls.tsx
-export const router = createRouter<AppEnv>({
+export const router = createRouter<AppBindings>({
   document: Document,
   // Enable theme support with system detection
   theme: {
@@ -22,10 +22,10 @@ export const router = createRouter<AppEnv>({
     enableColorScheme: true,
   },
   // CF cache store with ExecutionContext for non-blocking writes
-  cache: (env) => ({
+  cache: (env, ctx) => ({
     store: new CFCacheStore({
       defaults: { ttl: 60, swr: 300 },
-      ctx: env.ctx!, // Always provided in Cloudflare Workers
+      ctx: ctx!,
     }),
   }),
 })

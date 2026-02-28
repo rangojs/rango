@@ -1,9 +1,9 @@
 import { createRouter } from "@rangojs/router";
 import { urlpatterns } from "./urls.js";
 import { Document } from "./components/Document.js";
-import type { AppEnv } from "./env.js";
+import type { AppBindings } from "./env.js";
 
-export const router = createRouter<AppEnv>({
+export const router = createRouter<AppBindings>({
   document: Document,
 }).routes(urlpatterns);
 

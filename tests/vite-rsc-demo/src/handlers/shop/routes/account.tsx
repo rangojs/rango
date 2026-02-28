@@ -1,9 +1,8 @@
 import type { Handler } from "@rangojs/router";
-import type { AppEnv } from "@/router.js";
 import { orders } from "@/handlers/shop/data.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 
-export const AccountIndexRoute: Handler<"/account", AppEnv> = (ctx) => {
+export const AccountIndexRoute: Handler<"/account"> = (ctx) => {
   // Type-safe context access!
   const user = ctx.get("user") || {
     id: "guest",

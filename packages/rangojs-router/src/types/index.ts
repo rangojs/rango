@@ -3,6 +3,7 @@ export type {
   GetRegisteredRoutes,
   DefaultHandlerRouteMap,
   DefaultEnv,
+  DefaultVars,
 } from "./global-namespace.js";
 // Ensure the global namespace declaration is evaluated
 import "./global-namespace.js";

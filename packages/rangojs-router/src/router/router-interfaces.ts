@@ -15,6 +15,15 @@ import { RSC_ROUTER_BRAND } from "./router-registry.js";
 import type { RSCRouterOptions, RootLayoutProps } from "./router-options.js";
 
 /**
+ * Options passed to router.fetch() and the internal RSC handler.
+ */
+export interface RouterFetchOptions<TEnv> {
+  env?: TEnv;
+  vars?: Record<string, any>;
+  ctx?: ExecutionContext;
+}
+
+/**
  * Merge route patterns with response types into a single route map.
  * Routes with response types get { path, response } objects; others stay as strings.
  * Handles both plain string routes and { path, search } object routes.
@@ -108,7 +117,7 @@ export interface RSCRouter<
    *
    * @example
    * ```typescript
-   * const _router = createRouter<AppEnv>({
+   * const _router = createRouter<AppBindings>({
    *   urls: urlpatterns,
    * });
    *
@@ -311,6 +320,6 @@ export interface RSCRouter<
    */
   fetch(
     request: Request,
-    env: TEnv & { ctx?: ExecutionContext },
+    options?: RouterFetchOptions<TEnv>,
   ): Promise<Response>;
 }

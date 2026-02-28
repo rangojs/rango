@@ -35,6 +35,7 @@ import { useCachePatterns } from "./urls/use-cache.js";
 import { prerenderLocalePatterns } from "./urls/prerender-locale.js";
 import { loaderReversePatterns } from "./urls/loader-reverse.js";
 import { ctxCleanPatterns } from "./urls/ctx-clean.js";
+import { ctxEnvVarPatterns } from "./urls/ctx-env-var.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -530,6 +531,9 @@ export const urlpatterns = urls(
 
       // Context clean test patterns (verify _rsc* params stripped from ctx)
       include("/ctx-clean", ctxCleanPatterns, { name: "ctxClean" }),
+
+      // ctx.env/ctx.var consistency test patterns
+      include("/ctx-env-var", ctxEnvVarPatterns, { name: "ctxEnvVar" }),
 
       // Prerender with parent route params (locale in include prefix)
       include("/:locale", prerenderLocalePatterns, { name: "locale" }),

@@ -88,7 +88,7 @@ export interface RSCRouterOptions<TEnv = any> {
    * }
    *
    * // router.tsx
-   * const router = createRouter<AppEnv>({
+   * const router = createRouter<AppBindings>({
    *   document: Document,
    * });
    * ```
@@ -120,13 +120,13 @@ export interface RSCRouterOptions<TEnv = any> {
    * @example
    * ```typescript
    * // Simple static component
-   * const router = createRouter<AppEnv>({
+   * const router = createRouter<AppBindings>({
    *   document: Document,
    *   notFound: <NotFound404 />,
    * });
    *
    * // Dynamic component with pathname
-   * const router = createRouter<AppEnv>({
+   * const router = createRouter<AppBindings>({
    *   document: Document,
    *   notFound: ({ pathname }) => (
    *     <div>
@@ -157,7 +157,7 @@ export interface RSCRouterOptions<TEnv = any> {
    *
    * @example
    * ```typescript
-   * const router = createRouter<AppEnv>({
+   * const router = createRouter<AppBindings>({
    *   onError: (context) => {
    *     // Send to error tracking service
    *     Sentry.captureException(context.error, {
@@ -198,11 +198,11 @@ export interface RSCRouterOptions<TEnv = any> {
    *
    * @example Dynamic config with env (e.g., Cloudflare Workers with ExecutionContext)
    * ```typescript
-   * const router = createRouter<AppEnv>({
-   *   cache: (env) => ({
+   * const router = createRouter<AppBindings>({
+   *   cache: (env, ctx) => ({
    *     store: new CFCacheStore({
    *       defaults: { ttl: 60 },
-   *       ctx: env.ctx, // ExecutionContext for non-blocking writes
+   *       ctx, // ExecutionContext for non-blocking writes
    *     }),
    *   }),
    * });
@@ -210,7 +210,10 @@ export interface RSCRouterOptions<TEnv = any> {
    */
   cache?:
     | { store: SegmentCacheStore; enabled?: boolean }
-    | ((env: TEnv & { ctx?: ExecutionContext }) => {
+    | ((
+        env: TEnv,
+        ctx?: ExecutionContext,
+      ) => {
         store: SegmentCacheStore;
         enabled?: boolean;
       });
@@ -250,7 +253,7 @@ export interface RSCRouterOptions<TEnv = any> {
    *
    * @example
    * ```typescript
-   * const router = createRouter<AppEnv>({
+   * const router = createRouter<AppBindings>({
    *   theme: {
    *     defaultTheme: "system",
    *     themes: ["light", "dark"],
@@ -294,7 +297,7 @@ export interface RSCRouterOptions<TEnv = any> {
    *   path("/about", AboutPage, { name: "about" }),
    * ]);
    *
-   * const router = createRouter<AppEnv>({
+   * const router = createRouter<AppBindings>({
    *   document: Document,
    *   urls: urlpatterns,
    * });

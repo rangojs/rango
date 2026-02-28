@@ -15,6 +15,6 @@ export default {
     }
 
     // Use router.fetch directly (nonce and CSP handled automatically)
-    return router.fetch(request, { Bindings: env, Variables: {} });
+    return router.fetch(request, { env });
   },
 } satisfies ExportedHandler<AppBindings>;

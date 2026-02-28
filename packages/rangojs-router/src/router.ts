@@ -86,7 +86,10 @@ import type {
   RSCRouterOptions,
   RootLayoutProps,
 } from "./router/router-options.js";
-import type { RSCRouter } from "./router/router-interfaces.js";
+import type {
+  RSCRouter,
+  RouterFetchOptions,
+} from "./router/router-interfaces.js";
 
 // Extracted closure functions
 import {
@@ -106,7 +109,10 @@ export type {
   RSCRouterOptions,
   RootLayoutProps,
 } from "./router/router-options.js";
-export type { RSCRouter } from "./router/router-interfaces.js";
+export type {
+  RSCRouter,
+  RouterFetchOptions,
+} from "./router/router-interfaces.js";
 
 export function createRouter<TEnv = any>(
   options: RSCRouterOptions<TEnv> = {},
@@ -741,14 +747,11 @@ export function createRouter<TEnv = any>(
       let handler:
         | ((
             request: Request,
-            env: TEnv & { ctx?: ExecutionContext },
+            options?: RouterFetchOptions<TEnv>,
           ) => Promise<Response>)
         | null = null;
 
-      return async (
-        request: Request,
-        env: TEnv & { ctx?: ExecutionContext },
-      ) => {
+      return async (request: Request, options?: RouterFetchOptions<TEnv>) => {
         // Trigger lazy import of per-router manifest data before route matching.
         // No-op if data is already loaded or no loader is registered.
         await ensureRouterManifest(routerId);
@@ -762,7 +765,7 @@ export function createRouter<TEnv = any>(
             version,
           });
         }
-        return handler(request, env);
+        return handler(request, options);
       };
     })(),
 

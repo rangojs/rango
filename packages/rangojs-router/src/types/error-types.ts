@@ -34,7 +34,7 @@ export type ErrorPhase =
  *
  * @example
  * ```typescript
- * const router = createRouter<AppEnv>({
+ * const router = createRouter<AppBindings>({
  *   onError: (context) => {
  *     // Log to error tracking service
  *     errorTracker.capture({

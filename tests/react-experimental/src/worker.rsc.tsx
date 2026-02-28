@@ -13,6 +13,6 @@ export default {
       return new Response(null, { status: 404 });
     }
 
-    return router.fetch(request, { Bindings: {}, Variables: {} });
+    return router.fetch(request);
   },
 } satisfies ExportedHandler;

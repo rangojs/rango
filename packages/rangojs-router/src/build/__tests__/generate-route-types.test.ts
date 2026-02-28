@@ -934,7 +934,7 @@ export const router = createRouter().routes(urlpatterns);
     const code = `
 import { createRouter } from "@rangojs/router";
 import { urlpatterns } from "./urls.js";
-export const router = createRouter<AppEnv>({
+export const router = createRouter<AppBindings>({
   document: Document,
 }).routes(urlpatterns);
 `;
@@ -945,7 +945,7 @@ export const router = createRouter<AppEnv>({
     const code = `
 import { createRouter } from "@rangojs/router";
 import { sitePatterns } from "./urls.js";
-export const router = createRouter<AppEnv>({
+export const router = createRouter<AppBindings>({
   document: Document,
 }).middleware([authMiddleware]).routes(sitePatterns);
 `;

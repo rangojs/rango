@@ -21,7 +21,7 @@ export const authMiddleware = createMiddleware(async (ctx, next) => {
   }
 
   const user = await verifyToken(token);
-  ctx.env.Variables.user = user;
+  ctx.set("user", user);
 
   await next();
 });
@@ -74,12 +74,11 @@ export const myMiddleware = createMiddleware(async (ctx, next) => {
   ctx.url; // Parsed URL
   ctx.params; // Route parameters
 
-  // Access environment
-  ctx.env.Bindings.DB; // Cloudflare bindings
-  ctx.env.Variables; // Mutable variables
+  // Access environment (bindings directly)
+  ctx.env.DB; // Cloudflare bindings
 
   // Set variables for downstream handlers
-  ctx.env.Variables.user = { id: "123", name: "John" };
+  ctx.set("user", { id: "123", name: "John" });
 
   // Continue to next middleware/handler
   await next();
@@ -117,8 +116,8 @@ const Dashboard: Handler<"dashboard"> = (ctx) => {
 };
 ```
 
-This works alongside `ctx.env.Variables` (global env typing). Use `createVar` for
-route-local or feature-scoped data; use `env.Variables` for app-wide middleware state.
+This works alongside string-key `ctx.set("key", value)` / `ctx.get("key")`. Use `createVar` for
+route-local or feature-scoped data; use string keys for simple app-wide middleware state.
 
 ## Redirect with State in Middleware
 
@@ -150,7 +149,7 @@ Read the flash on the target page with `useLocationState(FlashMessage)`. The `{ 
 
 ```typescript
 export const requireAuthMiddleware = createMiddleware(async (ctx, next) => {
-  const user = ctx.env.Variables.user;
+  const user = ctx.get("user");
 
   if (!user) {
     throw new Response("Unauthorized", { status: 401 });
@@ -160,7 +159,7 @@ export const requireAuthMiddleware = createMiddleware(async (ctx, next) => {
 });
 
 export const permissionsMiddleware = createMiddleware(async (ctx, next) => {
-  const user = ctx.env.Variables.user;
+  const user = ctx.get("user");
   const requiredPermission = "admin";
 
   if (!user?.permissions?.includes(requiredPermission)) {
@@ -193,14 +192,14 @@ export const rateLimitMiddleware = createMiddleware(async (ctx, next) => {
   const ip = ctx.request.headers.get("CF-Connecting-IP") ?? "unknown";
   const key = `rate-limit:${ip}`;
 
-  const count = await ctx.env.Bindings.KV.get(key);
+  const count = await ctx.env.KV.get(key);
   const requests = count ? parseInt(count) : 0;
 
   if (requests > 100) {
     throw new Response("Too Many Requests", { status: 429 });
   }
 
-  await ctx.env.Bindings.KV.put(key, String(requests + 1), {
+  await ctx.env.KV.put(key, String(requests + 1), {
     expirationTtl: 60,
   });
 
@@ -221,12 +220,12 @@ export const loggerMiddleware = createMiddleware(async (ctx, next) => {
 
 export const mockAuthMiddleware = createMiddleware(async (ctx, next) => {
   // Mock user for development
-  ctx.env.Variables.user = { id: "1", name: "Demo User" };
+  ctx.set("user", { id: "1", name: "Demo User" });
   await next();
 });
 
 export const requireAuthMiddleware = createMiddleware(async (ctx, next) => {
-  if (!ctx.env.Variables.user) {
+  if (!ctx.get("user")) {
     throw new Response("Unauthorized", { status: 401 });
   }
   await next();

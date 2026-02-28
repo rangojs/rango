@@ -35,6 +35,7 @@ export type {
   DocumentProps,
   RouterEnv,
   DefaultEnv,
+  DefaultVars,
   RouteDefinition,
   RouteConfig,
   RouteDefinitionOptions,

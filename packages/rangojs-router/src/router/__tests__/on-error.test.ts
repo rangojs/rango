@@ -97,12 +97,12 @@ describe("OnError Types", () => {
     });
 
     it("should support typed env", () => {
-      interface AppEnv {
+      interface AppBindings {
         DB: { query: () => void };
         USER_ID: string;
       }
 
-      const context: OnErrorContext<AppEnv> = {
+      const context: OnErrorContext<AppBindings> = {
         error: new Error("DB error"),
         phase: "loader",
         request: new Request("https://example.com"),

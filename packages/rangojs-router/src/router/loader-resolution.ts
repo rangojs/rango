@@ -299,7 +299,8 @@ export function setupLoaderAccess<TEnv>(
     if (isHandle(item)) {
       const handle = item;
       const store = handleStoreRef;
-      const segmentId = (ctx as InternalHandlerContext)._currentSegmentId;
+      const segmentId = (ctx as InternalHandlerContext<any, TEnv>)
+        ._currentSegmentId;
 
       if (!segmentId) {
         throw new Error(
@@ -339,7 +340,8 @@ export function setupBuildUse<TEnv>(ctx: HandlerContext<any, TEnv>): void {
     if (isHandle(item)) {
       const handle = item;
       const store = handleStoreRef;
-      const segmentId = (ctx as InternalHandlerContext)._currentSegmentId;
+      const segmentId = (ctx as InternalHandlerContext<any, TEnv>)
+        ._currentSegmentId;
 
       if (!segmentId) {
         throw new Error(

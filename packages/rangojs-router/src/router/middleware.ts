@@ -107,7 +107,7 @@ export function extractParams(
  *
  * Note: The implementation uses runtime values while the interface provides
  * compile-time type safety. The env/get/set types are resolved at call sites
- * via conditional types based on TEnv extending RouterEnv.
+ * via the DefaultVars global namespace augmentation.
  */
 export function createMiddlewareContext<TEnv>(
   request: Request,
@@ -131,7 +131,7 @@ export function createMiddlewareContext<TEnv>(
     url,
     pathname: url.pathname,
     searchParams: url.searchParams,
-    env: env as MiddlewareContext<TEnv>["env"],
+    env,
     params,
 
     // res getter - returns the stub or real response (always available)

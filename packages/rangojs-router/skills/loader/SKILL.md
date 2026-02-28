@@ -14,7 +14,7 @@ Loaders fetch data on the server and stream it to the client.
 import { createLoader } from "@rangojs/router";
 
 export const ProductLoader = createLoader("product", async (ctx) => {
-  const product = await ctx.env.Bindings.DB.prepare(
+  const product = await ctx.env.DB.prepare(
     "SELECT * FROM products WHERE slug = ?",
   )
     .bind(ctx.params.slug)
@@ -100,14 +100,14 @@ export const ProductLoader = createLoader("product", async (ctx) => {
   // Query params
   const variant = ctx.url.searchParams.get("variant");
 
-  // Environment (DB, KV, etc.)
-  const db = ctx.env.Bindings.DB;
+  // Environment bindings (DB, KV, etc.)
+  const db = ctx.env.DB;
 
   // Request headers
   const auth = ctx.request.headers.get("Authorization");
 
   // Variables set by middleware
-  const user = ctx.env.Variables.user;
+  const user = ctx.get("user");
 
   return { product: await fetchProduct(slug) };
 });
@@ -222,7 +222,7 @@ export const SearchLoader = createLoader(async (ctx) => {
   "use server";
 
   const query = ctx.params.query ?? "";
-  const results = await ctx.env.Bindings.DB.prepare(
+  const results = await ctx.env.DB.prepare(
     "SELECT * FROM products WHERE name LIKE ?",
   )
     .bind(`%${query}%`)
@@ -273,7 +273,7 @@ export const FileUploadLoader = createLoader(async (ctx) => {
   const file = ctx.formData?.get("file") as File | null;
   if (file && file.size > 0) {
     // Save to R2, D1, etc.
-    await ctx.env.Bindings.BUCKET.put(file.name, file.stream());
+    await ctx.env.BUCKET.put(file.name, file.stream());
     return { uploaded: { name: file.name, size: file.size, type: file.type } };
   }
   return { uploaded: null };
@@ -289,7 +289,7 @@ Client usage — see `/hooks useFetchLoader` for the full client-side pattern.
 import { createLoader } from "@rangojs/router";
 
 export const ProductLoader = createLoader("product", async (ctx) => {
-  const product = await ctx.env.Bindings.DB
+  const product = await ctx.env.DB
     .prepare("SELECT * FROM products WHERE slug = ?")
     .bind(ctx.params.slug)
     .first();
@@ -302,10 +302,10 @@ export const ProductLoader = createLoader("product", async (ctx) => {
 });
 
 export const CartLoader = createLoader("cart", async (ctx) => {
-  const user = ctx.env.Variables.user;
+  const user = ctx.get("user");
   if (!user) return { cart: null };
 
-  const cart = await ctx.env.Bindings.KV.get(`cart:${user.id}`, "json");
+  const cart = await ctx.env.KV.get(`cart:${user.id}`, "json");
   return { cart };
 });
 

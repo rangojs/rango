@@ -1,9 +1,4 @@
-import {
-  createRouter,
-  type RouterEnv,
-  redirect,
-  type Middleware,
-} from "@rangojs/router";
+import { createRouter, redirect, type Middleware } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 import { urlpatterns } from "./urls.js";
 
@@ -52,13 +47,16 @@ export interface AppVariables {
   sharedFromGetParams?: string;
   // Prerender locale test variable
   localeContent?: string;
+  // ctx.env/ctx.var consistency test variables
+  envTestVar?: string;
+  mwEnvType?: string;
+  mwEnvKeys?: string;
 }
-
-export type AppEnv = RouterEnv<AppBindings, AppVariables>;
 
 declare global {
   namespace RSCRouter {
-    interface Env extends AppEnv {}
+    interface Env extends AppBindings {}
+    interface Vars extends AppVariables {}
   }
 }
 
@@ -154,7 +152,7 @@ const headerShorthandMiddleware: Middleware = async (ctx, next) => {
   ctx.header("X-Header-Shorthand", "works");
 };
 
-export const router = createRouter<AppEnv>({
+export const router = createRouter<AppBindings>({
   cache: { store: cacheStore },
   cacheProfiles: {
     short: { ttl: 10, swr: 20 },

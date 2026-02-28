@@ -28,6 +28,8 @@ export const NamedRoutes = {
   changelog: "/changelog",
   "ctxClean.index": "/ctx-clean",
   "ctxClean.source": "/ctx-clean/source",
+  "ctxEnvVar.index": "/ctx-env-var",
+  "ctxEnvVar.json": "/ctx-env-var/json",
   docs: "/docs",
   "docs.article": "/docs/:slug",
   "errors.clientError": "/errors/client-error",

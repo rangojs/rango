@@ -9,6 +9,7 @@
 
 import { createElement } from "react";
 import { RouteNotFoundError, RouterError } from "../errors.js";
+import type { RouterFetchOptions } from "../router/router-interfaces.js";
 import { matchMiddleware, executeMiddleware } from "../router/middleware.js";
 import {
   runWithRequestContext,
@@ -185,10 +186,13 @@ export function createRSCHandler<
 
   return async function handler(
     request: Request,
-    env: TEnv & { ctx?: ExecutionContext } = {} as TEnv & {
-      ctx?: ExecutionContext;
-    },
+    fetchOptions: RouterFetchOptions<TEnv> = {},
   ): Promise<Response> {
+    const {
+      env = {} as TEnv,
+      vars: initialVars,
+      ctx: executionCtx,
+    } = fetchOptions;
     const handlerStart = performance.now();
 
     // Connection warmup: return 204 immediately before any processing
@@ -216,10 +220,10 @@ export function createRSCHandler<
     const mwMatchDur = performance.now() - mwMatchStart;
 
     // Shared variables between middleware and route handlers
-    // Initialize from env.Variables if provided (allows pre-seeding from worker entry)
-    const variables: Record<string, any> = {
-      ...((env as any)?.Variables ?? {}),
-    };
+    // Initialize from vars option if provided (allows pre-seeding from worker entry)
+    const variables: Record<string, any> = initialVars
+      ? { ...initialVars }
+      : {};
 
     // Store nonce in variables so middleware can access via ctx.get('nonce')
     if (nonce) {
@@ -233,7 +237,9 @@ export function createRSCHandler<
     const cacheOption = options.cache ?? router.cache;
     if (cacheOption && !url.searchParams.has("__no_cache")) {
       const cacheConfig =
-        typeof cacheOption === "function" ? cacheOption(env) : cacheOption;
+        typeof cacheOption === "function"
+          ? cacheOption(env, executionCtx)
+          : cacheOption;
 
       if (cacheConfig.enabled !== false) {
         cacheStore = cacheConfig.store;
@@ -297,7 +303,7 @@ export function createRSCHandler<
       url,
       variables,
       cacheStore,
-      executionContext: env.ctx,
+      executionContext: executionCtx,
       themeConfig: router.themeConfig,
     });
     const ctxCreateDur = performance.now() - ctxCreateStart;
@@ -404,12 +410,11 @@ export function createRSCHandler<
       }
 
       // Build lightweight context for response handler
-      const bindings = (env as any)?.Bindings ?? env;
       const reqCtx = requireRequestContext();
       const responseHandlerCtx = {
         request,
         params: preview.params || {},
-        env: bindings,
+        env,
         searchParams: url.searchParams,
         url,
         pathname: url.pathname,

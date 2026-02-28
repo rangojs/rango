@@ -170,7 +170,7 @@ export interface DocumentCacheOptions<TEnv = any> {
  * @example
  * ```typescript
  * // Add middleware to router
- * const router = createRouter<AppEnv>()
+ * const router = createRouter<AppBindings>()
  *   .use(createDocumentCacheMiddleware({
  *     isEnabled: (ctx) => ctx.url.pathname !== '/admin',
  *   }))

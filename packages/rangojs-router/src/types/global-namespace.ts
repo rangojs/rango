@@ -1,32 +1,32 @@
 /**
  * Global namespace for module augmentation
  *
- * Users can augment this to provide type-safe context globally:
+ * Users augment these interfaces for type-safe context:
  *
  * @example
  * ```typescript
  * // In router.tsx or env.d.ts
  * declare global {
  *   namespace RSCRouter {
- *     interface Env extends RouterEnv<AppBindings, AppVariables> {}
+ *     interface Env extends AppBindings {}
+ *     interface Vars extends AppVariables {}
  *   }
  * }
  *
  * // Now all handlers have type-safe context without imports!
- * export default map<typeof shopRoutes>({
- *   [middleware('*', 'auth')]: [
- *     (ctx, next) => {
- *       ctx.set('user', ...) // Type-safe!
- *     }
- *   ]
- * })
+ * // ctx.env.DB, ctx.get("user"), etc.
  * ```
  */
 declare global {
   namespace RSCRouter {
     // eslint-disable-next-line @typescript-eslint/no-empty-interface
     interface Env {
-      // Empty by default - users augment with their RouterEnv
+      // Empty by default - users augment with their bindings (e.g., { DB: D1Database })
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-empty-interface
+    interface Vars {
+      // Empty by default - users augment with their variables (e.g., { user?: User })
     }
 
     // eslint-disable-next-line @typescript-eslint/no-empty-interface
@@ -69,3 +69,10 @@ export type DefaultHandlerRouteMap =
 export type DefaultEnv = keyof RSCRouter.Env extends never
   ? any
   : RSCRouter.Env;
+
+/**
+ * Default variables type - uses global augmentation if available, Record<string, any> otherwise
+ */
+export type DefaultVars = keyof RSCRouter.Vars extends never
+  ? Record<string, any>
+  : RSCRouter.Vars;

@@ -2,8 +2,11 @@ import type { ContextVar } from "../context-var.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import type { ScopedReverseFunction } from "../reverse.js";
 import type { SearchSchema, ResolveSearchSchema } from "../search-params.js";
-import type { DefaultEnv, DefaultHandlerRouteMap } from "./global-namespace.js";
-import type { RouterEnv } from "./route-config.js";
+import type {
+  DefaultEnv,
+  DefaultVars,
+  DefaultHandlerRouteMap,
+} from "./global-namespace.js";
 
 /**
  * Context passed to loader functions during execution
@@ -42,13 +45,11 @@ export type LoaderContext<
   search: {} extends TSearch ? {} : ResolveSearchSchema<TSearch>;
   pathname: string;
   url: URL;
-  env: TEnv extends RouterEnv<infer B, any> ? B : {};
-  var: TEnv extends RouterEnv<any, infer V> ? V : {};
+  env: TEnv;
+  var: DefaultVars;
   get: {
     <T>(contextVar: ContextVar<T>): T | undefined;
-  } & (TEnv extends RouterEnv<any, infer V>
-    ? <K extends keyof V>(key: K) => V[K]
-    : (key: string) => any);
+  } & (<K extends keyof DefaultVars>(key: K) => DefaultVars[K]);
   /**
    * Access another loader's data (returns promise since loaders run in parallel)
    */

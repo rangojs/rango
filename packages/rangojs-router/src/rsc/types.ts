@@ -192,11 +192,16 @@ export interface CreateRSCHandlerOptions<
    * @example Dynamic config with env
    * ```typescript
    * cache: (env) => ({
-   *   store: new KVSegmentCacheStore(env.Bindings.MY_CACHE, { defaults: { ttl: 60 } }),
+   *   store: new KVSegmentCacheStore(env.MY_CACHE, { defaults: { ttl: 60 } }),
    * })
    * ```
    */
-  cache?: HandlerCacheConfig | ((env: TEnv) => HandlerCacheConfig);
+  cache?:
+    | HandlerCacheConfig
+    | ((
+        env: TEnv,
+        ctx?: import("../server/request-context.js").ExecutionContext,
+      ) => HandlerCacheConfig);
 
   /**
    * RSC version string included in metadata.
