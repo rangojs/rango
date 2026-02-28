@@ -15,6 +15,7 @@ import { getLoaderLazy } from "../server/loader-registry.js";
 import { executeLoaderMiddleware } from "../router/middleware.js";
 import { requireRequestContext } from "../server/request-context.js";
 import { createReverseFunction } from "../router/handler-context.js";
+import { getGlobalRouteMap } from "../route-map-builder.js";
 import { createResponseWithMergedHeaders } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 
@@ -112,6 +113,11 @@ export async function handleLoaderFetch<TEnv>(
           params: mergedParams,
           body: loaderBody,
           method: request.method,
+          reverse: createReverseFunction(
+            getGlobalRouteMap(),
+            reqCtx._routeName,
+            mergedParams,
+          ),
           ...(loaderFormData ? { formData: loaderFormData } : {}),
         };
 

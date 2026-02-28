@@ -40,7 +40,7 @@ export async function handleRscRendering<TEnv>(
     if (!result) {
       // Fall back to full render
       const match = await ctx.router.match(request, env);
-      setRequestContextParams(match.params);
+      setRequestContextParams(match.params, match.routeName);
 
       if (match.redirect) {
         return createResponseWithMergedHeaders(null, {
@@ -66,7 +66,7 @@ export async function handleRscRendering<TEnv>(
         },
       };
     } else {
-      setRequestContextParams(result.params);
+      setRequestContextParams(result.params, result.routeName);
       serverTiming = result.serverTiming;
 
       payload = {
@@ -85,7 +85,7 @@ export async function handleRscRendering<TEnv>(
   } else {
     // Full render (initial page load)
     const match = await ctx.router.match(request, env);
-    setRequestContextParams(match.params);
+    setRequestContextParams(match.params, match.routeName);
 
     if (match.redirect) {
       return createResponseWithMergedHeaders(null, {

@@ -237,6 +237,45 @@ test.describe("location-state", () => {
     await expect(page.locator('[data-testid="flash-empty"]')).toBeVisible();
   });
 
+  test("thrown action redirect with flash state shows flash on target page", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state"));
+    await waitForHydration(page);
+
+    await expect(page.locator('[data-testid="flash-empty"]')).toBeVisible();
+
+    // Click thrown redirect button
+    await page.locator('[data-testid="throw-redirect-btn"]').click();
+
+    // Should redirect back to /location-state with flash message
+    await expect(page).toHaveURL(/\/location-state$/);
+    await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
+      "Thrown redirect flash!",
+    );
+  });
+
+  test("thrown action simple redirect navigates without flash", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state"));
+    await waitForHydration(page);
+
+    // Click thrown simple redirect button
+    await page.locator('[data-testid="throw-simple-redirect-btn"]').click();
+
+    // Should navigate to target page
+    await expect(page).toHaveURL(/\/location-state\/target$/);
+    await expect(page.locator('[data-testid="ls-target"]')).toBeVisible();
+
+    // No flash since no state was passed
+    await expect(page.locator('[data-testid="flash-empty"]')).toBeVisible();
+  });
+
   test("redirect state is stored in history.state", async ({ page }) => {
     using _ = expectNoPageError(page);
 
@@ -331,6 +370,39 @@ test.describe("location-state (production)", () => {
     await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
       "Action saved successfully!",
     );
+  });
+
+  test("thrown action redirect with flash works in production build", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state"));
+    await waitForHydration(page);
+
+    await expect(page.locator('[data-testid="flash-empty"]')).toBeVisible();
+
+    await page.locator('[data-testid="throw-redirect-btn"]').click();
+
+    await expect(page).toHaveURL(/\/location-state$/);
+    await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
+      "Thrown redirect flash!",
+    );
+  });
+
+  test("thrown action simple redirect works in production build", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state"));
+    await waitForHydration(page);
+
+    await page.locator('[data-testid="throw-simple-redirect-btn"]').click();
+
+    await expect(page).toHaveURL(/\/location-state\/target$/);
+    await expect(page.locator('[data-testid="ls-target"]')).toBeVisible();
+    await expect(page.locator('[data-testid="flash-empty"]')).toBeVisible();
   });
 
   test("flash auto-clears in production build", async ({ page }) => {
