@@ -547,6 +547,68 @@ function ConditionalLayout() {
 
 ## URL Hooks
 
+### useParams()
+
+Access route params from the current URL:
+
+```tsx
+"use client";
+import { useParams } from "@rangojs/router/client";
+
+// Route: /product/:productId
+function ProductPage() {
+  const params = useParams();
+  // { productId: "123" }
+
+  return <h1>Product {params.productId}</h1>;
+}
+
+// With selector for performance (re-renders only when selected value changes)
+function ProductId() {
+  const productId = useParams((p) => p.productId);
+  return <span>ID: {productId}</span>;
+}
+```
+
+Returns merged params from all matched route segments. Updates on navigation commit (not during pending navigation).
+
+### usePathname()
+
+Access the current URL pathname:
+
+```tsx
+"use client";
+import { usePathname } from "@rangojs/router/client";
+
+function CurrentPage() {
+  const pathname = usePathname();
+  // "/product/123" (no search params)
+
+  return <span>Current path: {pathname}</span>;
+}
+```
+
+Returns the pathname string without search params or hash. Updates on navigation commit.
+
+### useSearchParams()
+
+Access the current URL search params:
+
+```tsx
+"use client";
+import { useSearchParams } from "@rangojs/router/client";
+
+function SearchResults() {
+  const searchParams = useSearchParams();
+  const query = searchParams.get("q"); // "react"
+  const page = searchParams.get("page"); // "2"
+
+  return <div>Searching for: {query}, page {page}</div>;
+}
+```
+
+Returns a `ReadonlyURLSearchParams` (URLSearchParams without mutation methods). During SSR, returns empty params and syncs from the browser URL on mount.
+
 ### useHref()
 
 Mount-aware href for client components inside `include()` scopes:
@@ -591,9 +653,12 @@ See `/links` for full URL generation guide including server-side `ctx.reverse`.
 
 | Hook                 | Purpose                           | Returns                                         |
 | -------------------- | --------------------------------- | ----------------------------------------------- |
+| `useParams()`        | Route params                      | `Record<string, string>` or selected value      |
+| `usePathname()`      | Current pathname                  | `string`                                        |
+| `useSearchParams()`  | URL search params                 | `ReadonlyURLSearchParams`                       |
 | `useHref()`          | Mount-aware href                  | `(path) => string`                              |
 | `useMount()`         | Current include() mount path      | `string`                                        |
-| `useNavigation()`    | Reactive navigation state         | state, location, isStreaming                    |
+| `useNavigation()`    | Reactive navigation state         | state, location, isStreaming                     |
 | `useRouter()`        | Stable router actions             | push, replace, refresh, prefetch, back, forward |
 | `useSegments()`      | URL path & segment IDs            | path, segmentIds, location                      |
 | `useLinkStatus()`    | Link pending state                | { pending }                                     |
