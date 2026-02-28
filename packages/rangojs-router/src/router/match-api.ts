@@ -27,11 +27,7 @@ import {
   getContext,
   InterceptSelectorContext,
 } from "../server/context";
-import type {
-  ErrorBoundaryHandler,
-  ErrorInfo,
-  MatchResult,
-} from "../types";
+import type { ErrorBoundaryHandler, ErrorInfo, MatchResult } from "../types";
 import type { ReactNode } from "react";
 import type { MatchContext } from "./match-context.js";
 import type { MatchApiDeps, ActionContext } from "./types.js";
