@@ -2,7 +2,7 @@ import type { ContextVar } from "../context-var.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import type { ScopedReverseFunction } from "../reverse.js";
 import type { SearchSchema, ResolveSearchSchema } from "../search-params.js";
-import type { DefaultEnv, GetRegisteredRoutes } from "./global-namespace.js";
+import type { DefaultEnv, DefaultHandlerRouteMap } from "./global-namespace.js";
 import type { RouterEnv } from "./route-config.js";
 
 /**
@@ -75,7 +75,10 @@ export type LoaderContext<
    * Same scoped reverse as route handlers — `.name` resolves within the
    * current include() scope, `name` resolves globally.
    */
-  reverse: ScopedReverseFunction<GetRegisteredRoutes>;
+  reverse: ScopedReverseFunction<
+    Record<string, string>,
+    DefaultHandlerRouteMap
+  >;
 };
 
 /**

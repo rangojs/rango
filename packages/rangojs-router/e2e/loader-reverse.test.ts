@@ -78,9 +78,7 @@ test.describe("Loader ctx.reverse", () => {
       await page.goto(f.url("/loader-reverse"));
       await waitForHydration(page);
 
-      await expect(
-        testId(page, "client-loader-global-section"),
-      ).toBeVisible();
+      await expect(testId(page, "client-loader-global-section")).toBeVisible();
 
       // Global route: blog.index -> /blog
       await expect(
@@ -106,19 +104,17 @@ test.describe("Loader ctx.reverse", () => {
       await page.goto(f.url("/loader-reverse"));
       await waitForHydration(page);
 
-      await expect(
-        testId(page, "client-loader-scoped-section"),
-      ).toBeVisible();
+      await expect(testId(page, "client-loader-scoped-section")).toBeVisible();
 
       // Scoped .index -> /loader-reverse
-      await expect(
-        testId(page, "client-loader-scoped-index"),
-      ).toContainText("/loader-reverse");
+      await expect(testId(page, "client-loader-scoped-index")).toContainText(
+        "/loader-reverse",
+      );
 
       // Scoped .detail with params -> /loader-reverse/from-client-scoped-loader
-      await expect(
-        testId(page, "client-loader-scoped-detail"),
-      ).toContainText("/loader-reverse/from-client-scoped-loader");
+      await expect(testId(page, "client-loader-scoped-detail")).toContainText(
+        "/loader-reverse/from-client-scoped-loader",
+      );
 
       // Global blog.index from scoped loader -> /blog
       await expect(
@@ -137,9 +133,7 @@ test.describe("Loader ctx.reverse", () => {
       await waitForHydration(page);
 
       // Initial SSR data should be present
-      await expect(
-        testId(page, "fetch-loader-scoped-section"),
-      ).toBeVisible();
+      await expect(testId(page, "fetch-loader-scoped-section")).toBeVisible();
       const initialCount = await testId(
         page,
         "fetch-loader-scoped-count",
@@ -217,9 +211,7 @@ test.describe("Loader ctx.reverse (production)", () => {
       await page.goto(f.url("/loader-reverse"));
       await waitForHydration(page);
 
-      await expect(
-        testId(page, "client-loader-global-section"),
-      ).toBeVisible();
+      await expect(testId(page, "client-loader-global-section")).toBeVisible();
 
       await expect(
         testId(page, "client-loader-global-blog-index"),
@@ -240,16 +232,14 @@ test.describe("Loader ctx.reverse (production)", () => {
       await page.goto(f.url("/loader-reverse"));
       await waitForHydration(page);
 
-      await expect(
-        testId(page, "client-loader-scoped-section"),
-      ).toBeVisible();
+      await expect(testId(page, "client-loader-scoped-section")).toBeVisible();
 
-      await expect(
-        testId(page, "client-loader-scoped-index"),
-      ).toContainText("/loader-reverse");
-      await expect(
-        testId(page, "client-loader-scoped-detail"),
-      ).toContainText("/loader-reverse/from-client-scoped-loader");
+      await expect(testId(page, "client-loader-scoped-index")).toContainText(
+        "/loader-reverse",
+      );
+      await expect(testId(page, "client-loader-scoped-detail")).toContainText(
+        "/loader-reverse/from-client-scoped-loader",
+      );
       await expect(
         testId(page, "client-loader-scoped-global-blog"),
       ).toContainText("/blog");
@@ -265,9 +255,7 @@ test.describe("Loader ctx.reverse (production)", () => {
       await page.goto(f.url("/loader-reverse"));
       await waitForHydration(page);
 
-      await expect(
-        testId(page, "fetch-loader-scoped-section"),
-      ).toBeVisible();
+      await expect(testId(page, "fetch-loader-scoped-section")).toBeVisible();
       const initialCount = await testId(
         page,
         "fetch-loader-scoped-count",

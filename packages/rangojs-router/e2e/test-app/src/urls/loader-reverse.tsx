@@ -62,15 +62,9 @@ export const loaderReversePatterns = urls(({ path, loader }) => [
             </ul>
           </section>
 
-          <LoaderReverseClientGlobal
-            loader={LoaderReverseClientGlobalLoader}
-          />
-          <LoaderReverseClientScoped
-            loader={LoaderReverseClientScopedLoader}
-          />
-          <LoaderReverseFetchScoped
-            loader={LoaderReverseFetchScopedLoader}
-          />
+          <LoaderReverseClientGlobal loader={LoaderReverseClientGlobalLoader} />
+          <LoaderReverseClientScoped loader={LoaderReverseClientScopedLoader} />
+          <LoaderReverseFetchScoped loader={LoaderReverseFetchScopedLoader} />
         </div>
       );
     },

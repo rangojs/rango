@@ -516,7 +516,12 @@ export const LoaderReverseFetchScopedLoader = createLoader(
       id: "from-fetch-scoped-loader",
     });
     const globalBlog = ctx.reverse("blog.index");
-    return { localIndex, localDetail, globalBlog, count: fetchReverseScopedCount };
+    return {
+      localIndex,
+      localDetail,
+      globalBlog,
+      count: fetchReverseScopedCount,
+    };
   },
   true, // fetchable
 );
