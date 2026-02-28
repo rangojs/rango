@@ -70,7 +70,11 @@ export async function executeLoaderAction(
       requestCtx?.params ?? {},
       variables,
       requestCtx.res,
-      createReverseFunction(getGlobalRouteMap()),
+      createReverseFunction(
+        getGlobalRouteMap(),
+        requestCtx?._routeName,
+        requestCtx?.params as Record<string, string>,
+      ),
     );
   }
 

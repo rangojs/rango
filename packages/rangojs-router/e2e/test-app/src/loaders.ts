@@ -499,3 +499,24 @@ export const LoaderReverseClientScopedLoader = createLoader(
   },
   true, // fetchable
 );
+
+// Counter to distinguish SSR from client-side refetch
+let fetchReverseScopedCount = 0;
+
+/**
+ * Fetchable loader for testing the loader-fetch.ts path (useFetchLoader + load()).
+ * Uses scoped reverse to verify _routeName is threaded through RequestContext.
+ * Includes a count to distinguish SSR data from re-fetched data.
+ */
+export const LoaderReverseFetchScopedLoader = createLoader(
+  async (ctx) => {
+    fetchReverseScopedCount++;
+    const localIndex = ctx.reverse(".index");
+    const localDetail = ctx.reverse(".detail", {
+      id: "from-fetch-scoped-loader",
+    });
+    const globalBlog = ctx.reverse("blog.index");
+    return { localIndex, localDetail, globalBlog, count: fetchReverseScopedCount };
+  },
+  true, // fetchable
+);

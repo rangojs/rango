@@ -1,6 +1,10 @@
 "use client";
 
-import { useLoader, type LoaderDefinition } from "@rangojs/router/client";
+import {
+  useLoader,
+  useFetchLoader,
+  type LoaderDefinition,
+} from "@rangojs/router/client";
 
 interface ReverseUrls {
   blogIndex: string;
@@ -50,6 +54,37 @@ export function LoaderReverseClientScoped({
           {data.globalBlog}
         </li>
       </ul>
+    </section>
+  );
+}
+
+interface FetchScopedReverseUrls extends ScopedReverseUrls {
+  count: number;
+}
+
+export function LoaderReverseFetchScoped({
+  loader,
+}: {
+  loader: LoaderDefinition<FetchScopedReverseUrls>;
+}) {
+  const { data, load } = useFetchLoader<FetchScopedReverseUrls>(loader);
+
+  return (
+    <section data-testid="fetch-loader-scoped-section">
+      <h2>Fetch loader: scoped reverse (useFetchLoader)</h2>
+      {data && (
+        <ul>
+          <li data-testid="fetch-loader-scoped-index">{data.localIndex}</li>
+          <li data-testid="fetch-loader-scoped-detail">{data.localDetail}</li>
+          <li data-testid="fetch-loader-scoped-global-blog">
+            {data.globalBlog}
+          </li>
+          <li data-testid="fetch-loader-scoped-count">{data.count}</li>
+        </ul>
+      )}
+      <button data-testid="fetch-loader-refetch" onClick={() => load()}>
+        Refetch
+      </button>
     </section>
   );
 }

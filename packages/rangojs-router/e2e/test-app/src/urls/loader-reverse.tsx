@@ -4,10 +4,12 @@ import {
   LoaderReverseScopedLoader,
   LoaderReverseClientGlobalLoader,
   LoaderReverseClientScopedLoader,
+  LoaderReverseFetchScopedLoader,
 } from "../loaders.js";
 import {
   LoaderReverseClientGlobal,
   LoaderReverseClientScoped,
+  LoaderReverseFetchScoped,
 } from "../components/LoaderReverseClient.js";
 
 /**
@@ -66,6 +68,9 @@ export const loaderReversePatterns = urls(({ path, loader }) => [
           <LoaderReverseClientScoped
             loader={LoaderReverseClientScopedLoader}
           />
+          <LoaderReverseFetchScoped
+            loader={LoaderReverseFetchScopedLoader}
+          />
         </div>
       );
     },
@@ -75,6 +80,7 @@ export const loaderReversePatterns = urls(({ path, loader }) => [
       loader(LoaderReverseScopedLoader),
       loader(LoaderReverseClientGlobalLoader),
       loader(LoaderReverseClientScopedLoader),
+      loader(LoaderReverseFetchScopedLoader),
     ],
   ),
 

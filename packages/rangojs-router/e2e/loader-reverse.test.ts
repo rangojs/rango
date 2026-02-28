@@ -7,9 +7,11 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
  * Verifies that loaders can use the same scoped reverse function as handlers,
  * including both global route names and dot-prefixed local names.
  *
- * Two categories:
+ * Three categories:
  * 1. Server-consumed loaders (ctx.use) — non-fetchable loaders read on the server
  * 2. Client-bound loaders (useLoader) — fetchable loaders passed to client components
+ * 3. Client-fetched loaders (useFetchLoader + load()) — exercises the loader-fetch.ts
+ *    path where the loader runs via _rsc_loader GET, not via RSC rendering
  */
 test.describe("Loader ctx.reverse", () => {
   const f = useFixture({
@@ -124,6 +126,45 @@ test.describe("Loader ctx.reverse", () => {
       ).toContainText("/blog");
     });
   });
+
+  test.describe("client-fetched loaders (useFetchLoader + load())", () => {
+    test("should resolve scoped .name after client-side refetch via _rsc_loader", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/loader-reverse"));
+      await waitForHydration(page);
+
+      // Initial SSR data should be present
+      await expect(
+        testId(page, "fetch-loader-scoped-section"),
+      ).toBeVisible();
+      const initialCount = await testId(
+        page,
+        "fetch-loader-scoped-count",
+      ).textContent();
+
+      // Click refetch to trigger _rsc_loader GET request (loader-fetch.ts path)
+      await testId(page, "fetch-loader-refetch").click();
+
+      // Wait for count to change (proves data came from a new server fetch)
+      await expect(testId(page, "fetch-loader-scoped-count")).not.toHaveText(
+        initialCount!,
+      );
+
+      // Verify scoped reverse still resolves correctly via the loader-fetch path
+      await expect(testId(page, "fetch-loader-scoped-index")).toContainText(
+        "/loader-reverse",
+      );
+      await expect(testId(page, "fetch-loader-scoped-detail")).toContainText(
+        "/loader-reverse/from-fetch-scoped-loader",
+      );
+      await expect(
+        testId(page, "fetch-loader-scoped-global-blog"),
+      ).toContainText("/blog");
+    });
+  });
 });
 
 test.describe("Loader ctx.reverse (production)", () => {
@@ -211,6 +252,44 @@ test.describe("Loader ctx.reverse (production)", () => {
       ).toContainText("/loader-reverse/from-client-scoped-loader");
       await expect(
         testId(page, "client-loader-scoped-global-blog"),
+      ).toContainText("/blog");
+    });
+  });
+
+  test.describe("client-fetched loaders (useFetchLoader + load())", () => {
+    test("should resolve scoped .name after client-side refetch via _rsc_loader in production", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/loader-reverse"));
+      await waitForHydration(page);
+
+      await expect(
+        testId(page, "fetch-loader-scoped-section"),
+      ).toBeVisible();
+      const initialCount = await testId(
+        page,
+        "fetch-loader-scoped-count",
+      ).textContent();
+
+      // Click refetch to trigger _rsc_loader GET request
+      await testId(page, "fetch-loader-refetch").click();
+
+      // Wait for count to change (proves data came from a new server fetch)
+      await expect(testId(page, "fetch-loader-scoped-count")).not.toHaveText(
+        initialCount!,
+      );
+
+      // Verify scoped reverse resolves correctly via the loader-fetch path
+      await expect(testId(page, "fetch-loader-scoped-index")).toContainText(
+        "/loader-reverse",
+      );
+      await expect(testId(page, "fetch-loader-scoped-detail")).toContainText(
+        "/loader-reverse/from-fetch-scoped-loader",
+      );
+      await expect(
+        testId(page, "fetch-loader-scoped-global-blog"),
       ).toContainText("/blog");
     });
   });
