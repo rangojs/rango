@@ -501,11 +501,9 @@ export class ErrorBoundary extends Component<
 // ============================================================================
 
 // Navigation hooks
-export {
-  useNavigation,
-  type NavigationMethods,
-  type NavigationValue,
-} from "./browser/react/use-navigation.js";
+export { useNavigation } from "./browser/react/use-navigation.js";
+export { useRouter } from "./browser/react/use-router.js";
+export type { RouterInstance, RouterNavigateOptions } from "./browser/types.js";
 
 // Action state tracking hook
 export {

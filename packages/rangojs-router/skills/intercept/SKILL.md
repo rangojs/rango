@@ -106,15 +106,15 @@ Use navigation to close:
 
 ```typescript
 "use client";
-import { useNavigation } from "@rangojs/router/client";
+import { useRouter } from "@rangojs/router/client";
 
 function ModalWrapper({ children }) {
-  const { goBack } = useNavigation();
+  const router = useRouter();
 
   return (
-    <div className="modal-overlay" onClick={goBack}>
+    <div className="modal-overlay" onClick={() => router.back()}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <button onClick={goBack}>Close</button>
+        <button onClick={() => router.back()}>Close</button>
         {children}
       </div>
     </div>

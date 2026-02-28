@@ -251,6 +251,34 @@ export interface NavigateOptionsInternal extends NavigateOptions {
   _skipCache?: boolean;
 }
 
+/**
+ * Options for useRouter push/replace methods.
+ * Same as NavigateOptions but without `replace` (implicit in push vs replace).
+ */
+export interface RouterNavigateOptions {
+  scroll?: boolean;
+  state?: HistoryState;
+}
+
+/**
+ * Router instance returned by useRouter hook.
+ * Provides stable action methods that never cause re-renders.
+ */
+export interface RouterInstance {
+  /** Navigate to a URL, pushing a new entry to the history stack */
+  push(url: string, options?: RouterNavigateOptions): Promise<void>;
+  /** Navigate to a URL, replacing the current history entry */
+  replace(url: string, options?: RouterNavigateOptions): Promise<void>;
+  /** Refresh the current route (re-fetch server data, preserve client state) */
+  refresh(): Promise<void>;
+  /** Prefetch a URL for faster client-side transition */
+  prefetch(url: string): void;
+  /** Go back in browser history */
+  back(): void;
+  /** Go forward in browser history */
+  forward(): void;
+}
+
 // ============================================================================
 // RSC Browser Dependencies
 // ============================================================================

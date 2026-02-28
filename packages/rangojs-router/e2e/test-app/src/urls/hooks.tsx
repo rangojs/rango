@@ -10,6 +10,9 @@ import {
   LoaderCompositionHandler,
   InlineActionHandler,
   ProgressiveEnhancementHandler,
+  UseRouterHandler,
+  UseRouterTargetAHandler,
+  UseRouterTargetBHandler,
 } from "./hooks.handlers.js";
 
 /**
@@ -44,4 +47,24 @@ export const hooksPatterns = urls(({ path, loader }) => [
   path("/progressive-enhancement", ProgressiveEnhancementHandler, {
     name: "progressiveEnhancement",
   }),
+
+  // useRouter hook test routes
+  path(
+    "/hook-tests/use-router",
+    UseRouterHandler,
+    { name: "hookTests.useRouter" },
+    () => [loader(HookTestLoader)],
+  ),
+  path(
+    "/hook-tests/use-router/target-a",
+    UseRouterTargetAHandler,
+    { name: "hookTests.useRouterTargetA" },
+    () => [loader(HookTestLoader)],
+  ),
+  path(
+    "/hook-tests/use-router/target-b",
+    UseRouterTargetBHandler,
+    { name: "hookTests.useRouterTargetB" },
+    () => [loader(HookTestLoaderB)],
+  ),
 ]);

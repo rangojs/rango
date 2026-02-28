@@ -1,6 +1,6 @@
 "use client";
 
-import { useNavigation, Link } from "@rangojs/router/client";
+import { Link } from "@rangojs/router/client";
 import { categories, products, orders } from "./data.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 

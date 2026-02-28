@@ -26,6 +26,11 @@ import {
   IsLoadingTest,
   ServerActionFormTest,
 } from "../components/HookTests.js";
+import {
+  UseRouterTest,
+  UseRouterTargetPage,
+  UseNavigationStateOnlyTest,
+} from "../components/UseRouterTest.js";
 
 export const FetchLoaderHandler: Handler<"fetchLoader"> = () => (
   <div data-testid="fetch-loader-page">
@@ -295,3 +300,58 @@ export const ProgressiveEnhancementHandler: Handler<
     </div>
   );
 };
+
+// ==================== useRouter test handlers ====================
+
+export const UseRouterHandler: Handler<"hookTests.useRouter"> = () => (
+  <div data-testid="use-router-page">
+    <Link to="/" data-testid="back-link">
+      ← Back to Home
+    </Link>
+    <h1 data-testid="use-router-title">useRouter Hook Tests</h1>
+
+    <UseRouterTest loader={HookTestLoader} />
+
+    <hr style={{ margin: "2rem 0" }} />
+    <h2>useNavigation State-Only Test</h2>
+    <UseNavigationStateOnlyTest />
+  </div>
+);
+
+export const UseRouterTargetAHandler: Handler<
+  "hookTests.useRouterTargetA"
+> = () => (
+  <div data-testid="use-router-target-a-page">
+    <Link to="/" data-testid="back-link">
+      ← Back to Home
+    </Link>
+    <Link
+      to="/hook-tests/use-router"
+      data-testid="back-to-router-link"
+      style={{ marginLeft: "1rem" }}
+    >
+      Back to useRouter
+    </Link>
+    <h1 data-testid="target-a-title">Target A</h1>
+    <UseRouterTargetPage targetId="a" loader={HookTestLoader} />
+  </div>
+);
+
+export const UseRouterTargetBHandler: Handler<
+  "hookTests.useRouterTargetB"
+> = () => (
+  <div data-testid="use-router-target-b-page">
+    <Link to="/" data-testid="back-link">
+      ← Back to Home
+    </Link>
+    <Link
+      to="/hook-tests/use-router"
+      data-testid="back-to-router-link"
+      style={{ marginLeft: "1rem" }}
+    >
+      Back to useRouter
+    </Link>
+    <h1 data-testid="target-b-title">Target B</h1>
+    <UseRouterTargetPage targetId="b" loader={HookTestLoaderB} />
+  </div>
+);

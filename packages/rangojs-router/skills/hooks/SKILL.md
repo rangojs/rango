@@ -12,33 +12,48 @@ All hooks are imported from `@rangojs/router` or `@rangojs/router/client`.
 
 ### useNavigation()
 
-Track navigation state and control navigation:
+Track reactive navigation state (state-only, no actions):
 
 ```tsx
 "use client";
-import { useNavigation } from "@rangojs/router";
+import { useNavigation } from "@rangojs/router/client";
 
 function NavIndicator() {
   const nav = useNavigation();
 
-  // Full state
-  nav.state; // 'idle' | 'loading' | 'streaming'
+  // State properties
+  nav.state; // 'idle' | 'loading'
   nav.isStreaming; // boolean
   nav.location; // Current URL
   nav.pendingUrl; // Target URL during navigation (or null)
 
-  // Methods
-  nav.navigate("/products"); // Navigate programmatically
-  nav.navigate("/products", { replace: true }); // Replace history
-  nav.refresh(); // Refresh current route
-
   return nav.state === "loading" ? <Spinner /> : null;
 }
 
-// With selector for performance
+// With selector for performance (re-renders only when selected value changes)
 function IsLoading() {
   const isLoading = useNavigation((nav) => nav.state === "loading");
   return isLoading ? <Spinner /> : null;
+}
+```
+
+### useRouter()
+
+Access stable router actions (never causes re-renders):
+
+```tsx
+"use client";
+import { useRouter } from "@rangojs/router/client";
+
+function NavigationControls() {
+  const router = useRouter();
+
+  router.push("/products"); // Navigate (adds history entry)
+  router.replace("/login"); // Navigate (replaces history entry)
+  router.refresh(); // Re-fetch current route data
+  router.prefetch("/dashboard"); // Prefetch for faster navigation
+  router.back(); // Go back in history
+  router.forward(); // Go forward in history
 }
 ```
 
@@ -574,17 +589,18 @@ See `/links` for full URL generation guide including server-side `ctx.reverse`.
 
 ## Hook Summary
 
-| Hook                 | Purpose                           | Returns                    |
-| -------------------- | --------------------------------- | -------------------------- |
-| `useHref()`          | Mount-aware href                  | `(path) => string`         |
-| `useMount()`         | Current include() mount path      | `string`                   |
-| `useNavigation()`    | Navigation state & control        | state, navigate, refresh   |
-| `useSegments()`      | URL path & segment IDs            | path, segmentIds, location |
-| `useLinkStatus()`    | Link pending state                | { pending }                |
-| `useLoader()`        | Loader data (strict)              | data, isLoading, error     |
-| `useFetchLoader()`   | Loader with on-demand fetch       | data, load, isLoading      |
-| `useLoaderData()`    | All loader data                   | Record<string, any>        |
-| `useHandle()`        | Accumulated handle data           | T (handle type)            |
-| `useAction()`        | Server action state               | state, error, result       |
-| `useLocationState()` | History state (persists or flash) | T \| undefined             |
-| `useClientCache()`   | Cache control                     | { clear }                  |
+| Hook                 | Purpose                           | Returns                                         |
+| -------------------- | --------------------------------- | ----------------------------------------------- |
+| `useHref()`          | Mount-aware href                  | `(path) => string`                              |
+| `useMount()`         | Current include() mount path      | `string`                                        |
+| `useNavigation()`    | Reactive navigation state         | state, location, isStreaming                    |
+| `useRouter()`        | Stable router actions             | push, replace, refresh, prefetch, back, forward |
+| `useSegments()`      | URL path & segment IDs            | path, segmentIds, location                      |
+| `useLinkStatus()`    | Link pending state                | { pending }                                     |
+| `useLoader()`        | Loader data (strict)              | data, isLoading, error                          |
+| `useFetchLoader()`   | Loader with on-demand fetch       | data, load, isLoading                           |
+| `useLoaderData()`    | All loader data                   | Record<string, any>                             |
+| `useHandle()`        | Accumulated handle data           | T (handle type)                                 |
+| `useAction()`        | Server action state               | state, error, result                            |
+| `useLocationState()` | History state (persists or flash) | T \| undefined                                  |
+| `useClientCache()`   | Cache control                     | { clear }                                       |

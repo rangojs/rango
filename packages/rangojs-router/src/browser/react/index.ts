@@ -1,11 +1,10 @@
 // React exports for browser navigation
 
 // Hook with Zustand-style selectors
-export {
-  useNavigation,
-  type NavigationMethods,
-  type NavigationValue,
-} from "./use-navigation.js";
+export { useNavigation } from "./use-navigation.js";
+
+// Router actions hook (stable reference, no re-renders)
+export { useRouter } from "./use-router.js";
 
 // Action state tracking hook
 export { useAction, type TrackedActionState } from "./use-action.js";
