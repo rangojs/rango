@@ -5,7 +5,7 @@ import type {
   RscPayload,
   RscBrowserDependencies,
 } from "./types.js";
-import { NetworkError, isNetworkError } from "../errors.js";
+import { NetworkError, ServerRedirect, isNetworkError } from "../errors.js";
 import {
   browserDebugLog,
   isBrowserDebugEnabled,
@@ -130,6 +130,19 @@ export function createNavigationClient(
           window.location.href = reloadUrl;
           // Return a never-resolving promise to prevent further processing
           return new Promise<Response>(() => {});
+        }
+
+        // Server-side redirect without state: the server returned 204 with
+        // X-RSC-Redirect instead of a 3xx (which fetch would auto-follow
+        // to a URL rendering full HTML). Throw ServerRedirect so the
+        // navigation bridge catches it and re-navigates with _skipCache.
+        const redirectUrl = response.headers.get("X-RSC-Redirect");
+        if (redirectUrl) {
+          if (tx) {
+            browserDebugLog(tx, "server redirect", { redirectUrl });
+          }
+          resolveStreamComplete();
+          throw new ServerRedirect(redirectUrl, undefined);
         }
 
         if (!response.body) {
