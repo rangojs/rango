@@ -11,10 +11,7 @@ import { useFixture } from "./fixture";
  * No <link rel="prefetch"> elements should be created in router mode.
  */
 test.describe("prefetch-on-hover (router mode)", () => {
-  test("should fetch RSC partial on hover", async ({
-    page,
-    devServerURL,
-  }) => {
+  test("should fetch RSC partial on hover", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(devURL(devServerURL, "/"));

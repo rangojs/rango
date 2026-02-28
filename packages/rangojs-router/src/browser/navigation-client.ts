@@ -11,10 +11,7 @@ import {
   isBrowserDebugEnabled,
   startBrowserTransaction,
 } from "./logging.js";
-import {
-  prefetchCacheKey,
-  consumePrefetchResponse,
-} from "./prefetch-cache.js";
+import { prefetchCacheKey, consumePrefetchResponse } from "./prefetch-cache.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
