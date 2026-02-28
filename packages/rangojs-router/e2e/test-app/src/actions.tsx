@@ -126,6 +126,23 @@ export async function triggerRevalidation(): Promise<{
 }
 
 /**
+ * Server action for form tests.
+ * Compatible with useActionState: (prevState, formData) => newState
+ */
+export async function formTestAction(
+  _prevState: { id: string; message: string; timestamp: string } | null,
+  formData: FormData,
+): Promise<{ id: string; message: string; timestamp: string }> {
+  const id = (formData.get("id") as string) ?? "default";
+  await delay(500);
+  return {
+    id,
+    message: "Submitted via server action",
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/**
  * Simple form action for testing progressive enhancement (no-JS)
  * Returns the submitted name to verify the form was processed
  */

@@ -135,40 +135,6 @@ export type LoadOptions =
     };
 
 /**
- * Context passed to loader action on server
- */
-export type LoaderActionContext = {
-  method: string;
-  params: Record<string, string>;
-  body?: FormData | Record<string, any>;
-  formData?: FormData;
-};
-
-/**
- * @deprecated Use MiddlewareFn instead for fetchable loader middleware.
- * This type is kept for backwards compatibility but will be removed in a future version.
- *
- * Fetchable loaders now use the same middleware signature as routes,
- * enabling middleware reuse across routes and loaders.
- */
-export type LoaderMiddlewareFn = (
-  ctx: LoaderActionContext,
-  next: () => Promise<void>,
-) => Response | Promise<Response> | void | Promise<void>;
-
-/**
- * Loader action function type - server action for form-based fetching
- * This is a server action that can be passed to useActionState or form action prop.
- *
- * The signature (prevState, formData) is required for useActionState compatibility.
- * When used with useActionState, React passes the previous state as the first argument.
- */
-export type LoaderAction<T> = (
-  prevState: T | null,
-  formData: FormData,
-) => Promise<T>;
-
-/**
  * Loader definition object
  *
  * Created via createLoader(). Contains the loader name and function.
@@ -206,5 +172,4 @@ export type LoaderDefinition<
   __brand: "loader";
   $$id: string; // Injected by Vite plugin (exposeInternalIds) - unique identifier
   fn?: LoaderFn<T, TParams, any>; // Optional - server-side only, stored in registry for RSC
-  action?: LoaderAction<T>; // Optional - for fetchable loaders
 };

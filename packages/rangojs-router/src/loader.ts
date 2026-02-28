@@ -6,8 +6,8 @@
  * The actual loader function is not included -- it only exists on the server.
  *
  * For export-only loader files, the Vite plugin replaces the entire file with
- * object literals (bypassing this function). Those stubs include an action
- * property for fetchable loaders that wraps invokeFetchableLoaderAction.
+ * object literals (bypassing this function). Those stubs only contain
+ * { __brand, $$id }.
  * This function only runs when loaders are in mixed files (not export-only).
  *
  * The $$id is injected by the Vite exposeInternalIds plugin.

@@ -157,11 +157,70 @@ function SearchResults() {
 **Load options**:
 
 ```tsx
+// JSON body — sent as application/json, available as ctx.body on the server
 await load({
-  method: "POST", // GET, POST, PUT, PATCH, DELETE
-  params: { query: "test" }, // Query string (GET) or body (others)
-  body: { data: "value" }, // For POST/PUT/PATCH/DELETE
+  method: "POST",
+  params: { query: "test" },
+  body: { data: "value" },
 });
+
+// FormData body — sent as multipart/form-data, available as ctx.formData on the server.
+// Automatically detected: when body is a FormData instance, the request switches
+// to multipart/form-data to preserve File objects and binary data.
+const formData = new FormData();
+formData.append("file", fileInput.files[0]);
+await load({ method: "POST", body: formData });
+```
+
+**Body type auto-switching**: The `load()` function inspects the `body` value to
+choose the encoding. If `body instanceof FormData`, the request is sent as
+`multipart/form-data` (browser sets the boundary header automatically). Otherwise
+the body is JSON-serialized and sent with `Content-Type: application/json`. On the
+server, JSON bodies are available via `ctx.body` and FormData bodies via `ctx.formData`.
+
+**File upload example**:
+
+```tsx
+"use client";
+import { useFetchLoader } from "@rangojs/router";
+import { FileUploadLoader } from "../loaders/upload";
+
+function FileUploader() {
+  const { data, load, isLoading } = useFetchLoader(FileUploadLoader);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  const handleSubmit = async (formData: FormData) => {
+    await load({ method: "POST", body: formData });
+    formRef.current?.reset();
+  };
+
+  return (
+    <form ref={formRef} action={handleSubmit}>
+      <input type="file" name="file" />
+      <button type="submit" disabled={isLoading}>
+        {isLoading ? "Uploading..." : "Upload"}
+      </button>
+      {data?.uploadedFile && <p>Uploaded: {data.uploadedFile.name}</p>}
+    </form>
+  );
+}
+```
+
+Server-side loader for the upload:
+
+```typescript
+import { createLoader } from "@rangojs/router";
+
+export const FileUploadLoader = createLoader(async (ctx) => {
+  "use server";
+
+  const file = ctx.formData?.get("file") as File | null;
+  if (file && file.size > 0) {
+    // Process file (save to R2, D1, etc.)
+    return { uploadedFile: { name: file.name, size: file.size } };
+  }
+  return { uploadedFile: null };
+}, true); // true = fetchable (can be called from the client via load())
 ```
 
 ### useLoaderData()

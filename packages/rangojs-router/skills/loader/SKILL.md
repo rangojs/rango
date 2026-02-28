@@ -209,6 +209,79 @@ function ProductPage() {
 }
 ```
 
+## Fetchable Loaders
+
+By default, loaders only run during SSR and navigation. Pass `true` as the second
+argument to `createLoader` to make a loader **fetchable** — callable from the client
+via `useFetchLoader()` and `load()`:
+
+```typescript
+import { createLoader } from "@rangojs/router";
+
+export const SearchLoader = createLoader(async (ctx) => {
+  "use server";
+
+  const query = ctx.params.query ?? "";
+  const results = await ctx.env.Bindings.DB.prepare(
+    "SELECT * FROM products WHERE name LIKE ?",
+  )
+    .bind(`%${query}%`)
+    .all();
+
+  return { results: results.results ?? [] };
+}, true); // true = fetchable
+```
+
+Fetchable loaders support both GET and POST (PUT, PATCH, DELETE) from the client.
+The `load()` function auto-detects the body type:
+
+- **JSON body** (`body: { ... }`) — sent as `application/json`, available as `ctx.body`
+- **FormData body** (`body: formData`) — sent as `multipart/form-data`, available as `ctx.formData`
+
+### Mutation Context
+
+When a fetchable loader receives a POST/PUT/PATCH/DELETE request, the context
+includes additional fields depending on the body type:
+
+```typescript
+export const MutationLoader = createLoader(async (ctx) => {
+  "use server";
+
+  // JSON body — available as ctx.body (parsed object)
+  const data = ctx.body as { name: string; email: string };
+
+  // FormData body — available as ctx.formData
+  const file = ctx.formData?.get("file") as File | null;
+  const name = ctx.formData?.get("name") as string | null;
+
+  // Route params are always available
+  const { slug } = ctx.params;
+
+  return { success: true };
+}, true);
+```
+
+### File Upload Example
+
+```typescript
+// loaders/upload.ts
+import { createLoader } from "@rangojs/router";
+
+export const FileUploadLoader = createLoader(async (ctx) => {
+  "use server";
+
+  const file = ctx.formData?.get("file") as File | null;
+  if (file && file.size > 0) {
+    // Save to R2, D1, etc.
+    await ctx.env.Bindings.BUCKET.put(file.name, file.stream());
+    return { uploaded: { name: file.name, size: file.size, type: file.type } };
+  }
+  return { uploaded: null };
+}, true);
+```
+
+Client usage — see `/hooks useFetchLoader` for the full client-side pattern.
+
 ## Complete Example
 
 ```typescript

@@ -269,13 +269,13 @@ export const RSCContentLoader = createLoader<RSCContentLoaderData>(
 );
 
 /**
- * NotesLoader - Demonstrates loader as both GET and form action
+ * NotesLoader - Demonstrates loader as both GET and POST
  *
  * This loader serves dual purposes:
  * 1. GET request: Fetches all notes (used with useEffect on mount)
- * 2. Form action: Adds a new note when submitted via load.action
+ * 2. POST request: Adds a new note when submitted via load() with POST
  *
- * The loader checks ctx.formData to determine if it's handling a mutation.
+ * The loader checks ctx.body to determine if it's handling a mutation.
  * This pattern allows a single loader to handle both reading and writing.
  *
  * Use case: Simple CRUD operations where read and write share the same endpoint
@@ -313,16 +313,16 @@ export type NotesLoaderData = {
 };
 
 /**
- * FileUploadLoader - Demonstrates file upload handling via load.action
+ * FileUploadLoader - Demonstrates file upload handling via load() with POST
  *
- * This loader handles file uploads through FormData:
+ * This loader handles file uploads via FormData:
  * - GET request: Returns list of uploaded files
- * - Form action: Processes uploaded file(s) and returns updated list
+ * - POST request: Receives file via ctx.formData and returns updated list
  *
  * Note: This is a demo that stores file metadata only (not actual file contents).
  * In a real app, you'd save to disk, S3, or a database.
  *
- * Use case: File upload forms with progressive enhancement
+ * Use case: File uploads via load({ method: "POST", body: formData })
  */
 export const FileUploadLoader = createLoader(
   async (ctx) => {
@@ -331,13 +331,11 @@ export const FileUploadLoader = createLoader(
     // Simulate network latency
     await new Promise((resolve) => setTimeout(resolve, 300));
 
-    // Check if this is a file upload (form submission)
+    // Check if this is a file upload (POST with FormData)
     const file = ctx.formData?.get("file") as File | null;
     let uploadedFile: UploadedFile | null = null;
 
     if (file && file.size > 0) {
-      // Process the uploaded file
-      // In a real app, you'd save the file contents somewhere
       uploadedFile = addUploadedFile({
         name: file.name,
         size: file.size,
