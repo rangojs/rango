@@ -758,6 +758,11 @@ export function createNavigationBridge(
           const root = await renderSegments(cachedSegments, {
             forceAwait: true,
           });
+          // Merge params from cached segments for useParams restoration
+          const cachedParams: Record<string, string> = {};
+          for (const s of cachedSegments) {
+            if (s.params) Object.assign(cachedParams, s.params);
+          }
           const popstateUpdate = {
             root,
             metadata: {
@@ -767,6 +772,7 @@ export function createNavigationBridge(
               matched: cachedSegments.map((s) => s.id),
               diff: [],
               cachedHandleData,
+              params: cachedParams,
             },
           };
           const hasTransition = cachedSegments.some((s) => s.transition);

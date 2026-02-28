@@ -6,6 +6,11 @@ export { useNavigation } from "./use-navigation.js";
 // Router actions hook (stable reference, no re-renders)
 export { useRouter } from "./use-router.js";
 
+// URL hooks
+export { usePathname } from "./use-pathname.js";
+export { useSearchParams } from "./use-search-params.js";
+export { useParams } from "./use-params.js";
+
 // Action state tracking hook
 export { useAction, type TrackedActionState } from "./use-action.js";
 

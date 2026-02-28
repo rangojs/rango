@@ -44,6 +44,8 @@ export const NamedRoutes = {
   "hookTests.noLoader": "/hook-tests/no-loader",
   "hookTests.routeA": "/hook-tests/route-a",
   "hookTests.routeB": "/hook-tests/route-b",
+  "hookTests.urlHooks": "/hook-tests/url-hooks/:slug",
+  "hookTests.urlHooksNested": "/hook-tests/url-hooks/:slug/:id",
   "hookTests.useRouter": "/hook-tests/use-router",
   "hookTests.useRouterTargetA": "/hook-tests/use-router/target-a",
   "hookTests.useRouterTargetB": "/hook-tests/use-router/target-b",

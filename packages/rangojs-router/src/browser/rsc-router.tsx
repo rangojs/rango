@@ -170,6 +170,7 @@ export async function initBrowserApp(
   initSegmentsSync(
     initialPayload.metadata?.matched,
     initialPayload.metadata?.pathname,
+    initialPayload.metadata?.params,
   );
 
   // Initialize theme config for MetaTags (must match SSR state)
@@ -177,6 +178,9 @@ export async function initBrowserApp(
 
   // Initialize event controller with segment order (even without handles)
   eventController.setHandleData({}, initialPayload.metadata?.matched);
+
+  // Initialize route params
+  eventController.setParams(initialPayload.metadata?.params ?? {});
 
   // Initialize handle data from initial payload BEFORE hydration
   // This ensures useHandle returns correct data during hydration to avoid mismatch

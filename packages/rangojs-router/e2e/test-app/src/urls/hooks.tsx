@@ -13,6 +13,8 @@ import {
   UseRouterHandler,
   UseRouterTargetAHandler,
   UseRouterTargetBHandler,
+  UrlHooksHandler,
+  UrlHooksNestedHandler,
 } from "./hooks.handlers.js";
 
 /**
@@ -67,4 +69,12 @@ export const hooksPatterns = urls(({ path, loader }) => [
     { name: "hookTests.useRouterTargetB" },
     () => [loader(HookTestLoaderB)],
   ),
+
+  // URL hooks test routes (useParams, usePathname, useSearchParams)
+  path("/hook-tests/url-hooks/:slug", UrlHooksHandler, {
+    name: "hookTests.urlHooks",
+  }),
+  path("/hook-tests/url-hooks/:slug/:id", UrlHooksNestedHandler, {
+    name: "hookTests.urlHooksNested",
+  }),
 ]);

@@ -114,6 +114,7 @@ interface RscPayload {
     handles?: AsyncGenerator<HandleData, void, unknown>;
     matched?: string[];
     pathname?: string;
+    params?: Record<string, string>;
     themeConfig?: ResolvedThemeConfig | null;
     initialTheme?: Theme;
   };
@@ -161,6 +162,8 @@ function createSsrEventController(pathname: string): EventController {
     subscribeToHandles: () => () => {},
     setHandleData: () => {},
     getHandleState: () => ({ data: {}, segmentOrder: [] }),
+    setParams: () => {},
+    getParams: () => ({}),
     setLocation: () => {},
     startNavigation: () => {
       throw new Error("Navigation not supported during SSR");
@@ -233,6 +236,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         initSegmentsSync(
           resolved.metadata?.matched,
           resolved.metadata?.pathname,
+          resolved.metadata?.params,
         );
 
         // Initialize theme config for MetaTags to render theme script

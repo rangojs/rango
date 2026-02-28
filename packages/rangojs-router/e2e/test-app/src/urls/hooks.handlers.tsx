@@ -31,6 +31,10 @@ import {
   UseRouterTargetPage,
   UseNavigationStateOnlyTest,
 } from "../components/UseRouterTest.js";
+import {
+  UrlHooksTest,
+  UseParamsSelectorTest,
+} from "../components/UrlHooksTest.js";
 
 export const FetchLoaderHandler: Handler<"fetchLoader"> = () => (
   <div data-testid="fetch-loader-page">
@@ -353,5 +357,25 @@ export const UseRouterTargetBHandler: Handler<
     </Link>
     <h1 data-testid="target-b-title">Target B</h1>
     <UseRouterTargetPage targetId="b" loader={HookTestLoaderB} />
+  </div>
+);
+
+// ==================== URL hooks test handlers ====================
+
+export const UrlHooksHandler: Handler<"hookTests.urlHooks"> = () => (
+  <div data-testid="url-hooks-page">
+    <h1 data-testid="url-hooks-title">URL Hooks Tests</h1>
+    <UrlHooksTest />
+    <UseParamsSelectorTest />
+  </div>
+);
+
+export const UrlHooksNestedHandler: Handler<
+  "hookTests.urlHooksNested"
+> = () => (
+  <div data-testid="url-hooks-nested-page">
+    <h1 data-testid="url-hooks-nested-title">URL Hooks Nested</h1>
+    <UrlHooksTest />
+    <UseParamsSelectorTest />
   </div>
 );

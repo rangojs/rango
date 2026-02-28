@@ -36,6 +36,8 @@ export interface RscMetadata {
   isError?: boolean;
   matched?: string[];
   diff?: string[];
+  /** Merged route params from the matched route */
+  params?: Record<string, string>;
   /**
    * State of named slots for this route match
    * Key is slot name (e.g., "@modal"), value is slot state
@@ -275,6 +277,15 @@ export interface RouterInstance {
   /** Go forward in browser history */
   forward(): void;
 }
+
+/**
+ * URLSearchParams without mutation methods.
+ * Matches Next.js convention for useSearchParams return type.
+ */
+export type ReadonlyURLSearchParams = Omit<
+  URLSearchParams,
+  "append" | "delete" | "set" | "sort"
+>;
 
 // ============================================================================
 // RSC Browser Dependencies
