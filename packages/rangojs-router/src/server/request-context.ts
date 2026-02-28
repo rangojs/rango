@@ -24,6 +24,8 @@ import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import { THEME_COOKIE } from "../theme/constants.js";
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
 import { NOCACHE_SYMBOL, assertNotInsideCacheExec } from "../cache/taint.js";
+import { createReverseFunction } from "../router/handler-context.js";
+import { getGlobalRouteMap } from "../route-map-builder.js";
 
 /**
  * Unified request context available via getRequestContext()
@@ -212,6 +214,9 @@ export interface RequestContext<
 
   /** @internal Accumulated location state entries */
   _locationState?: LocationStateEntry[];
+
+  /** @internal Route name from route matching, used for scoped reverse resolution */
+  _routeName?: string;
 }
 
 // AsyncLocalStorage instance for request context
@@ -240,12 +245,18 @@ export function getRequestContext<TEnv = unknown>():
 
 /**
  * Update params on the current request context
- * Called after route matching to populate route params
+ * Called after route matching to populate route params and route name
  */
-export function setRequestContextParams(params: Record<string, string>): void {
+export function setRequestContextParams(
+  params: Record<string, string>,
+  routeName?: string,
+): void {
   const ctx = requestContextStorage.getStore();
   if (ctx) {
     ctx.params = params;
+    if (routeName !== undefined) {
+      ctx._routeName = routeName;
+    }
   }
 }
 
@@ -625,6 +636,11 @@ export function createUseFunction<TEnv>(
       },
       method: "GET",
       body: undefined,
+      reverse: createReverseFunction(
+        getGlobalRouteMap(),
+        ctx._routeName,
+        ctx.params as Record<string, string>,
+      ),
     };
 
     // Start loader execution with tracking

@@ -197,6 +197,18 @@ export function createServerActionBridge(
       // Check for version mismatch - server wants us to reload
       const reloadUrl = response.headers.get("X-RSC-Reload");
       if (reloadUrl) {
+        // Validate origin to prevent open redirect via crafted headers
+        try {
+          const target = new URL(reloadUrl, window.location.origin);
+          if (target.origin !== window.location.origin) {
+            throw new Error(
+              `X-RSC-Reload blocked: origin mismatch (${target.origin})`,
+            );
+          }
+        } catch (e) {
+          console.error("[rango]", e);
+          return response;
+        }
         log("version mismatch on action, reloading", { reloadUrl });
         window.location.href = reloadUrl;
         // Return a never-resolving promise to prevent further processing

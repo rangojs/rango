@@ -110,6 +110,10 @@ export function createRSCHandler<
     options.loadSSRModule ??
     (() => import.meta.viteRsc.loadModule("ssr", "index"));
 
+  // Track errors already reported to onError to prevent double-reporting
+  // when errors are caught by a phase-specific handler and re-thrown.
+  const reportedErrors = new WeakSet<object>();
+
   /**
    * Wrapper for invokeOnError that binds the router's onError callback.
    * Uses the shared utility from router/error-handling.ts for consistent behavior.
@@ -119,6 +123,10 @@ export function createRSCHandler<
     phase: ErrorPhase,
     context: Parameters<typeof invokeOnError<TEnv>>[3],
   ): void {
+    if (error != null && typeof error === "object") {
+      if (reportedErrors.has(error)) return;
+      reportedErrors.add(error);
+    }
     invokeOnError(router.onError, error, phase, context, "RSC");
   }
 
@@ -660,6 +668,7 @@ export function createRSCHandler<
         variables,
         nonce,
         preview?.params,
+        preview?.routeKey,
       );
       if (preview?.negotiated) {
         response.headers.append("Vary", "Accept");
@@ -723,6 +732,7 @@ export function createRSCHandler<
     variables: Record<string, any>,
     nonce: string | undefined,
     routeParams?: Record<string, string>,
+    routeKey?: string,
   ): Promise<Response> {
     const isPartial = url.searchParams.has("_rsc_partial");
     const isAction =
@@ -747,11 +757,23 @@ export function createRSCHandler<
       cleanUrl.searchParams.delete("_rsc_action");
       cleanUrl.searchParams.delete("_rsc_prev");
 
-      // For actions, reload current page (referer)
-      // For navigation, load the target URL
-      const reloadUrl = isAction
-        ? request.headers.get("referer") || cleanUrl.toString()
-        : cleanUrl.toString();
+      // For actions, reload current page (referer) if same origin.
+      // For navigation, load the target URL.
+      // Validate referer origin to prevent open redirect via crafted header.
+      let reloadUrl = cleanUrl.toString();
+      if (isAction) {
+        const referer = request.headers.get("referer");
+        if (referer) {
+          try {
+            const refererUrl = new URL(referer);
+            if (refererUrl.origin === url.origin) {
+              reloadUrl = referer;
+            }
+          } catch {
+            // Malformed referer, fall back to cleanUrl
+          }
+        }
+      }
 
       // Return special response that tells client to reload
       return createResponseWithMergedHeaders(null, {
@@ -799,7 +821,7 @@ export function createRSCHandler<
       // server actions, loader fetches) can access ctx.params via getRequestContext().
       // Previously this was only done for JS actions, leaving PE actions with empty params.
       if (routeParams) {
-        setRequestContextParams(routeParams);
+        setRequestContextParams(routeParams, routeKey);
       }
 
       // ============================================================================
@@ -822,14 +844,26 @@ export function createRSCHandler<
       // SERVER ACTION EXECUTION (JavaScript-enabled client)
       // ============================================================================
       if (isAction && actionId) {
-        return handleServerAction(
-          handlerCtx,
-          request,
-          env,
-          url,
-          actionId,
-          handleStore,
-        );
+        try {
+          return await handleServerAction(
+            handlerCtx,
+            request,
+            env,
+            url,
+            actionId,
+            handleStore,
+          );
+        } catch (error) {
+          callOnError(error, "action", {
+            request,
+            url,
+            env,
+            actionId,
+            handledByBoundary: false,
+          });
+          console.error(`[RSC] Action error:`, error);
+          throw error;
+        }
       }
 
       // ============================================================================

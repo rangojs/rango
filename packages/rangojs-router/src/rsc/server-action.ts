@@ -44,13 +44,6 @@ export async function handleServerAction<TEnv>(
       args = await ctx.decodeReply(body, { temporaryReferences });
     }
   } catch (error) {
-    ctx.callOnError(error, "action", {
-      request,
-      url,
-      env,
-      actionId,
-      handledByBoundary: false,
-    });
     throw new Error(`Failed to decode action arguments: ${error}`, {
       cause: error,
     });
@@ -90,6 +83,26 @@ export async function handleServerAction<TEnv>(
 
     returnValue = { ok: true, data };
   } catch (error) {
+    // Handle thrown redirect (e.g., throw redirect('/path'))
+    if (error instanceof Response) {
+      const redirectUrl = error.headers.get("Location");
+      const isRedirect =
+        error.status >= 300 && error.status < 400 && redirectUrl;
+      if (isRedirect) {
+        const locationState = getLocationState();
+        if (locationState) {
+          return ctx.createRedirectFlightResponse(
+            redirectUrl,
+            resolveLocationStateEntries(locationState),
+          );
+        }
+        return createResponseWithMergedHeaders(null, {
+          status: 204,
+          headers: { "X-RSC-Redirect": redirectUrl },
+        });
+      }
+    }
+
     returnValue = { ok: false, data: error };
     actionStatus = 500;
 
@@ -111,7 +124,7 @@ export async function handleServerAction<TEnv>(
     });
 
     if (errorResult) {
-      setRequestContextParams(errorResult.params);
+      setRequestContextParams(errorResult.params, errorResult.routeName);
 
       const payload: RscPayload = {
         metadata: {
@@ -159,7 +172,7 @@ export async function handleServerAction<TEnv>(
   if (!matchResult) {
     // Fall back to full render
     const fullMatch = await ctx.router.match(request, env);
-    setRequestContextParams(fullMatch.params);
+    setRequestContextParams(fullMatch.params, fullMatch.routeName);
 
     if (fullMatch.redirect) {
       return createResponseWithMergedHeaders(null, {
@@ -201,7 +214,7 @@ export async function handleServerAction<TEnv>(
   }
 
   // Return updated segments
-  setRequestContextParams(matchResult.params);
+  setRequestContextParams(matchResult.params, matchResult.routeName);
 
   const serverTiming = matchResult.serverTiming;
 

@@ -33,6 +33,7 @@ export async function previewMatch<TEnv = any>(
   params?: Record<string, string>;
   negotiated?: boolean;
   manifestEntry?: EntryData;
+  routeKey?: string;
 } | null> {
   return runWithRouterLogContext(
     { request, transaction: "previewMatch" },
@@ -132,6 +133,7 @@ export async function previewMatch<TEnv = any>(
               params: matched.params,
               negotiated: true,
               manifestEntry: negotiateEntry,
+              routeKey: matched.routeKey,
             };
           }
         }
@@ -144,6 +146,7 @@ export async function previewMatch<TEnv = any>(
           routeMiddleware:
             routeMiddleware.length > 0 ? routeMiddleware : undefined,
           params: matched.params,
+          routeKey: matched.routeKey,
           ...(responseType
             ? {
                 responseType,
