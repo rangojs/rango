@@ -22,7 +22,10 @@ import { resolveLocationStateEntries } from "../browser/react/location-state-sha
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
 import type { RscPayload, CreateRSCHandlerOptions } from "./types.js";
-import { createResponseWithMergedHeaders } from "./helpers.js";
+import {
+  createResponseWithMergedHeaders,
+  createSimpleRedirectResponse,
+} from "./helpers.js";
 import { generateNonce } from "./nonce.js";
 import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
@@ -335,9 +338,11 @@ export function createRSCHandler<
           createReverseFunction(getRequiredRouteMap()),
         );
 
-        // If global middleware returned a redirect with location state during
-        // a partial (SPA) request, convert to Flight payload. Without this,
-        // fetch auto-follows the 3xx and the state is lost.
+        // If global middleware returned a redirect during a partial (SPA)
+        // request, intercept it. fetch auto-follows 3xx, so we must signal
+        // the redirect via our own mechanism instead.
+        // - With state: Flight payload (200) so location state survives.
+        // - Without state: 204 + X-RSC-Redirect header (lightweight).
         const isPartial = url.searchParams.has("_rsc_partial");
         const redirectUrl = mwResponse.headers.get("Location");
         const isRedirect =
@@ -350,6 +355,7 @@ export function createRSCHandler<
               resolveLocationStateEntries(locationState),
             );
           }
+          return createSimpleRedirectResponse(redirectUrl);
         }
 
         return mwResponse;
@@ -694,10 +700,11 @@ export function createRSCHandler<
         createReverseFunction(getRequiredRouteMap()),
       );
 
-      // If route middleware returned a redirect with location state during
-      // a partial (SPA) request, convert to a 200 Flight payload so the
-      // browser can perform the redirect with pushState. Without this,
-      // fetch auto-follows the 3xx, losing the state.
+      // If route middleware returned a redirect during a partial (SPA)
+      // request, intercept it. fetch auto-follows 3xx, so we must signal
+      // the redirect via our own mechanism instead.
+      // - With state: Flight payload (200) so location state survives.
+      // - Without state: 204 + X-RSC-Redirect header (lightweight).
       const isPartial = url.searchParams.has("_rsc_partial");
       const mwRedirectUrl = mwResponse.headers.get("Location");
       const isMwRedirect =
@@ -710,6 +717,7 @@ export function createRSCHandler<
             resolveLocationStateEntries(locationState),
           );
         }
+        return createSimpleRedirectResponse(mwRedirectUrl);
       }
 
       return mwResponse;
@@ -918,10 +926,11 @@ export function createRSCHandler<
           });
         }
 
-        // For partial requests: intercept redirects that carry location state.
-        // HTTP 3xx redirects are auto-followed by fetch, losing the state.
-        // Instead, return a 200 with a Flight payload containing the redirect
-        // URL and state so the browser can perform the redirect with pushState.
+        // For partial requests: intercept redirects. HTTP 3xx redirects are
+        // auto-followed by fetch, which would hit the target URL without
+        // _rsc_partial and render a full HTML page the client can't parse.
+        // - With state: Flight payload (200) so location state survives.
+        // - Without state: 204 + X-RSC-Redirect header (lightweight).
         const redirectUrl = error.headers.get("Location");
         const isRedirect =
           error.status >= 300 && error.status < 400 && redirectUrl;
@@ -933,6 +942,7 @@ export function createRSCHandler<
               resolveLocationStateEntries(locationState),
             );
           }
+          return createSimpleRedirectResponse(redirectUrl);
         }
 
         return error;

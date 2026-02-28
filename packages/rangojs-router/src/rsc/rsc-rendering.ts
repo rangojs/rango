@@ -13,7 +13,10 @@ import {
 } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import type { RscPayload } from "./types.js";
-import { createResponseWithMergedHeaders } from "./helpers.js";
+import {
+  createResponseWithMergedHeaders,
+  createSimpleRedirectResponse,
+} from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 
 export async function handleRscRendering<TEnv>(
@@ -43,10 +46,10 @@ export async function handleRscRendering<TEnv>(
       setRequestContextParams(match.params, match.routeName);
 
       if (match.redirect) {
-        return createResponseWithMergedHeaders(null, {
-          status: 308,
-          headers: { Location: match.redirect },
-        });
+        // Partial request: use X-RSC-Redirect header so the client can
+        // perform SPA navigation. A raw 308 would be auto-followed by
+        // fetch, hitting the target without _rsc_partial.
+        return createSimpleRedirectResponse(match.redirect);
       }
 
       serverTiming = match.serverTiming;
