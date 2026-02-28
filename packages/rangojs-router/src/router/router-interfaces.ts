@@ -152,6 +152,13 @@ export interface RSCRouter<
   readonly themeConfig: import("../theme/types.js").ResolvedThemeConfig | null;
 
   /**
+   * Resolved prefetch mode.
+   * "router" uses fetch() with router-managed cache;
+   * "browser" uses native <link rel="prefetch">.
+   */
+  readonly prefetchMode: "browser" | "router";
+
+  /**
    * Whether connection warmup is enabled.
    * When true, the client sends HEAD /?_rsc_warmup after idle periods
    * and the server responds with 204 No Content.

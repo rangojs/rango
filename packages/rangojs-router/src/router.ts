@@ -128,6 +128,7 @@ export function createRouter<TEnv = any>(
     $$sourceFile: injectedSourceFile,
     nonce,
     version,
+    prefetch: prefetchOption,
     warmup: warmupOption,
     allowDebugManifest: allowDebugManifestOption = false,
   } = options;
@@ -169,6 +170,9 @@ export function createRouter<TEnv = any>(
   // order (unlike the counter which depends on import order).
   const routerId =
     userProvidedId ?? injectedId ?? `router_${nextRouterAutoId()}`;
+
+  // Resolve prefetch mode (default: 'router')
+  const prefetchMode = prefetchOption ?? "router";
 
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;
@@ -704,6 +708,9 @@ export function createRouter<TEnv = any>(
 
     // Expose resolved theme configuration for NavigationProvider and MetaTags
     themeConfig: resolvedThemeConfig,
+
+    // Expose prefetch mode for handler and client
+    prefetchMode,
 
     // Expose warmup enabled flag for handler and client
     warmupEnabled,

@@ -41,6 +41,11 @@ export interface NavigationStoreContextValue {
    * @returns Promise that resolves when refresh is complete
    */
   refresh: () => Promise<void>;
+
+  /**
+   * Prefetch mode: "router" for fetch-based, "browser" for <link rel="prefetch">.
+   */
+  prefetchMode: "browser" | "router";
 }
 
 /**

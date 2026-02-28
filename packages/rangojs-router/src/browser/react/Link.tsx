@@ -10,7 +10,6 @@ import React, {
 } from "react";
 import { NavigationStoreContext } from "./context.js";
 import { LinkContext } from "./use-link-status.js";
-import { prefetchUrl } from "./prefetch.js";
 import type { NavigateOptions } from "../types.js";
 import {
   type LocationStateEntry,
@@ -29,6 +28,76 @@ export type StateOrGetter<T = unknown> = T | (() => T);
  * - StateOrGetter: Legacy format for backwards compatibility
  */
 export type LinkState = LocationStateEntry[] | StateOrGetter;
+
+import {
+  prefetchCacheKey,
+  hasPrefetch,
+  markPrefetchInflight,
+  clearPrefetchInflight,
+  storePrefetchResponse,
+} from "../prefetch-cache.js";
+
+// Track prefetched URLs to avoid duplicate <link> elements (browser mode)
+const prefetchedUrls = new Set<string>();
+
+/**
+ * Build an RSC partial URL for prefetching.
+ */
+function buildPrefetchUrl(url: string, segmentIds: string[]): URL {
+  const targetUrl = new URL(url, window.location.origin);
+  targetUrl.searchParams.set("_rsc_partial", "true");
+  if (segmentIds.length > 0) {
+    targetUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
+  }
+  return targetUrl;
+}
+
+/**
+ * Browser-mode prefetch: inject a <link rel="prefetch"> element.
+ */
+function prefetchUrlBrowser(url: string, segmentIds: string[]): void {
+  if (prefetchedUrls.has(url)) return;
+  prefetchedUrls.add(url);
+
+  const targetUrl = buildPrefetchUrl(url, segmentIds);
+
+  const link = document.createElement("link");
+  link.rel = "prefetch";
+  link.href = targetUrl.toString();
+  link.as = "fetch";
+  document.head.appendChild(link);
+}
+/**
+ * Router-mode prefetch: fetch with low priority and store in prefetch cache.
+ * Uses X-Rango-State header so the server adds Vary to prevent HTTP cache
+ * collisions between prefetch and navigation requests.
+ */
+function prefetchUrlRouter(url: string, segmentIds: string[]): void {
+  const key = prefetchCacheKey(url);
+  if (hasPrefetch(key)) return;
+
+  markPrefetchInflight(key);
+
+  const targetUrl = buildPrefetchUrl(url, segmentIds);
+
+  fetch(targetUrl.toString(), {
+    priority: "low" as RequestPriority,
+    headers: {
+      "X-Rango-State": String(Date.now()),
+    },
+  })
+    .then((response) => {
+      if (response.ok || response.status === 204) {
+        storePrefetchResponse(key, response.clone());
+      }
+    })
+    .catch(() => {
+      // Silently ignore prefetch failures
+    })
+    .finally(() => {
+      clearPrefetchInflight(key);
+    });
+}
 
 /**
  * Prefetch strategy for the Link component
@@ -216,7 +285,11 @@ export const Link: ForwardRefExoticComponent<
   const handleMouseEnter = useCallback(() => {
     if (prefetch === "hover" && !isExternal && ctx?.store) {
       const segmentState = ctx.store.getSegmentState();
-      prefetchUrl(to, segmentState.currentSegmentIds);
+      if (ctx.prefetchMode === "browser") {
+        prefetchUrlBrowser(to, segmentState.currentSegmentIds);
+      } else {
+        prefetchUrlRouter(to, segmentState.currentSegmentIds);
+      }
     }
   }, [prefetch, to, isExternal, ctx]);
 

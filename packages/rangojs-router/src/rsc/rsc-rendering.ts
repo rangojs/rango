@@ -146,6 +146,7 @@ export async function handleRscRendering<TEnv>(
           handles: handleStore.stream(),
           version: ctx.version,
           themeConfig: ctx.router.themeConfig,
+          prefetchMode: ctx.router.prefetchMode,
           initialTheme: reqCtx.theme,
         },
       };
@@ -189,7 +190,9 @@ export async function handleRscRendering<TEnv>(
     const fullTiming = timingParts.join(", ");
     const rscHeaders: Record<string, string> = {
       "content-type": "text/x-component;charset=utf-8",
-      vary: "accept",
+      vary: request.headers.has("X-Rango-State")
+        ? "accept, X-Rango-State"
+        : "accept",
     };
     if (fullTiming) {
       rscHeaders["Server-Timing"] = fullTiming;

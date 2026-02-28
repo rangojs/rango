@@ -349,6 +349,17 @@ export interface RSCRouterOptions<TEnv = any> {
   version?: string;
 
   /**
+   * Prefetch strategy for client-side link prefetching.
+   *
+   * - "router": Use fetch() with router-managed cache (default).
+   *   Fixes Safari, gives the router full control over cache invalidation.
+   * - "browser": Use native <link rel="prefetch"> (browser HTTP cache).
+   *
+   * @default "router"
+   */
+  prefetch?: "browser" | "router";
+
+  /**
    * Enable connection warmup to keep TCP+TLS alive after idle periods.
    *
    * When enabled, the client sends a HEAD request after the user returns

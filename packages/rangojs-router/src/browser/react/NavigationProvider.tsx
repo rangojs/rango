@@ -126,6 +126,11 @@ export interface NavigationProviderProps {
    * When true, keeps TLS alive by sending HEAD requests after idle periods.
    */
   warmupEnabled?: boolean;
+
+  /**
+   * Prefetch mode: "router" for fetch-based, "browser" for <link rel="prefetch">.
+   */
+  prefetchMode?: "browser" | "router";
 }
 
 /**
@@ -157,6 +162,7 @@ export function NavigationProvider({
   themeConfig,
   initialTheme,
   warmupEnabled,
+  prefetchMode,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
   const [payload, setPayload] = useState(initialPayload);
@@ -185,6 +191,7 @@ export function NavigationProvider({
       eventController,
       navigate,
       refresh,
+      prefetchMode: prefetchMode ?? "router",
     }),
     [],
   );

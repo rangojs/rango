@@ -135,6 +135,7 @@ export async function handleProgressiveEnhancement<TEnv>(
       version: ctx.version,
       themeConfig: ctx.router.themeConfig,
       warmupEnabled: ctx.router.warmupEnabled,
+      prefetchMode: ctx.router.prefetchMode,
       initialTheme: requireRequestContext().theme,
     },
     formState: actionResult,

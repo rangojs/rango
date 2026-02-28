@@ -11,6 +11,10 @@ import {
   isBrowserDebugEnabled,
   startBrowserTransaction,
 } from "./logging.js";
+import {
+  prefetchCacheKey,
+  consumePrefetchResponse,
+} from "./prefetch-cache.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -97,18 +101,30 @@ export function createNavigationClient(
         resolveStreamComplete = resolve;
       });
 
+      // Check prefetch cache before making a network request
+      const cacheKey = prefetchCacheKey(targetUrl);
+      const cachedResponse = consumePrefetchResponse(cacheKey);
+
+      if (tx && cachedResponse) {
+        browserDebugLog(tx, "prefetch cache hit", { path: targetUrl });
+      }
+
       // Create a response promise that tracks stream completion
-      const responsePromise = fetch(fetchUrl, {
-        headers: {
-          "X-RSC-Router-Client-Path": previousUrl,
-          ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
-          ...(interceptSourceUrl && {
-            "X-RSC-Router-Intercept-Source": interceptSourceUrl,
-          }),
-          ...(hmr && { "X-RSC-HMR": "1" }),
-        },
-        signal,
-      }).then((response) => {
+      const responsePromise = (
+        cachedResponse
+          ? Promise.resolve(cachedResponse)
+          : fetch(fetchUrl, {
+              headers: {
+                "X-RSC-Router-Client-Path": previousUrl,
+                ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
+                ...(interceptSourceUrl && {
+                  "X-RSC-Router-Intercept-Source": interceptSourceUrl,
+                }),
+                ...(hmr && { "X-RSC-HMR": "1" }),
+              },
+              signal,
+            })
+      ).then((response) => {
         // Check for version mismatch - server wants us to reload
         const reloadUrl = response.headers.get("X-RSC-Reload");
         if (reloadUrl) {
