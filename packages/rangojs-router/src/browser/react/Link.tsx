@@ -31,13 +31,12 @@ export type LinkState = LocationStateEntry[] | StateOrGetter;
 
 import {
   hasPrefetch,
+  hasBrowserPrefetch,
+  markBrowserPrefetch,
   markPrefetchInflight,
   clearPrefetchInflight,
   storePrefetchResponse,
 } from "../prefetch-cache.js";
-
-// Track prefetched URLs to avoid duplicate <link> elements (browser mode)
-const prefetchedUrls = new Set<string>();
 
 /**
  * Build an RSC partial URL for prefetching.
@@ -55,8 +54,8 @@ function buildPrefetchUrl(url: string, segmentIds: string[]): URL {
  * Browser-mode prefetch: inject a <link rel="prefetch"> element.
  */
 function prefetchUrlBrowser(url: string, segmentIds: string[]): void {
-  if (prefetchedUrls.has(url)) return;
-  prefetchedUrls.add(url);
+  if (hasBrowserPrefetch(url)) return;
+  markBrowserPrefetch(url);
 
   const targetUrl = buildPrefetchUrl(url, segmentIds);
 

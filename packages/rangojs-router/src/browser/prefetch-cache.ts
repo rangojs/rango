@@ -12,6 +12,8 @@ const PREFETCH_CACHE_SIZE = 10;
 
 const cache = new LRUCache<string, Response>(PREFETCH_CACHE_SIZE);
 const inflight = new Set<string>();
+// Browser-mode dedup: tracks URLs that already have a <link rel="prefetch">
+const browserPrefetched = new Set<string>();
 
 /**
  * Generate a prefetch cache key from a URL.
@@ -53,6 +55,17 @@ export function hasPrefetch(key: string): boolean {
   return cache.has(key) || inflight.has(key);
 }
 
+/**
+ * Check if a URL was already prefetched in browser mode.
+ */
+export function hasBrowserPrefetch(url: string): boolean {
+  return browserPrefetched.has(url);
+}
+
+export function markBrowserPrefetch(url: string): void {
+  browserPrefetched.add(url);
+}
+
 export function markPrefetchInflight(key: string): void {
   inflight.add(key);
 }
@@ -68,4 +81,5 @@ export function clearPrefetchInflight(key: string): void {
 export function clearPrefetchCache(): void {
   cache.clear();
   inflight.clear();
+  browserPrefetched.clear();
 }
