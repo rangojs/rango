@@ -52,21 +52,23 @@ export async function handleLoaderFetch<TEnv>(
   if (isBodyMethod) {
     try {
       const contentType = request.headers.get("content-type") || "";
-      if (contentType.includes("application/json")) {
+      if (contentType.includes("multipart/form-data")) {
+        // FormData body — sent by load() when body is a FormData instance.
+        // Preserves File objects and binary data.
+        loaderFormData = await request.formData();
+        // Extract params if provided via the special field
+        const paramsField = loaderFormData.get("_rsc_loader_params");
+        if (typeof paramsField === "string") {
+          loaderParams = JSON.parse(paramsField);
+          loaderFormData.delete("_rsc_loader_params");
+        }
+      } else if (contentType.includes("application/json")) {
         const jsonBody = (await request.json()) as {
           params?: Record<string, string>;
           body?: unknown;
-          formEntries?: Record<string, string>;
         };
         loaderParams = jsonBody.params ?? {};
         loaderBody = jsonBody.body;
-        // Reconstruct FormData from JSON-serialized entries
-        if (jsonBody.formEntries) {
-          loaderFormData = new FormData();
-          for (const [key, value] of Object.entries(jsonBody.formEntries)) {
-            loaderFormData.append(key, value);
-          }
-        }
       }
     } catch {
       return createResponseWithMergedHeaders("Invalid request body", {

@@ -139,3 +139,101 @@ test.describe("progressive-enhancement", () => {
     });
   });
 });
+
+test.describe("progressive-enhancement (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.describe("with JavaScript disabled", () => {
+    test.use({ javaScriptEnabled: false });
+    test.setTimeout(120000);
+
+    test("form submission should return HTML page, not RSC stream", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/progressive-enhancement"));
+
+      await expect(page.locator('[data-testid="page-title"]')).toHaveText(
+        "Progressive Enhancement Test",
+      );
+
+      const input = page.locator('[data-testid="pe-input"]');
+      await input.fill("no-js-test-name");
+      await expect(input).toHaveValue("no-js-test-name");
+
+      await page.locator('[data-testid="pe-submit"]').click();
+      await page.waitForLoadState("domcontentloaded");
+
+      await expect(page.locator("html")).toBeVisible();
+      await expect(page.locator("body")).toBeVisible();
+
+      await expect(page.locator('[data-testid="page-title"]')).toHaveText(
+        "Progressive Enhancement Test",
+      );
+
+      await expect(page.locator('[data-testid="pe-result-name"]')).toHaveText(
+        "no-js-test-name",
+      );
+    });
+
+    test("form should have React hidden fields for progressive enhancement", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/progressive-enhancement"));
+
+      const formHtml = await page
+        .locator('[data-testid="pe-form"]')
+        .innerHTML();
+
+      expect(formHtml).toMatch(/\$ACTION/);
+    });
+
+    test("page should not contain RSC stream markers", async ({ page }) => {
+      await page.goto(f.url("/progressive-enhancement"));
+
+      await page.locator('[data-testid="pe-input"]').fill("marker-test");
+      await page.locator('[data-testid="pe-submit"]').click();
+
+      const content = await page.content();
+
+      expect(content).not.toMatch(/^0:/);
+      expect(content).not.toMatch(/^\d+:["[{]/);
+      expect(content).toMatch(/<!DOCTYPE html>/i);
+      expect(content).toMatch(/<html/i);
+    });
+
+    test("form should preserve input values after submission error", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/progressive-enhancement"));
+
+      const input = page.locator('[data-testid="pe-input"]');
+      await expect(input).toBeVisible();
+      await expect(input).toBeEditable();
+    });
+  });
+
+  test.describe("with JavaScript enabled", () => {
+    test.setTimeout(120000);
+
+    test("form submission should work with JS enhancement", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/progressive-enhancement"));
+      await page.waitForLoadState("networkidle");
+
+      await page.locator('[data-testid="pe-input"]').fill("js-enhanced-name");
+      await page.locator('[data-testid="pe-submit"]').click();
+
+      await expect(page.locator('[data-testid="pe-result-name"]')).toHaveText(
+        "js-enhanced-name",
+      );
+
+      await expect(page).toHaveURL(/\/progressive-enhancement/);
+    });
+  });
+});

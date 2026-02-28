@@ -315,14 +315,14 @@ export type NotesLoaderData = {
 /**
  * FileUploadLoader - Demonstrates file upload handling via load() with POST
  *
- * This loader handles file metadata uploads:
+ * This loader handles file uploads via FormData:
  * - GET request: Returns list of uploaded files
- * - POST request: Receives file metadata via ctx.body and returns updated list
+ * - POST request: Receives file via ctx.formData and returns updated list
  *
  * Note: This is a demo that stores file metadata only (not actual file contents).
  * In a real app, you'd save to disk, S3, or a database.
  *
- * Use case: Form-based mutations via load({ method: "POST", body })
+ * Use case: File uploads via load({ method: "POST", body: formData })
  */
 export const FileUploadLoader = createLoader(
   async (ctx) => {
@@ -331,17 +331,15 @@ export const FileUploadLoader = createLoader(
     // Simulate network latency
     await new Promise((resolve) => setTimeout(resolve, 300));
 
-    // Check if this is a file upload (POST with body)
-    const body = ctx.body as
-      | { fileName: string; fileSize: number; fileType?: string }
-      | undefined;
+    // Check if this is a file upload (POST with FormData)
+    const file = ctx.formData?.get("file") as File | null;
     let uploadedFile: UploadedFile | null = null;
 
-    if (body?.fileName && body.fileSize > 0) {
+    if (file && file.size > 0) {
       uploadedFile = addUploadedFile({
-        name: body.fileName,
-        size: body.fileSize,
-        type: body.fileType || "application/octet-stream",
+        name: file.name,
+        size: file.size,
+        type: file.type || "application/octet-stream",
       });
     }
 

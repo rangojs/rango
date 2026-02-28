@@ -738,10 +738,10 @@ const handleAdd = async (formData) => {
 }
 
 /**
- * FileUploader - Demonstrates file upload via load() with POST
+ * FileUploader - Demonstrates file upload via load() with POST FormData
  *
  * - useEffect fetches existing files on mount
- * - load({ method: "POST", body }) uploads file
+ * - load({ method: "POST", body: formData }) uploads file as multipart/form-data
  * - No refetch needed! Server returns updated file list automatically
  */
 export function FileUploader() {
@@ -757,13 +757,9 @@ export function FileUploader() {
     load();
   }, [load]);
 
-  // Handle form submission via POST — sends file metadata to the loader
+  // Handle form submission via POST — sends FormData with the actual file
   const handleSubmit = async (formData: FormData) => {
-    const file = formData.get("file") as File;
-    await load({
-      method: "POST",
-      body: { fileName: file.name, fileSize: file.size, fileType: file.type },
-    });
+    await load({ method: "POST", body: formData });
     formRef.current?.reset();
     setSelectedFile(null);
   };
@@ -779,7 +775,9 @@ export function FileUploader() {
     <div style={cardStyle}>
       <h3 style={headingStyle}>File Upload via load() POST</h3>
       <p style={descStyle}>
-        Upload files using <code>load({"{"} method: "POST" {"}"})</code>.
+        Upload files using{" "}
+        <code>load({"{"} method: "POST", body: formData {"}"})</code>. FormData
+        is sent as multipart/form-data, preserving File objects.
       </p>
 
       <form
@@ -893,12 +891,13 @@ export function FileUploader() {
         <pre style={{ margin: "0.5rem 0 0 0", whiteSpace: "pre-wrap" }}>
           {`// Server loader handles upload AND returns updated list
 async (ctx) => {
-  if (ctx.body?.fileName) await saveFile(ctx.body); // mutation
+  const file = ctx.formData?.get("file");
+  if (file) await saveFile(file); // mutation
   return { files: getFiles() };   // updated data
 };
 
-// Client - load() with POST updates state automatically
-await load({ method: "POST", body: { fileName } }); // data now has new file`}
+// Client - FormData body is sent as multipart/form-data
+await load({ method: "POST", body: formData }); // data now has new file`}
         </pre>
       </div>
     </div>

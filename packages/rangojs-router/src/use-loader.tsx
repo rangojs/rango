@@ -129,32 +129,50 @@ function useLoaderInternal<T>(
         let fetchOptions: RequestInit;
 
         if (isBodyMethod) {
-          // POST/PUT/PATCH/DELETE - send params and body as JSON
-          const bodyPayload: {
-            params?: Record<string, string>;
-            body?: unknown;
-          } = {};
-          if (
+          const bodyValue =
+            "body" in (loadOptions ?? {})
+              ? (loadOptions as any).body
+              : undefined;
+          const hasParams =
             loadOptions?.params &&
-            Object.keys(loadOptions.params).length > 0
-          ) {
-            bodyPayload.params = loadOptions.params;
-          }
-          if (
-            "body" in (loadOptions ?? {}) &&
-            (loadOptions as any).body !== undefined
-          ) {
-            bodyPayload.body = (loadOptions as any).body;
-          }
+            Object.keys(loadOptions.params).length > 0;
 
-          fetchOptions = {
-            method,
-            headers: {
-              Accept: "text/x-component",
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(bodyPayload),
-          };
+          if (bodyValue instanceof FormData) {
+            // FormData body — send as multipart/form-data (preserves File objects).
+            // Params are appended as a JSON string in a special field.
+            if (hasParams) {
+              bodyValue.set(
+                "_rsc_loader_params",
+                JSON.stringify(loadOptions!.params),
+              );
+            }
+            fetchOptions = {
+              method,
+              headers: { Accept: "text/x-component" },
+              body: bodyValue,
+            };
+          } else {
+            // JSON body — send params and body as JSON
+            const bodyPayload: {
+              params?: Record<string, string>;
+              body?: unknown;
+            } = {};
+            if (hasParams) {
+              bodyPayload.params = loadOptions!.params;
+            }
+            if (bodyValue !== undefined) {
+              bodyPayload.body = bodyValue;
+            }
+
+            fetchOptions = {
+              method,
+              headers: {
+                Accept: "text/x-component",
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(bodyPayload),
+            };
+          }
         } else {
           // GET - send params in query string
           if (
