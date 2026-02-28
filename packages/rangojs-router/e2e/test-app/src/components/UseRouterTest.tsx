@@ -13,11 +13,7 @@ type HookTestLoaderDef = LoaderDefinition<
  * Test component for useRouter hook.
  * Exposes all 6 methods via buttons with data-testid attributes.
  */
-export function UseRouterTest({
-  loader,
-}: {
-  loader: HookTestLoaderDef;
-}) {
+export function UseRouterTest({ loader }: { loader: HookTestLoaderDef }) {
   const router = useRouter();
   const routerRef = useRef(router);
   const [referenceStable, setReferenceStable] = useState(true);
