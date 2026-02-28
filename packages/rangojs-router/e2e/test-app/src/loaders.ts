@@ -443,3 +443,59 @@ export const UseCacheTestLoader = createLoader(async () => {
   const { getCachedLoaderData } = await import("./urls/use-cache-fn.js");
   return getCachedLoaderData();
 });
+
+// ============================================================================
+// Loader reverse() tests
+// Test that loaders can use ctx.reverse to generate URLs
+// ============================================================================
+
+/**
+ * Loader that uses ctx.reverse with global route names
+ */
+export const LoaderReverseGlobalLoader = createLoader(async (ctx) => {
+  const blogIndex = ctx.reverse("blog.index");
+  const blogPost = ctx.reverse("blog.post", { postId: "from-loader" });
+  const hrefIndex = ctx.reverse("href.index");
+  return { blogIndex, blogPost, hrefIndex };
+});
+
+/**
+ * Loader that uses ctx.reverse with scoped (.name) route names.
+ * This loader is used inside an include() scope to test local resolution.
+ */
+export const LoaderReverseScopedLoader = createLoader(async (ctx) => {
+  const localIndex = ctx.reverse(".index");
+  const localDetail = ctx.reverse(".detail", { id: "from-scoped-loader" });
+  const globalBlog = ctx.reverse("blog.index");
+  return { localIndex, localDetail, globalBlog };
+});
+
+/**
+ * Fetchable loader that uses ctx.reverse with global route names.
+ * Client-bound: passed to a client component and read with useLoader().
+ */
+export const LoaderReverseClientGlobalLoader = createLoader(
+  async (ctx) => {
+    const blogIndex = ctx.reverse("blog.index");
+    const blogPost = ctx.reverse("blog.post", { postId: "from-client-loader" });
+    const hrefIndex = ctx.reverse("href.index");
+    return { blogIndex, blogPost, hrefIndex };
+  },
+  true, // fetchable
+);
+
+/**
+ * Fetchable loader that uses ctx.reverse with scoped (.name) route names.
+ * Client-bound: passed to a client component and read with useLoader().
+ */
+export const LoaderReverseClientScopedLoader = createLoader(
+  async (ctx) => {
+    const localIndex = ctx.reverse(".index");
+    const localDetail = ctx.reverse(".detail", {
+      id: "from-client-scoped-loader",
+    });
+    const globalBlog = ctx.reverse("blog.index");
+    return { localIndex, localDetail, globalBlog };
+  },
+  true, // fetchable
+);

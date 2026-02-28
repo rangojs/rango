@@ -1,7 +1,8 @@
 import type { ContextVar } from "../context-var.js";
 import type { MiddlewareFn } from "../router/middleware.js";
+import type { ScopedReverseFunction } from "../reverse.js";
 import type { SearchSchema, ResolveSearchSchema } from "../search-params.js";
-import type { DefaultEnv } from "./global-namespace.js";
+import type { DefaultEnv, GetRegisteredRoutes } from "./global-namespace.js";
 import type { RouterEnv } from "./route-config.js";
 
 /**
@@ -69,6 +70,12 @@ export type LoaderContext<
    * Available when loader is called via form submission
    */
   formData?: FormData;
+  /**
+   * Generate URLs from route names.
+   * Same scoped reverse as route handlers — `.name` resolves within the
+   * current include() scope, `name` resolves globally.
+   */
+  reverse: ScopedReverseFunction<GetRegisteredRoutes>;
 };
 
 /**

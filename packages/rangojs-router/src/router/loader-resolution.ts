@@ -255,6 +255,7 @@ function createLoaderExecutor<TEnv>(
       },
       method: "GET",
       body: undefined,
+      reverse: ctx.reverse,
     };
 
     const doneLoader = track(`loader:${loader.$$id}`);

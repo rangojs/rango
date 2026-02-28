@@ -52,6 +52,8 @@ export const NamedRoutes = {
   index: "/",
   inlineAction: "/inline-action",
   loaderComposition: "/loader-composition",
+  "loaderReverse.detail": "/loader-reverse/:id",
+  "loaderReverse.index": "/loader-reverse",
   "locale.detail": "/:locale/blog/:slug",
   "locale.list": "/:locale/blog",
   "locationState.index": "/location-state",
