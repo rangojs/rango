@@ -352,10 +352,7 @@ test.describe.serial("hmr-route-mutations", () => {
     }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
 
     // Step 2: Rename path
-    const renamed = readUrls().replace(
-      "/hmr-sequential",
-      "/hmr-sequential-v2",
-    );
+    const renamed = readUrls().replace("/hmr-sequential", "/hmr-sequential-v2");
 
     await expect(async () => {
       fs.writeFileSync(p, renamed, "utf-8");
