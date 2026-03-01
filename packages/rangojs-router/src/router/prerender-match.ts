@@ -9,6 +9,7 @@ import { contextGet, contextSet } from "../context-var.js";
 import {
   createPrerenderContext,
   createStaticContext,
+  createReverseFunction,
 } from "./handler-context.js";
 import { setupBuildUse } from "./loader-resolution.js";
 import { loadManifest } from "./manifest.js";
@@ -119,9 +120,11 @@ export async function matchForPrerender<TEnv = any>(
       _onResponseCallbacks: [],
       setLocationState() {},
       _locationState: undefined,
-      reverse: () => {
-        throw new Error("reverse() not available during pre-rendering");
-      },
+      reverse: createReverseFunction(
+        deps.mergedRouteMap,
+        matched.routeKey,
+        matchedParams,
+      ),
     };
 
     return runWithRequestContext(minimalRequestContext, async () => {
@@ -327,9 +330,7 @@ export async function renderStaticSegment<TEnv = any>(
     _onResponseCallbacks: [],
     setLocationState() {},
     _locationState: undefined,
-    reverse: () => {
-      throw new Error("reverse() not available during static pre-rendering");
-    },
+    reverse: createReverseFunction(mergedRouteMap, routeName, {}),
   };
 
   return runWithRequestContext(minimalRequestContext, async () => {
