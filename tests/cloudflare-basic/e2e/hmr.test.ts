@@ -339,9 +339,12 @@ test.describe.serial("hmr-route-mutations", () => {
       `path("/about", AboutPage, { name: "about" }),
         path("/hmr-sequential", () => <div data-testid="hmr-sequential">Sequential</div>, { name: "hmrSequential" }),`,
     );
-    saveAndWrite(p, withRoute);
 
     await expect(async () => {
+      // Write inside toPass so retries re-trigger the file watcher if the
+      // previous write was missed (e.g. watcher still debouncing from an
+      // earlier step). Content is idempotent so repeated writes are safe.
+      saveAndWrite(p, withRoute);
       await page.goto(f.url("/hmr-sequential"));
       await expect(testId(page, "hmr-sequential")).toBeVisible({
         timeout: 2000,
@@ -349,11 +352,13 @@ test.describe.serial("hmr-route-mutations", () => {
     }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
 
     // Step 2: Rename path
-    const current = fs.readFileSync(p, "utf-8");
-    const renamed = current.replace("/hmr-sequential", "/hmr-sequential-v2");
-    fs.writeFileSync(p, renamed, "utf-8");
+    const renamed = readUrls().replace(
+      "/hmr-sequential",
+      "/hmr-sequential-v2",
+    );
 
     await expect(async () => {
+      fs.writeFileSync(p, renamed, "utf-8");
       await page.goto(f.url("/hmr-sequential-v2"));
       await expect(testId(page, "hmr-sequential")).toBeVisible({
         timeout: 2000,
@@ -364,14 +369,13 @@ test.describe.serial("hmr-route-mutations", () => {
     await expect(testId(page, "catch-all-page")).toBeVisible();
 
     // Step 3: Remove route
-    const current2 = fs.readFileSync(p, "utf-8");
-    const removed = current2.replace(
+    const removed = readUrls().replace(
       /\s*path\("\/hmr-sequential-v2".*\{[^}]*name:\s*"hmrSequential"[^}]*\}\s*\),/,
       "",
     );
-    fs.writeFileSync(p, removed, "utf-8");
 
     await expect(async () => {
+      fs.writeFileSync(p, removed, "utf-8");
       await page.goto(f.url("/hmr-sequential-v2"));
       await expect(testId(page, "catch-all-page")).toBeVisible({
         timeout: 2000,
@@ -479,9 +483,8 @@ test.describe.serial("hmr-route-mutations", () => {
     }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
 
     // Restore original
-    fs.writeFileSync(urlsPath(), content, "utf-8");
-
     await expect(async () => {
+      fs.writeFileSync(urlsPath(), content, "utf-8");
       await page.goto(f.url("/composition"));
       await expect(testId(page, "composition-index")).toBeVisible({
         timeout: 2000,
@@ -624,9 +627,8 @@ import { Outlet } from "@rangojs/router/client";`,
     }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
 
     // Restore original
-    fs.writeFileSync(urlsPath(), content, "utf-8");
-
     await expect(async () => {
+      fs.writeFileSync(urlsPath(), content, "utf-8");
       await page.goto(f.url("/blog"));
       await expect(
         testId(page, "blog-sidebar").or(testId(page, "sidebar-skeleton")),
