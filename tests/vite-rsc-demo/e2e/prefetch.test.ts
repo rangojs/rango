@@ -120,6 +120,50 @@ test.describe("prefetch-on-hover (router mode)", () => {
     expect(shopPrefetches.length).toBe(1);
   });
 
+  test("should use cached prefetch response on navigation (no second fetch)", async ({
+    page,
+    devServerURL,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(devURL(devServerURL, "/"));
+    await waitForHydration(page);
+
+    // Track all RSC partial requests for /blog
+    const rscRequests: { url: string; headers: Record<string, string> }[] = [];
+    page.on("request", (request) => {
+      const url = request.url();
+      if (url.includes("_rsc_partial") && url.includes("/blog")) {
+        rscRequests.push({ url, headers: request.headers() });
+      }
+    });
+
+    // Hover to trigger prefetch
+    const blogLink = page.locator('nav a:has-text("Blog")');
+    await blogLink.hover();
+
+    // Wait for prefetch request to complete (response received)
+    await expect.poll(() => rscRequests.length, { timeout: 3000 }).toBe(1);
+    // Wait for the prefetch response to be stored in cache
+    await page.waitForTimeout(200);
+
+    // Click the link to navigate
+    await blogLink.click();
+
+    // Verify navigation completed — we should be on /blog
+    await page.waitForURL("**/blog", { timeout: 5000 });
+
+    // Wait a bit for any potential late requests
+    await page.waitForTimeout(300);
+
+    // Only 1 RSC request should have been made (the prefetch).
+    // Navigation should have consumed the cached response.
+    expect(rscRequests.length).toBe(1);
+
+    // Verify the single request was the prefetch (has X-Rango-State)
+    expect(rscRequests[0]!.headers["x-rango-state"]).toBeDefined();
+  });
+
   test("should return RSC Flight for partial request with Accept: text/html", async ({
     devServerURL,
   }) => {
@@ -205,6 +249,38 @@ base.describe("prefetch-on-hover (production)", () => {
     );
     baseExpect(prefetchLinkCount).toBe(0);
   });
+
+  base(
+    "should use cached prefetch response on navigation (no second fetch)",
+    async ({ page }) => {
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      const rscRequests: { url: string; headers: Record<string, string> }[] =
+        [];
+      page.on("request", (request) => {
+        const url = request.url();
+        if (url.includes("_rsc_partial") && url.includes("/blog")) {
+          rscRequests.push({ url, headers: request.headers() });
+        }
+      });
+
+      const blogLink = page.locator('nav a:has-text("Blog")');
+      await blogLink.hover();
+
+      await baseExpect
+        .poll(() => rscRequests.length, { timeout: 3000 })
+        .toBe(1);
+      await page.waitForTimeout(200);
+
+      await blogLink.click();
+      await page.waitForURL("**/blog", { timeout: 5000 });
+      await page.waitForTimeout(300);
+
+      baseExpect(rscRequests.length).toBe(1);
+      baseExpect(rscRequests[0]!.headers["x-rango-state"]).toBeDefined();
+    },
+  );
 
   base(
     "should return RSC Flight for partial request with Accept: text/html",
