@@ -1,4 +1,4 @@
-import { urls, Prerender, Static } from "@rangojs/router";
+import { urls, Prerender, Static, getRequestContext } from "@rangojs/router";
 import { ChangelogPage } from "./prerender-fs.js";
 import { PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
@@ -60,6 +60,35 @@ export const DocsArticle = Prerender(
   },
 );
 
+// Prerender handler that uses ctx.reverse() to generate URLs at build time
+export const PrerenderWithReverse = Prerender(async (ctx) => {
+  const blogUrl = ctx.reverse("blog.index");
+  // Also test getRequestContext().reverse() during prerender
+  const reqCtx = getRequestContext()!;
+  const hrefUrl = reqCtx.reverse("href.index");
+  return (
+    <div data-testid="prerender-reverse-page">
+      <h1 data-testid="prerender-reverse-title">Prerender Reverse</h1>
+      <p data-testid="prerender-reverse-blog">{blogUrl}</p>
+      <p data-testid="prerender-reverse-href">{hrefUrl}</p>
+    </div>
+  );
+});
+
+// Static handler that uses getRequestContext().reverse()
+export const StaticWithReverse = Static((ctx) => {
+  const blogUrl = ctx.reverse("blog.index");
+  const reqCtx = getRequestContext()!;
+  const hrefUrl = reqCtx.reverse("href.index");
+  return (
+    <div data-testid="static-reverse-page">
+      <h1 data-testid="static-reverse-title">Static Reverse</h1>
+      <p data-testid="static-reverse-blog">{blogUrl}</p>
+      <p data-testid="static-reverse-href">{hrefUrl}</p>
+    </div>
+  );
+});
+
 export const prerenderPatterns = urls(({ path, loader }) => [
   path("/docs", DocsPage, { name: "docs" }),
   path("/docs/:slug", DocsArticle, { name: "docs.article" }, () => [
@@ -70,4 +99,9 @@ export const prerenderPatterns = urls(({ path, loader }) => [
   path("/static-page", StaticPage, { name: "static-page" }),
   // Static handler on a dynamic route -- same content for any :tag value
   path("/static-shell/:tag", StaticShell, { name: "static-shell" }),
+  // Prerender + Static handlers with reverse() -- tests URL generation at build time
+  path("/prerender-reverse", PrerenderWithReverse, {
+    name: "prerender-reverse",
+  }),
+  path("/static-reverse", StaticWithReverse, { name: "static-reverse" }),
 ]);

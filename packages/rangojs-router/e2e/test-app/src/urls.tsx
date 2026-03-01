@@ -34,6 +34,7 @@ import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
 import { useCachePatterns } from "./urls/use-cache.js";
 import { prerenderLocalePatterns } from "./urls/prerender-locale.js";
 import { loaderReversePatterns } from "./urls/loader-reverse.js";
+import { loaderCookiePatterns } from "./urls/loader-cookie.js";
 import { ctxCleanPatterns } from "./urls/ctx-clean.js";
 import { actionRedirectRevalidationPatterns } from "./urls/action-redirect-revalidation.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
@@ -531,6 +532,11 @@ export const urlpatterns = urls(
 
       // Context clean test patterns (verify _rsc* params stripped from ctx)
       include("/ctx-clean", ctxCleanPatterns, { name: "ctxClean" }),
+
+      // Loader cookie + RequestContext reverse test patterns
+      include("/loader-cookie", loaderCookiePatterns, {
+        name: "loaderCookie",
+      }),
 
       // Action redirect revalidation test patterns
       include(

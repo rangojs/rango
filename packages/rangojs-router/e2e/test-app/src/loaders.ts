@@ -543,3 +543,32 @@ export const LoaderReverseFetchScopedLoader = createLoader(
   },
   true, // fetchable
 );
+
+// ============================================================================
+// Loader cookie() tests
+// Test that loaders can read cookies directly via ctx.cookie()
+// ============================================================================
+
+/**
+ * Loader that reads cookies via ctx.cookie() and ctx.cookies()
+ * Used to test that LoaderContext has cookie access
+ */
+export const CookieTestLoader = createLoader(async (ctx) => {
+  const testSession = ctx.cookie("test-session");
+  const allCookies = ctx.cookies();
+  return {
+    session: testSession || null,
+    cookieCount: Object.keys(allCookies).length,
+  };
+});
+
+/**
+ * Loader that uses ctx.cookie() to read a cookie set by middleware.
+ * Tests the full pipeline: middleware sets cookie -> loader reads it.
+ */
+export const CookieFromMiddlewareLoader = createLoader(async (ctx) => {
+  const visitCount = ctx.cookie("visit-count");
+  return {
+    visitCount: visitCount ? parseInt(visitCount, 10) : null,
+  };
+});
