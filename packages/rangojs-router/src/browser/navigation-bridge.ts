@@ -594,7 +594,9 @@ export function createNavigationBridge(
             ? cachedSegments!
                 .filter((s) => s.type !== "loader")
                 .map((s) => s.id)
-            : undefined,
+            : options?._skipCache
+              ? [] // Action redirect: send no segments so server renders everything fresh
+              : undefined,
           false,
           tx.handle.signal,
           tx.with({
@@ -609,7 +611,6 @@ export function createNavigationBridge(
           // No need for staleRevalidation flag - we're sending the freshest segments we have.
           // Also pass cached handle data for restoring breadcrumbs when server returns empty diff.
           // When leaving intercept, pass the flag so fetchPartialUpdate knows to filter segments.
-          // When _skipCache (action redirect), mark segments as stale so server revalidates loaders.
           hasUsableCache
             ? {
                 targetCacheSegments: cachedSegments,
@@ -617,9 +618,7 @@ export function createNavigationBridge(
               }
             : isLeavingIntercept
               ? { leavingIntercept: true }
-              : options?._skipCache
-                ? { markStale: true }
-                : undefined,
+              : undefined,
         );
       } catch (error) {
         // Server-side redirect with location state: the current transaction's

@@ -56,14 +56,16 @@ test.describe("action-redirect-revalidation", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    // Track RSC navigation requests to verify _rsc_stale is sent
-    const rscRequests: { url: string; hasStale: boolean }[] = [];
+    // Track RSC navigation requests to verify _rsc_stale and empty segments
+    const rscRequests: { url: string; hasStale: boolean; segments: string }[] = [];
     page.on("request", (request) => {
       const url = request.url();
       if (url.includes("_rsc_partial=true")) {
+        const parsed = new URL(url);
         rscRequests.push({
           url,
           hasStale: url.includes("_rsc_stale=true"),
+          segments: parsed.searchParams.get("_rsc_segments") || "",
         });
       }
     });
@@ -87,12 +89,15 @@ test.describe("action-redirect-revalidation", () => {
     await expect(page).toHaveURL(/\/action-redirect-revalidation$/);
     await expect(page.locator('[data-testid="auth-user"]')).toBeVisible();
 
-    // Verify the RSC navigation request included _rsc_stale=true
+    // Verify the RSC navigation request after action redirect
     const redirectNavRequest = rscRequests.find(
       (r) => r.url.includes("/action-redirect-revalidation"),
     );
     expect(redirectNavRequest).toBeTruthy();
+    // Should send _rsc_stale=true as a signal
     expect(redirectNavRequest!.hasStale).toBe(true);
+    // Should send empty segments so server renders everything fresh
+    expect(redirectNavRequest!.segments).toBe("");
   });
 });
 
@@ -140,13 +145,15 @@ test.describe("action-redirect-revalidation (production)", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    const rscRequests: { url: string; hasStale: boolean }[] = [];
+    const rscRequests: { url: string; hasStale: boolean; segments: string }[] = [];
     page.on("request", (request) => {
       const url = request.url();
       if (url.includes("_rsc_partial=true")) {
+        const parsed = new URL(url);
         rscRequests.push({
           url,
           hasStale: url.includes("_rsc_stale=true"),
+          segments: parsed.searchParams.get("_rsc_segments") || "",
         });
       }
     });
@@ -171,5 +178,6 @@ test.describe("action-redirect-revalidation (production)", () => {
     );
     expect(redirectNavRequest).toBeTruthy();
     expect(redirectNavRequest!.hasStale).toBe(true);
+    expect(redirectNavRequest!.segments).toBe("");
   });
 });
