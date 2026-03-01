@@ -167,7 +167,8 @@ export async function resolveSegment<TEnv>(
       segments.push(...parallelSegments);
     }
 
-    (context as InternalHandlerContext)._currentSegmentId = entry.shortCode;
+    (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+      entry.shortCode;
 
     // Static handler interception: use pre-rendered component from build-time store.
     // Cast via any because the cache entry type in the union lacks isStaticPrerender.
@@ -225,7 +226,8 @@ export async function resolveSegment<TEnv>(
     //
     // The handler's segment is PUSHED after orphans/parallels to preserve
     // the correct tree composition order (layouts wrap the route content).
-    (context as InternalHandlerContext)._currentSegmentId = entry.shortCode;
+    (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+      entry.shortCode;
     let component: ReactNode | undefined;
 
     // Static handler interception: use pre-rendered component from build-time store

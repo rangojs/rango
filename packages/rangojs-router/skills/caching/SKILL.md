@@ -127,13 +127,13 @@ For distributed caching on Cloudflare Workers:
 ```typescript
 import { CFCacheStore } from "@rangojs/router/cache/cf";
 
-const router = createRouter({
+const router = createRouter<AppBindings>({
   document: Document,
   urls: urlpatterns,
-  cache: (env) => ({
+  cache: (env, ctx) => ({
     store: new CFCacheStore({
-      kv: env.Bindings.CACHE_KV,
-      waitUntil: (fn) => env.ctx.waitUntil(fn),
+      kv: env.CACHE_KV,
+      waitUntil: (fn) => ctx!.waitUntil(fn),
     }),
     enabled: true,
   }),

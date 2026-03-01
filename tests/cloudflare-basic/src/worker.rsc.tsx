@@ -15,6 +15,6 @@ export default {
     }
     // Use router.fetch directly - cache is configured in router with ctx from env
     // Response routes (path.text, urls.json) are handled by the router's short-circuit
-    return router.fetch(request, { Bindings: env, Variables: {}, ctx });
+    return router.fetch(request, { env, ctx });
   },
 } satisfies ExportedHandler<AppBindings>;

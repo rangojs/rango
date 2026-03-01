@@ -1,5 +1,4 @@
 /// <reference types="@cloudflare/workers-types" />
-import type { RouterEnv } from "@rangojs/router";
 
 // Cloudflare Workers bindings
 export interface AppBindings {
@@ -13,12 +12,10 @@ export interface AppVariables {
   dateStart?: number;
 }
 
-// Combined app environment
-export type AppEnv = RouterEnv<AppBindings, AppVariables>;
-
 // Module augmentation for global type inference
 declare global {
   namespace RSCRouter {
-    interface Env extends AppEnv {}
+    interface Env extends AppBindings {}
+    interface Vars extends AppVariables {}
   }
 }

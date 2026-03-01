@@ -198,11 +198,11 @@ export interface RSCRouterOptions<TEnv = any> {
    *
    * @example Dynamic config with env (e.g., Cloudflare Workers with ExecutionContext)
    * ```typescript
-   * const router = createRouter<AppEnv>({
-   *   cache: (env) => ({
+   * const router = createRouter<AppBindings>({
+   *   cache: (_env, ctx) => ({
    *     store: new CFCacheStore({
    *       defaults: { ttl: 60 },
-   *       ctx: env.ctx, // ExecutionContext for non-blocking writes
+   *       ctx: ctx!, // ExecutionContext for non-blocking writes
    *     }),
    *   }),
    * });
@@ -210,7 +210,10 @@ export interface RSCRouterOptions<TEnv = any> {
    */
   cache?:
     | { store: SegmentCacheStore; enabled?: boolean }
-    | ((env: TEnv & { ctx?: ExecutionContext }) => {
+    | ((
+        env: TEnv,
+        ctx?: ExecutionContext,
+      ) => {
         store: SegmentCacheStore;
         enabled?: boolean;
       });
@@ -319,7 +322,8 @@ export interface RSCRouterOptions<TEnv = any> {
    * - Undefined to disable nonce (default)
    *
    * The nonce will be applied to inline scripts injected by the RSC payload.
-   * It's also available to middleware via `ctx.get('nonce')`.
+   * It's also available to middleware via the typed `nonce` token:
+   * `import { nonce } from "@rangojs/router"; ctx.get(nonce)`
    *
    * @example Auto-generate nonce
    * ```tsx
