@@ -22,7 +22,7 @@ import type { LoaderRevalidationResult, ActionContext } from "./types";
 import { isHandle, type Handle } from "../handle.js";
 import type { HandleStore } from "../server/handle-store.js";
 import { getFetchableLoader } from "../server/fetchable-loader-store.js";
-import { getRequestContext } from "../server/request-context.js";
+import { _getRequestContext } from "../server/request-context.js";
 import { debugLog } from "./logging.js";
 
 /**
@@ -182,7 +182,7 @@ function createLoaderExecutor<TEnv>(
   callerLoaderId: string | null,
 ) => Promise<any> {
   // Capture RequestContext eagerly for cookie access (ALS protection on Cloudflare)
-  const reqCtxRef = getRequestContext();
+  const reqCtxRef = _getRequestContext();
 
   // Dependency graph: loaderId -> set of loader IDs it directly depends on.
   const dependsOn = new Map<string, Set<string>>();
@@ -300,7 +300,7 @@ export function setupLoaderAccess<TEnv>(
   // can disrupt AsyncLocalStorage, causing getRequestContext() to return
   // undefined when handlers later call ctx.use(handle). Capturing early
   // ensures the store reference survives ALS disruption.
-  const handleStoreRef = getRequestContext()?._handleStore;
+  const handleStoreRef = _getRequestContext()?._handleStore;
 
   const useLoader = createLoaderExecutor(ctx, loaderPromises);
 
@@ -342,7 +342,7 @@ export function setupLoaderAccess<TEnv>(
  */
 export function setupBuildUse<TEnv>(ctx: HandlerContext<any, TEnv>): void {
   // Eagerly capture the HandleStore (same ALS protection as setupLoaderAccess).
-  const handleStoreRef = getRequestContext()?._handleStore;
+  const handleStoreRef = _getRequestContext()?._handleStore;
 
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
     // Handle case: return a push function bound to the current segment

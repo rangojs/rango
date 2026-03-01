@@ -245,4 +245,30 @@ const testHandlerWithScopedReverse: Handler<"/"> = (ctx) => {
   return null;
 };
 
+// =============================================================================
+// Test 17: getRequestContext().reverse() is type-safe with global route names
+// =============================================================================
+import { getRequestContext } from "@rangojs/router";
+
+if (false as boolean) {
+  const ctx = getRequestContext()!;
+
+  // Should work - valid global route names (from RegisteredRoutes)
+  const _blogIndex: string = ctx.reverse("blog.index");
+  const _blogPost: string = ctx.reverse("blog.post", { postId: "hello" });
+  const _hrefIndex: string = ctx.reverse("href.index");
+  const _hrefDetail: string = ctx.reverse("href.detail", { id: "123" });
+  const _index: string = ctx.reverse("index");
+  const _docsArticle: string = ctx.reverse("docs.article", { slug: "intro" });
+
+  // @ts-expect-error - invalid route name should fail
+  ctx.reverse("nonexistent.route");
+
+  // @ts-expect-error - missing required params should fail
+  ctx.reverse("blog.post");
+
+  // @ts-expect-error - wrong param name should fail
+  ctx.reverse("blog.post", { wrongParam: "test" });
+}
+
 export {};

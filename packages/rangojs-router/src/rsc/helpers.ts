@@ -4,7 +4,7 @@
  * Utility functions for RSC request handling.
  */
 
-import { getRequestContext } from "../server/request-context.js";
+import { _getRequestContext } from "../server/request-context.js";
 
 /**
  * Check if a request body has content to decode
@@ -29,7 +29,7 @@ export function createResponseWithMergedHeaders(
   body: BodyInit | null,
   init: ResponseInit,
 ): Response {
-  const ctx = getRequestContext();
+  const ctx = _getRequestContext();
   if (!ctx) {
     return new Response(body, init);
   }

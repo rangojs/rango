@@ -4,8 +4,8 @@ import type { ScopedReverseFunction } from "../reverse.js";
 import type { SearchSchema, ResolveSearchSchema } from "../search-params.js";
 import type {
   DefaultEnv,
-  DefaultHandlerRouteMap,
   DefaultVars,
+  GetRegisteredRoutes,
 } from "./global-namespace.js";
 
 /**
@@ -80,10 +80,7 @@ export type LoaderContext<
    * Same scoped reverse as route handlers — `.name` resolves within the
    * current include() scope, `name` resolves globally.
    */
-  reverse: ScopedReverseFunction<
-    Record<string, string>,
-    DefaultHandlerRouteMap
-  >;
+  reverse: ScopedReverseFunction<GetRegisteredRoutes>;
 };
 
 /**

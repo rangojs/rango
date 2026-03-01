@@ -13,6 +13,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { CookieOptions } from "../router/middleware.js";
 import type { LoaderDefinition, LoaderContext } from "../types.js";
+import type { ScopedReverseFunction } from "../reverse.js";
+import type { GetRegisteredRoutes } from "../types/global-namespace.js";
 import type { Handle } from "../handle.js";
 import { type ContextVar, contextGet, contextSet } from "../context-var.js";
 import { createHandleStore, type HandleStore } from "./handle-store.js";
@@ -26,6 +28,7 @@ import type { LocationStateEntry } from "../browser/react/location-state-shared.
 import { NOCACHE_SYMBOL, assertNotInsideCacheExec } from "../cache/taint.js";
 import { createReverseFunction } from "../router/handler-context.js";
 import { getGlobalRouteMap } from "../route-map-builder.js";
+import { invariant } from "../errors.js";
 
 /**
  * Unified request context available via getRequestContext()
@@ -220,11 +223,7 @@ export interface RequestContext<
    * Uses the global route map. After route matching, scoped (`.name`) resolution
    * works within the matched include() scope.
    */
-  reverse(
-    name: string,
-    params?: Record<string, string>,
-    search?: Record<string, unknown>,
-  ): string;
+  reverse: ScopedReverseFunction<GetRegisteredRoutes>;
 
   /** @internal Route name from route matching, used for scoped reverse resolution */
   _routeName?: string;
@@ -246,9 +245,26 @@ export function runWithRequestContext<TEnv, T>(
 
 /**
  * Get the current request context
- * Returns undefined if not running within a request context
+ * Throws if called outside of a request context
  */
-export function getRequestContext<TEnv = unknown>():
+export function getRequestContext<TEnv = unknown>(): RequestContext<TEnv> {
+  const ctx = requestContextStorage.getStore() as
+    | RequestContext<TEnv>
+    | undefined;
+  invariant(
+    ctx,
+    "getRequestContext() called outside of a request context. " +
+      "This function must be called from within a route handler, loader, middleware, " +
+      "server action, or server component.",
+  );
+  return ctx;
+}
+
+/**
+ * @internal Get the request context without throwing — for internal code that
+ * may run outside a request context (cache stores, optional handle lookups, etc.)
+ */
+export function _getRequestContext<TEnv = unknown>():
   | RequestContext<TEnv>
   | undefined {
   return requestContextStorage.getStore() as RequestContext<TEnv> | undefined;
@@ -286,17 +302,10 @@ export function getLocationState(): LocationStateEntry[] | undefined {
 
 /**
  * Get the current request context, throwing if not available
- * Use this when context is required (e.g., in loader actions)
+ * @deprecated Use getRequestContext() directly — it now throws if outside context
  */
 export function requireRequestContext<TEnv = unknown>(): RequestContext<TEnv> {
-  const ctx = getRequestContext<TEnv>();
-  if (!ctx) {
-    throw new Error(
-      "Request context not available. This function must be called from within a server action " +
-        "executed through the RSC handler.",
-    );
-  }
-  return ctx;
+  return getRequestContext<TEnv>();
 }
 
 /**

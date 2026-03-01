@@ -5,7 +5,7 @@
  */
 
 import type { HandlerContext, InternalHandlerContext } from "../types";
-import { getRequestContext } from "../server/request-context.js";
+import { _getRequestContext } from "../server/request-context.js";
 import { getSearchSchema } from "../route-map-builder.js";
 import { parseSearchParams, serializeSearchParams } from "../search-params.js";
 import { contextGet, contextSet } from "../context-var.js";
@@ -149,7 +149,7 @@ export function createHandlerContext<TEnv>(
 ): InternalHandlerContext<any, TEnv> {
   // Get variables from request context - this is the unified context
   // shared between middleware and route handlers
-  const requestContext = getRequestContext();
+  const requestContext = _getRequestContext();
   const variables: any = requestContext?.var ?? {};
 
   // If route has a search schema, parse URLSearchParams into typed object

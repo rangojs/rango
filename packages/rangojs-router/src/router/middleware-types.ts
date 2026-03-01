@@ -6,7 +6,11 @@
  */
 
 import type { ContextVar } from "../context-var.js";
-import type { DefaultVars } from "../types/global-namespace.js";
+import type {
+  DefaultVars,
+  GetRegisteredRoutes,
+} from "../types/global-namespace.js";
+import type { ScopedReverseFunction } from "../reverse.js";
 
 /**
  * Get variable function type
@@ -121,11 +125,7 @@ export interface MiddlewareContext<
    * Generate URLs from route names.
    * - `name` — global route, from the named-routes definition
    */
-  reverse(
-    name: string,
-    params?: Record<string, string>,
-    search?: Record<string, unknown>,
-  ): string;
+  reverse: ScopedReverseFunction<GetRegisteredRoutes>;
 }
 
 /**
