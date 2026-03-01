@@ -1,4 +1,4 @@
-import { urls, Meta } from "@rangojs/router";
+import { urls, Meta, getRequestContext } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { RootLayout } from "./components/layouts/index.js";
 import { blogPatterns } from "./urls/blog.js";
@@ -560,16 +560,20 @@ export const urlpatterns = urls(
         { name: "shopPlayground" },
       ),
 
-      // Inline redirect test target — reads variable set by action via ctx.get()
+      // Inline redirect test target — reads variable and cookie set by action
       path(
         "/inline-redirect-target",
         (ctx) => {
           const variableValue =
             ctx.get("inlineRedirectCookie") ?? "no-variable";
+          const reqCtx = getRequestContext();
+          const cookieValue =
+            reqCtx?.cookie("inline-redirect-test") ?? "no-cookie";
           return (
             <div data-testid="inline-redirect-target">
               <h1>Inline Redirect Target</h1>
               <p data-testid="variable-value">Variable: {variableValue}</p>
+              <p data-testid="cookie-value">Cookie: {cookieValue}</p>
             </div>
           );
         },

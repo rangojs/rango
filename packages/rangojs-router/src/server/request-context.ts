@@ -115,6 +115,13 @@ export interface RequestContext<
   /** HTTP method (GET, POST, PUT, PATCH, DELETE, etc.) */
   method: string;
 
+  /**
+   * @internal Replay Set-Cookie response headers into the parsed cookie cache.
+   * Used by inline action redirects so that ctx.cookie() on the redirect target
+   * sees cookies set during the action.
+   */
+  _replayCookiesFromResponse(): void;
+
   /** @internal Handle store for tracking handle data across segments */
   _handleStore: HandleStore;
 
@@ -434,6 +441,27 @@ export function createRequestContext<TEnv>(
     header(name: string, value: string): void {
       assertNotInsideCacheExec(ctx, "header");
       stubResponse.headers.set(name, value);
+    },
+
+    _replayCookiesFromResponse(): void {
+      const cookies = getParsedCookies();
+      for (const header of stubResponse.headers.getSetCookie()) {
+        const parts = header.split(";");
+        const nameValue = parts[0]?.trim();
+        if (!nameValue) continue;
+        const eqIndex = nameValue.indexOf("=");
+        if (eqIndex === -1) continue;
+        const name = decodeURIComponent(nameValue.slice(0, eqIndex).trim());
+        const value = decodeURIComponent(nameValue.slice(eqIndex + 1).trim());
+        const isDelete = parts
+          .slice(1)
+          .some((p) => p.trim().toLowerCase() === "max-age=0");
+        if (isDelete) {
+          delete cookies[name];
+        } else {
+          cookies[name] = value;
+        }
+      }
     },
 
     // Placeholder - will be replaced below

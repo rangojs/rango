@@ -46,7 +46,7 @@ export interface AppVariables {
   role?: string;
   // Include + layout middleware test variable
   includeLayoutMw?: string;
-  // Inline redirect test variable
+  // Inline redirect test variables
   inlineRedirectCookie?: string;
   // Handler-first execution order test variable
   handlerData?: string;

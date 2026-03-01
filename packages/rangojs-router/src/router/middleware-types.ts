@@ -115,6 +115,13 @@ export interface MiddlewareContext<
     options?: Pick<CookieOptions, "domain" | "path">,
   ): void;
 
+  /**
+   * @internal Replay Set-Cookie response headers into the parsed cookie cache.
+   * Used by inline action redirects so that ctx.cookie() on the redirect target
+   * sees cookies set during the action.
+   */
+  _replayCookiesFromResponse(): void;
+
   /** Get a context variable (shared with route handlers) */
   get: GetVariableFn<TEnv>;
 

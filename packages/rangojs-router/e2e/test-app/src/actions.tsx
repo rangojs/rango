@@ -224,13 +224,15 @@ export async function throwSimpleRedirect(): Promise<void> {
 }
 
 /**
- * Action that sets a context variable and throws a redirect.
+ * Action that sets a context variable AND a cookie, then throws a redirect.
  * Tests that inline redirect preserves the shared RequestContext so
- * handlers on the redirect target can read action-set variables via ctx.get().
+ * handlers on the redirect target can read action-set variables via ctx.get()
+ * AND cookies via ctx.cookie() (replayed from response headers).
  */
 export async function throwRedirectWithVariable(): Promise<void> {
   const ctx = requireRequestContext();
   ctx.set("inlineRedirectCookie", "value-from-action");
+  ctx.setCookie("inline-redirect-test", "cookie-from-action", { path: "/" });
   throw redirect("/inline-redirect-target");
 }
 

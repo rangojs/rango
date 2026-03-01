@@ -53,8 +53,13 @@ async function renderInlineRedirect<TEnv>(
     // Empty _rsc_segments forces the server to render all segments fresh
     targetUrl.searchParams.set("_rsc_segments", "");
 
-    // Merge cookies set during the action into the request Cookie header
+    // Replay Set-Cookie headers into the request context's cookie cache
+    // so that ctx.cookie() on the redirect target sees cookies set by the action.
     const reqCtx = getRequestContext();
+    reqCtx?._replayCookiesFromResponse();
+
+    // Also merge cookies into the synthetic request's Cookie header for
+    // any new middleware contexts that may be created during matchPartial.
     const setCookieHeaders = reqCtx?.res.headers.getSetCookie() ?? [];
     const mergedCookieHeader = mergeCookiesForInlineRedirect(
       originalRequest.headers.get("Cookie"),

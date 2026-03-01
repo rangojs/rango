@@ -163,6 +163,37 @@ export function createMiddlewareContext<TEnv>(
       return { ...parsedCookies };
     },
 
+    /**
+     * @internal Replay Set-Cookie response headers into the parsed cookie cache.
+     * Used by inline action redirects so that ctx.cookie() on the redirect target
+     * sees cookies set during the action.
+     */
+    _replayCookiesFromResponse(): void {
+      if (!responseHolder.response) return;
+      // Ensure parsedCookies is initialized
+      if (!parsedCookies) {
+        parsedCookies = parseCookies(cookieHeader);
+      }
+      for (const header of responseHolder.response.headers.getSetCookie()) {
+        const parts = header.split(";");
+        const nameValue = parts[0]?.trim();
+        if (!nameValue) continue;
+        const eqIndex = nameValue.indexOf("=");
+        if (eqIndex === -1) continue;
+        const name = decodeURIComponent(nameValue.slice(0, eqIndex).trim());
+        const value = decodeURIComponent(nameValue.slice(eqIndex + 1).trim());
+        // Check if this is a deletion cookie (Max-Age=0)
+        const isDelete = parts
+          .slice(1)
+          .some((p) => p.trim().toLowerCase() === "max-age=0");
+        if (isDelete) {
+          delete parsedCookies[name];
+        } else {
+          parsedCookies[name] = value;
+        }
+      }
+    },
+
     setCookie(name: string, value: string, options?: CookieOptions): void {
       if (!responseHolder.response) {
         throw new Error(

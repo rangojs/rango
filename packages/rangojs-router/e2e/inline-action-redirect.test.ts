@@ -13,7 +13,8 @@ import { waitForHydration, expectNoPageError } from "./helper";
  * - Only ONE HTTP request (the action POST) — no subsequent _rsc_partial GET
  * - URL updates to the redirect target
  * - Redirect target content is rendered correctly
- * - Cookies set during the action are visible to loaders on the redirect target
+ * - Variables set during the action are visible on the redirect target
+ * - Cookies set during the action are visible via getRequestContext().cookie()
  */
 
 test.describe("inline-action-redirect (dev)", () => {
@@ -66,7 +67,7 @@ test.describe("inline-action-redirect (dev)", () => {
     expect(partialGets.length).toBe(0);
   });
 
-  test("redirect with variable — ctx.get() reads action-set variable on target", async ({
+  test("redirect with variable and cookie — reads action-set data on target", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -98,6 +99,11 @@ test.describe("inline-action-redirect (dev)", () => {
     // Verify the variable set by the action is readable on the redirect target
     await expect(page.locator('[data-testid="variable-value"]')).toHaveText(
       "Variable: value-from-action",
+    );
+
+    // Verify the cookie set by the action is readable via getRequestContext().cookie()
+    await expect(page.locator('[data-testid="cookie-value"]')).toHaveText(
+      "Cookie: cookie-from-action",
     );
 
     // URL should be updated
@@ -167,7 +173,7 @@ test.describe("inline-action-redirect (production)", () => {
     expect(partialGets.length).toBe(0);
   });
 
-  test("redirect with variable — ctx.get() reads action-set variable on target", async ({
+  test("redirect with variable and cookie — reads action-set data on target", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -199,6 +205,11 @@ test.describe("inline-action-redirect (production)", () => {
     // Verify the variable set by the action is readable on the redirect target
     await expect(page.locator('[data-testid="variable-value"]')).toHaveText(
       "Variable: value-from-action",
+    );
+
+    // Verify the cookie set by the action is readable via getRequestContext().cookie()
+    await expect(page.locator('[data-testid="cookie-value"]')).toHaveText(
+      "Cookie: cookie-from-action",
     );
 
     // URL should be updated
