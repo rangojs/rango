@@ -92,8 +92,6 @@ export async function createMatchContextForFull<TEnv>(
     matched.params,
   );
 
-  const bindings = (env as any)?.Bindings ?? env;
-
   // Clean URL without internal _rsc* params for userland access
   const cleanUrl = stripInternalParams(url);
 
@@ -103,7 +101,7 @@ export async function createMatchContextForFull<TEnv>(
     cleanUrl.searchParams,
     pathname,
     cleanUrl,
-    bindings,
+    env,
     deps.getRouteMap(),
     matched.routeKey,
     matched.responseType,
@@ -137,7 +135,6 @@ export async function createMatchContextForFull<TEnv>(
     url: cleanUrl,
     pathname,
     env,
-    bindings,
     clientSegmentIds: [],
     clientSegmentSet: new Set(),
     stale: false,
@@ -270,8 +267,6 @@ export async function createMatchContextForPartial<TEnv>(
     matched.params,
   );
 
-  const bindings = (env as any)?.Bindings ?? env;
-
   // Clean URL without internal _rsc* params for userland access
   const cleanUrl = stripInternalParams(url);
 
@@ -281,7 +276,7 @@ export async function createMatchContextForPartial<TEnv>(
     cleanUrl.searchParams,
     pathname,
     cleanUrl,
-    bindings,
+    env,
     deps.getRouteMap(),
     matched.routeKey,
     matched.responseType,
@@ -391,7 +386,6 @@ export async function createMatchContextForPartial<TEnv>(
     url: cleanUrl,
     pathname,
     env,
-    bindings,
     clientSegmentIds,
     clientSegmentSet,
     stale,

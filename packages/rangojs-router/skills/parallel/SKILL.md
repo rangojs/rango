@@ -119,7 +119,7 @@ Render different content based on context:
 ```typescript
 parallel({
   "@sidebar": (ctx) => {
-    const user = ctx.env.Variables.user;
+    const user = ctx.get("user");
     return user ? <UserSidebar user={user} /> : <GuestSidebar />;
   },
 })

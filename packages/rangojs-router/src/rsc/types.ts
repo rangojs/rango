@@ -222,7 +222,8 @@ export interface CreateRSCHandlerOptions<
    * - Undefined to disable nonce (default)
    *
    * The nonce will be applied to inline scripts injected by the RSC payload.
-   * It's also available to middleware via `ctx.get('nonce')`.
+   * It's also available to middleware via the typed `nonce` token:
+   * `import { nonce } from "@rangojs/router"; ctx.get(nonce)`
    *
    * @example Auto-generate nonce
    * ```tsx

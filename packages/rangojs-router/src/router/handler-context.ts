@@ -142,7 +142,7 @@ export function createHandlerContext<TEnv>(
   searchParams: URLSearchParams,
   pathname: string,
   url: URL,
-  bindings: any = {},
+  bindings: TEnv = {} as TEnv,
   routeMap: Record<string, string> = {},
   routeName?: string,
   responseType?: string,

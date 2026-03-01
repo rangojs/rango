@@ -17,11 +17,11 @@ import { createRouter } from "@rangojs/router";
 import { CFCacheStore } from "@rangojs/router/cache/cf";
 import { urlpatterns } from "./urls";
 
-const router = createRouter<AppEnv>({
+const router = createRouter<AppBindings>({
   document: Document,
   urls: urlpatterns,
-  documentCache: (env) => ({
-    store: new CFCacheStore({ ctx: env.ctx }),
+  documentCache: (_env, ctx) => ({
+    store: new CFCacheStore({ ctx: ctx! }),
     skipPaths: ["/api", "/admin"],
     debug: process.env.NODE_ENV === "development",
   }),
@@ -58,9 +58,9 @@ export const urlpatterns = urls(({ path, cache }) => [
 ```typescript
 createRouter({
   // ...
-  documentCache: (env) => ({
+  documentCache: (_env, ctx) => ({
     // Cache store (required)
-    store: new CFCacheStore({ ctx: env.ctx }),
+    store: new CFCacheStore({ ctx: ctx! }),
 
     // Skip specific paths
     skipPaths: ["/api", "/admin"],
@@ -137,11 +137,11 @@ import { createRouter } from "@rangojs/router";
 import { CFCacheStore } from "@rangojs/router/cache/cf";
 import { urlpatterns } from "./urls";
 
-const router = createRouter<AppEnv>({
+const router = createRouter<AppBindings>({
   document: Document,
   urls: urlpatterns,
-  documentCache: (env) => ({
-    store: new CFCacheStore({ ctx: env.ctx }),
+  documentCache: (_env, ctx) => ({
+    store: new CFCacheStore({ ctx: ctx! }),
     skipPaths: ["/api"],
     debug: process.env.NODE_ENV === "development",
   }),

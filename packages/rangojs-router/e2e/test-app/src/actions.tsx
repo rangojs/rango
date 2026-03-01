@@ -241,3 +241,27 @@ export async function interleaveTestAction(
 ): Promise<{ result: string; ts: number }> {
   return { result: `action-result:${input}`, ts: Date.now() };
 }
+
+/**
+ * Login action for testing action redirect revalidation.
+ * Sets an auth cookie and throws redirect to the target page.
+ * The redirect should cause the target route's loaders to revalidate
+ * so the page shows authenticated content.
+ */
+export async function actionRedirectLogin(
+  _prev: { error?: string } | undefined,
+  formData: FormData,
+): Promise<{ error?: string }> {
+  const email = (formData.get("email") as string)?.trim();
+  if (!email) {
+    return { error: "Email is required" };
+  }
+
+  const ctx = requireRequestContext();
+  ctx.setCookie("test-auth-session", email, {
+    path: "/",
+    maxAge: 86400,
+  });
+
+  throw redirect("/action-redirect-revalidation");
+}

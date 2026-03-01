@@ -107,7 +107,7 @@ export async function handleServerAction<TEnv>(
     // Try to render error boundary
     const errorResult = await ctx.router.matchError(
       request,
-      env,
+      { env },
       error,
       "route",
     );
@@ -163,13 +163,13 @@ export async function handleServerAction<TEnv>(
 
   const matchResult = await ctx.router.matchPartial(
     request,
-    env,
+    { env },
     actionContext,
   );
 
   if (!matchResult) {
     // Fall back to full render
-    const fullMatch = await ctx.router.match(request, env);
+    const fullMatch = await ctx.router.match(request, { env });
     setRequestContextParams(fullMatch.params, fullMatch.routeName);
 
     if (fullMatch.redirect) {

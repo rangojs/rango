@@ -15,6 +15,7 @@ import type {
   RouteEntry,
   HostMatchResult,
 } from "./types.js";
+import type { RouterRequestInput } from "../router/router-interfaces.js";
 import {
   matchPattern,
   parseRequest,
@@ -133,7 +134,7 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
   async function executeMiddleware(
     middleware: Middleware[],
     request: Request,
-    context: any,
+    input: RouterRequestInput<any>,
     finalHandler: () => Promise<Response>,
   ): Promise<Response> {
     let index = 0;
@@ -148,7 +149,7 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
         return finalHandler();
       }
 
-      return mw(request, context, next);
+      return mw(request, input, next);
     }
 
     return next();
@@ -160,11 +161,11 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
   async function executeHandler(
     handler: Handler | LazyHandler,
     request: Request,
-    context: any,
+    input: RouterRequestInput<any>,
   ): Promise<Response> {
     // Check if it's a lazy handler (function that returns promise)
     if (typeof handler === "function") {
-      const result = handler(request, context);
+      const result = handler(request, input);
 
       // If it returns a promise with default export
       if (result && typeof result === "object" && "then" in result) {
@@ -183,11 +184,11 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
             defaultExport !== null &&
             "match" in defaultExport
           ) {
-            return (defaultExport as HostRouter).match(request, context);
+            return (defaultExport as HostRouter).match(request, input);
           }
 
           // Otherwise treat as handler
-          return (defaultExport as Handler)(request, context);
+          return (defaultExport as Handler)(request, input);
         }
         // If promise resolves to Response
         return result as Promise<Response>;
@@ -246,18 +247,17 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
       return null;
     },
 
-    async match(request: Request, context: any = {}): Promise<Response> {
+    async match(
+      request: Request,
+      input: RouterRequestInput<any> = {},
+    ): Promise<Response> {
       log(`Request: ${request.url}`);
 
       let effectiveHostname: string;
 
       try {
         // Handle cookie override (may throw HostRouterError)
-        effectiveHostname = handleCookieOverride(
-          request,
-          hostOverride,
-          context,
-        );
+        effectiveHostname = handleCookieOverride(request, hostOverride, input);
       } catch (error) {
         // If it's a HostRouterError from cookie override
         if (error instanceof HostRouterError) {
@@ -265,14 +265,18 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
 
           // If fallback exists, use it
           if (fallbackRoute) {
-            context.error = error;
+            const fallbackInput = { ...input, error };
             const allMiddleware = [
               ...globalMiddleware,
               ...fallbackRoute.middleware,
             ];
 
-            return executeMiddleware(allMiddleware, request, context, () =>
-              executeHandler(fallbackRoute!.handler, request, context),
+            return executeMiddleware(
+              allMiddleware,
+              request,
+              fallbackInput,
+              () =>
+                executeHandler(fallbackRoute!.handler, request, fallbackInput),
             );
           }
 
@@ -312,8 +316,8 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
       const allMiddleware = [...globalMiddleware, ...matchedRoute.middleware];
 
       // Execute middleware chain and handler
-      return executeMiddleware(allMiddleware, request, context, () =>
-        executeHandler(matchedRoute.handler, request, context),
+      return executeMiddleware(allMiddleware, request, input, () =>
+        executeHandler(matchedRoute.handler, request, input),
       );
     },
   };

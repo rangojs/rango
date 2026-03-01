@@ -39,11 +39,11 @@ export async function handleRscRendering<TEnv>(
 
   if (isPartial) {
     // Partial render (navigation)
-    const result = await ctx.router.matchPartial(request, env);
+    const result = await ctx.router.matchPartial(request, { env });
 
     if (!result) {
       // Fall back to full render
-      const match = await ctx.router.match(request, env);
+      const match = await ctx.router.match(request, { env });
       setRequestContextParams(match.params, match.routeName);
 
       if (match.redirect) {
@@ -91,7 +91,7 @@ export async function handleRscRendering<TEnv>(
     }
   } else {
     // Full render (initial page load)
-    const match = await ctx.router.match(request, env);
+    const match = await ctx.router.match(request, { env });
     setRequestContextParams(match.params, match.routeName);
 
     if (match.redirect) {
