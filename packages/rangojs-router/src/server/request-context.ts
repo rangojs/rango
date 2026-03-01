@@ -215,6 +215,17 @@ export interface RequestContext<
   /** @internal Accumulated location state entries */
   _locationState?: LocationStateEntry[];
 
+  /**
+   * Generate URLs from route names.
+   * Uses the global route map. After route matching, scoped (`.name`) resolution
+   * works within the matched include() scope.
+   */
+  reverse(
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ): string;
+
   /** @internal Route name from route matching, used for scoped reverse resolution */
   _routeName?: string;
 }
@@ -257,6 +268,8 @@ export function setRequestContextParams(
     if (routeName !== undefined) {
       ctx._routeName = routeName;
     }
+    // Update reverse with scoped resolution now that route is known
+    ctx.reverse = createReverseFunction(getGlobalRouteMap(), routeName, params);
   }
 }
 
@@ -480,6 +493,8 @@ export function createRequestContext<TEnv>(
         : entries;
     },
     _locationState: undefined,
+
+    reverse: createReverseFunction(getGlobalRouteMap(), undefined, {}),
   };
 
   // Now create use() with access to ctx
@@ -628,6 +643,12 @@ export function createUseFunction<TEnv>(
       env: ctx.env as any,
       var: ctx.var as any,
       get: ctx.get as any,
+      cookie(name: string) {
+        return ctx.cookie(name);
+      },
+      cookies() {
+        return ctx.cookies();
+      },
       use: <TDep, TDepParams = any>(
         dep: LoaderDefinition<TDep, TDepParams>,
       ): Promise<TDep> => {

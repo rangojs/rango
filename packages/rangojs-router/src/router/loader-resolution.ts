@@ -181,6 +181,9 @@ function createLoaderExecutor<TEnv>(
   loader: LoaderDefinition<any, any>,
   callerLoaderId: string | null,
 ) => Promise<any> {
+  // Capture RequestContext eagerly for cookie access (ALS protection on Cloudflare)
+  const reqCtxRef = getRequestContext();
+
   // Dependency graph: loaderId -> set of loader IDs it directly depends on.
   const dependsOn = new Map<string, Set<string>>();
 
@@ -248,6 +251,12 @@ function createLoaderExecutor<TEnv>(
       env: ctx.env,
       var: ctx.var,
       get: ctx.get,
+      cookie(name: string) {
+        return reqCtxRef?.cookie(name);
+      },
+      cookies() {
+        return reqCtxRef?.cookies() ?? {};
+      },
       use: <TDep, TDepParams = any>(
         dep: LoaderDefinition<TDep, TDepParams>,
       ): Promise<TDep> => {
