@@ -46,21 +46,24 @@ export function isWorkspaceDevelopment(): boolean {
 }
 
 /**
- * Subpaths that need to be excluded from Vite's dependency optimization
- * and potentially aliased
+ * Subpaths derived from package.json exports that use TypeScript source.
+ * These must be excluded from Vite's dependency optimization (they ship
+ * as .ts/.tsx, not compiled JS) and aliased when installed from npm.
+ *
+ * Derived automatically from the exports field to prevent drift.
  */
-const PACKAGE_SUBPATHS = [
-  "",
-  "/browser",
-  "/client",
-  "/server",
-  "/rsc",
-  "/ssr",
-  "/internal/deps/browser",
-  "/internal/deps/html-stream-client",
-  "/internal/deps/ssr",
-  "/internal/deps/rsc",
-] as const;
+const SOURCE_EXPORT_SUBPATHS = Object.keys(packageJson.exports)
+  .filter((key) => {
+    const entry = (
+      packageJson.exports as Record<string, Record<string, string>>
+    )[key];
+    // Include if any non-types condition points to TypeScript source
+    return Object.entries(entry).some(
+      ([condition, path]) =>
+        condition !== "types" && typeof path === "string" && /\.tsx?$/.test(path),
+    );
+  })
+  .map((key) => key.replace(/^\./, ""));
 
 /**
  * Generate the list of modules to exclude from Vite's dependency optimization.
@@ -72,7 +75,7 @@ export function getExcludeDeps(): string[] {
   const packageName = getPublishedPackageName();
   const excludes: string[] = [];
 
-  for (const subpath of PACKAGE_SUBPATHS) {
+  for (const subpath of SOURCE_EXPORT_SUBPATHS) {
     // Add scoped package paths
     excludes.push(`${packageName}${subpath}`);
     // Add virtual/aliased paths (before alias resolution)
@@ -85,20 +88,11 @@ export function getExcludeDeps(): string[] {
 }
 
 /**
- * Subpaths that need aliasing (subset of PACKAGE_SUBPATHS)
+ * Subpaths that need aliasing — same as SOURCE_EXPORT_SUBPATHS.
+ * When installed from npm, virtual entries may use a different package name
+ * than the published one; aliases bridge them.
  */
-const ALIAS_SUBPATHS = [
-  "/internal/deps/browser",
-  "/internal/deps/ssr",
-  "/internal/deps/rsc",
-  "/internal/deps/html-stream-client",
-  "/internal/deps/html-stream-server",
-  "/browser",
-  "/client",
-  "/server",
-  "/rsc",
-  "/ssr",
-] as const;
+const ALIAS_SUBPATHS = SOURCE_EXPORT_SUBPATHS;
 
 /**
  * Generate aliases to map virtual package paths to the actual published package.
