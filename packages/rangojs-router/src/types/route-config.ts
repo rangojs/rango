@@ -8,27 +8,17 @@ export type DocumentProps = {
 };
 
 /**
- * Router environment (Hono-inspired type-safe context)
+ * @deprecated RouterEnv is no longer needed. Pass bindings directly as TEnv
+ * to createRouter<TEnv>() and declare RSCRouter.Vars for variables.
  *
- * @template TBindings - Platform bindings (DB, KV, secrets, etc.)
- * @template TVariables - Middleware-injected variables (user, permissions, etc.)
+ * Migration:
+ *   // Before:
+ *   type AppEnv = RouterEnv<AppBindings, AppVariables>;
+ *   createRouter<AppEnv>();
  *
- * @example
- * ```typescript
- * interface AppBindings {
- *   DB: D1Database;
- *   KV: KVNamespace;
- *   STRIPE_KEY: string;
- * }
- *
- * interface AppVariables {
- *   user?: { id: string; name: string };
- *   permissions?: string[];
- * }
- *
- * type AppEnv = RouterEnv<AppBindings, AppVariables>;
- * const router = createRouter<AppEnv>();
- * ```
+ *   // After:
+ *   createRouter<AppBindings>();
+ *   declare global { namespace RSCRouter { interface Vars extends AppVariables {} } }
  */
 export interface RouterEnv<TBindings = {}, TVariables = {}> {
   Bindings: TBindings;

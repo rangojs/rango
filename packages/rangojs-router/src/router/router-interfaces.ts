@@ -13,6 +13,17 @@ import type {
 import type { MiddlewareEntry, MiddlewareFn } from "./middleware.js";
 import { RSC_ROUTER_BRAND } from "./router-registry.js";
 import type { RSCRouterOptions, RootLayoutProps } from "./router-options.js";
+import type { DefaultVars } from "../types/global-namespace.js";
+
+/**
+ * Options passed to router.fetch(), router.match(), and other request entrypoints.
+ * All entrypoints use this same shape for consistency.
+ */
+export interface RouterRequestInput<TEnv, TVars = DefaultVars> {
+  env?: TEnv;
+  vars?: Partial<TVars>;
+  ctx?: ExecutionContext;
+}
 
 /**
  * Merge route patterns with response types into a single route map.
@@ -195,7 +206,10 @@ export interface RSCRouter<
    */
   readonly __sourceFile?: string;
 
-  match(request: Request, context: TEnv): Promise<MatchResult>;
+  match(
+    request: Request,
+    input?: RouterRequestInput<TEnv>,
+  ): Promise<MatchResult>;
 
   /**
    * Build-time pre-render match. Resolves segments with a BuildContext
@@ -233,7 +247,7 @@ export interface RSCRouter<
    */
   previewMatch(
     request: Request,
-    context: TEnv,
+    input?: RouterRequestInput<TEnv>,
   ): Promise<{
     routeMiddleware?: Array<{
       handler: import("./middleware.js").MiddlewareFn;
@@ -249,7 +263,7 @@ export interface RSCRouter<
 
   matchPartial(
     request: Request,
-    context: TEnv,
+    input?: RouterRequestInput<TEnv>,
     actionContext?: {
       actionId?: string;
       actionUrl?: URL;
@@ -273,7 +287,7 @@ export interface RSCRouter<
    */
   matchError(
     request: Request,
-    context: TEnv,
+    input: RouterRequestInput<TEnv> | undefined,
     error: unknown,
     segmentType?: ErrorInfo["segmentType"],
   ): Promise<MatchResult | null>;
@@ -309,8 +323,5 @@ export interface RSCRouter<
    * export const fetch = router.fetch;
    * ```
    */
-  fetch(
-    request: Request,
-    env: TEnv & { ctx?: ExecutionContext },
-  ): Promise<Response>;
+  fetch(request: Request, input?: RouterRequestInput<TEnv>): Promise<Response>;
 }

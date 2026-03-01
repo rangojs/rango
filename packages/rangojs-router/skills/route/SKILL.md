@@ -286,8 +286,8 @@ path("/product/:slug", (ctx) => {
   // Access query params (untyped - use search schema for typed access)
   const tab = ctx.searchParams.get("tab");
 
-  // Access environment
-  const db = ctx.env.Bindings.DB;
+  // Access platform bindings
+  const db = ctx.env.DB;
 
   // Access handles
   const breadcrumbs = ctx.use(Breadcrumbs);
