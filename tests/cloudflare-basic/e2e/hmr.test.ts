@@ -230,6 +230,21 @@ test.describe.serial("hmr-route-mutations", () => {
     fs.writeFileSync(filePath, content, "utf-8");
   }
 
+  // Write a file and periodically re-touch it to ensure the watcher picks
+  // up the change even when a prior HMR cycle is still settling. Returns a
+  // cleanup function to stop the periodic re-touch.
+  function writeWithRetouch(
+    filePath: string,
+    content: string,
+    intervalMs = 8000,
+  ) {
+    saveAndWrite(filePath, content);
+    const timer = setInterval(() => {
+      fs.writeFileSync(filePath, content, "utf-8");
+    }, intervalMs);
+    return () => clearInterval(timer);
+  }
+
   test.afterEach(async () => {
     for (const [filePath, content] of originalContents) {
       fs.writeFileSync(filePath, content, "utf-8");
@@ -339,28 +354,27 @@ test.describe.serial("hmr-route-mutations", () => {
       `path("/about", AboutPage, { name: "about" }),
         path("/hmr-sequential", () => <div data-testid="hmr-sequential">Sequential</div>, { name: "hmrSequential" }),`,
     );
+    let stopRetouch = writeWithRetouch(p, withRoute);
 
     await expect(async () => {
-      // Write inside toPass so retries re-trigger the file watcher if the
-      // previous write was missed (e.g. watcher still debouncing from an
-      // earlier step). Content is idempotent so repeated writes are safe.
-      saveAndWrite(p, withRoute);
       await page.goto(f.url("/hmr-sequential"));
       await expect(testId(page, "hmr-sequential")).toBeVisible({
         timeout: 2000,
       });
     }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
+    stopRetouch();
 
     // Step 2: Rename path
     const renamed = readUrls().replace("/hmr-sequential", "/hmr-sequential-v2");
+    stopRetouch = writeWithRetouch(p, renamed);
 
     await expect(async () => {
-      fs.writeFileSync(p, renamed, "utf-8");
       await page.goto(f.url("/hmr-sequential-v2"));
       await expect(testId(page, "hmr-sequential")).toBeVisible({
         timeout: 2000,
       });
     }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
+    stopRetouch();
 
     await page.goto(f.url("/hmr-sequential"));
     await expect(testId(page, "catch-all-page")).toBeVisible();
@@ -370,14 +384,15 @@ test.describe.serial("hmr-route-mutations", () => {
       /\s*path\("\/hmr-sequential-v2".*\{[^}]*name:\s*"hmrSequential"[^}]*\}\s*\),/,
       "",
     );
+    stopRetouch = writeWithRetouch(p, removed);
 
     await expect(async () => {
-      fs.writeFileSync(p, removed, "utf-8");
       await page.goto(f.url("/hmr-sequential-v2"));
       await expect(testId(page, "catch-all-page")).toBeVisible({
         timeout: 2000,
       });
     }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
+    stopRetouch();
   });
 
   test("should handle burst rapid edits and serve final state", async ({
@@ -480,13 +495,15 @@ test.describe.serial("hmr-route-mutations", () => {
     }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
 
     // Restore original
+    const stopRetouch = writeWithRetouch(urlsPath(), content);
+
     await expect(async () => {
-      fs.writeFileSync(urlsPath(), content, "utf-8");
       await page.goto(f.url("/composition"));
       await expect(testId(page, "composition-index")).toBeVisible({
         timeout: 2000,
       });
     }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
+    stopRetouch();
   });
 
   // -- Group 4: Layout Mutations --
@@ -624,12 +641,14 @@ import { Outlet } from "@rangojs/router/client";`,
     }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
 
     // Restore original
+    const stopRetouch = writeWithRetouch(urlsPath(), content);
+
     await expect(async () => {
-      fs.writeFileSync(urlsPath(), content, "utf-8");
       await page.goto(f.url("/blog"));
       await expect(
         testId(page, "blog-sidebar").or(testId(page, "sidebar-skeleton")),
       ).toBeVisible({ timeout: 2000 });
     }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
+    stopRetouch();
   });
 });
