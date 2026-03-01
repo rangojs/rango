@@ -14,7 +14,6 @@ import type {
 } from "./global-namespace.js";
 import type {
   ExtractParams,
-  RouterEnv,
   RouteDefinition,
   ResolvedRouteMap,
 } from "./route-config.js";

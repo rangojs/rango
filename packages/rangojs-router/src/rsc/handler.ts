@@ -221,10 +221,9 @@ export function createRSCHandler<
       ? { ...initialVars }
       : {};
 
-    // Store nonce via ContextVar token and string key for backward compat
+    // Store nonce via ContextVar token for typed access: ctx.get(nonce)
     if (nonce) {
       contextSet(variables, nonceToken, nonce);
-      variables.nonce = nonce;
     }
 
     // Resolve cache store configuration

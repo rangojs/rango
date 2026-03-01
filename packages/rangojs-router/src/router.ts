@@ -778,17 +778,12 @@ export function createRouter<TEnv = any>(
         if (!handler) {
           // Lazy import deferred to first request to avoid dev mode issues
           const { createRSCHandler } = await import("./rsc/handler.js");
-          // Cast: handler.ts still accepts (request, env) — will be updated
-          // separately to accept RouterRequestInput.
           handler = createRSCHandler({
             router: router as any,
             cache,
             nonce,
             version,
-          }) as (
-            request: Request,
-            input: RouterRequestInput<TEnv>,
-          ) => Promise<Response>;
+          });
         }
         return handler!(request, input);
       };
