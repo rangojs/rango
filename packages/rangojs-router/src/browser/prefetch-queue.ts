@@ -18,7 +18,7 @@ const queue: Array<{
 }> = [];
 const queued = new Set<string>();
 const executing = new Set<string>();
-let abortController = new AbortController();
+let abortController: AbortController | null = null;
 
 function startExecution(
   key: string,
@@ -26,6 +26,7 @@ function startExecution(
 ): void {
   active++;
   executing.add(key);
+  abortController ??= new AbortController();
   execute(abortController.signal).finally(() => {
     active--;
     executing.delete(key);
@@ -70,8 +71,9 @@ export function enqueuePrefetch(
  * compete with navigation fetches for connection slots.
  */
 export function cancelAllPrefetches(): void {
-  abortController.abort();
-  abortController = new AbortController();
+  abortController?.abort();
+  abortController = null;
+
   queue.length = 0;
   queued.clear();
   executing.clear();
