@@ -202,6 +202,61 @@ test.describe("prefetch-on-hover (router mode)", () => {
     const vary = res.headers.get("vary");
     expect(vary).toContain("X-Rango-State");
   });
+
+  test("should re-prefetch after server action invalidates cache", async ({
+    page,
+    devServerURL,
+  }) => {
+    test.setTimeout(30000);
+    using _ = expectNoPageError(page);
+
+    await page.goto(devURL(devServerURL, "/todos"));
+    await waitForHydration(page);
+
+    // Wait for the todos page to fully load (loader has latency)
+    await expect(page.locator("button:has-text('Add Todo')")).toBeVisible({
+      timeout: 15000,
+    });
+
+    // Track prefetch requests for /blog
+    const prefetchRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = request.url();
+      if (url.includes("_rsc_partial") && url.includes("/blog")) {
+        prefetchRequests.push(url);
+      }
+    });
+
+    // Hover Blog link to trigger prefetch
+    const blogLink = page.locator('nav a:has-text("Blog")');
+    await blogLink.hover();
+
+    // Wait for prefetch to complete
+    await expect.poll(() => prefetchRequests.length, { timeout: 3000 }).toBe(1);
+    await page.waitForTimeout(200);
+
+    // Move cursor away from Blog link
+    await page.locator("h1").first().hover();
+    await page.waitForTimeout(200);
+
+    // Perform server action: add a todo
+    // This triggers markCacheAsStale -> clearPrefetchCache
+    const input = page.locator('input[placeholder="What needs to be done?"]');
+    await input.fill("Prefetch Invalidation Test");
+    await page.locator("button:has-text('Add Todo')").click();
+
+    // Wait for action to complete (button returns to "Add Todo")
+    await expect(page.locator("button:has-text('Add Todo')")).toBeVisible({
+      timeout: 10000,
+    });
+    await page.waitForTimeout(300);
+
+    // Hover Blog link again — should trigger a NEW prefetch
+    // because the cache was cleared by the server action
+    await blogLink.hover();
+
+    await expect.poll(() => prefetchRequests.length, { timeout: 3000 }).toBe(2);
+  });
 });
 
 /**
@@ -314,4 +369,62 @@ base.describe("prefetch-on-hover (production)", () => {
     const vary = res.headers.get("vary");
     baseExpect(vary).toContain("X-Rango-State");
   });
+
+  base(
+    "should re-prefetch after server action invalidates cache",
+    async ({ page }) => {
+      base.setTimeout(60000);
+
+      await page.goto(f.url("/todos"));
+      await waitForHydration(page);
+
+      // Wait for the todos page to fully load (loader has latency)
+      await baseExpect(page.locator("button:has-text('Add Todo')")).toBeVisible(
+        { timeout: 15000 },
+      );
+
+      // Track prefetch requests for /blog
+      const prefetchRequests: string[] = [];
+      page.on("request", (request) => {
+        const url = request.url();
+        if (url.includes("_rsc_partial") && url.includes("/blog")) {
+          prefetchRequests.push(url);
+        }
+      });
+
+      // Hover Blog link to trigger prefetch
+      const blogLink = page.locator('nav a:has-text("Blog")');
+      await blogLink.hover();
+
+      // Wait for prefetch to complete
+      await baseExpect
+        .poll(() => prefetchRequests.length, { timeout: 3000 })
+        .toBe(1);
+      await page.waitForTimeout(200);
+
+      // Move cursor away from Blog link
+      await page.locator("h1").first().hover();
+      await page.waitForTimeout(200);
+
+      // Perform server action: add a todo
+      // This triggers markCacheAsStale -> clearPrefetchCache
+      const input = page.locator('input[placeholder="What needs to be done?"]');
+      await input.fill("Prefetch Invalidation Test");
+      await page.locator("button:has-text('Add Todo')").click();
+
+      // Wait for action to complete (button returns to "Add Todo")
+      await baseExpect(page.locator("button:has-text('Add Todo')")).toBeVisible(
+        { timeout: 10000 },
+      );
+      await page.waitForTimeout(300);
+
+      // Hover Blog link again — should trigger a NEW prefetch
+      // because the cache was cleared by the server action
+      await blogLink.hover();
+
+      await baseExpect
+        .poll(() => prefetchRequests.length, { timeout: 3000 })
+        .toBe(2);
+    },
+  );
 });
