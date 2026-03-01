@@ -210,7 +210,11 @@ export function createPartialUpdater(
         targetUrl: url,
         segmentIds: segments,
         previousUrl,
-        staleRevalidation,
+        // Mark stale when explicitly requested OR when no segments are sent
+        // (action redirect sends empty segments for a fresh render).
+        // Only the fetch URL param is affected here — behavioral side effects
+        // (forceAwait, history key check) are controlled by the staleRevalidation variable.
+        staleRevalidation: staleRevalidation || segments.length === 0,
         version,
       });
     } catch (err) {

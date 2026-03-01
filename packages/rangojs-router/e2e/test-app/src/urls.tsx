@@ -36,6 +36,7 @@ import { prerenderLocalePatterns } from "./urls/prerender-locale.js";
 import { loaderReversePatterns } from "./urls/loader-reverse.js";
 import { loaderCookiePatterns } from "./urls/loader-cookie.js";
 import { ctxCleanPatterns } from "./urls/ctx-clean.js";
+import { actionRedirectRevalidationPatterns } from "./urls/action-redirect-revalidation.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -536,6 +537,15 @@ export const urlpatterns = urls(
       include("/loader-cookie", loaderCookiePatterns, {
         name: "loaderCookie",
       }),
+
+      // Action redirect revalidation test patterns
+      include(
+        "/action-redirect-revalidation",
+        actionRedirectRevalidationPatterns,
+        {
+          name: "actionRedirectRevalidation",
+        },
+      ),
 
       // Prerender with parent route params (locale in include prefix)
       include("/:locale", prerenderLocalePatterns, { name: "locale" }),

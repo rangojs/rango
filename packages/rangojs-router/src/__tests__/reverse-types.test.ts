@@ -12,12 +12,7 @@ import type {
   ParamsFor,
 } from "../reverse.js";
 import type { ExtractParams, Handler } from "../types.js";
-import type {
-  HandlerContext,
-  GenericParams,
-  DefaultEnv,
-  RouterEnv,
-} from "../types.js";
+import type { HandlerContext, GenericParams, DefaultEnv } from "../types.js";
 
 // Test route definitions
 type TestRoutes = {
@@ -499,36 +494,39 @@ describe("ReverseFunction with mixed routeMap", () => {
 // ResponseHandlerContext — env extraction, searchParams, url, pathname
 // ============================================================================
 
-type TestEnv = RouterEnv<{ DB: "d1"; KV: "kv" }, { user: string }>;
+type TestBindings = { DB: "d1"; KV: "kv" };
 
 describe("ResponseHandlerContext", () => {
-  it("should extract bindings from RouterEnv", () => {
-    type Ctx = ResponseHandlerContext<{}, TestEnv>;
-    expectTypeOf<Ctx["env"]>().toEqualTypeOf<{ DB: "d1"; KV: "kv" }>();
+  it("should pass through env directly", () => {
+    type Ctx = ResponseHandlerContext<{}, TestBindings>;
+    expectTypeOf<Ctx["env"]>().toEqualTypeOf<TestBindings>();
   });
 
-  it("should fallback to empty object for non-RouterEnv", () => {
+  it("should pass through plain bindings", () => {
     type Ctx = ResponseHandlerContext<{}, { DB: string }>;
-    expectTypeOf<Ctx["env"]>().toEqualTypeOf<{}>();
+    expectTypeOf<Ctx["env"]>().toEqualTypeOf<{ DB: string }>();
   });
 
   it("should have searchParams", () => {
-    type Ctx = ResponseHandlerContext<{}, TestEnv>;
+    type Ctx = ResponseHandlerContext<{}, TestBindings>;
     expectTypeOf<Ctx["searchParams"]>().toEqualTypeOf<URLSearchParams>();
   });
 
   it("should have url", () => {
-    type Ctx = ResponseHandlerContext<{}, TestEnv>;
+    type Ctx = ResponseHandlerContext<{}, TestBindings>;
     expectTypeOf<Ctx["url"]>().toEqualTypeOf<URL>();
   });
 
   it("should have pathname", () => {
-    type Ctx = ResponseHandlerContext<{}, TestEnv>;
+    type Ctx = ResponseHandlerContext<{}, TestBindings>;
     expectTypeOf<Ctx["pathname"]>().toEqualTypeOf<string>();
   });
 
   it("should have typed params", () => {
-    type Ctx = ResponseHandlerContext<{ id: string; slug: string }, TestEnv>;
+    type Ctx = ResponseHandlerContext<
+      { id: string; slug: string },
+      TestBindings
+    >;
     expectTypeOf<Ctx["params"]>().toEqualTypeOf<{ id: string; slug: string }>();
   });
 });

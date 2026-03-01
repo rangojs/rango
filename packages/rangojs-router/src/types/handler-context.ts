@@ -9,11 +9,11 @@ import type { LocationStateEntry } from "../browser/react/location-state-shared.
 import type {
   DefaultEnv,
   DefaultHandlerRouteMap,
+  DefaultVars,
   GetRegisteredRoutes,
 } from "./global-namespace.js";
 import type {
   ExtractParams,
-  RouterEnv,
   RouteDefinition,
   ResolvedRouteMap,
 } from "./route-config.js";
@@ -171,15 +171,15 @@ export type HandlerContext<
    */
   url: URL;
   /**
-   * Platform bindings (DB, KV, secrets, etc.) from RouterEnv.
+   * Platform bindings (DB, KV, secrets, etc.).
    * Access resources like `ctx.env.DB`, `ctx.env.KV`.
    */
-  env: TEnv extends RouterEnv<infer B, any> ? B : {};
+  env: TEnv;
   /**
-   * Middleware-injected variables from RouterEnv.
+   * Middleware-injected variables.
    * Access values like `ctx.var.user`, `ctx.var.permissions`.
    */
-  var: TEnv extends RouterEnv<any, infer V> ? V : {};
+  var: DefaultVars;
   /**
    * Type-safe getter for middleware variables.
    * Alternative to `ctx.var.key` with better autocomplete.
@@ -191,9 +191,7 @@ export type HandlerContext<
    */
   get: {
     <T>(contextVar: ContextVar<T>): T | undefined;
-  } & (TEnv extends RouterEnv<any, infer V>
-    ? <K extends keyof V>(key: K) => V[K]
-    : (key: string) => any);
+  } & (<K extends keyof DefaultVars>(key: K) => DefaultVars[K]);
   /**
    * Type-safe setter for middleware variables.
    * Use in middleware to pass data to handlers.
@@ -206,9 +204,7 @@ export type HandlerContext<
    */
   set: {
     <T>(contextVar: ContextVar<T>, value: T): void;
-  } & (TEnv extends RouterEnv<any, infer V>
-    ? <K extends keyof V>(key: K, value: V[K]) => void
-    : (key: string, value: any) => void);
+  } & (<K extends keyof DefaultVars>(key: K, value: DefaultVars[K]) => void);
   /**
    * Stub response for setting headers/cookies.
    * Headers set here are merged into the final response.

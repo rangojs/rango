@@ -594,7 +594,9 @@ export function createNavigationBridge(
             ? cachedSegments!
                 .filter((s) => s.type !== "loader")
                 .map((s) => s.id)
-            : undefined,
+            : options?._skipCache
+              ? [] // Action redirect: send no segments so server renders everything fresh
+              : undefined,
           false,
           tx.handle.signal,
           tx.with({

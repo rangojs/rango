@@ -338,7 +338,8 @@ export async function renderStaticSegment<TEnv = any>(
     const buildCtx = createStaticContext<TEnv>(mergedRouteMap, routeName);
 
     // Set segment ID so handle pushes are keyed correctly
-    (buildCtx as InternalHandlerContext)._currentSegmentId = handlerId;
+    (buildCtx as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+      handlerId;
 
     setupBuildUse(buildCtx);
 

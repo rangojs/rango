@@ -25,6 +25,6 @@ export default {
       return new Response(null, { status: 404 });
     }
 
-    return hostRouter.match(request, { Bindings: env, Variables: {}, ctx });
+    return hostRouter.match(request, { env, ctx });
   },
 } satisfies ExportedHandler<AppBindings>;

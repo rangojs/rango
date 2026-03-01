@@ -561,7 +561,7 @@ hostRouter.fallback().map(() => import("./apps/site/handler.js"));
 
 export default {
   async fetch(request, env, ctx) {
-    return hostRouter.match(request, { Bindings: env, Variables: {}, ctx });
+    return hostRouter.match(request, { env, ctx });
   },
 };
 ```

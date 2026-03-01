@@ -257,3 +257,27 @@ export async function testRequestContextReverse(): Promise<{
   const hrefIndex = ctx.reverse("href.index");
   return { blogIndex, blogPost, hrefIndex };
 }
+
+/**
+ * Login action for testing action redirect revalidation.
+ * Sets an auth cookie and throws redirect to the target page.
+ * The redirect should cause the target route's loaders to revalidate
+ * so the page shows authenticated content.
+ */
+export async function actionRedirectLogin(
+  _prev: { error?: string } | undefined,
+  formData: FormData,
+): Promise<{ error?: string }> {
+  const email = (formData.get("email") as string)?.trim();
+  if (!email) {
+    return { error: "Email is required" };
+  }
+
+  const ctx = requireRequestContext();
+  ctx.setCookie("test-auth-session", email, {
+    path: "/",
+    maxAge: 86400,
+  });
+
+  throw redirect("/action-redirect-revalidation");
+}

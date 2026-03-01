@@ -4,12 +4,15 @@
  * Type definitions for the host-based routing system.
  */
 
+import type { RouterRequestInput } from "../router/router-interfaces.js";
+
 /**
- * Handler function that processes a request and returns a response
+ * Handler function that processes a request and returns a response.
+ * The input parameter receives the same RouterRequestInput passed to match().
  */
 export type Handler = (
   request: Request,
-  context: any,
+  input: RouterRequestInput<any>,
 ) => Response | Promise<Response>;
 
 /**
@@ -18,11 +21,12 @@ export type Handler = (
 export type LazyHandler = () => Promise<{ default: Handler | HostRouter }>;
 
 /**
- * Middleware function that can intercept and modify requests/responses
+ * Middleware function that can intercept and modify requests/responses.
+ * The input parameter receives the same RouterRequestInput passed to match().
  */
 export type Middleware = (
   request: Request,
-  context: any,
+  input: RouterRequestInput<any>,
   next: () => Promise<Response>,
 ) => Promise<Response>;
 
@@ -71,7 +75,7 @@ export interface HostRouter {
   /**
    * Match an incoming request
    */
-  match(request: Request, context?: any): Promise<Response>;
+  match(request: Request, input?: RouterRequestInput<any>): Promise<Response>;
 
   /**
    * Register fallback handler for allowed hosts without valid cookie
@@ -101,7 +105,11 @@ export interface HostOverrideConfig {
   /**
    * Optional validation function
    */
-  validate?: (request: Request, cookieValue: string, context: any) => string;
+  validate?: (
+    request: Request,
+    cookieValue: string,
+    input: RouterRequestInput<any>,
+  ) => string;
 }
 
 /**

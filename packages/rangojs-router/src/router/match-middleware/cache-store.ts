@@ -207,7 +207,7 @@ export function withCacheStore<TEnv>(
               ctx.url.searchParams,
               ctx.pathname,
               ctx.url,
-              ctx.bindings,
+              ctx.env,
               ctx.routeMap,
               ctx.matched.routeKey,
               ctx.matched.responseType,
