@@ -119,6 +119,9 @@ export async function matchForPrerender<TEnv = any>(
       _onResponseCallbacks: [],
       setLocationState() {},
       _locationState: undefined,
+      reverse: () => {
+        throw new Error("reverse() not available during pre-rendering");
+      },
     };
 
     return runWithRequestContext(minimalRequestContext, async () => {
@@ -324,6 +327,9 @@ export async function renderStaticSegment<TEnv = any>(
     _onResponseCallbacks: [],
     setLocationState() {},
     _locationState: undefined,
+    reverse: () => {
+      throw new Error("reverse() not available during static pre-rendering");
+    },
   };
 
   return runWithRequestContext(minimalRequestContext, async () => {

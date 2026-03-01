@@ -49,6 +49,10 @@ export type LoaderContext<
   } & (TEnv extends RouterEnv<any, infer V>
     ? <K extends keyof V>(key: K) => V[K]
     : (key: string) => any);
+  /** Get a cookie value from the request */
+  cookie(name: string): string | undefined;
+  /** Get all cookies from the request */
+  cookies(): Record<string, string>;
   /**
    * Access another loader's data (returns promise since loaders run in parallel)
    */

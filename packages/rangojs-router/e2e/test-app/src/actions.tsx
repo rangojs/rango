@@ -241,3 +241,19 @@ export async function interleaveTestAction(
 ): Promise<{ result: string; ts: number }> {
   return { result: `action-result:${input}`, ts: Date.now() };
 }
+
+/**
+ * Test action that uses getRequestContext().reverse() to generate URLs.
+ * Verifies that RequestContext has the reverse() method available in server actions.
+ */
+export async function testRequestContextReverse(): Promise<{
+  blogIndex: string;
+  blogPost: string;
+  hrefIndex: string;
+}> {
+  const ctx = requireRequestContext();
+  const blogIndex = ctx.reverse("blog.index");
+  const blogPost = ctx.reverse("blog.post", { postId: "from-action" });
+  const hrefIndex = ctx.reverse("href.index");
+  return { blogIndex, blogPost, hrefIndex };
+}
