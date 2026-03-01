@@ -58,6 +58,7 @@ export const NamedRoutes = {
   "includeMw.index": "/include-mw-test",
   index: "/",
   inlineAction: "/inline-action",
+  inlineRedirectTarget: "/inline-redirect-target",
   loaderComposition: "/loader-composition",
   "loaderReverse.detail": "/loader-reverse/:id",
   "loaderReverse.index": "/loader-reverse",

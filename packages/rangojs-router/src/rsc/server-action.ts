@@ -7,6 +7,7 @@
  */
 
 import {
+  getRequestContext,
   requireRequestContext,
   setRequestContextParams,
   getLocationState,
@@ -18,7 +19,112 @@ import {
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
 } from "./helpers.js";
+import { mergeCookiesForInlineRedirect } from "./cookie-merge.js";
 import type { HandlerContext } from "./handler-context.js";
+
+/**
+ * Render the redirect target inline in the action response.
+ * Creates a synthetic GET request for the redirect URL, merges cookies
+ * set during the action, and calls matchPartial to render the target.
+ * Returns null if inline rendering fails (caller falls back to simple redirect).
+ */
+async function renderInlineRedirect<TEnv>(
+  ctx: HandlerContext<TEnv>,
+  originalRequest: Request,
+  env: TEnv,
+  redirectUrl: string,
+  actionContext: {
+    actionId?: string;
+    actionUrl?: URL;
+    actionResult?: unknown;
+    formData?: FormData;
+  },
+  returnValue: { ok: boolean; data: unknown },
+  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  temporaryReferences: ReturnType<
+    HandlerContext<TEnv>["createTemporaryReferenceSet"]
+  >,
+): Promise<Response | null> {
+  try {
+    // Build the synthetic URL for the redirect target
+    const originalUrl = new URL(originalRequest.url);
+    const targetUrl = new URL(redirectUrl, originalUrl.origin);
+    targetUrl.searchParams.set("_rsc_partial", "true");
+    // Empty _rsc_segments forces the server to render all segments fresh
+    targetUrl.searchParams.set("_rsc_segments", "");
+
+    // Merge cookies set during the action into the request Cookie header
+    const reqCtx = getRequestContext();
+    const setCookieHeaders = reqCtx?.res.headers.getSetCookie() ?? [];
+    const mergedCookieHeader = mergeCookiesForInlineRedirect(
+      originalRequest.headers.get("Cookie"),
+      setCookieHeaders,
+    );
+
+    // Create synthetic GET request for the redirect target
+    const syntheticHeaders = new Headers(originalRequest.headers);
+    syntheticHeaders.set("Cookie", mergedCookieHeader);
+    syntheticHeaders.set(
+      "X-RSC-Router-Client-Path",
+      originalUrl.pathname + originalUrl.search,
+    );
+    // Remove action-specific headers
+    syntheticHeaders.delete("Content-Type");
+    syntheticHeaders.delete("Content-Length");
+
+    const syntheticRequest = new Request(targetUrl.toString(), {
+      method: "GET",
+      headers: syntheticHeaders,
+    });
+
+    const matchResult = await ctx.router.matchPartial(
+      syntheticRequest,
+      env,
+      actionContext,
+    );
+
+    if (!matchResult) return null;
+
+    // If the target itself redirects, fall back to simple redirect
+    if (matchResult.redirect) return null;
+
+    setRequestContextParams(matchResult.params, matchResult.routeName);
+
+    const payload: RscPayload = {
+      metadata: {
+        pathname: targetUrl.pathname,
+        segments: matchResult.segments,
+        isPartial: true,
+        matched: matchResult.matched,
+        diff: matchResult.diff,
+        slots: matchResult.slots,
+        handles: handleStore.stream(),
+        version: ctx.version,
+        inlineRedirect: { url: redirectUrl },
+      },
+      returnValue,
+    };
+
+    const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
+      temporaryReferences,
+    });
+
+    const headers: Record<string, string> = {
+      "content-type": "text/x-component;charset=utf-8",
+    };
+    if (matchResult.serverTiming) {
+      headers["Server-Timing"] = matchResult.serverTiming;
+    }
+
+    return createResponseWithMergedHeaders(rscStream, {
+      status: 200,
+      headers,
+    });
+  } catch {
+    // If anything goes wrong, fall back to simple redirect
+    return null;
+  }
+}
 
 export async function handleServerAction<TEnv>(
   ctx: HandlerContext<TEnv>,
@@ -77,7 +183,27 @@ export async function handleServerAction<TEnv>(
             resolveLocationStateEntries(locationState),
           );
         }
-        // Simple redirect: short-circuit with a header, no RSC serialization
+        // Try inline redirect: render target directly in action response
+        const resolvedId =
+          (loadedAction as { $id?: string; $$id?: string } | undefined)?.$id ??
+          (loadedAction as { $$id?: string } | undefined)?.$$id ??
+          actionId;
+        const inlineResponse = await renderInlineRedirect(
+          ctx,
+          request,
+          env,
+          redirectUrl,
+          {
+            actionId: resolvedId,
+            actionUrl: new URL(request.url),
+            formData: actionFormData,
+          },
+          { ok: true, data: undefined },
+          handleStore,
+          temporaryReferences,
+        );
+        if (inlineResponse) return inlineResponse;
+        // Fall back to simple redirect
         return createSimpleRedirectResponse(redirectUrl);
       }
     }
@@ -97,6 +223,27 @@ export async function handleServerAction<TEnv>(
             resolveLocationStateEntries(locationState),
           );
         }
+        // Try inline redirect: render target directly in action response
+        const resolvedId =
+          (loadedAction as { $id?: string; $$id?: string } | undefined)?.$id ??
+          (loadedAction as { $$id?: string } | undefined)?.$$id ??
+          actionId;
+        const inlineResponse = await renderInlineRedirect(
+          ctx,
+          request,
+          env,
+          redirectUrl,
+          {
+            actionId: resolvedId,
+            actionUrl: new URL(request.url),
+            formData: actionFormData,
+          },
+          { ok: true, data: undefined },
+          handleStore,
+          temporaryReferences,
+        );
+        if (inlineResponse) return inlineResponse;
+        // Fall back to simple redirect
         return createSimpleRedirectResponse(redirectUrl);
       }
     }

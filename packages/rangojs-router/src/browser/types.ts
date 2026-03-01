@@ -69,6 +69,8 @@ export interface RscMetadata {
   warmupEnabled?: boolean;
   /** Server-side redirect with optional state (for partial requests) */
   redirect?: { url: string };
+  /** Inline redirect: the server rendered the redirect target in the action response */
+  inlineRedirect?: { url: string };
   /** Server-set location state to include in history.pushState */
   locationState?: Record<string, unknown>;
 }

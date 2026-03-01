@@ -11,6 +11,8 @@ import {
 } from "./segment-reconciler.js";
 import { classifyActionResponse } from "./action-response-classifier.js";
 import { startTransition } from "react";
+import { generateHistoryKey } from "./navigation-store.js";
+import { ensureHistoryKey } from "./scroll-restoration.js";
 import type { EventController } from "./event-controller.js";
 import {
   toNetworkError,
@@ -335,6 +337,67 @@ export function createServerActionBridge(
       } else {
         window.location.href = redirectUrl;
       }
+      return returnValue?.data;
+    }
+
+    // Handle inline redirect: server rendered the redirect target directly in the
+    // action response. No second request needed — apply segments and update URL.
+    if (metadata?.inlineRedirect && !handle.signal.aborted) {
+      const { url: redirectUrl } = metadata.inlineRedirect;
+      const { matched: inlineMatched, diff: inlineDiff, segments: inlineSegments } = metadata;
+
+      log("inline redirect", { redirectUrl, segments: inlineSegments?.length });
+
+      if (inlineMatched && inlineSegments) {
+        // Reconcile the full segments from the server
+        const reconciled = reconcileSegments({
+          actor: "action",
+          matched: inlineMatched,
+          diff: inlineDiff || [],
+          serverSegments: inlineSegments,
+          cachedSegments: [], // Fresh render, no cache to merge
+        });
+
+        // Render the tree
+        const newTree = await renderSegments(reconciled.mainSegments, {
+          isAction: true,
+          interceptSegments:
+            reconciled.interceptSegments.length > 0
+              ? reconciled.interceptSegments
+              : undefined,
+        });
+
+        // Update UI
+        startTransition(() => {
+          onUpdate({ root: newTree, metadata: metadata! });
+        });
+
+        // Update URL to the redirect target
+        const historyKey = generateHistoryKey(redirectUrl);
+        const parsedUrl = new URL(redirectUrl, window.location.origin);
+
+        window.history.replaceState(
+          { key: historyKey },
+          "",
+          redirectUrl,
+        );
+        ensureHistoryKey();
+
+        // Update store state
+        store.setPath(parsedUrl.pathname);
+        store.setCurrentUrl(redirectUrl);
+        store.setHistoryKey(historyKey);
+        store.setSegmentIds(inlineMatched);
+        const currentHandleData = eventController.getHandleState().data;
+        store.cacheSegmentsForHistory(
+          historyKey,
+          reconciled.segments,
+          currentHandleData,
+        );
+        store.markCacheAsStaleAndBroadcast();
+      }
+
+      handle.complete(returnValue?.data);
       return returnValue?.data;
     }
 

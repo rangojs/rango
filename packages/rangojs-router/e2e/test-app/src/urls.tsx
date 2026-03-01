@@ -560,6 +560,22 @@ export const urlpatterns = urls(
         { name: "shopPlayground" },
       ),
 
+      // Inline redirect test target — reads variable set by action via ctx.get()
+      path(
+        "/inline-redirect-target",
+        (ctx) => {
+          const variableValue =
+            ctx.get("inlineRedirectCookie") ?? "no-variable";
+          return (
+            <div data-testid="inline-redirect-target">
+              <h1>Inline Redirect Target</h1>
+              <p data-testid="variable-value">Variable: {variableValue}</p>
+            </div>
+          );
+        },
+        { name: "inlineRedirectTarget" },
+      ),
+
       // Module-level reverse() test endpoint — returns results computed at
       // module load time (before lazy includes resolve) via NamedRoutes fallback
       path.json(
