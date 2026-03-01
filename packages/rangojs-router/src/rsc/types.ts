@@ -240,6 +240,16 @@ export interface CreateRSCHandlerOptions<
    *   nonce: (request, env) => env.nonce,
    * });
    * ```
+   *
+   * @example Access nonce in middleware
+   * ```tsx
+   * import { nonce } from "@rangojs/router";
+   *
+   * const cspMiddleware: Middleware = async (ctx, next) => {
+   *   const value = ctx.get(nonce); // string | undefined
+   *   await next();
+   * };
+   * ```
    */
   nonce?: NonceProvider<TEnv>;
 }

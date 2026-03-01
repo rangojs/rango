@@ -36,7 +36,8 @@ const router = createRouter<Env>({
 ## Server (in loaders/middleware)
 
 ```typescript
-import { createLoader, createMiddleware } from "@rangojs/router";
+import { createLoader } from "@rangojs/router";
+import type { Middleware } from "@rangojs/router";
 
 // In a loader
 export const SettingsLoader = createLoader("settings", async (ctx) => {
@@ -45,11 +46,11 @@ export const SettingsLoader = createLoader("settings", async (ctx) => {
 });
 
 // In middleware
-export const themeMiddleware = createMiddleware(async (ctx, next) => {
+export const themeMiddleware: Middleware = async (ctx, next) => {
   // Set theme based on user preference
   ctx.setTheme("dark");
   await next();
-});
+};
 ```
 
 ## Client
