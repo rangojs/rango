@@ -35,6 +35,7 @@ export async function handleRscRendering<TEnv>(
 
   let payload: RscPayload;
   let serverTiming: string | undefined;
+  let hasInterceptSlots = false;
 
   if (isPartial) {
     // Partial render (navigation)
@@ -72,6 +73,7 @@ export async function handleRscRendering<TEnv>(
     } else {
       setRequestContextParams(result.params, result.routeName);
       serverTiming = result.serverTiming;
+      hasInterceptSlots = !!result.slots;
 
       payload = {
         metadata: {
@@ -190,10 +192,19 @@ export async function handleRscRendering<TEnv>(
     const fullTiming = timingParts.join(", ");
     const rscHeaders: Record<string, string> = {
       "content-type": "text/x-component;charset=utf-8",
-      vary: request.headers.has("X-Rango-State")
-        ? "accept, X-Rango-State"
-        : "accept",
+      vary: "accept, X-Rango-State, X-RSC-Router-Client-Path",
     };
+    // Enable browser HTTP caching for prefetch responses only.
+    // Requires X-Rango-Prefetch header (sent by Link prefetch fetch),
+    // non-intercept context (intercept responses depend on source page),
+    // and a configured cache-control value (false disables caching).
+    const isPrefetch = request.headers.has("X-Rango-Prefetch");
+    if (isPrefetch && isPartial && !hasInterceptSlots) {
+      const cc = ctx.router.prefetchCacheControl;
+      if (cc) {
+        rscHeaders["cache-control"] = cc;
+      }
+    }
     if (fullTiming) {
       rscHeaders["Server-Timing"] = fullTiming;
     }

@@ -7,8 +7,9 @@ import { useFixture } from "./fixture";
  * Prefetch on hover tests (router mode — default)
  *
  * Verifies that prefetch="hover" on Link components triggers a fetch() request
- * to the RSC partial URL on mouseenter, with X-Rango-State header.
- * No <link rel="prefetch"> elements should be created in router mode.
+ * to the RSC partial URL on mouseenter, with X-Rango-State header from localStorage.
+ * Both prefetch and navigation send the same X-Rango-State value so the browser
+ * HTTP cache can serve the prefetch response for navigation.
  */
 test.describe("prefetch-on-hover (router mode)", () => {
   test("should fetch RSC partial on hover", async ({ page, devServerURL }) => {
@@ -120,7 +121,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     expect(shopPrefetches.length).toBe(1);
   });
 
-  test("should use cached prefetch response on navigation (no second fetch)", async ({
+  test("should send same X-Rango-State on prefetch and navigation", async ({
     page,
     devServerURL,
   }) => {
@@ -142,26 +143,32 @@ test.describe("prefetch-on-hover (router mode)", () => {
     const blogLink = page.locator('nav a:has-text("Blog")');
     await blogLink.hover();
 
-    // Wait for prefetch request to complete (response received)
+    // Wait for prefetch request
     await expect.poll(() => rscRequests.length, { timeout: 3000 }).toBe(1);
-    // Wait for the prefetch response to be stored in cache
     await page.waitForTimeout(200);
 
     // Click the link to navigate
     await blogLink.click();
 
-    // Verify navigation completed — we should be on /blog
+    // Verify navigation completed
     await page.waitForURL("**/blog", { timeout: 5000 });
 
-    // Wait a bit for any potential late requests
-    await page.waitForTimeout(300);
+    // Navigation sends its own fetch with X-Rango-State and X-RSC-Router-Client-Path.
+    // Browser HTTP cache should serve the prefetch response (matching Vary headers).
+    // Both requests should share the same X-Rango-State and Client-Path values.
+    const prefetchState = rscRequests[0]!.headers["x-rango-state"];
+    expect(prefetchState).toBeDefined();
+    const prefetchClientPath =
+      rscRequests[0]!.headers["x-rsc-router-client-path"];
+    expect(prefetchClientPath).toBeDefined();
 
-    // Only 1 RSC request should have been made (the prefetch).
-    // Navigation should have consumed the cached response.
-    expect(rscRequests.length).toBe(1);
-
-    // Verify the single request was the prefetch (has X-Rango-State)
-    expect(rscRequests[0]!.headers["x-rango-state"]).toBeDefined();
+    // If navigation made a request (cache miss), verify same header values
+    if (rscRequests.length > 1) {
+      expect(rscRequests[1]!.headers["x-rango-state"]).toBe(prefetchState);
+      expect(rscRequests[1]!.headers["x-rsc-router-client-path"]).toBe(
+        prefetchClientPath,
+      );
+    }
   });
 
   test("should return RSC Flight for partial request with Accept: text/html", async ({
@@ -184,23 +191,56 @@ test.describe("prefetch-on-hover (router mode)", () => {
     expect(res.headers.get("content-type")).toContain("text/x-component");
   });
 
-  test("should include Vary: X-Rango-State for prefetch requests", async ({
+  test("should always include Vary: X-Rango-State and X-RSC-Router-Client-Path on RSC responses", async ({
     devServerURL,
   }) => {
-    // Prefetch requests include X-Rango-State header.
-    // Server should add X-Rango-State to Vary to prevent HTTP cache collisions.
+    // Vary should include X-Rango-State and X-RSC-Router-Client-Path on ALL RSC responses,
+    // not just those with the headers — ensures consistent browser cache behavior.
     const url = new URL("/shop", devServerURL);
     url.searchParams.set("_rsc_partial", "true");
 
-    const res = await fetch(url, {
-      headers: {
-        "X-Rango-State": String(Date.now()),
-      },
-    });
+    // Request WITHOUT X-Rango-State header
+    const res = await fetch(url);
 
     expect(res.status).toBe(200);
     const vary = res.headers.get("vary");
     expect(vary).toContain("X-Rango-State");
+    expect(vary).toContain("X-RSC-Router-Client-Path");
+  });
+
+  test("should include Cache-Control only on prefetch partial responses", async ({
+    devServerURL,
+  }) => {
+    const url = new URL("/shop", devServerURL);
+    url.searchParams.set("_rsc_partial", "true");
+
+    // Prefetch request (with X-Rango-Prefetch) should get Cache-Control
+    const prefetchRes = await fetch(url, {
+      headers: { "X-Rango-State": "test:1", "X-Rango-Prefetch": "1" },
+    });
+    expect(prefetchRes.status).toBe(200);
+    const cc = prefetchRes.headers.get("cache-control");
+    expect(cc).toContain("private");
+    expect(cc).toContain("max-age=300");
+
+    // Navigation request (without X-Rango-Prefetch) should NOT get Cache-Control
+    const navRes = await fetch(url, {
+      headers: { "X-Rango-State": "test:1" },
+    });
+    expect(navRes.status).toBe(200);
+    expect(navRes.headers.get("cache-control")).toBeNull();
+  });
+
+  test("should not include Cache-Control on full page HTML requests", async ({
+    devServerURL,
+  }) => {
+    const res = await fetch(devServerURL + "/shop", {
+      headers: { Accept: "text/html" },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(res.headers.get("cache-control")).toBeNull();
   });
 
   test("should re-prefetch after server action invalidates cache", async ({
@@ -218,12 +258,12 @@ test.describe("prefetch-on-hover (router mode)", () => {
       timeout: 15000,
     });
 
-    // Track prefetch requests for /blog
-    const prefetchRequests: string[] = [];
+    // Track prefetch requests for /blog and capture X-Rango-State values
+    const prefetchStates: string[] = [];
     page.on("request", (request) => {
       const url = request.url();
       if (url.includes("_rsc_partial") && url.includes("/blog")) {
-        prefetchRequests.push(url);
+        prefetchStates.push(request.headers()["x-rango-state"] ?? "");
       }
     });
 
@@ -232,7 +272,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     await blogLink.hover();
 
     // Wait for prefetch to complete
-    await expect.poll(() => prefetchRequests.length, { timeout: 3000 }).toBe(1);
+    await expect.poll(() => prefetchStates.length, { timeout: 3000 }).toBe(1);
     await page.waitForTimeout(200);
 
     // Move cursor away from Blog link
@@ -240,7 +280,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     await page.waitForTimeout(200);
 
     // Perform server action: add a todo
-    // This triggers markCacheAsStale -> clearPrefetchCache
+    // This triggers markCacheAsStale -> clearPrefetchCache -> invalidateRangoState
     const input = page.locator('input[placeholder="What needs to be done?"]');
     await input.fill("Prefetch Invalidation Test");
     await page.locator("button:has-text('Add Todo')").click();
@@ -252,10 +292,79 @@ test.describe("prefetch-on-hover (router mode)", () => {
     await page.waitForTimeout(300);
 
     // Hover Blog link again — should trigger a NEW prefetch
-    // because the cache was cleared by the server action
+    // because the cache was cleared and state key changed
     await blogLink.hover();
 
-    await expect.poll(() => prefetchRequests.length, { timeout: 3000 }).toBe(2);
+    await expect.poll(() => prefetchStates.length, { timeout: 3000 }).toBe(2);
+
+    // Verify the X-Rango-State value changed after invalidation
+    expect(prefetchStates[0]).not.toBe(prefetchStates[1]);
+  });
+
+  test("should persist rango-state in localStorage across refresh", async ({
+    page,
+    devServerURL,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(devURL(devServerURL, "/"));
+    await waitForHydration(page);
+
+    // Read the initial state key from localStorage
+    const initialState = await page.evaluate(() =>
+      localStorage.getItem("rango-state"),
+    );
+    expect(initialState).toBeDefined();
+    expect(initialState).toContain(":");
+
+    // Trigger a prefetch to warm the browser cache
+    const prefetchRequests: { headers: Record<string, string> }[] = [];
+    page.on("request", (request) => {
+      const url = request.url();
+      if (url.includes("_rsc_partial") && url.includes("/blog")) {
+        prefetchRequests.push({ headers: request.headers() });
+      }
+    });
+
+    await page.locator('nav a:has-text("Blog")').hover();
+    await expect.poll(() => prefetchRequests.length, { timeout: 3000 }).toBe(1);
+
+    // Verify prefetch used the localStorage state key
+    expect(prefetchRequests[0]!.headers["x-rango-state"]).toBe(initialState);
+
+    // Reload the page
+    await page.reload();
+    await waitForHydration(page);
+
+    // State key should persist across refresh
+    const stateAfterReload = await page.evaluate(() =>
+      localStorage.getItem("rango-state"),
+    );
+    expect(stateAfterReload).toBe(initialState);
+  });
+
+  test("should include version in rango-state key", async ({
+    page,
+    devServerURL,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(devURL(devServerURL, "/"));
+    await waitForHydration(page);
+
+    // Read the state key from localStorage
+    const stateKey = await page.evaluate(() =>
+      localStorage.getItem("rango-state"),
+    );
+    expect(stateKey).toBeDefined();
+
+    // Format should be "{version}:{timestamp}"
+    const parts = stateKey!.split(":");
+    expect(parts.length).toBe(2);
+    // Version part should be non-empty
+    expect(parts[0]!.length).toBeGreaterThan(0);
+    // Timestamp part should be numeric
+    expect(Number(parts[1])).toBeGreaterThan(0);
   });
 });
 
@@ -306,7 +415,7 @@ base.describe("prefetch-on-hover (production)", () => {
   });
 
   base(
-    "should use cached prefetch response on navigation (no second fetch)",
+    "should send same X-Rango-State on prefetch and navigation",
     async ({ page }) => {
       await page.goto(f.url("/"));
       await waitForHydration(page);
@@ -330,10 +439,15 @@ base.describe("prefetch-on-hover (production)", () => {
 
       await blogLink.click();
       await page.waitForURL("**/blog", { timeout: 5000 });
-      await page.waitForTimeout(300);
 
-      baseExpect(rscRequests.length).toBe(1);
-      baseExpect(rscRequests[0]!.headers["x-rango-state"]).toBeDefined();
+      // Both requests should share the same X-Rango-State value
+      const prefetchState = rscRequests[0]!.headers["x-rango-state"];
+      baseExpect(prefetchState).toBeDefined();
+      if (rscRequests.length > 1) {
+        baseExpect(rscRequests[1]!.headers["x-rango-state"]).toBe(
+          prefetchState,
+        );
+      }
     },
   );
 
@@ -355,20 +469,58 @@ base.describe("prefetch-on-hover (production)", () => {
     },
   );
 
-  base("should include Vary: X-Rango-State for prefetch requests", async () => {
-    const url = new URL("/shop", f.url("/"));
-    url.searchParams.set("_rsc_partial", "true");
+  base(
+    "should always include Vary: X-Rango-State and X-RSC-Router-Client-Path on RSC responses",
+    async () => {
+      const url = new URL("/shop", f.url("/"));
+      url.searchParams.set("_rsc_partial", "true");
 
-    const res = await fetch(url, {
-      headers: {
-        "X-Rango-State": String(Date.now()),
-      },
-    });
+      // Request WITHOUT X-Rango-State header
+      const res = await fetch(url);
 
-    baseExpect(res.status).toBe(200);
-    const vary = res.headers.get("vary");
-    baseExpect(vary).toContain("X-Rango-State");
-  });
+      baseExpect(res.status).toBe(200);
+      const vary = res.headers.get("vary");
+      baseExpect(vary).toContain("X-Rango-State");
+      baseExpect(vary).toContain("X-RSC-Router-Client-Path");
+    },
+  );
+
+  base(
+    "should include Cache-Control only on prefetch partial responses",
+    async () => {
+      const url = new URL("/shop", f.url("/"));
+      url.searchParams.set("_rsc_partial", "true");
+
+      // Prefetch request (with X-Rango-Prefetch) should get Cache-Control
+      const prefetchRes = await fetch(url, {
+        headers: { "X-Rango-State": "test:1", "X-Rango-Prefetch": "1" },
+      });
+      baseExpect(prefetchRes.status).toBe(200);
+      const cc = prefetchRes.headers.get("cache-control");
+      baseExpect(cc).toContain("private");
+      baseExpect(cc).toContain("max-age=300");
+
+      // Navigation request (without X-Rango-Prefetch) should NOT get Cache-Control
+      const navRes = await fetch(url, {
+        headers: { "X-Rango-State": "test:1" },
+      });
+      baseExpect(navRes.status).toBe(200);
+      baseExpect(navRes.headers.get("cache-control")).toBeNull();
+    },
+  );
+
+  base(
+    "should not include Cache-Control on full page HTML requests",
+    async () => {
+      const res = await fetch(f.url("/shop"), {
+        headers: { Accept: "text/html" },
+      });
+
+      baseExpect(res.status).toBe(200);
+      baseExpect(res.headers.get("content-type")).toContain("text/html");
+      baseExpect(res.headers.get("cache-control")).toBeNull();
+    },
+  );
 
   base(
     "should re-prefetch after server action invalidates cache",
@@ -383,12 +535,12 @@ base.describe("prefetch-on-hover (production)", () => {
         { timeout: 15000 },
       );
 
-      // Track prefetch requests for /blog
-      const prefetchRequests: string[] = [];
+      // Track prefetch requests and capture X-Rango-State values
+      const prefetchStates: string[] = [];
       page.on("request", (request) => {
         const url = request.url();
         if (url.includes("_rsc_partial") && url.includes("/blog")) {
-          prefetchRequests.push(url);
+          prefetchStates.push(request.headers()["x-rango-state"] ?? "");
         }
       });
 
@@ -398,7 +550,7 @@ base.describe("prefetch-on-hover (production)", () => {
 
       // Wait for prefetch to complete
       await baseExpect
-        .poll(() => prefetchRequests.length, { timeout: 3000 })
+        .poll(() => prefetchStates.length, { timeout: 3000 })
         .toBe(1);
       await page.waitForTimeout(200);
 
@@ -407,7 +559,6 @@ base.describe("prefetch-on-hover (production)", () => {
       await page.waitForTimeout(200);
 
       // Perform server action: add a todo
-      // This triggers markCacheAsStale -> clearPrefetchCache
       const input = page.locator('input[placeholder="What needs to be done?"]');
       await input.fill("Prefetch Invalidation Test");
       await page.locator("button:has-text('Add Todo')").click();
@@ -419,14 +570,77 @@ base.describe("prefetch-on-hover (production)", () => {
       await page.waitForTimeout(300);
 
       // Hover Blog link again — should trigger a NEW prefetch
-      // because the cache was cleared by the server action
+      // because state key changed after invalidation
       await blogLink.hover();
 
       await baseExpect
-        .poll(() => prefetchRequests.length, { timeout: 3000 })
+        .poll(() => prefetchStates.length, { timeout: 3000 })
         .toBe(2);
+
+      // Verify the X-Rango-State value changed after invalidation
+      baseExpect(prefetchStates[0]).not.toBe(prefetchStates[1]);
     },
   );
+
+  base(
+    "should persist rango-state in localStorage across refresh",
+    async ({ page }) => {
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      // Read initial state key
+      const initialState = await page.evaluate(() =>
+        localStorage.getItem("rango-state"),
+      );
+      baseExpect(initialState).toBeDefined();
+      baseExpect(initialState).toContain(":");
+
+      // Trigger a prefetch
+      const prefetchRequests: { headers: Record<string, string> }[] = [];
+      page.on("request", (request) => {
+        const url = request.url();
+        if (url.includes("_rsc_partial") && url.includes("/blog")) {
+          prefetchRequests.push({ headers: request.headers() });
+        }
+      });
+
+      await page.locator('nav a:has-text("Blog")').hover();
+      await baseExpect
+        .poll(() => prefetchRequests.length, { timeout: 3000 })
+        .toBe(1);
+
+      // Verify prefetch used the localStorage state key
+      baseExpect(prefetchRequests[0]!.headers["x-rango-state"]).toBe(
+        initialState,
+      );
+
+      // Reload the page
+      await page.reload();
+      await waitForHydration(page);
+
+      // State key should persist
+      const stateAfterReload = await page.evaluate(() =>
+        localStorage.getItem("rango-state"),
+      );
+      baseExpect(stateAfterReload).toBe(initialState);
+    },
+  );
+
+  base("should include version in rango-state key", async ({ page }) => {
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    const stateKey = await page.evaluate(() =>
+      localStorage.getItem("rango-state"),
+    );
+    baseExpect(stateKey).toBeDefined();
+
+    // Format: "{version}:{timestamp}"
+    const parts = stateKey!.split(":");
+    baseExpect(parts.length).toBe(2);
+    baseExpect(parts[0]!.length).toBeGreaterThan(0);
+    baseExpect(Number(parts[1])).toBeGreaterThan(0);
+  });
 });
 
 /**

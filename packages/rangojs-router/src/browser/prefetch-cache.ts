@@ -1,59 +1,32 @@
 /**
- * Prefetch Cache
+ * Prefetch Tracking
  *
- * Stores prefetched RSC responses for consumption by fetchPartial.
- * Responses are stored as raw Response objects and consumed one-shot
- * (deleted on use) to prevent serving stale data.
+ * Tracks in-flight prefetches for deduplication and browser-mode
+ * <link rel="prefetch"> dedup. The actual response caching is handled
+ * by the browser's HTTP cache via Vary: X-Rango-State.
  */
 
-import { LRUCache } from "./lru-cache.js";
 import { cancelAllPrefetches } from "./prefetch-queue.js";
+import { invalidateRangoState } from "./rango-state.js";
 
-const PREFETCH_CACHE_SIZE = 10;
-
-const cache = new LRUCache<string, Response>(PREFETCH_CACHE_SIZE);
 const inflight = new Set<string>();
+// Router-mode dedup: tracks keys that have completed prefetch (browser HTTP cache has them)
+const routerPrefetched = new Set<string>();
 // Browser-mode dedup: tracks URLs that already have a <link rel="prefetch">
 const browserPrefetched = new Set<string>();
 
 /**
- * Generate a prefetch cache key from a URL.
- * Uses pathname only — segment IDs at prefetch time may differ from
- * navigation time, and the server handles any segment set.
- */
-export function prefetchCacheKey(url: string): string {
-  try {
-    const parsed = new URL(url, window.location.origin);
-    return parsed.pathname;
-  } catch {
-    return url;
-  }
-}
-
-/**
- * Store a prefetched response. The response must be cloned before calling this.
- */
-export function storePrefetchResponse(key: string, response: Response): void {
-  cache.set(key, response);
-}
-
-/**
- * Consume a prefetched response (one-shot: removes from cache).
- * Returns undefined if no cached response exists.
- */
-export function consumePrefetchResponse(key: string): Response | undefined {
-  const response = cache.get(key);
-  if (response) {
-    cache.delete(key);
-  }
-  return response;
-}
-
-/**
- * Check if a prefetch is already in-flight or cached for the given key.
+ * Check if a prefetch is already in-flight or completed for the given key.
  */
 export function hasPrefetch(key: string): boolean {
-  return cache.has(key) || inflight.has(key);
+  return routerPrefetched.has(key) || inflight.has(key);
+}
+
+/**
+ * Mark a key as successfully prefetched (response is in browser HTTP cache).
+ */
+export function markPrefetched(key: string): void {
+  routerPrefetched.add(key);
 }
 
 /**
@@ -76,12 +49,15 @@ export function clearPrefetchInflight(key: string): void {
 }
 
 /**
- * Clear all cached prefetch responses and in-flight tracking.
- * Called when server actions invalidate data.
+ * Invalidate prefetch state. Called when server actions mutate data.
+ * Updates the localStorage state key so next fetch has a different
+ * X-Rango-State value, causing Vary mismatch in browser HTTP cache.
+ * Also cancels any in-flight or queued speculative prefetches.
  */
 export function clearPrefetchCache(): void {
-  cache.clear();
   inflight.clear();
+  routerPrefetched.clear();
   browserPrefetched.clear();
   cancelAllPrefetches();
+  invalidateRangoState();
 }

@@ -26,6 +26,7 @@ import type {
 } from "./types.js";
 import type { EventController } from "./event-controller.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
+import { initRangoState } from "./rango-state.js";
 
 // Vite HMR types are provided by vite/client
 
@@ -213,6 +214,10 @@ export async function initBrowserApp(
   // Extract rootLayout and version from metadata for browser-side re-renders
   const rootLayout = initialPayload.metadata?.rootLayout;
   const version = initialPayload.metadata?.version;
+
+  // Initialize the localStorage state key for browser HTTP cache invalidation.
+  // Uses the build version so a new deploy automatically busts all cached prefetches.
+  initRangoState(version ?? "0");
 
   // Create a bound renderSegments that includes rootLayout
   const renderSegments = (

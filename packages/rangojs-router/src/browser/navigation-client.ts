@@ -11,7 +11,7 @@ import {
   isBrowserDebugEnabled,
   startBrowserTransaction,
 } from "./logging.js";
-import { consumePrefetchResponse } from "./prefetch-cache.js";
+import { getRangoState } from "./rango-state.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -85,7 +85,6 @@ export function createNavigationClient(
       if (version) {
         fetchUrl.searchParams.set("_rsc_v", version);
       }
-
       if (tx) {
         browserDebugLog(tx, "fetching", {
           path: `${fetchUrl.pathname}${fetchUrl.search}`,
@@ -98,34 +97,19 @@ export function createNavigationClient(
         resolveStreamComplete = resolve;
       });
 
-      // Check prefetch cache before making a network request.
-      // Skip cache when intercept context is present — prefetched responses
-      // don't include intercept headers, so they represent the non-intercepted
-      // route and would be wrong for modal/intercept navigations.
-      const cachedResponse = interceptSourceUrl
-        ? undefined
-        : consumePrefetchResponse(fetchUrl.pathname);
-
-      if (tx && cachedResponse) {
-        browserDebugLog(tx, "prefetch cache hit", { path: fetchUrl.pathname });
-      }
-
       // Create a response promise that tracks stream completion
-      const responsePromise = (
-        cachedResponse
-          ? Promise.resolve(cachedResponse)
-          : fetch(fetchUrl, {
-              headers: {
-                "X-RSC-Router-Client-Path": previousUrl,
-                ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
-                ...(interceptSourceUrl && {
-                  "X-RSC-Router-Intercept-Source": interceptSourceUrl,
-                }),
-                ...(hmr && { "X-RSC-HMR": "1" }),
-              },
-              signal,
-            })
-      ).then((response) => {
+      const responsePromise = fetch(fetchUrl, {
+        headers: {
+          "X-RSC-Router-Client-Path": previousUrl,
+          "X-Rango-State": getRangoState(),
+          ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
+          ...(interceptSourceUrl && {
+            "X-RSC-Router-Intercept-Source": interceptSourceUrl,
+          }),
+          ...(hmr && { "X-RSC-HMR": "1" }),
+        },
+        signal,
+      }).then((response) => {
         // Check for version mismatch - server wants us to reload
         const reloadUrl = response.headers.get("X-RSC-Reload");
         if (reloadUrl) {

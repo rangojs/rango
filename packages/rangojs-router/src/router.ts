@@ -129,6 +129,7 @@ export function createRouter<TEnv = any>(
     nonce,
     version,
     prefetch: prefetchOption,
+    prefetchCacheControl: prefetchCacheControlOption,
     warmup: warmupOption,
     allowDebugManifest: allowDebugManifestOption = false,
   } = options;
@@ -173,6 +174,12 @@ export function createRouter<TEnv = any>(
 
   // Resolve prefetch mode (default: 'router')
   const prefetchMode = prefetchOption ?? "router";
+
+  // Resolve prefetch cache control (default: 'private, max-age=300')
+  const prefetchCacheControl =
+    prefetchCacheControlOption !== undefined
+      ? prefetchCacheControlOption
+      : "private, max-age=300";
 
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;
@@ -711,6 +718,9 @@ export function createRouter<TEnv = any>(
 
     // Expose prefetch mode for handler and client
     prefetchMode,
+
+    // Expose prefetch cache control for RSC handler
+    prefetchCacheControl,
 
     // Expose warmup enabled flag for handler and client
     warmupEnabled,

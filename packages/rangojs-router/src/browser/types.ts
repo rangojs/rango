@@ -180,7 +180,7 @@ export type ActionStateListener = (state: TrackedActionState) => void;
 
 /**
  * Cache interface for storing segments
- * Compatible with both Map and LRUCache
+ * Compatible with Map
  *
  * @internal This type is an implementation detail and may change without notice.
  */

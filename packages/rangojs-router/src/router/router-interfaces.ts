@@ -159,6 +159,12 @@ export interface RSCRouter<
   readonly prefetchMode: "browser" | "router";
 
   /**
+   * Cache-Control header value for prefetch responses.
+   * False means no browser caching of prefetch responses.
+   */
+  readonly prefetchCacheControl: string | false;
+
+  /**
    * Whether connection warmup is enabled.
    * When true, the client sends HEAD /?_rsc_warmup after idle periods
    * and the server responds with 204 No Content.

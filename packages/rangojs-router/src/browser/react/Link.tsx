@@ -35,9 +35,10 @@ import {
   hasBrowserPrefetch,
   markBrowserPrefetch,
   markPrefetchInflight,
+  markPrefetched,
   clearPrefetchInflight,
-  storePrefetchResponse,
 } from "../prefetch-cache.js";
+import { getRangoState } from "../rango-state.js";
 import { enqueuePrefetch } from "../prefetch-queue.js";
 import {
   observeForPrefetch,
@@ -100,12 +101,18 @@ function executePrefetchFetch(
     priority: "low" as RequestPriority,
     signal,
     headers: {
-      "X-Rango-State": String(Date.now()),
+      "X-Rango-State": getRangoState(),
+      "X-RSC-Router-Client-Path": window.location.href,
+      "X-Rango-Prefetch": "1",
     },
   })
     .then((response) => {
-      if (response.ok || response.status === 204) {
-        storePrefetchResponse(key, response.clone());
+      // Drain body to ensure full download for browser HTTP cache.
+      // pipeTo avoids decoding the stream into a JS string (unlike .text()).
+      if (response.ok && response.body) {
+        return response.body
+          .pipeTo(new WritableStream())
+          .then(() => markPrefetched(key));
       }
     })
     .catch(() => {

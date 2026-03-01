@@ -360,6 +360,18 @@ export interface RSCRouterOptions<TEnv = any> {
   prefetch?: "browser" | "router";
 
   /**
+   * Cache-Control header value for prefetch responses.
+   * Only applied to non-intercept partial responses that include the
+   * `X-Rango-Prefetch` header (sent by the Link component's prefetch fetch).
+   * Navigation responses are never cached by the browser.
+   *
+   * Set to `false` to disable browser caching of prefetch responses entirely.
+   *
+   * @default "private, max-age=300"
+   */
+  prefetchCacheControl?: string | false;
+
+  /**
    * Enable connection warmup to keep TCP+TLS alive after idle periods.
    *
    * When enabled, the client sends a HEAD request after the user returns
