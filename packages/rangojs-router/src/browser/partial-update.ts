@@ -67,6 +67,10 @@ export type PartialUpdater = (
   options?: {
     isAction?: boolean;
     staleRevalidation?: boolean;
+    /** Mark segments as stale for the server (_rsc_stale=true) without triggering
+     * stale revalidation behavior (forceAwait, history key check, reconciliation actor).
+     * Used after action redirects where we need fresh loader data but normal navigation behavior. */
+    markStale?: boolean;
     interceptSourceUrl?: string;
     /** Cached segments for the target URL. When provided, these are used to build
      * the segment map instead of the current page's segments. This ensures consistency
@@ -133,6 +137,7 @@ export function createPartialUpdater(
     options?: {
       isAction?: boolean;
       staleRevalidation?: boolean;
+      markStale?: boolean;
       interceptSourceUrl?: string;
       targetCacheSegments?: ResolvedSegment[];
       targetCacheHandleData?: Record<string, Record<string, unknown[]>>;
@@ -142,6 +147,7 @@ export function createPartialUpdater(
     const {
       isAction = false,
       staleRevalidation = false,
+      markStale = false,
       interceptSourceUrl,
       targetCacheSegments,
       targetCacheHandleData,
@@ -210,7 +216,7 @@ export function createPartialUpdater(
         targetUrl: url,
         segmentIds: segments,
         previousUrl,
-        staleRevalidation,
+        staleRevalidation: staleRevalidation || markStale,
         version,
       });
     } catch (err) {

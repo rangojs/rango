@@ -500,6 +500,24 @@ export const LoaderReverseClientScopedLoader = createLoader(
   true, // fetchable
 );
 
+// ============================================================================
+// Action Redirect Revalidation Test Loader
+// Tests that loaders revalidate after action redirect (_skipCache)
+// ============================================================================
+
+/**
+ * Loader that reads an auth cookie and returns user data.
+ * Used to test that after an action sets a cookie and throws redirect,
+ * the target route's loader runs fresh (not from stale cache).
+ */
+export const ActionRedirectAuthLoader = createLoader(async (ctx) => {
+  const session = ctx.cookie("test-auth-session");
+  return {
+    user: session || null,
+    loadedAt: new Date().toISOString(),
+  };
+});
+
 // Counter to distinguish SSR from client-side refetch
 let fetchReverseScopedCount = 0;
 
