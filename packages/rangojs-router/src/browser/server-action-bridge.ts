@@ -344,7 +344,11 @@ export function createServerActionBridge(
     // action response. No second request needed — apply segments and update URL.
     if (metadata?.inlineRedirect && !handle.signal.aborted) {
       const { url: redirectUrl } = metadata.inlineRedirect;
-      const { matched: inlineMatched, diff: inlineDiff, segments: inlineSegments } = metadata;
+      const {
+        matched: inlineMatched,
+        diff: inlineDiff,
+        segments: inlineSegments,
+      } = metadata;
 
       log("inline redirect", { redirectUrl, segments: inlineSegments?.length });
 
@@ -376,11 +380,7 @@ export function createServerActionBridge(
         const historyKey = generateHistoryKey(redirectUrl);
         const parsedUrl = new URL(redirectUrl, window.location.origin);
 
-        window.history.replaceState(
-          { key: historyKey },
-          "",
-          redirectUrl,
-        );
+        window.history.replaceState({ key: historyKey }, "", redirectUrl);
         ensureHistoryKey();
 
         // Update store state
