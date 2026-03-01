@@ -7,6 +7,7 @@
  */
 
 import { LRUCache } from "./lru-cache.js";
+import { cancelAllPrefetches } from "./prefetch-queue.js";
 
 const PREFETCH_CACHE_SIZE = 10;
 
@@ -82,4 +83,5 @@ export function clearPrefetchCache(): void {
   cache.clear();
   inflight.clear();
   browserPrefetched.clear();
+  cancelAllPrefetches();
 }

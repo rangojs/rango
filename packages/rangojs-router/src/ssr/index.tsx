@@ -118,6 +118,7 @@ interface RscPayload {
     themeConfig?: ResolvedThemeConfig | null;
     initialTheme?: Theme;
     prefetchMode?: "browser" | "router";
+    version?: string;
   };
 }
 
@@ -262,6 +263,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
           navigate: async () => {},
           refresh: async () => {},
           prefetchMode: resolved.metadata?.prefetchMode ?? "router",
+          version: resolved.metadata?.version,
         };
 
         // Build content tree from segments.

@@ -1,6 +1,7 @@
 import { urls } from "@rangojs/router";
 import { HomePage } from "../pages/home.js";
 import { AboutPage } from "../pages/about.js";
+import { PrefetchTestPage } from "../pages/prefetch-test.js";
 
 // Import URL patterns from separate modules
 import { blogPatterns } from "./blog.js";
@@ -27,6 +28,7 @@ export const urlpatterns = urls(({ path, include }) => [
   // Root routes
   path("/", HomePage, { name: "home.index" }),
   path("/about", AboutPage, { name: "about.index" }),
+  path("/prefetch-test", PrefetchTestPage, { name: "prefetch-test" }),
 
   // Include patterns from separate modules
   include("/blog", blogPatterns, { name: "blog" }),

@@ -4,6 +4,7 @@ import React, {
   forwardRef,
   useCallback,
   useContext,
+  useEffect,
   useRef,
   type ForwardRefExoticComponent,
   type RefAttributes,
@@ -37,15 +38,28 @@ import {
   clearPrefetchInflight,
   storePrefetchResponse,
 } from "../prefetch-cache.js";
+import { enqueuePrefetch } from "../prefetch-queue.js";
+import {
+  observeForPrefetch,
+  unobserveForPrefetch,
+} from "../prefetch-observer.js";
 
 /**
  * Build an RSC partial URL for prefetching.
+ * Includes _rsc_v for version mismatch detection when available.
  */
-function buildPrefetchUrl(url: string, segmentIds: string[]): URL {
+function buildPrefetchUrl(
+  url: string,
+  segmentIds: string[],
+  version?: string,
+): URL {
   const targetUrl = new URL(url, window.location.origin);
   targetUrl.searchParams.set("_rsc_partial", "true");
   if (segmentIds.length > 0) {
     targetUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
+  }
+  if (version) {
+    targetUrl.searchParams.set("_rsc_v", version);
   }
   return targetUrl;
 }
@@ -53,11 +67,15 @@ function buildPrefetchUrl(url: string, segmentIds: string[]): URL {
 /**
  * Browser-mode prefetch: inject a <link rel="prefetch"> element.
  */
-function prefetchUrlBrowser(url: string, segmentIds: string[]): void {
+function prefetchUrlBrowser(
+  url: string,
+  segmentIds: string[],
+  version?: string,
+): void {
   if (hasBrowserPrefetch(url)) return;
   markBrowserPrefetch(url);
 
-  const targetUrl = buildPrefetchUrl(url, segmentIds);
+  const targetUrl = buildPrefetchUrl(url, segmentIds, version);
 
   const link = document.createElement("link");
   link.rel = "prefetch";
@@ -66,19 +84,21 @@ function prefetchUrlBrowser(url: string, segmentIds: string[]): void {
   document.head.appendChild(link);
 }
 /**
- * Router-mode prefetch: fetch with low priority and store in prefetch cache.
- * Uses X-Rango-State header so the server adds Vary to prevent HTTP cache
- * collisions between prefetch and navigation requests.
+ * Core prefetch fetch logic. Returns a Promise and accepts an optional
+ * AbortSignal for cancellation by the prefetch queue.
+ * Callers must pass the pre-built cache key and fetch URL to avoid
+ * redundant URL construction.
  */
-function prefetchUrlRouter(url: string, segmentIds: string[]): void {
-  const targetUrl = buildPrefetchUrl(url, segmentIds);
-  const key = targetUrl.pathname;
-  if (hasPrefetch(key)) return;
-
+function executePrefetchFetch(
+  key: string,
+  fetchUrl: string,
+  signal?: AbortSignal,
+): Promise<void> {
   markPrefetchInflight(key);
 
-  fetch(targetUrl.toString(), {
+  return fetch(fetchUrl, {
     priority: "low" as RequestPriority,
+    signal,
     headers: {
       "X-Rango-State": String(Date.now()),
     },
@@ -89,7 +109,7 @@ function prefetchUrlRouter(url: string, segmentIds: string[]): void {
       }
     })
     .catch(() => {
-      // Silently ignore prefetch failures
+      // Silently ignore prefetch failures (including abort)
     })
     .finally(() => {
       clearPrefetchInflight(key);
@@ -97,13 +117,59 @@ function prefetchUrlRouter(url: string, segmentIds: string[]): void {
 }
 
 /**
+ * Router-mode prefetch (direct): fetch with low priority and store in cache.
+ * Used by hover strategy — fires immediately without queueing.
+ */
+function prefetchUrlRouter(
+  url: string,
+  segmentIds: string[],
+  version?: string,
+): void {
+  const targetUrl = buildPrefetchUrl(url, segmentIds, version);
+  const key = targetUrl.pathname;
+  if (hasPrefetch(key)) return;
+  executePrefetchFetch(key, targetUrl.toString());
+}
+
+/**
+ * Router-mode prefetch (queued): goes through the concurrency-limited queue.
+ * Used by viewport/render strategies to avoid flooding the server.
+ * Returns the cache key for use in cleanup.
+ */
+function prefetchUrlRouterQueued(
+  url: string,
+  segmentIds: string[],
+  version?: string,
+): string {
+  const targetUrl = buildPrefetchUrl(url, segmentIds, version);
+  const key = targetUrl.pathname;
+  if (hasPrefetch(key)) return key;
+  const fetchUrlStr = targetUrl.toString();
+  enqueuePrefetch(key, (signal) =>
+    executePrefetchFetch(key, fetchUrlStr, signal),
+  );
+  return key;
+}
+
+// Touch device detection for hybrid strategy.
+// Checked once at module load (Link.tsx is "use client", runs only in browser).
+const isTouchDevice =
+  typeof window !== "undefined" && window.matchMedia("(hover: none)").matches;
+
+/**
  * Prefetch strategy for the Link component
- * - "hover": Prefetch on mouse enter (uses native <link rel="prefetch">)
- * - "viewport": Prefetch when link enters viewport (not yet implemented)
- * - "hybrid": Hover on desktop, viewport on mobile (not yet implemented)
+ * - "hover": Prefetch on mouse enter (direct, no queue)
+ * - "viewport": Prefetch when link enters viewport (queued, waits for idle)
+ * - "render": Prefetch on component mount regardless of visibility (queued, waits for idle)
+ * - "hybrid": Hover on pointer devices, viewport on touch devices
  * - "none": No prefetching (default)
  */
-export type PrefetchStrategy = "hover" | "viewport" | "hybrid" | "none";
+export type PrefetchStrategy =
+  | "hover"
+  | "viewport"
+  | "render"
+  | "hybrid"
+  | "none";
 
 /**
  * Link component props
@@ -216,6 +282,25 @@ export const Link: ForwardRefExoticComponent<
   const ctx = useContext(NavigationStoreContext);
   const isExternal = isExternalUrl(to);
 
+  // Resolve hybrid: viewport on touch devices, hover on pointer devices
+  const resolvedStrategy =
+    prefetch === "hybrid" ? (isTouchDevice ? "viewport" : "hover") : prefetch;
+
+  // Internal ref for viewport observation; merge with forwarded ref
+  const internalRef = useRef<HTMLAnchorElement | null>(null);
+  const setRef = useCallback(
+    (node: HTMLAnchorElement | null) => {
+      internalRef.current = node;
+      if (typeof ref === "function") {
+        ref(node);
+      } else if (ref) {
+        (ref as React.MutableRefObject<HTMLAnchorElement | null>).current =
+          node;
+      }
+    },
+    [ref],
+  );
+
   // Use ref to always get the latest state/getter without adding to useCallback deps
   // This enables just-in-time state resolution without causing re-renders
   const stateRef = useRef(state);
@@ -280,19 +365,81 @@ export const Link: ForwardRefExoticComponent<
   );
 
   const handleMouseEnter = useCallback(() => {
-    if (prefetch === "hover" && !isExternal && ctx?.store) {
+    if (resolvedStrategy === "hover" && !isExternal && ctx?.store) {
       const segmentState = ctx.store.getSegmentState();
       if (ctx.prefetchMode === "browser") {
-        prefetchUrlBrowser(to, segmentState.currentSegmentIds);
+        prefetchUrlBrowser(to, segmentState.currentSegmentIds, ctx.version);
       } else {
-        prefetchUrlRouter(to, segmentState.currentSegmentIds);
+        prefetchUrlRouter(to, segmentState.currentSegmentIds, ctx.version);
       }
     }
-  }, [prefetch, to, isExternal, ctx]);
+  }, [resolvedStrategy, to, isExternal, ctx]);
+
+  // Viewport/render prefetch: waits for idle before starting,
+  // uses concurrency-limited queue to avoid flooding.
+  useEffect(() => {
+    if (isExternal || !ctx?.store) return;
+    const isViewport = resolvedStrategy === "viewport";
+    const isRender = resolvedStrategy === "render";
+    if (!isViewport && !isRender) return;
+
+    let cancelled = false;
+    let unsubIdle: (() => void) | undefined;
+
+    const triggerPrefetch = () => {
+      if (cancelled) return;
+      const segmentState = ctx.store.getSegmentState();
+      if (ctx.prefetchMode === "browser") {
+        prefetchUrlBrowser(to, segmentState.currentSegmentIds, ctx.version);
+      } else {
+        prefetchUrlRouterQueued(
+          to,
+          segmentState.currentSegmentIds,
+          ctx.version,
+        );
+      }
+    };
+
+    // Schedule prefetch only when the app is idle (no navigation/streaming).
+    // This avoids competing with hydration and active navigation fetches.
+    const scheduleWhenIdle = (callback: () => void) => {
+      const state = ctx.eventController.getState();
+      if (state.state === "idle" && !state.isStreaming) {
+        callback();
+        return;
+      }
+      const unsub = ctx.eventController.subscribe(() => {
+        const s = ctx.eventController.getState();
+        if (s.state === "idle" && !s.isStreaming) {
+          unsub();
+          callback();
+        }
+      });
+      unsubIdle = unsub;
+    };
+
+    if (isRender) {
+      scheduleWhenIdle(triggerPrefetch);
+    } else if (isViewport) {
+      const element = internalRef.current;
+      if (!element) return;
+      observeForPrefetch(element, () => {
+        scheduleWhenIdle(triggerPrefetch);
+      });
+    }
+
+    return () => {
+      cancelled = true;
+      unsubIdle?.();
+      if (isViewport && internalRef.current) {
+        unobserveForPrefetch(internalRef.current);
+      }
+    };
+  }, [resolvedStrategy, to, isExternal, ctx]);
 
   return (
     <a
-      ref={ref}
+      ref={setRef}
       href={to}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}

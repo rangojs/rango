@@ -99,9 +99,12 @@ export function createNavigationClient(
       });
 
       // Check prefetch cache before making a network request.
-      // Use fetchUrl.pathname directly — same as prefetchCacheKey() but
-      // avoids re-parsing the URL that was already parsed above.
-      const cachedResponse = consumePrefetchResponse(fetchUrl.pathname);
+      // Skip cache when intercept context is present — prefetched responses
+      // don't include intercept headers, so they represent the non-intercepted
+      // route and would be wrong for modal/intercept navigations.
+      const cachedResponse = interceptSourceUrl
+        ? undefined
+        : consumePrefetchResponse(fetchUrl.pathname);
 
       if (tx && cachedResponse) {
         browserDebugLog(tx, "prefetch cache hit", { path: fetchUrl.pathname });

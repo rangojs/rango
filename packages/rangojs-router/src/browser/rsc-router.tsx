@@ -112,6 +112,8 @@ export interface BrowserAppContext {
   warmupEnabled?: boolean;
   /** Prefetch mode: "router" for fetch-based, "browser" for <link rel="prefetch"> */
   prefetchMode?: "browser" | "router";
+  /** App version for prefetch version mismatch detection */
+  version?: string;
 }
 
 // Module-level state for the initialized app
@@ -322,6 +324,7 @@ export async function initBrowserApp(
     initialTheme: effectiveInitialTheme,
     warmupEnabled: initialPayload.metadata?.warmupEnabled ?? true,
     prefetchMode: initialPayload.metadata?.prefetchMode ?? "router",
+    version,
   };
   browserAppContext = context;
 
@@ -387,6 +390,7 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
     initialTheme,
     warmupEnabled,
     prefetchMode,
+    version,
   } = getBrowserAppContext();
 
   return (
@@ -399,6 +403,7 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
       initialTheme={initialTheme}
       warmupEnabled={warmupEnabled}
       prefetchMode={prefetchMode}
+      version={version}
     />
   );
 }

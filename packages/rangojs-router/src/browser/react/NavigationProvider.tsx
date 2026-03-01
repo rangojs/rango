@@ -23,6 +23,7 @@ import { RootErrorBoundary } from "../../root-error-boundary.js";
 import type { HandleData } from "../types.js";
 import { ThemeProvider } from "../../theme/ThemeProvider.js";
 import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
+import { cancelAllPrefetches } from "../prefetch-queue.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -131,6 +132,12 @@ export interface NavigationProviderProps {
    * Prefetch mode: "router" for fetch-based, "browser" for <link rel="prefetch">.
    */
   prefetchMode?: "browser" | "router";
+
+  /**
+   * App version from server payload (stable, immutable).
+   * Forwarded to prefetch requests for version mismatch detection.
+   */
+  version?: string;
 }
 
 /**
@@ -163,6 +170,7 @@ export function NavigationProvider({
   initialTheme,
   warmupEnabled,
   prefetchMode,
+  version,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
   const [payload, setPayload] = useState(initialPayload);
@@ -192,6 +200,7 @@ export function NavigationProvider({
       navigate,
       refresh,
       prefetchMode: prefetchMode ?? "router",
+      version,
     }),
     [],
   );
@@ -282,6 +291,21 @@ export function NavigationProvider({
       }
     };
   }, [warmupEnabled]);
+
+  // Cancel speculative prefetches when navigation starts.
+  // Viewport/render prefetches should not compete with navigation fetches.
+  useEffect(() => {
+    let wasIdle = true;
+    const unsub = eventController.subscribe(() => {
+      const state = eventController.getState();
+      const isIdle = state.state === "idle" && !state.isStreaming;
+      if (wasIdle && !isIdle) {
+        cancelAllPrefetches();
+      }
+      wasIdle = isIdle;
+    });
+    return unsub;
+  }, [eventController]);
 
   // Subscribe to UI updates (for re-rendering the tree)
   useEffect(() => {

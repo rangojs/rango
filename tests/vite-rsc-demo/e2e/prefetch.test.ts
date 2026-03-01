@@ -428,3 +428,214 @@ base.describe("prefetch-on-hover (production)", () => {
     },
   );
 });
+
+/**
+ * Viewport prefetch tests (dev)
+ *
+ * Verifies that prefetch="viewport" triggers a fetch when a link
+ * enters the viewport, and does not fire for links that remain off-screen.
+ */
+test.describe("prefetch-viewport (dev)", () => {
+  test("should prefetch when link is visible on page load", async ({
+    page,
+    devServerURL,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Track prefetch requests for /blog (viewport link visible on load)
+    const prefetchRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = request.url();
+      if (url.includes("_rsc_partial") && url.includes("/blog")) {
+        prefetchRequests.push(url);
+      }
+    });
+
+    await page.goto(devURL(devServerURL, "/prefetch-test"));
+    await waitForHydration(page);
+
+    // The blog link has prefetch="viewport" and is visible on load.
+    // After hydration completes (idle), IntersectionObserver should fire.
+    await expect.poll(() => prefetchRequests.length, { timeout: 5000 }).toBe(1);
+  });
+
+  test("should not prefetch below-fold viewport link until scrolled", async ({
+    page,
+    devServerURL,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    const prefetchRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = request.url();
+      if (url.includes("_rsc_partial") && url.includes("/shop")) {
+        prefetchRequests.push(url);
+      }
+    });
+
+    await page.goto(devURL(devServerURL, "/prefetch-test"));
+    await waitForHydration(page);
+
+    // Wait for visible viewport links to fire
+    await page.waitForTimeout(500);
+
+    // Shop link is below a 3000px spacer — should NOT have been prefetched
+    expect(prefetchRequests.length).toBe(0);
+
+    // Scroll to the bottom to bring the link into viewport
+    await page
+      .locator('[data-testid="viewport-below-fold"]')
+      .scrollIntoViewIfNeeded();
+
+    // Now the shop link should be prefetched
+    await expect.poll(() => prefetchRequests.length, { timeout: 5000 }).toBe(1);
+  });
+
+  test("should prefetch render links on mount", async ({
+    page,
+    devServerURL,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Track prefetch requests for /about (render link)
+    const prefetchRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = request.url();
+      if (url.includes("_rsc_partial") && url.includes("/about")) {
+        prefetchRequests.push(url);
+      }
+    });
+
+    await page.goto(devURL(devServerURL, "/prefetch-test"));
+    await waitForHydration(page);
+
+    // Render link should prefetch on mount (after idle)
+    await expect.poll(() => prefetchRequests.length, { timeout: 5000 }).toBe(1);
+  });
+
+  test("should resolve hybrid to hover on desktop", async ({
+    page,
+    devServerURL,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    const prefetchRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = request.url();
+      if (url.includes("_rsc_partial") && url.includes("/magazine")) {
+        prefetchRequests.push(url);
+      }
+    });
+
+    await page.goto(devURL(devServerURL, "/prefetch-test"));
+    await waitForHydration(page);
+
+    // On desktop (pointer device), hybrid resolves to hover.
+    // No prefetch should happen without hovering.
+    await page.waitForTimeout(500);
+    expect(prefetchRequests.length).toBe(0);
+
+    // Hover the hybrid link — should trigger prefetch
+    await page.locator('a:has-text("Magazine (hybrid)")').hover();
+
+    await expect.poll(() => prefetchRequests.length, { timeout: 3000 }).toBe(1);
+  });
+});
+
+/**
+ * Viewport prefetch tests (production)
+ */
+base.describe("prefetch-viewport (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  base.setTimeout(120000);
+
+  base(
+    "should prefetch when link is visible on page load",
+    async ({ page }) => {
+      const prefetchRequests: string[] = [];
+      page.on("request", (request) => {
+        const url = request.url();
+        if (url.includes("_rsc_partial") && url.includes("/blog")) {
+          prefetchRequests.push(url);
+        }
+      });
+
+      await page.goto(f.url("/prefetch-test"));
+      await waitForHydration(page);
+
+      await baseExpect
+        .poll(() => prefetchRequests.length, { timeout: 5000 })
+        .toBe(1);
+    },
+  );
+
+  base(
+    "should not prefetch below-fold viewport link until scrolled",
+    async ({ page }) => {
+      const prefetchRequests: string[] = [];
+      page.on("request", (request) => {
+        const url = request.url();
+        if (url.includes("_rsc_partial") && url.includes("/shop")) {
+          prefetchRequests.push(url);
+        }
+      });
+
+      await page.goto(f.url("/prefetch-test"));
+      await waitForHydration(page);
+
+      await page.waitForTimeout(500);
+      baseExpect(prefetchRequests.length).toBe(0);
+
+      await page
+        .locator('[data-testid="viewport-below-fold"]')
+        .scrollIntoViewIfNeeded();
+
+      await baseExpect
+        .poll(() => prefetchRequests.length, { timeout: 5000 })
+        .toBe(1);
+    },
+  );
+
+  base("should prefetch render links on mount", async ({ page }) => {
+    const prefetchRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = request.url();
+      if (url.includes("_rsc_partial") && url.includes("/about")) {
+        prefetchRequests.push(url);
+      }
+    });
+
+    await page.goto(f.url("/prefetch-test"));
+    await waitForHydration(page);
+
+    await baseExpect
+      .poll(() => prefetchRequests.length, { timeout: 5000 })
+      .toBe(1);
+  });
+
+  base("should resolve hybrid to hover on desktop", async ({ page }) => {
+    const prefetchRequests: string[] = [];
+    page.on("request", (request) => {
+      const url = request.url();
+      if (url.includes("_rsc_partial") && url.includes("/magazine")) {
+        prefetchRequests.push(url);
+      }
+    });
+
+    await page.goto(f.url("/prefetch-test"));
+    await waitForHydration(page);
+
+    await page.waitForTimeout(500);
+    baseExpect(prefetchRequests.length).toBe(0);
+
+    await page.locator('a:has-text("Magazine (hybrid)")').hover();
+
+    await baseExpect
+      .poll(() => prefetchRequests.length, { timeout: 3000 })
+      .toBe(1);
+  });
+});
