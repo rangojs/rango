@@ -1,4 +1,4 @@
-import { createLoader } from "@rangojs/router";
+import { createLoader, getRequestContext } from "@rangojs/router";
 
 // Simple loader for prerender client component tests
 export const PrerenderTestLoader = createLoader(async () => {
@@ -510,8 +510,8 @@ export const LoaderReverseClientScopedLoader = createLoader(
  * Used to test that after an action sets a cookie and throws redirect,
  * the target route's loader runs fresh (not from stale cache).
  */
-export const ActionRedirectAuthLoader = createLoader(async (ctx) => {
-  const session = ctx.cookie("test-auth-session");
+export const ActionRedirectAuthLoader = createLoader(async () => {
+  const session = getRequestContext()?.cookie("test-auth-session");
   return {
     user: session || null,
     loadedAt: new Date().toISOString(),

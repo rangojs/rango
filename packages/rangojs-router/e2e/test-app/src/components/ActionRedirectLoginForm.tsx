@@ -4,14 +4,15 @@ import { useActionState } from "react";
 import { actionRedirectLogin } from "../actions.jsx";
 
 export function ActionRedirectLoginForm() {
-  const [state, formAction, isPending] = useActionState(actionRedirectLogin, undefined);
+  const [state, formAction, isPending] = useActionState(
+    actionRedirectLogin,
+    undefined,
+  );
 
   return (
     <div data-testid="login-form">
       <form action={formAction}>
-        {state?.error && (
-          <div data-testid="login-error">{state.error}</div>
-        )}
+        {state?.error && <div data-testid="login-error">{state.error}</div>}
         <input
           name="email"
           type="email"

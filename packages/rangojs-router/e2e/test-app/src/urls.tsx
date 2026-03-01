@@ -533,9 +533,13 @@ export const urlpatterns = urls(
       include("/ctx-clean", ctxCleanPatterns, { name: "ctxClean" }),
 
       // Action redirect revalidation test patterns
-      include("/action-redirect-revalidation", actionRedirectRevalidationPatterns, {
-        name: "actionRedirectRevalidation",
-      }),
+      include(
+        "/action-redirect-revalidation",
+        actionRedirectRevalidationPatterns,
+        {
+          name: "actionRedirectRevalidation",
+        },
+      ),
 
       // Prerender with parent route params (locale in include prefix)
       include("/:locale", prerenderLocalePatterns, { name: "locale" }),
