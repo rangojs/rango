@@ -60,7 +60,9 @@ const SOURCE_EXPORT_SUBPATHS = Object.keys(packageJson.exports)
     // Include if any non-types condition points to TypeScript source
     return Object.entries(entry).some(
       ([condition, path]) =>
-        condition !== "types" && typeof path === "string" && /\.tsx?$/.test(path),
+        condition !== "types" &&
+        typeof path === "string" &&
+        /\.tsx?$/.test(path),
     );
   })
   .map((key) => key.replace(/^\./, ""));
