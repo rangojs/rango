@@ -94,6 +94,15 @@ export async function evaluateRevalidation<TEnv>(
       // Parent chain segment (shared layouts/parallels) - don't revalidate
       defaultShouldRevalidate = false;
     }
+  } else if (stale) {
+    // Stale navigation: revalidate all segments by default.
+    // The client marked its cache as stale (e.g. after action redirect),
+    // so loaders and route segments should re-run to pick up fresh data.
+    defaultShouldRevalidate = true;
+    debugLog("revalidation", "stale request, revalidating by default", {
+      segmentId: segment.id,
+      segmentType: segment.type,
+    });
   } else {
     // Navigation (GET): Conservative defaults to minimize unnecessary revalidations
     // Only the route segment revalidates by default - all others require explicit opt-in
