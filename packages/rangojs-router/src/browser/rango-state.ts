@@ -21,6 +21,19 @@ const STORAGE_KEY = "rango-state";
 // Initialized from localStorage on first access or by initRangoState().
 let cachedState: string | null = null;
 
+// Cross-tab sync: the `storage` event fires in OTHER tabs when one tab writes
+// to localStorage, keeping cachedState fresh without polling.
+let storageListenerAttached = false;
+
+function attachStorageListener(): void {
+  if (storageListenerAttached || typeof window === "undefined") return;
+  window.addEventListener("storage", (e) => {
+    if (e.key !== STORAGE_KEY) return;
+    cachedState = e.newValue;
+  });
+  storageListenerAttached = true;
+}
+
 /**
  * Initialize the Rango state key in localStorage.
  * Called once at app startup with the build version from the server.
@@ -29,6 +42,8 @@ let cachedState: string | null = null;
  */
 export function initRangoState(version: string): void {
   if (typeof window === "undefined") return;
+
+  attachStorageListener();
 
   try {
     const existing = localStorage.getItem(STORAGE_KEY);
