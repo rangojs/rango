@@ -153,9 +153,10 @@ test.describe("useRouter", () => {
     await waitForHydration(page);
 
     // Listen for the prefetch fetch request
-    const prefetchPromise = page.waitForRequest((req) =>
-      req.url().includes("/hook-tests/use-router/target-a") &&
-      req.url().includes("_rsc_partial=true"),
+    const prefetchPromise = page.waitForRequest(
+      (req) =>
+        req.url().includes("/hook-tests/use-router/target-a") &&
+        req.url().includes("_rsc_partial=true"),
     );
 
     // Click prefetch button
@@ -472,9 +473,10 @@ test.describe("useRouter (production)", () => {
     await page.goto(f.url("/hook-tests/use-router"));
     await waitForHydration(page);
 
-    const prefetchPromise = page.waitForRequest((req) =>
-      req.url().includes("/hook-tests/use-router/target-a") &&
-      req.url().includes("_rsc_partial=true"),
+    const prefetchPromise = page.waitForRequest(
+      (req) =>
+        req.url().includes("/hook-tests/use-router/target-a") &&
+        req.url().includes("_rsc_partial=true"),
     );
 
     await testId(page, "router-prefetch-btn").click();
