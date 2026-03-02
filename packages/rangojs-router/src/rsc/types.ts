@@ -7,7 +7,7 @@
 
 import type { ResolvedSegment, SlotState } from "../types.js";
 import type { HandleData } from "../server/handle-store.js";
-import type { RSCRouter } from "../router.js";
+import type { RSCRouterInternal } from "../router/router-interfaces.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 
 /**
@@ -161,7 +161,7 @@ export interface CreateRSCHandlerOptions<
   /**
    * The RSC router instance
    */
-  router: RSCRouter<TEnv, TRoutes>;
+  router: RSCRouterInternal<TEnv, TRoutes>;
 
   /**
    * RSC dependencies from @vitejs/plugin-rsc/rsc.

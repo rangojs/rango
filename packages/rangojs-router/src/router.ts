@@ -90,6 +90,7 @@ import type {
 } from "./router/router-options.js";
 import type {
   RSCRouter,
+  RSCRouterInternal,
   RouterRequestInput,
 } from "./router/router-interfaces.js";
 
@@ -113,8 +114,10 @@ export type {
 } from "./router/router-options.js";
 export type {
   RSCRouter,
+  RSCRouterInternal,
   RouterRequestInput,
 } from "./router/router-interfaces.js";
+export { toInternal } from "./router/router-interfaces.js";
 
 export function createRouter<TEnv = any>(
   options: RSCRouterOptions<TEnv> = {},
@@ -509,7 +512,7 @@ export function createRouter<TEnv = any>(
    * The type system tracks accumulated routes through the builder chain
    * Initial TRoutes is {} (empty) to avoid poisoning accumulated types with Record<string, string>
    */
-  const router: RSCRouter<TEnv, {}> = {
+  const router: RSCRouterInternal<TEnv, {}> = {
     __brand: RSC_ROUTER_BRAND,
     id: routerId,
 
