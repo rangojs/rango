@@ -170,6 +170,8 @@ ${lazyImports.join(",\n")}
 
       const fs = await import("node:fs/promises");
 
+      const SKIP_DIRS = new Set(["node_modules", "dist", "build", "coverage"]);
+
       async function scanDir(dir: string): Promise<string[]> {
         const results: string[] = [];
         try {
@@ -177,7 +179,7 @@ ${lazyImports.join(",\n")}
           for (const entry of entries) {
             const fullPath = path.join(dir, entry.name);
             if (entry.isDirectory()) {
-              if (entry.name !== "node_modules") {
+              if (!SKIP_DIRS.has(entry.name) && !entry.name.startsWith(".")) {
                 results.push(...(await scanDir(fullPath)));
               }
             } else if (/\.(ts|tsx|js|jsx)$/.test(entry.name)) {
@@ -191,8 +193,7 @@ ${lazyImports.join(",\n")}
       }
 
       try {
-        const srcDir = path.join(projectRoot, "src");
-        const files = await scanDir(srcDir);
+        const files = await scanDir(projectRoot);
 
         for (const filePath of files) {
           const content = await fs.readFile(filePath, "utf-8");

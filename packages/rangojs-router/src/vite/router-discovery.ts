@@ -97,6 +97,12 @@ export function createRouterDiscoveryPlugin(
       s.isBuildMode = config.command === "build";
       // Capture user's resolve aliases for the temp server
       s.userResolveAlias = config.resolve.alias;
+      // Node preset: pick up auto-discovered router path from the config() hook.
+      // The auto-discover plugin runs in config() using Vite's resolved root,
+      // populating the mutable ref before configResolved fires.
+      if (!s.resolvedEntryPath && opts?.routerPathRef?.path) {
+        s.resolvedEntryPath = opts.routerPathRef.path;
+      }
       // Cloudflare preset: read entry from resolved environment config.
       // The @cloudflare/vite-plugin reads wrangler config (toml/json/jsonc)
       // and sets optimizeDeps.entries on the RSC environment.
