@@ -992,7 +992,6 @@ export function createRSCHandler<
             version,
             themeConfig: router.themeConfig,
             warmupEnabled: router.warmupEnabled,
-            prefetchMode: router.prefetchMode,
             initialTheme: requireRequestContext().theme,
             // No routeName for not-found routes
           },

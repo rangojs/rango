@@ -136,7 +136,6 @@ export function createRouter<TEnv = any>(
     $$sourceFile: injectedSourceFile,
     nonce,
     version,
-    prefetch: prefetchOption,
     prefetchCacheControl: prefetchCacheControlOption,
     warmup: warmupOption,
     allowDebugManifest: allowDebugManifestOption = false,
@@ -179,9 +178,6 @@ export function createRouter<TEnv = any>(
   // order (unlike the counter which depends on import order).
   const routerId =
     userProvidedId ?? injectedId ?? `router_${nextRouterAutoId()}`;
-
-  // Resolve prefetch mode (default: 'router')
-  const prefetchMode = prefetchOption ?? "router";
 
   // Resolve prefetch cache control (default: 'private, max-age=300')
   const prefetchCacheControl =
@@ -723,9 +719,6 @@ export function createRouter<TEnv = any>(
 
     // Expose resolved theme configuration for NavigationProvider and MetaTags
     themeConfig: resolvedThemeConfig,
-
-    // Expose prefetch mode for handler and client
-    prefetchMode,
 
     // Expose prefetch cache control for RSC handler
     prefetchCacheControl,

@@ -144,11 +144,19 @@ test.describe("useRouter", () => {
     );
   });
 
-  test("prefetch() should create a prefetch link element", async ({ page }) => {
+  test("prefetch() should issue a fetch request with prefetch headers", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/hook-tests/use-router"));
     await waitForHydration(page);
+
+    // Listen for the prefetch fetch request
+    const prefetchPromise = page.waitForRequest((req) =>
+      req.url().includes("/hook-tests/use-router/target-a") &&
+      req.url().includes("_rsc_partial=true"),
+    );
 
     // Click prefetch button
     await testId(page, "router-prefetch-btn").click();
@@ -158,27 +166,12 @@ test.describe("useRouter", () => {
       "prefetched:/hook-tests/use-router/target-a",
     );
 
-    // Should create a link[rel=prefetch] element in the head
-    const prefetchLink = await page.evaluate(() => {
-      const links = document.querySelectorAll('link[rel="prefetch"]');
-      for (const link of links) {
-        if (
-          link.getAttribute("href")?.includes("/hook-tests/use-router/target-a")
-        ) {
-          return {
-            href: link.getAttribute("href"),
-            as: link.getAttribute("as"),
-            rel: link.getAttribute("rel"),
-          };
-        }
-      }
-      return null;
-    });
-
-    expect(prefetchLink).not.toBeNull();
-    expect(prefetchLink!.rel).toBe("prefetch");
-    expect(prefetchLink!.as).toBe("fetch");
-    expect(prefetchLink!.href).toContain("_rsc_partial=true");
+    // Should issue a fetch() request with prefetch headers
+    const prefetchReq = await prefetchPromise;
+    expect(prefetchReq.url()).toContain("_rsc_partial=true");
+    const headers = await prefetchReq.allHeaders();
+    expect(headers["x-rango-state"]).toBeTruthy();
+    expect(headers["x-rango-prefetch"]).toBe("1");
   });
 
   test("back() should go back in browser history", async ({ page }) => {
@@ -471,11 +464,18 @@ test.describe("useRouter (production)", () => {
     await expect(page).toHaveURL(/\/hook-tests\/use-router$/);
   });
 
-  test("prefetch() should create a prefetch link element", async ({ page }) => {
+  test("prefetch() should issue a fetch request with prefetch headers", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/hook-tests/use-router"));
     await waitForHydration(page);
+
+    const prefetchPromise = page.waitForRequest((req) =>
+      req.url().includes("/hook-tests/use-router/target-a") &&
+      req.url().includes("_rsc_partial=true"),
+    );
 
     await testId(page, "router-prefetch-btn").click();
 
@@ -483,26 +483,11 @@ test.describe("useRouter (production)", () => {
       "prefetched:/hook-tests/use-router/target-a",
     );
 
-    const prefetchLink = await page.evaluate(() => {
-      const links = document.querySelectorAll('link[rel="prefetch"]');
-      for (const link of links) {
-        if (
-          link.getAttribute("href")?.includes("/hook-tests/use-router/target-a")
-        ) {
-          return {
-            href: link.getAttribute("href"),
-            as: link.getAttribute("as"),
-            rel: link.getAttribute("rel"),
-          };
-        }
-      }
-      return null;
-    });
-
-    expect(prefetchLink).not.toBeNull();
-    expect(prefetchLink!.rel).toBe("prefetch");
-    expect(prefetchLink!.as).toBe("fetch");
-    expect(prefetchLink!.href).toContain("_rsc_partial=true");
+    const prefetchReq = await prefetchPromise;
+    expect(prefetchReq.url()).toContain("_rsc_partial=true");
+    const headers = await prefetchReq.allHeaders();
+    expect(headers["x-rango-state"]).toBeTruthy();
+    expect(headers["x-rango-prefetch"]).toBe("1");
   });
 
   test("back() and forward() should work with browser history", async ({

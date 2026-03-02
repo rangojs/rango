@@ -2,15 +2,14 @@ import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 
 /**
- * Tests for prefetch Cache-Control headers.
+ * Tests for prefetch Cache-Control and Vary headers.
  *
  * The test-app router is configured with:
  *   prefetchCacheControl: "private, max-age=60"
  *
- * Verifies that:
- * - Prefetch requests (with X-Rango-Prefetch header) receive the configured Cache-Control
- * - Navigation requests (without X-Rango-Prefetch) do NOT receive Cache-Control
- * - Full page HTML requests do NOT receive Cache-Control
+ * Prefetch uses fetch() with X-Rango-State + X-Rango-Prefetch headers.
+ * Server responds with Vary on custom headers so navigation fetch
+ * (same custom headers) matches the cached prefetch response.
  */
 
 test.describe("prefetch-cache-control (dev)", () => {
@@ -19,7 +18,7 @@ test.describe("prefetch-cache-control (dev)", () => {
     mode: "dev",
   });
 
-  test("prefetch request gets configured Cache-Control", async () => {
+  test("prefetch request gets configured Cache-Control and Vary", async () => {
     const url = new URL("/", f.url("/"));
     url.searchParams.set("_rsc_partial", "true");
 
@@ -32,8 +31,10 @@ test.describe("prefetch-cache-control (dev)", () => {
     });
 
     expect(res.status).toBe(200);
-    const cc = res.headers.get("cache-control");
-    expect(cc).toBe("private, max-age=60");
+    expect(res.headers.get("cache-control")).toBe("private, max-age=60");
+    expect(res.headers.get("vary")).toBe(
+      "accept, X-Rango-State, X-RSC-Router-Client-Path",
+    );
   });
 
   test("navigation request does not get Cache-Control", async () => {
@@ -49,6 +50,9 @@ test.describe("prefetch-cache-control (dev)", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBeNull();
+    expect(res.headers.get("vary")).toBe(
+      "accept, X-Rango-State, X-RSC-Router-Client-Path",
+    );
   });
 
   test("full page HTML request does not get Cache-Control", async () => {
@@ -80,12 +84,14 @@ test.describe("prefetch-cache-control (dev)", () => {
 });
 
 test.describe("prefetch-cache-control (production)", () => {
+  test.setTimeout(120000);
+
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "build",
   });
 
-  test("prefetch request gets configured Cache-Control", async () => {
+  test("prefetch request gets configured Cache-Control and Vary", async () => {
     const url = new URL("/", f.url("/"));
     url.searchParams.set("_rsc_partial", "true");
 
@@ -98,8 +104,10 @@ test.describe("prefetch-cache-control (production)", () => {
     });
 
     expect(res.status).toBe(200);
-    const cc = res.headers.get("cache-control");
-    expect(cc).toBe("private, max-age=60");
+    expect(res.headers.get("cache-control")).toBe("private, max-age=60");
+    expect(res.headers.get("vary")).toBe(
+      "accept, X-Rango-State, X-RSC-Router-Client-Path",
+    );
   });
 
   test("navigation request does not get Cache-Control", async () => {
@@ -115,6 +123,9 @@ test.describe("prefetch-cache-control (production)", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBeNull();
+    expect(res.headers.get("vary")).toBe(
+      "accept, X-Rango-State, X-RSC-Router-Client-Path",
+    );
   });
 
   test("full page HTML request does not get Cache-Control", async () => {

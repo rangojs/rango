@@ -43,11 +43,6 @@ export interface NavigationStoreContextValue {
   refresh: () => Promise<void>;
 
   /**
-   * Prefetch mode: "router" for fetch-based, "browser" for <link rel="prefetch">.
-   */
-  prefetchMode: "browser" | "router";
-
-  /**
    * App version from server payload (stable, immutable).
    * Used in prefetch requests for version mismatch detection.
    */

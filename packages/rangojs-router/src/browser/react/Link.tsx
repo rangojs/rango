@@ -30,133 +30,11 @@ export type StateOrGetter<T = unknown> = T | (() => T);
  */
 export type LinkState = LocationStateEntry[] | StateOrGetter;
 
-import {
-  hasPrefetch,
-  hasBrowserPrefetch,
-  markBrowserPrefetch,
-  markPrefetchInflight,
-  markPrefetched,
-  clearPrefetchInflight,
-} from "../prefetch-cache.js";
-import { getRangoState } from "../rango-state.js";
-import { enqueuePrefetch } from "../prefetch-queue.js";
+import { prefetchDirect, prefetchQueued } from "../prefetch-fetch.js";
 import {
   observeForPrefetch,
   unobserveForPrefetch,
 } from "../prefetch-observer.js";
-
-/**
- * Build an RSC partial URL for prefetching.
- * Includes _rsc_v for version mismatch detection when available.
- */
-function buildPrefetchUrl(
-  url: string,
-  segmentIds: string[],
-  version?: string,
-): URL {
-  const targetUrl = new URL(url, window.location.origin);
-  targetUrl.searchParams.set("_rsc_partial", "true");
-  if (segmentIds.length > 0) {
-    targetUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
-  }
-  if (version) {
-    targetUrl.searchParams.set("_rsc_v", version);
-  }
-  return targetUrl;
-}
-
-/**
- * Browser-mode prefetch: inject a <link rel="prefetch"> element.
- */
-function prefetchUrlBrowser(
-  url: string,
-  segmentIds: string[],
-  version?: string,
-): void {
-  if (hasBrowserPrefetch(url)) return;
-  markBrowserPrefetch(url);
-
-  const targetUrl = buildPrefetchUrl(url, segmentIds, version);
-
-  const link = document.createElement("link");
-  link.rel = "prefetch";
-  link.href = targetUrl.toString();
-  link.as = "fetch";
-  document.head.appendChild(link);
-}
-/**
- * Core prefetch fetch logic. Returns a Promise and accepts an optional
- * AbortSignal for cancellation by the prefetch queue.
- * Callers must pass the pre-built cache key and fetch URL to avoid
- * redundant URL construction.
- */
-function executePrefetchFetch(
-  key: string,
-  fetchUrl: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  markPrefetchInflight(key);
-
-  return fetch(fetchUrl, {
-    priority: "low" as RequestPriority,
-    signal,
-    headers: {
-      "X-Rango-State": getRangoState(),
-      "X-RSC-Router-Client-Path": window.location.href,
-      "X-Rango-Prefetch": "1",
-    },
-  })
-    .then((response) => {
-      // Drain body to ensure full download for browser HTTP cache.
-      // pipeTo avoids decoding the stream into a JS string (unlike .text()).
-      if (response.ok && response.body) {
-        return response.body
-          .pipeTo(new WritableStream())
-          .then(() => markPrefetched(key));
-      }
-    })
-    .catch(() => {
-      // Silently ignore prefetch failures (including abort)
-    })
-    .finally(() => {
-      clearPrefetchInflight(key);
-    });
-}
-
-/**
- * Router-mode prefetch (direct): fetch with low priority and store in cache.
- * Used by hover strategy — fires immediately without queueing.
- */
-function prefetchUrlRouter(
-  url: string,
-  segmentIds: string[],
-  version?: string,
-): void {
-  const targetUrl = buildPrefetchUrl(url, segmentIds, version);
-  const key = targetUrl.pathname;
-  if (hasPrefetch(key)) return;
-  executePrefetchFetch(key, targetUrl.toString());
-}
-
-/**
- * Router-mode prefetch (queued): goes through the concurrency-limited queue.
- * Used by viewport/render strategies to avoid flooding the server.
- * Returns the cache key for use in cleanup.
- */
-function prefetchUrlRouterQueued(
-  url: string,
-  segmentIds: string[],
-  version?: string,
-): string {
-  const targetUrl = buildPrefetchUrl(url, segmentIds, version);
-  const key = targetUrl.pathname;
-  if (hasPrefetch(key)) return key;
-  const fetchUrlStr = targetUrl.toString();
-  enqueuePrefetch(key, (signal) =>
-    executePrefetchFetch(key, fetchUrlStr, signal),
-  );
-  return key;
-}
 
 // Touch device detection for hybrid strategy.
 // Checked once at module load (Link.tsx is "use client", runs only in browser).
@@ -374,11 +252,7 @@ export const Link: ForwardRefExoticComponent<
   const handleMouseEnter = useCallback(() => {
     if (resolvedStrategy === "hover" && !isExternal && ctx?.store) {
       const segmentState = ctx.store.getSegmentState();
-      if (ctx.prefetchMode === "browser") {
-        prefetchUrlBrowser(to, segmentState.currentSegmentIds, ctx.version);
-      } else {
-        prefetchUrlRouter(to, segmentState.currentSegmentIds, ctx.version);
-      }
+      prefetchDirect(to, segmentState.currentSegmentIds, ctx.version);
     }
   }, [resolvedStrategy, to, isExternal, ctx]);
 
@@ -396,15 +270,7 @@ export const Link: ForwardRefExoticComponent<
     const triggerPrefetch = () => {
       if (cancelled) return;
       const segmentState = ctx.store.getSegmentState();
-      if (ctx.prefetchMode === "browser") {
-        prefetchUrlBrowser(to, segmentState.currentSegmentIds, ctx.version);
-      } else {
-        prefetchUrlRouterQueued(
-          to,
-          segmentState.currentSegmentIds,
-          ctx.version,
-        );
-      }
+      prefetchQueued(to, segmentState.currentSegmentIds, ctx.version);
     };
 
     // Schedule prefetch only when the app is idle (no navigation/streaming).

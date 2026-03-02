@@ -129,11 +129,6 @@ export interface NavigationProviderProps {
   warmupEnabled?: boolean;
 
   /**
-   * Prefetch mode: "router" for fetch-based, "browser" for <link rel="prefetch">.
-   */
-  prefetchMode?: "browser" | "router";
-
-  /**
    * App version from server payload (stable, immutable).
    * Forwarded to prefetch requests for version mismatch detection.
    */
@@ -169,7 +164,6 @@ export function NavigationProvider({
   themeConfig,
   initialTheme,
   warmupEnabled,
-  prefetchMode,
   version,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
@@ -199,7 +193,6 @@ export function NavigationProvider({
       eventController,
       navigate,
       refresh,
-      prefetchMode: prefetchMode ?? "router",
       version,
     }),
     [],

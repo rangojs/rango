@@ -163,13 +163,6 @@ export interface RSCRouter<
   readonly themeConfig: import("../theme/types.js").ResolvedThemeConfig | null;
 
   /**
-   * Resolved prefetch mode.
-   * "router" uses fetch() with router-managed cache;
-   * "browser" uses native <link rel="prefetch">.
-   */
-  readonly prefetchMode: "browser" | "router";
-
-  /**
    * Cache-Control header value for prefetch responses.
    * False means no browser caching of prefetch responses.
    */

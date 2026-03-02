@@ -148,7 +148,6 @@ export async function handleRscRendering<TEnv>(
           handles: handleStore.stream(),
           version: ctx.version,
           themeConfig: ctx.router.themeConfig,
-          prefetchMode: ctx.router.prefetchMode,
           initialTheme: reqCtx.theme,
         },
       };
@@ -173,8 +172,8 @@ export async function handleRscRendering<TEnv>(
 
   // Determine if this is an RSC request or HTML request.
   // Partial requests (_rsc_partial) are always RSC -- they come from client-side
-  // navigation or <link rel="prefetch">. Chrome sends Accept: text/html for
-  // prefetch links despite as="fetch", so we cannot rely on Accept alone.
+  // navigation or prefetch fetch(). We cannot rely on Accept alone since some
+  // browsers may send Accept: text/html for non-HTML requests.
   const isRscRequest =
     isPartial ||
     (!request.headers.get("accept")?.includes("text/html") &&
