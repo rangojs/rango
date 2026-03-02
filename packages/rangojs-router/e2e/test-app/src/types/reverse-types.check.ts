@@ -8,6 +8,8 @@
 import type {
   Handler,
   HandlerContext,
+  LoaderContext,
+  MiddlewareContext,
   Middleware,
   Revalidate,
   GenericParams,
@@ -15,16 +17,16 @@ import type {
 
 // Test 1: ctx.reverse in handlers accepts route names
 const testHandlerReverse: Handler<"/"> = (ctx) => {
-  // Should work - ctx.reverse accepts any string for named route resolution
+  // Should work - ctx.reverse accepts valid generated route names
   const _indexUrl = ctx.reverse("index");
   const _blogUrl = ctx.reverse("blog.index");
 
   // Should work - route with params
-  const _blogPostUrl = ctx.reverse("blog.post", { slug: "hello-world" });
+  const _blogPostUrl = ctx.reverse("blog.post", { postId: "hello-world" });
   const _productUrl = ctx.reverse("product.detail", { productId: "123" });
 
   // Should work - absolute route with dot notation (global lookup)
-  const _absoluteUrl = ctx.reverse("some.nested.route");
+  const _absoluteUrl = ctx.reverse("docs.article", { slug: "intro" });
 
   return null;
 };
@@ -91,19 +93,20 @@ const testGenericHandler: Handler<GenericParams> = (ctx) => {
   return null;
 };
 
-// Test 9: Verify ctx.reverse accepts various route name formats
-// ctx.reverse is (name: string, params?) => string, accepts any route name
+// Test 9: Verify ctx.reverse accepts valid global route name formats
 declare function testGlobalRoutes(): void;
 if (false as boolean) {
   testGlobalRoutes();
-  // ctx.reverse accepts any string - named routes resolve at runtime via server routeMap
+  // Valid generated route names should type-check
   const ctx = {} as HandlerContext;
   ctx.reverse("index");
   ctx.reverse("blog.index");
-  ctx.reverse("blog.post", { slug: "test" });
+  ctx.reverse("blog.post", { postId: "test" });
   ctx.reverse("product.detail", { productId: "test" });
   ctx.reverse("href.index");
   ctx.reverse("href.detail", { id: "test" });
+  // Dot-prefixed local names remain permissive when no local route map is known
+  ctx.reverse(".local-name");
 }
 
 // =============================================================================
@@ -240,9 +243,109 @@ const testHandlerWithScopedReverse: Handler<"/"> = (ctx) => {
   const _det = reverse("detail", { id: "abc" });
 
   // For global routes, use ctx.reverse directly
-  const _cross = ctx.reverse("blog.post", { slug: "hello" });
+  const _cross = ctx.reverse("blog.post", { postId: "hello" });
 
   return null;
 };
+
+// Test 16b: scopedReverse() works for extracted loaders and middleware too
+type SharedLocalRoutes = {
+  index: "/";
+  detail: "/:id";
+  settings: "/settings";
+};
+type SharedPatternsType = UrlPatterns<unknown, SharedLocalRoutes>;
+
+const testLoaderWithScopedReverse = (
+  ctx: LoaderContext<Record<string, string | undefined>>,
+) => {
+  const reverse = scopedReverse<SharedPatternsType>(ctx.reverse);
+
+  const _idx = reverse("index");
+  const _detail = reverse("detail", { id: "abc" });
+  const _settings = reverse("settings");
+
+  return { _idx, _detail, _settings };
+};
+
+const testMiddlewareWithScopedReverse = async (
+  ctx: MiddlewareContext,
+  next: () => Promise<Response>,
+) => {
+  const reverse = scopedReverse<SharedPatternsType>(ctx.reverse);
+
+  const _idx = reverse("index");
+  const _detail = reverse("detail", { id: "abc" });
+  const _settings = reverse("settings");
+
+  await next();
+  return new Response(JSON.stringify({ _idx, _detail, _settings }));
+};
+
+// =============================================================================
+// Test 17: getRequestContext().reverse() is type-safe with global route names
+// =============================================================================
+import { getRequestContext } from "@rangojs/router";
+
+if (false as boolean) {
+  const ctx = getRequestContext()!;
+
+  // Should work - valid global route names (from RegisteredRoutes)
+  const _blogIndex: string = ctx.reverse("blog.index");
+  const _blogPost: string = ctx.reverse("blog.post", { postId: "hello" });
+  const _hrefIndex: string = ctx.reverse("href.index");
+  const _hrefDetail: string = ctx.reverse("href.detail", { id: "123" });
+  const _index: string = ctx.reverse("index");
+  const _docsArticle: string = ctx.reverse("docs.article", { slug: "intro" });
+
+  // @ts-expect-error - invalid route name should fail
+  ctx.reverse("nonexistent.route");
+
+  // @ts-expect-error - missing required params should fail
+  ctx.reverse("blog.post");
+
+  // @ts-expect-error - wrong param name should fail
+  ctx.reverse("blog.post", { wrongParam: "test" });
+}
+
+// =============================================================================
+// Test 18: Explicit local route maps require local params but allow mount params
+// =============================================================================
+type LocalMountedRoutes = {
+  settings: "/settings";
+  user: "/users/:userId";
+};
+
+if (false as boolean) {
+  const ctx = {} as HandlerContext<
+    { tenantId: string; userId?: string },
+    any,
+    {},
+    LocalMountedRoutes
+  >;
+
+  ctx.reverse(".settings");
+  ctx.reverse(".settings", { tenantId: "override" });
+  ctx.reverse(".user", { userId: "u1" });
+  ctx.reverse(".user", { userId: "u1", tenantId: "override" });
+
+  // @ts-expect-error - local route param is required when known from the local map
+  ctx.reverse(".user");
+
+  // @ts-expect-error - inherited mount params alone are not enough
+  ctx.reverse(".user", { tenantId: "override" });
+}
+
+// =============================================================================
+// Test 19: Inline handlers without an explicit local route map stay permissive
+// =============================================================================
+if (false as boolean) {
+  const ctx = {} as HandlerContext<{ tenantId: string }>;
+
+  // This remains intentionally permissive because inline handlers do not carry
+  // a local route map that distinguishes module-owned params from mount params.
+  ctx.reverse(".user");
+  ctx.reverse(".user", { tenantId: "override" });
+}
 
 export {};

@@ -7,6 +7,7 @@ vi.mock("../../server/context", () => ({
 
 vi.mock("../../server/request-context.js", () => ({
   getRequestContext: () => undefined,
+  _getRequestContext: () => undefined,
 }));
 
 vi.mock("../../server/fetchable-loader-store.js", () => ({

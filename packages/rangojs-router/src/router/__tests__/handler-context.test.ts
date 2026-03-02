@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 // Mock dependencies before importing the module under test
 vi.mock("../../server/request-context.js", () => ({
   getRequestContext: () => undefined,
+  _getRequestContext: () => undefined,
 }));
 
 vi.mock("../../route-map-builder.js", () => ({

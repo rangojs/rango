@@ -16,7 +16,10 @@ import type { LoaderEntry } from "../../server/context.js";
 import type { HandlerContext } from "../../types.js";
 import type { SegmentCacheStore } from "../../cache/types.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
-import { getRequestContext } from "../../server/request-context.js";
+import {
+  getRequestContext,
+  _getRequestContext,
+} from "../../server/request-context.js";
 
 const DEFAULT_TTL_SECONDS = 60;
 
@@ -49,7 +52,7 @@ function getLoaderStore(loaderEntry: LoaderEntry): SegmentCacheStore | null {
   if (options.store) return options.store;
 
   // App-level store from request context
-  return getRequestContext()?._cacheStore ?? null;
+  return _getRequestContext()?._cacheStore ?? null;
 }
 
 function getLoaderTtl(

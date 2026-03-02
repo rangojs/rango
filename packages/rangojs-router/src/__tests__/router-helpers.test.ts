@@ -490,11 +490,12 @@ describe("resolveRouteName (via createHandlerContext.reverse)", () => {
   async function makeReverse(
     routeMap: Record<string, string>,
     currentRoute?: string,
+    currentParams?: Record<string, string>,
   ) {
     const { createHandlerContext } =
       await import("../router/handler-context.js");
     const ctx = createHandlerContext(
-      {},
+      currentParams ?? {},
       new Request("http://localhost/"),
       new URLSearchParams(),
       "/",
@@ -516,6 +517,7 @@ describe("resolveRouteName (via createHandlerContext.reverse)", () => {
     "magazine.article": "/magazine/:slug",
     "magazine.author": "/magazine/author/:authorSlug",
     "magazine.author.posts": "/magazine/author/:authorSlug/posts",
+    "product.detail": "/product/:productId",
   };
 
   // Dot-prefixed = local resolution (within include() scope)
@@ -573,5 +575,14 @@ describe("resolveRouteName (via createHandlerContext.reverse)", () => {
   it("should throw for unknown global names", async () => {
     const reverse = await makeReverse(routeMap, "magazine.author");
     expect(() => reverse("nonexistent.route" as any)).toThrow("Unknown route");
+  });
+
+  it("should throw for global names when required params cannot be auto-filled", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author", {
+      authorSlug: "alice",
+    });
+    expect(() => reverse("product.detail" as any)).toThrow(
+      'Missing param "productId"',
+    );
   });
 });

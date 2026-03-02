@@ -12,7 +12,10 @@ import type { PartialCacheOptions } from "../types.js";
 import type { ResolvedSegment } from "../types.js";
 import type { SegmentCacheStore, CachedEntryData } from "./types.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
-import { getRequestContext } from "../server/request-context.js";
+import {
+  getRequestContext,
+  _getRequestContext,
+} from "../server/request-context.js";
 import { serializeSegments, deserializeSegments } from "./segment-codec.js";
 import { captureHandles, restoreHandles } from "./handle-snapshot.js";
 
@@ -274,7 +277,7 @@ export class CacheScope {
       const segments = await deserializeSegments(cached.segments);
 
       // Replay handle data
-      const handleStore = getRequestContext()?._handleStore;
+      const handleStore = _getRequestContext()?._handleStore;
       if (handleStore) {
         restoreHandles(cached.handles, handleStore);
       }
