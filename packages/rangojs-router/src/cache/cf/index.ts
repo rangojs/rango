@@ -18,13 +18,3 @@ export {
   CACHE_TAGS_HEADER,
   REVALIDATION_LOCK_TTL,
 } from "./cf-cache-store.js";
-
-// Deprecated exports (kept for backwards compatibility)
-export {
-  /** @deprecated Renamed to REVALIDATION_LOCK_TTL */
-  MAX_REVALIDATION_INTERVAL,
-  /** @deprecated No longer used */
-  CACHE_STATUS_HEADER,
-  /** @deprecated No longer used */
-  type CacheStatus,
-} from "./cf-cache-store.js";
