@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
-import { CFCacheStore, CACHE_TAGS_HEADER } from "../cf/cf-cache-store.js";
+import {
+  CFCacheStore,
+  CFEdgeKVCacheStore,
+  CFKVTagInvalidationStore,
+  CACHE_TAGS_HEADER,
+  type CFTagInvalidationStore,
+} from "../cf/cf-cache-store.js";
 
 // ---------------------------------------------------------------------------
 // Mock the virtual module and requestContext imports
@@ -40,6 +46,45 @@ function createMockCtx() {
   };
 }
 
+function createMockTagInvalidationStore() {
+  const invalidatedAt = new Map<string, number>();
+  const store: CFTagInvalidationStore = {
+    async getLatestInvalidation(tags: string[]) {
+      let latest: number | null = null;
+      for (const tag of tags) {
+        const timestamp = invalidatedAt.get(tag);
+        if (timestamp === undefined) continue;
+        latest = latest === null ? timestamp : Math.max(latest, timestamp);
+      }
+      return latest;
+    },
+    async revalidateTag(tag: string, at: number) {
+      invalidatedAt.set(tag, at);
+    },
+  };
+
+  return {
+    store,
+    invalidatedAt,
+    revalidateTag: vi.spyOn(store, "revalidateTag"),
+    getLatestInvalidation: vi.spyOn(store, "getLatestInvalidation"),
+  };
+}
+
+function createMockKV() {
+  const data = new Map<string, string>();
+  return {
+    get: vi.fn(async (key: string) => data.get(key) ?? null),
+    put: vi.fn(async (key: string, value: string) => {
+      data.set(key, value);
+    }),
+    delete: vi.fn(async (key: string) => {
+      data.delete(key);
+    }),
+    data,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -56,12 +101,16 @@ describe("CFCacheStore tag support", () => {
     (globalThis as any).caches = { default: mockCache };
   });
 
-  function createStore(onRevalidateTag?: (tags: string[]) => Promise<void>) {
+  function createStore(options?: {
+    onRevalidateTag?: (tags: string[]) => Promise<void>;
+    tagInvalidationStore?: CFTagInvalidationStore;
+  }) {
     return new CFCacheStore({
       ctx: mockCtx,
       baseUrl: "https://test.internal/",
       version: "v1",
-      onRevalidateTag,
+      onRevalidateTag: options?.onRevalidateTag,
+      tagInvalidationStore: options?.tagInvalidationStore,
     });
   }
 
@@ -157,13 +206,149 @@ describe("CFCacheStore tag support", () => {
   });
 
   // ========================================================================
+  // Distributed invalidation store
+  // ========================================================================
+
+  describe("tag invalidation store", () => {
+    it("treats tagged segment entries as misses after global invalidation", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+        const tagStore = createMockTagInvalidationStore();
+        const store = createStore({ tagInvalidationStore: tagStore.store });
+
+        await store.set(
+          "key1",
+          {
+            segments: [],
+            handles: {},
+            expiresAt: Date.now() + 60000,
+            tags: ["products"],
+          },
+          60,
+        );
+        await mockCtx.flush();
+
+        vi.advanceTimersByTime(1000);
+        await store.revalidateTag("products");
+        await mockCtx.flush();
+
+        expect(await store.get("key1")).toBeNull();
+        expect(tagStore.revalidateTag).toHaveBeenCalledWith(
+          "products",
+          Date.now(),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("treats tagged function entries as misses after global invalidation", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+        const tagStore = createMockTagInvalidationStore();
+        const store = createStore({ tagInvalidationStore: tagStore.store });
+
+        await store.setItem("fn-key", "serialized-value", {
+          ttl: 60,
+          tags: ["users"],
+        });
+        await mockCtx.flush();
+
+        vi.advanceTimersByTime(1000);
+        await store.revalidateTag("users");
+        await mockCtx.flush();
+
+        expect(await store.getItem("fn-key")).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("treats tagged response entries as misses after global invalidation", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+        const tagStore = createMockTagInvalidationStore();
+        const store = createStore({ tagInvalidationStore: tagStore.store });
+
+        await store.putResponse(
+          "doc-key",
+          new Response("body"),
+          60,
+          undefined,
+          ["page"],
+        );
+        await mockCtx.flush();
+
+        vi.advanceTimersByTime(1000);
+        await store.revalidateTag("page");
+        await mockCtx.flush();
+
+        expect(await store.getResponse("doc-key")).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not invalidate untagged entries when global tag state changes", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+        const tagStore = createMockTagInvalidationStore();
+        const store = createStore({ tagInvalidationStore: tagStore.store });
+
+        await store.set(
+          "key1",
+          { segments: [], handles: {}, expiresAt: Date.now() + 60000 },
+          60,
+        );
+        await mockCtx.flush();
+
+        vi.advanceTimersByTime(1000);
+        await store.revalidateTag("products");
+        await mockCtx.flush();
+
+        expect(await store.get("key1")).not.toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("can update distributed invalidation state and call onRevalidateTag", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+        const tagStore = createMockTagInvalidationStore();
+        const onInvalidation = vi.fn(async () => {});
+        const store = createStore({
+          tagInvalidationStore: tagStore.store,
+          onRevalidateTag: onInvalidation,
+        });
+
+        await store.revalidateTag("products");
+        await mockCtx.flush();
+
+        expect(tagStore.revalidateTag).toHaveBeenCalledWith(
+          "products",
+          Date.now(),
+        );
+        expect(onInvalidation).toHaveBeenCalledWith(["products"]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // ========================================================================
   // onRevalidateTag callback
   // ========================================================================
 
   describe("revalidateTag()", () => {
     it("calls onRevalidateTag via waitUntil with the tag", async () => {
       const onInvalidation = vi.fn(async () => {});
-      const store = createStore(onInvalidation);
+      const store = createStore({ onRevalidateTag: onInvalidation });
 
       await store.revalidateTag("products");
       await mockCtx.flush();
@@ -179,7 +364,7 @@ describe("CFCacheStore tag support", () => {
       await store.revalidateTag("products");
 
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("no onRevalidateTag"),
+        expect.stringContaining("no invalidation handler"),
       );
       warnSpy.mockRestore();
     });
@@ -201,7 +386,7 @@ describe("CFCacheStore tag support", () => {
       const failingCallback = vi.fn(async () => {
         throw new Error("purge API failed");
       });
-      const store = createStore(failingCallback);
+      const store = createStore({ onRevalidateTag: failingCallback });
 
       // Should not throw
       await store.revalidateTag("products");
@@ -211,5 +396,199 @@ describe("CFCacheStore tag support", () => {
       expect(failingCallback).toHaveBeenCalledWith(["products"]);
       errorSpy.mockRestore();
     });
+  });
+});
+
+describe("CFKVTagInvalidationStore", () => {
+  it("stores invalidation timestamps and returns the latest one across tags", async () => {
+    const kv = createMockKV();
+    const store = new CFKVTagInvalidationStore(kv);
+
+    await store.revalidateTag("products", 100);
+    await store.revalidateTag("catalog", 200);
+
+    expect(await store.getLatestInvalidation(["products"])).toBe(100);
+    expect(await store.getLatestInvalidation(["products", "catalog"])).toBe(
+      200,
+    );
+    expect(await store.getLatestInvalidation(["missing"])).toBeNull();
+  });
+});
+
+describe("CFEdgeKVCacheStore", () => {
+  let mockCache: ReturnType<typeof createMockCache>;
+  let mockCtx: ReturnType<typeof createMockCtx>;
+  let mockKV: ReturnType<typeof createMockKV>;
+
+  beforeEach(() => {
+    mockCache = createMockCache();
+    mockCtx = createMockCtx();
+    mockKV = createMockKV();
+    (globalThis as any).caches = { default: mockCache };
+  });
+
+  function createStore(options?: {
+    onRevalidateTag?: (tags: string[]) => Promise<void>;
+  }) {
+    return new CFEdgeKVCacheStore({
+      ctx: mockCtx,
+      baseUrl: "https://test.internal/",
+      version: "v1",
+      kv: mockKV,
+      onRevalidateTag: options?.onRevalidateTag,
+    });
+  }
+
+  it("falls back to KV on segment miss and repopulates edge", async () => {
+    const writer = createStore();
+    await writer.set(
+      "key1",
+      {
+        segments: [],
+        handles: {},
+        expiresAt: Date.now() + 60000,
+        tags: ["products"],
+      },
+      60,
+    );
+    await mockCtx.flush();
+
+    const freshEdge = createMockCache();
+    (globalThis as any).caches = { default: freshEdge };
+
+    const reader = createStore();
+    const result = await reader.get("key1");
+    await mockCtx.flush();
+
+    expect(result).not.toBeNull();
+    expect(result!.data.tags).toEqual(["products"]);
+    expect(freshEdge.put).toHaveBeenCalled();
+  });
+
+  it("falls back to KV on function miss and repopulates edge", async () => {
+    const writer = createStore();
+    await writer.setItem("fn-key", "serialized-value", {
+      ttl: 60,
+      tags: ["users"],
+    });
+    await mockCtx.flush();
+
+    const freshEdge = createMockCache();
+    (globalThis as any).caches = { default: freshEdge };
+
+    const reader = createStore();
+    const result = await reader.getItem!("fn-key");
+    await mockCtx.flush();
+
+    expect(result).not.toBeNull();
+    expect(result!.value).toBe("serialized-value");
+    expect(freshEdge.put).toHaveBeenCalled();
+  });
+
+  it("falls back to KV on response miss and repopulates edge", async () => {
+    const writer = createStore();
+    await writer.putResponse!("doc-key", new Response("body"), 60, undefined, [
+      "page",
+    ]);
+    await mockCtx.flush();
+
+    const freshEdge = createMockCache();
+    (globalThis as any).caches = { default: freshEdge };
+
+    const reader = createStore();
+    const result = await reader.getResponse!("doc-key");
+    await mockCtx.flush();
+
+    expect(result).not.toBeNull();
+    expect(await result!.response.text()).toBe("body");
+    expect(freshEdge.put).toHaveBeenCalled();
+  });
+
+  it("uses shared KV tag invalidation to reject stale KV fallback hits", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+      const writer = createStore();
+      await writer.set(
+        "key1",
+        {
+          segments: [],
+          handles: {},
+          expiresAt: Date.now() + 60000,
+          tags: ["products"],
+        },
+        60,
+      );
+      await mockCtx.flush();
+
+      vi.advanceTimersByTime(1000);
+      await writer.revalidateTag("products");
+      await mockCtx.flush();
+
+      const freshEdge = createMockCache();
+      (globalThis as any).caches = { default: freshEdge };
+
+      const reader = createStore();
+      expect(await reader.get("key1")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns shouldRevalidate: true for stale KV fallback within SWR window", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+      const writer = createStore();
+      await writer.set(
+        "key1",
+        {
+          segments: [],
+          handles: {},
+          expiresAt: Date.now() + 120_000,
+        },
+        10, // ttl: 10s
+        60, // swr: 60s
+      );
+      await mockCtx.flush();
+
+      // Advance past ttl but within swr window
+      vi.advanceTimersByTime(15_000);
+
+      // Clear edge cache to force KV fallback
+      const freshEdge = createMockCache();
+      (globalThis as any).caches = { default: freshEdge };
+
+      const reader = createStore();
+      const result = await reader.get("key1");
+      await mockCtx.flush();
+
+      expect(result).not.toBeNull();
+      expect(result!.shouldRevalidate).toBe(true);
+      // Verify edge was repopulated from KV
+      expect(freshEdge.put).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("updates distributed invalidation state and optional purge callback", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+      const onInvalidation = vi.fn(async () => {});
+      const store = createStore({ onRevalidateTag: onInvalidation });
+
+      await store.revalidateTag("products");
+      await mockCtx.flush();
+
+      const tagStore = new CFKVTagInvalidationStore(mockKV);
+      expect(await tagStore.getLatestInvalidation(["products"])).toBe(
+        Date.now(),
+      );
+      expect(onInvalidation).toHaveBeenCalledWith(["products"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

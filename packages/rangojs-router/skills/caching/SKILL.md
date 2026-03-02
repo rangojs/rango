@@ -120,24 +120,85 @@ const store = new MemorySegmentCacheStore({
 });
 ```
 
-### Cloudflare KV Store
+### Cloudflare Edge Cache Store
 
-For distributed caching on Cloudflare Workers:
+Per-datacenter caching using the Cloudflare Cache API:
 
 ```typescript
-import { CFCacheStore } from "@rangojs/router/cache/cf";
+import { CFCacheStore } from "@rangojs/router/rsc";
 
 const router = createRouter<AppBindings>({
   document: Document,
   urls: urlpatterns,
   cache: (env, ctx) => ({
     store: new CFCacheStore({
-      kv: env.CACHE_KV,
-      waitUntil: (fn) => ctx!.waitUntil(fn),
+      ctx,
+      defaults: { ttl: 60, swr: 300 },
     }),
     enabled: true,
   }),
 });
+```
+
+### Cloudflare Edge + KV Hybrid Store
+
+Cache API as L1, Workers KV as persistent L2. On edge miss, falls back to KV
+and repopulates the edge. Includes built-in distributed tag invalidation via KV.
+
+```typescript
+import { CFEdgeKVCacheStore } from "@rangojs/router/rsc";
+
+const router = createRouter<AppBindings>({
+  document: Document,
+  urls: urlpatterns,
+  cache: (env, ctx) => ({
+    store: new CFEdgeKVCacheStore({
+      ctx,
+      kv: env.CACHE_KV,
+      defaults: { ttl: 60, swr: 300 },
+    }),
+    enabled: true,
+  }),
+});
+```
+
+### Tag Invalidation
+
+Attach tags to cached entries via `cache()` options, then invalidate them from
+server actions with `revalidateTag()`.
+
+```typescript
+// In urls: tag cached routes
+cache({ ttl: 300, tags: ["products"] }, () => [
+  path("/products", ProductList, { name: "products" }),
+  path("/products/:id", ProductDetail, { name: "product" }),
+]);
+
+// In a server action: invalidate by tag
+import { revalidateTag } from "@rangojs/router";
+
+async function updateProduct(formData: FormData) {
+  "use server";
+  await db.products.update(formData);
+  revalidateTag("products");
+}
+```
+
+For distributed invalidation across Cloudflare datacenters, use
+`tagInvalidationStore` on `CFCacheStore` or the built-in KV-backed store
+on `CFEdgeKVCacheStore` (enabled by default).
+
+```typescript
+import { CFCacheStore, CFKVTagInvalidationStore } from "@rangojs/router/rsc";
+
+// Edge-only store with distributed tag invalidation via KV
+cache: (env, ctx) => ({
+  store: new CFCacheStore({
+    ctx,
+    tagInvalidationStore: new CFKVTagInvalidationStore(env.CACHE_KV),
+    defaults: { ttl: 60, swr: 300 },
+  }),
+}),
 ```
 
 ## Nested Cache Boundaries

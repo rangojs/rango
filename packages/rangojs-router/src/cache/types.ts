@@ -246,6 +246,8 @@ export interface CachedEntryData {
   expiresAt: number;
   /** Cache tags for invalidation */
   tags?: string[];
+  /** Timestamp when tags were attached (ms since epoch) */
+  taggedAt?: number;
 }
 
 // ============================================================================

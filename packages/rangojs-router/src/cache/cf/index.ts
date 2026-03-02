@@ -10,11 +10,21 @@
  */
 
 // Public API
-export { CFCacheStore, type CFCacheStoreOptions } from "./cf-cache-store.js";
+export {
+  CFCacheStore,
+  CFEdgeKVCacheStore,
+  CFKVTagInvalidationStore,
+  type CFCacheStoreOptions,
+  type CFEdgeKVCacheStoreOptions,
+  type CFTagInvalidationStore,
+  type CFKVTagInvalidationStoreOptions,
+  type KVNamespaceLike,
+} from "./cf-cache-store.js";
 
 // Header constants for debugging and inspection
 export {
   CACHE_STALE_AT_HEADER,
   CACHE_TAGS_HEADER,
+  CACHE_TAGGED_AT_HEADER,
   REVALIDATION_LOCK_TTL,
 } from "./cf-cache-store.js";

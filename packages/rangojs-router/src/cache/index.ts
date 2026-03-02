@@ -43,9 +43,16 @@ export { MemorySegmentCacheStore } from "./memory-segment-store.js";
 // Cloudflare cache store
 export {
   CFCacheStore,
+  CFEdgeKVCacheStore,
+  CFKVTagInvalidationStore,
   type CFCacheStoreOptions,
+  type CFEdgeKVCacheStoreOptions,
+  type CFTagInvalidationStore,
+  type CFKVTagInvalidationStoreOptions,
+  type KVNamespaceLike,
   CACHE_STALE_AT_HEADER,
   CACHE_TAGS_HEADER,
+  CACHE_TAGGED_AT_HEADER,
 } from "./cf/index.js";
 
 // Cache scope
