@@ -303,6 +303,378 @@ test.describe("location-state", () => {
 });
 
 /**
+ * Link state prop tests — covers all 4 patterns:
+ * 1. Typed eager: state={[Definition({ ... })]}
+ * 2. Typed JIT: state={[Definition(() => ({ ... }))]}
+ * 3. Plain static: state={{ key: value }}
+ * 4. Plain JIT: state={() => ({ key: value })}
+ */
+test.describe("link-state-prop", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test("typed eager state is delivered to target page", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="link-state-index"]'),
+    ).toBeVisible();
+
+    // Click typed eager link
+    await page.locator('[data-testid="link-typed-eager"]').click();
+    await expect(
+      page.locator('[data-testid="link-state-target"]'),
+    ).toBeVisible();
+
+    // Verify typed state was received
+    await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
+      "Eager Product",
+    );
+    await expect(
+      page.locator('[data-testid="typed-product-price"]'),
+    ).toHaveText("42");
+  });
+
+  test("typed JIT state is delivered to target page", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    // Click typed JIT link
+    await page.locator('[data-testid="link-typed-jit"]').click();
+    await expect(
+      page.locator('[data-testid="link-state-target"]'),
+    ).toBeVisible();
+
+    // Verify typed state was received (getter resolved at click time)
+    await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
+      "JIT Product",
+    );
+    await expect(
+      page.locator('[data-testid="typed-product-price"]'),
+    ).toHaveText("99");
+  });
+
+  test("typed JIT getter runs at click time, not render time", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    // The TypedJitTimingLink sets a ref to 42 in useEffect (after mount).
+    // The getter reads the ref: if resolved at render time it sees 0,
+    // if resolved at click time it sees 42.
+    await page.locator('[data-testid="link-typed-jit-timing"]').click();
+    await expect(
+      page.locator('[data-testid="link-state-target"]'),
+    ).toBeVisible();
+
+    // productPrice = 42 proves the getter ran after mount (at click time)
+    await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
+      "JIT Timing",
+    );
+    await expect(
+      page.locator('[data-testid="typed-product-price"]'),
+    ).toHaveText("42");
+  });
+
+  test("plain static state is delivered to target page", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    // Click plain static link
+    await page.locator('[data-testid="link-plain-static"]').click();
+    await expect(
+      page.locator('[data-testid="link-state-plain-target"]'),
+    ).toBeVisible();
+
+    // Verify plain state was received via useLocationState() (reads history.state.state)
+    await expect(page.locator('[data-testid="plain-from"]')).toHaveText("list");
+    await expect(page.locator('[data-testid="plain-count"]')).toHaveText("5");
+  });
+
+  test("plain JIT state is delivered to target page", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    // Click plain JIT link (function called at click time)
+    await page.locator('[data-testid="link-plain-jit"]').click();
+    await expect(
+      page.locator('[data-testid="link-state-plain-target"]'),
+    ).toBeVisible();
+
+    // Verify plain state was received
+    await expect(page.locator('[data-testid="plain-from"]')).toHaveText("jit");
+    await expect(page.locator('[data-testid="plain-count"]')).toHaveText("7");
+  });
+
+  test("typed state persists through back/forward navigation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    // Navigate to typed target
+    await page.locator('[data-testid="link-typed-eager"]').click();
+    await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
+      "Eager Product",
+    );
+
+    // Navigate back
+    await page.locator('[data-testid="link-state-back"]').click();
+    await expect(
+      page.locator('[data-testid="link-state-index"]'),
+    ).toBeVisible();
+
+    // Go back to typed target via browser back
+    await goBack(page);
+    await expect(
+      page.locator('[data-testid="link-state-target"]'),
+    ).toBeVisible();
+    await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
+      "Eager Product",
+    );
+    await expect(
+      page.locator('[data-testid="typed-product-price"]'),
+    ).toHaveText("42");
+  });
+
+  test("plain state persists through back/forward navigation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    // Navigate to plain target
+    await page.locator('[data-testid="link-plain-static"]').click();
+    await expect(page.locator('[data-testid="plain-from"]')).toHaveText("list");
+
+    // Navigate back
+    await page.locator('[data-testid="link-state-back"]').click();
+    await expect(
+      page.locator('[data-testid="link-state-index"]'),
+    ).toBeVisible();
+
+    // Go back to plain target via browser back
+    await goBack(page);
+    await expect(
+      page.locator('[data-testid="link-state-plain-target"]'),
+    ).toBeVisible();
+    await expect(page.locator('[data-testid="plain-from"]')).toHaveText("list");
+    await expect(page.locator('[data-testid="plain-count"]')).toHaveText("5");
+  });
+
+  test("typed state stored in history.state with __rsc_ls_ prefix", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    // Navigate to typed target
+    await page.locator('[data-testid="link-typed-eager"]').click();
+    await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
+      "Eager Product",
+    );
+
+    // Verify typed state is keyed under __rsc_ls_ in history.state
+    const state = await getHistoryState(page);
+    const lsKeys = Object.keys(state || {}).filter((k) =>
+      k.startsWith("__rsc_ls_"),
+    );
+    expect(lsKeys.length).toBe(1);
+  });
+
+  test("plain state stored in history.state.state", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    // Navigate to plain target
+    await page.locator('[data-testid="link-plain-static"]').click();
+    await expect(page.locator('[data-testid="plain-from"]')).toHaveText("list");
+
+    // Verify plain state is stored under history.state.state (not __rsc_ls_ keys)
+    const state = await getHistoryState(page);
+    expect(state?.state).toEqual({ from: "list", count: 5 });
+  });
+});
+
+/**
+ * Production build tests for Link state prop
+ */
+test.describe("link-state-prop (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("typed eager state works in production build", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    await page.locator('[data-testid="link-typed-eager"]').click();
+    await expect(
+      page.locator('[data-testid="link-state-target"]'),
+    ).toBeVisible();
+
+    await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
+      "Eager Product",
+    );
+    await expect(
+      page.locator('[data-testid="typed-product-price"]'),
+    ).toHaveText("42");
+  });
+
+  test("typed JIT state works in production build", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    await page.locator('[data-testid="link-typed-jit"]').click();
+    await expect(
+      page.locator('[data-testid="link-state-target"]'),
+    ).toBeVisible();
+
+    await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
+      "JIT Product",
+    );
+    await expect(
+      page.locator('[data-testid="typed-product-price"]'),
+    ).toHaveText("99");
+  });
+
+  test("typed JIT getter runs at click time in production build", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    await page.locator('[data-testid="link-typed-jit-timing"]').click();
+    await expect(
+      page.locator('[data-testid="link-state-target"]'),
+    ).toBeVisible();
+
+    // productPrice = 42 proves the getter ran after mount (at click time)
+    await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
+      "JIT Timing",
+    );
+    await expect(
+      page.locator('[data-testid="typed-product-price"]'),
+    ).toHaveText("42");
+  });
+
+  test("plain static state works in production build", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    await page.locator('[data-testid="link-plain-static"]').click();
+    await expect(
+      page.locator('[data-testid="link-state-plain-target"]'),
+    ).toBeVisible();
+
+    await expect(page.locator('[data-testid="plain-from"]')).toHaveText("list");
+    await expect(page.locator('[data-testid="plain-count"]')).toHaveText("5");
+  });
+
+  test("plain JIT state works in production build", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    await page.locator('[data-testid="link-plain-jit"]').click();
+    await expect(
+      page.locator('[data-testid="link-state-plain-target"]'),
+    ).toBeVisible();
+
+    await expect(page.locator('[data-testid="plain-from"]')).toHaveText("jit");
+    await expect(page.locator('[data-testid="plain-count"]')).toHaveText("7");
+  });
+
+  test("typed state persists through back/forward in production build", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    // Navigate to typed target
+    await page.locator('[data-testid="link-typed-eager"]').click();
+    await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
+      "Eager Product",
+    );
+
+    // Navigate back
+    await page.locator('[data-testid="link-state-back"]').click();
+    await expect(
+      page.locator('[data-testid="link-state-index"]'),
+    ).toBeVisible();
+
+    // Browser back to typed target
+    await goBack(page);
+    await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
+      "Eager Product",
+    );
+    await expect(
+      page.locator('[data-testid="typed-product-price"]'),
+    ).toHaveText("42");
+  });
+
+  test("plain state persists through back/forward in production build", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    // Navigate to plain target
+    await page.locator('[data-testid="link-plain-static"]').click();
+    await expect(page.locator('[data-testid="plain-from"]')).toHaveText("list");
+
+    // Navigate back
+    await page.locator('[data-testid="link-state-back"]').click();
+    await expect(
+      page.locator('[data-testid="link-state-index"]'),
+    ).toBeVisible();
+
+    // Browser back to plain target
+    await goBack(page);
+    await expect(page.locator('[data-testid="plain-from"]')).toHaveText("list");
+    await expect(page.locator('[data-testid="plain-count"]')).toHaveText("5");
+  });
+});
+
+/**
  * Production build tests for location state
  */
 test.describe("location-state (production)", () => {

@@ -1,9 +1,4 @@
-import {
-  createRouter,
-  type RouterEnv,
-  redirect,
-  type Middleware,
-} from "@rangojs/router";
+import { createRouter, redirect, type Middleware } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 import { urlpatterns } from "./urls.js";
 
@@ -54,11 +49,12 @@ export interface AppVariables {
   localeContent?: string;
 }
 
-export type AppEnv = RouterEnv<AppBindings, AppVariables>;
+export type AppEnv = AppBindings;
 
 declare global {
   namespace RSCRouter {
-    interface Env extends AppEnv {}
+    interface Env extends AppBindings {}
+    interface Vars extends AppVariables {}
   }
 }
 

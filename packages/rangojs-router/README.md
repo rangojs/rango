@@ -168,16 +168,14 @@ import { ProductLoader } from "./loaders/product";
 import { productMiddleware } from "./middleware/product";
 import { productRevalidate } from "./revalidation/product";
 
-const shopPatterns = urls(
-  ({ path, loader, middleware, revalidate, cache }) => [
-    path("/product/:slug", ProductPage, { name: "product" }, () => [
-      middleware(productMiddleware),
-      loader(ProductLoader),
-      revalidate(productRevalidate),
-      cache({ ttl: 300 }),
-    ]),
-  ],
-);
+const shopPatterns = urls(({ path, loader, middleware, revalidate, cache }) => [
+  path("/product/:slug", ProductPage, { name: "product" }, () => [
+    middleware(productMiddleware),
+    loader(ProductLoader),
+    revalidate(productRevalidate),
+    cache({ ttl: 300 }),
+  ]),
+]);
 ```
 
 The route tree stays explicit even when behavior is modular.

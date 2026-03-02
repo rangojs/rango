@@ -215,7 +215,7 @@ export interface NavigationUpdate {
 /**
  * State value for navigate/Link
  * - LocationStateEntry[]: Type-safe state entries (recommended)
- * - unknown: Legacy format for backwards compatibility
+ * - unknown: Plain state format (object or getter function)
  */
 export type HistoryState =
   | import("./react/location-state-shared.js").LocationStateEntry[]
@@ -234,14 +234,22 @@ export interface NavigateOptions {
    * @example
    * ```tsx
    * // Type-safe state (recommended)
-   * const ProductState = createLocationState<{ name: string }>("product");
+   * const ProductState = createLocationState<{ name: string }>();
    * navigate("/product/123", { state: [ProductState({ name: "Widget" })] });
+   *
+   * // Type-safe just-in-time state (getter called at navigation time)
+   * navigate("/product/123", {
+   *   state: [ProductState(() => ({ name: computeName() }))],
+   * });
    *
    * // Multiple states
    * navigate("/checkout", { state: [ProductState(p), CartState(c)] });
    *
-   * // Legacy format (backwards compatible)
+   * // Plain static state
    * navigate("/product", { state: { from: "list" } });
+   *
+   * // Plain just-in-time state
+   * navigate("/product", { state: () => ({ from: window.location.pathname }) });
    * ```
    */
   state?: HistoryState;

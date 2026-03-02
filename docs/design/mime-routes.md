@@ -275,7 +275,7 @@ type Handler<TParams, TEnv> = (
 interface ResponseHandlerContext<TParams, TEnv> {
   request: Request;
   params: TParams;
-  env: TEnv extends RouterEnv<infer B, any> ? B : {}; // extracts bindings, same as HandlerContext
+  env: TEnv; // platform bindings from createRouter<TBindings>()
   searchParams: URLSearchParams; // system params filtered
   url: URL;
   pathname: string;

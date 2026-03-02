@@ -56,16 +56,14 @@ Rango is trying to avoid that tradeoff.
 You can keep the route tree explicit while attaching external capabilities where they belong.
 
 ```tsx
-const shopPatterns = urls(
-  ({ path, loader, middleware, revalidate, cache }) => [
-    path("/product/:slug", ProductPage, { name: "product" }, () => [
-      middleware(productMiddleware),
-      loader(ProductLoader),
-      revalidate(productRevalidate),
-      cache({ ttl: 300 }),
-    ]),
-  ],
-);
+const shopPatterns = urls(({ path, loader, middleware, revalidate, cache }) => [
+  path("/product/:slug", ProductPage, { name: "product" }, () => [
+    middleware(productMiddleware),
+    loader(ProductLoader),
+    revalidate(productRevalidate),
+    cache({ ttl: 300 }),
+  ]),
+]);
 ```
 
 In practice, this means:

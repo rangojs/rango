@@ -1,6 +1,10 @@
 import { urls, redirect } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
-import { FlashMessage, ServerInfo } from "../location-states.js";
+import {
+  FlashMessage,
+  ServerInfo,
+  SlowProductLocationState,
+} from "../location-states.js";
 import {
   FlashBanner,
   ServerInfoDisplay,
@@ -10,6 +14,13 @@ import {
   ThrowSimpleRedirectButton,
   ThrowErrorButton,
 } from "../components/FlashBanner.js";
+import {
+  TypedStateDisplay,
+  PlainStateDisplay,
+  TypedJitLink,
+  PlainJitLink,
+  TypedJitTimingLink,
+} from "../components/LinkStateDisplay.js";
 
 /**
  * Location state test routes - tests for redirect() with state,
@@ -156,5 +167,83 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
       </div>
     ),
     { name: "other" },
+  ),
+
+  // === Link state prop tests ===
+  // Tests for all 4 state patterns: typed eager, typed JIT, plain static, plain JIT
+
+  // Link state index page with links exercising each pattern
+  path(
+    "/link-state",
+    () => (
+      <div data-testid="link-state-index">
+        <h1>Link State Prop Tests</h1>
+        <ul>
+          <li>
+            <Link
+              to="/location-state/link-state/target"
+              state={[
+                SlowProductLocationState({
+                  productName: "Eager Product",
+                  productPrice: 42,
+                }),
+              ]}
+              data-testid="link-typed-eager"
+            >
+              Typed eager state
+            </Link>
+          </li>
+          <li>
+            <TypedJitLink />
+          </li>
+          <li>
+            <Link
+              to="/location-state/link-state/plain-target"
+              state={{ from: "list", count: 5 }}
+              data-testid="link-plain-static"
+            >
+              Plain static state
+            </Link>
+          </li>
+          <li>
+            <PlainJitLink />
+          </li>
+          <li>
+            <TypedJitTimingLink />
+          </li>
+        </ul>
+      </div>
+    ),
+    { name: "linkState" },
+  ),
+
+  // Target page for typed state (reads via useLocationState with definition)
+  path(
+    "/link-state/target",
+    () => (
+      <div data-testid="link-state-target">
+        <h1>Typed State Target</h1>
+        <TypedStateDisplay />
+        <Link to="/location-state/link-state" data-testid="link-state-back">
+          Back
+        </Link>
+      </div>
+    ),
+    { name: "linkStateTarget" },
+  ),
+
+  // Target page for plain state (reads via useLocationState without definition)
+  path(
+    "/link-state/plain-target",
+    () => (
+      <div data-testid="link-state-plain-target">
+        <h1>Plain State Target</h1>
+        <PlainStateDisplay />
+        <Link to="/location-state/link-state" data-testid="link-state-back">
+          Back
+        </Link>
+      </div>
+    ),
+    { name: "linkStatePlainTarget" },
   ),
 ]);

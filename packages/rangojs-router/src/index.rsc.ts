@@ -33,7 +33,6 @@ export {
 export type {
   // Configuration types
   DocumentProps,
-  RouterEnv,
   DefaultEnv,
   RouteDefinition,
   RouteConfig,
@@ -171,7 +170,6 @@ export { Meta } from "./handles/meta.js";
 // Request context (for accessing request data in server actions/components)
 export {
   getRequestContext,
-  requireRequestContext,
   type RequestContext,
 } from "./server/request-context.js";
 
@@ -200,9 +198,6 @@ export type {
   RouteSearchParams,
   RouteParams,
 } from "./search-params.js";
-
-// Performance tracking (server-only)
-export { track } from "./server/context.js";
 
 // Debug utilities for route matching (development only)
 export {

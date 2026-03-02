@@ -8,24 +8,6 @@ export type DocumentProps = {
 };
 
 /**
- * @deprecated RouterEnv is no longer needed. Pass bindings directly as TEnv
- * to createRouter<TEnv>() and declare RSCRouter.Vars for variables.
- *
- * Migration:
- *   // Before:
- *   type AppEnv = RouterEnv<AppBindings, AppVariables>;
- *   createRouter<AppEnv>();
- *
- *   // After:
- *   createRouter<AppBindings>();
- *   declare global { namespace RSCRouter { interface Vars extends AppVariables {} } }
- */
-export interface RouterEnv<TBindings = {}, TVariables = {}> {
-  Bindings: TBindings;
-  Variables: TVariables;
-}
-
-/**
  * Parse constraint values into a union type
  * "a|b|c" -> "a" | "b" | "c"
  */

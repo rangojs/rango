@@ -280,8 +280,8 @@ return await executeLoaderMiddleware(
   request,
   env,
   loaderParams,
-  requireRequestContext().var, // Variables from unified context
-  requireRequestContext().res, // Stub response for header merging
+  getRequestContext().var, // Variables from unified context
+  getRequestContext().res, // Stub response for header merging
   async () => {
     // Loader executes within request context
     // Variables accessed via getRequestContext().var

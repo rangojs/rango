@@ -1,4 +1,4 @@
-import { createRouter, type RouterEnv } from "@rangojs/router";
+import { createRouter } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 import { RootLayout } from "./layouts/RootLayout.js";
 
@@ -45,20 +45,14 @@ export interface AppVariables {
   };
 }
 
-/**
- * Combined app environment (Hono-inspired type-safe context)
- */
-export type AppEnv = RouterEnv<AppBindings, AppVariables>;
+export type AppEnv = AppBindings;
 
-/**
- * Module augmentation - makes AppEnv available globally in all handlers
- * This allows handlers to have type-safe context without importing AppEnv
- */
 type AppRoutes = typeof router.routeMap;
 
 declare global {
   namespace RSCRouter {
-    interface Env extends AppEnv {}
+    interface Env extends AppBindings {}
+    interface Vars extends AppVariables {}
     interface RegisteredRoutes extends AppRoutes {}
   }
 }
