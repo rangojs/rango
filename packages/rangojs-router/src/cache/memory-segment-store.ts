@@ -241,6 +241,7 @@ export class MemorySegmentCacheStore<
 
     // Check expiration
     if (Date.now() > cached.expiresAt) {
+      this.unregisterTags(`seg:${key}`);
       this.cache.delete(key);
       return null;
     }
@@ -261,13 +262,16 @@ export class MemorySegmentCacheStore<
       ...data,
       expiresAt: Date.now() + ttl * 1000,
     };
+    const prefixedKey = `seg:${key}`;
+    this.unregisterTags(prefixedKey);
     this.cache.set(key, entry);
     if (data.tags && data.tags.length > 0) {
-      this.registerTags(data.tags, `seg:${key}`);
+      this.registerTags(data.tags, prefixedKey);
     }
   }
 
   async delete(key: string): Promise<boolean> {
+    this.unregisterTags(`seg:${key}`);
     return this.cache.delete(key);
   }
 
@@ -285,6 +289,7 @@ export class MemorySegmentCacheStore<
     if (!cached) return null;
 
     if (Date.now() > cached.expiresAt) {
+      this.unregisterTags(`res:${key}`);
       this.responseCache.delete(key);
       return null;
     }
@@ -317,6 +322,8 @@ export class MemorySegmentCacheStore<
     const staleAt = Date.now() + ttl * 1000;
     const expiresAt = staleAt + swrWindow * 1000;
 
+    const prefixedKey = `res:${key}`;
+    this.unregisterTags(prefixedKey);
     this.responseCache.set(key, {
       body,
       status: response.status,
@@ -325,7 +332,7 @@ export class MemorySegmentCacheStore<
       staleAt,
     });
     if (tags && tags.length > 0) {
-      this.registerTags(tags, `res:${key}`);
+      this.registerTags(tags, prefixedKey);
     }
   }
 
@@ -334,6 +341,7 @@ export class MemorySegmentCacheStore<
     if (!cached) return null;
 
     if (Date.now() > cached.expiresAt) {
+      this.unregisterTags(`item:${key}`);
       this.itemCache.delete(key);
       return null;
     }
@@ -351,13 +359,15 @@ export class MemorySegmentCacheStore<
     options?: CacheItemOptions,
   ): Promise<void> {
     const ttl = options?.ttl ?? this.defaults?.ttl ?? 900;
+    const prefixedKey = `item:${key}`;
+    this.unregisterTags(prefixedKey);
     this.itemCache.set(key, {
       value,
       handles: options?.handles,
       expiresAt: Date.now() + ttl * 1000,
     });
     if (options?.tags && options.tags.length > 0) {
-      this.registerTags(options.tags, `item:${key}`);
+      this.registerTags(options.tags, prefixedKey);
     }
   }
 
@@ -365,7 +375,10 @@ export class MemorySegmentCacheStore<
     const keys = this.tagIndex.get(tag);
     if (!keys || keys.size === 0) return;
 
-    for (const prefixedKey of keys) {
+    // Collect keys before mutating the index
+    const prefixedKeys = [...keys];
+
+    for (const prefixedKey of prefixedKeys) {
       const colonIdx = prefixedKey.indexOf(":");
       const prefix = prefixedKey.slice(0, colonIdx);
       const rawKey = prefixedKey.slice(colonIdx + 1);
@@ -377,22 +390,18 @@ export class MemorySegmentCacheStore<
       } else if (prefix === "item") {
         this.itemCache.delete(rawKey);
       }
-    }
 
-    // Clean up the tag entry itself
-    this.tagIndex.delete(tag);
+      // Remove this key from all tag sets (including other tags)
+      this.unregisterTags(prefixedKey);
+    }
   }
 
   /**
    * Register tags for a prefixed cache key.
-   * Removes any stale tag mappings from a previous write to the same key
-   * before adding the new ones.
+   * Callers must call unregisterTags() before this to clear stale mappings.
    * @internal
    */
   private registerTags(tags: string[], prefixedKey: string): void {
-    // Remove old tag mappings for this key to prevent stale invalidation
-    this.unregisterTags(prefixedKey);
-
     for (const tag of tags) {
       let keys = this.tagIndex.get(tag);
       if (!keys) {

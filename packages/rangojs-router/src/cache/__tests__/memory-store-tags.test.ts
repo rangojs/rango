@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { MemorySegmentCacheStore } from "../memory-segment-store.js";
 
 describe("MemorySegmentCacheStore tag invalidation", () => {
@@ -174,6 +174,128 @@ describe("MemorySegmentCacheStore tag invalidation", () => {
 
       await store.revalidateTag("new");
       expect(await store.getResponse("res-key")).toBeNull();
+    });
+  });
+
+  describe("tagged -> untagged overwrite", () => {
+    it("does not invalidate untagged item after old tag revalidation", async () => {
+      await store.setItem("key1", "old-value", {
+        ttl: 60,
+        tags: ["old-tag"],
+      });
+      // Overwrite with no tags
+      await store.setItem("key1", "new-value", { ttl: 60 });
+
+      await store.revalidateTag("old-tag");
+
+      const cached = await store.getItem("key1");
+      expect(cached).not.toBeNull();
+      expect(cached!.value).toBe("new-value");
+    });
+
+    it("does not invalidate untagged segment after old tag revalidation", async () => {
+      await store.set(
+        "seg-key",
+        {
+          segments: [],
+          handles: {},
+          expiresAt: Date.now() + 60000,
+          tags: ["old"],
+        },
+        60,
+      );
+      await store.set(
+        "seg-key",
+        { segments: [], handles: {}, expiresAt: Date.now() + 60000 },
+        60,
+      );
+
+      await store.revalidateTag("old");
+      expect(await store.get("seg-key")).not.toBeNull();
+    });
+
+    it("does not invalidate untagged response after old tag revalidation", async () => {
+      await store.putResponse("res-key", new Response("v1"), 60, undefined, [
+        "old",
+      ]);
+      await store.putResponse("res-key", new Response("v2"), 60);
+
+      await store.revalidateTag("old");
+      expect(await store.getResponse("res-key")).not.toBeNull();
+    });
+  });
+
+  describe("delete cleans up tag index", () => {
+    it("does not invalidate new entry written after delete", async () => {
+      await store.set(
+        "seg-key",
+        {
+          segments: [],
+          handles: {},
+          expiresAt: Date.now() + 60000,
+          tags: ["tag-a"],
+        },
+        60,
+      );
+      await store.delete("seg-key");
+
+      // Write a new untagged entry under the same key
+      await store.set(
+        "seg-key",
+        { segments: [], handles: {}, expiresAt: Date.now() + 60000 },
+        60,
+      );
+
+      await store.revalidateTag("tag-a");
+      expect(await store.get("seg-key")).not.toBeNull();
+    });
+  });
+
+  describe("expiry cleanup removes tag index", () => {
+    it("does not invalidate new item written after expiry eviction", async () => {
+      vi.useFakeTimers();
+      try {
+        await store.setItem("key1", "old", {
+          ttl: 1,
+          tags: ["stale-tag"],
+        });
+
+        // Advance past TTL to trigger expiry eviction
+        vi.advanceTimersByTime(2000);
+        expect(await store.getItem("key1")).toBeNull();
+
+        // Write a new untagged entry under the same key
+        await store.setItem("key1", "fresh", { ttl: 60 });
+
+        await store.revalidateTag("stale-tag");
+        const cached = await store.getItem("key1");
+        expect(cached).not.toBeNull();
+        expect(cached!.value).toBe("fresh");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe("multi-tag stale references after partial revalidation", () => {
+    it("revalidating one tag cleans up other tag references for the same key", async () => {
+      await store.setItem("key1", "value1", {
+        ttl: 60,
+        tags: ["tag-a", "tag-b"],
+      });
+
+      // Revalidate only tag-a — this deletes key1
+      await store.revalidateTag("tag-a");
+      expect(await store.getItem("key1")).toBeNull();
+
+      // Write a new untagged entry under the same key
+      await store.setItem("key1", "value2", { ttl: 60 });
+
+      // tag-b should no longer reference the old key
+      await store.revalidateTag("tag-b");
+      const cached = await store.getItem("key1");
+      expect(cached).not.toBeNull();
+      expect(cached!.value).toBe("value2");
     });
   });
 
