@@ -4,7 +4,7 @@ import type { ScopedReverseFunction } from "../reverse.js";
 import type { SearchSchema, ResolveSearchSchema } from "../search-params.js";
 import type {
   DefaultEnv,
-  DefaultHandlerRouteMap,
+  DefaultReverseRouteMap,
   DefaultVars,
 } from "./global-namespace.js";
 
@@ -82,7 +82,7 @@ export type LoaderContext<
    */
   reverse: ScopedReverseFunction<
     Record<string, string>,
-    DefaultHandlerRouteMap
+    DefaultReverseRouteMap
   >;
 };
 

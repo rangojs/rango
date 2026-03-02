@@ -6,7 +6,7 @@
  */
 
 import type { ReactNode } from "react";
-import { getRequestContext } from "../../server/request-context.js";
+import { _getRequestContext } from "../../server/request-context.js";
 import type { StaticStore } from "../../prerender/store.js";
 
 // Lazy-initialized static store for production Static handler interception.
@@ -57,7 +57,7 @@ export async function tryStaticLookup(
   // The data was keyed by handlerId at build time; replay under segmentId
   // so it matches the segment order used by useHandle on the client.
   if (entry.handles && Object.keys(entry.handles).length > 0) {
-    const handleStore = getRequestContext()?._handleStore;
+    const handleStore = _getRequestContext()?._handleStore;
     if (handleStore) {
       handleStore.replaySegmentData(segmentId, entry.handles);
     }

@@ -24,7 +24,10 @@ import {
   type MetricsStore,
 } from "./server/context";
 import { createHandleStore, type HandleStore } from "./server/handle-store.js";
-import { getRequestContext } from "./server/request-context.js";
+import {
+  getRequestContext,
+  _getRequestContext,
+} from "./server/request-context.js";
 import type {
   ErrorPhase,
   HandlerContext,
@@ -330,7 +333,7 @@ export function createRouter<TEnv = any>(
 
   // Helper to get handleStore from request context
   const getHandleStore = (): HandleStore | undefined => {
-    return getRequestContext()?._handleStore;
+    return _getRequestContext()?._handleStore;
   };
 
   // Track a pending handler promise (non-blocking)
