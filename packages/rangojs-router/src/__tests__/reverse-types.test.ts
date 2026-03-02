@@ -247,6 +247,31 @@ describe("Handler with local route map separates local/global", () => {
     });
   });
 
+  it("should require known local params when local route map is provided", () => {
+    type LocalAutofillRoutes = {
+      settings: "/settings";
+      user: "/users/:userId";
+    };
+    type Ctx = HandlerContext<
+      { tenantId: string; userId?: string },
+      DefaultEnv,
+      {},
+      LocalAutofillRoutes
+    >;
+
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".settings");
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".settings", {
+      tenantId: "acme",
+    });
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".user", {
+      userId: "u1",
+    });
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".user", {
+      userId: "u1",
+      tenantId: "acme",
+    });
+  });
+
   it("should separate namespaces with explicit types", () => {
     // Direct ScopedReverseFunction with both type params
     type Reverse = ScopedReverseFunction<LocalRoutes, GlobalRoutes>;

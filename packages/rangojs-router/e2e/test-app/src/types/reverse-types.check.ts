@@ -272,4 +272,44 @@ if (false as boolean) {
   ctx.reverse("blog.post", { wrongParam: "test" });
 }
 
+// =============================================================================
+// Test 18: Explicit local route maps require local params but allow mount params
+// =============================================================================
+type LocalMountedRoutes = {
+  settings: "/settings";
+  user: "/users/:userId";
+};
+
+if (false as boolean) {
+  const ctx = {} as HandlerContext<
+    { tenantId: string; userId?: string },
+    any,
+    {},
+    LocalMountedRoutes
+  >;
+
+  ctx.reverse(".settings");
+  ctx.reverse(".settings", { tenantId: "override" });
+  ctx.reverse(".user", { userId: "u1" });
+  ctx.reverse(".user", { userId: "u1", tenantId: "override" });
+
+  // @ts-expect-error - local route param is required when known from the local map
+  ctx.reverse(".user");
+
+  // @ts-expect-error - inherited mount params alone are not enough
+  ctx.reverse(".user", { tenantId: "override" });
+}
+
+// =============================================================================
+// Test 19: Inline handlers without an explicit local route map stay permissive
+// =============================================================================
+if (false as boolean) {
+  const ctx = {} as HandlerContext<{ tenantId: string }>;
+
+  // This remains intentionally permissive because inline handlers do not carry
+  // a local route map that distinguishes module-owned params from mount params.
+  ctx.reverse(".user");
+  ctx.reverse(".user", { tenantId: "override" });
+}
+
 export {};

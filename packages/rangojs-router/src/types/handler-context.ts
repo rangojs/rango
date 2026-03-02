@@ -67,6 +67,8 @@ type ExtractSearchFromEntry<TMap, TKey> = TKey extends keyof TMap
     : {}
   : {};
 
+type IsEmptyObject<T> = keyof T extends never ? true : false;
+
 type AutofillParamsFromEntry<TEntry> = TEntry extends string
   ? string extends TEntry
     ? Record<string, string>
@@ -95,6 +97,35 @@ type AutofillAwareReverseFunction<
   <TName extends keyof TLocalRoutes & string>(
     name: `.${TName}`,
     params?: AutofillParamsFromEntry<TLocalRoutes[TName]>,
+    search?: AutofillSearchFromEntry<TLocalRoutes, TName>,
+  ): string;
+};
+
+type StrictLocalParamsWithExtras<TEntry> =
+  IsEmptyObject<ExtractParamsFromEntry<TEntry, {}>> extends true
+    ? Record<string, string>
+    : ExtractParamsFromEntry<TEntry, {}> & Record<string, string>;
+
+// HandlerContext.reverse is the only reverse surface with runtime param autofill
+// from the current matched request. Middleware/loaders/request context do not
+// have the same local-route guarantees, so they keep plain ScopedReverseFunction.
+//
+// When a handler has an explicit local route map, enforce that local route
+// params declared by that map are present while still allowing extra mount
+// params to be passed through. Global names remain autofill-friendly because
+// parent include() params are often unknown at the module definition site.
+type StrictLocalAutofillGlobalReverseFunction<
+  TLocalRoutes,
+  TGlobalRoutes,
+> = ScopedReverseFunction<TLocalRoutes, TGlobalRoutes> & {
+  <TName extends keyof TGlobalRoutes & string>(
+    name: TName,
+    params?: AutofillParamsFromEntry<TGlobalRoutes[TName]>,
+    search?: AutofillSearchFromEntry<TGlobalRoutes, TName>,
+  ): string;
+  <TName extends keyof TLocalRoutes & string>(
+    name: `.${TName}`,
+    params: StrictLocalParamsWithExtras<TLocalRoutes[TName]>,
     search?: AutofillSearchFromEntry<TLocalRoutes, TName>,
   ): string;
 };
@@ -374,7 +405,10 @@ export type HandlerContext<
    */
   reverse: [TRouteMap] extends [never]
     ? AutofillAwareReverseFunction<Record<string, string>, DefaultReverseRouteMap>
-    : AutofillAwareReverseFunction<TRouteMap, DefaultReverseRouteMap>;
+    : StrictLocalAutofillGlobalReverseFunction<
+        TRouteMap,
+        DefaultReverseRouteMap
+      >;
 };
 
 /**
