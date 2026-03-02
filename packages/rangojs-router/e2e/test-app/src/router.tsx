@@ -1,4 +1,9 @@
-import { createRouter, redirect, type Middleware } from "@rangojs/router";
+import {
+  createRouter,
+  getRequestContext,
+  redirect,
+  type Middleware,
+} from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 import { urlpatterns } from "./urls.js";
 
@@ -184,6 +189,21 @@ export const router = createRouter<AppEnv>({
   .use("/middleware-test/cookies", cookieMiddleware)
   // Pattern-based middleware with params
   .use("/middleware-test/params/:id", paramsMiddleware)
+  // Pre-handler onResponse callback for response cache callback tests.
+  // Registers a callback via getRequestContext().onResponse() which lands
+  // in savedCallbacks (before the cache block), so it runs on every serve.
+  .use("/response-cache/cb-test/*", async (_ctx, next) => {
+    const reqCtx = getRequestContext();
+    reqCtx?.onResponse((response) => {
+      const headers = new Headers(response.headers);
+      headers.set("X-Pre-Handler-Ts", String(Date.now()));
+      return new Response(response.body, {
+        status: response.status,
+        headers,
+      });
+    });
+    await next();
+  })
   .routes(urlpatterns);
 
 export const reverse = router.reverse;

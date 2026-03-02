@@ -156,6 +156,59 @@ test.describe("response-cache (dev)", () => {
     // Different query string must produce a different cache entry
     expect(body2.data.ts).not.toBe(ts1);
   });
+
+  test("pre-handler onResponse callback runs on both miss and hit", async ({
+    request,
+  }) => {
+    // First request (cache miss) — pre-handler callback should set header
+    const res1 = await request.get(
+      f.url("/response-cache/cb-test/with-route-cb"),
+    );
+    expect(res1.status()).toBe(200);
+    const preTs1 = res1.headers()["x-pre-handler-ts"];
+    expect(preTs1).toBeTruthy();
+
+    await new Promise((r) => setTimeout(r, 500));
+
+    // Second request (cache hit) — pre-handler callback should still run
+    // with a fresh timestamp (not baked into cache)
+    const res2 = await request.get(
+      f.url("/response-cache/cb-test/with-route-cb"),
+    );
+    expect(res2.status()).toBe(200);
+    const preTs2 = res2.headers()["x-pre-handler-ts"];
+    expect(preTs2).toBeTruthy();
+    expect(Number(preTs2)).toBeGreaterThanOrEqual(Number(preTs1));
+  });
+
+  test("route-level onResponse callback is baked into cache, not replayed on hit", async ({
+    request,
+  }) => {
+    // First request (cache miss) — route callback should set header
+    const res1 = await request.get(
+      f.url("/response-cache/cb-test/with-route-cb"),
+    );
+    expect(res1.status()).toBe(200);
+    const routeTs1 = res1.headers()["x-route-callback-ts"];
+    expect(routeTs1).toBeTruthy();
+    const body1 = await res1.json();
+    const bodyTs1 = body1.data.ts;
+
+    await new Promise((r) => setTimeout(r, 500));
+
+    // Second request (cache hit) — route callback header should be
+    // present with the SAME value (baked into cached response, not re-run)
+    const res2 = await request.get(
+      f.url("/response-cache/cb-test/with-route-cb"),
+    );
+    expect(res2.status()).toBe(200);
+    const routeTs2 = res2.headers()["x-route-callback-ts"];
+    expect(routeTs2).toBe(routeTs1);
+
+    // Body timestamp should also match (confirming cache hit)
+    const body2 = await res2.json();
+    expect(body2.data.ts).toBe(bodyTs1);
+  });
 });
 
 test.describe("response-cache (production)", () => {
@@ -295,5 +348,51 @@ test.describe("response-cache (production)", () => {
     expect(body2.data.q).toBe("beta");
 
     expect(body2.data.ts).not.toBe(ts1);
+  });
+
+  test("pre-handler onResponse callback runs on both miss and hit", async ({
+    request,
+  }) => {
+    const res1 = await request.get(
+      f.url("/response-cache/cb-test/with-route-cb"),
+    );
+    expect(res1.status()).toBe(200);
+    const preTs1 = res1.headers()["x-pre-handler-ts"];
+    expect(preTs1).toBeTruthy();
+
+    await new Promise((r) => setTimeout(r, 500));
+
+    const res2 = await request.get(
+      f.url("/response-cache/cb-test/with-route-cb"),
+    );
+    expect(res2.status()).toBe(200);
+    const preTs2 = res2.headers()["x-pre-handler-ts"];
+    expect(preTs2).toBeTruthy();
+    expect(Number(preTs2)).toBeGreaterThanOrEqual(Number(preTs1));
+  });
+
+  test("route-level onResponse callback is baked into cache, not replayed on hit", async ({
+    request,
+  }) => {
+    const res1 = await request.get(
+      f.url("/response-cache/cb-test/with-route-cb"),
+    );
+    expect(res1.status()).toBe(200);
+    const routeTs1 = res1.headers()["x-route-callback-ts"];
+    expect(routeTs1).toBeTruthy();
+    const body1 = await res1.json();
+    const bodyTs1 = body1.data.ts;
+
+    await new Promise((r) => setTimeout(r, 500));
+
+    const res2 = await request.get(
+      f.url("/response-cache/cb-test/with-route-cb"),
+    );
+    expect(res2.status()).toBe(200);
+    const routeTs2 = res2.headers()["x-route-callback-ts"];
+    expect(routeTs2).toBe(routeTs1);
+
+    const body2 = await res2.json();
+    expect(body2.data.ts).toBe(bodyTs1);
   });
 });
