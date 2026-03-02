@@ -591,9 +591,20 @@ export function createRSCHandler<
           const store = cacheScope.getStore() ?? reqCtx._cacheStore;
           if (store?.getResponse && store?.putResponse) {
             // Build cache key with response:{type}: prefix to avoid collision
-            // with segment keys and differentiate between response types
-            let cacheKey = `response:${preview.responseType}:${url.pathname}`;
-            if (store.keyGenerator) {
+            // with segment keys and differentiate between response types.
+            // Include url.search so query-driven responses cache separately.
+            let cacheKey = `response:${preview.responseType}:${url.pathname}${url.search}`;
+
+            // Priority 1: Route-level key function (full override)
+            if (cacheScope.config !== false && cacheScope.config.key) {
+              try {
+                const customKey = await cacheScope.config.key(reqCtx);
+                cacheKey = `response:${customKey}`;
+              } catch {
+                // Fall back to default key on route-level key failure
+              }
+            } else if (store.keyGenerator) {
+              // Priority 2: Store-level keyGenerator (modifies default key)
               try {
                 cacheKey = await store.keyGenerator(reqCtx, cacheKey);
               } catch {
@@ -601,13 +612,32 @@ export function createRSCHandler<
               }
             }
 
+            // Save pre-handler callbacks (registered by app-level middleware
+            // before we reach the cache block) and clear the live array.
+            // createResponseWithMergedHeaders (inside the handler) eagerly
+            // executes any callbacks present in _onResponseCallbacks, so
+            // handler-registered callbacks are baked into the handler's
+            // response and the cached artifact. Pre-handler callbacks are
+            // NOT in the live array during execution, so they are applied
+            // once per serve on every path (hit + miss) below.
+            const savedCallbacks = reqCtx._onResponseCallbacks;
+            reqCtx._onResponseCallbacks = [];
+
+            const applyPreHandlerCallbacks = (response: Response): Response => {
+              let result = response;
+              for (const callback of savedCallbacks) {
+                result = callback(result) ?? result;
+              }
+              return result;
+            };
+
             try {
               const cached = await store.getResponse(cacheKey);
 
               if (cached && isCacheableStatus(cached.response.status)) {
                 if (!cached.shouldRevalidate) {
                   // Fresh hit
-                  return cached.response;
+                  return applyPreHandlerCallbacks(cached.response);
                 }
 
                 // Stale hit (SWR) - return cached, revalidate in background
@@ -630,13 +660,16 @@ export function createRSCHandler<
                   }
                 });
 
-                return cached.response;
+                return applyPreHandlerCallbacks(cached.response);
               }
             } catch (error) {
               console.error(`[ResponseCache] Cache lookup failed:`, error);
             }
 
-            // Cache miss - execute handler and cache the result
+            // Cache miss - execute handler and cache the result.
+            // createResponseWithMergedHeaders inside the handler applies
+            // any callbacks registered during execution, so the response
+            // (and its clone) already include those transforms.
             const response = await executeHandler();
 
             if (isCacheableStatus(response.status)) {
@@ -654,7 +687,7 @@ export function createRSCHandler<
               });
             }
 
-            return response;
+            return applyPreHandlerCallbacks(response);
           }
         }
       }

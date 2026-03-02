@@ -50,6 +50,18 @@ export const responseCachePatterns = urls(({ path, cache }) => [
       },
       { name: "responseCache.md" },
     ),
+
+    path.json(
+      "/cached-json-query",
+      (ctx) => {
+        return {
+          source: "cached-json-query",
+          q: ctx.url.searchParams.get("q") ?? "",
+          ts: Date.now(),
+        };
+      },
+      { name: "responseCache.jsonQuery" },
+    ),
   ]),
 
   // Control route: NOT wrapped in cache() — handler always re-executes

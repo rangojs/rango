@@ -997,7 +997,7 @@ export async function resolveWithRevalidationErrorHandling<TEnv>(
         segmentType: entry.type as any,
         env: errorContext.env,
         isPartial: errorContext.isPartial,
-        handledByBoundary: !!fallback,
+        handledByBoundary: !!effectiveFallback,
         requestStartTime: errorContext.requestStartTime,
       });
     }
