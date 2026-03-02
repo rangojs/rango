@@ -37,7 +37,9 @@ export function revalidateTag(tag: string): void {
 
   // App-level store from request context
   if (ctx?._cacheStore?.revalidateTag) {
-    stores.add(ctx._cacheStore as { revalidateTag(tag: string): Promise<void> });
+    stores.add(
+      ctx._cacheStore as { revalidateTag(tag: string): Promise<void> },
+    );
   }
 
   // Explicit per-scope stores scoped to this handler
@@ -61,14 +63,12 @@ export function revalidateTag(tag: string): void {
 
   if (ctx?.waitUntil) {
     ctx.waitUntil(async () => {
-      await Promise.all(
-        [...stores].map((store) => store.revalidateTag(tag)),
-      );
+      await Promise.all([...stores].map((store) => store.revalidateTag(tag)));
     });
   } else {
     // No waitUntil (e.g. outside request context): run as best-effort
-    Promise.all(
-      [...stores].map((store) => store.revalidateTag(tag)),
-    ).catch(() => {});
+    Promise.all([...stores].map((store) => store.revalidateTag(tag))).catch(
+      () => {},
+    );
   }
 }

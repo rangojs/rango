@@ -100,7 +100,9 @@ export function createRSCHandler<
   // Shared set of explicit per-scope stores for cross-store tag invalidation.
   // Lives in the handler closure so it's scoped per router — different handlers
   // in a multi-router deployment get separate sets.
-  const explicitTaggedStores = new Set<import("../cache/types.js").SegmentCacheStore>();
+  const explicitTaggedStores = new Set<
+    import("../cache/types.js").SegmentCacheStore
+  >();
 
   // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
   const deps = options.deps ?? rscDeps;
@@ -603,7 +605,11 @@ export function createRSCHandler<
             // Only register when the store came from cache({ store }), not the
             // app-level fallback (which is reachable via ctx._cacheStore).
             // The set is scoped per handler, so different routers don't cross-pollinate.
-            if (cacheScope.hasExplicitStore && responseTags && responseTags.length > 0) {
+            if (
+              cacheScope.hasExplicitStore &&
+              responseTags &&
+              responseTags.length > 0
+            ) {
               reqCtx._explicitTaggedStores?.add(store);
             }
 
