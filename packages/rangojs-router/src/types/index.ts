@@ -11,7 +11,6 @@ import "./global-namespace.js";
 // Route configuration
 export type {
   DocumentProps,
-  RouterEnv,
   ExtractParams,
   TrailingSlashMode,
   RouteConfig,

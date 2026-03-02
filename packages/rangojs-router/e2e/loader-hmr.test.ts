@@ -20,7 +20,7 @@ test.describe.serial("loader-hmr", () => {
 
   test.setTimeout(30000);
 
-  const loadersPath = path.resolve("./e2e/test-app/src/loaders.ts");
+  const loadersPath = path.resolve("./e2e/test-app/src/loaders.tsx");
   let originalContent: string;
 
   // Save original content before tests
@@ -91,7 +91,7 @@ export const HMRDynamicLoader = createLoader(
     // Test that the new loader is accessible
     const text = await waitForLoaderResponse(
       request,
-      f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23HMRDynamicLoader"),
+      f.url("/fetch-loader?_rsc_loader=src/loaders.tsx%23HMRDynamicLoader"),
       200,
     );
     expect(text).toContain("HMR Dynamic Loader Works!");
@@ -115,7 +115,7 @@ export const HMRRemovableLoader = createLoader(
     // Verify it's accessible
     await waitForLoaderResponse(
       request,
-      f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23HMRRemovableLoader"),
+      f.url("/fetch-loader?_rsc_loader=src/loaders.tsx%23HMRRemovableLoader"),
       200,
     );
 
@@ -126,7 +126,7 @@ export const HMRRemovableLoader = createLoader(
     // Test that the loader returns 404
     const text = await waitForLoaderResponse(
       request,
-      f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23HMRRemovableLoader"),
+      f.url("/fetch-loader?_rsc_loader=src/loaders.tsx%23HMRRemovableLoader"),
       404,
     );
     expect(text).toContain("not found");
@@ -138,7 +138,7 @@ export const HMRRemovableLoader = createLoader(
     // Fetch from existing loader first
     const text1 = await waitForLoaderResponse(
       request,
-      f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23FetchableTestLoader"),
+      f.url("/fetch-loader?_rsc_loader=src/loaders.tsx%23FetchableTestLoader"),
       200,
     );
     expect(text1).toContain("Fetched via GET!");
@@ -157,7 +157,7 @@ export const HMRAnotherLoader = createLoader(
     // Existing loader should still work
     const text2 = await waitForLoaderResponse(
       request,
-      f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23FetchableTestLoader"),
+      f.url("/fetch-loader?_rsc_loader=src/loaders.tsx%23FetchableTestLoader"),
       200,
     );
     expect(text2).toContain("Fetched via GET!");

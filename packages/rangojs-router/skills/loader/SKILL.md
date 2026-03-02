@@ -1,7 +1,7 @@
 ---
 name: loader
 description: Define data loaders for fetching data in routes with createLoader
-argument-hint: [name]
+argument-hint: [loader]
 ---
 
 # Data Loaders with loader()
@@ -13,7 +13,9 @@ Loaders fetch data on the server and stream it to the client.
 ```typescript
 import { createLoader } from "@rangojs/router";
 
-export const ProductLoader = createLoader("product", async (ctx) => {
+export const ProductLoader = createLoader(async (ctx) => {
+  "use server";
+
   const product = await ctx.env.DB.prepare(
     "SELECT * FROM products WHERE slug = ?",
   )
@@ -30,19 +32,19 @@ All of the following are equivalent and fully supported by the Vite transform:
 
 ```typescript
 // Direct export (most common)
-export const ProductLoader = createLoader("product", handler);
+export const ProductLoader = createLoader(handler);
 
 // Separate declaration + named export
-const ProductLoader = createLoader("product", handler);
+const ProductLoader = createLoader(handler);
 export { ProductLoader };
 
 // Aliased export
-const InternalLoader = createLoader("product", handler);
+const InternalLoader = createLoader(handler);
 export { InternalLoader as ProductLoader };
 
 // Aliased import
 import { createLoader as cl } from "@rangojs/router";
-export const ProductLoader = cl("product", handler);
+export const ProductLoader = cl(handler);
 ```
 
 The `export const` form and the `const + export { }` form both work for
@@ -79,12 +81,12 @@ async function ProductPage() {
 
 ```typescript
 "use client";
-import { useLoaderData } from "@rangojs/router/client";
+import { useLoader } from "@rangojs/router/client";
 import { ProductLoader } from "./loaders/product";
 
 function ProductDetails() {
-  const { product } = useLoaderData(ProductLoader);
-  return <div>{product.description}</div>;
+  const { data } = useLoader(ProductLoader);
+  return <div>{data.product.description}</div>;
 }
 ```
 
@@ -93,7 +95,9 @@ function ProductDetails() {
 Loaders receive the same context as route handlers:
 
 ```typescript
-export const ProductLoader = createLoader("product", async (ctx) => {
+export const ProductLoader = createLoader(async (ctx) => {
+  "use server";
+
   // URL params
   const { slug } = ctx.params;
 
@@ -133,6 +137,119 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
   ]),
 ]);
 ```
+
+## Loaders: The Live Data Layer
+
+Loaders are the live data layer of the router. They resolve fresh on every
+request, even when the route's UI segments are served from cache. This is a
+core design principle — route-level `cache()` caches rendered components but
+never caches loader data. Loaders are excluded at storage time and re-resolved
+on retrieval.
+
+This means `cache()` gives you cached UI + fresh data by default. Pre-rendering
+follows the same rule: at build time, loaders are skipped entirely (there is no
+real request context), and at runtime the worker resolves them fresh against
+the live database.
+
+### Opting a Loader into Caching
+
+To cache a specific loader's data, attach a `cache()` child:
+
+```typescript
+loader(ProductLoader, () => [cache({ ttl: 300 })]),
+```
+
+The loader's data is cached independently from the route's segment cache,
+using the same `SegmentCacheStore` (app-level or per-loader override).
+
+Values are serialized through RSC Flight, so loaders can return ReactNode,
+Promises, null, and any RSC-serializable type — all round-trip correctly
+through the cache.
+
+### Cache Key
+
+The default cache key is `loader:{loaderId}:{pathname}:{sortedParams}`.
+This can be customized at two levels:
+
+```typescript
+// Full override — key function replaces the default entirely
+loader(ProductLoader, () => [
+  cache({
+    ttl: 300,
+    key: (ctx) => `product:${ctx.params.slug}:${ctx.cookie("locale")}`,
+  }),
+]),
+
+// Store-level keyGenerator — modifies the default key (e.g., adds a region prefix)
+// Set in the store configuration, applies to all entries in that store
+```
+
+Resolution priority (same as route-level `cache()`):
+
+1. `key(ctx)` from cache options — full override
+2. `store.keyGenerator(ctx, defaultKey)` — store-level modification
+3. Default key — `loader:{id}:{pathname}:{params}`
+
+If a custom key function throws, it falls back to the default key silently
+(logged to console.error).
+
+### Tags for Invalidation
+
+```typescript
+// Static tags
+loader(ProductLoader, () => [
+  cache({ ttl: 300, tags: ["products", "catalog"] }),
+]),
+
+// Dynamic tags
+loader(ProductLoader, () => [
+  cache({
+    ttl: 300,
+    tags: (ctx) => [`product:${ctx.params.slug}`, "products"],
+  }),
+]),
+```
+
+### Stale-While-Revalidate
+
+```typescript
+loader(ProductLoader, () => [
+  cache({ ttl: 60, swr: 300 }),
+]),
+```
+
+During the SWR window (60-360s), stale data is returned immediately while
+fresh data is fetched in the background via `waitUntil`. After the SWR window
+expires (360s+), the entry is treated as a cache miss.
+
+### Conditional Caching
+
+Skip the cache at runtime based on request properties:
+
+```typescript
+loader(ProductLoader, () => [
+  cache({
+    ttl: 300,
+    condition: (ctx) => !ctx.request.headers.has("authorization"),
+  }),
+]),
+```
+
+When `condition` returns false, the loader runs fresh and the cache is bypassed
+entirely (no read, no write).
+
+### Per-Loader Store Override
+
+```typescript
+const hotStore = new MemorySegmentCacheStore({ defaults: { ttl: 10 } });
+
+loader(PricingLoader, () => [
+  cache({ store: hotStore }),
+]),
+```
+
+Without an explicit store, the loader uses the app-level store from the
+handler config (`cache.store`).
 
 ## Multiple Loaders
 
@@ -288,7 +405,9 @@ Client usage — see `/hooks useFetchLoader` for the full client-side pattern.
 // loaders/shop.ts
 import { createLoader } from "@rangojs/router";
 
-export const ProductLoader = createLoader("product", async (ctx) => {
+export const ProductLoader = createLoader(async (ctx) => {
+  "use server";
+
   const product = await ctx.env.DB
     .prepare("SELECT * FROM products WHERE slug = ?")
     .bind(ctx.params.slug)
@@ -301,7 +420,9 @@ export const ProductLoader = createLoader("product", async (ctx) => {
   return { product };
 });
 
-export const CartLoader = createLoader("cart", async (ctx) => {
+export const CartLoader = createLoader(async (ctx) => {
+  "use server";
+
   const user = ctx.get("user");
   if (!user) return { cart: null };
 

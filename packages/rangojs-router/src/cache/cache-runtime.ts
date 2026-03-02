@@ -17,8 +17,6 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
 
 import {
-  renderToReadableStream,
-  createFromReadableStream,
   createTemporaryReferenceSet,
   encodeReply,
   createClientTemporaryReferenceSet,
@@ -33,29 +31,13 @@ import {
 
 export { isCachedFunction };
 import { getCacheProfile } from "./profile-registry.js";
-import { streamToString, stringToStream } from "./segment-codec.js";
+import {
+  streamToString,
+  serializeResult,
+  deserializeResult,
+} from "./segment-codec.js";
 import type { SegmentHandleData } from "./types.js";
 import type { HandleStore } from "../server/handle-store.js";
-
-// ============================================================================
-// Serialization Helpers
-// ============================================================================
-
-async function serializeResult(value: unknown): Promise<string | null> {
-  try {
-    const temporaryReferences = createTemporaryReferenceSet();
-    const stream = renderToReadableStream(value, { temporaryReferences });
-    return await streamToString(stream);
-  } catch {
-    return null;
-  }
-}
-
-async function deserializeResult<T>(encoded: string): Promise<T> {
-  const temporaryReferences = createTemporaryReferenceSet();
-  const stream = stringToStream(encoded);
-  return createFromReadableStream<T>(stream, { temporaryReferences });
-}
 
 // ============================================================================
 // Cache Key Generation

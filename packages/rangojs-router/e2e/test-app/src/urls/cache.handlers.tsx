@@ -5,6 +5,8 @@ import {
   NonCachedTestLoader,
   CachedTestLoader,
   InterceptCacheTestLoader,
+  ReactNodeTestLoader,
+  NullTestLoader,
 } from "../loaders.js";
 import {
   CacheTestModal,
@@ -205,3 +207,61 @@ export const CacheStatusRedirectTargetHandler: Handler<
     </p>
   </div>
 );
+
+// ReactNode loader handler (cached variant — route attaches cache())
+export const CacheReactNodeCachedHandler: Handler<
+  "cacheTest.reactNodeCached"
+> = async (ctx) => {
+  const node = await ctx.use(ReactNodeTestLoader);
+  return (
+    <div data-testid="react-node-cached-page">
+      <h1>ReactNode Cached Loader</h1>
+      <div data-testid="react-node-content">{node}</div>
+    </div>
+  );
+};
+
+// ReactNode loader handler (non-cached variant)
+export const CacheReactNodeNonCachedHandler: Handler<
+  "cacheTest.reactNodeNonCached"
+> = async (ctx) => {
+  const node = await ctx.use(ReactNodeTestLoader);
+  return (
+    <div data-testid="react-node-non-cached-page">
+      <h1>ReactNode Non-Cached Loader</h1>
+      <div data-testid="react-node-content">{node}</div>
+    </div>
+  );
+};
+
+// Null loader handler (cached variant — route attaches cache())
+export const CacheNullCachedHandler: Handler<"cacheTest.nullCached"> = async (
+  ctx,
+) => {
+  const data = await ctx.use(NullTestLoader);
+  return (
+    <div data-testid="null-cached-page">
+      <h1>Null Cached Loader</h1>
+      <p data-testid="null-value">
+        {data.value === null ? "null" : "not-null"}
+      </p>
+      <p data-testid="null-count">{data.count}</p>
+    </div>
+  );
+};
+
+// Null loader handler (non-cached variant)
+export const CacheNullNonCachedHandler: Handler<
+  "cacheTest.nullNonCached"
+> = async (ctx) => {
+  const data = await ctx.use(NullTestLoader);
+  return (
+    <div data-testid="null-non-cached-page">
+      <h1>Null Non-Cached Loader</h1>
+      <p data-testid="null-value">
+        {data.value === null ? "null" : "not-null"}
+      </p>
+      <p data-testid="null-count">{data.count}</p>
+    </div>
+  );
+};

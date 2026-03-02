@@ -398,6 +398,33 @@ import { ProductState } from "./state";
 </Link>;
 ```
 
+Pass typed state just in time (getter evaluated at click time, not render time):
+
+```tsx
+"use client"; // JIT state requires a client component (getter can't cross RSC boundary)
+
+import { Link } from "@rangojs/router/client";
+import { ProductState } from "./state";
+
+// The getter is stored lazily and only called when the user clicks the link.
+// This is useful for capturing values that change after render (e.g., scroll
+// position, form state, ref values).
+<Link
+  to="/product/123"
+  state={[ProductState(() => ({ name: product.name, price: product.price }))]}
+>
+  View Product
+</Link>;
+```
+
+Plain state can also be evaluated just in time (also requires a client component):
+
+```tsx
+<Link to="/product/123" state={() => ({ from: window.location.pathname })}>
+  View Product
+</Link>
+```
+
 ### Flash State (read-once)
 
 Create a location state with `{ flash: true }` for read-once state that

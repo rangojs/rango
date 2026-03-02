@@ -1,5 +1,6 @@
 import type { PluginOption } from "vite";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { exposeActionId } from "./plugins/expose-action-id.js";
 import {
   exposeInternalIds,
@@ -70,8 +71,10 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   // Track RSC entry path for version injection
   let rscEntryPath: string | null = null;
 
-  // Resolved router path (node preset only, may be auto-discovered)
-  let routerPath: string | undefined;
+  // Mutable ref for router path (node preset only).
+  // Set immediately when user-specified, or populated by the auto-discover
+  // config() hook using Vite's resolved root.
+  const routerRef: { path: string | undefined } = { path: undefined };
 
   // Build-time prerendering is enabled for both presets.
   // Collection runs in-process via the RSC dev environment runner during discoverRouters().
@@ -200,34 +203,42 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   } else {
     // Node preset: full RSC plugin integration
     const nodeOptions = resolvedOptions as RangoNodeOptions;
-    routerPath = nodeOptions.router;
 
-    // Auto-discover router when not specified
-    if (!routerPath) {
-      const earlyFilter = createScanFilter(process.cwd(), {
-        include: resolvedOptions.include,
-        exclude: resolvedOptions.exclude,
+    routerRef.path = nodeOptions.router;
+
+    // Auto-discover router using Vite's resolved root (not process.cwd())
+    if (!routerRef.path) {
+      plugins.push({
+        name: "@rangojs/router:auto-discover",
+        config(userConfig) {
+          if (routerRef.path) return;
+          const root = userConfig.root
+            ? resolve(process.cwd(), userConfig.root)
+            : process.cwd();
+          const filter = createScanFilter(root, {
+            include: resolvedOptions.include,
+            exclude: resolvedOptions.exclude,
+          });
+          const candidates = findRouterFiles(root, filter);
+          if (candidates.length === 1) {
+            const abs = candidates[0];
+            routerRef.path = abs.startsWith(root)
+              ? "./" + abs.slice(root.length + 1)
+              : abs;
+          } else if (candidates.length > 1) {
+            const list = candidates
+              .map(
+                (f) =>
+                  "  - " + (f.startsWith(root) ? f.slice(root.length + 1) : f),
+              )
+              .join("\n");
+            throw new Error(
+              `[rsc-router] Multiple routers found. Specify \`router\` to choose one:\n${list}`,
+            );
+          }
+          // 0 found: routerRef.path stays undefined, warn at startup via discovery plugin
+        },
       });
-      const candidates = findRouterFiles(process.cwd(), earlyFilter);
-      if (candidates.length === 1) {
-        // Convert absolute path to relative ./path
-        const abs = candidates[0];
-        const rel = abs.startsWith(process.cwd())
-          ? "./" + abs.slice(process.cwd().length + 1)
-          : abs;
-        routerPath = rel;
-      } else if (candidates.length > 1) {
-        const cwd = process.cwd();
-        const list = candidates
-          .map(
-            (f) => "  - " + (f.startsWith(cwd) ? f.slice(cwd.length + 1) : f),
-          )
-          .join("\n");
-        throw new Error(
-          `[rsc-router] Multiple routers found. Specify \`router\` to choose one:\n${list}`,
-        );
-      }
-      // 0 found: routerPath stays undefined, warn at startup via discovery plugin
     }
 
     const rscOption = nodeOptions.rsc ?? true;
@@ -371,8 +382,8 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
         },
       });
 
-      // Add virtual entries plugin
-      plugins.push(createVirtualEntriesPlugin(finalEntries, routerPath));
+      // Add virtual entries plugin (RSC entry generated lazily from routerRef)
+      plugins.push(createVirtualEntriesPlugin(finalEntries, routerRef));
 
       // Add the RSC plugin directly
       // Cast to PluginOption to handle type differences between bundled vite types
@@ -449,10 +460,13 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   // Add version virtual module plugin for cache invalidation
   plugins.push(createVersionPlugin());
 
-  // Entry path for discovery and version injection.
-  // Node preset: uses the (possibly auto-discovered) router path.
+  // Entry path for discovery: user-specified value (if any) or undefined.
+  // Auto-discovered path is passed separately via routerRef.
   // Cloudflare preset: deferred to configResolved (read from resolved Vite env config).
-  const discoveryEntryPath = preset !== "cloudflare" ? routerPath : undefined;
+  const discoveryEntryPath =
+    preset !== "cloudflare" ? routerRef.path : undefined;
+  // Ref for deferred auto-discovery (node preset only, undefined for cloudflare)
+  const discoveryRouterRef = preset !== "cloudflare" ? routerRef : undefined;
 
   // Version injector: auto-injects VERSION and routes-manifest into custom entry.rsc files.
   // Only applies when there's an explicit rscEntryPath or for cloudflare preset (resolved
@@ -470,8 +484,10 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
 
   // Router discovery plugin for build-time manifest generation.
   // For cloudflare, the entry is resolved lazily in configResolved from the RSC environment.
+  // For node, discoveryRouterRef provides the auto-discovered path when not user-specified.
   plugins.push(
     createRouterDiscoveryPlugin(discoveryEntryPath, {
+      routerPathRef: discoveryRouterRef,
       enableBuildPrerender: prerenderEnabled,
       staticRouteTypesGeneration: resolvedOptions.staticRouteTypesGeneration,
       include: resolvedOptions.include,

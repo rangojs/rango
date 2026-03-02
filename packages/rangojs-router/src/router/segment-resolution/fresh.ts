@@ -548,7 +548,7 @@ export async function resolveWithErrorHandling<TEnv>(
       segmentType: entry.type as any,
       env: errorContext?.env,
       isPartial: errorContext?.isPartial,
-      handledByBoundary: !!fallback,
+      handledByBoundary: !!effectiveFallback,
       requestStartTime: errorContext?.requestStartTime,
     });
 

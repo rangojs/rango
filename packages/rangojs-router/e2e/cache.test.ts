@@ -1137,3 +1137,265 @@ test.describe("cache-response-type (production)", () => {
     expect(body3.data.ts).toBe(body1.data.ts);
   });
 });
+
+// ============================================================================
+// ReactNode loader return type (dev)
+// ============================================================================
+
+test.describe("cache-loader-reactnode", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+    isolatedServer: true,
+  });
+
+  test("cached ReactNode loader returns serialized JSX on cache hit", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // First visit — cache miss, loader runs
+    await page.goto(f.url("/cache-test/react-node-cached"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("react-node-cached-page")).toBeVisible();
+    const firstCount = await page.getByTestId("rn-count").textContent();
+    const firstTs = await page.getByTestId("rn-ts").textContent();
+    expect(firstCount).toBeTruthy();
+    expect(firstTs).toBeTruthy();
+
+    // Wait for cache write
+    await page.waitForTimeout(500);
+
+    // Navigate away
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Second visit — cache hit, same ReactNode
+    await page.goto(f.url("/cache-test/react-node-cached"));
+    await waitForHydration(page);
+
+    const secondCount = await page.getByTestId("rn-count").textContent();
+    const secondTs = await page.getByTestId("rn-ts").textContent();
+
+    // Cached: same count and timestamp
+    expect(secondCount).toBe(firstCount);
+    expect(secondTs).toBe(firstTs);
+  });
+
+  test("non-cached ReactNode loader runs fresh on every request", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/react-node-non-cached"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("react-node-non-cached-page")).toBeVisible();
+    const firstCount = await page.getByTestId("rn-count").textContent();
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await page.goto(f.url("/cache-test/react-node-non-cached"));
+    await waitForHydration(page);
+
+    const secondCount = await page.getByTestId("rn-count").textContent();
+
+    // Not cached: count should increment
+    expect(Number(secondCount)).toBeGreaterThan(Number(firstCount));
+  });
+});
+
+// ============================================================================
+// ReactNode loader return type (production)
+// ============================================================================
+
+test.describe("cache-loader-reactnode (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+    isolatedServer: true,
+  });
+
+  test("cached ReactNode loader returns serialized JSX on cache hit", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/react-node-cached"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("react-node-cached-page")).toBeVisible();
+    const firstCount = await page.getByTestId("rn-count").textContent();
+    const firstTs = await page.getByTestId("rn-ts").textContent();
+    expect(firstCount).toBeTruthy();
+    expect(firstTs).toBeTruthy();
+
+    await page.waitForTimeout(500);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await page.goto(f.url("/cache-test/react-node-cached"));
+    await waitForHydration(page);
+
+    const secondCount = await page.getByTestId("rn-count").textContent();
+    const secondTs = await page.getByTestId("rn-ts").textContent();
+
+    expect(secondCount).toBe(firstCount);
+    expect(secondTs).toBe(firstTs);
+  });
+
+  test("non-cached ReactNode loader runs fresh on every request", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/react-node-non-cached"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("react-node-non-cached-page")).toBeVisible();
+    const firstCount = await page.getByTestId("rn-count").textContent();
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await page.goto(f.url("/cache-test/react-node-non-cached"));
+    await waitForHydration(page);
+
+    const secondCount = await page.getByTestId("rn-count").textContent();
+
+    expect(Number(secondCount)).toBeGreaterThan(Number(firstCount));
+  });
+});
+
+// ============================================================================
+// Null loader return type (dev)
+// ============================================================================
+
+test.describe("cache-loader-null", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+    isolatedServer: true,
+  });
+
+  test("cached null-value loader preserves null through cache round-trip", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // First visit — cache miss
+    await page.goto(f.url("/cache-test/null-cached"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("null-cached-page")).toBeVisible();
+    await expect(page.getByTestId("null-value")).toHaveText("null");
+    const firstCount = await page.getByTestId("null-count").textContent();
+
+    // Wait for cache write
+    await page.waitForTimeout(500);
+
+    // Navigate away
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Second visit — cache hit, null preserved
+    await page.goto(f.url("/cache-test/null-cached"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("null-value")).toHaveText("null");
+    const secondCount = await page.getByTestId("null-count").textContent();
+
+    // Cached: same count (loader did NOT run again)
+    expect(secondCount).toBe(firstCount);
+  });
+
+  test("non-cached null-value loader runs fresh on every request", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/null-non-cached"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("null-non-cached-page")).toBeVisible();
+    await expect(page.getByTestId("null-value")).toHaveText("null");
+    const firstCount = await page.getByTestId("null-count").textContent();
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await page.goto(f.url("/cache-test/null-non-cached"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("null-value")).toHaveText("null");
+    const secondCount = await page.getByTestId("null-count").textContent();
+
+    // Not cached: count should increment
+    expect(Number(secondCount)).toBeGreaterThan(Number(firstCount));
+  });
+});
+
+// ============================================================================
+// Null loader return type (production)
+// ============================================================================
+
+test.describe("cache-loader-null (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+    isolatedServer: true,
+  });
+
+  test("cached null-value loader preserves null through cache round-trip", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/null-cached"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("null-cached-page")).toBeVisible();
+    await expect(page.getByTestId("null-value")).toHaveText("null");
+    const firstCount = await page.getByTestId("null-count").textContent();
+
+    await page.waitForTimeout(500);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await page.goto(f.url("/cache-test/null-cached"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("null-value")).toHaveText("null");
+    const secondCount = await page.getByTestId("null-count").textContent();
+
+    expect(secondCount).toBe(firstCount);
+  });
+
+  test("non-cached null-value loader runs fresh on every request", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/null-non-cached"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("null-non-cached-page")).toBeVisible();
+    await expect(page.getByTestId("null-value")).toHaveText("null");
+    const firstCount = await page.getByTestId("null-count").textContent();
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await page.goto(f.url("/cache-test/null-non-cached"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("null-value")).toHaveText("null");
+    const secondCount = await page.getByTestId("null-count").textContent();
+
+    expect(Number(secondCount)).toBeGreaterThan(Number(firstCount));
+  });
+});

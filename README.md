@@ -5,6 +5,7 @@ A code-first, type-safe React Server Components router for serverless deployment
 ## Features
 
 - **Code-first routing** - No file-based conventions
+- **Named routes** - Type-safe `reverse()` references that survive path refactors
 - **Type-safe params** - Automatic inference from route patterns
 - **Django-style URL patterns** - `urls()` and `include()` for composition
 - **Partial rendering** - Optimal performance with RSC
@@ -14,6 +15,8 @@ A code-first, type-safe React Server Components router for serverless deployment
 - **Middleware** - Auth, logging, rate limiting
 - **Error/NotFound boundaries** - Graceful error handling
 - **Pre-rendering** - Build-time caching for static content
+- **Live data loaders** - Pre-render or cache UI structure while `loader()` stays fresh by default
+- **Trailing slash control** - Per-route canonical URL handling via `path(..., { trailingSlash })`
 
 ## Structure
 
@@ -44,27 +47,49 @@ pnpm dev
 ## Quick Example
 
 ```typescript
-import { createRouter, urls, include } from "@rangojs/router";
+import { createRouter, urls } from "@rangojs/router";
 
-// Define URL patterns (Django-style)
+// Define a composable module with local route names
 const shopPatterns = urls(({ path }) => [
-  path("", () => <ShopIndex />),
-  path("cart", () => <CartPage />),
-  path("product/:slug", async (ctx) => {
+  path("/", () => <ShopIndex />, { name: "index" }),
+  path("/cart", () => <CartPage />, { name: "cart" }),
+  path("/product/:slug", async (ctx) => {
     const product = await getProduct(ctx.params.slug);
     return <ProductDetail product={product} />;
-  }),
+  }, { name: "product" }),
 ]);
 
-// Create router and register patterns
-const router = createRouter();
-router.routes(
-  urls(({ path }) => [
-    path("", () => <Home />),
-    path("shop/*", include(shopPatterns)),
-  ])
-);
+// Mount it into the app with a route-name namespace
+const urlpatterns = urls(({ path, include }) => [
+  path("/", () => <Home />, { name: "home" }),
+  include("/shop", shopPatterns, { name: "shop" }),
+]);
+
+const router = createRouter().routes(urlpatterns);
+
+router.reverse("shop.cart"); // "/shop/cart"
+router.reverse("shop.product", { slug: "widget" }); // "/shop/product/widget"
 ```
+
+Rango treats loaders as the live data layer: pre-rendering and route-level
+cache boundaries can store the UI structure, while `loader()` re-resolves fresh
+request-time data by default. That lets you pre-render the page shell without
+freezing the data behind it.
+
+Trailing slash handling is supported directly on `path()`:
+
+```typescript
+const urlpatterns = urls(({ path }) => [
+  path("/about", AboutPage, { name: "about", trailingSlash: "never" }),
+  path("/docs/", DocsPage, { name: "docs", trailingSlash: "always" }),
+  path("/webhook", WebhookHandler, {
+    name: "webhook",
+    trailingSlash: "ignore",
+  }),
+]);
+```
+
+If `trailingSlash` is omitted, there is no separate global default mode. The router uses the pattern you define as the canonical form and redirects to it.
 
 ## Debug Logging
 

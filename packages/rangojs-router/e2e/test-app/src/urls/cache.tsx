@@ -4,6 +4,8 @@ import {
   NonCachedTestLoader,
   CachedTestLoader,
   InterceptCacheTestLoader,
+  ReactNodeTestLoader,
+  NullTestLoader,
 } from "../loaders.js";
 import {
   CacheTestModal,
@@ -29,6 +31,10 @@ import {
   CacheStatusServerErrorHandler,
   CacheStatusRedirectHandler,
   CacheStatusRedirectTargetHandler,
+  CacheReactNodeCachedHandler,
+  CacheReactNodeNonCachedHandler,
+  CacheNullCachedHandler,
+  CacheNullNonCachedHandler,
 } from "./cache.handlers.js";
 
 /**
@@ -178,6 +184,32 @@ export const cachePatterns = urls(
         { name: "cacheTest.responseTypeText" },
       ),
     ]),
+
+    // ReactNode and null loader return type tests
+    path(
+      "/cache-test/react-node-cached",
+      CacheReactNodeCachedHandler,
+      { name: "cacheTest.reactNodeCached" },
+      () => [loader(ReactNodeTestLoader, () => [cache({ ttl: 600 })])],
+    ),
+    path(
+      "/cache-test/react-node-non-cached",
+      CacheReactNodeNonCachedHandler,
+      { name: "cacheTest.reactNodeNonCached" },
+      () => [loader(ReactNodeTestLoader)],
+    ),
+    path(
+      "/cache-test/null-cached",
+      CacheNullCachedHandler,
+      { name: "cacheTest.nullCached" },
+      () => [loader(NullTestLoader, () => [cache({ ttl: 600 })])],
+    ),
+    path(
+      "/cache-test/null-non-cached",
+      CacheNullNonCachedHandler,
+      { name: "cacheTest.nullNonCached" },
+      () => [loader(NullTestLoader)],
+    ),
 
     // Non-200 status caching test: verify isCacheableStatus behavior.
     // 404 responses are cacheable, 500 responses are not.

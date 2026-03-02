@@ -58,9 +58,7 @@ export interface HandleStore {
 
   /**
    * Get all collected handle data after all handlers have settled.
-   * Returns a promise that waits for `settled`, then returns the data.
-   * The data may contain unresolved promises which RSC will stream.
-   * @deprecated Use stream() for progressive updates
+   * Waits for `settled`, then returns the finalized data.
    */
   getData(): Promise<HandleData>;
 
@@ -163,7 +161,7 @@ export function createHandleStore(): HandleStore {
     },
 
     getData(): Promise<HandleData> {
-      return this.settled.then(() => data);
+      return this.settled.then(() => cloneHandleData(data));
     },
 
     async *stream(): AsyncGenerator<HandleData, void, unknown> {

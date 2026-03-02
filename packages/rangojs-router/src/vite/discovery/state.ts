@@ -15,6 +15,9 @@ export interface PluginOptions {
   staticRouteTypesGeneration?: boolean;
   include?: string[];
   exclude?: string[];
+  // Mutable ref for deferred auto-discovery (node preset).
+  // The auto-discover config() hook populates this before configResolved.
+  routerPathRef?: { path?: string };
 }
 
 export interface PrecomputedEntry {

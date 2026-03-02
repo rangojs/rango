@@ -3,6 +3,7 @@ import { AppLayout } from "./components/layouts/index.js";
 import { HomePage, AboutPage } from "./components/pages/index.js";
 import { blogPatterns } from "./urls/blog.js";
 import { shopPatterns } from "./urls/shop.js";
+import { loaderTypePatterns } from "./urls/loader-types.js";
 
 /**
  * Main URL patterns - Django-style routing API
@@ -13,5 +14,6 @@ export const urlpatterns = urls(({ path, layout, include }) => [
     path("/about", AboutPage, { name: "about" }),
     include("/blog", blogPatterns, { name: "blog" }),
     include("/shop", shopPatterns, { name: "shop" }),
+    include("/loader-types", loaderTypePatterns, { name: "loaderTypes" }),
   ]),
 ]);

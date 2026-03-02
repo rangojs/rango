@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { getRequestContext, urls } from "@rangojs/router";
 
 /**
  * Response cache test routes URL patterns.
@@ -8,7 +8,7 @@ import { urls } from "@rangojs/router";
  * have the exact same timestamp on subsequent requests. Non-cached responses
  * will always have a different (newer) timestamp.
  */
-export const responseCachePatterns = urls(({ path, cache }) => [
+export const responseCachePatterns = urls(({ path, cache, middleware }) => [
   // Cached routes: wrapped in cache() boundary
   cache({ ttl: 600 }, () => [
     path.json(
@@ -50,6 +50,18 @@ export const responseCachePatterns = urls(({ path, cache }) => [
       },
       { name: "responseCache.md" },
     ),
+
+    path.json(
+      "/cached-json-query",
+      (ctx) => {
+        return {
+          source: "cached-json-query",
+          q: ctx.url.searchParams.get("q") ?? "",
+          ts: Date.now(),
+        };
+      },
+      { name: "responseCache.jsonQuery" },
+    ),
   ]),
 
   // Control route: NOT wrapped in cache() — handler always re-executes
@@ -60,4 +72,34 @@ export const responseCachePatterns = urls(({ path, cache }) => [
     },
     { name: "responseCache.uncached" },
   ),
+
+  // Callback test routes (under /cb-test/ so the app-level middleware matches).
+  // The app-level middleware registers a pre-handler onResponse callback that
+  // sets X-Pre-Handler-Ts with a fresh timestamp on every serve.
+  cache({ ttl: 600 }, () => [
+    // Route with route-level middleware that registers an onResponse callback.
+    // This callback is applied by createResponseWithMergedHeaders during
+    // handler execution, so it is baked into the cached response.
+    path.json(
+      "/cb-test/with-route-cb",
+      () => {
+        return { source: "route-cb", ts: Date.now() };
+      },
+      { name: "responseCache.routeCb" },
+      () => [
+        middleware(async (_ctx, next) => {
+          const reqCtx = getRequestContext();
+          reqCtx?.onResponse((response) => {
+            const headers = new Headers(response.headers);
+            headers.set("X-Route-Callback-Ts", String(Date.now()));
+            return new Response(response.body, {
+              status: response.status,
+              headers,
+            });
+          });
+          await next();
+        }),
+      ],
+    ),
+  ]),
 ]);

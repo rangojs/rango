@@ -25,7 +25,7 @@ The base context is created once per request right after route matching. It hold
 - `search` -- typed search params from route schema, `{}` when no schema defined
 - `params` -- route parameters from pattern matching
 - `method` -- HTTP method
-- `env` -- platform bindings (typed via `RouterEnv`)
+- `env` -- platform bindings (typed via `createRouter<TBindings>()`)
 
 ### Middleware variables
 

@@ -46,7 +46,7 @@ export const sharedEsbuildOptions: {
  */
 export function createVirtualEntriesPlugin(
   entries: { client: string; ssr: string; rsc?: string },
-  routerPath?: string,
+  routerPathRef?: { path?: string },
 ): Plugin {
   // Build virtual modules map based on which entries use virtual IDs
   const virtualModules: Record<string, string> = {};
@@ -57,12 +57,13 @@ export function createVirtualEntriesPlugin(
   if (entries.ssr === VIRTUAL_IDS.ssr) {
     virtualModules[VIRTUAL_IDS.ssr] = VIRTUAL_ENTRY_SSR;
   }
-  if (entries.rsc === VIRTUAL_IDS.rsc && routerPath) {
-    // Convert relative path to absolute for virtual module imports
-    const absoluteRouterPath = routerPath.startsWith(".")
-      ? "/" + routerPath.slice(2) // ./src/router.tsx -> /src/router.tsx
-      : routerPath;
-    virtualModules[VIRTUAL_IDS.rsc] = getVirtualEntryRSC(absoluteRouterPath);
+
+  // RSC entry is resolved lazily in load() because routerPath may be
+  // set after plugin creation (e.g. by the auto-discover config() hook).
+  // Track all known virtual IDs for resolveId (content is separate).
+  const knownIds = new Set(Object.keys(virtualModules));
+  if (entries.rsc === VIRTUAL_IDS.rsc) {
+    knownIds.add(VIRTUAL_IDS.rsc);
   }
 
   return {
@@ -70,11 +71,11 @@ export function createVirtualEntriesPlugin(
     enforce: "pre",
 
     resolveId(id) {
-      if (id in virtualModules) {
+      if (knownIds.has(id)) {
         return "\0" + id;
       }
       // Handle if the id already has the null prefix (RSC plugin wrapper imports)
-      if (id.startsWith("\0") && id.slice(1) in virtualModules) {
+      if (id.startsWith("\0") && knownIds.has(id.slice(1))) {
         return id;
       }
       return null;
@@ -85,6 +86,13 @@ export function createVirtualEntriesPlugin(
         const virtualId = id.slice(1);
         if (virtualId in virtualModules) {
           return virtualModules[virtualId];
+        }
+        // Lazy RSC entry: routerPath may have been set by a config() hook
+        if (virtualId === VIRTUAL_IDS.rsc && routerPathRef?.path) {
+          const absoluteRouterPath = routerPathRef.path.startsWith(".")
+            ? "/" + routerPathRef.path.slice(2) // ./src/router.tsx -> /src/router.tsx
+            : routerPathRef.path;
+          return getVirtualEntryRSC(absoluteRouterPath);
         }
       }
       return null;

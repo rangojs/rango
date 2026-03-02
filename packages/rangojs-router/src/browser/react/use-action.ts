@@ -9,7 +9,7 @@ import {
   startTransition,
 } from "react";
 import { NavigationStoreContext } from "./context.js";
-import type { TrackedActionState, ActionLifecycleState } from "../types.js";
+import type { TrackedActionState } from "../types.js";
 import { invariant } from "../../errors.js";
 
 /**
@@ -161,13 +161,24 @@ export function useAction<T>(
     T | TrackedActionState
   >(null!);
 
-  // Memoize the selector to avoid unnecessary re-subscriptions
+  // Ref keeps the latest selector without re-subscribing on every render.
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 
   // Subscribe to action state changes from event controller
   useEffect(() => {
     if (!ctx) return;
+
+    // Sync current state for the (possibly new) actionId so that switching
+    // actions on an idle page doesn't leave stale data from the old action.
+    const currentState = ctx.eventController.getActionState(actionId);
+    const currentSelected = selectorRef.current
+      ? selectorRef.current(currentState)
+      : currentState;
+    if (!isShallowEqual(currentSelected, prevSelected.current)) {
+      prevSelected.current = currentSelected;
+      setBaseState(currentSelected);
+    }
 
     // Subscribe to action-specific updates
     const unsubscribe = ctx.eventController.subscribeToAction(

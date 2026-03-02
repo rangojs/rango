@@ -34,7 +34,6 @@ export {
 export type {
   // Configuration types
   DocumentProps,
-  RouterEnv,
   DefaultEnv,
   RouteDefinition,
   RouteConfig,
@@ -170,15 +169,6 @@ export function getRequestContext(): never {
 }
 
 /**
- * Error-throwing stub for server-only `requireRequestContext` function.
- */
-export function requireRequestContext(): never {
-  throw new Error(
-    "requireRequestContext() is server-only and requires RSC context.",
-  );
-}
-
-/**
  * Error-throwing stub for server-only `createReverse` function.
  */
 export function createReverse(): never {
@@ -201,13 +191,6 @@ export function getMatchDebugStats(): never {
   throw new Error(
     "getMatchDebugStats() is server-only and requires RSC context.",
   );
-}
-
-/**
- * Error-throwing stub for server-only `track` function.
- */
-export function track(): never {
-  throw new Error("track() is server-only and requires RSC context.");
 }
 
 // Error-throwing stubs for server-only route helpers

@@ -13,22 +13,22 @@ import { NavigationStoreContext } from "./context.js";
 import { LinkContext } from "./use-link-status.js";
 import type { NavigateOptions } from "../types.js";
 import {
-  type LocationStateEntry,
   isLocationStateEntry,
+  type LocationStateEntry,
   resolveLocationStateEntries,
 } from "./location-state.js";
 
 /**
- * State value or getter function for just-in-time state resolution (legacy)
+ * State prop type for Link component.
+ * - LocationStateEntry[]: Type-safe state entries via createLocationState()
+ * - StateOrGetter: Plain state object or click-time getter function
+ * - Record<string, unknown>: Plain state object passed to history.pushState
  */
 export type StateOrGetter<T = unknown> = T | (() => T);
 
-/**
- * State prop type for Link component
- * - LocationStateEntry[]: Type-safe state entries (always lazy)
- * - StateOrGetter: Legacy format for backwards compatibility
- */
-export type LinkState = LocationStateEntry[] | StateOrGetter;
+export type LinkState =
+  | LocationStateEntry[]
+  | StateOrGetter<Record<string, unknown>>;
 
 import { prefetchDirect, prefetchQueued } from "../prefetch-fetch.js";
 import {
@@ -91,16 +91,29 @@ export interface LinkProps extends Omit<
    * @example
    * ```tsx
    * // Type-safe state with createLocationState (recommended)
-   * const ProductState = createLocationState((p: Product) => ({ name: p.name }));
-   * <Link to="/product" state={[ProductState(product)]}>View</Link>
+   * const ProductState = createLocationState<{ name: string; price: number }>();
+   * <Link to="/product" state={[ProductState({ name: product.name, price: product.price })]}>
+   *   View
+   * </Link>
+   *
+   * // Type-safe just-in-time state (getter called at click time, not render time).
+   * // Must be in a client component -- getter can't cross the RSC boundary.
+   * <Link
+   *   to="/product"
+   *   state={[ProductState(() => ({ name: product.name, price: product.price }))]}
+   * >
+   *   View
+   * </Link>
    *
    * // Multiple typed states
-   * <Link to="/checkout" state={[ProductState(p), CartState(c)]}>Checkout</Link>
+   * <Link to="/checkout" state={[ProductState({ name: p.name, price: p.price }), CartState(c)]}>
+   *   Checkout
+   * </Link>
    *
-   * // Legacy: static state
+   * // Plain static state
    * <Link to="/product" state={{ from: "list" }}>View</Link>
    *
-   * // Legacy: dynamic state (called at click time)
+   * // Plain just-in-time state (called at click time, requires client component)
    * <Link to="/product" state={() => ({ scrollY: window.scrollY })}>View</Link>
    * ```
    */
@@ -222,24 +235,20 @@ export const Link: ForwardRefExoticComponent<
       e.stopPropagation();
 
       if (ctx?.navigate) {
-        // Resolve state just-in-time based on format
-        let resolvedState: unknown;
         const currentState = stateRef.current;
+        let resolvedState: unknown;
 
         if (
           Array.isArray(currentState) &&
           currentState.length > 0 &&
           isLocationStateEntry(currentState[0])
         ) {
-          // Type-safe LocationStateEntry[] - resolve each entry into keyed object
           resolvedState = resolveLocationStateEntries(
             currentState as LocationStateEntry[],
           );
         } else if (typeof currentState === "function") {
-          // Legacy getter function
           resolvedState = currentState();
-        } else {
-          // Legacy static value
+        } else if (currentState != null) {
           resolvedState = currentState;
         }
 

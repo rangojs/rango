@@ -28,7 +28,7 @@ function isTypedLocationState(
 }
 
 /**
- * Resolve navigation state - handles both LocationStateEntry[] and legacy formats
+ * Resolve navigation state - handles both LocationStateEntry[] and plain formats
  */
 function resolveNavigationState(state: unknown): unknown {
   // Check if it's an array of LocationStateEntry
@@ -39,14 +39,14 @@ function resolveNavigationState(state: unknown): unknown {
   ) {
     return resolveLocationStateEntries(state);
   }
-  // Return as-is for legacy formats
+  // Return as-is for plain state formats
   return state;
 }
 
 /**
  * Build history state object from user state
  * - Typed state: spread directly into history.state
- * - Legacy state: store in history.state.state
+ * - Plain state: store in history.state.state
  */
 function buildHistoryState(
   userState: unknown,
@@ -69,7 +69,7 @@ function buildHistoryState(
       // Typed state: spread directly
       Object.assign(result, userState);
     } else {
-      // Legacy state: store in .state
+      // Plain state: store in .state
       result.state = userState;
     }
   }

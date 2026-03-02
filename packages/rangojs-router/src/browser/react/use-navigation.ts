@@ -84,8 +84,11 @@ export function useNavigation<T>(
   // useOptimistic allows immediate updates during transitions/actions
   const [value, setOptimisticValue] = useOptimistic(baseValue);
 
-  // Store selector in a ref to avoid re-subscribing when an inline
-  // function is passed (its identity changes every render).
+  // Store selector in a ref so the subscription callback always uses the
+  // latest selector without re-subscribing on every render (inline functions
+  // have a new identity each render). This is event-driven by design: the
+  // value updates when the store emits, not when the selector changes.
+  // Between events there is nothing new to select from.
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 

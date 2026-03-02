@@ -107,7 +107,7 @@ export function extractParams(
  *
  * Note: The implementation uses runtime values while the interface provides
  * compile-time type safety. The env/get/set types are resolved at call sites
- * via conditional types based on TEnv extending RouterEnv.
+ * via conditional types based on TEnv from createRouter<TBindings>().
  */
 export function createMiddlewareContext<TEnv>(
   request: Request,

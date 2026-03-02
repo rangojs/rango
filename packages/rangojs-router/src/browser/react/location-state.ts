@@ -22,7 +22,7 @@ export {
  *
  * Overloaded:
  * - With definition: Returns typed state from the specific key
- * - With type param only: Returns legacy state from history.state.state (backwards compat)
+ * - With type param only: Returns plain state from history.state.state
  *
  * @example
  * ```typescript
@@ -34,8 +34,8 @@ export {
  * const FlashMsg = createLocationState<{ text: string }>({ flash: true });
  * const flash = useLocationState(FlashMsg);
  *
- * // Legacy typed access (backwards compatible)
- * const legacyState = useLocationState<{ from?: string }>();
+ * // Plain state access (reads from history.state.state)
+ * const state = useLocationState<{ from?: string }>();
  * ```
  */
 export function useLocationState<TArgs extends unknown[], TState>(
@@ -53,7 +53,7 @@ export function useLocationState<TArgs extends unknown[], TState>(
     if (key) {
       return window.history.state?.[key] as TState | undefined;
     }
-    // Legacy: return history.state.state for backwards compatibility
+    // Plain state: stored under history.state.state
     return window.history.state?.state as TState | undefined;
   });
 
