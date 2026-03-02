@@ -218,6 +218,9 @@ export function createVersionPlugin(): Plugin {
           const source = await ctx.read();
           const nextSignature = getClientModuleSignature(source);
           if (nextSignature) {
+            // "use client" file — compare export signatures.
+            // client-component-hmr may have cleared ctx.modules, so we
+            // cannot rely on ctx.modules.length for these files.
             clientModuleSignatures.set(filePath, nextSignature);
             if (
               previousSignature &&
@@ -227,10 +230,22 @@ export function createVersionPlugin(): Plugin {
             }
           } else {
             clientModuleSignatures.delete(filePath);
+            if (!previousSignature) {
+              // Not and never was "use client" — use module graph check.
+              // ctx.modules is reliable for pure server files (only
+              // client-component-hmr clears it for "use client" modules).
+              if (ctx.modules.length === 0) return;
+            }
+            // Was "use client" but directive removed — boundary changed,
+            // bump below.
           }
         } catch {
           // Fail open: if we can't read or parse the update, invalidate.
         }
+      } else {
+        // Non-code file (json, css, etc.) — only bump if it's actually
+        // referenced by the RSC module graph.
+        if (ctx.modules.length === 0) return;
       }
 
       bumpVersion("RSC module changed");
