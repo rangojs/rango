@@ -117,6 +117,7 @@ interface RscPayload {
     params?: Record<string, string>;
     themeConfig?: ResolvedThemeConfig | null;
     initialTheme?: Theme;
+    version?: string;
   };
 }
 
@@ -260,6 +261,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
           ),
           navigate: async () => {},
           refresh: async () => {},
+          version: resolved.metadata?.version,
         };
 
         // Build content tree from segments.
@@ -289,7 +291,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
 
         // Wrap with NavigationStoreContext for useNavigation hook
         return (
-          <NavigationStoreContext.Provider value={ssrContextValue}>
+          <NavigationStoreContext.Provider value={ssrContextValue!}>
             {content}
           </NavigationStoreContext.Provider>
         );

@@ -34,6 +34,7 @@ export const NamedRoutes = {
   "middleware.index": "/middleware",
   "middleware.timed": "/middleware/timed",
   "middleware.user": "/middleware/user/:userId",
+  "prefetch-test": "/prefetch-test",
   "protected.dashboard": "/protected/dashboard",
   "protected.index": "/protected",
   "protected.profile": "/protected/profile/:username",

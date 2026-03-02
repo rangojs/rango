@@ -338,6 +338,16 @@ export interface RSCRouterOptions<TEnv = any> {
    *   nonce: (request, env) => env.nonce,
    * });
    * ```
+   *
+   * @example Access nonce in middleware
+   * ```tsx
+   * import { nonce } from "@rangojs/router";
+   *
+   * const cspMiddleware: Middleware = async (ctx, next) => {
+   *   const value = ctx.get(nonce); // string | undefined
+   *   await next();
+   * };
+   * ```
    */
   nonce?: NonceProvider<TEnv>;
 
@@ -351,6 +361,18 @@ export interface RSCRouterOptions<TEnv = any> {
    * @default VERSION from @rangojs/router:version
    */
   version?: string;
+
+  /**
+   * Cache-Control header value for prefetch responses.
+   * Only applied to non-intercept partial responses that include the
+   * `X-Rango-Prefetch` header (sent by the Link component's prefetch fetch).
+   * Navigation responses are never cached by the browser.
+   *
+   * Set to `false` to disable browser caching of prefetch responses entirely.
+   *
+   * @default "private, max-age=300"
+   */
+  prefetchCacheControl?: string | false;
 
   /**
    * Enable connection warmup to keep TCP+TLS alive after idle periods.

@@ -184,16 +184,16 @@ declare global {
 }
 
 // middleware - typed via ctx.set / ctx.get
-import { createMiddleware } from "@rangojs/router";
+import type { Middleware } from "@rangojs/router";
 
-export const authMiddleware = createMiddleware(async (ctx, next) => {
+export const authMiddleware: Middleware = async (ctx, next) => {
   ctx.set("user", {
     id: "123",
     email: "user@example.com",
     role: "admin",
   });
   await next();
-});
+};
 
 // loaders - typed context
 export const UserLoader = createLoader("user", async (ctx) => {

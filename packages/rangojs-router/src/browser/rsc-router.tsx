@@ -26,6 +26,7 @@ import type {
 } from "./types.js";
 import type { EventController } from "./event-controller.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
+import { initRangoState } from "./rango-state.js";
 
 // Vite HMR types are provided by vite/client
 
@@ -110,6 +111,8 @@ export interface BrowserAppContext {
   initialTheme?: Theme;
   /** Whether connection warmup is enabled */
   warmupEnabled?: boolean;
+  /** App version for prefetch version mismatch detection */
+  version?: string;
 }
 
 // Module-level state for the initialized app
@@ -209,6 +212,10 @@ export async function initBrowserApp(
   // Extract rootLayout and version from metadata for browser-side re-renders
   const rootLayout = initialPayload.metadata?.rootLayout;
   const version = initialPayload.metadata?.version;
+
+  // Initialize the localStorage state key for browser HTTP cache invalidation.
+  // Uses the build version so a new deploy automatically busts all cached prefetches.
+  initRangoState(version ?? "0");
 
   // Create a bound renderSegments that includes rootLayout
   const renderSegments = (
@@ -319,6 +326,7 @@ export async function initBrowserApp(
     themeConfig: effectiveThemeConfig,
     initialTheme: effectiveInitialTheme,
     warmupEnabled: initialPayload.metadata?.warmupEnabled ?? true,
+    version,
   };
   browserAppContext = context;
 
@@ -383,6 +391,7 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
     themeConfig,
     initialTheme,
     warmupEnabled,
+    version,
   } = getBrowserAppContext();
 
   return (
@@ -394,6 +403,7 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
       themeConfig={themeConfig}
       initialTheme={initialTheme}
       warmupEnabled={warmupEnabled}
+      version={version}
     />
   );
 }

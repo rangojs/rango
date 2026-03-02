@@ -2,7 +2,7 @@
 
 import { useContext, useMemo } from "react";
 import { NavigationStoreContext } from "./context.js";
-import { prefetchUrl } from "./prefetch.js";
+import { prefetchDirect } from "../prefetch-fetch.js";
 import type { RouterInstance, RouterNavigateOptions } from "../types.js";
 
 /**
@@ -46,10 +46,9 @@ export function useRouter(): RouterInstance {
       },
 
       prefetch(url: string): void {
-        // Guard for SSR where store is null
         const segmentState = ctx.store?.getSegmentState();
         if (segmentState) {
-          prefetchUrl(url, segmentState.currentSegmentIds);
+          prefetchDirect(url, segmentState.currentSegmentIds, ctx.version);
         }
       },
 

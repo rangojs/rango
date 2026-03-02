@@ -159,6 +159,7 @@ export const router = createRouter<AppEnv>({
   cacheProfiles: {
     short: { ttl: 10, swr: 20 },
   },
+  prefetchCacheControl: "private, max-age=60",
   theme: {
     defaultTheme: "light",
     themes: ["light", "dark", "system"],

@@ -11,6 +11,7 @@ import {
   isBrowserDebugEnabled,
   startBrowserTransaction,
 } from "./logging.js";
+import { getRangoState } from "./rango-state.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -84,7 +85,6 @@ export function createNavigationClient(
       if (version) {
         fetchUrl.searchParams.set("_rsc_v", version);
       }
-
       if (tx) {
         browserDebugLog(tx, "fetching", {
           path: `${fetchUrl.pathname}${fetchUrl.search}`,
@@ -101,6 +101,7 @@ export function createNavigationClient(
       const responsePromise = fetch(fetchUrl, {
         headers: {
           "X-RSC-Router-Client-Path": previousUrl,
+          "X-Rango-State": getRangoState(),
           ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
           ...(interceptSourceUrl && {
             "X-RSC-Router-Intercept-Source": interceptSourceUrl,
