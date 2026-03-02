@@ -125,6 +125,14 @@ export interface RequestContext<
   _cacheStore?: SegmentCacheStore;
 
   /**
+   * @internal Explicit per-scope stores from cache({ store }) that have received
+   * tagged writes. Shared across requests for the same handler — the Set is created
+   * once per createRSCHandler() and passed to every request context.
+   * revalidateTag() iterates this + _cacheStore to cover all stores.
+   */
+  _explicitTaggedStores?: Set<SegmentCacheStore>;
+
+  /**
    * Schedule work to run after the response is sent.
    * On Cloudflare Workers, uses ctx.waitUntil().
    * On Node.js, runs as fire-and-forget.
@@ -329,6 +337,11 @@ export interface CreateRequestContextOptions<TEnv> {
   variables: Record<string, any>;
   /** Optional cache store for segment caching (used by CacheScope) */
   cacheStore?: SegmentCacheStore;
+  /**
+   * Shared set of explicit per-scope stores for cross-store tag invalidation.
+   * Created once per handler, reused across requests.
+   */
+  explicitTaggedStores?: Set<SegmentCacheStore>;
   /** Optional Cloudflare execution context for waitUntil support */
   executionContext?: ExecutionContext;
   /** Optional theme configuration (enables ctx.theme and ctx.setTheme) */
@@ -352,6 +365,7 @@ export function createRequestContext<TEnv>(
     url,
     variables,
     cacheStore,
+    explicitTaggedStores,
     executionContext,
     themeConfig,
   } = options;
@@ -468,6 +482,7 @@ export function createRequestContext<TEnv>(
 
     _handleStore: handleStore,
     _cacheStore: cacheStore,
+    _explicitTaggedStores: explicitTaggedStores,
 
     waitUntil(fn: () => Promise<void>): void {
       if (executionContext?.waitUntil) {

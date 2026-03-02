@@ -18,7 +18,6 @@ import {
 } from "../server/request-context.js";
 import { serializeSegments, deserializeSegments } from "./segment-codec.js";
 import { captureHandles, restoreHandles } from "./handle-snapshot.js";
-import { registerTaggedStore } from "./tag-store-registry.js";
 
 // Re-export codec functions for backwards compatibility.
 // Existing call sites import these from cache-scope.ts via dynamic import.
@@ -179,6 +178,16 @@ export class CacheScope {
     // Fall back to store defaults
     const store = this.getStore();
     return store?.defaults?.swr;
+  }
+
+  /**
+   * Whether this scope has an explicit store from cache() options.
+   * Used to determine if the store needs registration for cross-store
+   * tag invalidation (explicit stores are not reachable via ctx._cacheStore).
+   * @internal
+   */
+  get hasExplicitStore(): boolean {
+    return this.explicitStore !== undefined;
   }
 
   /**
@@ -352,9 +361,12 @@ export class CacheScope {
     // Resolve tags early (while request context is available)
     const tags = resolveCacheTags(this.config, requestCtx);
 
-    // Register this store for tag invalidation if tags are present
-    if (tags && tags.length > 0) {
-      registerTaggedStore(store);
+    // Register the explicit per-scope store for cross-store tag invalidation.
+    // Only explicit stores need registration — the app-level fallback store is
+    // always reachable via ctx._cacheStore in revalidateTag().
+    // The set is scoped per handler, so different routers don't cross-pollinate.
+    if (this.explicitStore && tags && tags.length > 0) {
+      requestCtx._explicitTaggedStores?.add(this.explicitStore);
     }
 
     // Check if this is a partial request (navigation) vs document request

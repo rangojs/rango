@@ -35,7 +35,6 @@ import { contextGet, contextSet } from "../context-var.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import { traverseBack } from "../router/pattern-matching.js";
 import { createCacheScope, resolveCacheTags } from "../cache/cache-scope.js";
-import { registerTaggedStore } from "../cache/tag-store-registry.js";
 import {
   hasCachedManifest,
   getRouteTrie,
@@ -97,6 +96,11 @@ export function createRSCHandler<
   TRoutes extends Record<string, string> = Record<string, string>,
 >(options: CreateRSCHandlerOptions<TEnv, TRoutes>) {
   const { router, version = VERSION, nonce: nonceProvider } = options;
+
+  // Shared set of explicit per-scope stores for cross-store tag invalidation.
+  // Lives in the handler closure so it's scoped per router — different handlers
+  // in a multi-router deployment get separate sets.
+  const explicitTaggedStores = new Set<import("../cache/types.js").SegmentCacheStore>();
 
   // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
   const deps = options.deps ?? rscDeps;
@@ -301,6 +305,7 @@ export function createRSCHandler<
       url,
       variables,
       cacheStore,
+      explicitTaggedStores,
       executionContext: executionCtx,
       themeConfig: router.themeConfig,
     });
@@ -594,9 +599,12 @@ export function createRSCHandler<
             // Resolve tags for response cache entries
             const responseTags = resolveCacheTags(cacheScope.config, reqCtx);
 
-            // Register this store for tag invalidation if tags are present
-            if (responseTags && responseTags.length > 0) {
-              registerTaggedStore(store);
+            // Register the explicit per-scope store for cross-store tag invalidation.
+            // Only register when the store came from cache({ store }), not the
+            // app-level fallback (which is reachable via ctx._cacheStore).
+            // The set is scoped per handler, so different routers don't cross-pollinate.
+            if (cacheScope.hasExplicitStore && responseTags && responseTags.length > 0) {
+              reqCtx._explicitTaggedStores?.add(store);
             }
 
             // Build cache key with response:{type}: prefix to avoid collision

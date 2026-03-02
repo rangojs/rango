@@ -2,12 +2,11 @@
  * Cache Tag Invalidation API
  *
  * Provides revalidateTag() for on-demand cache invalidation.
- * Invalidates across all stores that have received tagged writes,
- * including explicit per-scope stores from cache({ store: ... }).
+ * Invalidates across the app-level store and any explicit per-scope
+ * stores from cache({ store: ... }) that belong to this handler.
  */
 
 import { getRequestContext } from "../server/request-context.js";
-import { getTaggedStores } from "./tag-store-registry.js";
 
 /**
  * Invalidate all cache entries tagged with the given tag.
@@ -16,8 +15,10 @@ import { getTaggedStores } from "./tag-store-registry.js";
  * The invalidation runs asynchronously via waitUntil() so it
  * does not block the response.
  *
- * Invalidates across all stores that have received tagged entries,
- * including explicit per-scope stores from cache({ store: ... }).
+ * Invalidates across the app-level store and any explicit per-scope
+ * stores registered by this handler's cache({ store }) boundaries.
+ * In multi-router deployments, only the current handler's stores
+ * are affected.
  *
  * @example
  * ```typescript
@@ -31,7 +32,7 @@ import { getTaggedStores } from "./tag-store-registry.js";
 export function revalidateTag(tag: string): void {
   const ctx = getRequestContext();
 
-  // Collect all stores that need invalidation
+  // Collect all stores that need invalidation (deduplicated via Set)
   const stores = new Set<{ revalidateTag(tag: string): Promise<void> }>();
 
   // App-level store from request context
@@ -39,10 +40,12 @@ export function revalidateTag(tag: string): void {
     stores.add(ctx._cacheStore as { revalidateTag(tag: string): Promise<void> });
   }
 
-  // All stores that have received tagged writes (includes explicit per-scope stores)
-  for (const store of getTaggedStores()) {
-    if (store.revalidateTag) {
-      stores.add(store as { revalidateTag(tag: string): Promise<void> });
+  // Explicit per-scope stores scoped to this handler
+  if (ctx?._explicitTaggedStores) {
+    for (const store of ctx._explicitTaggedStores) {
+      if (store.revalidateTag) {
+        stores.add(store as { revalidateTag(tag: string): Promise<void> });
+      }
     }
   }
 
