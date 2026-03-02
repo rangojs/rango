@@ -85,21 +85,19 @@ type AutofillSearchFromEntry<TMap, TKey> = TKey extends keyof TMap
     : Record<string, unknown>
   : Record<string, unknown>;
 
-type AutofillAwareReverseFunction<
-  TLocalRoutes,
-  TGlobalRoutes,
-> = ScopedReverseFunction<TLocalRoutes, TGlobalRoutes> & {
-  <TName extends keyof TGlobalRoutes & string>(
-    name: TName,
-    params?: AutofillParamsFromEntry<TGlobalRoutes[TName]>,
-    search?: AutofillSearchFromEntry<TGlobalRoutes, TName>,
-  ): string;
-  <TName extends keyof TLocalRoutes & string>(
-    name: `.${TName}`,
-    params?: AutofillParamsFromEntry<TLocalRoutes[TName]>,
-    search?: AutofillSearchFromEntry<TLocalRoutes, TName>,
-  ): string;
-};
+type AutofillAwareReverseFunction<TLocalRoutes, TGlobalRoutes> =
+  ScopedReverseFunction<TLocalRoutes, TGlobalRoutes> & {
+    <TName extends keyof TGlobalRoutes & string>(
+      name: TName,
+      params?: AutofillParamsFromEntry<TGlobalRoutes[TName]>,
+      search?: AutofillSearchFromEntry<TGlobalRoutes, TName>,
+    ): string;
+    <TName extends keyof TLocalRoutes & string>(
+      name: `.${TName}`,
+      params?: AutofillParamsFromEntry<TLocalRoutes[TName]>,
+      search?: AutofillSearchFromEntry<TLocalRoutes, TName>,
+    ): string;
+  };
 
 type StrictLocalParamsWithExtras<TEntry> =
   IsEmptyObject<ExtractParamsFromEntry<TEntry, {}>> extends true
@@ -114,21 +112,19 @@ type StrictLocalParamsWithExtras<TEntry> =
 // params declared by that map are present while still allowing extra mount
 // params to be passed through. Global names remain autofill-friendly because
 // parent include() params are often unknown at the module definition site.
-type StrictLocalAutofillGlobalReverseFunction<
-  TLocalRoutes,
-  TGlobalRoutes,
-> = ScopedReverseFunction<TLocalRoutes, TGlobalRoutes> & {
-  <TName extends keyof TGlobalRoutes & string>(
-    name: TName,
-    params?: AutofillParamsFromEntry<TGlobalRoutes[TName]>,
-    search?: AutofillSearchFromEntry<TGlobalRoutes, TName>,
-  ): string;
-  <TName extends keyof TLocalRoutes & string>(
-    name: `.${TName}`,
-    params: StrictLocalParamsWithExtras<TLocalRoutes[TName]>,
-    search?: AutofillSearchFromEntry<TLocalRoutes, TName>,
-  ): string;
-};
+type StrictLocalAutofillGlobalReverseFunction<TLocalRoutes, TGlobalRoutes> =
+  ScopedReverseFunction<TLocalRoutes, TGlobalRoutes> & {
+    <TName extends keyof TGlobalRoutes & string>(
+      name: TName,
+      params?: AutofillParamsFromEntry<TGlobalRoutes[TName]>,
+      search?: AutofillSearchFromEntry<TGlobalRoutes, TName>,
+    ): string;
+    <TName extends keyof TLocalRoutes & string>(
+      name: `.${TName}`,
+      params: StrictLocalParamsWithExtras<TLocalRoutes[TName]>,
+      search?: AutofillSearchFromEntry<TLocalRoutes, TName>,
+    ): string;
+  };
 
 export type Handler<
   T extends
@@ -404,7 +400,10 @@ export type HandlerContext<
    * ```
    */
   reverse: [TRouteMap] extends [never]
-    ? AutofillAwareReverseFunction<Record<string, string>, DefaultReverseRouteMap>
+    ? AutofillAwareReverseFunction<
+        Record<string, string>,
+        DefaultReverseRouteMap
+      >
     : StrictLocalAutofillGlobalReverseFunction<
         TRouteMap,
         DefaultReverseRouteMap

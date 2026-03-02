@@ -8,6 +8,8 @@
 import type {
   Handler,
   HandlerContext,
+  LoaderContext,
+  MiddlewareContext,
   Middleware,
   Revalidate,
   GenericParams,
@@ -244,6 +246,40 @@ const testHandlerWithScopedReverse: Handler<"/"> = (ctx) => {
   const _cross = ctx.reverse("blog.post", { postId: "hello" });
 
   return null;
+};
+
+// Test 16b: scopedReverse() works for extracted loaders and middleware too
+type SharedLocalRoutes = {
+  index: "/";
+  detail: "/:id";
+  settings: "/settings";
+};
+type SharedPatternsType = UrlPatterns<unknown, SharedLocalRoutes>;
+
+const testLoaderWithScopedReverse = (
+  ctx: LoaderContext<Record<string, string | undefined>>,
+) => {
+  const reverse = scopedReverse<SharedPatternsType>(ctx.reverse);
+
+  const _idx = reverse("index");
+  const _detail = reverse("detail", { id: "abc" });
+  const _settings = reverse("settings");
+
+  return { _idx, _detail, _settings };
+};
+
+const testMiddlewareWithScopedReverse = async (
+  ctx: MiddlewareContext,
+  next: () => Promise<Response>,
+) => {
+  const reverse = scopedReverse<SharedPatternsType>(ctx.reverse);
+
+  const _idx = reverse("index");
+  const _detail = reverse("detail", { id: "abc" });
+  const _settings = reverse("settings");
+
+  await next();
+  return new Response(JSON.stringify({ _idx, _detail, _settings }));
 };
 
 // =============================================================================

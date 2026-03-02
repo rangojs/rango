@@ -223,7 +223,10 @@ export interface RequestContext<
    * Uses the global route map. After route matching, scoped (`.name`) resolution
    * works within the matched include() scope.
    */
-  reverse: ScopedReverseFunction<Record<string, string>, DefaultReverseRouteMap>;
+  reverse: ScopedReverseFunction<
+    Record<string, string>,
+    DefaultReverseRouteMap
+  >;
 
   /** @internal Route name from route matching, used for scoped reverse resolution */
   _routeName?: string;

@@ -628,6 +628,11 @@ Quick rule of thumb:
 - `typeof router.routeMap` — use when you need route entries with response metadata
 - `RegisteredRoutes` (manual augmentation) — use to expose `typeof router.routeMap` globally for `href()`, `PathResponse`, `ValidPaths`, and other path/response-aware utilities
 
+For extracted reusable loaders or middleware, prefer global dotted names on
+`ctx.reverse()` by default. If you want type-safe local names for a specific
+module, use `scopedReverse<typeof localPatterns>(ctx.reverse)` or
+`scopedReverse<routes>(ctx.reverse)` with a generated local route type.
+
 ## Subpath Exports
 
 | Export                   | Description                                                                       |

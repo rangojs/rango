@@ -293,20 +293,29 @@ describe("Handler with local route map separates local/global", () => {
 
 describe("DefaultReverseRouteMap", () => {
   it("should allow string fallback when no route types are registered", () => {
-    type Reverse = ScopedReverseFunction<Record<string, string>, DefaultReverseRouteMap>;
+    type Reverse = ScopedReverseFunction<
+      Record<string, string>,
+      DefaultReverseRouteMap
+    >;
     expectTypeOf<Reverse>().toBeCallableWith("any-route");
     expectTypeOf<Reverse>().toBeCallableWith("any-route", { id: "1" });
   });
 
   it("should preserve response-route entries from manual route maps", () => {
     type RegisteredOnlyRoutes = {
-      "api.health": { readonly path: "/api/health"; readonly response: { ok: true } };
+      "api.health": {
+        readonly path: "/api/health";
+        readonly response: { ok: true };
+      };
       "api.item": {
         readonly path: "/api/items/:id";
         readonly response: { id: string };
       };
     };
-    type Reverse = ScopedReverseFunction<Record<string, string>, RegisteredOnlyRoutes>;
+    type Reverse = ScopedReverseFunction<
+      Record<string, string>,
+      RegisteredOnlyRoutes
+    >;
 
     expectTypeOf<Reverse>().toBeCallableWith("api.health");
     expectTypeOf<Reverse>().toBeCallableWith("api.item", { id: "123" });
@@ -319,13 +328,20 @@ describe("DefaultReverseRouteMap", () => {
         readonly search: { readonly q: "string"; readonly page: "number?" };
       };
     };
-    type Reverse = ScopedReverseFunction<Record<string, string>, GeneratedRoutes>;
+    type Reverse = ScopedReverseFunction<
+      Record<string, string>,
+      GeneratedRoutes
+    >;
 
     expectTypeOf<Reverse>().toBeCallableWith("search", {}, { q: "term" });
-    expectTypeOf<Reverse>().toBeCallableWith("search", {}, {
-      q: "term",
-      page: 2,
-    });
+    expectTypeOf<Reverse>().toBeCallableWith(
+      "search",
+      {},
+      {
+        q: "term",
+        page: 2,
+      },
+    );
   });
 });
 
