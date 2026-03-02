@@ -10,6 +10,7 @@ Named-route RSC router with structural composability and type-safe partial rende
 - **Structural composability** — Attach routes, loaders, middleware, handles, caching, prerendering, and static generation without hiding the route tree
 - **Composable URL patterns** — Django-style `urls()` DSL with `path`, `layout`, `include`
 - **Data loaders** — `createLoader()` with automatic streaming and Suspense integration
+- **Live data layer** — Pre-render or cache the UI shell while loaders stay live by default at request time
 - **Layouts & nesting** — Nested layouts with `<Outlet />` and parallel routes
 - **Segment-level caching** — `cache()` DSL with TTL/SWR and pluggable cache stores
 - **Middleware** — Route-level middleware with cookie and header access
@@ -186,6 +187,34 @@ This applies to:
 - external route modules mounted with `include()`
 - imported loaders, middleware, and handles attached at the route site
 - prerendering and static generation attached without turning the route tree opaque
+
+### Loaders As the Live Data Layer
+
+Rango separates app structure from app data.
+
+Routes, layouts, and pre-rendered segments can be static or cached, while
+loaders stay live by default and re-resolve at request time.
+
+This means you can pre-render or cache the shell of a page without freezing its
+data.
+
+- `cache()` caches route structure and rendered UI segments
+- `Prerender()` skips loaders at build time
+- `loader()` provides fresh request-time data
+- individual loaders can opt into caching explicitly when needed
+
+```tsx
+import { urls, Prerender } from "@rangojs/router";
+import { ArticleLoader } from "./loaders/article";
+
+const docsPatterns = urls(({ path, loader }) => [
+  path("/docs/:slug", Prerender(DocsArticle), { name: "docs.article" }, () => [
+    loader(ArticleLoader), // fresh by default
+  ]),
+]);
+```
+
+Pre-render the page, keep the data live.
 
 ### Typed Handlers
 

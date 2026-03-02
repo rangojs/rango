@@ -62,6 +62,10 @@ export function stringToStream(str: string): ReadableStream<Uint8Array> {
 /**
  * RSC-serialize a value using React Server Components stream.
  * Used for serializing loaderData, layout, loading components etc.
+ *
+ * Returns undefined for null/undefined inputs (component fields that are absent).
+ * For contexts where null is a valid result (loader caching, "use cache"),
+ * use serializeResult() instead which preserves null through RSC Flight.
  */
 export async function rscSerialize(
   value: unknown,
@@ -81,6 +85,38 @@ export async function rscDeserialize<T>(
 ): Promise<T | undefined> {
   if (!encoded) return undefined;
 
+  const temporaryReferences = createTemporaryReferenceSet();
+  const stream = stringToStream(encoded);
+  return createFromReadableStream<T>(stream, { temporaryReferences });
+}
+
+// ============================================================================
+// Null-Preserving RSC Serialization (for caching)
+// ============================================================================
+
+/**
+ * RSC-serialize any value including null.
+ * Unlike rscSerialize(), this does NOT skip null — it serializes it through
+ * RSC Flight so that a loader returning null produces a valid cached entry
+ * rather than a permanent cache miss.
+ *
+ * Returns null only on serialization failure.
+ */
+export async function serializeResult(value: unknown): Promise<string | null> {
+  try {
+    const temporaryReferences = createTemporaryReferenceSet();
+    const stream = renderToReadableStream(value, { temporaryReferences });
+    return await streamToString(stream);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * RSC-deserialize a cached result string.
+ * Counterpart to serializeResult() — always receives a non-empty string.
+ */
+export async function deserializeResult<T>(encoded: string): Promise<T> {
   const temporaryReferences = createTemporaryReferenceSet();
   const stream = stringToStream(encoded);
   return createFromReadableStream<T>(stream, { temporaryReferences });

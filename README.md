@@ -15,6 +15,7 @@ A code-first, type-safe React Server Components router for serverless deployment
 - **Middleware** - Auth, logging, rate limiting
 - **Error/NotFound boundaries** - Graceful error handling
 - **Pre-rendering** - Build-time caching for static content
+- **Live data loaders** - Pre-render or cache UI structure while `loader()` stays fresh by default
 - **Trailing slash control** - Per-route canonical URL handling via `path(..., { trailingSlash })`
 
 ## Structure
@@ -69,6 +70,11 @@ const router = createRouter().routes(urlpatterns);
 router.reverse("shop.cart"); // "/shop/cart"
 router.reverse("shop.product", { slug: "widget" }); // "/shop/product/widget"
 ```
+
+Rango treats loaders as the live data layer: pre-rendering and route-level
+cache boundaries can store the UI structure, while `loader()` re-resolves fresh
+request-time data by default. That lets you pre-render the page shell without
+freezing the data behind it.
 
 Trailing slash handling is supported directly on `path()`:
 

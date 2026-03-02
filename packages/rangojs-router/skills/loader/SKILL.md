@@ -134,6 +134,119 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ]);
 ```
 
+## Loaders: The Live Data Layer
+
+Loaders are the live data layer of the router. They resolve fresh on every
+request, even when the route's UI segments are served from cache. This is a
+core design principle — route-level `cache()` caches rendered components but
+never caches loader data. Loaders are excluded at storage time and re-resolved
+on retrieval.
+
+This means `cache()` gives you cached UI + fresh data by default. Pre-rendering
+follows the same rule: at build time, loaders are skipped entirely (there is no
+real request context), and at runtime the worker resolves them fresh against
+the live database.
+
+### Opting a Loader into Caching
+
+To cache a specific loader's data, attach a `cache()` child:
+
+```typescript
+loader(ProductLoader, () => [cache({ ttl: 300 })]),
+```
+
+The loader's data is cached independently from the route's segment cache,
+using the same `SegmentCacheStore` (app-level or per-loader override).
+
+Values are serialized through RSC Flight, so loaders can return ReactNode,
+Promises, null, and any RSC-serializable type — all round-trip correctly
+through the cache.
+
+### Cache Key
+
+The default cache key is `loader:{loaderId}:{pathname}:{sortedParams}`.
+This can be customized at two levels:
+
+```typescript
+// Full override — key function replaces the default entirely
+loader(ProductLoader, () => [
+  cache({
+    ttl: 300,
+    key: (ctx) => `product:${ctx.params.slug}:${ctx.cookie("locale")}`,
+  }),
+]),
+
+// Store-level keyGenerator — modifies the default key (e.g., adds a region prefix)
+// Set in the store configuration, applies to all entries in that store
+```
+
+Resolution priority (same as route-level `cache()`):
+
+1. `key(ctx)` from cache options — full override
+2. `store.keyGenerator(ctx, defaultKey)` — store-level modification
+3. Default key — `loader:{id}:{pathname}:{params}`
+
+If a custom key function throws, it falls back to the default key silently
+(logged to console.error).
+
+### Tags for Invalidation
+
+```typescript
+// Static tags
+loader(ProductLoader, () => [
+  cache({ ttl: 300, tags: ["products", "catalog"] }),
+]),
+
+// Dynamic tags
+loader(ProductLoader, () => [
+  cache({
+    ttl: 300,
+    tags: (ctx) => [`product:${ctx.params.slug}`, "products"],
+  }),
+]),
+```
+
+### Stale-While-Revalidate
+
+```typescript
+loader(ProductLoader, () => [
+  cache({ ttl: 60, swr: 300 }),
+]),
+```
+
+During the SWR window (60-360s), stale data is returned immediately while
+fresh data is fetched in the background via `waitUntil`. After the SWR window
+expires (360s+), the entry is treated as a cache miss.
+
+### Conditional Caching
+
+Skip the cache at runtime based on request properties:
+
+```typescript
+loader(ProductLoader, () => [
+  cache({
+    ttl: 300,
+    condition: (ctx) => !ctx.request.headers.has("authorization"),
+  }),
+]),
+```
+
+When `condition` returns false, the loader runs fresh and the cache is bypassed
+entirely (no read, no write).
+
+### Per-Loader Store Override
+
+```typescript
+const hotStore = new MemorySegmentCacheStore({ defaults: { ttl: 10 } });
+
+loader(PricingLoader, () => [
+  cache({ store: hotStore }),
+]),
+```
+
+Without an explicit store, the loader uses the app-level store from the
+handler config (`cache.store`).
+
 ## Multiple Loaders
 
 Routes can have multiple loaders that run in parallel:
