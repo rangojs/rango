@@ -46,6 +46,10 @@ export {
   type CFCacheStoreOptions,
   CACHE_STALE_AT_HEADER,
   CACHE_TAGS_HEADER,
+  // Deprecated (kept for backwards compatibility)
+  CACHE_STATUS_HEADER,
+  MAX_REVALIDATION_INTERVAL,
+  type CacheStatus,
 } from "./cf/index.js";
 
 // Cache scope

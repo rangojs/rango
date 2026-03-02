@@ -53,6 +53,25 @@ export const CACHE_TAGS_HEADER = "Cache-Tag";
 export const REVALIDATION_LOCK_TTL = 30;
 
 // ============================================================================
+// Deprecated exports (kept for backwards compatibility)
+// ============================================================================
+
+/**
+ * @deprecated Renamed to `REVALIDATION_LOCK_TTL`. Will be removed in a future major version.
+ */
+export const MAX_REVALIDATION_INTERVAL: number = REVALIDATION_LOCK_TTL;
+
+/**
+ * @deprecated The SWR status header is no longer used. Will be removed in a future major version.
+ */
+export const CACHE_STATUS_HEADER = "x-edge-cache-status";
+
+/**
+ * @deprecated The CacheStatus type is no longer used. Will be removed in a future major version.
+ */
+export type CacheStatus = "HIT" | "REVALIDATING";
+
+// ============================================================================
 // Types
 // ============================================================================
 
