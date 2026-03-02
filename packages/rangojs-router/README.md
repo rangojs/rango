@@ -17,6 +17,7 @@ Named-route RSC router with structural composability and type-safe partial rende
 - **Theme support** — Light/dark mode with FOUC prevention and system detection
 - **Host routing** — Multi-app routing by domain/subdomain via `@rangojs/router/host`
 - **Response routes** — `path.json()`, `path.text()`, `path.xml()` for API endpoints
+- **Trailing slash control** — Per-route canonical URLs with `"never"`, `"always"`, or `"ignore"`
 - **CLI codegen** — `rango generate` for route type generation
 
 ## Installation
@@ -241,6 +242,44 @@ const SearchPage: Handler<"search"> = (ctx) => {
   // q: string, page: number | undefined, sort: string | undefined
 };
 ```
+
+### Trailing Slash Handling
+
+Trailing slash behavior is a current `path()` feature.
+
+Set it per route with `trailingSlash`:
+
+```tsx
+const urlpatterns = urls(({ path }) => [
+  path("/about", AboutPage, {
+    name: "about",
+    trailingSlash: "never",
+  }),
+  path("/docs/", DocsPage, {
+    name: "docs",
+    trailingSlash: "always",
+  }),
+  path("/webhook", WebhookHandler, {
+    name: "webhook",
+    trailingSlash: "ignore",
+  }),
+]);
+```
+
+Modes:
+
+- `"never"` — canonical URL has no trailing slash, redirects `/about/` to `/about`
+- `"always"` — canonical URL has a trailing slash, redirects `/docs` to `/docs/`
+- `"ignore"` — matches both forms without redirect
+
+Default behavior when `trailingSlash` is omitted:
+
+- There is no separate global default mode
+- If the pattern is defined without a trailing slash, the canonical URL is the no-slash form
+- If the pattern is defined with a trailing slash, the canonical URL is the slash form
+- The router redirects to the canonical form based on the pattern you defined
+
+The recommended public API is the per-route `path(..., { trailingSlash })` option. Use `"ignore"` sparingly, especially on content pages, because `/x` and `/x/` are distinct URLs.
 
 ### Response Routes
 

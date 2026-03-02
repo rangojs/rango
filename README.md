@@ -15,6 +15,7 @@ A code-first, type-safe React Server Components router for serverless deployment
 - **Middleware** - Auth, logging, rate limiting
 - **Error/NotFound boundaries** - Graceful error handling
 - **Pre-rendering** - Build-time caching for static content
+- **Trailing slash control** - Per-route canonical URL handling via `path(..., { trailingSlash })`
 
 ## Structure
 
@@ -68,6 +69,21 @@ const router = createRouter().routes(urlpatterns);
 router.reverse("shop.cart"); // "/shop/cart"
 router.reverse("shop.product", { slug: "widget" }); // "/shop/product/widget"
 ```
+
+Trailing slash handling is supported directly on `path()`:
+
+```typescript
+const urlpatterns = urls(({ path }) => [
+  path("/about", AboutPage, { name: "about", trailingSlash: "never" }),
+  path("/docs/", DocsPage, { name: "docs", trailingSlash: "always" }),
+  path("/webhook", WebhookHandler, {
+    name: "webhook",
+    trailingSlash: "ignore",
+  }),
+]);
+```
+
+If `trailingSlash` is omitted, there is no separate global default mode. The router uses the pattern you define as the canonical form and redirects to it.
 
 ## Debug Logging
 
