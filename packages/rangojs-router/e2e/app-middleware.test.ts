@@ -619,7 +619,7 @@ test.describe("app-middleware (dev)", () => {
     }) => {
       // Try to fetch protected loader without auth token
       const response = await request.get(
-        f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader"),
+        f.url("/fetch-loader?_rsc_loader=src/loaders.tsx%23ProtectedLoader"),
         {
           headers: { Accept: "text/x-component" },
         },
@@ -637,7 +637,7 @@ test.describe("app-middleware (dev)", () => {
       // Fetch protected loader with valid auth token
       const response = await request.get(
         f.url(
-          "/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader&_rsc_loader_params=" +
+          "/fetch-loader?_rsc_loader=src/loaders.tsx%23ProtectedLoader&_rsc_loader_params=" +
             encodeURIComponent(JSON.stringify({ authToken: "valid-token" })),
         ),
         {
@@ -656,7 +656,7 @@ test.describe("app-middleware (dev)", () => {
       // Fetch protected loader with invalid auth token
       const response = await request.get(
         f.url(
-          "/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader&_rsc_loader_params=" +
+          "/fetch-loader?_rsc_loader=src/loaders.tsx%23ProtectedLoader&_rsc_loader_params=" +
             encodeURIComponent(JSON.stringify({ authToken: "invalid-token" })),
         ),
         {
