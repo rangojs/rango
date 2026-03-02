@@ -35,6 +35,7 @@ import { contextGet, contextSet } from "../context-var.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import { traverseBack } from "../router/pattern-matching.js";
 import { createCacheScope, resolveCacheTags } from "../cache/cache-scope.js";
+import { registerTaggedStore } from "../cache/tag-store-registry.js";
 import {
   hasCachedManifest,
   getRouteTrie,
@@ -592,6 +593,11 @@ export function createRSCHandler<
           if (store?.getResponse && store?.putResponse) {
             // Resolve tags for response cache entries
             const responseTags = resolveCacheTags(cacheScope.config, reqCtx);
+
+            // Register this store for tag invalidation if tags are present
+            if (responseTags && responseTags.length > 0) {
+              registerTaggedStore(store);
+            }
 
             // Build cache key with response:{type}: prefix to avoid collision
             // with segment keys and differentiate between response types

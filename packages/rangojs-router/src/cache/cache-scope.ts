@@ -18,6 +18,7 @@ import {
 } from "../server/request-context.js";
 import { serializeSegments, deserializeSegments } from "./segment-codec.js";
 import { captureHandles, restoreHandles } from "./handle-snapshot.js";
+import { registerTaggedStore } from "./tag-store-registry.js";
 
 // Re-export codec functions for backwards compatibility.
 // Existing call sites import these from cache-scope.ts via dynamic import.
@@ -350,6 +351,11 @@ export class CacheScope {
 
     // Resolve tags early (while request context is available)
     const tags = resolveCacheTags(this.config, requestCtx);
+
+    // Register this store for tag invalidation if tags are present
+    if (tags && tags.length > 0) {
+      registerTaggedStore(store);
+    }
 
     // Check if this is a partial request (navigation) vs document request
     const isPartial = requestCtx.url.searchParams.has("_rsc_partial");

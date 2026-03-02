@@ -2,11 +2,12 @@
  * Cache Tag Invalidation API
  *
  * Provides revalidateTag() for on-demand cache invalidation.
- * Accesses the cache store via RequestContext and delegates
- * deletion to the store's revalidateTag() implementation.
+ * Invalidates across all stores that have received tagged writes,
+ * including explicit per-scope stores from cache({ store: ... }).
  */
 
 import { getRequestContext } from "../server/request-context.js";
+import { getTaggedStores } from "./tag-store-registry.js";
 
 /**
  * Invalidate all cache entries tagged with the given tag.
@@ -15,8 +16,8 @@ import { getRequestContext } from "../server/request-context.js";
  * The invalidation runs asynchronously via waitUntil() so it
  * does not block the response.
  *
- * Requires a cache store that implements revalidateTag().
- * MemorySegmentCacheStore supports this; CFCacheStore logs a warning.
+ * Invalidates across all stores that have received tagged entries,
+ * including explicit per-scope stores from cache({ store: ... }).
  *
  * @example
  * ```typescript
@@ -29,7 +30,23 @@ import { getRequestContext } from "../server/request-context.js";
  */
 export function revalidateTag(tag: string): void {
   const ctx = getRequestContext();
-  if (!ctx?._cacheStore?.revalidateTag) {
+
+  // Collect all stores that need invalidation
+  const stores = new Set<{ revalidateTag(tag: string): Promise<void> }>();
+
+  // App-level store from request context
+  if (ctx?._cacheStore?.revalidateTag) {
+    stores.add(ctx._cacheStore as { revalidateTag(tag: string): Promise<void> });
+  }
+
+  // All stores that have received tagged writes (includes explicit per-scope stores)
+  for (const store of getTaggedStores()) {
+    if (store.revalidateTag) {
+      stores.add(store as { revalidateTag(tag: string): Promise<void> });
+    }
+  }
+
+  if (stores.size === 0) {
     if (process.env.NODE_ENV !== "production") {
       console.warn(
         `[revalidateTag] No cache store with tag support available. ` +
@@ -38,8 +55,17 @@ export function revalidateTag(tag: string): void {
     }
     return;
   }
-  const store = ctx._cacheStore;
-  ctx.waitUntil(async () => {
-    await store.revalidateTag!(tag);
-  });
+
+  if (ctx?.waitUntil) {
+    ctx.waitUntil(async () => {
+      await Promise.all(
+        [...stores].map((store) => store.revalidateTag(tag)),
+      );
+    });
+  } else {
+    // No waitUntil (e.g. outside request context): run as best-effort
+    Promise.all(
+      [...stores].map((store) => store.revalidateTag(tag)),
+    ).catch(() => {});
+  }
 }
