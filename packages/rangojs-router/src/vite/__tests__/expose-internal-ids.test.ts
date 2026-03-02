@@ -780,7 +780,7 @@ export const helperFn = () => "not a loader";
 // ---------------------------------------------------------------------------
 
 describe("exposeInternalIds - fetchable loader client stubs", () => {
-  it("generates client stub with action for fetchable loader (export-only file)", () => {
+  it("generates client stub for fetchable loader (export-only file)", () => {
     const plugin = createPlugin();
     initDev(plugin);
 
@@ -791,11 +791,10 @@ export const MyLoader = createLoader(async () => ({ ok: true }), true);
     expect(result).toBeDefined();
     expect(result.code).toContain('__brand: "loader"');
     expect(result.code).toContain("$$id");
-    // Fetchable loaders include an action wrapper that delegates to the
-    // invokeFetchableLoaderAction server action.
-    expect(result.code).toContain("action:");
-    expect(result.code).toContain("__ifa");
-    expect(result.code).toContain("invokeFetchableLoaderAction");
+    // No action wrapper — loaders are simple { __brand, $$id } stubs
+    expect(result.code).not.toContain("action:");
+    expect(result.code).not.toContain("__ifa");
+    expect(result.code).not.toContain("invokeFetchableLoaderAction");
     // No server code
     expect(result.code).not.toContain("async () =>");
   });
@@ -815,7 +814,7 @@ export const MyLoader = createLoader(async () => ({ ok: true }));
     expect(result.code).not.toContain("invokeFetchableLoaderAction");
   });
 
-  it("generates mixed stubs when file has both fetchable and non-fetchable loaders", () => {
+  it("generates stubs for file with both fetchable and non-fetchable loaders", () => {
     const plugin = createPlugin();
     initDev(plugin);
 
@@ -825,10 +824,9 @@ export const Fetchable = createLoader(async () => ({ data: "write" }), true);
 `;
     const result = plugin.transform.call(clientCtx(), code, FILE_ID);
     expect(result).toBeDefined();
-    // Fetchable loader gets action wrapper, non-fetchable does not
-    expect(result.code).toContain("invokeFetchableLoaderAction");
-    expect(result.code).toMatch(/Fetchable\s*=\s*\{[^}]*action:/);
-    expect(result.code).not.toMatch(/ReadOnly\s*=\s*\{[^}]*action:/);
+    // No action wrappers on any stubs
+    expect(result.code).not.toContain("invokeFetchableLoaderAction");
+    expect(result.code).not.toContain("action:");
     // Both stubs have __brand and $$id
     expect(result.code).toMatch(/ReadOnly\s*=\s*\{[^}]*__brand/);
     expect(result.code).toMatch(/Fetchable\s*=\s*\{[^}]*__brand/);
@@ -845,9 +843,9 @@ export const CartLoader = createLoader(async () => ({ items: [] }), true);
     expect(result).toBeDefined();
     // Stub should reference the correct loader ID
     expect(result.code).toContain("src/urls.tsx#CartLoader");
-    // The ID appears twice: once in $$id and once in the action wrapper
+    // The ID appears once in $$id
     const idOccurrences = result.code.match(/src\/urls\.tsx#CartLoader/g);
-    expect(idOccurrences).toHaveLength(2);
+    expect(idOccurrences).toHaveLength(1);
   });
 
   it("client stub includes correct loader ID in build mode", () => {
@@ -859,9 +857,9 @@ export const CartLoader = createLoader(async () => ({ items: [] }), true);
 `;
     const result = plugin.transform.call(clientCtx(), code, FILE_ID);
     expect(result).toBeDefined();
-    // Build mode uses hashed IDs, appears twice: $$id and action wrapper
+    // Build mode uses hashed IDs, appears once in $$id
     const ids = result.code.match(/[0-9a-f]{8}#CartLoader/g);
-    expect(ids).toHaveLength(2);
+    expect(ids).toHaveLength(1);
   });
 
   it("does not inject action for fetchable loader in mixed file (transformLoaders path)", () => {
@@ -923,11 +921,11 @@ export const Guarded = createLoader(async () => ({ ok: true }), { middleware: [a
 `;
     const result = plugin.transform.call(clientCtx(), code, FILE_ID);
     expect(result).toBeDefined();
-    // Client stub has __brand, $$id, and action wrapper (options object makes it fetchable)
+    // Client stub has __brand and $$id, no action wrapper
     expect(result.code).toContain('__brand: "loader"');
     expect(result.code).toContain("$$id");
-    expect(result.code).toContain("action:");
-    expect(result.code).toContain("__ifa");
+    expect(result.code).not.toContain("action:");
+    expect(result.code).not.toContain("__ifa");
   });
 });
 

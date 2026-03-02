@@ -13,7 +13,11 @@ import {
 } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import type { RscPayload } from "./types.js";
-import { hasBodyContent, createResponseWithMergedHeaders } from "./helpers.js";
+import {
+  hasBodyContent,
+  createResponseWithMergedHeaders,
+  createSimpleRedirectResponse,
+} from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 
 export async function handleServerAction<TEnv>(
@@ -74,10 +78,7 @@ export async function handleServerAction<TEnv>(
           );
         }
         // Simple redirect: short-circuit with a header, no RSC serialization
-        return createResponseWithMergedHeaders(null, {
-          status: 204,
-          headers: { "X-RSC-Redirect": redirectUrl },
-        });
+        return createSimpleRedirectResponse(redirectUrl);
       }
     }
 
@@ -96,10 +97,7 @@ export async function handleServerAction<TEnv>(
             resolveLocationStateEntries(locationState),
           );
         }
-        return createResponseWithMergedHeaders(null, {
-          status: 204,
-          headers: { "X-RSC-Redirect": redirectUrl },
-        });
+        return createSimpleRedirectResponse(redirectUrl);
       }
     }
 
@@ -109,7 +107,7 @@ export async function handleServerAction<TEnv>(
     // Try to render error boundary
     const errorResult = await ctx.router.matchError(
       request,
-      env,
+      { env },
       error,
       "route",
     );
@@ -165,20 +163,20 @@ export async function handleServerAction<TEnv>(
 
   const matchResult = await ctx.router.matchPartial(
     request,
-    env,
+    { env },
     actionContext,
   );
 
   if (!matchResult) {
     // Fall back to full render
-    const fullMatch = await ctx.router.match(request, env);
+    const fullMatch = await ctx.router.match(request, { env });
     setRequestContextParams(fullMatch.params, fullMatch.routeName);
 
     if (fullMatch.redirect) {
-      return createResponseWithMergedHeaders(null, {
-        status: 308,
-        headers: { Location: fullMatch.redirect },
-      });
+      // Action context is always partial — use X-RSC-Redirect header so
+      // the client can perform SPA navigation instead of fetch auto-following
+      // a raw 308 to a URL that would render full HTML.
+      return createSimpleRedirectResponse(fullMatch.redirect);
     }
 
     const serverTiming = fullMatch.serverTiming;

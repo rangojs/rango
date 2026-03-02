@@ -455,7 +455,8 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       return shouldRevalidate;
     },
     async () => {
-      (context as InternalHandlerContext)._currentSegmentId = entry.shortCode;
+      (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+        entry.shortCode;
       // Static handler interception: use pre-rendered component from build-time store
       const entryAny = entry as any;
       if (entryAny.isStaticPrerender && entryAny.staticHandlerId) {

@@ -4,7 +4,7 @@
  * Utility functions for RSC request handling.
  */
 
-import { getRequestContext } from "../server/request-context.js";
+import { _getRequestContext } from "../server/request-context.js";
 
 /**
  * Check if a request body has content to decode
@@ -29,7 +29,7 @@ export function createResponseWithMergedHeaders(
   body: BodyInit | null,
   init: ResponseInit,
 ): Response {
-  const ctx = getRequestContext();
+  const ctx = _getRequestContext();
   if (!ctx) {
     return new Response(body, init);
   }
@@ -61,4 +61,18 @@ export function createResponseWithMergedHeaders(
   }
 
   return response;
+}
+
+/**
+ * Create a 204 response with X-RSC-Redirect header for stateless redirects.
+ * Used during partial/action requests where fetch would auto-follow a raw
+ * 3xx to a URL that renders full HTML instead of Flight data. The 204 status
+ * prevents auto-follow; the client reads the header and re-navigates via
+ * the router.
+ */
+export function createSimpleRedirectResponse(redirectUrl: string): Response {
+  return createResponseWithMergedHeaders(null, {
+    status: 204,
+    headers: { "X-RSC-Redirect": redirectUrl },
+  });
 }

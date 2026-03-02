@@ -23,6 +23,7 @@ import { RootErrorBoundary } from "../../root-error-boundary.js";
 import type { HandleData } from "../types.js";
 import { ThemeProvider } from "../../theme/ThemeProvider.js";
 import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
+import { cancelAllPrefetches } from "../prefetch-queue.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -126,6 +127,12 @@ export interface NavigationProviderProps {
    * When true, keeps TLS alive by sending HEAD requests after idle periods.
    */
   warmupEnabled?: boolean;
+
+  /**
+   * App version from server payload (stable, immutable).
+   * Forwarded to prefetch requests for version mismatch detection.
+   */
+  version?: string;
 }
 
 /**
@@ -157,6 +164,7 @@ export function NavigationProvider({
   themeConfig,
   initialTheme,
   warmupEnabled,
+  version,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
   const [payload, setPayload] = useState(initialPayload);
@@ -185,6 +193,7 @@ export function NavigationProvider({
       eventController,
       navigate,
       refresh,
+      version,
     }),
     [],
   );
@@ -276,6 +285,21 @@ export function NavigationProvider({
     };
   }, [warmupEnabled]);
 
+  // Cancel speculative prefetches when navigation starts.
+  // Viewport/render prefetches should not compete with navigation fetches.
+  useEffect(() => {
+    let wasIdle = true;
+    const unsub = eventController.subscribe(() => {
+      const state = eventController.getState();
+      const isIdle = state.state === "idle" && !state.isStreaming;
+      if (wasIdle && !isIdle) {
+        cancelAllPrefetches();
+      }
+      wasIdle = isIdle;
+    });
+    return unsub;
+  }, [eventController]);
+
   // Subscribe to UI updates (for re-rendering the tree)
   useEffect(() => {
     const unsubscribe = store.onUpdate((update) => {
@@ -283,6 +307,9 @@ export function NavigationProvider({
         root: update.root,
         metadata: update.metadata,
       });
+
+      // Update route params
+      eventController.setParams(update.metadata.params ?? {});
 
       // Update handle data progressively as it streams in
       if (update.metadata.handles) {

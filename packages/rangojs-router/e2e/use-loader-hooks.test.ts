@@ -689,7 +689,7 @@ test.describe("isLoading state verification", () => {
   });
 });
 
-test.describe("Form action support", () => {
+test.describe("Server action form (useActionState)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
@@ -697,57 +697,7 @@ test.describe("Form action support", () => {
 
   test.setTimeout(30000);
 
-  test("form action triggers loader fetch on submit", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/hook-tests/form-action"));
-    await waitForHydration(page);
-
-    // Initially no data
-    await expect(testId(page, "form-action-no-data")).toBeVisible();
-
-    // Submit the form
-    await testId(page, "form-action-submit-btn").click();
-
-    // Wait for data to appear
-    await expect(testId(page, "form-action-data")).toBeVisible({
-      timeout: 5000,
-    });
-
-    // Verify data was fetched
-    await expect(testId(page, "form-action-message")).toContainText(
-      "Fetched from unregistered loader",
-    );
-  });
-
-  test("form uses correct server action markup for progressive enhancement", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/hook-tests/form-action"));
-    await waitForHydration(page);
-
-    // Verify the progressive enhancement form has correct server action markup
-    // This form uses useActionState with loader.action directly
-    const formHtml = await testId(
-      page,
-      "form-action-progressive-form",
-    ).evaluate((el) => el.outerHTML);
-
-    // Should have method="POST" and enctype for server actions
-    expect(formHtml).toContain('method="POST"');
-    expect(formHtml).toContain('enctype="multipart/form-data"');
-
-    // Should have server action reference hidden inputs
-    expect(formHtml).toContain('name="$ACTION_REF_');
-    expect(formHtml).toContain('name="$ACTION_KEY"');
-
-    // Should NOT have the javascript: trap (that indicates a client-only action)
-    expect(formHtml).not.toContain("javascript:throw");
-  });
-
-  test("form action works with directly imported loader (not passed as prop)", async ({
+  test("form submission triggers server action and displays result", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -756,62 +706,84 @@ test.describe("Form action support", () => {
     await waitForHydration(page);
 
     // Initially no data
-    await expect(testId(page, "direct-import-no-data")).toBeVisible();
+    await expect(testId(page, "server-action-form-no-data")).toBeVisible();
+    await expect(testId(page, "server-action-form-data")).not.toBeVisible();
 
     // Submit the form
-    await testId(page, "direct-import-submit-btn").click();
+    await testId(page, "server-action-form-submit-btn").click();
 
-    // Wait for data to appear
-    await expect(testId(page, "direct-import-data")).toBeVisible({
+    // Wait for result
+    await expect(testId(page, "server-action-form-data")).toBeVisible({
       timeout: 5000,
     });
 
-    // Verify data was fetched via the loader action
-    await expect(testId(page, "direct-import-message")).toContainText(
-      "Fetched from unregistered loader",
+    // Verify server action returned data
+    await expect(testId(page, "server-action-form-message")).toContainText(
+      "Submitted via server action",
     );
-    await expect(testId(page, "direct-import-id")).toContainText(
-      "direct-import-submitted",
+    await expect(testId(page, "server-action-form-id")).toContainText(
+      "form-submitted",
     );
   });
 
-  // Progressive enhancement test: useActionState forms work without JavaScript.
-  // The server decodes the action using decodeAction(), executes it, then passes
-  // the form state to renderToReadableStream so useActionState hooks receive the result.
-  test("form action works without JavaScript (progressive enhancement)", async ({
-    browser,
+  test("form has correct server action markup for progressive enhancement", async ({
+    page,
   }) => {
-    // Create a new context with JavaScript disabled
-    const context = await browser.newContext({
-      javaScriptEnabled: false,
-    });
-    const page = await context.newPage();
+    using _ = expectNoPageError(page);
 
-    try {
-      await page.goto(f.url("/hook-tests/form-action"));
+    await page.goto(f.url("/hook-tests/form-action"));
+    await waitForHydration(page);
 
-      // The progressive enhancement form should render with no data
-      await expect(
-        testId(page, "form-action-progressive-no-data"),
-      ).toBeVisible();
+    // The form should have React's hidden fields for server action PE
+    const formHtml = await testId(page, "server-action-form").innerHTML();
 
-      // Submit the form - native POST submission
-      await testId(page, "form-action-progressive-submit-btn").click();
+    // React adds hidden inputs with $ACTION prefix for progressive enhancement
+    expect(formHtml).toMatch(/\$ACTION/);
+  });
+});
 
-      // Wait for navigation to complete
-      await page.waitForLoadState("networkidle");
+test.describe("Server action form without JavaScript", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
 
-      // With progressive enhancement working, useActionState receives the result
-      await expect(testId(page, "form-action-progressive-data")).toBeVisible({
-        timeout: 5000,
-      });
+  test.setTimeout(30000);
+  test.use({ javaScriptEnabled: false });
 
-      await expect(
-        testId(page, "form-action-progressive-message"),
-      ).toContainText("Fetched from unregistered loader");
-    } finally {
-      await context.close();
-    }
+  test("form submission works without JavaScript (progressive enhancement)", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/hook-tests/form-action"));
+
+    // Verify page rendered via SSR
+    await expect(testId(page, "form-action-title")).toBeVisible();
+
+    // The form should be visible with no data
+    await expect(testId(page, "server-action-form-test")).toBeVisible();
+    await expect(testId(page, "server-action-form-no-data")).toBeVisible();
+
+    // Submit the form (without JS, this does a full page POST)
+    await testId(page, "server-action-form-submit-btn").click();
+
+    // Wait for navigation to complete
+    await page.waitForLoadState("domcontentloaded");
+
+    // After submission, we should get proper HTML back (not RSC stream)
+    await expect(page.locator("html")).toBeVisible();
+    await expect(page.locator("body")).toBeVisible();
+
+    // The page should still render correctly
+    await expect(testId(page, "form-action-title")).toBeVisible();
+
+    // The result should show the submitted data
+    await expect(testId(page, "server-action-form-data")).toBeVisible();
+    await expect(testId(page, "server-action-form-message")).toContainText(
+      "Submitted via server action",
+    );
+    await expect(testId(page, "server-action-form-id")).toContainText(
+      "form-submitted",
+    );
   });
 });
 
@@ -939,25 +911,7 @@ test.describe("useLoader hooks (production)", () => {
     );
   });
 
-  test("form action triggers loader fetch on submit", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/hook-tests/form-action"));
-    await waitForHydration(page);
-
-    await expect(testId(page, "form-action-no-data")).toBeVisible();
-
-    await testId(page, "form-action-submit-btn").click();
-
-    await expect(testId(page, "form-action-data")).toBeVisible({
-      timeout: 5000,
-    });
-    await expect(testId(page, "form-action-message")).toContainText(
-      "Fetched from unregistered loader",
-    );
-  });
-
-  test("form uses correct server action markup for progressive enhancement", async ({
+  test("server action form submission works in production", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -965,67 +919,77 @@ test.describe("useLoader hooks (production)", () => {
     await page.goto(f.url("/hook-tests/form-action"));
     await waitForHydration(page);
 
-    const formHtml = await testId(
-      page,
-      "form-action-progressive-form",
-    ).evaluate((el) => el.outerHTML);
+    // Initially no data
+    await expect(testId(page, "server-action-form-no-data")).toBeVisible();
 
-    expect(formHtml).toContain('method="POST"');
-    expect(formHtml).toContain('enctype="multipart/form-data"');
-    expect(formHtml).toContain('name="$ACTION_REF_');
-    expect(formHtml).toContain('name="$ACTION_KEY"');
-    expect(formHtml).not.toContain("javascript:throw");
+    // Submit the form
+    await testId(page, "server-action-form-submit-btn").click();
+
+    // Wait for result
+    await expect(testId(page, "server-action-form-data")).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Verify server action returned data
+    await expect(testId(page, "server-action-form-message")).toContainText(
+      "Submitted via server action",
+    );
+    await expect(testId(page, "server-action-form-id")).toContainText(
+      "form-submitted",
+    );
   });
 
-  test("form action works with directly imported loader (not passed as prop)", async ({
+  test("server action form has correct PE markup in production", async ({
     page,
   }) => {
+    using _ = expectNoPageError(page);
+
     await page.goto(f.url("/hook-tests/form-action"));
     await waitForHydration(page);
 
-    await expect(testId(page, "direct-import-no-data")).toBeVisible();
+    const formHtml = await testId(page, "server-action-form").innerHTML();
 
-    await testId(page, "direct-import-submit-btn").click();
+    expect(formHtml).toMatch(/\$ACTION/);
+  });
+});
 
-    await expect(testId(page, "direct-import-data")).toBeVisible({
-      timeout: 5000,
-    });
-    await expect(testId(page, "direct-import-message")).toContainText(
-      "Fetched from unregistered loader",
-    );
-    await expect(testId(page, "direct-import-id")).toContainText(
-      "direct-import-submitted",
-    );
+test.describe("Server action form without JavaScript (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
   });
 
-  test("form action works without JavaScript (progressive enhancement)", async ({
-    browser,
+  test.setTimeout(120000);
+  test.use({ javaScriptEnabled: false });
+
+  test("form submission works without JavaScript in production", async ({
+    page,
   }) => {
-    const context = await browser.newContext({
-      javaScriptEnabled: false,
-    });
-    const page = await context.newPage();
+    await page.goto(f.url("/hook-tests/form-action"));
 
-    try {
-      await page.goto(f.url("/hook-tests/form-action"));
+    // Verify page rendered via SSR
+    await expect(testId(page, "form-action-title")).toBeVisible();
 
-      await expect(
-        testId(page, "form-action-progressive-no-data"),
-      ).toBeVisible();
+    // Submit the form (native POST)
+    await testId(page, "server-action-form-submit-btn").click();
 
-      await testId(page, "form-action-progressive-submit-btn").click();
+    // Wait for navigation to complete
+    await page.waitForLoadState("domcontentloaded");
 
-      await page.waitForLoadState("networkidle");
+    // After submission, we should get proper HTML back
+    await expect(page.locator("html")).toBeVisible();
+    await expect(page.locator("body")).toBeVisible();
 
-      await expect(testId(page, "form-action-progressive-data")).toBeVisible({
-        timeout: 5000,
-      });
+    // The page should still render correctly
+    await expect(testId(page, "form-action-title")).toBeVisible();
 
-      await expect(
-        testId(page, "form-action-progressive-message"),
-      ).toContainText("Fetched from unregistered loader");
-    } finally {
-      await context.close();
-    }
+    // The result should show the submitted data
+    await expect(testId(page, "server-action-form-data")).toBeVisible();
+    await expect(testId(page, "server-action-form-message")).toContainText(
+      "Submitted via server action",
+    );
+    await expect(testId(page, "server-action-form-id")).toContainText(
+      "form-submitted",
+    );
   });
 });

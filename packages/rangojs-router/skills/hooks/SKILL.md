@@ -12,33 +12,48 @@ All hooks are imported from `@rangojs/router` or `@rangojs/router/client`.
 
 ### useNavigation()
 
-Track navigation state and control navigation:
+Track reactive navigation state (state-only, no actions):
 
 ```tsx
 "use client";
-import { useNavigation } from "@rangojs/router";
+import { useNavigation } from "@rangojs/router/client";
 
 function NavIndicator() {
   const nav = useNavigation();
 
-  // Full state
-  nav.state; // 'idle' | 'loading' | 'streaming'
+  // State properties
+  nav.state; // 'idle' | 'loading'
   nav.isStreaming; // boolean
   nav.location; // Current URL
   nav.pendingUrl; // Target URL during navigation (or null)
 
-  // Methods
-  nav.navigate("/products"); // Navigate programmatically
-  nav.navigate("/products", { replace: true }); // Replace history
-  nav.refresh(); // Refresh current route
-
   return nav.state === "loading" ? <Spinner /> : null;
 }
 
-// With selector for performance
+// With selector for performance (re-renders only when selected value changes)
 function IsLoading() {
   const isLoading = useNavigation((nav) => nav.state === "loading");
   return isLoading ? <Spinner /> : null;
+}
+```
+
+### useRouter()
+
+Access stable router actions (never causes re-renders):
+
+```tsx
+"use client";
+import { useRouter } from "@rangojs/router/client";
+
+function NavigationControls() {
+  const router = useRouter();
+
+  router.push("/products"); // Navigate (adds history entry)
+  router.replace("/login"); // Navigate (replaces history entry)
+  router.refresh(); // Re-fetch current route data
+  router.prefetch("/dashboard"); // Prefetch for faster navigation
+  router.back(); // Go back in history
+  router.forward(); // Go forward in history
 }
 ```
 
@@ -157,11 +172,70 @@ function SearchResults() {
 **Load options**:
 
 ```tsx
+// JSON body — sent as application/json, available as ctx.body on the server
 await load({
-  method: "POST", // GET, POST, PUT, PATCH, DELETE
-  params: { query: "test" }, // Query string (GET) or body (others)
-  body: { data: "value" }, // For POST/PUT/PATCH/DELETE
+  method: "POST",
+  params: { query: "test" },
+  body: { data: "value" },
 });
+
+// FormData body — sent as multipart/form-data, available as ctx.formData on the server.
+// Automatically detected: when body is a FormData instance, the request switches
+// to multipart/form-data to preserve File objects and binary data.
+const formData = new FormData();
+formData.append("file", fileInput.files[0]);
+await load({ method: "POST", body: formData });
+```
+
+**Body type auto-switching**: The `load()` function inspects the `body` value to
+choose the encoding. If `body instanceof FormData`, the request is sent as
+`multipart/form-data` (browser sets the boundary header automatically). Otherwise
+the body is JSON-serialized and sent with `Content-Type: application/json`. On the
+server, JSON bodies are available via `ctx.body` and FormData bodies via `ctx.formData`.
+
+**File upload example**:
+
+```tsx
+"use client";
+import { useFetchLoader } from "@rangojs/router";
+import { FileUploadLoader } from "../loaders/upload";
+
+function FileUploader() {
+  const { data, load, isLoading } = useFetchLoader(FileUploadLoader);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  const handleSubmit = async (formData: FormData) => {
+    await load({ method: "POST", body: formData });
+    formRef.current?.reset();
+  };
+
+  return (
+    <form ref={formRef} action={handleSubmit}>
+      <input type="file" name="file" />
+      <button type="submit" disabled={isLoading}>
+        {isLoading ? "Uploading..." : "Upload"}
+      </button>
+      {data?.uploadedFile && <p>Uploaded: {data.uploadedFile.name}</p>}
+    </form>
+  );
+}
+```
+
+Server-side loader for the upload:
+
+```typescript
+import { createLoader } from "@rangojs/router";
+
+export const FileUploadLoader = createLoader(async (ctx) => {
+  "use server";
+
+  const file = ctx.formData?.get("file") as File | null;
+  if (file && file.size > 0) {
+    // Process file (save to R2, D1, etc.)
+    return { uploadedFile: { name: file.name, size: file.size } };
+  }
+  return { uploadedFile: null };
+}, true); // true = fetchable (can be called from the client via load())
 ```
 
 ### useLoaderData()
@@ -473,6 +547,72 @@ function ConditionalLayout() {
 
 ## URL Hooks
 
+### useParams()
+
+Access route params from the current URL:
+
+```tsx
+"use client";
+import { useParams } from "@rangojs/router/client";
+
+// Route: /product/:productId
+function ProductPage() {
+  const params = useParams();
+  // { productId: "123" }
+
+  return <h1>Product {params.productId}</h1>;
+}
+
+// With selector for performance (re-renders only when selected value changes)
+function ProductId() {
+  const productId = useParams((p) => p.productId);
+  return <span>ID: {productId}</span>;
+}
+```
+
+Returns merged params from all matched route segments. Updates on navigation commit (not during pending navigation).
+
+### usePathname()
+
+Access the current URL pathname:
+
+```tsx
+"use client";
+import { usePathname } from "@rangojs/router/client";
+
+function CurrentPage() {
+  const pathname = usePathname();
+  // "/product/123" (no search params)
+
+  return <span>Current path: {pathname}</span>;
+}
+```
+
+Returns the pathname string without search params or hash. Updates on navigation commit.
+
+### useSearchParams()
+
+Access the current URL search params:
+
+```tsx
+"use client";
+import { useSearchParams } from "@rangojs/router/client";
+
+function SearchResults() {
+  const searchParams = useSearchParams();
+  const query = searchParams.get("q"); // "react"
+  const page = searchParams.get("page"); // "2"
+
+  return (
+    <div>
+      Searching for: {query}, page {page}
+    </div>
+  );
+}
+```
+
+Returns a `ReadonlyURLSearchParams` (URLSearchParams without mutation methods). During SSR, returns empty params and syncs from the browser URL on mount.
+
 ### useHref()
 
 Mount-aware href for client components inside `include()` scopes:
@@ -515,17 +655,21 @@ See `/links` for full URL generation guide including server-side `ctx.reverse`.
 
 ## Hook Summary
 
-| Hook                 | Purpose                           | Returns                    |
-| -------------------- | --------------------------------- | -------------------------- |
-| `useHref()`          | Mount-aware href                  | `(path) => string`         |
-| `useMount()`         | Current include() mount path      | `string`                   |
-| `useNavigation()`    | Navigation state & control        | state, navigate, refresh   |
-| `useSegments()`      | URL path & segment IDs            | path, segmentIds, location |
-| `useLinkStatus()`    | Link pending state                | { pending }                |
-| `useLoader()`        | Loader data (strict)              | data, isLoading, error     |
-| `useFetchLoader()`   | Loader with on-demand fetch       | data, load, isLoading      |
-| `useLoaderData()`    | All loader data                   | Record<string, any>        |
-| `useHandle()`        | Accumulated handle data           | T (handle type)            |
-| `useAction()`        | Server action state               | state, error, result       |
-| `useLocationState()` | History state (persists or flash) | T \| undefined             |
-| `useClientCache()`   | Cache control                     | { clear }                  |
+| Hook                 | Purpose                           | Returns                                         |
+| -------------------- | --------------------------------- | ----------------------------------------------- |
+| `useParams()`        | Route params                      | `Record<string, string>` or selected value      |
+| `usePathname()`      | Current pathname                  | `string`                                        |
+| `useSearchParams()`  | URL search params                 | `ReadonlyURLSearchParams`                       |
+| `useHref()`          | Mount-aware href                  | `(path) => string`                              |
+| `useMount()`         | Current include() mount path      | `string`                                        |
+| `useNavigation()`    | Reactive navigation state         | state, location, isStreaming                    |
+| `useRouter()`        | Stable router actions             | push, replace, refresh, prefetch, back, forward |
+| `useSegments()`      | URL path & segment IDs            | path, segmentIds, location                      |
+| `useLinkStatus()`    | Link pending state                | { pending }                                     |
+| `useLoader()`        | Loader data (strict)              | data, isLoading, error                          |
+| `useFetchLoader()`   | Loader with on-demand fetch       | data, load, isLoading                           |
+| `useLoaderData()`    | All loader data                   | Record<string, any>                             |
+| `useHandle()`        | Accumulated handle data           | T (handle type)                                 |
+| `useAction()`        | Server action state               | state, error, result                            |
+| `useLocationState()` | History state (persists or flash) | T \| undefined                                  |
+| `useClientCache()`   | Cache control                     | { clear }                                       |

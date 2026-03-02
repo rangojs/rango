@@ -5,6 +5,7 @@
  */
 
 import type { HostOverrideConfig } from "./types.js";
+import type { RouterRequestInput } from "../router/router-interfaces.js";
 import { matchPattern, parseRequest } from "./pattern-matcher.js";
 import {
   HostOverrideNotAllowedError,
@@ -98,7 +99,7 @@ export function isHostAllowed(
 export function handleCookieOverride(
   request: Request,
   config: HostOverrideConfig | undefined,
-  context: any,
+  input: RouterRequestInput<any>,
 ): string {
   if (!config) {
     const { hostname } = parseRequest(request);
@@ -127,7 +128,7 @@ export function handleCookieOverride(
   // If allowed and has custom validation, run it
   if (validate) {
     try {
-      const validatedHostname = validate(request, cookieValue, context);
+      const validatedHostname = validate(request, cookieValue, input);
       return validatedHostname;
     } catch (error) {
       // Wrap in HostValidationError

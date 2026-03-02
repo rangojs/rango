@@ -5,36 +5,27 @@
  * Separated from execution logic for cleaner imports.
  */
 
-import type { RouterEnv } from "../types.js";
 import type { ContextVar } from "../context-var.js";
-
-/**
- * Helper type to extract Variables from RouterEnv
- * Uses 0 extends 1 & TEnv to detect `any` type and fall back to Record<string, unknown>
- */
-type ExtractVariables<TEnv> = 0 extends 1 & TEnv
-  ? Record<string, unknown> // TEnv is any
-  : TEnv extends RouterEnv<unknown, infer V>
-    ? V
-    : Record<string, unknown>;
+import type {
+  DefaultReverseRouteMap,
+  DefaultVars,
+} from "../types/global-namespace.js";
+import type { ScopedReverseFunction } from "../reverse.js";
 
 /**
  * Get variable function type
  */
-type GetVariableFn<TEnv> = {
+type GetVariableFn = {
   <T>(contextVar: ContextVar<T>): T | undefined;
-  <K extends keyof ExtractVariables<TEnv>>(key: K): ExtractVariables<TEnv>[K];
+  <K extends keyof DefaultVars>(key: K): DefaultVars[K];
 };
 
 /**
  * Set variable function type
  */
-type SetVariableFn<TEnv> = {
+type SetVariableFn = {
   <T>(contextVar: ContextVar<T>, value: T): void;
-  <K extends keyof ExtractVariables<TEnv>>(
-    key: K,
-    value: ExtractVariables<TEnv>[K],
-  ): void;
+  <K extends keyof DefaultVars>(key: K, value: DefaultVars[K]): void;
 };
 
 /**
@@ -73,7 +64,7 @@ export interface MiddlewareContext<
   searchParams: URLSearchParams;
 
   /** Platform bindings (Cloudflare, etc.) */
-  env: TEnv extends RouterEnv<infer B, unknown> ? B : {};
+  env: TEnv;
 
   /** URL params extracted from route/middleware pattern */
   params: TParams;
@@ -116,10 +107,10 @@ export interface MiddlewareContext<
   ): void;
 
   /** Get a context variable (shared with route handlers) */
-  get: GetVariableFn<TEnv>;
+  get: GetVariableFn;
 
   /** Set a context variable (shared with route handlers) */
-  set: SetVariableFn<TEnv>;
+  set: SetVariableFn;
 
   /**
    * Set a response header - can be called before or after `next()`
@@ -134,11 +125,10 @@ export interface MiddlewareContext<
    * Generate URLs from route names.
    * - `name` — global route, from the named-routes definition
    */
-  reverse(
-    name: string,
-    params?: Record<string, string>,
-    search?: Record<string, unknown>,
-  ): string;
+  reverse: ScopedReverseFunction<
+    Record<string, string>,
+    DefaultReverseRouteMap
+  >;
 }
 
 /**

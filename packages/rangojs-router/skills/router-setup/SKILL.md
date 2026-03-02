@@ -165,7 +165,7 @@ import { createRouter } from "@rangojs/router";
 import { Document } from "./document";
 import { urlpatterns } from "./urls";
 
-export const router = createRouter<AppEnv>({
+export const router = createRouter<AppBindings>({
   document: Document,
   urls: urlpatterns,
 });
@@ -175,7 +175,7 @@ import { router } from "./router";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    return router.fetch(request, { Bindings: env, Variables: {}, ctx });
+    return router.fetch(request, { env, ctx });
   },
 };
 ```
@@ -189,12 +189,12 @@ For per-request cache configuration (e.g., Cloudflare Workers with ExecutionCont
 import { createRouter } from "@rangojs/router";
 import { CFCacheStore } from "@rangojs/router/cache";
 
-export const router = createRouter<AppEnv>({
+export const router = createRouter<AppBindings>({
   document: Document,
   urls: urlpatterns,
-  // Cache config receives env with ctx for ExecutionContext access
-  cache: (env) => ({
-    store: new CFCacheStore({ ctx: env.ctx, defaults: { ttl: 60 } }),
+  // Cache config receives (env, ctx) separately
+  cache: (_env, ctx) => ({
+    store: new CFCacheStore({ ctx: ctx!, defaults: { ttl: 60 } }),
   }),
 });
 
@@ -203,7 +203,7 @@ import { router } from "./router";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    return router.fetch(request, { Bindings: env, Variables: {}, ctx });
+    return router.fetch(request, { env, ctx });
   },
 };
 ```
@@ -303,23 +303,29 @@ export const urlpatterns = urls(({ path }) => [
 ## Environment Types
 
 ```typescript
-import type { RouterEnv } from "@rangojs/router";
-
+// Bindings passed as TEnv to createRouter<TEnv>()
 interface AppBindings {
   DB: D1Database;
   KV: KVNamespace;
 }
 
+// Variables declared via module augmentation
 interface AppVariables {
   user?: { id: string; name: string };
 }
 
-type AppEnv = RouterEnv<AppBindings, AppVariables>;
-
-const router = createRouter<AppEnv>({
+const router = createRouter<AppBindings>({
   document: Document,
   urls: urlpatterns,
 });
+
+// Register types globally for implicit typing
+declare global {
+  namespace RSCRouter {
+    interface Env extends AppBindings {}
+    interface Vars extends AppVariables {}
+  }
+}
 ```
 
 ## Connection Warmup

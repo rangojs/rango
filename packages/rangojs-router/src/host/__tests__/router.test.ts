@@ -116,16 +116,16 @@ describe("router.use - Global Middleware", () => {
     expect(order).toEqual([1, 2, 3, 4]);
   });
 
-  it("should allow middleware to modify context", async () => {
+  it("should allow middleware to modify context via vars", async () => {
     const router = createHostRouter();
 
-    router.use(async (_req, ctx, next) => {
-      ctx.user = { id: 123 };
+    router.use(async (_req, input, next) => {
+      input.vars = { ...input.vars, user: { id: 123 } };
       return next();
     });
 
-    const handler = vi.fn((_req, ctx) => {
-      return new Response(JSON.stringify(ctx.user));
+    const handler = vi.fn((_req, input) => {
+      return new Response(JSON.stringify((input.vars as any)?.user));
     });
 
     router.host(["."]).map(handler);
@@ -264,7 +264,8 @@ describe("router.fallback", () => {
       },
     });
 
-    const fallbackHandler = vi.fn((_req, ctx) => {
+    const fallbackHandler = vi.fn((_req, input) => {
+      const ctx = input as any;
       expect(ctx.error).toBeInstanceOf(HostValidationError);
       expect(ctx.error.message).toBe("Invalid host");
       return new Response("fallback");

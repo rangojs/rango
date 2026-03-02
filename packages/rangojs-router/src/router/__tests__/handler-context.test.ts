@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 // Mock dependencies before importing the module under test
 vi.mock("../../server/request-context.js", () => ({
   getRequestContext: () => undefined,
+  _getRequestContext: () => undefined,
 }));
 
 vi.mock("../../route-map-builder.js", () => ({
@@ -12,6 +13,7 @@ vi.mock("../../route-map-builder.js", () => ({
 import {
   createHandlerContext,
   createReverseFunction,
+  stripInternalParams,
 } from "../handler-context";
 
 /**
@@ -32,7 +34,7 @@ function buildContext(searchParams: URLSearchParams) {
 }
 
 describe("createHandlerContext", () => {
-  describe("search param cleaning", () => {
+  describe("search param pass-through", () => {
     it("should preserve multi-valued query params", () => {
       const params = new URLSearchParams("tag=a&tag=b&tag=c");
       const ctx = buildContext(params);
@@ -41,37 +43,7 @@ describe("createHandlerContext", () => {
       expect(result.getAll("tag")).toEqual(["a", "b", "c"]);
     });
 
-    it("should strip _rsc-prefixed system params", () => {
-      const params = new URLSearchParams("q=hello&_rscAction=nav&_rscKey=abc");
-      const ctx = buildContext(params);
-
-      const result = ctx.searchParams as URLSearchParams;
-      expect(result.get("q")).toBe("hello");
-      expect(result.has("_rscAction")).toBe(false);
-      expect(result.has("_rscKey")).toBe(false);
-    });
-
-    it("should strip _rsc params while preserving multi-valued user params", () => {
-      const params = new URLSearchParams(
-        "color=red&color=blue&_rscKey=x&size=L",
-      );
-      const ctx = buildContext(params);
-
-      const result = ctx.searchParams as URLSearchParams;
-      expect(result.getAll("color")).toEqual(["red", "blue"]);
-      expect(result.get("size")).toBe("L");
-      expect(result.has("_rscKey")).toBe(false);
-    });
-
-    it("should produce empty searchParams when all params are system params", () => {
-      const params = new URLSearchParams("_rscA=1&_rscB=2");
-      const ctx = buildContext(params);
-
-      const result = ctx.searchParams as URLSearchParams;
-      expect([...result.entries()]).toEqual([]);
-    });
-
-    it("should pass through params unchanged when no system params exist", () => {
+    it("should pass through params unchanged", () => {
       const params = new URLSearchParams("page=2&sort=name");
       const ctx = buildContext(params);
 
@@ -80,13 +52,57 @@ describe("createHandlerContext", () => {
       expect(result.get("sort")).toBe("name");
     });
 
-    it("should reflect cleaned params in the context url", () => {
-      const params = new URLSearchParams("q=test&_rscKey=abc");
+    it("should expose the same URL that was passed in", () => {
+      const params = new URLSearchParams("q=test&page=1");
       const ctx = buildContext(params);
 
       expect(ctx.url.searchParams.get("q")).toBe("test");
-      expect(ctx.url.searchParams.has("_rscKey")).toBe(false);
+      expect(ctx.url.searchParams.get("page")).toBe("1");
     });
+  });
+});
+
+describe("stripInternalParams", () => {
+  it("should remove all _rsc-prefixed params", () => {
+    const url = new URL(
+      "http://localhost/test?q=hello&_rsc_partial=1&_rsc_segments=M0,M1&_rsc_v=abc&page=2",
+    );
+    const clean = stripInternalParams(url);
+
+    expect(clean.searchParams.get("q")).toBe("hello");
+    expect(clean.searchParams.get("page")).toBe("2");
+    expect(clean.searchParams.has("_rsc_partial")).toBe(false);
+    expect(clean.searchParams.has("_rsc_segments")).toBe(false);
+    expect(clean.searchParams.has("_rsc_v")).toBe(false);
+  });
+
+  it("should return empty search when all params are internal", () => {
+    const url = new URL("http://localhost/test?_rsc_partial=1&_rsc_stale=true");
+    const clean = stripInternalParams(url);
+    expect(clean.search).toBe("");
+  });
+
+  it("should preserve all user params when no internal params exist", () => {
+    const url = new URL("http://localhost/test?q=hello&page=2");
+    const clean = stripInternalParams(url);
+    expect(clean.searchParams.get("q")).toBe("hello");
+    expect(clean.searchParams.get("page")).toBe("2");
+  });
+
+  it("should not mutate the original URL", () => {
+    const url = new URL("http://localhost/test?q=hello&_rsc_partial=1");
+    stripInternalParams(url);
+    expect(url.searchParams.has("_rsc_partial")).toBe(true);
+  });
+
+  it("should preserve pathname and origin", () => {
+    const url = new URL(
+      "http://example.com/path/to/page?_rsc_partial=1&q=test",
+    );
+    const clean = stripInternalParams(url);
+    expect(clean.origin).toBe("http://example.com");
+    expect(clean.pathname).toBe("/path/to/page");
+    expect(clean.searchParams.get("q")).toBe("test");
   });
 });
 

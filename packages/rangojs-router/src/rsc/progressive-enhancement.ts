@@ -114,7 +114,7 @@ export async function handleProgressiveEnhancement<TEnv>(
     headers: new Headers({ accept: "text/html" }),
   });
 
-  const match = await ctx.router.match(renderRequest, env);
+  const match = await ctx.router.match(renderRequest, { env });
 
   if (match.redirect) {
     return createResponseWithMergedHeaders(null, {

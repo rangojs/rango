@@ -30,32 +30,14 @@ export function generateClientLoaderStubs(
   if (!isExportOnlyFile(code, bindings)) return null;
 
   const lines: string[] = [];
-  let needsFetchableImport = false;
 
   for (const binding of bindings) {
     for (const name of binding.exportNames) {
       const loaderId = isBuild ? hashId(filePath, name) : `${filePath}#${name}`;
-
-      // Fetchable loaders (argCount >= 2) get an action property that wraps
-      // the shared "use server" dispatcher. The wrapper passes loaderId so
-      // the server can look up the correct loader in the registry.
-      if (binding.argCount >= 2) {
-        needsFetchableImport = true;
-        lines.push(
-          `export const ${name} = { __brand: "loader", $$id: "${loaderId}", action: (_prev, fd) => __ifa("${loaderId}", _prev, fd) };`,
-        );
-      } else {
-        lines.push(
-          `export const ${name} = { __brand: "loader", $$id: "${loaderId}" };`,
-        );
-      }
+      lines.push(
+        `export const ${name} = { __brand: "loader", $$id: "${loaderId}" };`,
+      );
     }
-  }
-
-  if (needsFetchableImport) {
-    lines.unshift(
-      `import { invokeFetchableLoaderAction as __ifa } from "@rangojs/router/__internal/fetchable-action";`,
-    );
   }
 
   return { code: lines.join("\n") + "\n" };

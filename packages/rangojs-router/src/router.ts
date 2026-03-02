@@ -24,7 +24,10 @@ import {
   type MetricsStore,
 } from "./server/context";
 import { createHandleStore, type HandleStore } from "./server/handle-store.js";
-import { getRequestContext } from "./server/request-context.js";
+import {
+  getRequestContext,
+  _getRequestContext,
+} from "./server/request-context.js";
 import type {
   ErrorPhase,
   HandlerContext,
@@ -33,7 +36,6 @@ import type {
   RouteEntry,
   TrailingSlashMode,
 } from "./types";
-import type { ExecutionContext } from "./server/request-context.js";
 
 // Extracted router utilities
 import {
@@ -86,7 +88,10 @@ import type {
   RSCRouterOptions,
   RootLayoutProps,
 } from "./router/router-options.js";
-import type { RSCRouter } from "./router/router-interfaces.js";
+import type {
+  RSCRouter,
+  RouterRequestInput,
+} from "./router/router-interfaces.js";
 
 // Extracted closure functions
 import {
@@ -106,7 +111,10 @@ export type {
   RSCRouterOptions,
   RootLayoutProps,
 } from "./router/router-options.js";
-export type { RSCRouter } from "./router/router-interfaces.js";
+export type {
+  RSCRouter,
+  RouterRequestInput,
+} from "./router/router-interfaces.js";
 
 export function createRouter<TEnv = any>(
   options: RSCRouterOptions<TEnv> = {},
@@ -128,6 +136,7 @@ export function createRouter<TEnv = any>(
     $$sourceFile: injectedSourceFile,
     nonce,
     version,
+    prefetchCacheControl: prefetchCacheControlOption,
     warmup: warmupOption,
     allowDebugManifest: allowDebugManifestOption = false,
   } = options;
@@ -169,6 +178,12 @@ export function createRouter<TEnv = any>(
   // order (unlike the counter which depends on import order).
   const routerId =
     userProvidedId ?? injectedId ?? `router_${nextRouterAutoId()}`;
+
+  // Resolve prefetch cache control (default: 'private, max-age=300')
+  const prefetchCacheControl =
+    prefetchCacheControlOption !== undefined
+      ? prefetchCacheControlOption
+      : "private, max-age=300";
 
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;
@@ -314,7 +329,7 @@ export function createRouter<TEnv = any>(
 
   // Helper to get handleStore from request context
   const getHandleStore = (): HandleStore | undefined => {
-    return getRequestContext()?._handleStore;
+    return _getRequestContext()?._handleStore;
   };
 
   // Track a pending handler promise (non-blocking)
@@ -705,6 +720,9 @@ export function createRouter<TEnv = any>(
     // Expose resolved theme configuration for NavigationProvider and MetaTags
     themeConfig: resolvedThemeConfig,
 
+    // Expose prefetch cache control for RSC handler
+    prefetchCacheControl,
+
     // Expose warmup enabled flag for handler and client
     warmupEnabled,
 
@@ -714,12 +732,33 @@ export function createRouter<TEnv = any>(
     // Expose global middleware for RSC handler
     middleware: globalMiddleware,
 
-    match,
+    match: (request: Request, input: RouterRequestInput<TEnv> = {}) => {
+      const env = input.env ?? ({} as TEnv);
+      return match(request, env);
+    },
     matchForPrerender,
     renderStaticSegment,
-    matchPartial,
-    matchError,
-    previewMatch,
+    matchPartial: (
+      request: Request,
+      input: RouterRequestInput<TEnv> = {},
+      actionContext?: Parameters<typeof matchPartial>[2],
+    ) => {
+      const env = input.env ?? ({} as TEnv);
+      return matchPartial(request, env, actionContext);
+    },
+    matchError: (
+      request: Request,
+      input: RouterRequestInput<TEnv> | undefined,
+      error: unknown,
+      segmentType?: Parameters<typeof matchError>[3],
+    ) => {
+      const env = input?.env ?? ({} as TEnv);
+      return matchError(request, env, error, segmentType);
+    },
+    previewMatch: (request: Request, input: RouterRequestInput<TEnv> = {}) => {
+      const env = input.env ?? ({} as TEnv);
+      return previewMatch(request, env);
+    },
 
     // Expose nonce provider for fetch
     nonce,
@@ -741,28 +780,30 @@ export function createRouter<TEnv = any>(
       let handler:
         | ((
             request: Request,
-            env: TEnv & { ctx?: ExecutionContext },
+            input: RouterRequestInput<TEnv>,
           ) => Promise<Response>)
         | null = null;
 
-      return async (
-        request: Request,
-        env: TEnv & { ctx?: ExecutionContext },
-      ) => {
+      return async (request: Request, input: RouterRequestInput<TEnv> = {}) => {
         // Trigger lazy import of per-router manifest data before route matching.
         // No-op if data is already loaded or no loader is registered.
         await ensureRouterManifest(routerId);
         if (!handler) {
           // Lazy import deferred to first request to avoid dev mode issues
           const { createRSCHandler } = await import("./rsc/handler.js");
+          // Cast: handler.ts still accepts (request, env) — will be updated
+          // separately to accept RouterRequestInput.
           handler = createRSCHandler({
             router: router as any,
             cache,
             nonce,
             version,
-          });
+          }) as (
+            request: Request,
+            input: RouterRequestInput<TEnv>,
+          ) => Promise<Response>;
         }
-        return handler(request, env);
+        return handler!(request, input);
       };
     })(),
 

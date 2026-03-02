@@ -13,7 +13,10 @@ import {
 } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import type { RscPayload } from "./types.js";
-import { createResponseWithMergedHeaders } from "./helpers.js";
+import {
+  createResponseWithMergedHeaders,
+  createSimpleRedirectResponse,
+} from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 
 export async function handleRscRendering<TEnv>(
@@ -32,21 +35,22 @@ export async function handleRscRendering<TEnv>(
 
   let payload: RscPayload;
   let serverTiming: string | undefined;
+  let hasInterceptSlots = false;
 
   if (isPartial) {
     // Partial render (navigation)
-    const result = await ctx.router.matchPartial(request, env);
+    const result = await ctx.router.matchPartial(request, { env });
 
     if (!result) {
       // Fall back to full render
-      const match = await ctx.router.match(request, env);
+      const match = await ctx.router.match(request, { env });
       setRequestContextParams(match.params, match.routeName);
 
       if (match.redirect) {
-        return createResponseWithMergedHeaders(null, {
-          status: 308,
-          headers: { Location: match.redirect },
-        });
+        // Partial request: use X-RSC-Redirect header so the client can
+        // perform SPA navigation. A raw 308 would be auto-followed by
+        // fetch, hitting the target without _rsc_partial.
+        return createSimpleRedirectResponse(match.redirect);
       }
 
       serverTiming = match.serverTiming;
@@ -57,6 +61,7 @@ export async function handleRscRendering<TEnv>(
           segments: match.segments,
           matched: match.matched,
           diff: match.diff,
+          params: match.params,
           isPartial: false,
           rootLayout: ctx.router.rootLayout,
           handles: handleStore.stream(),
@@ -68,6 +73,7 @@ export async function handleRscRendering<TEnv>(
     } else {
       setRequestContextParams(result.params, result.routeName);
       serverTiming = result.serverTiming;
+      hasInterceptSlots = !!result.slots;
 
       payload = {
         metadata: {
@@ -75,6 +81,7 @@ export async function handleRscRendering<TEnv>(
           segments: result.segments,
           matched: result.matched,
           diff: result.diff,
+          params: result.params,
           isPartial: true,
           slots: result.slots,
           handles: handleStore.stream(),
@@ -84,7 +91,7 @@ export async function handleRscRendering<TEnv>(
     }
   } else {
     // Full render (initial page load)
-    const match = await ctx.router.match(request, env);
+    const match = await ctx.router.match(request, { env });
     setRequestContextParams(match.params, match.routeName);
 
     if (match.redirect) {
@@ -135,6 +142,7 @@ export async function handleRscRendering<TEnv>(
           segments: match.segments,
           matched: match.matched,
           diff: match.diff,
+          params: match.params,
           isPartial: false,
           rootLayout: ctx.router.rootLayout,
           handles: handleStore.stream(),
@@ -164,8 +172,8 @@ export async function handleRscRendering<TEnv>(
 
   // Determine if this is an RSC request or HTML request.
   // Partial requests (_rsc_partial) are always RSC -- they come from client-side
-  // navigation or <link rel="prefetch">. Chrome sends Accept: text/html for
-  // prefetch links despite as="fetch", so we cannot rely on Accept alone.
+  // navigation or prefetch fetch(). We cannot rely on Accept alone since some
+  // browsers may send Accept: text/html for non-HTML requests.
   const isRscRequest =
     isPartial ||
     (!request.headers.get("accept")?.includes("text/html") &&
@@ -183,8 +191,19 @@ export async function handleRscRendering<TEnv>(
     const fullTiming = timingParts.join(", ");
     const rscHeaders: Record<string, string> = {
       "content-type": "text/x-component;charset=utf-8",
-      vary: "accept",
+      vary: "accept, X-Rango-State, X-RSC-Router-Client-Path",
     };
+    // Enable browser HTTP caching for prefetch responses only.
+    // Requires X-Rango-Prefetch header (sent by Link prefetch fetch),
+    // non-intercept context (intercept responses depend on source page),
+    // and a configured cache-control value (false disables caching).
+    const isPrefetch = request.headers.has("X-Rango-Prefetch");
+    if (isPrefetch && isPartial && !hasInterceptSlots) {
+      const cc = ctx.router.prefetchCacheControl;
+      if (cc) {
+        rscHeaders["cache-control"] = cc;
+      }
+    }
     if (fullTiming) {
       rscHeaders["Server-Timing"] = fullTiming;
     }

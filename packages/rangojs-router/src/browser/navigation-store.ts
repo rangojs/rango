@@ -12,6 +12,7 @@ import type {
   ActionStateListener,
   HandleData,
 } from "./types.js";
+import { clearPrefetchCache } from "./prefetch-cache.js";
 
 /**
  * Default action state (idle with no payload)
@@ -320,6 +321,7 @@ export function createNavigationStore(
    */
   function clearCacheInternal(): void {
     historyCache.length = 0;
+    clearPrefetchCache();
   }
 
   /**
@@ -329,6 +331,7 @@ export function createNavigationStore(
     for (let i = 0; i < historyCache.length; i++) {
       historyCache[i][2] = true;
     }
+    clearPrefetchCache();
   }
 
   /**
@@ -652,9 +655,7 @@ export function createNavigationStore(
      * Called after server actions to indicate data may be outdated
      */
     markCacheAsStale(): void {
-      for (let i = 0; i < historyCache.length; i++) {
-        historyCache[i][2] = true;
-      }
+      markCacheAsStaleInternal();
       console.log(
         "[Browser] Marked",
         historyCache.length,

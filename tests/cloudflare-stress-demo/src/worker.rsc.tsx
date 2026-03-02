@@ -37,8 +37,8 @@ export default {
 
       const subStart = performance.now();
       const subResponse = await router.fetch(subRequest, {
-        Bindings: env,
-        Variables: { requestStart: subStart, dateStart: Date.now() },
+        env,
+        vars: { requestStart: subStart, dateStart: Date.now() },
         ctx,
       });
       const subDur = performance.now() - subStart;
@@ -79,8 +79,8 @@ export default {
     }
 
     const response = await router.fetch(request, {
-      Bindings: env,
-      Variables: { requestStart, dateStart },
+      env,
+      vars: { requestStart, dateStart },
       ctx,
     });
 

@@ -209,6 +209,10 @@ export interface EventController {
   ): void;
   getHandleState(): HandleState;
 
+  // Params operations
+  setParams(params: Record<string, string>): void;
+  getParams(): Record<string, string>;
+
   // Direct state access for advanced use
   getCurrentNavigation(): NavigationEntry | null;
   getInflightActions(): Map<string, ActionEntry>;
@@ -298,6 +302,9 @@ export function createEventController(
   // Handle data from RSC payload
   let handleData: HandleData = {};
   let handleSegmentOrder: string[] = [];
+
+  // Merged route params from current match
+  let routeParams: Record<string, string> = {};
 
   // ========================================================================
   // Listeners
@@ -824,6 +831,19 @@ export function createEventController(
   }
 
   // ========================================================================
+  // Params Operations
+  // ========================================================================
+
+  function setParams(params: Record<string, string>): void {
+    routeParams = params;
+    notify();
+  }
+
+  function getParams(): Record<string, string> {
+    return routeParams;
+  }
+
+  // ========================================================================
   // Return Controller
   // ========================================================================
 
@@ -844,6 +864,10 @@ export function createEventController(
     // Handles
     setHandleData,
     getHandleState,
+
+    // Params
+    setParams,
+    getParams,
 
     // Subscriptions
     subscribe,

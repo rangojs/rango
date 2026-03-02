@@ -94,7 +94,10 @@ import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
 import type { HandleStore } from "../../server/handle-store.js";
-import { getRequestContext } from "../../server/request-context.js";
+import {
+  getRequestContext,
+  _getRequestContext,
+} from "../../server/request-context.js";
 
 // Lazily initialized prerender store singleton and dynamically imported deps.
 // Dynamic imports prevent pulling in @vitejs/plugin-rsc/rsc virtual module at
@@ -109,7 +112,7 @@ let _restoreHandles:
 let _hashParams:
   | typeof import("../../prerender/param-hash.js").hashParams
   | undefined;
-let _getRequestContext:
+let _lazyGetRequestContext:
   | typeof import("../../server/request-context.js").getRequestContext
   | undefined;
 
@@ -141,7 +144,7 @@ async function ensurePrerenderDeps() {
     _deserializeSegments = codec.deserializeSegments;
     _restoreHandles = snapshot.restoreHandles;
     _hashParams = paramHash.hashParams;
-    _getRequestContext = reqCtx.getRequestContext;
+    _lazyGetRequestContext = reqCtx.getRequestContext;
     if (prerenderStoreInstance === undefined) {
       prerenderStoreInstance = store.createPrerenderStore();
     }
@@ -167,7 +170,7 @@ async function* yieldFromStore<TEnv>(
     !_deserializeSegments ||
     !_restoreHandles ||
     !_hashParams ||
-    !_getRequestContext
+    !_lazyGetRequestContext
   ) {
     throw new Error("yieldFromStore called before ensurePrerenderDeps");
   }
@@ -176,7 +179,7 @@ async function* yieldFromStore<TEnv>(
 
   // Replay handle data (same as runtime cache hit path).
   // Prefer the eagerly-captured handleStoreRef to avoid ALS disruption in workerd.
-  const handleStore = handleStoreRef ?? _getRequestContext()?._handleStore;
+  const handleStore = handleStoreRef ?? _lazyGetRequestContext()?._handleStore;
   if (handleStore) {
     _restoreHandles(entry.handles, handleStore);
   }
@@ -288,7 +291,7 @@ export function withCacheLookup<TEnv>(
     // can disrupt AsyncLocalStorage, causing getRequestContext() to return
     // undefined afterward. Capturing the reference early ensures handle replay
     // and handler handle-push work regardless of ALS state.
-    const handleStoreRef = getRequestContext()?._handleStore;
+    const handleStoreRef = _getRequestContext()?._handleStore;
 
     const {
       evaluateRevalidation,

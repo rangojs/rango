@@ -114,8 +114,10 @@ interface RscPayload {
     handles?: AsyncGenerator<HandleData, void, unknown>;
     matched?: string[];
     pathname?: string;
+    params?: Record<string, string>;
     themeConfig?: ResolvedThemeConfig | null;
     initialTheme?: Theme;
+    version?: string;
   };
 }
 
@@ -161,6 +163,8 @@ function createSsrEventController(pathname: string): EventController {
     subscribeToHandles: () => () => {},
     setHandleData: () => {},
     getHandleState: () => ({ data: {}, segmentOrder: [] }),
+    setParams: () => {},
+    getParams: () => ({}),
     setLocation: () => {},
     startNavigation: () => {
       throw new Error("Navigation not supported during SSR");
@@ -233,6 +237,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         initSegmentsSync(
           resolved.metadata?.matched,
           resolved.metadata?.pathname,
+          resolved.metadata?.params,
         );
 
         // Initialize theme config for MetaTags to render theme script
@@ -256,6 +261,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
           ),
           navigate: async () => {},
           refresh: async () => {},
+          version: resolved.metadata?.version,
         };
 
         // Build content tree from segments.
@@ -285,7 +291,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
 
         // Wrap with NavigationStoreContext for useNavigation hook
         return (
-          <NavigationStoreContext.Provider value={ssrContextValue}>
+          <NavigationStoreContext.Provider value={ssrContextValue!}>
             {content}
           </NavigationStoreContext.Provider>
         );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useLoader, useNavigation } from "@rangojs/router/client";
+import { useLoader } from "@rangojs/router/client";
 import { TodosLoader } from "./loader.js";
 import { DebugSegmentWrapper } from "../../components/DebugSegmentWrapper.js";
 import { AddTodoForm, TodoItem, TodoStats } from "./components.js";

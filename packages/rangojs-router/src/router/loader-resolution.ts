@@ -22,7 +22,7 @@ import type { LoaderRevalidationResult, ActionContext } from "./types";
 import { isHandle, type Handle } from "../handle.js";
 import type { HandleStore } from "../server/handle-store.js";
 import { getFetchableLoader } from "../server/fetchable-loader-store.js";
-import { getRequestContext } from "../server/request-context.js";
+import { _getRequestContext } from "../server/request-context.js";
 import { debugLog } from "./logging.js";
 
 /**
@@ -181,6 +181,9 @@ function createLoaderExecutor<TEnv>(
   loader: LoaderDefinition<any, any>,
   callerLoaderId: string | null,
 ) => Promise<any> {
+  // Capture RequestContext eagerly for cookie access (ALS protection on Cloudflare)
+  const reqCtxRef = _getRequestContext();
+
   // Dependency graph: loaderId -> set of loader IDs it directly depends on.
   const dependsOn = new Map<string, Set<string>>();
 
@@ -248,6 +251,12 @@ function createLoaderExecutor<TEnv>(
       env: ctx.env,
       var: ctx.var,
       get: ctx.get,
+      cookie(name: string) {
+        return reqCtxRef?.cookie(name);
+      },
+      cookies() {
+        return reqCtxRef?.cookies() ?? {};
+      },
       use: <TDep, TDepParams = any>(
         dep: LoaderDefinition<TDep, TDepParams>,
       ): Promise<TDep> => {
@@ -291,7 +300,7 @@ export function setupLoaderAccess<TEnv>(
   // can disrupt AsyncLocalStorage, causing getRequestContext() to return
   // undefined when handlers later call ctx.use(handle). Capturing early
   // ensures the store reference survives ALS disruption.
-  const handleStoreRef = getRequestContext()?._handleStore;
+  const handleStoreRef = _getRequestContext()?._handleStore;
 
   const useLoader = createLoaderExecutor(ctx, loaderPromises);
 
@@ -299,7 +308,8 @@ export function setupLoaderAccess<TEnv>(
     if (isHandle(item)) {
       const handle = item;
       const store = handleStoreRef;
-      const segmentId = (ctx as InternalHandlerContext)._currentSegmentId;
+      const segmentId = (ctx as InternalHandlerContext<any, TEnv>)
+        ._currentSegmentId;
 
       if (!segmentId) {
         throw new Error(
@@ -332,14 +342,15 @@ export function setupLoaderAccess<TEnv>(
  */
 export function setupBuildUse<TEnv>(ctx: HandlerContext<any, TEnv>): void {
   // Eagerly capture the HandleStore (same ALS protection as setupLoaderAccess).
-  const handleStoreRef = getRequestContext()?._handleStore;
+  const handleStoreRef = _getRequestContext()?._handleStore;
 
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
     // Handle case: return a push function bound to the current segment
     if (isHandle(item)) {
       const handle = item;
       const store = handleStoreRef;
-      const segmentId = (ctx as InternalHandlerContext)._currentSegmentId;
+      const segmentId = (ctx as InternalHandlerContext<any, TEnv>)
+        ._currentSegmentId;
 
       if (!segmentId) {
         throw new Error(

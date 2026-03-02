@@ -29,7 +29,7 @@ import type {
   CacheItemOptions,
 } from "../types.js";
 import {
-  getRequestContext,
+  _getRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
 import { VERSION } from "@rangojs/router:version";
@@ -201,7 +201,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private deriveBaseUrl(): string {
     const fallback = "https://rsc-cache.internal.com/";
 
-    const ctx = getRequestContext();
+    const ctx = _getRequestContext();
     if (!ctx?.request) {
       return fallback;
     }

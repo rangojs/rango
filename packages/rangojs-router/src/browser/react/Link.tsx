@@ -4,6 +4,7 @@ import React, {
   forwardRef,
   useCallback,
   useContext,
+  useEffect,
   useRef,
   type ForwardRefExoticComponent,
   type RefAttributes,
@@ -29,40 +30,31 @@ export type StateOrGetter<T = unknown> = T | (() => T);
  */
 export type LinkState = LocationStateEntry[] | StateOrGetter;
 
-// Track prefetched URLs to avoid duplicate <link> elements
-const prefetchedUrls = new Set<string>();
+import { prefetchDirect, prefetchQueued } from "../prefetch-fetch.js";
+import {
+  observeForPrefetch,
+  unobserveForPrefetch,
+} from "../prefetch-observer.js";
 
-/**
- * Inject a <link rel="prefetch"> element into the document head
- * for the given URL with RSC partial request parameters.
- */
-function prefetchUrl(url: string, segmentIds: string[]): void {
-  if (prefetchedUrls.has(url)) return;
-  prefetchedUrls.add(url);
-
-  // Build RSC partial URL with segment IDs
-  const targetUrl = new URL(url, window.location.origin);
-  targetUrl.searchParams.set("_rsc_partial", "true");
-  if (segmentIds.length > 0) {
-    targetUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
-  }
-
-  // Inject <link rel="prefetch"> into head
-  const link = document.createElement("link");
-  link.rel = "prefetch";
-  link.href = targetUrl.toString();
-  link.as = "fetch";
-  document.head.appendChild(link);
-}
+// Touch device detection for hybrid strategy.
+// Checked once at module load (Link.tsx is "use client", runs only in browser).
+const isTouchDevice =
+  typeof window !== "undefined" && window.matchMedia("(hover: none)").matches;
 
 /**
  * Prefetch strategy for the Link component
- * - "hover": Prefetch on mouse enter (uses native <link rel="prefetch">)
- * - "viewport": Prefetch when link enters viewport (not yet implemented)
- * - "hybrid": Hover on desktop, viewport on mobile (not yet implemented)
+ * - "hover": Prefetch on mouse enter (direct, no queue)
+ * - "viewport": Prefetch when link enters viewport (queued, waits for idle)
+ * - "render": Prefetch on component mount regardless of visibility (queued, waits for idle)
+ * - "hybrid": Hover on pointer devices, viewport on touch devices
  * - "none": No prefetching (default)
  */
-export type PrefetchStrategy = "hover" | "viewport" | "hybrid" | "none";
+export type PrefetchStrategy =
+  | "hover"
+  | "viewport"
+  | "render"
+  | "hybrid"
+  | "none";
 
 /**
  * Link component props
@@ -175,6 +167,25 @@ export const Link: ForwardRefExoticComponent<
   const ctx = useContext(NavigationStoreContext);
   const isExternal = isExternalUrl(to);
 
+  // Resolve hybrid: viewport on touch devices, hover on pointer devices
+  const resolvedStrategy =
+    prefetch === "hybrid" ? (isTouchDevice ? "viewport" : "hover") : prefetch;
+
+  // Internal ref for viewport observation; merge with forwarded ref
+  const internalRef = useRef<HTMLAnchorElement | null>(null);
+  const setRef = useCallback(
+    (node: HTMLAnchorElement | null) => {
+      internalRef.current = node;
+      if (typeof ref === "function") {
+        ref(node);
+      } else if (ref) {
+        (ref as React.MutableRefObject<HTMLAnchorElement | null>).current =
+          node;
+      }
+    },
+    [ref],
+  );
+
   // Use ref to always get the latest state/getter without adding to useCallback deps
   // This enables just-in-time state resolution without causing re-renders
   const stateRef = useRef(state);
@@ -239,15 +250,69 @@ export const Link: ForwardRefExoticComponent<
   );
 
   const handleMouseEnter = useCallback(() => {
-    if (prefetch === "hover" && !isExternal && ctx?.store) {
+    if (resolvedStrategy === "hover" && !isExternal && ctx?.store) {
       const segmentState = ctx.store.getSegmentState();
-      prefetchUrl(to, segmentState.currentSegmentIds);
+      prefetchDirect(to, segmentState.currentSegmentIds, ctx.version);
     }
-  }, [prefetch, to, isExternal, ctx]);
+  }, [resolvedStrategy, to, isExternal, ctx]);
+
+  // Viewport/render prefetch: waits for idle before starting,
+  // uses concurrency-limited queue to avoid flooding.
+  useEffect(() => {
+    if (isExternal || !ctx?.store) return;
+    const isViewport = resolvedStrategy === "viewport";
+    const isRender = resolvedStrategy === "render";
+    if (!isViewport && !isRender) return;
+
+    let cancelled = false;
+    let unsubIdle: (() => void) | undefined;
+
+    const triggerPrefetch = () => {
+      if (cancelled) return;
+      const segmentState = ctx.store.getSegmentState();
+      prefetchQueued(to, segmentState.currentSegmentIds, ctx.version);
+    };
+
+    // Schedule prefetch only when the app is idle (no navigation/streaming).
+    // This avoids competing with hydration and active navigation fetches.
+    const scheduleWhenIdle = (callback: () => void) => {
+      const state = ctx.eventController.getState();
+      if (state.state === "idle" && !state.isStreaming) {
+        callback();
+        return;
+      }
+      const unsub = ctx.eventController.subscribe(() => {
+        const s = ctx.eventController.getState();
+        if (s.state === "idle" && !s.isStreaming) {
+          unsub();
+          callback();
+        }
+      });
+      unsubIdle = unsub;
+    };
+
+    if (isRender) {
+      scheduleWhenIdle(triggerPrefetch);
+    } else if (isViewport) {
+      const element = internalRef.current;
+      if (!element) return;
+      observeForPrefetch(element, () => {
+        scheduleWhenIdle(triggerPrefetch);
+      });
+    }
+
+    return () => {
+      cancelled = true;
+      unsubIdle?.();
+      if (isViewport && internalRef.current) {
+        unobserveForPrefetch(internalRef.current);
+      }
+    };
+  }, [resolvedStrategy, to, isExternal, ctx]);
 
   return (
     <a
-      ref={ref}
+      ref={setRef}
       href={to}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}

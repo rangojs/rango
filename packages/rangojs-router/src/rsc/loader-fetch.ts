@@ -1,9 +1,8 @@
 /**
  * Loader Fetch Handler
  *
- * Handles load() (GET) requests from the client. load.action() uses a proper
- * server action instead (invokeFetchableLoaderAction from
- * fetchable-loader-action.ts).
+ * Handles load() requests (GET, POST, PUT, PATCH, DELETE) from the client.
+ * All loader data fetching and mutations go through this endpoint.
  *
  * Route params (e.g. slug from /blog/:slug) come from previewMatch() in the
  * outer coreRequestHandler, threaded through coreRequestHandlerInner as
@@ -54,21 +53,23 @@ export async function handleLoaderFetch<TEnv>(
   if (isBodyMethod) {
     try {
       const contentType = request.headers.get("content-type") || "";
-      if (contentType.includes("application/json")) {
+      if (contentType.includes("multipart/form-data")) {
+        // FormData body — sent by load() when body is a FormData instance.
+        // Preserves File objects and binary data.
+        loaderFormData = await request.formData();
+        // Extract params if provided via the special field
+        const paramsField = loaderFormData.get("_rsc_loader_params");
+        if (typeof paramsField === "string") {
+          loaderParams = JSON.parse(paramsField);
+          loaderFormData.delete("_rsc_loader_params");
+        }
+      } else if (contentType.includes("application/json")) {
         const jsonBody = (await request.json()) as {
           params?: Record<string, string>;
           body?: unknown;
-          formEntries?: Record<string, string>;
         };
         loaderParams = jsonBody.params ?? {};
         loaderBody = jsonBody.body;
-        // Reconstruct FormData from JSON-serialized entries (from load.action)
-        if (jsonBody.formEntries) {
-          loaderFormData = new FormData();
-          for (const [key, value] of Object.entries(jsonBody.formEntries)) {
-            loaderFormData.append(key, value);
-          }
-        }
       }
     } catch {
       return createResponseWithMergedHeaders("Invalid request body", {

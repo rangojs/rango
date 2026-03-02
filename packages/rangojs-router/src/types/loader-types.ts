@@ -2,8 +2,11 @@ import type { ContextVar } from "../context-var.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import type { ScopedReverseFunction } from "../reverse.js";
 import type { SearchSchema, ResolveSearchSchema } from "../search-params.js";
-import type { DefaultEnv, DefaultHandlerRouteMap } from "./global-namespace.js";
-import type { RouterEnv } from "./route-config.js";
+import type {
+  DefaultEnv,
+  DefaultReverseRouteMap,
+  DefaultVars,
+} from "./global-namespace.js";
 
 /**
  * Context passed to loader functions during execution
@@ -42,13 +45,15 @@ export type LoaderContext<
   search: {} extends TSearch ? {} : ResolveSearchSchema<TSearch>;
   pathname: string;
   url: URL;
-  env: TEnv extends RouterEnv<infer B, any> ? B : {};
-  var: TEnv extends RouterEnv<any, infer V> ? V : {};
+  env: TEnv;
+  var: DefaultVars;
   get: {
     <T>(contextVar: ContextVar<T>): T | undefined;
-  } & (TEnv extends RouterEnv<any, infer V>
-    ? <K extends keyof V>(key: K) => V[K]
-    : (key: string) => any);
+  } & (<K extends keyof DefaultVars>(key: K) => DefaultVars[K]);
+  /** Get a cookie value from the request */
+  cookie(name: string): string | undefined;
+  /** Get all cookies from the request */
+  cookies(): Record<string, string>;
   /**
    * Access another loader's data (returns promise since loaders run in parallel)
    */
@@ -77,7 +82,7 @@ export type LoaderContext<
    */
   reverse: ScopedReverseFunction<
     Record<string, string>,
-    DefaultHandlerRouteMap
+    DefaultReverseRouteMap
   >;
 };
 
@@ -135,40 +140,6 @@ export type LoadOptions =
     };
 
 /**
- * Context passed to loader action on server
- */
-export type LoaderActionContext = {
-  method: string;
-  params: Record<string, string>;
-  body?: FormData | Record<string, any>;
-  formData?: FormData;
-};
-
-/**
- * @deprecated Use MiddlewareFn instead for fetchable loader middleware.
- * This type is kept for backwards compatibility but will be removed in a future version.
- *
- * Fetchable loaders now use the same middleware signature as routes,
- * enabling middleware reuse across routes and loaders.
- */
-export type LoaderMiddlewareFn = (
-  ctx: LoaderActionContext,
-  next: () => Promise<void>,
-) => Response | Promise<Response> | void | Promise<void>;
-
-/**
- * Loader action function type - server action for form-based fetching
- * This is a server action that can be passed to useActionState or form action prop.
- *
- * The signature (prevState, formData) is required for useActionState compatibility.
- * When used with useActionState, React passes the previous state as the first argument.
- */
-export type LoaderAction<T> = (
-  prevState: T | null,
-  formData: FormData,
-) => Promise<T>;
-
-/**
  * Loader definition object
  *
  * Created via createLoader(). Contains the loader name and function.
@@ -206,5 +177,4 @@ export type LoaderDefinition<
   __brand: "loader";
   $$id: string; // Injected by Vite plugin (exposeInternalIds) - unique identifier
   fn?: LoaderFn<T, TParams, any>; // Optional - server-side only, stored in registry for RSC
-  action?: LoaderAction<T>; // Optional - for fetchable loaders
 };

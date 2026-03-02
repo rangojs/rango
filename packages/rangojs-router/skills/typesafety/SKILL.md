@@ -15,7 +15,7 @@ argument-hint: [setup]
 import { createRouter } from "@rangojs/router";
 import { urlpatterns } from "./urls";
 
-const router = createRouter<AppEnv>({
+const router = createRouter<AppBindings>({
   document: Document,
   urls: urlpatterns,
 });
@@ -24,6 +24,39 @@ const router = createRouter<AppEnv>({
 export const reverse = router.reverse;
 
 export default router;
+```
+
+### Which global type should I use?
+
+Use the generated route map by default. Manual `RegisteredRoutes` augmentation
+is only needed when you want the richer `typeof router.routeMap` shape
+available globally.
+
+- `GeneratedRouteMap` — auto-registered by `router.named-routes.gen.ts`
+  Use for `Handler<"name">`, `Prerender<"name">`, server `ctx.reverse()`,
+  and named-route param/search inference.
+- `typeof router.routeMap` — the real merged route map from your router
+  instance, including response-route metadata such as `{ path, response }`.
+- `RegisteredRoutes` — manual global hook for exposing `typeof router.routeMap`
+  to utilities like `href()`, `ValidPaths`, and `PathResponse`.
+
+Recommended setup:
+
+```typescript
+// router.tsx
+import { createRouter } from "@rangojs/router";
+import { urlpatterns } from "./urls";
+import type { AppBindings, AppVars } from "./env";
+
+export const router = createRouter<AppBindings>({}).routes(urlpatterns);
+
+declare global {
+  namespace RSCRouter {
+    interface Env extends AppBindings {}
+    interface Vars extends AppVars {}
+    interface RegisteredRoutes extends typeof router.routeMap {}
+  }
+}
 ```
 
 ## Route Definition with Type-Safe Names
@@ -95,6 +128,17 @@ function ShopNav() {
 }
 ```
 
+`href()` and path-based response utilities read from `RegisteredRoutes`, so if
+you want them typed globally you should augment:
+
+```typescript
+declare global {
+  namespace RSCRouter {
+    interface RegisteredRoutes extends typeof router.routeMap {}
+  }
+}
+```
+
 See `/links` for full URL generation guide.
 
 ## Environment Type Setup
@@ -103,54 +147,58 @@ Define your app's environment for type-safe bindings and variables:
 
 ```typescript
 // env.ts
-import type { RouterEnv } from "@rangojs/router";
 
-// Cloudflare bindings
-interface AppBindings {
+// Cloudflare bindings — passed as TEnv to createRouter<TEnv>()
+export interface AppBindings {
   DB: D1Database;
   KV: KVNamespace;
   CACHE: KVNamespace;
   AI: Ai;
 }
 
-// Variables set by middleware
-interface AppVariables {
+// Variables set by middleware — declared via module augmentation
+export interface AppVariables {
   user?: { id: string; email: string; role: string };
   requestId?: string;
   permissions?: string[];
 }
-
-// Combined environment type
-export type AppEnv = RouterEnv<AppBindings, AppVariables>;
 ```
 
 ### Using Environment Types
 
 ```typescript
 // router.tsx
-import type { AppEnv } from "./env";
+import type { AppBindings, AppVariables } from "./env";
 
-const router = createRouter<AppEnv>({
+const router = createRouter<AppBindings>({
   document: Document,
   urls: urlpatterns,
 });
 
-// middleware - typed ctx.env.Variables
-import { createMiddleware } from "@rangojs/router";
+// Register bindings and variables globally for implicit typing
+declare global {
+  namespace RSCRouter {
+    interface Env extends AppBindings {}
+    interface Vars extends AppVariables {}
+  }
+}
 
-export const authMiddleware = createMiddleware(async (ctx, next) => {
-  ctx.env.Variables.user = {
+// middleware - typed via ctx.set / ctx.get
+import type { Middleware } from "@rangojs/router";
+
+export const authMiddleware: Middleware = async (ctx, next) => {
+  ctx.set("user", {
     id: "123",
     email: "user@example.com",
     role: "admin",
-  };
+  });
   await next();
-});
+};
 
 // loaders - typed context
 export const UserLoader = createLoader("user", async (ctx) => {
-  const db = ctx.env.Bindings.DB; // D1Database
-  const userId = ctx.env.Variables.user?.id;
+  const db = ctx.env.DB; // D1Database (plain bindings)
+  const userId = ctx.get("user")?.id; // from RSCRouter.Vars
   return db.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
 });
 ```
@@ -163,7 +211,8 @@ Register environment types globally for implicit typing:
 // router.tsx
 declare global {
   namespace RSCRouter {
-    interface Env extends AppEnv {}
+    interface Env extends AppBindings {}
+    interface Vars extends AppVariables {}
   }
 }
 ```
@@ -173,9 +222,9 @@ Now handlers have typed context without explicit imports:
 ```typescript
 // In loaders
 export const DashboardLoader = createLoader("dashboard", async (ctx) => {
-  // ctx.env.Variables.user is typed from global Env
-  // ctx.params is typed from route pattern
-  const user = ctx.env.Variables.user;
+  // ctx.env.DB is typed from global RSCRouter.Env
+  // ctx.get("user") is typed from global RSCRouter.Vars
+  const user = ctx.get("user");
   return { user };
 });
 ```
@@ -350,15 +399,16 @@ export function PaginationLayout(ctx: any) {
 }
 ```
 
-### Why not just use RouterEnv?
+### Why not just use RSCRouter.Vars?
 
-`RouterEnv<Bindings, Variables>` provides app-global typing via namespace
-augmentation. It works for middleware state shared app-wide. `createVar<T>()`
-is for route-local or feature-scoped context -- the producer and consumer
-import the same token, creating a scoped contract without polluting global types.
+`RSCRouter.Vars` (via module augmentation) provides app-global typing for
+`ctx.get("key")` / `ctx.set("key", value)`. It works for middleware state
+shared app-wide. `createVar<T>()` is for route-local or feature-scoped
+context -- the producer and consumer import the same token, creating a
+scoped contract without polluting global types.
 
-Both approaches coexist: `ctx.env.Variables.user` (global) and
-`ctx.get(Pagination)` (scoped) work side by side.
+Both approaches coexist: `ctx.get("user")` (global via Vars) and
+`ctx.get(Pagination)` (scoped via createVar) work side by side.
 
 ## Handle Type Safety
 
@@ -500,7 +550,7 @@ global type declarations (like `RSCRouter.Env`).
 }
 ```
 
-The `files` array ensures `router.tsx` (which contains `declare global { namespace RSCRouter { interface Env } }`)
+The `files` array ensures `router.tsx` (which contains `declare global { namespace RSCRouter { interface Env; interface Vars } }`)
 is always included in the compilation even if nothing directly imports it. Route types come from the
 auto-generated `*.named-routes.gen.ts` file (via `rango generate`), not from manual declaration.
 Each app gets its own typed environment without interfering with other apps.
@@ -509,7 +559,14 @@ Each app gets its own typed environment without interfering with other apps.
 
 ```typescript
 // 1. env.ts - Environment types
-export type AppEnv = RouterEnv<AppBindings, AppVariables>;
+export interface AppBindings {
+  DB: D1Database;
+  KV: KVNamespace;
+}
+
+export interface AppVariables {
+  user?: { id: string; email: string; role: string };
+}
 
 // 2. urls.tsx - Route definitions with names
 import { urls } from "@rangojs/router";
@@ -526,14 +583,15 @@ export const urlpatterns = urls(({ path, layout, loader }) => [
 ]);
 
 // 3. router.tsx - Create router and export reverse
-const router = createRouter<AppEnv>({
+const router = createRouter<AppBindings>({
   document: Document,
 }).routes(urlpatterns);
 
-// Optional: register environment type globally for implicit typing
+// Register bindings and variables globally for implicit typing
 declare global {
   namespace RSCRouter {
-    interface Env extends AppEnv {}
+    interface Env extends AppBindings {}
+    interface Vars extends AppVariables {}
   }
 }
 
@@ -547,8 +605,8 @@ export default router;
 // 5. loaders/*.ts - Type-safe loaders
 export const ProductLoader = createLoader("product", async (ctx) => {
   // ctx.params: { slug: string }
-  // ctx.env.Variables.user: User | undefined
-  // ctx.env.Bindings.DB: D1Database
+  // ctx.get("user"): User | undefined  (from RSCRouter.Vars)
+  // ctx.env.DB: D1Database  (plain bindings from RSCRouter.Env)
   return { product: await fetchProduct(ctx.params.slug) };
 });
 

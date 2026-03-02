@@ -126,6 +126,23 @@ export async function triggerRevalidation(): Promise<{
 }
 
 /**
+ * Server action for form tests.
+ * Compatible with useActionState: (prevState, formData) => newState
+ */
+export async function formTestAction(
+  _prevState: { id: string; message: string; timestamp: string } | null,
+  formData: FormData,
+): Promise<{ id: string; message: string; timestamp: string }> {
+  const id = (formData.get("id") as string) ?? "default";
+  await delay(500);
+  return {
+    id,
+    message: "Submitted via server action",
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/**
  * Simple form action for testing progressive enhancement (no-JS)
  * Returns the submitted name to verify the form was processed
  */
@@ -223,4 +240,44 @@ export async function interleaveTestAction(
   input: string,
 ): Promise<{ result: string; ts: number }> {
   return { result: `action-result:${input}`, ts: Date.now() };
+}
+
+/**
+ * Test action that uses getRequestContext().reverse() to generate URLs.
+ * Verifies that RequestContext has the reverse() method available in server actions.
+ */
+export async function testRequestContextReverse(): Promise<{
+  blogIndex: string;
+  blogPost: string;
+  hrefIndex: string;
+}> {
+  const ctx = requireRequestContext();
+  const blogIndex = ctx.reverse("blog.index");
+  const blogPost = ctx.reverse("blog.post", { postId: "from-action" });
+  const hrefIndex = ctx.reverse("href.index");
+  return { blogIndex, blogPost, hrefIndex };
+}
+
+/**
+ * Login action for testing action redirect revalidation.
+ * Sets an auth cookie and throws redirect to the target page.
+ * The redirect should cause the target route's loaders to revalidate
+ * so the page shows authenticated content.
+ */
+export async function actionRedirectLogin(
+  _prev: { error?: string } | undefined,
+  formData: FormData,
+): Promise<{ error?: string }> {
+  const email = (formData.get("email") as string)?.trim();
+  if (!email) {
+    return { error: "Email is required" };
+  }
+
+  const ctx = requireRequestContext();
+  ctx.setCookie("test-auth-session", email, {
+    path: "/",
+    maxAge: 86400,
+  });
+
+  throw redirect("/action-redirect-revalidation");
 }

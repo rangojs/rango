@@ -11,9 +11,9 @@ Middleware runs before/after route handlers using the onion model.
 ## Basic Middleware
 
 ```typescript
-import { createMiddleware } from "@rangojs/router";
+import type { Middleware } from "@rangojs/router";
 
-export const authMiddleware = createMiddleware(async (ctx, next) => {
+export const authMiddleware: Middleware = async (ctx, next) => {
   const token = ctx.request.headers.get("Authorization");
 
   if (!token) {
@@ -21,10 +21,10 @@ export const authMiddleware = createMiddleware(async (ctx, next) => {
   }
 
   const user = await verifyToken(token);
-  ctx.env.Variables.user = user;
+  ctx.set("user", user);
 
   await next();
-});
+};
 ```
 
 ## Using Middleware in Routes
@@ -68,25 +68,25 @@ layout(<ShopLayout />, () => [
 ## Middleware Context
 
 ```typescript
-export const myMiddleware = createMiddleware(async (ctx, next) => {
+export const myMiddleware: Middleware = async (ctx, next) => {
   // Access request
   ctx.request; // Request object
   ctx.url; // Parsed URL
   ctx.params; // Route parameters
 
-  // Access environment
-  ctx.env.Bindings.DB; // Cloudflare bindings
-  ctx.env.Variables; // Mutable variables
+  // Access platform bindings (plain bindings from createRouter<TEnv>())
+  ctx.env.DB; // D1Database
+  ctx.env.KV; // KVNamespace
 
-  // Set variables for downstream handlers
-  ctx.env.Variables.user = { id: "123", name: "John" };
+  // Set variables for downstream handlers (typed via RSCRouter.Vars)
+  ctx.set("user", { id: "123", name: "John" });
 
   // Continue to next middleware/handler
   await next();
 
   // After handler (response intercepting)
   console.log("Handler completed");
-});
+};
 ```
 
 ### Typed context variables in middleware
@@ -94,19 +94,20 @@ export const myMiddleware = createMiddleware(async (ctx, next) => {
 Use `createVar<T>()` for type-safe data sharing between middleware and handlers:
 
 ```typescript
-import { createMiddleware, createVar } from "@rangojs/router";
+import { createVar } from "@rangojs/router";
+import type { Middleware } from "@rangojs/router";
 
 interface AuthUser { id: string; email: string; role: string }
 export const CurrentUser = createVar<AuthUser>();
 
-export const authMiddleware = createMiddleware(async (ctx, next) => {
+export const authMiddleware: Middleware = async (ctx, next) => {
   const token = ctx.request.headers.get("Authorization");
   if (!token) throw new Response("Unauthorized", { status: 401 });
 
   const user = await verifyToken(token);
   ctx.set(CurrentUser, user);  // type-checked
   await next();
-});
+};
 
 // In a handler -- typed read
 import { CurrentUser } from "./middleware";
@@ -117,23 +118,21 @@ const Dashboard: Handler<"dashboard"> = (ctx) => {
 };
 ```
 
-This works alongside `ctx.env.Variables` (global env typing). Use `createVar` for
-route-local or feature-scoped data; use `env.Variables` for app-wide middleware state.
+This works alongside `ctx.get("key")` / `ctx.set("key", value)` (global typing
+via RSCRouter.Vars augmentation). Use `createVar` for route-local or feature-scoped
+data; use RSCRouter.Vars for app-wide middleware state.
 
 ## Redirect with State in Middleware
 
 ```typescript
-import {
-  createMiddleware,
-  redirect,
-  createLocationState,
-} from "@rangojs/router";
+import { redirect, createLocationState } from "@rangojs/router";
+import type { Middleware } from "@rangojs/router";
 
 export const FlashMessage = createLocationState<{ text: string }>({
   flash: true,
 });
 
-export const requireAuthMiddleware = createMiddleware(async (ctx, next) => {
+export const requireAuthMiddleware: Middleware = async (ctx, next) => {
   const token = ctx.request.headers.get("Authorization");
   if (!token) {
     return redirect("/login", {
@@ -141,7 +140,7 @@ export const requireAuthMiddleware = createMiddleware(async (ctx, next) => {
     });
   }
   await next();
-});
+};
 ```
 
 Read the flash on the target page with `useLocationState(FlashMessage)`. The `{ flash: true }` option makes it auto-clear after first render. See `/hooks`.
@@ -149,18 +148,18 @@ Read the flash on the target page with `useLocationState(FlashMessage)`. The `{ 
 ## Authentication Middleware
 
 ```typescript
-export const requireAuthMiddleware = createMiddleware(async (ctx, next) => {
-  const user = ctx.env.Variables.user;
+export const requireAuthMiddleware: Middleware = async (ctx, next) => {
+  const user = ctx.get("user");
 
   if (!user) {
     throw new Response("Unauthorized", { status: 401 });
   }
 
   await next();
-});
+};
 
-export const permissionsMiddleware = createMiddleware(async (ctx, next) => {
-  const user = ctx.env.Variables.user;
+export const permissionsMiddleware: Middleware = async (ctx, next) => {
+  const user = ctx.get("user");
   const requiredPermission = "admin";
 
   if (!user?.permissions?.includes(requiredPermission)) {
@@ -168,13 +167,13 @@ export const permissionsMiddleware = createMiddleware(async (ctx, next) => {
   }
 
   await next();
-});
+};
 ```
 
 ## Logger Middleware
 
 ```typescript
-export const loggerMiddleware = createMiddleware(async (ctx, next) => {
+export const loggerMiddleware: Middleware = async (ctx, next) => {
   const start = Date.now();
 
   console.log(`[${ctx.request.method}] ${ctx.url.pathname}`);
@@ -183,54 +182,54 @@ export const loggerMiddleware = createMiddleware(async (ctx, next) => {
 
   const duration = Date.now() - start;
   console.log(`[${ctx.request.method}] ${ctx.url.pathname} - ${duration}ms`);
-});
+};
 ```
 
 ## Rate Limiting Middleware
 
 ```typescript
-export const rateLimitMiddleware = createMiddleware(async (ctx, next) => {
+export const rateLimitMiddleware: Middleware = async (ctx, next) => {
   const ip = ctx.request.headers.get("CF-Connecting-IP") ?? "unknown";
   const key = `rate-limit:${ip}`;
 
-  const count = await ctx.env.Bindings.KV.get(key);
+  const count = await ctx.env.KV.get(key);
   const requests = count ? parseInt(count) : 0;
 
   if (requests > 100) {
     throw new Response("Too Many Requests", { status: 429 });
   }
 
-  await ctx.env.Bindings.KV.put(key, String(requests + 1), {
+  await ctx.env.KV.put(key, String(requests + 1), {
     expirationTtl: 60,
   });
 
   await next();
-});
+};
 ```
 
 ## Complete Example
 
 ```typescript
 // middleware/index.ts
-import { createMiddleware } from "@rangojs/router";
+import type { Middleware } from "@rangojs/router";
 
-export const loggerMiddleware = createMiddleware(async (ctx, next) => {
+export const loggerMiddleware: Middleware = async (ctx, next) => {
   console.log(`[${ctx.request.method}] ${ctx.url.pathname}`);
   await next();
-});
+};
 
-export const mockAuthMiddleware = createMiddleware(async (ctx, next) => {
+export const mockAuthMiddleware: Middleware = async (ctx, next) => {
   // Mock user for development
-  ctx.env.Variables.user = { id: "1", name: "Demo User" };
+  ctx.set("user", { id: "1", name: "Demo User" });
   await next();
-});
+};
 
-export const requireAuthMiddleware = createMiddleware(async (ctx, next) => {
-  if (!ctx.env.Variables.user) {
+export const requireAuthMiddleware: Middleware = async (ctx, next) => {
+  if (!ctx.get("user")) {
     throw new Response("Unauthorized", { status: 401 });
   }
   await next();
-});
+};
 
 // urls.tsx
 import { urls } from "@rangojs/router";

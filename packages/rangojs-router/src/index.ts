@@ -58,9 +58,6 @@ export type {
   LoaderContext,
   FetchableLoaderOptions,
   LoadOptions,
-  LoaderActionContext,
-  LoaderAction,
-  LoaderMiddlewareFn,
   // Error boundary types
   ErrorInfo,
   ErrorBoundaryFallbackProps,
@@ -145,6 +142,9 @@ export { createHandle, isHandle, type Handle } from "./handle.js";
 
 // Context variable API (typed ctx.set/ctx.get tokens)
 export { createVar, type ContextVar } from "./context-var.js";
+
+// CSP nonce token (use with ctx.get(nonce) in middleware/handlers)
+export { nonce } from "./rsc/nonce.js";
 
 /**
  * Error-throwing stub for server-only `Prerender` function.

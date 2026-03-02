@@ -41,7 +41,7 @@ export interface ServerActionBridgeConfigWithController extends ServerActionBrid
   /** Callback to trigger SPA navigation (for action redirects) */
   onNavigate?: (
     url: string,
-    options?: { state?: unknown; replace?: boolean },
+    options?: { state?: unknown; replace?: boolean; _skipCache?: boolean },
   ) => Promise<void>;
 }
 
@@ -228,7 +228,10 @@ export function createServerActionBridge(
         }
         handle.complete(undefined);
         if (onNavigate) {
-          await onNavigate(simpleRedirectUrl, { replace: true });
+          await onNavigate(simpleRedirectUrl, {
+            replace: true,
+            _skipCache: true,
+          });
         } else {
           window.location.href = simpleRedirectUrl;
         }
@@ -327,6 +330,7 @@ export function createServerActionBridge(
         await onNavigate(redirectUrl, {
           state: redirectState,
           replace: true,
+          _skipCache: true,
         });
       } else {
         window.location.href = redirectUrl;

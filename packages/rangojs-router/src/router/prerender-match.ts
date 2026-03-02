@@ -9,6 +9,7 @@ import { contextGet, contextSet } from "../context-var.js";
 import {
   createPrerenderContext,
   createStaticContext,
+  createReverseFunction,
 } from "./handler-context.js";
 import { setupBuildUse } from "./loader-resolution.js";
 import { loadManifest } from "./manifest.js";
@@ -119,6 +120,11 @@ export async function matchForPrerender<TEnv = any>(
       _onResponseCallbacks: [],
       setLocationState() {},
       _locationState: undefined,
+      reverse: createReverseFunction(
+        deps.mergedRouteMap,
+        matched.routeKey,
+        matchedParams,
+      ),
     };
 
     return runWithRequestContext(minimalRequestContext, async () => {
@@ -324,6 +330,7 @@ export async function renderStaticSegment<TEnv = any>(
     _onResponseCallbacks: [],
     setLocationState() {},
     _locationState: undefined,
+    reverse: createReverseFunction(mergedRouteMap, routeName, {}),
   };
 
   return runWithRequestContext(minimalRequestContext, async () => {
@@ -332,7 +339,8 @@ export async function renderStaticSegment<TEnv = any>(
     const buildCtx = createStaticContext<TEnv>(mergedRouteMap, routeName);
 
     // Set segment ID so handle pushes are keyed correctly
-    (buildCtx as InternalHandlerContext)._currentSegmentId = handlerId;
+    (buildCtx as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+      handlerId;
 
     setupBuildUse(buildCtx);
 

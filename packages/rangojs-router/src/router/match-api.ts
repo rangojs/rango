@@ -12,7 +12,10 @@ import {
   createErrorSegment,
   findNearestErrorBoundary as findErrorBoundary,
 } from "./error-handling.js";
-import { createHandlerContext } from "./handler-context.js";
+import {
+  createHandlerContext,
+  stripInternalParams,
+} from "./handler-context.js";
 import { setupLoaderAccess } from "./loader-resolution.js";
 import { loadManifest, clearManifestCache } from "./manifest.js";
 import { collectRouteMiddleware } from "./middleware.js";
@@ -23,23 +26,11 @@ import {
   LoaderEntry,
   getContext,
   InterceptSelectorContext,
-  type MetricsStore,
 } from "../server/context";
-import type {
-  ErrorBoundaryHandler,
-  ErrorInfo,
-  HandlerContext,
-  MatchResult,
-  ResolvedSegment,
-} from "../types";
+import type { ErrorBoundaryHandler, ErrorInfo, MatchResult } from "../types";
 import type { ReactNode } from "react";
-import type {
-  MatchContext,
-  ActionContext as MatchActionContext,
-} from "./match-context.js";
+import type { MatchContext } from "./match-context.js";
 import type { MatchApiDeps, ActionContext } from "./types.js";
-import type { InterceptEntry } from "../server/context";
-import type { RouteMatchResult } from "./pattern-matching.js";
 import { getRequestContext } from "../server/request-context.js";
 import { debugLog, debugWarn } from "./logging.js";
 
@@ -101,15 +92,16 @@ export async function createMatchContextForFull<TEnv>(
     matched.params,
   );
 
-  const bindings = (env as any)?.Bindings ?? env;
+  // Clean URL without internal _rsc* params for userland access
+  const cleanUrl = stripInternalParams(url);
 
   const handlerContext = createHandlerContext(
     matched.params,
     request,
-    url.searchParams,
+    cleanUrl.searchParams,
     pathname,
-    url,
-    bindings,
+    cleanUrl,
+    env,
     deps.getRouteMap(),
     matched.routeKey,
     matched.responseType,
@@ -140,14 +132,13 @@ export async function createMatchContextForFull<TEnv>(
 
   return {
     request,
-    url,
+    url: cleanUrl,
     pathname,
     env,
-    bindings,
     clientSegmentIds: [],
     clientSegmentSet: new Set(),
     stale: false,
-    prevUrl: url,
+    prevUrl: cleanUrl,
     prevParams: {},
     prevMatch: null,
     matched,
@@ -164,8 +155,8 @@ export async function createMatchContextForFull<TEnv>(
     Store,
     interceptContextMatch: null,
     interceptSelectorContext: {
-      from: url,
-      to: url,
+      from: cleanUrl,
+      to: cleanUrl,
       params: matched.params,
       request,
       env,
@@ -195,7 +186,6 @@ export async function createMatchContextForPartial<TEnv>(
   const url = new URL(request.url);
   const pathname = url.pathname;
 
-  const requestStartTime = performance.now();
   const metricsStore = deps.getMetricsStore();
 
   const clientSegmentIds =
@@ -277,14 +267,16 @@ export async function createMatchContextForPartial<TEnv>(
     matched.params,
   );
 
-  const bindings = (env as any)?.Bindings ?? env;
+  // Clean URL without internal _rsc* params for userland access
+  const cleanUrl = stripInternalParams(url);
+
   const handlerContext = createHandlerContext(
     matched.params,
     request,
-    url.searchParams,
+    cleanUrl.searchParams,
     pathname,
-    url,
-    bindings,
+    cleanUrl,
+    env,
     deps.getRouteMap(),
     matched.routeKey,
     matched.responseType,
@@ -335,7 +327,7 @@ export async function createMatchContextForPartial<TEnv>(
   });
   const interceptSelectorContext: InterceptSelectorContext = {
     from: prevUrl,
-    to: url,
+    to: cleanUrl,
     params: matched.params,
     request,
     env,
@@ -391,10 +383,9 @@ export async function createMatchContextForPartial<TEnv>(
 
   return {
     request,
-    url,
+    url: cleanUrl,
     pathname,
     env,
-    bindings,
     clientSegmentIds,
     clientSegmentSet,
     stale,

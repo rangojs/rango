@@ -16,7 +16,7 @@ export const CommentsLoader = createLoader(async (ctx) => {
 
   const slug = ctx.params.slug as string;
 
-  // Handle form submission (mutation)
+  // Handle form submission (mutation via FormData)
   const name = ctx.formData?.get("name") as string | null;
   const text = ctx.formData?.get("text") as string | null;
 

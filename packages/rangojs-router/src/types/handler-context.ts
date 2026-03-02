@@ -9,11 +9,11 @@ import type { LocationStateEntry } from "../browser/react/location-state-shared.
 import type {
   DefaultEnv,
   DefaultHandlerRouteMap,
-  GetRegisteredRoutes,
+  DefaultReverseRouteMap,
+  DefaultVars,
 } from "./global-namespace.js";
 import type {
   ExtractParams,
-  RouterEnv,
   RouteDefinition,
   ResolvedRouteMap,
 } from "./route-config.js";
@@ -66,6 +66,65 @@ type ExtractSearchFromEntry<TMap, TKey> = TKey extends keyof TMap
     ? S
     : {}
   : {};
+
+type IsEmptyObject<T> = keyof T extends never ? true : false;
+
+type AutofillParamsFromEntry<TEntry> = TEntry extends string
+  ? string extends TEntry
+    ? Record<string, string>
+    : Partial<ExtractParams<TEntry>>
+  : TEntry extends { readonly path: infer P extends string }
+    ? string extends P
+      ? Record<string, string>
+      : Partial<ExtractParams<P>>
+    : Record<string, string>;
+
+type AutofillSearchFromEntry<TMap, TKey> = TKey extends keyof TMap
+  ? TMap[TKey] extends { readonly search: infer S extends SearchSchema }
+    ? ResolveSearchSchema<S>
+    : Record<string, unknown>
+  : Record<string, unknown>;
+
+type AutofillAwareReverseFunction<TLocalRoutes, TGlobalRoutes> =
+  ScopedReverseFunction<TLocalRoutes, TGlobalRoutes> & {
+    <TName extends keyof TGlobalRoutes & string>(
+      name: TName,
+      params?: AutofillParamsFromEntry<TGlobalRoutes[TName]>,
+      search?: AutofillSearchFromEntry<TGlobalRoutes, TName>,
+    ): string;
+    <TName extends keyof TLocalRoutes & string>(
+      name: `.${TName}`,
+      params?: AutofillParamsFromEntry<TLocalRoutes[TName]>,
+      search?: AutofillSearchFromEntry<TLocalRoutes, TName>,
+    ): string;
+  };
+
+type StrictLocalParamsWithExtras<TEntry> =
+  IsEmptyObject<ExtractParamsFromEntry<TEntry, {}>> extends true
+    ? Record<string, string>
+    : ExtractParamsFromEntry<TEntry, {}> & Record<string, string>;
+
+// HandlerContext.reverse is the only reverse surface with runtime param autofill
+// from the current matched request. Middleware/loaders/request context do not
+// have the same local-route guarantees, so they keep plain ScopedReverseFunction.
+//
+// When a handler has an explicit local route map, enforce that local route
+// params declared by that map are present while still allowing extra mount
+// params to be passed through. Global names remain autofill-friendly because
+// parent include() params are often unknown at the module definition site.
+type StrictLocalAutofillGlobalReverseFunction<TLocalRoutes, TGlobalRoutes> =
+  ScopedReverseFunction<TLocalRoutes, TGlobalRoutes> & {
+    <TName extends keyof TGlobalRoutes & string>(
+      name: TName,
+      params?: AutofillParamsFromEntry<TGlobalRoutes[TName]>,
+      search?: AutofillSearchFromEntry<TGlobalRoutes, TName>,
+    ): string;
+    <TName extends keyof TLocalRoutes & string>(
+      name: `.${TName}`,
+      params: StrictLocalParamsWithExtras<TLocalRoutes[TName]>,
+      search?: AutofillSearchFromEntry<TLocalRoutes, TName>,
+    ): string;
+  };
 
 export type Handler<
   T extends
@@ -171,15 +230,15 @@ export type HandlerContext<
    */
   url: URL;
   /**
-   * Platform bindings (DB, KV, secrets, etc.) from RouterEnv.
+   * Platform bindings (DB, KV, secrets, etc.).
    * Access resources like `ctx.env.DB`, `ctx.env.KV`.
    */
-  env: TEnv extends RouterEnv<infer B, any> ? B : {};
+  env: TEnv;
   /**
-   * Middleware-injected variables from RouterEnv.
+   * Middleware-injected variables.
    * Access values like `ctx.var.user`, `ctx.var.permissions`.
    */
-  var: TEnv extends RouterEnv<any, infer V> ? V : {};
+  var: DefaultVars;
   /**
    * Type-safe getter for middleware variables.
    * Alternative to `ctx.var.key` with better autocomplete.
@@ -191,9 +250,7 @@ export type HandlerContext<
    */
   get: {
     <T>(contextVar: ContextVar<T>): T | undefined;
-  } & (TEnv extends RouterEnv<any, infer V>
-    ? <K extends keyof V>(key: K) => V[K]
-    : (key: string) => any);
+  } & (<K extends keyof DefaultVars>(key: K) => DefaultVars[K]);
   /**
    * Type-safe setter for middleware variables.
    * Use in middleware to pass data to handlers.
@@ -206,9 +263,7 @@ export type HandlerContext<
    */
   set: {
     <T>(contextVar: ContextVar<T>, value: T): void;
-  } & (TEnv extends RouterEnv<any, infer V>
-    ? <K extends keyof V>(key: K, value: V[K]) => void
-    : (key: string, value: any) => void);
+  } & (<K extends keyof DefaultVars>(key: K, value: DefaultVars[K]) => void);
   /**
    * Stub response for setting headers/cookies.
    * Headers set here are merged into the final response.
@@ -345,8 +400,14 @@ export type HandlerContext<
    * ```
    */
   reverse: [TRouteMap] extends [never]
-    ? ScopedReverseFunction<GetRegisteredRoutes>
-    : ScopedReverseFunction<TRouteMap, GetRegisteredRoutes>;
+    ? AutofillAwareReverseFunction<
+        Record<string, string>,
+        DefaultReverseRouteMap
+      >
+    : StrictLocalAutofillGlobalReverseFunction<
+        TRouteMap,
+        DefaultReverseRouteMap
+      >;
 };
 
 /**

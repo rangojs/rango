@@ -1,32 +1,32 @@
 /**
  * Global namespace for module augmentation
  *
- * Users can augment this to provide type-safe context globally:
+ * Users augment these interfaces for type-safe context:
  *
  * @example
  * ```typescript
- * // In router.tsx or env.d.ts
+ * // In env.ts or env.d.ts
  * declare global {
  *   namespace RSCRouter {
- *     interface Env extends RouterEnv<AppBindings, AppVariables> {}
+ *     interface Env extends AppBindings {}
+ *     interface Vars extends AppVariables {}
  *   }
  * }
  *
  * // Now all handlers have type-safe context without imports!
- * export default map<typeof shopRoutes>({
- *   [middleware('*', 'auth')]: [
- *     (ctx, next) => {
- *       ctx.set('user', ...) // Type-safe!
- *     }
- *   ]
- * })
+ * // ctx.env.DB, ctx.get("user"), etc.
  * ```
  */
 declare global {
   namespace RSCRouter {
     // eslint-disable-next-line @typescript-eslint/no-empty-interface
     interface Env {
-      // Empty by default - users augment with their RouterEnv
+      // Empty by default - users augment with their bindings (e.g., { DB: D1Database })
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-empty-interface
+    interface Vars {
+      // Empty by default - users augment with their variables (e.g., { user?: User })
     }
 
     // eslint-disable-next-line @typescript-eslint/no-empty-interface
@@ -53,6 +53,19 @@ export type GetRegisteredRoutes = keyof RSCRouter.RegisteredRoutes extends never
   : RSCRouter.RegisteredRoutes;
 
 /**
+ * Default route map for reverse() surfaces.
+ * Prefers GeneratedRouteMap to avoid router.tsx -> urls.tsx -> types -> router.tsx
+ * cycles, but falls back to RegisteredRoutes for manual augmentation and then to
+ * a permissive record when no route types are available.
+ */
+export type DefaultReverseRouteMap =
+  keyof RSCRouter.GeneratedRouteMap extends never
+    ? keyof RSCRouter.RegisteredRoutes extends never
+      ? Record<string, string>
+      : RSCRouter.RegisteredRoutes
+    : RSCRouter.GeneratedRouteMap;
+
+/**
  * Default route map for Handler type.
  * Uses GeneratedRouteMap (from gen file) instead of RegisteredRoutes to avoid
  * circular dependencies: router.tsx -> urls.tsx -> handler.tsx -> RegisteredRoutes -> router.tsx.
@@ -69,3 +82,10 @@ export type DefaultHandlerRouteMap =
 export type DefaultEnv = keyof RSCRouter.Env extends never
   ? any
   : RSCRouter.Env;
+
+/**
+ * Default variables type - uses global augmentation if available, Record<string, any> otherwise
+ */
+export type DefaultVars = keyof RSCRouter.Vars extends never
+  ? Record<string, any>
+  : RSCRouter.Vars;

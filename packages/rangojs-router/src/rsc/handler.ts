@@ -16,19 +16,22 @@ import {
   requireRequestContext,
   createRequestContext,
   getLocationState,
-  type ExecutionContext,
 } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
 import type { RscPayload, CreateRSCHandlerOptions } from "./types.js";
-import { createResponseWithMergedHeaders } from "./helpers.js";
-import { generateNonce } from "./nonce.js";
+import {
+  createResponseWithMergedHeaders,
+  createSimpleRedirectResponse,
+} from "./helpers.js";
+import { generateNonce, nonce as nonceToken } from "./nonce.js";
 import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
+import type { RouterRequestInput } from "../router/router-interfaces.js";
 import { invokeOnError } from "../router/error-handling.js";
 import { createReverseFunction } from "../router/handler-context.js";
-import { contextGet } from "../context-var.js";
+import { contextGet, contextSet } from "../context-var.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import { traverseBack } from "../router/pattern-matching.js";
 import { createCacheScope, resolveCacheTags } from "../cache/cache-scope.js";
@@ -182,11 +185,11 @@ export function createRSCHandler<
 
   return async function handler(
     request: Request,
-    env: TEnv & { ctx?: ExecutionContext } = {} as TEnv & {
-      ctx?: ExecutionContext;
-    },
+    input: RouterRequestInput<TEnv> = {},
   ): Promise<Response> {
     const handlerStart = performance.now();
+
+    const { env = {} as TEnv, vars: initialVars, ctx: executionCtx } = input;
 
     // Connection warmup: return 204 immediately before any processing
     if (router?.warmupEnabled && request.method === "HEAD") {
@@ -213,13 +216,14 @@ export function createRSCHandler<
     const mwMatchDur = performance.now() - mwMatchStart;
 
     // Shared variables between middleware and route handlers
-    // Initialize from env.Variables if provided (allows pre-seeding from worker entry)
-    const variables: Record<string, any> = {
-      ...((env as any)?.Variables ?? {}),
-    };
+    // Initialize from input.vars if provided (allows pre-seeding from worker entry)
+    const variables: Record<string, any> = initialVars
+      ? { ...initialVars }
+      : {};
 
-    // Store nonce in variables so middleware can access via ctx.get('nonce')
+    // Store nonce via ContextVar token and string key for backward compat
     if (nonce) {
+      contextSet(variables, nonceToken, nonce);
       variables.nonce = nonce;
     }
 
@@ -230,7 +234,9 @@ export function createRSCHandler<
     const cacheOption = options.cache ?? router.cache;
     if (cacheOption && !url.searchParams.has("__no_cache")) {
       const cacheConfig =
-        typeof cacheOption === "function" ? cacheOption(env) : cacheOption;
+        typeof cacheOption === "function"
+          ? cacheOption(env, executionCtx)
+          : cacheOption;
 
       if (cacheConfig.enabled !== false) {
         cacheStore = cacheConfig.store;
@@ -294,7 +300,7 @@ export function createRSCHandler<
       url,
       variables,
       cacheStore,
-      executionContext: env.ctx,
+      executionContext: executionCtx,
       themeConfig: router.themeConfig,
     });
     const ctxCreateDur = performance.now() - ctxCreateStart;
@@ -335,9 +341,11 @@ export function createRSCHandler<
           createReverseFunction(getRequiredRouteMap()),
         );
 
-        // If global middleware returned a redirect with location state during
-        // a partial (SPA) request, convert to Flight payload. Without this,
-        // fetch auto-follows the 3xx and the state is lost.
+        // If global middleware returned a redirect during a partial (SPA)
+        // request, intercept it. fetch auto-follows 3xx, so we must signal
+        // the redirect via our own mechanism instead.
+        // - With state: Flight payload (200) so location state survives.
+        // - Without state: 204 + X-RSC-Redirect header (lightweight).
         const isPartial = url.searchParams.has("_rsc_partial");
         const redirectUrl = mwResponse.headers.get("Location");
         const isRedirect =
@@ -350,6 +358,7 @@ export function createRSCHandler<
               resolveLocationStateEntries(locationState),
             );
           }
+          return createSimpleRedirectResponse(redirectUrl);
         }
 
         return mwResponse;
@@ -369,7 +378,7 @@ export function createRSCHandler<
   ): Promise<Response> {
     // First, check for route-level middleware
     const previewStart = performance.now();
-    const preview = await router.previewMatch(request, env);
+    const preview = await router.previewMatch(request, { env });
     const previewDur = performance.now() - previewStart;
     const handlerTiming: string[] = variables.__handlerTiming || [];
     handlerTiming.push(`handler-preview-match;dur=${previewDur.toFixed(2)}`);
@@ -398,12 +407,11 @@ export function createRSCHandler<
       }
 
       // Build lightweight context for response handler
-      const bindings = (env as any)?.Bindings ?? env;
       const reqCtx = requireRequestContext();
       const responseHandlerCtx = {
         request,
         params: preview.params || {},
-        env: bindings,
+        env,
         searchParams: url.searchParams,
         url,
         pathname: url.pathname,
@@ -699,10 +707,11 @@ export function createRSCHandler<
         createReverseFunction(getRequiredRouteMap()),
       );
 
-      // If route middleware returned a redirect with location state during
-      // a partial (SPA) request, convert to a 200 Flight payload so the
-      // browser can perform the redirect with pushState. Without this,
-      // fetch auto-follows the 3xx, losing the state.
+      // If route middleware returned a redirect during a partial (SPA)
+      // request, intercept it. fetch auto-follows 3xx, so we must signal
+      // the redirect via our own mechanism instead.
+      // - With state: Flight payload (200) so location state survives.
+      // - Without state: 204 + X-RSC-Redirect header (lightweight).
       const isPartial = url.searchParams.has("_rsc_partial");
       const mwRedirectUrl = mwResponse.headers.get("Location");
       const isMwRedirect =
@@ -715,6 +724,7 @@ export function createRSCHandler<
             resolveLocationStateEntries(locationState),
           );
         }
+        return createSimpleRedirectResponse(mwRedirectUrl);
       }
 
       return mwResponse;
@@ -923,10 +933,11 @@ export function createRSCHandler<
           });
         }
 
-        // For partial requests: intercept redirects that carry location state.
-        // HTTP 3xx redirects are auto-followed by fetch, losing the state.
-        // Instead, return a 200 with a Flight payload containing the redirect
-        // URL and state so the browser can perform the redirect with pushState.
+        // For partial requests: intercept redirects. HTTP 3xx redirects are
+        // auto-followed by fetch, which would hit the target URL without
+        // _rsc_partial and render a full HTML page the client can't parse.
+        // - With state: Flight payload (200) so location state survives.
+        // - Without state: 204 + X-RSC-Redirect header (lightweight).
         const redirectUrl = error.headers.get("Location");
         const isRedirect =
           error.status >= 300 && error.status < 400 && redirectUrl;
@@ -938,6 +949,7 @@ export function createRSCHandler<
               resolveLocationStateEntries(locationState),
             );
           }
+          return createSimpleRedirectResponse(redirectUrl);
         }
 
         return error;

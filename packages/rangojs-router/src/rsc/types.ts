@@ -23,6 +23,8 @@ export interface RscPayload {
     isError?: boolean;
     matched?: string[];
     diff?: string[];
+    /** Merged route params from the matched route */
+    params?: Record<string, string>;
     slots?: Record<string, SlotState>;
     /** Root layout component for browser-side re-renders (client component reference) */
     rootLayout?: React.ComponentType<{ children: React.ReactNode }>;
@@ -218,7 +220,8 @@ export interface CreateRSCHandlerOptions<
    * - Undefined to disable nonce (default)
    *
    * The nonce will be applied to inline scripts injected by the RSC payload.
-   * It's also available to middleware via `ctx.get('nonce')`.
+   * It's also available to middleware via the typed `nonce` token:
+   * `import { nonce } from "@rangojs/router"; ctx.get(nonce)`
    *
    * @example Auto-generate nonce
    * ```tsx
@@ -234,6 +237,16 @@ export interface CreateRSCHandlerOptions<
    *   router,
    *   nonce: (request, env) => env.nonce,
    * });
+   * ```
+   *
+   * @example Access nonce in middleware
+   * ```tsx
+   * import { nonce } from "@rangojs/router";
+   *
+   * const cspMiddleware: Middleware = async (ctx, next) => {
+   *   const value = ctx.get(nonce); // string | undefined
+   *   await next();
+   * };
    * ```
    */
   nonce?: NonceProvider<TEnv>;

@@ -546,3 +546,85 @@ test.describe("prerender-complex (production build)", () => {
     ).toContainText("alpha");
   });
 });
+
+test.describe("reverse() in Prerender/Static handlers", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test("Prerender handler can use ctx.reverse() and getRequestContext().reverse()", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/prerender-reverse"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="prerender-reverse-title"]'),
+    ).toContainText("Prerender Reverse");
+    await expect(
+      page.locator('[data-testid="prerender-reverse-blog"]'),
+    ).toHaveText("/blog");
+    await expect(
+      page.locator('[data-testid="prerender-reverse-href"]'),
+    ).toHaveText("/href");
+  });
+
+  test("Static handler can use ctx.reverse() and getRequestContext().reverse()", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-reverse"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="static-reverse-title"]'),
+    ).toContainText("Static Reverse");
+    await expect(
+      page.locator('[data-testid="static-reverse-blog"]'),
+    ).toHaveText("/blog");
+    await expect(
+      page.locator('[data-testid="static-reverse-href"]'),
+    ).toHaveText("/href");
+  });
+});
+
+test.describe("reverse() in Prerender/Static handlers (production build)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("Prerender handler resolves reverse() in production", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/prerender-reverse"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="prerender-reverse-blog"]'),
+    ).toHaveText("/blog");
+    await expect(
+      page.locator('[data-testid="prerender-reverse-href"]'),
+    ).toHaveText("/href");
+  });
+
+  test("Static handler resolves reverse() in production", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-reverse"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="static-reverse-blog"]'),
+    ).toHaveText("/blog");
+    await expect(
+      page.locator('[data-testid="static-reverse-href"]'),
+    ).toHaveText("/href");
+  });
+});

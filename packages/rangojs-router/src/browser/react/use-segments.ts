@@ -22,6 +22,7 @@ export interface SegmentsState {
  */
 let ssrSegmentOrder: string[] = [];
 let ssrPathname: string = "/";
+let ssrParams: Record<string, string> = {};
 
 /**
  * Filter segment IDs to only include routes and layouts.
@@ -41,10 +42,30 @@ function filterSegmentOrder(matched: string[]): string[] {
  *
  * @param matched - Segment order from RSC metadata
  * @param pathname - Current pathname
+ * @param params - Merged route params
  */
-export function initSegmentsSync(matched?: string[], pathname?: string): void {
+export function initSegmentsSync(
+  matched?: string[],
+  pathname?: string,
+  params?: Record<string, string>,
+): void {
   ssrSegmentOrder = filterSegmentOrder(matched ?? []);
   ssrPathname = pathname ?? "/";
+  ssrParams = params ?? {};
+}
+
+/**
+ * Get SSR params for use-params hook initialization.
+ */
+export function getSsrParams(): Record<string, string> {
+  return ssrParams;
+}
+
+/**
+ * Get SSR pathname for use-pathname hook initialization.
+ */
+export function getSsrPathname(): string {
+  return ssrPathname;
 }
 
 /**

@@ -2,6 +2,7 @@
 export type {
   GetRegisteredRoutes,
   DefaultHandlerRouteMap,
+  DefaultReverseRouteMap,
   DefaultEnv,
 } from "./global-namespace.js";
 // Ensure the global namespace declaration is evaluated
@@ -69,9 +70,6 @@ export type {
   LoaderFn,
   FetchableLoaderOptions,
   LoadOptions,
-  LoaderActionContext,
-  LoaderMiddlewareFn,
-  LoaderAction,
   LoaderDefinition,
 } from "./loader-types.js";
 
