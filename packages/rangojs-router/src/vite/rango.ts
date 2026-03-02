@@ -193,9 +193,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
     // since SSR runs in workerd alongside RSC
     plugins.push(
       rsc({
-        get entries() {
-          return finalEntries;
-        },
+        entries: finalEntries,
         serverHandler: false,
       }) as PluginOption,
     );

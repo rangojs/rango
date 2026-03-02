@@ -63,6 +63,10 @@ test.describe("blog comments via loader action (dev)", () => {
       "Comments (1)",
     );
 
+    // Wait for form to fully reset before posting the second comment
+    await expect(testId(page, "comment-submit")).toBeEnabled({ timeout: 5000 });
+    await expect(testId(page, "comment-name")).toHaveValue("");
+
     // Post second comment
     await testId(page, "comment-name").fill("Carol");
     await testId(page, "comment-text").fill("Second comment");
@@ -187,6 +191,10 @@ test.describe("blog comments via loader action (production)", () => {
     await expect(testId(page, "comments-section")).toContainText(
       "Comments (1)",
     );
+
+    // Wait for form to fully reset before posting the second comment
+    await expect(testId(page, "comment-submit")).toBeEnabled({ timeout: 5000 });
+    await expect(testId(page, "comment-name")).toHaveValue("");
 
     await testId(page, "comment-name").fill("Carol");
     await testId(page, "comment-text").fill("Second comment");

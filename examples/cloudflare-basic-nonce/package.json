@@ -20,7 +20,7 @@
     "react-dom": "catalog:"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.21.0",
+    "@cloudflare/vite-plugin": "^1.25.6",
     "@cloudflare/workers-types": "^4.20260228.0",
     "@playwright/test": "^1.49.1",
     "@types/react": "catalog:",
@@ -29,6 +29,6 @@
     "tinyexec": "^0.3.2",
     "typescript": "^5.7.0",
     "vite": "catalog:",
-    "wrangler": "^4.67.0"
+    "wrangler": "^4.69.0"
   }
 }
