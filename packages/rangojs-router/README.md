@@ -1,13 +1,14 @@
 # @rangojs/router
 
-Django-inspired RSC router with type-safe partial rendering for Vite.
+Named-route RSC router with structural composability and type-safe partial rendering for Vite.
 
 > **Experimental:** This package is under active development. APIs may change between releases. Install with `@experimental` tag.
 
 ## Features
 
-- **Composable URL patterns** — Django-style `urls()` DSL with `path`, `layout`, `include`
 - **Named routes** — `reverse("blogPost", { slug })` for type-safe URL generation (Django-style)
+- **Structural composability** — Attach routes, loaders, middleware, handles, caching, prerendering, and static generation without hiding the route tree
+- **Composable URL patterns** — Django-style `urls()` DSL with `path`, `layout`, `include`
 - **Data loaders** — `createLoader()` with automatic streaming and Suspense integration
 - **Layouts & nesting** — Nested layouts with `<Outlet />` and parallel routes
 - **Segment-level caching** — `cache()` DSL with TTL/SWR and pluggable cache stores
@@ -58,18 +59,22 @@ export default defineConfig({
 import { createRouter, urls } from "@rangojs/router";
 import { Document } from "./document";
 
-const urlpatterns = urls(({ path, layout }) => [
-  layout(<MainLayout />, () => [
-    path("/", HomePage, { name: "home" }),
-    path("/about", AboutPage, { name: "about" }),
-    path("/blog/:slug", BlogPostPage, { name: "blogPost" }),
-  ]),
+const blogPatterns = urls(({ path }) => [
+  path("/", BlogIndexPage, { name: "index" }),
+  path("/:slug", BlogPostPage, { name: "post" }),
+]);
+
+const urlpatterns = urls(({ path, include }) => [
+  path("/", HomePage, { name: "home" }),
+  include("/blog", blogPatterns, { name: "blog" }),
 ]);
 
 export const router = createRouter({ document: Document }).routes(urlpatterns);
 
 // Export typed reverse function for URL generation by route name
 export const reverse = router.reverse;
+
+// reverse("blog.post", { slug: "hello-world" }) -> "/blog/hello-world"
 ```
 
 ### Document
@@ -95,7 +100,15 @@ export function Document({ children }: { children: ReactNode }) {
 
 ## Defining Routes
 
-### Path Patterns
+Rango is a named-route router first.
+
+Paths define where a route lives. Names define how the app refers to it.
+
+It is also structurally composable.
+
+As an app grows, routes can pull in external handlers, loaders, middleware, handles, cache policy, intercepts, prerendering, and static generation while keeping the route tree visible at the composition site.
+
+### Named Routes
 
 ```tsx
 import { urls } from "@rangojs/router";
@@ -107,6 +120,73 @@ const urlpatterns = urls(({ path }) => [
   path("/files/*", FilesPage, { name: "files" }),
 ]);
 ```
+
+Use `reverse()` as the default way to link to routes:
+
+```tsx
+router.reverse("product", { slug: "widget" }); // "/product/widget"
+router.reverse("search", undefined, { q: "rsc" }); // "/search?q=rsc"
+```
+
+### Composable URL Modules
+
+Local route names compose cleanly with `include(..., { name })`:
+
+```tsx
+import { urls } from "@rangojs/router";
+
+export const blogPatterns = urls(({ path }) => [
+  path("/", BlogIndexPage, { name: "index" }),
+  path("/:slug", BlogPostPage, { name: "post" }),
+]);
+
+export const urlpatterns = urls(({ path, include }) => [
+  path("/", HomePage, { name: "home" }),
+  include("/blog", blogPatterns, { name: "blog" }),
+]);
+
+router.reverse("blog.index"); // "/blog"
+router.reverse("blog.post", { slug: "hello-world" }); // "/blog/hello-world"
+```
+
+This is the core composition model:
+
+- Paths stay local to the module that defines them
+- Names become stable references across the app
+- `include()` scales those names without forcing raw path-string coupling
+
+### Structural Composability
+
+Rango avoids the usual tradeoff between modularity and visibility.
+
+You can extract route behavior into separate files or packages and still keep one readable route definition that shows the structure of the app.
+
+```tsx
+import { urls } from "@rangojs/router";
+import { ProductPage } from "./routes/product";
+import { ProductLoader } from "./loaders/product";
+import { productMiddleware } from "./middleware/product";
+import { productRevalidate } from "./revalidation/product";
+
+const shopPatterns = urls(
+  ({ path, loader, middleware, revalidate, cache }) => [
+    path("/product/:slug", ProductPage, { name: "product" }, () => [
+      middleware(productMiddleware),
+      loader(ProductLoader),
+      revalidate(productRevalidate),
+      cache({ ttl: 300 }),
+    ]),
+  ],
+);
+```
+
+The route tree stays explicit even when behavior is modular.
+
+This applies to:
+
+- external route modules mounted with `include()`
+- imported loaders, middleware, and handles attached at the route site
+- prerendering and static generation attached without turning the route tree opaque
 
 ### Typed Handlers
 
@@ -121,6 +201,29 @@ export const ProductPage: Handler<"product"> = (ctx) => {
   return <h1>Product: {slug}</h1>;
 };
 ```
+
+### Choosing a Handler Style
+
+All handler typing styles are supported, but they solve different problems:
+
+- `Handler<"product">` — default for named app routes
+- `Handler<".post", ScopedRouteMap<"blog">>` — best for reusable included modules
+- `Handler<"/blog/:slug">` — good for unnamed or local-only extracted handlers
+- `Handler<{ slug: string }>` — escape hatch for advanced or decoupled cases
+
+Example of a scoped local name inside a mounted module:
+
+```tsx
+import type { Handler, ScopedRouteMap } from "@rangojs/router";
+
+type BlogRoutes = ScopedRouteMap<"blog">;
+
+export const BlogPostPage: Handler<".post", BlogRoutes> = (ctx) => {
+  return <a href={ctx.reverse(".index")}>Back to blog</a>;
+};
+```
+
+See [`../../docs/named-routes.md`](../../docs/named-routes.md) for the recommended mental model.
 
 ### Search Params
 

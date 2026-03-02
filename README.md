@@ -5,6 +5,7 @@ A code-first, type-safe React Server Components router for serverless deployment
 ## Features
 
 - **Code-first routing** - No file-based conventions
+- **Named routes** - Type-safe `reverse()` references that survive path refactors
 - **Type-safe params** - Automatic inference from route patterns
 - **Django-style URL patterns** - `urls()` and `include()` for composition
 - **Partial rendering** - Optimal performance with RSC
@@ -44,26 +45,28 @@ pnpm dev
 ## Quick Example
 
 ```typescript
-import { createRouter, urls, include } from "@rangojs/router";
+import { createRouter, urls } from "@rangojs/router";
 
-// Define URL patterns (Django-style)
+// Define a composable module with local route names
 const shopPatterns = urls(({ path }) => [
-  path("", () => <ShopIndex />),
-  path("cart", () => <CartPage />),
-  path("product/:slug", async (ctx) => {
+  path("/", () => <ShopIndex />, { name: "index" }),
+  path("/cart", () => <CartPage />, { name: "cart" }),
+  path("/product/:slug", async (ctx) => {
     const product = await getProduct(ctx.params.slug);
     return <ProductDetail product={product} />;
-  }),
+  }, { name: "product" }),
 ]);
 
-// Create router and register patterns
-const router = createRouter();
-router.routes(
-  urls(({ path }) => [
-    path("", () => <Home />),
-    path("shop/*", include(shopPatterns)),
-  ])
-);
+// Mount it into the app with a route-name namespace
+const urlpatterns = urls(({ path, include }) => [
+  path("/", () => <Home />, { name: "home" }),
+  include("/shop", shopPatterns, { name: "shop" }),
+]);
+
+const router = createRouter().routes(urlpatterns);
+
+router.reverse("shop.cart"); // "/shop/cart"
+router.reverse("shop.product", { slug: "widget" }); // "/shop/product/widget"
 ```
 
 ## Debug Logging
