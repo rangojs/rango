@@ -173,13 +173,29 @@ export function useHandle<T, A, S>(
   const prevValueRef = useRef(value);
   prevValueRef.current = value;
 
-  // Memoize selector ref
+  // Ref keeps the latest selector without re-subscribing on every render.
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 
   // Subscribe to handle data changes (client only)
   useEffect(() => {
     if (!ctx) return;
+
+    // Sync current state for the (possibly new) handle so that switching
+    // handles on an idle page doesn't leave stale data from the old handle.
+    const currentHandleState = ctx.eventController.getHandleState();
+    const currentCollected = collectHandle(
+      handle,
+      currentHandleState.data,
+      currentHandleState.segmentOrder,
+    );
+    const currentValue = selectorRef.current
+      ? selectorRef.current(currentCollected)
+      : currentCollected;
+    if (!shallowEqual(currentValue, prevValueRef.current)) {
+      prevValueRef.current = currentValue;
+      setValue(currentValue);
+    }
 
     return ctx.eventController.subscribeToHandles(() => {
       const state = ctx.eventController.getHandleState();

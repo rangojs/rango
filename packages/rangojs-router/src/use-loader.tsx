@@ -105,12 +105,22 @@ function useLoaderInternal<T>(
 
   const throwOnError = options?.throwOnError ?? true;
 
+  // Refs for values used inside load() that should NOT cause callback identity
+  // churn. loader.$$id can change if a reusable component receives a different
+  // loader without remounting; data changes on every navigation. Refs keep the
+  // callback stable while always reading the latest values.
+  const loaderIdRef = useRef(loader.$$id);
+  loaderIdRef.current = loader.$$id;
+  const dataRef = useRef(data);
+  dataRef.current = data;
+
   // Load function for fetching data via the ?_rsc_loader endpoint.
   // Supports GET (data fetching) and POST/PUT/PATCH/DELETE (mutations).
   const load = useCallback(
     async (loadOptions?: LoadOptions): Promise<T> => {
+      const loaderId = loaderIdRef.current;
       // Verify the loader has $$id
-      if (!loader.$$id) {
+      if (!loaderId) {
         throw new Error(
           `Loader is missing $$id. Make sure the exposeLoaderId Vite plugin is enabled.`,
         );
@@ -121,7 +131,7 @@ function useLoaderInternal<T>(
 
       try {
         const url = new URL(window.location.pathname, window.location.origin);
-        url.searchParams.set("_rsc_loader", loader.$$id);
+        url.searchParams.set("_rsc_loader", loaderId);
 
         const method = loadOptions?.method ?? "GET";
         const isBodyMethod = method !== "GET";
@@ -210,9 +220,9 @@ function useLoaderInternal<T>(
         if (throwOnError) {
           throw err;
         }
-        // When throwOnError is false, return the current data (previous successful
-        // value or undefined). Caller should check error state for error handling.
-        return data as T;
+        // When throwOnError is false, return the latest data snapshot (previous
+        // successful value or undefined). Caller should check error state.
+        return dataRef.current as T;
       } finally {
         setIsLoading(false);
       }
