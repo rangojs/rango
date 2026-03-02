@@ -1,5 +1,10 @@
 import { createRouter } from "@rangojs/router";
+import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 import { urlpatterns } from "./urls.js";
+
+const cacheStore = new MemorySegmentCacheStore({
+  defaults: { ttl: 60 },
+});
 
 type AppRoutes = typeof router.routeMap;
 
@@ -9,4 +14,6 @@ declare global {
   }
 }
 
-export const router = createRouter({}).routes(urlpatterns);
+export const router = createRouter({
+  cache: { store: cacheStore },
+}).routes(urlpatterns);

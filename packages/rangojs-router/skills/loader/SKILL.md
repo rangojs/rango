@@ -1,7 +1,7 @@
 ---
 name: loader
 description: Define data loaders for fetching data in routes with createLoader
-argument-hint: [name]
+argument-hint: [loader]
 ---
 
 # Data Loaders with loader()
@@ -13,7 +13,9 @@ Loaders fetch data on the server and stream it to the client.
 ```typescript
 import { createLoader } from "@rangojs/router";
 
-export const ProductLoader = createLoader("product", async (ctx) => {
+export const ProductLoader = createLoader(async (ctx) => {
+  "use server";
+
   const product = await ctx.env.DB.prepare(
     "SELECT * FROM products WHERE slug = ?",
   )
@@ -30,19 +32,19 @@ All of the following are equivalent and fully supported by the Vite transform:
 
 ```typescript
 // Direct export (most common)
-export const ProductLoader = createLoader("product", handler);
+export const ProductLoader = createLoader(handler);
 
 // Separate declaration + named export
-const ProductLoader = createLoader("product", handler);
+const ProductLoader = createLoader(handler);
 export { ProductLoader };
 
 // Aliased export
-const InternalLoader = createLoader("product", handler);
+const InternalLoader = createLoader(handler);
 export { InternalLoader as ProductLoader };
 
 // Aliased import
 import { createLoader as cl } from "@rangojs/router";
-export const ProductLoader = cl("product", handler);
+export const ProductLoader = cl(handler);
 ```
 
 The `export const` form and the `const + export { }` form both work for
@@ -79,12 +81,12 @@ async function ProductPage() {
 
 ```typescript
 "use client";
-import { useLoaderData } from "@rangojs/router/client";
+import { useLoader } from "@rangojs/router/client";
 import { ProductLoader } from "./loaders/product";
 
 function ProductDetails() {
-  const { product } = useLoaderData(ProductLoader);
-  return <div>{product.description}</div>;
+  const { data } = useLoader(ProductLoader);
+  return <div>{data.product.description}</div>;
 }
 ```
 
@@ -93,7 +95,9 @@ function ProductDetails() {
 Loaders receive the same context as route handlers:
 
 ```typescript
-export const ProductLoader = createLoader("product", async (ctx) => {
+export const ProductLoader = createLoader(async (ctx) => {
+  "use server";
+
   // URL params
   const { slug } = ctx.params;
 
@@ -401,7 +405,9 @@ Client usage — see `/hooks useFetchLoader` for the full client-side pattern.
 // loaders/shop.ts
 import { createLoader } from "@rangojs/router";
 
-export const ProductLoader = createLoader("product", async (ctx) => {
+export const ProductLoader = createLoader(async (ctx) => {
+  "use server";
+
   const product = await ctx.env.DB
     .prepare("SELECT * FROM products WHERE slug = ?")
     .bind(ctx.params.slug)
@@ -414,7 +420,9 @@ export const ProductLoader = createLoader("product", async (ctx) => {
   return { product };
 });
 
-export const CartLoader = createLoader("cart", async (ctx) => {
+export const CartLoader = createLoader(async (ctx) => {
+  "use server";
+
   const user = ctx.get("user");
   if (!user) return { cart: null };
 
