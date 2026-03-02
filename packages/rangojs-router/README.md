@@ -605,7 +605,28 @@ Auto-detects file type:
 
 ## Type Safety
 
-The Vite plugin automatically generates a `router.named-routes.gen.ts` file that globally registers all route names, patterns, and search schemas. Type-safe `reverse()`, `Handler<"name">`, `href()`, and `RouteParams<"name">` work out of the box — no manual type registration needed. The gen file is updated on dev server startup, HMR, and production builds.
+The Vite plugin automatically generates a `router.named-routes.gen.ts` file that globally registers route names, patterns, and search schemas via `RSCRouter.GeneratedRouteMap`. This powers server-side named-route typing such as `Handler<"name">`, `ctx.reverse()`, `getRequestContext().reverse()`, and `RouteParams<"name">` without any manual route registration. The gen file is updated on dev server startup, HMR, and production builds.
+
+Use the generated map by default. Augment `RSCRouter.RegisteredRoutes` only when you need the richer `typeof router.routeMap` shape globally, especially for response-aware and path-based utilities.
+
+```typescript
+// router.tsx
+const router = createRouter<AppBindings>({}).routes(urlpatterns);
+
+declare global {
+  namespace RSCRouter {
+    interface Env extends AppEnv {}
+    interface Vars extends AppVars {}
+    interface RegisteredRoutes extends typeof router.routeMap {}
+  }
+}
+```
+
+Quick rule of thumb:
+
+- `GeneratedRouteMap` (auto-generated) — use for server-side named-route typing: `Handler<"name">`, `ctx.reverse()`, `Prerender<"name">`
+- `typeof router.routeMap` — use when you need route entries with response metadata
+- `RegisteredRoutes` (manual augmentation) — use to expose `typeof router.routeMap` globally for `href()`, `PathResponse`, `ValidPaths`, and other path/response-aware utilities
 
 ## Subpath Exports
 

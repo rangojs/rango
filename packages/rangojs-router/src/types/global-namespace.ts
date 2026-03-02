@@ -53,6 +53,19 @@ export type GetRegisteredRoutes = keyof RSCRouter.RegisteredRoutes extends never
   : RSCRouter.RegisteredRoutes;
 
 /**
+ * Default route map for reverse() surfaces.
+ * Prefers GeneratedRouteMap to avoid router.tsx -> urls.tsx -> types -> router.tsx
+ * cycles, but falls back to RegisteredRoutes for manual augmentation and then to
+ * a permissive record when no route types are available.
+ */
+export type DefaultReverseRouteMap =
+  keyof RSCRouter.GeneratedRouteMap extends never
+    ? keyof RSCRouter.RegisteredRoutes extends never
+      ? Record<string, string>
+      : RSCRouter.RegisteredRoutes
+    : RSCRouter.GeneratedRouteMap;
+
+/**
  * Default route map for Handler type.
  * Uses GeneratedRouteMap (from gen file) instead of RegisteredRoutes to avoid
  * circular dependencies: router.tsx -> urls.tsx -> handler.tsx -> RegisteredRoutes -> router.tsx.

@@ -15,16 +15,16 @@ import type {
 
 // Test 1: ctx.reverse in handlers accepts route names
 const testHandlerReverse: Handler<"/"> = (ctx) => {
-  // Should work - ctx.reverse accepts any string for named route resolution
+  // Should work - ctx.reverse accepts valid generated route names
   const _indexUrl = ctx.reverse("index");
   const _blogUrl = ctx.reverse("blog.index");
 
   // Should work - route with params
-  const _blogPostUrl = ctx.reverse("blog.post", { slug: "hello-world" });
+  const _blogPostUrl = ctx.reverse("blog.post", { postId: "hello-world" });
   const _productUrl = ctx.reverse("product.detail", { productId: "123" });
 
   // Should work - absolute route with dot notation (global lookup)
-  const _absoluteUrl = ctx.reverse("some.nested.route");
+  const _absoluteUrl = ctx.reverse("docs.article", { slug: "intro" });
 
   return null;
 };
@@ -91,19 +91,20 @@ const testGenericHandler: Handler<GenericParams> = (ctx) => {
   return null;
 };
 
-// Test 9: Verify ctx.reverse accepts various route name formats
-// ctx.reverse is (name: string, params?) => string, accepts any route name
+// Test 9: Verify ctx.reverse accepts valid global route name formats
 declare function testGlobalRoutes(): void;
 if (false as boolean) {
   testGlobalRoutes();
-  // ctx.reverse accepts any string - named routes resolve at runtime via server routeMap
+  // Valid generated route names should type-check
   const ctx = {} as HandlerContext;
   ctx.reverse("index");
   ctx.reverse("blog.index");
-  ctx.reverse("blog.post", { slug: "test" });
+  ctx.reverse("blog.post", { postId: "test" });
   ctx.reverse("product.detail", { productId: "test" });
   ctx.reverse("href.index");
   ctx.reverse("href.detail", { id: "test" });
+  // Dot-prefixed local names remain permissive when no local route map is known
+  ctx.reverse(".local-name");
 }
 
 // =============================================================================
@@ -240,7 +241,7 @@ const testHandlerWithScopedReverse: Handler<"/"> = (ctx) => {
   const _det = reverse("detail", { id: "abc" });
 
   // For global routes, use ctx.reverse directly
-  const _cross = ctx.reverse("blog.post", { slug: "hello" });
+  const _cross = ctx.reverse("blog.post", { postId: "hello" });
 
   return null;
 };

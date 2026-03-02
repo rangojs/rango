@@ -26,6 +26,39 @@ export const reverse = router.reverse;
 export default router;
 ```
 
+### Which global type should I use?
+
+Use the generated route map by default. Manual `RegisteredRoutes` augmentation
+is only needed when you want the richer `typeof router.routeMap` shape
+available globally.
+
+- `GeneratedRouteMap` — auto-registered by `router.named-routes.gen.ts`
+  Use for `Handler<"name">`, `Prerender<"name">`, server `ctx.reverse()`,
+  and named-route param/search inference.
+- `typeof router.routeMap` — the real merged route map from your router
+  instance, including response-route metadata such as `{ path, response }`.
+- `RegisteredRoutes` — manual global hook for exposing `typeof router.routeMap`
+  to utilities like `href()`, `ValidPaths`, and `PathResponse`.
+
+Recommended setup:
+
+```typescript
+// router.tsx
+import { createRouter } from "@rangojs/router";
+import { urlpatterns } from "./urls";
+import type { AppBindings, AppVars } from "./env";
+
+export const router = createRouter<AppBindings>({}).routes(urlpatterns);
+
+declare global {
+  namespace RSCRouter {
+    interface Env extends AppBindings {}
+    interface Vars extends AppVars {}
+    interface RegisteredRoutes extends typeof router.routeMap {}
+  }
+}
+```
+
 ## Route Definition with Type-Safe Names
 
 ```typescript
@@ -92,6 +125,17 @@ href("/blog/hello");                   // Matches /blog/:slug
 function ShopNav() {
   const href = useHref();
   return <Link to={href("/cart")}>Cart</Link>; // "/shop/cart"
+}
+```
+
+`href()` and path-based response utilities read from `RegisteredRoutes`, so if
+you want them typed globally you should augment:
+
+```typescript
+declare global {
+  namespace RSCRouter {
+    interface RegisteredRoutes extends typeof router.routeMap {}
+  }
 }
 ```
 

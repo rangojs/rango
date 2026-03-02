@@ -12,7 +12,12 @@ import type {
   ParamsFor,
 } from "../reverse.js";
 import type { ExtractParams, Handler } from "../types.js";
-import type { HandlerContext, GenericParams, DefaultEnv } from "../types.js";
+import type {
+  HandlerContext,
+  GenericParams,
+  DefaultEnv,
+  DefaultReverseRouteMap,
+} from "../types.js";
 
 // Test route definitions
 type TestRoutes = {
@@ -201,9 +206,17 @@ describe("HandlerContext.reverse", () => {
 
   it("should accept string as first argument", () => {
     type Ctx = HandlerContext<GenericParams, DefaultEnv>;
-    // Verify reverse accepts a string name and optional params
+    // Global names stay permissive when no generated route map is in scope
     expectTypeOf<Ctx["reverse"]>().toBeCallableWith("any-route");
     expectTypeOf<Ctx["reverse"]>().toBeCallableWith("any-route", { id: "1" });
+  });
+
+  it("should accept dot-prefixed local names when no local route map is provided", () => {
+    type Ctx = HandlerContext<GenericParams, DefaultEnv>;
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".local-route");
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".local-route", {
+      id: "1",
+    });
   });
 });
 
@@ -217,6 +230,12 @@ describe("Handler with local route map separates local/global", () => {
     // Dot-prefixed = local (from LocalRoutes)
     expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".post", { slug: "hello" });
     expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".index");
+  });
+
+  it("should allow omitting params via autofill overload", () => {
+    type Ctx = HandlerContext<{ slug: string }, DefaultEnv, {}, LocalRoutes>;
+    // Autofill overload makes params optional — runtime auto-fills from ctx.params
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".post");
   });
 
   it("should accept unprefixed global names", () => {
@@ -244,6 +263,44 @@ describe("Handler with local route map separates local/global", () => {
     expectTypeOf<Reverse>().toBeCallableWith("post", { slug: "hello" });
     // @ts-expect-error - ".shop.cart" is global, must use "shop.cart"
     expectTypeOf<Reverse>().toBeCallableWith(".shop.cart");
+  });
+});
+
+describe("DefaultReverseRouteMap", () => {
+  it("should allow string fallback when no route types are registered", () => {
+    type Reverse = ScopedReverseFunction<Record<string, string>, DefaultReverseRouteMap>;
+    expectTypeOf<Reverse>().toBeCallableWith("any-route");
+    expectTypeOf<Reverse>().toBeCallableWith("any-route", { id: "1" });
+  });
+
+  it("should preserve response-route entries from manual route maps", () => {
+    type RegisteredOnlyRoutes = {
+      "api.health": { readonly path: "/api/health"; readonly response: { ok: true } };
+      "api.item": {
+        readonly path: "/api/items/:id";
+        readonly response: { id: string };
+      };
+    };
+    type Reverse = ScopedReverseFunction<Record<string, string>, RegisteredOnlyRoutes>;
+
+    expectTypeOf<Reverse>().toBeCallableWith("api.health");
+    expectTypeOf<Reverse>().toBeCallableWith("api.item", { id: "123" });
+  });
+
+  it("should accept generated route entries with search metadata", () => {
+    type GeneratedRoutes = {
+      search: {
+        readonly path: "/search";
+        readonly search: { readonly q: "string"; readonly page: "number?" };
+      };
+    };
+    type Reverse = ScopedReverseFunction<Record<string, string>, GeneratedRoutes>;
+
+    expectTypeOf<Reverse>().toBeCallableWith("search", {}, { q: "term" });
+    expectTypeOf<Reverse>().toBeCallableWith("search", {}, {
+      q: "term",
+      page: 2,
+    });
   });
 });
 

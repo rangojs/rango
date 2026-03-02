@@ -14,7 +14,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { CookieOptions } from "../router/middleware.js";
 import type { LoaderDefinition, LoaderContext } from "../types.js";
 import type { ScopedReverseFunction } from "../reverse.js";
-import type { GetRegisteredRoutes } from "../types/global-namespace.js";
+import type { DefaultReverseRouteMap } from "../types/global-namespace.js";
 import type { Handle } from "../handle.js";
 import { type ContextVar, contextGet, contextSet } from "../context-var.js";
 import { createHandleStore, type HandleStore } from "./handle-store.js";
@@ -223,7 +223,7 @@ export interface RequestContext<
    * Uses the global route map. After route matching, scoped (`.name`) resolution
    * works within the matched include() scope.
    */
-  reverse: ScopedReverseFunction<GetRegisteredRoutes>;
+  reverse: ScopedReverseFunction<Record<string, string>, DefaultReverseRouteMap>;
 
   /** @internal Route name from route matching, used for scoped reverse resolution */
   _routeName?: string;

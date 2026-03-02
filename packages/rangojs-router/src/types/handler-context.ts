@@ -9,8 +9,8 @@ import type { LocationStateEntry } from "../browser/react/location-state-shared.
 import type {
   DefaultEnv,
   DefaultHandlerRouteMap,
+  DefaultReverseRouteMap,
   DefaultVars,
-  GetRegisteredRoutes,
 } from "./global-namespace.js";
 import type {
   ExtractParams,
@@ -66,6 +66,38 @@ type ExtractSearchFromEntry<TMap, TKey> = TKey extends keyof TMap
     ? S
     : {}
   : {};
+
+type AutofillParamsFromEntry<TEntry> = TEntry extends string
+  ? string extends TEntry
+    ? Record<string, string>
+    : Partial<ExtractParams<TEntry>>
+  : TEntry extends { readonly path: infer P extends string }
+    ? string extends P
+      ? Record<string, string>
+      : Partial<ExtractParams<P>>
+    : Record<string, string>;
+
+type AutofillSearchFromEntry<TMap, TKey> = TKey extends keyof TMap
+  ? TMap[TKey] extends { readonly search: infer S extends SearchSchema }
+    ? ResolveSearchSchema<S>
+    : Record<string, unknown>
+  : Record<string, unknown>;
+
+type AutofillAwareReverseFunction<
+  TLocalRoutes,
+  TGlobalRoutes,
+> = ScopedReverseFunction<TLocalRoutes, TGlobalRoutes> & {
+  <TName extends keyof TGlobalRoutes & string>(
+    name: TName,
+    params?: AutofillParamsFromEntry<TGlobalRoutes[TName]>,
+    search?: AutofillSearchFromEntry<TGlobalRoutes, TName>,
+  ): string;
+  <TName extends keyof TLocalRoutes & string>(
+    name: `.${TName}`,
+    params?: AutofillParamsFromEntry<TLocalRoutes[TName]>,
+    search?: AutofillSearchFromEntry<TLocalRoutes, TName>,
+  ): string;
+};
 
 export type Handler<
   T extends
@@ -341,8 +373,8 @@ export type HandlerContext<
    * ```
    */
   reverse: [TRouteMap] extends [never]
-    ? ScopedReverseFunction<GetRegisteredRoutes>
-    : ScopedReverseFunction<TRouteMap, GetRegisteredRoutes>;
+    ? AutofillAwareReverseFunction<Record<string, string>, DefaultReverseRouteMap>
+    : AutofillAwareReverseFunction<TRouteMap, DefaultReverseRouteMap>;
 };
 
 /**

@@ -2,6 +2,7 @@
 export type {
   GetRegisteredRoutes,
   DefaultHandlerRouteMap,
+  DefaultReverseRouteMap,
   DefaultEnv,
 } from "./global-namespace.js";
 // Ensure the global namespace declaration is evaluated
