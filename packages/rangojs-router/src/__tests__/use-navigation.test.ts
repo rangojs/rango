@@ -146,4 +146,31 @@ describe("useNavigation", () => {
     // Effect should not re-run (deps are [])
     expect(capturedEffectDeps).toEqual([]);
   });
+
+  it("subscription callback uses latest selector via ref", () => {
+    const ec = createMockEventController();
+    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+
+    // First render picks state
+    useNavigation((nav) => nav.state);
+    const setBaseValue = stateSlots[0][1];
+
+    // Run effect to get the subscription callback
+    capturedEffectFn!();
+    const subscribeCallback = ec.subscribe.mock.calls[0][0];
+
+    // Clear initial setState and set prevState to current value
+    setBaseValue.mockClear();
+    // refSlots[0] = prevState, refSlots[1] = selectorRef
+    refSlots[0].current = "idle";
+
+    // Re-render with different selector (picks location)
+    resetHookIndices();
+    useNavigation((nav) => nav.location);
+
+    // Simulate event: subscription callback should use the NEW selector
+    subscribeCallback();
+
+    expect(setBaseValue).toHaveBeenCalledWith(new URL("http://localhost/shop"));
+  });
 });
