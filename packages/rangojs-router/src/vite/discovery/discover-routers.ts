@@ -98,7 +98,7 @@ export async function discoverRouters(
 
   // Import build utilities for manifest generation
   const buildMod = await rscEnv.runner.import("@rangojs/router/build");
-  const generateManifest = buildMod.generateManifest;
+  const generateManifestFull = buildMod.generateManifestFull;
 
   state.mergedRouteManifest = {};
   state.mergedPrecomputedEntries = [];
@@ -114,11 +114,11 @@ export async function discoverRouters(
   const allManifests: Array<{ id: string; manifest: any }> = [];
 
   for (const [id, router] of registry) {
-    if (!router.urlpatterns || !generateManifest) {
+    if (!router.urlpatterns || !generateManifestFull) {
       continue;
     }
 
-    const manifest = generateManifest(router.urlpatterns, routerMountIndex);
+    const manifest = generateManifestFull(router.urlpatterns, routerMountIndex);
     routerMountIndex++;
     allManifests.push({ id, manifest });
     const routeCount = Object.keys(manifest.routeManifest).length;
