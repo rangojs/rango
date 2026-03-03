@@ -21,18 +21,23 @@ const RESPONSE_CACHE_REGISTRY_KEY = "__rsc_router_response_cache_registry__";
 const ITEM_CACHE_REGISTRY_KEY = "__rsc_router_item_cache_registry__";
 
 /**
- * Returns the globalThis-backed registry of named cache Maps.
- * The registry itself survives HMR; individual stores are keyed by name.
+ * Get or create a named Map from a globalThis-backed registry.
+ * The registry survives HMR; individual stores are keyed by name.
  */
-function getGlobalRegistry(): Map<string, Map<string, CachedEntryData>> {
-  let registry = (globalThis as any)[CACHE_REGISTRY_KEY] as
-    | Map<string, Map<string, CachedEntryData>>
+function getNamedMap<V>(registryKey: string, name: string): Map<string, V> {
+  let registry = (globalThis as any)[registryKey] as
+    | Map<string, Map<string, V>>
     | undefined;
   if (!registry) {
     registry = new Map();
-    (globalThis as any)[CACHE_REGISTRY_KEY] = registry;
+    (globalThis as any)[registryKey] = registry;
   }
-  return registry;
+  let map = registry.get(name);
+  if (!map) {
+    map = new Map<string, V>();
+    registry.set(name, map);
+  }
+  return map;
 }
 
 interface CachedResponseEntry {
@@ -47,37 +52,6 @@ interface CachedItemEntry {
   value: string;
   handles?: Record<string, SegmentHandleData>;
   expiresAt: number;
-}
-
-/**
- * Returns the globalThis-backed registry of named item cache Maps (for "use cache").
- */
-function getItemCacheRegistry(): Map<string, Map<string, CachedItemEntry>> {
-  let registry = (globalThis as any)[ITEM_CACHE_REGISTRY_KEY] as
-    | Map<string, Map<string, CachedItemEntry>>
-    | undefined;
-  if (!registry) {
-    registry = new Map();
-    (globalThis as any)[ITEM_CACHE_REGISTRY_KEY] = registry;
-  }
-  return registry;
-}
-
-/**
- * Returns the globalThis-backed registry of named response cache Maps.
- */
-function getResponseCacheRegistry(): Map<
-  string,
-  Map<string, CachedResponseEntry>
-> {
-  let registry = (globalThis as any)[RESPONSE_CACHE_REGISTRY_KEY] as
-    | Map<string, Map<string, CachedResponseEntry>>
-    | undefined;
-  if (!registry) {
-    registry = new Map();
-    (globalThis as any)[RESPONSE_CACHE_REGISTRY_KEY] = registry;
-  }
-  return registry;
 }
 
 /**
@@ -172,29 +146,18 @@ export class MemorySegmentCacheStore<
     if (options?.name != null) {
       // Named stores use the globalThis registry so data survives HMR.
       // Each name gets its own isolated Map.
-      const registry = getGlobalRegistry();
-      let map = registry.get(options.name);
-      if (!map) {
-        map = new Map<string, CachedEntryData>();
-        registry.set(options.name, map);
-      }
-      this.cache = map;
-
-      const responseRegistry = getResponseCacheRegistry();
-      let responseMap = responseRegistry.get(options.name);
-      if (!responseMap) {
-        responseMap = new Map<string, CachedResponseEntry>();
-        responseRegistry.set(options.name, responseMap);
-      }
-      this.responseCache = responseMap;
-
-      const itemRegistry = getItemCacheRegistry();
-      let itemMap = itemRegistry.get(options.name);
-      if (!itemMap) {
-        itemMap = new Map<string, CachedItemEntry>();
-        itemRegistry.set(options.name, itemMap);
-      }
-      this.itemCache = itemMap;
+      this.cache = getNamedMap<CachedEntryData>(
+        CACHE_REGISTRY_KEY,
+        options.name,
+      );
+      this.responseCache = getNamedMap<CachedResponseEntry>(
+        RESPONSE_CACHE_REGISTRY_KEY,
+        options.name,
+      );
+      this.itemCache = getNamedMap<CachedItemEntry>(
+        ITEM_CACHE_REGISTRY_KEY,
+        options.name,
+      );
     } else {
       // Unnamed stores get a plain instance-level Map (no globalThis sharing).
       this.cache = new Map<string, CachedEntryData>();
