@@ -70,26 +70,13 @@ export interface MiddlewareContext<
   params: TParams;
 
   /**
-   * Response object - available immediately via stub, real response after `await next()`
+   * Response stub (read-only). Before `next()`, returns the shared response stub
+   * where headers and cookies accumulate. After `next()`, returns the downstream response.
    *
-   * Headers set before `next()` are merged into the final response.
-   * Can be used to modify headers directly like Hono's `c.res`.
-   *
-   * @example
-   * ```typescript
-   * middleware(async (ctx, next) => {
-   *   // Set headers BEFORE next() - will be merged into final response
-   *   ctx.res.headers.set('X-Request-Id', generateId());
-   *
-   *   await next();
-   *
-   *   // Set headers AFTER next() - applied directly
-   *   ctx.res.headers.set('X-Custom', 'value');
-   *   // No return needed!
-   * });
-   * ```
+   * Use `ctx.header()`, `ctx.setCookie()`, or `ctx.deleteCookie()` to mutate.
+   * To replace the response entirely, return a new `Response` from the middleware.
    */
-  res: Response;
+  readonly res: Response;
 
   /** Get a cookie value */
   cookie(name: string): string | undefined;

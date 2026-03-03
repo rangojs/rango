@@ -20,6 +20,7 @@ import type {
   ResponseHolder,
 } from "./middleware-types.js";
 import { parseCookies, serializeCookie } from "./middleware-cookies.js";
+import { _getRequestContext } from "../server/request-context.js";
 
 // Re-export types and cookie utilities for backward compatibility
 export type {
@@ -125,6 +126,19 @@ export function createMiddlewareContext<TEnv>(
   const cookieHeader = request.headers.get("Cookie");
   let parsedCookies: Record<string, string> | null = null;
 
+  // Track the initial response to detect pre/post-next() phase.
+  // Before next(): responseHolder.response === initialResponse (the stub).
+  // After next(): responseHolder.response is the real downstream response.
+  const initialResponse = responseHolder.response;
+  const isPreNext = () => responseHolder.response === initialResponse;
+
+  // Delegation strategy for RequestContext (reqCtx):
+  // - cookie/cookies/setCookie/deleteCookie: delegate unconditionally.
+  //   Cookies must always accumulate on the shared reqCtx stub so loaders
+  //   and actions see a consistent view across all phases.
+  // - res getter / header(): delegate only before next(). After next(),
+  //   these operate on the real downstream response so middleware can
+  //   inspect/modify the actual response returned by the handler.
   // The runtime implementation - types are enforced at call sites via MiddlewareContext<TEnv>
   return {
     request,
@@ -134,8 +148,13 @@ export function createMiddlewareContext<TEnv>(
     env: env as MiddlewareContext<TEnv>["env"],
     params,
 
-    // res getter - returns the stub or real response (always available)
     get res(): Response {
+      // Before next(): return shared RequestContext stub so cookies/headers
+      // set via ctx.setCookie()/ctx.header() are visible on ctx.res.
+      if (isPreNext()) {
+        const reqCtx = _getRequestContext();
+        if (reqCtx) return reqCtx.res;
+      }
       if (!responseHolder.response) {
         throw new Error(
           "ctx.res is not available - responseHolder was not initialized",
@@ -143,13 +162,17 @@ export function createMiddlewareContext<TEnv>(
       }
       return responseHolder.response;
     },
-
-    // res setter - allows middleware to replace the response
-    set res(response: Response) {
-      responseHolder.response = response;
+    set res(_: Response) {
+      throw new Error(
+        "ctx.res is read-only. Use ctx.header(), ctx.setCookie(), or ctx.deleteCookie() to mutate the response.",
+      );
     },
 
     cookie(name: string): string | undefined {
+      // Delegate to RequestContext for response-derived cookie resolution
+      const reqCtx = _getRequestContext();
+      if (reqCtx) return reqCtx.cookie(name);
+      // Fallback: standalone usage (tests, edge cases)
       if (!parsedCookies) {
         parsedCookies = parseCookies(cookieHeader);
       }
@@ -157,6 +180,8 @@ export function createMiddlewareContext<TEnv>(
     },
 
     cookies(): Record<string, string> {
+      const reqCtx = _getRequestContext();
+      if (reqCtx) return reqCtx.cookies();
       if (!parsedCookies) {
         parsedCookies = parseCookies(cookieHeader);
       }
@@ -164,6 +189,13 @@ export function createMiddlewareContext<TEnv>(
     },
 
     setCookie(name: string, value: string, options?: CookieOptions): void {
+      // Write to the shared RequestContext stub so all phases see the cookie
+      const reqCtx = _getRequestContext();
+      if (reqCtx) {
+        reqCtx.setCookie(name, value, options);
+        return;
+      }
+      // Fallback: standalone usage (tests, edge cases)
       if (!responseHolder.response) {
         throw new Error(
           "ctx.setCookie() is not available - responseHolder was not initialized",
@@ -179,6 +211,13 @@ export function createMiddlewareContext<TEnv>(
       name: string,
       options?: Pick<CookieOptions, "domain" | "path">,
     ): void {
+      // Write to the shared RequestContext stub so all phases see the deletion
+      const reqCtx = _getRequestContext();
+      if (reqCtx) {
+        reqCtx.deleteCookie(name, options);
+        return;
+      }
+      // Fallback: standalone usage (tests, edge cases)
       if (!responseHolder.response) {
         throw new Error(
           "ctx.deleteCookie() is not available - responseHolder was not initialized",
@@ -198,6 +237,15 @@ export function createMiddlewareContext<TEnv>(
     }) as MiddlewareContext<TEnv>["set"],
 
     header(name: string, value: string): void {
+      // Before next(): delegate to shared RequestContext stub
+      if (isPreNext()) {
+        const reqCtx = _getRequestContext();
+        if (reqCtx) {
+          reqCtx.header(name, value);
+          return;
+        }
+      }
+      // After next() or standalone: write to current response
       if (!responseHolder.response) {
         throw new Error(
           "ctx.header() is not available - responseHolder was not initialized",
@@ -326,8 +374,9 @@ export async function executeMiddleware<TEnv>(
     const result = await entry.handler(ctx, wrappedNext);
 
     // Explicit return takes precedence (middleware short-circuit).
-    // Merge stub headers (from ctx.header/setCookie before this point)
-    // into the returned Response so they are not lost.
+    // Merge stub headers (from ctx.header before this point) and
+    // RequestContext stub headers (from ctx.setCookie) into the
+    // returned Response so they are not lost.
     if (result instanceof Response) {
       const mergedHeaders = new Headers(result.headers);
       stubResponse.headers.forEach((value, name) => {
@@ -337,6 +386,17 @@ export async function executeMiddleware<TEnv>(
           mergedHeaders.set(name, value);
         }
       });
+      // Also merge shared RequestContext stub (cookies written via setCookie)
+      const reqCtx = _getRequestContext();
+      if (reqCtx) {
+        reqCtx.res.headers.forEach((value, name) => {
+          if (name.toLowerCase() === "set-cookie") {
+            mergedHeaders.append(name, value);
+          } else if (!mergedHeaders.has(name)) {
+            mergedHeaders.set(name, value);
+          }
+        });
+      }
       const merged = new Response(result.body, {
         status: result.status,
         statusText: result.statusText,
@@ -442,12 +502,6 @@ export async function executeInterceptMiddleware<TEnv>(
     if (result instanceof Response) {
       earlyResponse = result;
       return result;
-    }
-
-    // Check if middleware replaced ctx.res with a different response
-    if (responseHolder.response && responseHolder.response !== stubResponse) {
-      earlyResponse = responseHolder.response;
-      return earlyResponse;
     }
 
     return stubResponse;
