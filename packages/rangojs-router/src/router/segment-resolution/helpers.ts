@@ -122,8 +122,7 @@ export interface ErrorReportContext {
  * Handle a caught error during segment resolution by creating an
  * error or not-found segment with the nearest boundary.
  *
- * Shared by both resolveWithErrorHandling (fresh path) and
- * resolveWithRevalidationErrorHandling (revalidation path).
+ * Called by resolveWithErrorBoundary to produce error/notFound segments.
  */
 export function catchSegmentError<TEnv>(
   error: unknown,
@@ -211,4 +210,38 @@ export function catchSegmentError<TEnv>(
   setResponseStatus(500);
 
   return createErrorSegment(errorInfo, effectiveFallback, entry, params);
+}
+
+/**
+ * Generic error boundary wrapper for segment resolution.
+ * Catches non-Response errors and produces an error/notFound segment
+ * via catchSegmentError. Response throws (e.g. redirects) are re-thrown.
+ *
+ * The caller provides a `wrapError` callback to shape the error segment
+ * into the expected return type (e.g. ResolvedSegment[] for the fresh
+ * path, or SegmentRevalidationResult for the revalidation path).
+ */
+export async function resolveWithErrorBoundary<TEnv, TResult>(
+  entry: EntryData,
+  params: Record<string, string>,
+  resolveFn: () => Promise<TResult>,
+  wrapError: (segment: ResolvedSegment) => TResult,
+  deps: SegmentResolutionDeps<TEnv>,
+  report?: ErrorReportContext,
+  pathname?: string,
+): Promise<TResult> {
+  try {
+    return await resolveFn();
+  } catch (error) {
+    if (error instanceof Response) throw error;
+    const segment = catchSegmentError(
+      error,
+      entry,
+      params,
+      deps,
+      report,
+      pathname,
+    );
+    return wrapError(segment);
+  }
 }

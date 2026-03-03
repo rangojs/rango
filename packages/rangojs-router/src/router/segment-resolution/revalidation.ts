@@ -29,7 +29,7 @@ import {
   tryStaticHandler,
   tryStaticSlot,
   resolveLayoutComponent,
-  catchSegmentError,
+  resolveWithErrorBoundary,
 } from "./helpers.js";
 
 // ---------------------------------------------------------------------------
@@ -874,55 +874,6 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
 }
 
 /**
- * Wrapper for segment resolution with revalidation that adds error boundary handling.
- */
-export async function resolveWithRevalidationErrorHandling<TEnv>(
-  entry: EntryData,
-  params: Record<string, string>,
-  resolveFn: () => Promise<SegmentRevalidationResult>,
-  deps: SegmentResolutionDeps<TEnv>,
-  pathname?: string,
-  errorContext?: {
-    request: Request;
-    url: URL;
-    routeKey?: string;
-    env?: TEnv;
-    isPartial?: boolean;
-    requestStartTime?: number;
-  },
-): Promise<SegmentRevalidationResult> {
-  try {
-    return await resolveFn();
-  } catch (error) {
-    if (error instanceof Response) {
-      throw error;
-    }
-
-    const segment = catchSegmentError(
-      error,
-      entry,
-      params,
-      deps,
-      errorContext
-        ? {
-            request: errorContext.request,
-            url: errorContext.url,
-            routeKey: errorContext.routeKey,
-            env: errorContext.env,
-            isPartial: errorContext.isPartial,
-            requestStartTime: errorContext.requestStartTime,
-          }
-        : undefined,
-      pathname,
-    );
-    return {
-      segments: [segment],
-      matchedIds: [segment.id],
-    };
-  }
-}
-
-/**
  * Resolve all segments for a route with revalidation logic (for matchPartial).
  */
 export async function resolveAllSegmentsWithRevalidation<TEnv>(
@@ -965,7 +916,7 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
     }
 
     const nonParallelEntry = entry as Exclude<EntryData, { type: "parallel" }>;
-    const resolved = await resolveWithRevalidationErrorHandling(
+    const resolved = await resolveWithErrorBoundary(
       nonParallelEntry,
       params,
       () =>
@@ -984,7 +935,9 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
           actionContext,
           false,
         ),
+      (seg) => ({ segments: [seg], matchedIds: [seg.id] }),
       deps,
+      undefined,
       pathname,
     );
 

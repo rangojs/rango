@@ -6,7 +6,6 @@ export {
   resolveSegment,
   resolveOrphanLayout,
   resolveParallelEntry,
-  resolveWithErrorHandling,
   resolveAllSegments,
   resolveLoadersOnly,
 } from "./segment-resolution/fresh.js";
@@ -18,6 +17,5 @@ export {
   resolveEntryHandlerWithRevalidation,
   resolveSegmentWithRevalidation,
   resolveOrphanLayoutWithRevalidation,
-  resolveWithRevalidationErrorHandling,
   resolveAllSegmentsWithRevalidation,
 } from "./segment-resolution/revalidation.js";
