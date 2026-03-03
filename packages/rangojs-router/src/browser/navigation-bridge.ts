@@ -201,6 +201,7 @@ function createNavigationTransaction(
   let optimisticallyCommitted = false;
   let earlyStatePushed = false;
   const currentUrl = window.location.href;
+  const currentHistoryState = window.history.state;
 
   // Start navigation in event controller (this sets loading state)
   const handle = eventController.startNavigation(url, options);
@@ -437,14 +438,27 @@ function createNavigationTransaction(
     },
 
     [Symbol.dispose]() {
-      // If aborted, another navigation took over - don't touch state
-      if (handle.signal.aborted) return;
+      // Superseded: another navigation took over. Roll back our early push
+      // so the new navigation starts from a clean history position.
+      // Guard: only rollback if we still own the current URL. A newer
+      // navigation may have already pushed its own entry — touching
+      // history in that case would overwrite the winning navigation.
+      if (handle.signal.aborted) {
+        if (
+          earlyStatePushed &&
+          !committed &&
+          !optimisticallyCommitted &&
+          window.location.href === url
+        ) {
+          window.history.replaceState(currentHistoryState, "", currentUrl);
+        }
+        return;
+      }
 
-      // If not committed (and not optimistically committed), the handle's dispose
-      // will reset state to idle via the event controller
+      // Failed (not committed): keep the target URL — the error UI owns it.
+      // Just reset the event controller to idle.
       if (!committed && !optimisticallyCommitted) {
         handle[Symbol.dispose]();
-        // The NavigationHandle's [Symbol.dispose] handles this
       }
     },
   };

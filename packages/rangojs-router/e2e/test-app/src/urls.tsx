@@ -37,6 +37,8 @@ import { loaderReversePatterns } from "./urls/loader-reverse.js";
 import { loaderCookiePatterns } from "./urls/loader-cookie.js";
 import { ctxCleanPatterns } from "./urls/ctx-clean.js";
 import { actionRedirectRevalidationPatterns } from "./urls/action-redirect-revalidation.js";
+import { hashNavigationPatterns } from "./urls/hash-navigation.js";
+import { linkBehaviorPatterns } from "./urls/link-behavior.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -546,6 +548,16 @@ export const urlpatterns = urls(
           name: "actionRedirectRevalidation",
         },
       ),
+
+      // Hash navigation test patterns (hash-only links bypass SPA router)
+      include("/hash-navigation", hashNavigationPatterns, {
+        name: "hashNavigation",
+      }),
+
+      // Link behavior test patterns (interception, prefetch strategies)
+      include("/link-behavior", linkBehaviorPatterns, {
+        name: "linkBehavior",
+      }),
 
       // Prerender with parent route params (locale in include prefix)
       include("/:locale", prerenderLocalePatterns, { name: "locale" }),

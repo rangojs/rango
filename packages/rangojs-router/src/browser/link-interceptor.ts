@@ -44,6 +44,16 @@ export function defaultShouldIntercept(link: HTMLAnchorElement): boolean {
     return false;
   }
 
+  // Don't intercept hash-only navigation (same path, only fragment changes).
+  // Let the browser handle anchor scrolling natively.
+  if (
+    link.pathname === window.location.pathname &&
+    link.search === window.location.search &&
+    link.hash
+  ) {
+    return false;
+  }
+
   return true;
 }
 
