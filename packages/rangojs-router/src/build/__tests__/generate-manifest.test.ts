@@ -95,17 +95,6 @@ describe("generateManifest", () => {
     expect(shopNode.children).toHaveProperty("/shop/category");
   });
 
-  it("should include generatedAt timestamp", () => {
-    const urlpatterns = urls(({ path }) => [
-      path("/", () => null, { name: "home" }),
-    ]);
-
-    const manifest = generateManifest(urlpatterns);
-
-    expect(manifest.generatedAt).toBeDefined();
-    expect(new Date(manifest.generatedAt).getTime()).not.toBeNaN();
-  });
-
   it("should extract search schemas for named routes", () => {
     const urlpatterns = urls(({ path }) => [
       path("/search/:category", () => null, {

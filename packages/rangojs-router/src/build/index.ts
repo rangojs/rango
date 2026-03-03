@@ -17,6 +17,7 @@
 
 export {
   generateManifest,
+  generateManifestFull,
   generateManifestCode,
   type GeneratedManifest,
 } from "./generate-manifest.js";
