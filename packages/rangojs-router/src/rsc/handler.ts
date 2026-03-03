@@ -8,33 +8,31 @@
  */
 
 import { createElement } from "react";
-import { RouteNotFoundError, RouterError } from "../errors.js";
+import { RouteNotFoundError } from "../errors.js";
 import { matchMiddleware, executeMiddleware } from "../router/middleware.js";
 import {
   runWithRequestContext,
   setRequestContextParams,
   requireRequestContext,
   createRequestContext,
-  getLocationState,
 } from "../server/request-context.js";
-import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
 import type { RscPayload, CreateRSCHandlerOptions } from "./types.js";
 import {
   createResponseWithMergedHeaders,
-  createSimpleRedirectResponse,
+  cleanRscUrl,
+  interceptRedirectForPartial,
+  buildRouteMiddlewareEntries,
 } from "./helpers.js";
+import { handleResponseRoute } from "./response-route-handler.js";
 import { generateNonce, nonce as nonceToken } from "./nonce.js";
 import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
 import type { RouterRequestInput } from "../router/router-interfaces.js";
 import { invokeOnError } from "../router/error-handling.js";
 import { createReverseFunction } from "../router/handler-context.js";
-import { contextGet, contextSet } from "../context-var.js";
-import { NOCACHE_SYMBOL } from "../cache/taint.js";
-import { traverseBack } from "../router/pattern-matching.js";
-import { createCacheScope } from "../cache/cache-scope.js";
+import { contextSet } from "../context-var.js";
 import {
   hasCachedManifest,
   getRouteTrie,
@@ -44,7 +42,6 @@ import {
   getRouterTrie,
 } from "../route-map-builder.js";
 import type { HandlerContext } from "./handler-context.js";
-import { createResponseErrorPayload } from "./response-error.js";
 import { buildRouterTrieFromUrlpatterns } from "./manifest-init.js";
 import { handleProgressiveEnhancement } from "./progressive-enhancement.js";
 import { handleServerAction } from "./server-action.js";
@@ -84,13 +81,6 @@ import { handleRscRendering } from "./rsc-rendering.js";
  * });
  * ```
  */
-// Only cache successful responses. Non-200 statuses (errors, redirects) are
-// not cached — notFound() produces 500 in response routes, and explicit
-// non-200 Responses are rare enough that caching them would be surprising.
-function isCacheableStatus(status: number): boolean {
-  return status === 200;
-}
-
 export function createRSCHandler<
   TEnv = unknown,
   TRoutes extends Record<string, string> = Record<string, string>,
@@ -341,24 +331,12 @@ export function createRSCHandler<
           createReverseFunction(getRequiredRouteMap()),
         );
 
-        // If global middleware returned a redirect during a partial (SPA)
-        // request, intercept it. fetch auto-follows 3xx, so we must signal
-        // the redirect via our own mechanism instead.
-        // - With state: Flight payload (200) so location state survives.
-        // - Without state: 204 + X-RSC-Redirect header (lightweight).
-        const isPartial = url.searchParams.has("_rsc_partial");
-        const redirectUrl = mwResponse.headers.get("Location");
-        const isRedirect =
-          mwResponse.status >= 300 && mwResponse.status < 400 && redirectUrl;
-        if (isPartial && isRedirect) {
-          const locationState = getLocationState();
-          if (locationState) {
-            return createRedirectFlightResponse(
-              redirectUrl,
-              resolveLocationStateEntries(locationState),
-            );
-          }
-          return createSimpleRedirectResponse(redirectUrl);
+        if (url.searchParams.has("_rsc_partial")) {
+          const intercepted = interceptRedirectForPartial(
+            mwResponse,
+            createRedirectFlightResponse,
+          );
+          if (intercepted) return intercepted;
         }
 
         return mwResponse;
@@ -384,315 +362,14 @@ export function createRSCHandler<
     handlerTiming.push(`handler-preview-match;dur=${previewDur.toFixed(2)}`);
     // Response route short-circuit: skip entire RSC pipeline
     if (preview?.responseType && preview.handler) {
-      const isPartial = url.searchParams.has("_rsc_partial");
-
-      // Partial requests (client-side navigation) to response routes
-      // get X-RSC-Reload to trigger hard navigation in the browser
-      if (isPartial) {
-        const cleanUrl = new URL(url);
-        cleanUrl.searchParams.delete("_rsc_partial");
-        cleanUrl.searchParams.delete("_rsc_segments");
-        cleanUrl.searchParams.delete("_rsc_v");
-        cleanUrl.searchParams.delete("_rsc_stale");
-        cleanUrl.searchParams.delete("_rsc_action");
-        cleanUrl.searchParams.delete("_rsc_prev");
-
-        return createResponseWithMergedHeaders(null, {
-          status: 200,
-          headers: {
-            "X-RSC-Reload": cleanUrl.toString(),
-            "content-type": "text/x-component;charset=utf-8",
-          },
-        });
-      }
-
-      // Build lightweight context for response handler
-      const reqCtx = requireRequestContext();
-      const responseHandlerCtx = {
+      return handleResponseRoute(
+        handlerCtx,
+        preview as any,
         request,
-        params: preview.params || {},
         env,
-        searchParams: url.searchParams,
         url,
-        pathname: url.pathname,
-        href: (name: string, hrefParams?: Record<string, string>) => {
-          if (name.startsWith("/")) {
-            if (!hrefParams) return name;
-            return name.replace(/:([^/]+)/g, (_, key) => {
-              const value = hrefParams[key];
-              if (value === undefined)
-                throw new Error(`Missing param "${key}" for path "${name}"`);
-              return encodeURIComponent(value);
-            });
-          }
-          return name;
-        },
-        get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
-        header: (name: string, value: string) => reqCtx.header(name, value),
-        setCookie: (name: string, value: string, options?: any) =>
-          reqCtx.setCookie(name, value, options),
-        _responseType: preview.responseType,
-      };
-      // Brand with taint symbol so "use cache" detects it as request-scoped
-      // and extracts route-identifying properties (params, pathname, _responseType)
-      (responseHandlerCtx as any)[NOCACHE_SYMBOL] = true;
-
-      // Call handler directly, wrapped by route middleware if present
-      const callHandler = async () => {
-        // JSON response routes: wrap in { data } / { error } envelope
-        if (preview.responseType === "json") {
-          const errorCtx = { request, url, env };
-          try {
-            const result = await (preview.handler as Function)(
-              responseHandlerCtx,
-            );
-            if (result instanceof Response) {
-              const mergedHeaders: Record<string, string> = {};
-              result.headers.forEach((value, key) => {
-                mergedHeaders[key] = value;
-              });
-              return createResponseWithMergedHeaders(result.body, {
-                status: result.status,
-                headers: mergedHeaders,
-              });
-            }
-            return createResponseWithMergedHeaders(
-              JSON.stringify({ data: result }),
-              {
-                status: 200,
-                headers: { "content-type": "application/json;charset=utf-8" },
-              },
-            );
-          } catch (error) {
-            callOnError(error, "handler", errorCtx);
-            const isDev = process.env.NODE_ENV !== "production";
-            const status = error instanceof RouterError ? error.status : 500;
-            return createResponseWithMergedHeaders(
-              JSON.stringify({
-                error: createResponseErrorPayload(error, isDev),
-              }),
-              {
-                status,
-                headers: { "content-type": "application/json;charset=utf-8" },
-              },
-            );
-          }
-        }
-
-        // Non-JSON response routes: catch errors and return plain Response
-        const errorCtx = { request, url, env };
-        try {
-          const result = await (preview.handler as Function)(
-            responseHandlerCtx,
-          );
-
-          if (result instanceof Response) {
-            // Handler returned a Response directly -- pass through
-            const mergedHeaders: Record<string, string> = {};
-            result.headers.forEach((value, key) => {
-              mergedHeaders[key] = value;
-            });
-            return createResponseWithMergedHeaders(result.body, {
-              status: result.status,
-              headers: mergedHeaders,
-            });
-          }
-
-          // Auto-wrap based on response type tag
-          switch (preview.responseType) {
-            case "text":
-              return createResponseWithMergedHeaders(String(result), {
-                status: 200,
-                headers: { "content-type": "text/plain;charset=utf-8" },
-              });
-            case "html":
-              return createResponseWithMergedHeaders(String(result), {
-                status: 200,
-                headers: { "content-type": "text/html;charset=utf-8" },
-              });
-            case "xml":
-              return createResponseWithMergedHeaders(String(result), {
-                status: 200,
-                headers: { "content-type": "application/xml;charset=utf-8" },
-              });
-            case "md":
-              return createResponseWithMergedHeaders(String(result), {
-                status: 200,
-                headers: { "content-type": "text/markdown;charset=utf-8" },
-              });
-            default:
-              // image, stream, any -- must return Response
-              throw new Error(
-                `Response route handler for "${preview.responseType}" must return a Response object, got ${typeof result}`,
-              );
-          }
-        } catch (error) {
-          callOnError(error, "handler", errorCtx);
-          const isDev = process.env.NODE_ENV !== "production";
-          const status = error instanceof RouterError ? error.status : 500;
-          const message =
-            error instanceof RouterError
-              ? error.message
-              : isDev && error instanceof Error
-                ? error.message
-                : "Internal Server Error";
-          return createResponseWithMergedHeaders(message, {
-            status,
-            headers: { "content-type": "text/plain;charset=utf-8" },
-          });
-        }
-      };
-
-      // Wrap callHandler to append Vary: Accept on content-negotiated responses
-      const callHandlerWithVary = async () => {
-        const response = await callHandler();
-        if (preview.negotiated) {
-          response.headers.append("Vary", "Accept");
-        }
-        return response;
-      };
-
-      // Wrap with response caching if cache() config is present
-      const executeHandler = async () => {
-        if (preview.routeMiddleware && preview.routeMiddleware.length > 0) {
-          const middlewareEntries = preview.routeMiddleware.map((mw) => ({
-            entry: {
-              pattern: null,
-              regex: null,
-              paramNames: [],
-              handler: mw.handler,
-              mountPrefix: null,
-            },
-            params: mw.params,
-          }));
-          return executeMiddleware(
-            middlewareEntries,
-            request,
-            env,
-            variables,
-            callHandlerWithVary,
-            createReverseFunction(getRequiredRouteMap()),
-          );
-        }
-        return callHandlerWithVary();
-      };
-
-      // Resolve cache config from entry tree (same pattern as match-api.ts)
-      if (preview.manifestEntry) {
-        const entries = [...traverseBack(preview.manifestEntry)];
-        let cacheScope: ReturnType<typeof createCacheScope> = null;
-        for (const entry of entries) {
-          if (entry.cache) {
-            cacheScope = createCacheScope(entry.cache, cacheScope);
-          }
-        }
-
-        if (cacheScope?.enabled) {
-          const store = cacheScope.getStore() ?? reqCtx._cacheStore;
-          if (store?.getResponse && store?.putResponse) {
-            // Build cache key with response:{type}: prefix to avoid collision
-            // with segment keys and differentiate between response types.
-            // Include url.search so query-driven responses cache separately.
-            let cacheKey = `response:${preview.responseType}:${url.pathname}${url.search}`;
-
-            // Priority 1: Route-level key function (full override)
-            if (cacheScope.config !== false && cacheScope.config.key) {
-              try {
-                const customKey = await cacheScope.config.key(reqCtx);
-                cacheKey = `response:${customKey}`;
-              } catch {
-                // Fall back to default key on route-level key failure
-              }
-            } else if (store.keyGenerator) {
-              // Priority 2: Store-level keyGenerator (modifies default key)
-              try {
-                cacheKey = await store.keyGenerator(reqCtx, cacheKey);
-              } catch {
-                // Fall back to default key on keyGenerator failure
-              }
-            }
-
-            // Save pre-handler callbacks (registered by app-level middleware
-            // before we reach the cache block) and clear the live array.
-            // createResponseWithMergedHeaders (inside the handler) eagerly
-            // executes any callbacks present in _onResponseCallbacks, so
-            // handler-registered callbacks are baked into the handler's
-            // response and the cached artifact. Pre-handler callbacks are
-            // NOT in the live array during execution, so they are applied
-            // once per serve on every path (hit + miss) below.
-            const savedCallbacks = reqCtx._onResponseCallbacks;
-            reqCtx._onResponseCallbacks = [];
-
-            const applyPreHandlerCallbacks = (response: Response): Response => {
-              let result = response;
-              for (const callback of savedCallbacks) {
-                result = callback(result) ?? result;
-              }
-              return result;
-            };
-
-            try {
-              const cached = await store.getResponse(cacheKey);
-
-              if (cached && isCacheableStatus(cached.response.status)) {
-                if (!cached.shouldRevalidate) {
-                  // Fresh hit
-                  return applyPreHandlerCallbacks(cached.response);
-                }
-
-                // Stale hit (SWR) - return cached, revalidate in background
-                reqCtx.waitUntil(async () => {
-                  try {
-                    const fresh = await executeHandler();
-                    if (isCacheableStatus(fresh.status)) {
-                      await store.putResponse!(
-                        cacheKey,
-                        fresh,
-                        cacheScope!.ttl,
-                        cacheScope!.swr,
-                      );
-                    }
-                  } catch (error) {
-                    console.error(
-                      `[ResponseCache] Revalidation failed:`,
-                      error,
-                    );
-                  }
-                });
-
-                return applyPreHandlerCallbacks(cached.response);
-              }
-            } catch (error) {
-              console.error(`[ResponseCache] Cache lookup failed:`, error);
-            }
-
-            // Cache miss - execute handler and cache the result.
-            // createResponseWithMergedHeaders inside the handler applies
-            // any callbacks registered during execution, so the response
-            // (and its clone) already include those transforms.
-            const response = await executeHandler();
-
-            if (isCacheableStatus(response.status)) {
-              reqCtx.waitUntil(async () => {
-                try {
-                  await store.putResponse!(
-                    cacheKey,
-                    response.clone(),
-                    cacheScope!.ttl,
-                    cacheScope!.swr,
-                  );
-                } catch (error) {
-                  console.error(`[ResponseCache] Cache write failed:`, error);
-                }
-              });
-            }
-
-            return applyPreHandlerCallbacks(response);
-          }
-        }
-      }
-
-      return executeHandler();
+        variables,
+      );
     }
 
     // Wrap RSC handler to append Vary: Accept on content-negotiated routes
@@ -713,21 +390,8 @@ export function createRSCHandler<
     };
 
     if (preview?.routeMiddleware && preview.routeMiddleware.length > 0) {
-      // Convert route middleware to app middleware format for execution
-      const middlewareEntries = preview.routeMiddleware.map((mw) => ({
-        entry: {
-          pattern: null,
-          regex: null,
-          paramNames: [],
-          handler: mw.handler,
-          mountPrefix: null,
-        },
-        params: mw.params,
-      }));
-
-      // Execute route middleware wrapping the actual request handling
       const mwResponse = await executeMiddleware(
-        middlewareEntries,
+        buildRouteMiddlewareEntries<TEnv>(preview.routeMiddleware),
         request,
         env,
         variables,
@@ -735,24 +399,12 @@ export function createRSCHandler<
         createReverseFunction(getRequiredRouteMap()),
       );
 
-      // If route middleware returned a redirect during a partial (SPA)
-      // request, intercept it. fetch auto-follows 3xx, so we must signal
-      // the redirect via our own mechanism instead.
-      // - With state: Flight payload (200) so location state survives.
-      // - Without state: 204 + X-RSC-Redirect header (lightweight).
-      const isPartial = url.searchParams.has("_rsc_partial");
-      const mwRedirectUrl = mwResponse.headers.get("Location");
-      const isMwRedirect =
-        mwResponse.status >= 300 && mwResponse.status < 400 && mwRedirectUrl;
-      if (isPartial && isMwRedirect) {
-        const locationState = getLocationState();
-        if (locationState) {
-          return createRedirectFlightResponse(
-            mwRedirectUrl,
-            resolveLocationStateEntries(locationState),
-          );
-        }
-        return createSimpleRedirectResponse(mwRedirectUrl);
+      if (url.searchParams.has("_rsc_partial")) {
+        const intercepted = interceptRedirectForPartial(
+          mwResponse,
+          createRedirectFlightResponse,
+        );
+        if (intercepted) return intercepted;
       }
 
       return mwResponse;
@@ -786,19 +438,10 @@ export function createRSCHandler<
         `[RSC] Version mismatch: client=${clientVersion}, server=${version}. Forcing reload.`,
       );
 
-      // Clean URL by removing RSC params
-      const cleanUrl = new URL(url);
-      cleanUrl.searchParams.delete("_rsc_partial");
-      cleanUrl.searchParams.delete("_rsc_segments");
-      cleanUrl.searchParams.delete("_rsc_v");
-      cleanUrl.searchParams.delete("_rsc_stale");
-      cleanUrl.searchParams.delete("_rsc_action");
-      cleanUrl.searchParams.delete("_rsc_prev");
-
       // For actions, reload current page (referer) if same origin.
       // For navigation, load the target URL.
       // Validate referer origin to prevent open redirect via crafted header.
-      let reloadUrl = cleanUrl.toString();
+      let reloadUrl = cleanRscUrl(url).toString();
       if (isAction) {
         const referer = request.headers.get("referer");
         if (referer) {
@@ -945,39 +588,21 @@ export function createRSCHandler<
             `[RSC] Route handler at ${url.pathname} returned a Response during client-side navigation. ` +
               `Falling back to hard navigation. Use data-external on the <Link> to avoid the extra round-trip.`,
           );
-          const cleanUrl = new URL(url);
-          cleanUrl.searchParams.delete("_rsc_partial");
-          cleanUrl.searchParams.delete("_rsc_segments");
-          cleanUrl.searchParams.delete("_rsc_v");
-          cleanUrl.searchParams.delete("_rsc_stale");
-          cleanUrl.searchParams.delete("_rsc_action");
-          cleanUrl.searchParams.delete("_rsc_prev");
           return createResponseWithMergedHeaders(null, {
             status: 200,
             headers: {
-              "X-RSC-Reload": cleanUrl.toString(),
+              "X-RSC-Reload": cleanRscUrl(url).toString(),
               "content-type": "text/x-component;charset=utf-8",
             },
           });
         }
 
-        // For partial requests: intercept redirects. HTTP 3xx redirects are
-        // auto-followed by fetch, which would hit the target URL without
-        // _rsc_partial and render a full HTML page the client can't parse.
-        // - With state: Flight payload (200) so location state survives.
-        // - Without state: 204 + X-RSC-Redirect header (lightweight).
-        const redirectUrl = error.headers.get("Location");
-        const isRedirect =
-          error.status >= 300 && error.status < 400 && redirectUrl;
-        if (isPartial && isRedirect) {
-          const locationState = getLocationState();
-          if (locationState) {
-            return createRedirectFlightResponse(
-              redirectUrl,
-              resolveLocationStateEntries(locationState),
-            );
-          }
-          return createSimpleRedirectResponse(redirectUrl);
+        if (isPartial) {
+          const intercepted = interceptRedirectForPartial(
+            error,
+            createRedirectFlightResponse,
+          );
+          if (intercepted) return intercepted;
         }
 
         return error;
