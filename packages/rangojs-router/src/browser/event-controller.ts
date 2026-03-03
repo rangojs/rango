@@ -8,6 +8,7 @@ import type {
   ResolvedSegment,
   RscMetadata,
   HandleData,
+  StreamingToken,
 } from "./types.js";
 import { filterSegmentOrder } from "./react/filter-segment-order.js";
 
@@ -115,15 +116,6 @@ export type HandleListener = () => void;
 export interface HandleState {
   data: HandleData;
   segmentOrder: string[];
-}
-
-/**
- * Token for tracking an active stream
- * Call end() when the stream completes
- */
-export interface StreamingToken {
-  /** End this streaming operation */
-  end(): void;
 }
 
 /**
