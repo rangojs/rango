@@ -20,7 +20,7 @@ import {
   tryStaticHandler,
   tryStaticSlot,
   resolveLayoutComponent,
-  catchSegmentError,
+  resolveWithErrorBoundary,
 } from "./helpers.js";
 
 // ---------------------------------------------------------------------------
@@ -384,56 +384,6 @@ export async function resolveParallelEntry<TEnv>(
 }
 
 /**
- * Wrapper that adds error boundary handling to segment resolution.
- */
-export async function resolveWithErrorHandling<TEnv>(
-  entry: EntryData,
-  routeKey: string,
-  params: Record<string, string>,
-  context: HandlerContext<any, TEnv>,
-  loaderPromises: Map<string, Promise<any>>,
-  resolveFn: () => Promise<ResolvedSegment[]>,
-  deps: SegmentResolutionDeps<TEnv>,
-  errorContext?: {
-    env?: TEnv;
-    isPartial?: boolean;
-    requestStartTime?: number;
-  },
-): Promise<ResolvedSegment[]> {
-  try {
-    return await resolveFn();
-  } catch (error) {
-    if (error instanceof Response) {
-      throw error;
-    }
-
-    // Safe request access: during build-time prerendering, context.request
-    // is a throwing getter. Use undefined when unavailable.
-    let safeRequest: Request | undefined;
-    try {
-      safeRequest = context.request;
-    } catch {}
-
-    const segment = catchSegmentError(
-      error,
-      entry,
-      params,
-      deps,
-      {
-        request: safeRequest,
-        url: context.url,
-        routeKey,
-        env: errorContext?.env,
-        isPartial: errorContext?.isPartial,
-        requestStartTime: errorContext?.requestStartTime,
-      },
-      context.pathname,
-    );
-    return [segment];
-  }
-}
-
-/**
  * Resolve all segments for a route (used for single-cache-per-request pattern).
  */
 export async function resolveAllSegments<TEnv>(
@@ -448,13 +398,17 @@ export async function resolveAllSegments<TEnv>(
   const allSegments: ResolvedSegment[] = [];
   const seenIds = new Set<string>();
 
+  // Safe request access: during build-time prerendering, context.request
+  // is a throwing getter. Use undefined when unavailable.
+  let safeRequest: Request | undefined;
+  try {
+    safeRequest = context.request;
+  } catch {}
+
   for (const entry of entries) {
-    const resolvedSegments = await resolveWithErrorHandling(
+    const resolvedSegments = await resolveWithErrorBoundary(
       entry,
-      routeKey,
       params,
-      context,
-      loaderPromises,
       () =>
         resolveSegment(
           entry,
@@ -466,7 +420,10 @@ export async function resolveAllSegments<TEnv>(
           false,
           options,
         ),
+      (seg) => [seg],
       deps,
+      { request: safeRequest, url: context.url, routeKey },
+      context.pathname,
     );
     // Deduplicate by segment ID. include() scopes can produce entries that
     // resolve the same shared layout/loader segment. Duplicates in the segment
