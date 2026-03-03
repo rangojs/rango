@@ -17,8 +17,7 @@ import { urlpatterns } from "./urls";
 
 const router = createRouter<AppBindings>({
   document: Document,
-  urls: urlpatterns,
-});
+}).routes(urlpatterns);
 
 // Server-side named-route reverse (type-safe via routeMap)
 export const reverse = router.reverse;
@@ -172,8 +171,7 @@ import type { AppBindings, AppVariables } from "./env";
 
 const router = createRouter<AppBindings>({
   document: Document,
-  urls: urlpatterns,
-});
+}).routes(urlpatterns);
 
 // Register bindings and variables globally for implicit typing
 declare global {
@@ -196,7 +194,7 @@ export const authMiddleware: Middleware = async (ctx, next) => {
 };
 
 // loaders - typed context
-export const UserLoader = createLoader("user", async (ctx) => {
+export const UserLoader = createLoader(async (ctx) => {
   const db = ctx.env.DB; // D1Database (plain bindings)
   const userId = ctx.get("user")?.id; // from RSCRouter.Vars
   return db.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
@@ -221,7 +219,7 @@ Now handlers have typed context without explicit imports:
 
 ```typescript
 // In loaders
-export const DashboardLoader = createLoader("dashboard", async (ctx) => {
+export const DashboardLoader = createLoader(async (ctx) => {
   // ctx.env.DB is typed from global RSCRouter.Env
   // ctx.get("user") is typed from global RSCRouter.Vars
   const user = ctx.get("user");
@@ -327,7 +325,7 @@ Loaders have typed return values:
 
 ```typescript
 // loaders/product.ts
-export const ProductLoader = createLoader("product", async (ctx) => {
+export const ProductLoader = createLoader(async (ctx) => {
   return {
     id: ctx.params.slug,
     name: "Widget",
@@ -346,11 +344,12 @@ async function ProductPage() {
 
 // In client component - same type
 "use client";
-import { useLoaderData } from "@rangojs/router/client";
+import { useLoader } from "@rangojs/router/client";
 
 function ProductPrice() {
-  const { product } = useLoaderData(ProductLoader);
-  // product: { id: string; name: string; price: number }
+  const { data } = useLoader(ProductLoader);
+  // data: { id: string; name: string; price: number }
+  const product = data;
   return <span>${product.price}</span>;
 }
 ```
@@ -603,7 +602,7 @@ export default router;
 //    No manual RegisteredRoutes declaration needed.
 
 // 5. loaders/*.ts - Type-safe loaders
-export const ProductLoader = createLoader("product", async (ctx) => {
+export const ProductLoader = createLoader(async (ctx) => {
   // ctx.params: { slug: string }
   // ctx.get("user"): User | undefined  (from RSCRouter.Vars)
   // ctx.env.DB: D1Database  (plain bindings from RSCRouter.Env)

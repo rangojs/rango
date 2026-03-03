@@ -51,7 +51,7 @@ export const urlpatterns = urls(({ path, layout }) => [
 import { createRouter } from "@rangojs/router";
 import { urlpatterns } from "./urls";
 
-export default createRouter({ document: Document }).urls(urlpatterns);
+export default createRouter({ document: Document }).routes(urlpatterns);
 ```
 
 Use `/typesafety` for type-safe href and environment setup.

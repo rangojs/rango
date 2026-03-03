@@ -40,7 +40,7 @@ import { createLoader } from "@rangojs/router";
 import type { Middleware } from "@rangojs/router";
 
 // In a loader
-export const SettingsLoader = createLoader("settings", async (ctx) => {
+export const SettingsLoader = createLoader(async (ctx) => {
   const currentTheme = ctx.theme; // read from cookie
   return { theme: currentTheme };
 });
