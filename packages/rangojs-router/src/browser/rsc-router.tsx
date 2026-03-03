@@ -394,6 +394,13 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
     version,
   } = getBrowserAppContext();
 
+  // Signal that the React tree has hydrated. useEffect only fires after
+  // hydration completes, so this attribute is a stable readiness marker
+  // that does not depend on React internals like __reactFiber.
+  React.useEffect(() => {
+    document.documentElement.dataset.hydrated = "";
+  }, []);
+
   return (
     <NavigationProvider
       store={store}

@@ -49,25 +49,60 @@ test.describe.serial("route-types-hmr", () => {
 
   let originalBlogContent: string;
   let originalMainUrlsContent: string;
+  let originalHandlersContent: string;
+  let dirtyGuardMessage = "";
 
   test.beforeAll(async () => {
-    // Restore git-tracked versions in case a prior timed-out test left
-    // modified files on disk (afterEach does not run when workers crash).
+    // Check for uncommitted changes BEFORE touching files. If a developer
+    // has local edits in the target files, bail out rather than overwriting.
     try {
-      execSync(
-        `git checkout -- "${blogUrlsPath}" "${mainUrlsPath}" "${handlersPath}"`,
-        {
-          stdio: "ignore",
-        },
-      );
-    } catch {}
-    originalBlogContent = await fs.readFile(blogUrlsPath, "utf-8");
-    originalMainUrlsContent = await fs.readFile(mainUrlsPath, "utf-8");
+      const dirty = execSync(
+        `git diff --name-only -- "${blogUrlsPath}" "${mainUrlsPath}" "${handlersPath}"`,
+        { encoding: "utf-8" },
+      ).trim();
+      if (dirty) {
+        dirtyGuardMessage =
+          `Source files have uncommitted changes (${dirty.replace(/\n/g, ", ")}). ` +
+          `Restore them first: git checkout -- ${dirty.replace(/\n/g, " ")}`;
+        return;
+      }
+    } catch {
+      // Not a git repo or git not available — proceed anyway
+    }
+
+    // Read baselines from git object store (non-destructive) so that even
+    // if a prior crashed run left modified files, we get the canonical
+    // tracked versions without `git checkout --`.
+    const repoRoot = execSync("git rev-parse --show-toplevel", {
+      encoding: "utf-8",
+    }).trim();
+
+    function gitBaseline(absPath: string): string {
+      const rel = path.relative(repoRoot, absPath);
+      return execSync(`git show HEAD:${rel}`, { encoding: "utf-8" });
+    }
+
+    originalBlogContent = gitBaseline(blogUrlsPath);
+    originalMainUrlsContent = gitBaseline(mainUrlsPath);
+    originalHandlersContent = gitBaseline(handlersPath);
+
+    // Write baselines to disk in case a prior crash left stale modifications.
+    await fs.writeFile(blogUrlsPath, originalBlogContent);
+    await fs.writeFile(mainUrlsPath, originalMainUrlsContent);
+    await fs.writeFile(handlersPath, originalHandlersContent);
+  });
+
+  // Deferred skip: test.skip() cannot be called from beforeAll, so we
+  // check the guard flag here and skip each test individually.
+  test.beforeEach(() => {
+    test.skip(dirtyGuardMessage.length > 0, dirtyGuardMessage);
   });
 
   test.afterEach(async () => {
+    if (dirtyGuardMessage) return;
     await fs.writeFile(blogUrlsPath, originalBlogContent);
     await fs.writeFile(mainUrlsPath, originalMainUrlsContent);
+    await fs.writeFile(handlersPath, originalHandlersContent);
     // Wait for HMR + re-discovery to process the restore
     await new Promise((r) => setTimeout(r, isCI ? 5000 : 2000));
   });

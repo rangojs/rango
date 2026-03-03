@@ -12,7 +12,7 @@ export const testNoJs = test.extend({
 /**
  * Wait for React hydration to complete and verify no hydration errors
  */
-export async function waitForHydration(page: Page, locator: string = "body") {
+export async function waitForHydration(page: Page) {
   const hydrationErrors: string[] = [];
 
   // Listen for console messages during hydration
@@ -51,18 +51,13 @@ export async function waitForHydration(page: Page, locator: string = "body") {
   page.on("pageerror", pageErrorHandler);
 
   try {
-    // Wait for DOM to be ready before checking for React fiber
+    // Wait for DOM to be ready before checking hydration marker
     await page.waitForLoadState("domcontentloaded");
 
-    // Use waitForFunction instead of expect.poll - more reliable for DOM checks
+    // RSCRouter sets data-hydrated on <html> after hydration via useEffect.
+    // This is a stable readiness signal that does not rely on React internals.
     await page.waitForFunction(
-      (selector) => {
-        const el = document.querySelector(selector);
-        return (
-          el && Object.keys(el).some((key) => key.startsWith("__reactFiber"))
-        );
-      },
-      locator,
+      () => document.documentElement.hasAttribute("data-hydrated"),
       { timeout: 20000 },
     );
 
