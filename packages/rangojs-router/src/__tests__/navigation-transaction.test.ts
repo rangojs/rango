@@ -285,4 +285,72 @@ describe("createNavigationTransaction", () => {
     });
     txB[Symbol.dispose]();
   });
+
+  it("does not clobber newer navigation when both target the same URL", () => {
+    const { store, eventController } = createTestContext();
+
+    // Nav A navigates to /product with state { view: "gallery" }
+    const txA = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/product",
+      { state: { view: "gallery" } },
+    );
+    expect(locationHref).toBe("http://localhost/product");
+
+    // Nav B aborts A and navigates to the SAME URL with different state.
+    // This happens when the user clicks a link to the same page but with
+    // different state (e.g., switching tabs on a product page).
+    eventController.abortNavigation();
+    const txB = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/product",
+      { state: { view: "details" } },
+    );
+    expect(locationHref).toBe("http://localhost/product");
+
+    // A's dispose fires. Without stamp-based ownership, A would see
+    // window.location.href === url and roll back, clobbering B's state.
+    txA[Symbol.dispose]();
+
+    // B's URL and state must survive
+    expect(locationHref).toBe("http://localhost/product");
+    // B's state should be the current history state (not A's or the original).
+    // buildHistoryState wraps plain objects as { state: <value> }.
+    expect(historyState).toHaveProperty("state");
+    expect(historyState.state).toEqual({ view: "details" });
+    // replaceState should NOT have been called for A's rollback
+    expect(replaceStateSpy).not.toHaveBeenCalled();
+
+    // Clean up B
+    txB.commit({
+      url: "http://localhost/product",
+      segmentIds: ["root"],
+      segments: [],
+    });
+    txB[Symbol.dispose]();
+  });
+
+  it("still rolls back superseded navigation when no newer push has happened", () => {
+    const { store, eventController } = createTestContext();
+
+    // Nav A navigates to /product with state
+    const txA = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/product",
+      { state: { view: "gallery" } },
+    );
+    expect(locationHref).toBe("http://localhost/product");
+
+    // Abort A, but do NOT start a new navigation that pushes state
+    eventController.abortNavigation();
+
+    // A's dispose fires — A's stamp is still in history.state, so rollback is valid
+    txA[Symbol.dispose]();
+
+    // Should roll back to the original URL
+    expect(locationHref).toBe("http://localhost/start");
+  });
 });

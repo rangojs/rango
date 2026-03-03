@@ -1,5 +1,5 @@
 /**
- * Tests for RSC helpers, specifically createResponseWithMergedHeaders
+ * Tests for RSC helpers
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -9,6 +9,7 @@ import {
 import {
   createResponseWithMergedHeaders,
   finalizeResponse,
+  interceptRedirectForPartial,
 } from "../helpers.js";
 
 describe("createResponseWithMergedHeaders", () => {
@@ -263,5 +264,178 @@ describe("finalizeResponse", () => {
     const result = runWithRequestContext(ctx, () => finalizeResponse(response));
     expect(called).toBe(true);
     expect(result).toBe(response);
+  });
+});
+
+describe("onResponse callback drain semantics", () => {
+  it("createResponseWithMergedHeaders drains callbacks so finalizeResponse is a no-op", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    let callCount = 0;
+    ctx.onResponse((res) => {
+      callCount++;
+      return res;
+    });
+
+    const result = runWithRequestContext(ctx, () => {
+      // First call — callback fires and is drained
+      const response = createResponseWithMergedHeaders("body", { status: 200 });
+      // Second call via finalizeResponse — should NOT re-fire
+      return finalizeResponse(response);
+    });
+
+    expect(callCount).toBe(1);
+    expect(result.status).toBe(200);
+  });
+
+  it("finalizeResponse drains callbacks so a second call is a no-op", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    let callCount = 0;
+    ctx.onResponse((res) => {
+      callCount++;
+      return res;
+    });
+
+    const response = new Response("body", { status: 200 });
+    runWithRequestContext(ctx, () => {
+      finalizeResponse(response);
+      finalizeResponse(response);
+    });
+
+    expect(callCount).toBe(1);
+  });
+});
+
+describe("interceptRedirectForPartial", () => {
+  it("returns null for non-redirect responses", () => {
+    const response = new Response("ok", { status: 200 });
+    const result = interceptRedirectForPartial(response, () => new Response());
+    expect(result).toBeNull();
+  });
+
+  it("returns null for redirect without Location header", () => {
+    const response = new Response(null, { status: 302 });
+    const result = interceptRedirectForPartial(response, () => new Response());
+    expect(result).toBeNull();
+  });
+
+  it("intercepts 3xx redirect and returns simple redirect response", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    const response = new Response(null, {
+      status: 302,
+      headers: { Location: "/new-page" },
+    });
+
+    const result = runWithRequestContext(ctx, () =>
+      interceptRedirectForPartial(
+        response,
+        (url) => new Response(`flight:${url}`),
+      ),
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.headers.get("X-RSC-Redirect")).toBe("/new-page");
+  });
+
+  it("preserves Set-Cookie from original redirect response", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    const headers = new Headers();
+    headers.set("Location", "/dashboard");
+    headers.append("Set-Cookie", "session=abc123; Path=/; HttpOnly");
+    headers.append("Set-Cookie", "theme=dark; Path=/");
+    const response = new Response(null, { status: 302, headers });
+
+    const result = runWithRequestContext(ctx, () =>
+      interceptRedirectForPartial(
+        response,
+        (url) => new Response(`flight:${url}`),
+      ),
+    );
+
+    expect(result).not.toBeNull();
+    const cookies = result!.headers.getSetCookie();
+    expect(cookies).toContain("session=abc123; Path=/; HttpOnly");
+    expect(cookies).toContain("theme=dark; Path=/");
+  });
+
+  it("preserves custom headers from original redirect response", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    const response = new Response(null, {
+      status: 307,
+      headers: {
+        Location: "/target",
+        "X-Custom-Middleware": "applied",
+        "X-Request-Id": "req-123",
+      },
+    });
+
+    const result = runWithRequestContext(ctx, () =>
+      interceptRedirectForPartial(
+        response,
+        (url) => new Response(`flight:${url}`),
+      ),
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.headers.get("X-Custom-Middleware")).toBe("applied");
+    expect(result!.headers.get("X-Request-Id")).toBe("req-123");
+    // Location should not be carried over
+    expect(result!.headers.get("Location")).toBeNull();
+  });
+
+  it("does not overwrite headers already on the intercepted response", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    const response = new Response(null, {
+      status: 302,
+      headers: {
+        Location: "/target",
+        "content-type": "text/html",
+      },
+    });
+
+    const result = runWithRequestContext(ctx, () =>
+      interceptRedirectForPartial(
+        response,
+        (url) => new Response(`flight:${url}`),
+      ),
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.headers.get("X-RSC-Redirect")).toBe("/target");
   });
 });
