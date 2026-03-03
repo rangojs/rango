@@ -229,6 +229,19 @@ export const Link: ForwardRefExoticComponent<
       const target = (e.currentTarget as HTMLAnchorElement).target;
       if (target && target !== "_self") return;
 
+      // Hash-only navigation: let the browser handle anchor scrolling natively.
+      // The anchor element's properties are already browser-resolved from `href={to}`.
+      {
+        const anchor = e.currentTarget as HTMLAnchorElement;
+        if (
+          anchor.pathname === window.location.pathname &&
+          anchor.search === window.location.search &&
+          anchor.hash
+        ) {
+          return;
+        }
+      }
+
       // Prevent default and use SPA navigation
       e.preventDefault();
       // Stop propagation to prevent link-interceptor from also handling this

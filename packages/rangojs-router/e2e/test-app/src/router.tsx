@@ -181,6 +181,22 @@ export const router = createRouter<AppEnv>({
   .use(globalMiddleware)
   .use(timingMiddleware)
   .use(headerShorthandMiddleware)
+  // Stub-header and onResponse test: sets a header before next() and registers
+  // an onResponse callback. Verifies these survive when authMiddleware
+  // short-circuits with a redirect (returns Response without calling next()).
+  .use("/middleware-test/protected/*", async (ctx, next) => {
+    ctx.header("X-Stub-Before-Next", "applied");
+    const reqCtx = getRequestContext();
+    reqCtx?.onResponse((response) => {
+      const headers = new Headers(response.headers);
+      headers.set("X-OnResponse-Applied", "yes");
+      return new Response(response.body, {
+        status: response.status,
+        headers,
+      });
+    });
+    await next();
+  })
   // Pattern-based middleware for protected routes
   .use("/middleware-test/protected/*", authMiddleware)
   // Pattern-based middleware for error handling routes

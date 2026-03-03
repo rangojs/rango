@@ -800,3 +800,153 @@ test.describe("location-state (production)", () => {
     await expect(page.locator('[data-testid="flash-empty"]')).toBeVisible();
   });
 });
+
+/**
+ * Stateful navigation failure tests — dev
+ *
+ * Verifies that when a Link-with-state navigation fails (network error),
+ * the error UI renders at the target URL. The early pushState is intentional
+ * and the failed destination owns the URL.
+ */
+test.describe("stateful-navigation-failure", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test("failed stateful navigation shows error UI at target URL", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="link-state-index"]'),
+    ).toBeVisible();
+
+    // Intercept only the RSC partial request to the target route
+    await page.route(
+      (url) =>
+        url.pathname.includes("/location-state/link-state/target") &&
+        url.searchParams.has("_rsc_partial"),
+      (route) => route.abort("failed"),
+    );
+
+    // Click a Link with state — this triggers an early history.pushState
+    await page.locator('[data-testid="link-typed-eager"]').click();
+
+    // The error UI should appear at the target URL
+    await expect(page.getByRole("heading", { name: /error/i })).toBeVisible();
+
+    // URL stays at the target — the failed navigation owns it
+    expect(page.url()).toContain("/location-state/link-state/target");
+  });
+});
+
+/**
+ * Stateful navigation failure tests — production
+ */
+test.describe("stateful-navigation-failure (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("failed stateful navigation shows error UI at target URL", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="link-state-index"]'),
+    ).toBeVisible();
+
+    // Intercept only the RSC partial request to the target route
+    await page.route(
+      (url) =>
+        url.pathname.includes("/location-state/link-state/target") &&
+        url.searchParams.has("_rsc_partial"),
+      (route) => route.abort("failed"),
+    );
+
+    // Click a Link with state — this triggers an early history.pushState
+    await page.locator('[data-testid="link-typed-eager"]').click();
+
+    // The error UI should appear at the target URL
+    await expect(page.getByRole("heading", { name: /error/i })).toBeVisible();
+
+    // URL stays at the target — the failed navigation owns it
+    expect(page.url()).toContain("/location-state/link-state/target");
+  });
+});
+
+/**
+ * Superseded navigation race: clicking two stateful links in quick
+ * succession must leave the URL at the second link's target, not
+ * rolled back to the source by the first transaction's dispose.
+ */
+test.describe("stateful-navigation-superseded", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+
+  test("second stateful nav wins when first is superseded", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="link-state-index"]'),
+    ).toBeVisible();
+
+    // Fire both clicks synchronously so the first navigation can't
+    // re-render the page before the second click fires.
+    await page.evaluate(() => {
+      document
+        .querySelector<HTMLElement>('[data-testid="link-typed-eager"]')!
+        .click();
+      document
+        .querySelector<HTMLElement>('[data-testid="link-plain-static"]')!
+        .click();
+    });
+
+    // The second navigation should win -- URL must be at its target
+    await expect(
+      page.locator('[data-testid="link-state-plain-target"]'),
+    ).toBeVisible();
+    expect(page.url()).toContain("/location-state/link-state/plain-target");
+  });
+});
+
+test.describe("stateful-navigation-superseded (production)", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
+
+  test("second stateful nav wins when first is superseded", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/link-state"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="link-state-index"]'),
+    ).toBeVisible();
+
+    await page.evaluate(() => {
+      document
+        .querySelector<HTMLElement>('[data-testid="link-typed-eager"]')!
+        .click();
+      document
+        .querySelector<HTMLElement>('[data-testid="link-plain-static"]')!
+        .click();
+    });
+
+    await expect(
+      page.locator('[data-testid="link-state-plain-target"]'),
+    ).toBeVisible();
+    expect(page.url()).toContain("/location-state/link-state/plain-target");
+  });
+});

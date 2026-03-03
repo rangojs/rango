@@ -21,6 +21,7 @@ import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 import type { RscPayload, CreateRSCHandlerOptions } from "./types.js";
 import {
   createResponseWithMergedHeaders,
+  finalizeResponse,
   interceptRedirectForPartial,
   buildRouteMiddlewareEntries,
 } from "./helpers.js";
@@ -344,7 +345,7 @@ export function createRSCHandler<
           if (intercepted) return intercepted;
         }
 
-        return mwResponse;
+        return finalizeResponse(mwResponse);
       }
 
       return coreHandler();
@@ -412,7 +413,7 @@ export function createRSCHandler<
         if (intercepted) return intercepted;
       }
 
-      return mwResponse;
+      return finalizeResponse(mwResponse);
     }
 
     // No route middleware, proceed directly

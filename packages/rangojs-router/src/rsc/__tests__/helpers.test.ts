@@ -6,7 +6,10 @@ import {
   createRequestContext,
   runWithRequestContext,
 } from "../../server/request-context.js";
-import { createResponseWithMergedHeaders } from "../helpers.js";
+import {
+  createResponseWithMergedHeaders,
+  finalizeResponse,
+} from "../helpers.js";
 
 describe("createResponseWithMergedHeaders", () => {
   it("should create response without context", () => {
@@ -171,5 +174,94 @@ describe("createResponseWithMergedHeaders", () => {
     });
 
     expect(capturedStatus).toBe(308);
+  });
+});
+
+describe("finalizeResponse", () => {
+  it("should return response unchanged when no request context", () => {
+    const response = new Response("body", { status: 200 });
+    const result = finalizeResponse(response);
+    expect(result).toBe(response);
+  });
+
+  it("should return response unchanged when no callbacks registered", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    const response = new Response("body", { status: 200 });
+    const result = runWithRequestContext(ctx, () => finalizeResponse(response));
+    expect(result).toBe(response);
+  });
+
+  it("should run single onResponse callback", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    ctx.onResponse((res) => {
+      const headers = new Headers(res.headers);
+      headers.set("X-Test", "applied");
+      return new Response(res.body, { status: res.status, headers });
+    });
+
+    const response = new Response("body", { status: 200 });
+    const result = runWithRequestContext(ctx, () => finalizeResponse(response));
+    expect(result.headers.get("X-Test")).toBe("applied");
+  });
+
+  it("should chain multiple callbacks in order", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    const order: number[] = [];
+    ctx.onResponse((res) => {
+      order.push(1);
+      const headers = new Headers(res.headers);
+      headers.set("X-First", "1");
+      return new Response(res.body, { status: res.status, headers });
+    });
+    ctx.onResponse((res) => {
+      order.push(2);
+      const headers = new Headers(res.headers);
+      headers.set("X-Second", "2");
+      return new Response(res.body, { status: res.status, headers });
+    });
+
+    const response = new Response("body", { status: 200 });
+    const result = runWithRequestContext(ctx, () => finalizeResponse(response));
+    expect(order).toEqual([1, 2]);
+    expect(result.headers.get("X-First")).toBe("1");
+    expect(result.headers.get("X-Second")).toBe("2");
+  });
+
+  it("should handle callback returning undefined", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    let called = false;
+    ctx.onResponse((_res) => {
+      called = true;
+      return undefined as any;
+    });
+
+    const response = new Response("body", { status: 201 });
+    const result = runWithRequestContext(ctx, () => finalizeResponse(response));
+    expect(called).toBe(true);
+    expect(result).toBe(response);
   });
 });
