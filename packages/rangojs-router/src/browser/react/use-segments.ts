@@ -115,27 +115,21 @@ export function useSegments<T>(
 ): T | SegmentsState {
   const ctx = useContext(NavigationStoreContext);
 
-  // Recompute selected value from current store state and apply selector.
-  // Shared by the render-time eager check and the subscription callback.
-  function recompute(
-    sel: ((state: SegmentsState) => T) | undefined,
-  ): T | SegmentsState {
-    const location = ctx!.eventController.getLocation();
-    const handleState = ctx!.eventController.getHandleState();
-    const segmentsState = buildSegmentsState(
-      location as URL,
-      handleState.segmentOrder,
-    );
-    return sel ? sel(segmentsState) : segmentsState;
-  }
-
-  // Build initial state from SSR module state or event controller
+  // Build initial state from SSR module state or event controller.
+  // Inlined rather than calling recompute() because the segmentsCache
+  // ref is not yet initialized during the useState initializer.
   const [state, setState] = useState<T | SegmentsState>(() => {
     if (typeof document === "undefined" || !ctx) {
       const ssrState = buildSsrState();
       return selector ? selector(ssrState) : ssrState;
     }
-    return recompute(selector);
+    const location = ctx.eventController.getLocation();
+    const handleState = ctx.eventController.getHandleState();
+    const segmentsState = buildSegmentsState(
+      location as URL,
+      handleState.segmentOrder,
+    );
+    return selector ? selector(segmentsState) : segmentsState;
   });
 
   const prevState = useRef(state);
@@ -147,6 +141,48 @@ export function useSegments<T>(
   // Without this guard, no-selector mode causes infinite re-renders because
   // buildSegmentsState creates fresh arrays that fail Object.is checks.
   const prevSelectorIdentity = useRef(selector);
+
+  // Cache SegmentsState to stabilize nested references (path, segmentIds
+  // arrays) so selectors returning composite values don't cause spurious
+  // render-time setState calls.
+  const segmentsCache = useRef<{
+    location: URL;
+    segmentOrder: string[];
+    state: SegmentsState;
+  } | null>(null);
+
+  // Recompute selected value from current store state and apply selector.
+  // Shared by the render-time eager check and the subscription callback.
+  function recompute(
+    sel: ((state: SegmentsState) => T) | undefined,
+  ): T | SegmentsState {
+    const location = ctx!.eventController.getLocation();
+    const handleState = ctx!.eventController.getHandleState();
+
+    // Reuse cached state when inputs haven't changed by reference,
+    // keeping array/object references stable for composite selectors.
+    const cache = segmentsCache.current;
+    let segmentsState: SegmentsState;
+    if (
+      cache &&
+      cache.location === location &&
+      cache.segmentOrder === handleState.segmentOrder
+    ) {
+      segmentsState = cache.state;
+    } else {
+      segmentsState = buildSegmentsState(
+        location as URL,
+        handleState.segmentOrder,
+      );
+      segmentsCache.current = {
+        location: location as URL,
+        segmentOrder: handleState.segmentOrder,
+        state: segmentsState,
+      };
+    }
+    return sel ? sel(segmentsState) : segmentsState;
+  }
+
   if (ctx && selector !== prevSelectorIdentity.current) {
     prevSelectorIdentity.current = selector;
     const nextSelected = recompute(selector);

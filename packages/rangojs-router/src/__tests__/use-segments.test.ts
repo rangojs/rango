@@ -54,12 +54,13 @@ const mockedUseContext = vi.mocked(useContext);
 
 function createMockEventController() {
   const location = new URL("http://localhost/shop/products");
+  // segmentOrder is a stable reference, matching real event controller behavior
+  // where handleSegmentOrder identity only changes on setHandleData calls.
+  const segmentOrder = ["L0", "L0L1"];
   return {
     getState: () => ({ location }),
     getLocation: () => location,
-    getHandleState: () => ({
-      segmentOrder: ["L0", "L0L1"],
-    }),
+    getHandleState: () => ({ segmentOrder }),
     subscribe: vi.fn(() => vi.fn()),
     subscribeToHandles: vi.fn(() => vi.fn()),
   };
@@ -191,5 +192,35 @@ describe("useSegments", () => {
         segmentIds: ["L0", "L0L1"],
       }),
     );
+  });
+
+  it("does not loop for composite selectors returning wrapped arrays", () => {
+    const ec = createMockEventController();
+    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+
+    // First render with composite selector wrapping path array
+    useSegments((s) => ({ path: s.path }));
+    const setState = stateSlots[0][1];
+    setState.mockClear();
+
+    // First re-render: populates the SegmentsState cache.
+    // May trigger one setState (SSR → client mismatch, acceptable one-time cost).
+    resetHookIndices();
+    useSegments((s) => ({ path: s.path }));
+
+    // Sync prevState with whatever recompute produced
+    const cachedResult =
+      setState.mock.calls.length > 0
+        ? setState.mock.calls[0][0]
+        : refSlots[0].current;
+    refSlots[0].current = cachedResult;
+    setState.mockClear();
+
+    // Second re-render: cache hit means path reference is stable,
+    // so the composite selector produces an object with the same path ref.
+    resetHookIndices();
+    useSegments((s) => ({ path: s.path }));
+
+    expect(setState).not.toHaveBeenCalled();
   });
 });
