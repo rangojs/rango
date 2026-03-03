@@ -4,7 +4,7 @@ import type {
   RscPayload,
 } from "./types.js";
 import { createPartialUpdater } from "./partial-update.js";
-import { createNavigationTransaction } from "./navigation-bridge.js";
+import { createNavigationTransaction } from "./navigation-transaction.js";
 import {
   reconcileSegments,
   reconcileErrorSegments,
