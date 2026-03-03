@@ -6,48 +6,22 @@
  */
 
 import type { ReactNode } from "react";
-import { DataNotFoundError, invariant } from "../../errors";
-import {
-  createErrorInfo,
-  createErrorSegment,
-  createNotFoundInfo,
-  createNotFoundSegment,
-} from "../error-handling.js";
-import { getRequestContext } from "../../server/request-context.js";
-import { DefaultErrorFallback } from "../../default-error-boundary.js";
+import { invariant } from "../../errors";
 import type { EntryData } from "../../server/context";
 import type {
   HandlerContext,
   InternalHandlerContext,
   ResolvedSegment,
-  ErrorInfo,
 } from "../../types";
 import type { SegmentResolutionDeps } from "../types.js";
-import { debugLog } from "../logging.js";
-import { tryStaticLookup } from "./static-store.js";
 import { resolveLoaderData } from "./loader-cache.js";
-
-/**
- * Handle Response returns from handlers.
- * When a handler returns a Response (e.g., redirect), throw it to trigger
- * the short-circuit mechanism. Otherwise return the ReactNode.
- */
-export function handleHandlerResult(
-  result: ReactNode | Response | Promise<ReactNode> | Promise<Response>,
-): ReactNode {
-  if (result instanceof Response) {
-    throw result;
-  }
-  if (result instanceof Promise) {
-    return result.then((resolved) => {
-      if (resolved instanceof Response) {
-        throw resolved;
-      }
-      return resolved;
-    }) as ReactNode;
-  }
-  return result;
-}
+import {
+  handleHandlerResult,
+  tryStaticHandler,
+  tryStaticSlot,
+  resolveLayoutComponent,
+  catchSegmentError,
+} from "./helpers.js";
 
 // ---------------------------------------------------------------------------
 // Fresh path (full match, no revalidation)
@@ -170,22 +144,7 @@ export async function resolveSegment<TEnv>(
     (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
       entry.shortCode;
 
-    // Static handler interception: use pre-rendered component from build-time store.
-    // Cast via any because the cache entry type in the union lacks isStaticPrerender.
-    const entryAny = entry as any;
-    let component: ReactNode | undefined;
-    if (entryAny.isStaticPrerender && entryAny.staticHandlerId) {
-      component = await tryStaticLookup(
-        entryAny.staticHandlerId,
-        entry.shortCode,
-      );
-    }
-    if (component === undefined) {
-      component =
-        typeof entry.handler === "function"
-          ? handleHandlerResult(await entry.handler(context))
-          : entry.handler;
-    }
+    const component = await resolveLayoutComponent(entry, context);
 
     segments.push({
       id: entry.shortCode,
@@ -228,15 +187,10 @@ export async function resolveSegment<TEnv>(
     // the correct tree composition order (layouts wrap the route content).
     (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
       entry.shortCode;
-    let component: ReactNode | undefined;
-
-    // Static handler interception: use pre-rendered component from build-time store
-    if (entry.isStaticPrerender && (entry as any).staticHandlerId) {
-      component = await tryStaticLookup(
-        (entry as any).staticHandlerId,
-        entry.shortCode,
-      );
-    }
+    let component: ReactNode | undefined = await tryStaticHandler(
+      entry,
+      entry.shortCode,
+    );
     if (component === undefined) {
       if (entry.loading) {
         const result = handleHandlerResult(entry.handler(context));
@@ -333,21 +287,7 @@ export async function resolveOrphanLayout<TEnv>(
     segments.push(...parallelSegments);
   }
 
-  // Static handler interception for orphan layouts
-  const orphanAny = orphan as any;
-  let component: ReactNode | undefined;
-  if (orphanAny.isStaticPrerender && orphanAny.staticHandlerId) {
-    component = await tryStaticLookup(
-      orphanAny.staticHandlerId,
-      orphan.shortCode,
-    );
-  }
-  if (component === undefined) {
-    component =
-      typeof orphan.handler === "function"
-        ? handleHandlerResult(await orphan.handler(context))
-        : orphan.handler;
-  }
+  const component = await resolveLayoutComponent(orphan, context);
 
   segments.push({
     id: orphan.shortCode,
@@ -392,16 +332,11 @@ export async function resolveParallelEntry<TEnv>(
   >;
 
   for (const [slot, handler] of Object.entries(slots)) {
-    let component: ReactNode | undefined;
-
-    // Static handler interception for individual parallel slots
-    const slotStaticId = (parallelEntry as any).staticHandlerIds?.[slot];
-    if (slotStaticId) {
-      component = await tryStaticLookup(
-        slotStaticId,
-        `${parentShortCode}.${slot}`,
-      );
-    }
+    let component: ReactNode | undefined = await tryStaticSlot(
+      parallelEntry,
+      slot,
+      `${parentShortCode}.${slot}`,
+    );
 
     if (component === undefined) {
       const hasLoadingFallback =
@@ -472,109 +407,29 @@ export async function resolveWithErrorHandling<TEnv>(
       throw error;
     }
 
-    if (error instanceof DataNotFoundError) {
-      const notFoundFallback = deps.findNearestNotFoundBoundary(entry);
-
-      if (notFoundFallback) {
-        const notFoundInfo = createNotFoundInfo(
-          error,
-          entry.shortCode,
-          entry.type,
-          context.pathname,
-        );
-
-        // Safe request access: during build-time prerendering, context.request
-        // is a throwing getter. Use undefined when unavailable.
-        let safeRequest: Request | undefined;
-        try {
-          safeRequest = context.request;
-        } catch {}
-
-        deps.callOnError(error, "handler", {
-          request: safeRequest as Request,
-          url: context.url,
-          routeKey,
-          params,
-          segmentId: entry.shortCode,
-          segmentType: entry.type as any,
-          env: errorContext?.env,
-          isPartial: errorContext?.isPartial,
-          handledByBoundary: true,
-          metadata: { notFound: true, message: notFoundInfo.message },
-          requestStartTime: errorContext?.requestStartTime,
-        });
-
-        debugLog("segment", "notFound boundary handled error", {
-          segmentId: entry.shortCode,
-          message: notFoundInfo.message,
-        });
-
-        const reqCtx = getRequestContext();
-        if (reqCtx) {
-          reqCtx.res = new Response(null, {
-            status: 404,
-            headers: reqCtx.res.headers,
-          });
-        }
-
-        const notFoundSegment = createNotFoundSegment(
-          notFoundInfo,
-          notFoundFallback,
-          entry,
-          params,
-        );
-        return [notFoundSegment];
-      }
-    }
-
-    const fallback = deps.findNearestErrorBoundary(entry);
-    const segmentType: ErrorInfo["segmentType"] = entry.type;
-    const errorInfo = createErrorInfo(error, entry.shortCode, segmentType);
-    const effectiveFallback = fallback ?? DefaultErrorFallback;
-
     // Safe request access: during build-time prerendering, context.request
     // is a throwing getter. Use undefined when unavailable.
-    let safeReq: Request | undefined;
+    let safeRequest: Request | undefined;
     try {
-      safeReq = context.request;
+      safeRequest = context.request;
     } catch {}
 
-    deps.callOnError(error, "handler", {
-      request: safeReq as Request,
-      url: context.url,
-      routeKey,
-      params,
-      segmentId: entry.shortCode,
-      segmentType: entry.type as any,
-      env: errorContext?.env,
-      isPartial: errorContext?.isPartial,
-      handledByBoundary: !!effectiveFallback,
-      requestStartTime: errorContext?.requestStartTime,
-    });
-
-    debugLog("segment", "error boundary handled error", {
-      segmentId: entry.shortCode,
-      boundary: fallback ? "custom" : "default",
-      message: errorInfo.message,
-    });
-
-    {
-      const reqCtx = getRequestContext();
-      if (reqCtx) {
-        reqCtx.res = new Response(null, {
-          status: 500,
-          headers: reqCtx.res.headers,
-        });
-      }
-    }
-
-    const errorSegment = createErrorSegment(
-      errorInfo,
-      effectiveFallback,
+    const segment = catchSegmentError(
+      error,
       entry,
       params,
+      deps,
+      {
+        request: safeRequest,
+        url: context.url,
+        routeKey,
+        env: errorContext?.env,
+        isPartial: errorContext?.isPartial,
+        requestStartTime: errorContext?.requestStartTime,
+      },
+      context.pathname,
     );
-    return [errorSegment];
+    return [segment];
   }
 }
 
