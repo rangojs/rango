@@ -87,7 +87,7 @@ function cleanupGlobals() {
 
 // Import after setting up mocks but the actual import is deferred via dynamic import
 // to ensure the globals are in place when the module evaluates.
-let createNavigationTransaction: typeof import("../browser/navigation-bridge").createNavigationTransaction;
+let createNavigationTransaction: typeof import("../browser/navigation-transaction").createNavigationTransaction;
 let createNavigationStore: typeof import("../browser/navigation-store").createNavigationStore;
 let createEventController: typeof import("../browser/event-controller").createEventController;
 
@@ -95,8 +95,8 @@ beforeEach(async () => {
   setupGlobals();
 
   // Dynamic import after globals are set up
-  const bridgeMod = await import("../browser/navigation-bridge");
-  createNavigationTransaction = bridgeMod.createNavigationTransaction;
+  const txMod = await import("../browser/navigation-transaction");
+  createNavigationTransaction = txMod.createNavigationTransaction;
 
   const storeMod = await import("../browser/navigation-store");
   createNavigationStore = storeMod.createNavigationStore;

@@ -15,7 +15,7 @@ import type { RenderSegmentsOptions } from "../segment-system.js";
 import { reconcileSegments } from "./segment-reconciler.js";
 import type { ReconcileActor } from "./segment-reconciler.js";
 import { hasActiveIntercept as hasActiveInterceptSlots } from "./intercept-utils.js";
-import type { BoundTransaction } from "./navigation-bridge.js";
+import type { BoundTransaction } from "./navigation-transaction.js";
 import { ServerRedirect } from "../errors.js";
 import { debugLog } from "./logging.js";
 
