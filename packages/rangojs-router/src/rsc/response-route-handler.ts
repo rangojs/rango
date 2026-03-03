@@ -13,14 +13,16 @@ import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import { traverseBack } from "../router/pattern-matching.js";
 import { createCacheScope } from "../cache/cache-scope.js";
 import { executeMiddleware } from "../router/middleware.js";
-import { createReverseFunction } from "../router/handler-context.js";
+import {
+  createReverseFunction,
+  stripInternalParams,
+} from "../router/handler-context.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import type { EntryData } from "../server/context.js";
 import type { HandlerContext } from "./handler-context.js";
 import { createResponseErrorPayload } from "./response-error.js";
 import {
   createResponseWithMergedHeaders,
-  cleanRscUrl,
   isCacheableStatus,
   buildRouteMiddlewareEntries,
 } from "./helpers.js";
@@ -60,7 +62,7 @@ export async function handleResponseRoute<TEnv>(
     return createResponseWithMergedHeaders(null, {
       status: 200,
       headers: {
-        "X-RSC-Reload": cleanRscUrl(url).toString(),
+        "X-RSC-Reload": stripInternalParams(url).toString(),
         "content-type": "text/x-component;charset=utf-8",
       },
     });
@@ -99,9 +101,10 @@ export async function handleResponseRoute<TEnv>(
 
   // Call handler directly, wrapped by route middleware if present
   const callHandler = async () => {
+    const errorCtx = { request, url, env };
+
     // JSON response routes: wrap in { data } / { error } envelope
     if (preview.responseType === "json") {
-      const errorCtx = { request, url, env };
       try {
         const result = await (preview.handler as Function)(responseHandlerCtx);
         if (result instanceof Response) {
@@ -138,7 +141,6 @@ export async function handleResponseRoute<TEnv>(
     }
 
     // Non-JSON response routes: catch errors and return plain Response
-    const errorCtx = { request, url, env };
     try {
       const result = await (preview.handler as Function)(responseHandlerCtx);
 

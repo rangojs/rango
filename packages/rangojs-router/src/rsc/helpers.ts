@@ -83,22 +83,6 @@ export function createSimpleRedirectResponse(redirectUrl: string): Response {
 }
 
 /**
- * Remove RSC-internal query parameters from a URL.
- * Returns a new URL with _rsc_partial, _rsc_segments, _rsc_v,
- * _rsc_stale, _rsc_action, and _rsc_prev stripped.
- */
-export function cleanRscUrl(url: URL): URL {
-  const clean = new URL(url);
-  clean.searchParams.delete("_rsc_partial");
-  clean.searchParams.delete("_rsc_segments");
-  clean.searchParams.delete("_rsc_v");
-  clean.searchParams.delete("_rsc_stale");
-  clean.searchParams.delete("_rsc_action");
-  clean.searchParams.delete("_rsc_prev");
-  return clean;
-}
-
-/**
  * If a response is a 3xx redirect during a partial (client-side) request,
  * intercept it and return a Flight-compatible redirect instead.
  * fetch() auto-follows 3xx which would hit a URL that renders full HTML

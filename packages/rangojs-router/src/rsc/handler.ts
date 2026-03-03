@@ -21,17 +21,22 @@ import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 import type { RscPayload, CreateRSCHandlerOptions } from "./types.js";
 import {
   createResponseWithMergedHeaders,
-  cleanRscUrl,
   interceptRedirectForPartial,
   buildRouteMiddlewareEntries,
 } from "./helpers.js";
-import { handleResponseRoute } from "./response-route-handler.js";
+import {
+  handleResponseRoute,
+  type ResponseRouteMatch,
+} from "./response-route-handler.js";
 import { generateNonce, nonce as nonceToken } from "./nonce.js";
 import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
 import type { RouterRequestInput } from "../router/router-interfaces.js";
 import { invokeOnError } from "../router/error-handling.js";
-import { createReverseFunction } from "../router/handler-context.js";
+import {
+  createReverseFunction,
+  stripInternalParams,
+} from "../router/handler-context.js";
 import { contextSet } from "../context-var.js";
 import {
   hasCachedManifest,
@@ -364,7 +369,7 @@ export function createRSCHandler<
     if (preview?.responseType && preview.handler) {
       return handleResponseRoute(
         handlerCtx,
-        preview as any,
+        preview as ResponseRouteMatch,
         request,
         env,
         url,
@@ -441,7 +446,7 @@ export function createRSCHandler<
       // For actions, reload current page (referer) if same origin.
       // For navigation, load the target URL.
       // Validate referer origin to prevent open redirect via crafted header.
-      let reloadUrl = cleanRscUrl(url).toString();
+      let reloadUrl = stripInternalParams(url).toString();
       if (isAction) {
         const referer = request.headers.get("referer");
         if (referer) {
@@ -591,7 +596,7 @@ export function createRSCHandler<
           return createResponseWithMergedHeaders(null, {
             status: 200,
             headers: {
-              "X-RSC-Reload": cleanRscUrl(url).toString(),
+              "X-RSC-Reload": stripInternalParams(url).toString(),
               "content-type": "text/x-component;charset=utf-8",
             },
           });
