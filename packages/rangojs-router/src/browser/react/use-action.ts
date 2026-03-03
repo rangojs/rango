@@ -9,6 +9,7 @@ import {
   startTransition,
 } from "react";
 import { NavigationStoreContext } from "./context.js";
+import { shallowEqual } from "./shallow-equal.js";
 import type { TrackedActionState } from "../types.js";
 import { invariant } from "../../errors.js";
 
@@ -175,7 +176,7 @@ export function useAction<T>(
     const currentSelected = selectorRef.current
       ? selectorRef.current(currentState)
       : currentState;
-    if (!isShallowEqual(currentSelected, prevSelected.current)) {
+    if (!shallowEqual(currentSelected, prevSelected.current)) {
       prevSelected.current = currentSelected;
       setBaseState(currentSelected);
     }
@@ -188,7 +189,7 @@ export function useAction<T>(
           ? selectorRef.current(state)
           : state;
 
-        if (!isShallowEqual(selectedState, prevSelected.current)) {
+        if (!shallowEqual(selectedState, prevSelected.current)) {
           prevSelected.current = selectedState;
           setBaseState(selectedState);
           startTransition(() => {
@@ -204,48 +205,6 @@ export function useAction<T>(
   }, [actionId]);
 
   return (optimisticState ?? baseState) as T | TrackedActionState;
-}
-
-function isShallowEqual<T, U>(selectedState: T, baseState: U): boolean {
-  // If references are equal, they're shallow equal
-  //@ts-expect-error -- TS doesn't like comparing generics
-  if (selectedState === baseState) {
-    return true;
-  }
-
-  // If either is null/undefined and they're not equal, they're not shallow equal
-  if (selectedState == null || baseState == null) {
-    return false;
-  }
-
-  // If types are different, they're not shallow equal
-  if (typeof selectedState !== typeof baseState) {
-    return false;
-  }
-
-  // For primitives, === comparison is sufficient (already checked above)
-  if (typeof selectedState !== "object") {
-    return false;
-  }
-
-  // For objects, compare keys and values shallowly
-  const keysA = Object.keys(selectedState as object);
-  const keysB = Object.keys(baseState as object);
-
-  if (keysA.length !== keysB.length) {
-    return false;
-  }
-
-  for (const key of keysA) {
-    if (
-      !Object.prototype.hasOwnProperty.call(baseState, key) ||
-      (selectedState as any)[key] !== (baseState as any)[key]
-    ) {
-      return false;
-    }
-  }
-
-  return true;
 }
 
 export type { TrackedActionState };

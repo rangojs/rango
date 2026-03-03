@@ -9,6 +9,7 @@ import type {
   RscMetadata,
   HandleData,
 } from "./types.js";
+import { filterSegmentOrder } from "./react/filter-segment-order.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -189,6 +190,7 @@ export interface EventController {
   // State access
   getState(): DerivedNavigationState;
   getActionState(actionId: string): TrackedActionState;
+  getLocation(): NavigationLocation;
 
   // Location updates (for popstate where navigation doesn't go through startNavigation)
   setLocation(location: NavigationLocation): void;
@@ -744,18 +746,6 @@ export function createEventController(
   // Handle Operations
   // ========================================================================
 
-  /**
-   * Filter segment IDs to only include routes and layouts.
-   * Excludes parallels (contain .@) and loaders (contain D followed by digit).
-   */
-  function filterSegmentOrder(matched: string[]): string[] {
-    return matched.filter((id) => {
-      if (id.includes(".@")) return false;
-      if (/D\d+\./.test(id)) return false;
-      return true;
-    });
-  }
-
   function setHandleData(
     data: HandleData,
     matched?: string[],
@@ -859,6 +849,7 @@ export function createEventController(
     // State
     getState,
     getActionState,
+    getLocation: () => location,
     setLocation,
 
     // Handles
