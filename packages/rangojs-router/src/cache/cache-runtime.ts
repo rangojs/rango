@@ -38,6 +38,7 @@ import {
 } from "./segment-codec.js";
 import type { SegmentHandleData } from "./types.js";
 import type { HandleStore } from "../server/handle-store.js";
+import { restoreHandles } from "./handle-snapshot.js";
 
 // ============================================================================
 // Cache Key Generation
@@ -93,17 +94,6 @@ function stopHandleCapture(
   // Restore original push by deleting the override
   // (the original is on the prototype/closure, our override is an own property)
   delete (handleStore as any).push;
-}
-
-function restoreHandles(
-  handles: Record<string, SegmentHandleData>,
-  handleStore: HandleStore,
-): void {
-  for (const [segId, segHandles] of Object.entries(handles)) {
-    if (Object.keys(segHandles).length > 0) {
-      handleStore.replaySegmentData(segId, segHandles);
-    }
-  }
 }
 
 // ============================================================================
