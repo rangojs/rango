@@ -170,6 +170,8 @@ export function useSegments<T>(
   });
 
   const prevState = useRef(state);
+  const selectorRef = useRef(selector);
+  selectorRef.current = selector;
 
   // Subscribe to both navigation state and handle state changes
   useEffect(() => {
@@ -184,7 +186,8 @@ export function useSegments<T>(
         navState.location as URL,
         handleState.segmentOrder,
       );
-      const nextSelected = selector ? selector(segmentsState) : segmentsState;
+      const sel = selectorRef.current;
+      const nextSelected = sel ? sel(segmentsState) : segmentsState;
 
       if (!shallowEqual(nextSelected, prevState.current)) {
         prevState.current = nextSelected;
@@ -204,7 +207,8 @@ export function useSegments<T>(
       unsubscribeNav();
       unsubscribeHandles();
     };
-  }, [selector]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return state as T | SegmentsState;
 }
