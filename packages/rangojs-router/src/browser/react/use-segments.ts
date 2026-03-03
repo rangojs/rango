@@ -175,17 +175,17 @@ export function useSegments<T>(
 
   // Eagerly recompute selected value when selector behavior changes.
   // Without this, a prop-driven selector swap (e.g.,
-  // useSegments(s => expanded ? s.segmentIds : s.path)) would stay stale
-  // until the next store event. Only checked when a selector is provided;
-  // the no-selector path returns the full state and has no swap scenario.
-  if (ctx && selector) {
+  // useSegments(s => expanded ? s.segmentIds : s.path)) or removal
+  // (useSegments(expanded ? selector : undefined)) would stay stale
+  // until the next store event.
+  if (ctx) {
     const navState = ctx.eventController.getState();
     const handleState = ctx.eventController.getHandleState();
     const segmentsState = buildSegmentsState(
       navState.location as URL,
       handleState.segmentOrder,
     );
-    const nextSelected = selector(segmentsState);
+    const nextSelected = selector ? selector(segmentsState) : segmentsState;
     if (!shallowEqual(nextSelected, prevState.current)) {
       prevState.current = nextSelected;
       setState(nextSelected);

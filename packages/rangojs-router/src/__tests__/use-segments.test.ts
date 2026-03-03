@@ -166,4 +166,30 @@ describe("useSegments", () => {
 
     expect(setState).not.toHaveBeenCalled();
   });
+
+  it("eagerly recomputes when selector is removed", () => {
+    const ec = createMockEventController();
+    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+
+    // First render with a selector picking path
+    useSegments((s) => s.path);
+    const setState = stateSlots[0][1];
+
+    // Clear SSR → client mismatch setState, update prevState
+    setState.mockClear();
+    refSlots[0].current = ["shop", "products"];
+
+    // Re-render without selector (selector removed)
+    resetHookIndices();
+    useSegments();
+
+    // Should switch to full SegmentsState
+    expect(setState).toHaveBeenCalledOnce();
+    expect(setState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: ["shop", "products"],
+        segmentIds: ["L0", "L0L1"],
+      }),
+    );
+  });
 });
