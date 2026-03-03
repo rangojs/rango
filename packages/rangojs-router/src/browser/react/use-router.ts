@@ -25,9 +25,7 @@ export function useRouter(): RouterInstance {
   const ctx = useContext(NavigationStoreContext);
 
   if (!ctx) {
-    throw new Error(
-      "useRouter must be used within NavigationStoreContext.Provider",
-    );
+    throw new Error("useRouter must be used within NavigationProvider");
   }
 
   // Stable reference: ctx is itself stable (NavigationProvider memoizes with [])

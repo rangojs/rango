@@ -53,10 +53,10 @@ import { useSegments } from "../browser/react/use-segments.js";
 const mockedUseContext = vi.mocked(useContext);
 
 function createMockEventController() {
+  const location = new URL("http://localhost/shop/products");
   return {
-    getState: () => ({
-      location: new URL("http://localhost/shop/products"),
-    }),
+    getState: () => ({ location }),
+    getLocation: () => location,
     getHandleState: () => ({
       segmentOrder: ["L0", "L0L1"],
     }),

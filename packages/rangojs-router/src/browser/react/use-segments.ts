@@ -2,6 +2,8 @@
 
 import { useContext, useState, useEffect, useRef } from "react";
 import { NavigationStoreContext } from "./context.js";
+import { filterSegmentOrder } from "./filter-segment-order.js";
+import { shallowEqual } from "./shallow-equal.js";
 
 /**
  * Segments state returned by useSegments hook
@@ -23,18 +25,6 @@ export interface SegmentsState {
 let ssrSegmentOrder: string[] = [];
 let ssrPathname: string = "/";
 let ssrParams: Record<string, string> = {};
-
-/**
- * Filter segment IDs to only include routes and layouts.
- * Excludes parallels (contain .@) and loaders (contain D followed by digit).
- */
-function filterSegmentOrder(matched: string[]): string[] {
-  return matched.filter((id) => {
-    if (id.includes(".@")) return false;
-    if (/D\d+\./.test(id)) return false;
-    return true;
-  });
-}
 
 /**
  * Initialize segments data synchronously for SSR.
@@ -66,33 +56,6 @@ export function getSsrParams(): Record<string, string> {
  */
 export function getSsrPathname(): string {
   return ssrPathname;
-}
-
-/**
- * Shallow equality check for selector results
- */
-function shallowEqual<T>(a: T, b: T): boolean {
-  if (Object.is(a, b)) return true;
-  if (
-    typeof a !== "object" ||
-    a === null ||
-    typeof b !== "object" ||
-    b === null
-  ) {
-    return false;
-  }
-  const keysA = Object.keys(a);
-  const keysB = Object.keys(b);
-  if (keysA.length !== keysB.length) return false;
-  for (const key of keysA) {
-    if (
-      !Object.hasOwn(b, key) ||
-      !Object.is((a as any)[key], (b as any)[key])
-    ) {
-      return false;
-    }
-  }
-  return true;
 }
 
 /**
@@ -152,72 +115,62 @@ export function useSegments<T>(
 ): T | SegmentsState {
   const ctx = useContext(NavigationStoreContext);
 
+  // Recompute selected value from current store state and apply selector.
+  // Shared by the render-time eager check and the subscription callback.
+  function recompute(
+    sel: ((state: SegmentsState) => T) | undefined,
+  ): T | SegmentsState {
+    const location = ctx!.eventController.getLocation();
+    const handleState = ctx!.eventController.getHandleState();
+    const segmentsState = buildSegmentsState(
+      location as URL,
+      handleState.segmentOrder,
+    );
+    return sel ? sel(segmentsState) : segmentsState;
+  }
+
   // Build initial state from SSR module state or event controller
   const [state, setState] = useState<T | SegmentsState>(() => {
-    // During SSR or when no context, use module-level SSR state
     if (typeof document === "undefined" || !ctx) {
       const ssrState = buildSsrState();
       return selector ? selector(ssrState) : ssrState;
     }
-    // On client with context, use event controller state
-    const navState = ctx.eventController.getState();
-    const handleState = ctx.eventController.getHandleState();
-    const segmentsState = buildSegmentsState(
-      navState.location as URL,
-      handleState.segmentOrder,
-    );
-    return selector ? selector(segmentsState) : segmentsState;
+    return recompute(selector);
   });
 
   const prevState = useRef(state);
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 
-  // Eagerly recompute selected value when selector behavior changes.
-  // Without this, a prop-driven selector swap (e.g.,
-  // useSegments(s => expanded ? s.segmentIds : s.path)) or removal
-  // (useSegments(expanded ? selector : undefined)) would stay stale
-  // until the next store event.
-  if (ctx) {
-    const navState = ctx.eventController.getState();
-    const handleState = ctx.eventController.getHandleState();
-    const segmentsState = buildSegmentsState(
-      navState.location as URL,
-      handleState.segmentOrder,
-    );
-    const nextSelected = selector ? selector(segmentsState) : segmentsState;
+  // Track selector identity to detect when the selector function changes.
+  // Only then do we eagerly recompute during render to avoid staleness.
+  // Without this guard, no-selector mode causes infinite re-renders because
+  // buildSegmentsState creates fresh arrays that fail Object.is checks.
+  const prevSelectorIdentity = useRef(selector);
+  if (ctx && selector !== prevSelectorIdentity.current) {
+    prevSelectorIdentity.current = selector;
+    const nextSelected = recompute(selector);
     if (!shallowEqual(nextSelected, prevState.current)) {
       prevState.current = nextSelected;
       setState(nextSelected);
     }
   }
 
-  // Subscribe to both navigation state and handle state changes
+  // Subscribe to store changes. The eager block above handles selector
+  // changes and SSR drift, so no initial updateState() call is needed.
   useEffect(() => {
     if (!ctx) {
       return;
     }
 
     const updateState = () => {
-      const navState = ctx.eventController.getState();
-      const handleState = ctx.eventController.getHandleState();
-      const segmentsState = buildSegmentsState(
-        navState.location as URL,
-        handleState.segmentOrder,
-      );
-      const sel = selectorRef.current;
-      const nextSelected = sel ? sel(segmentsState) : segmentsState;
-
+      const nextSelected = recompute(selectorRef.current);
       if (!shallowEqual(nextSelected, prevState.current)) {
         prevState.current = nextSelected;
         setState(nextSelected);
       }
     };
 
-    // Initial update in case SSR state differs from client state
-    updateState();
-
-    // Subscribe to both state sources
     const unsubscribeNav = ctx.eventController.subscribe(updateState);
     const unsubscribeHandles =
       ctx.eventController.subscribeToHandles(updateState);
@@ -226,6 +179,8 @@ export function useSegments<T>(
       unsubscribeNav();
       unsubscribeHandles();
     };
+    // Stable subscription: selector changes are handled via selectorRef,
+    // state comparison uses prevState ref. No re-subscribe needed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

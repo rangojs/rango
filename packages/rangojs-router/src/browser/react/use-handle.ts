@@ -12,6 +12,8 @@ import type { Handle } from "../../handle.js";
 import { getCollectFn } from "../../handle.js";
 import type { HandleData } from "../types.js";
 import { NavigationStoreContext } from "./context.js";
+import { filterSegmentOrder } from "./filter-segment-order.js";
+import { shallowEqual } from "./shallow-equal.js";
 
 /**
  * SSR module-level state.
@@ -20,18 +22,6 @@ import { NavigationStoreContext } from "./context.js";
  */
 let ssrHandleData: HandleData = {};
 let ssrSegmentOrder: string[] = [];
-
-/**
- * Filter segment IDs to only include routes and layouts.
- * Excludes parallels (contain .@) and loaders (contain D followed by digit).
- */
-function filterSegmentOrder(matched: string[]): string[] {
-  return matched.filter((id) => {
-    if (id.includes(".@")) return false;
-    if (/D\d+\./.test(id)) return false;
-    return true;
-  });
-}
 
 /**
  * Resolve the collect function for a handle.
@@ -84,33 +74,6 @@ function collectHandle<T, A>(
 
   // Call collect once with all segment data
   return collect(segmentArrays);
-}
-
-/**
- * Shallow equality check for selector results.
- */
-function shallowEqual<T>(a: T, b: T): boolean {
-  if (Object.is(a, b)) return true;
-  if (
-    typeof a !== "object" ||
-    a === null ||
-    typeof b !== "object" ||
-    b === null
-  ) {
-    return false;
-  }
-  const keysA = Object.keys(a);
-  const keysB = Object.keys(b);
-  if (keysA.length !== keysB.length) return false;
-  for (const key of keysA) {
-    if (
-      !Object.hasOwn(b, key) ||
-      !Object.is((a as any)[key], (b as any)[key])
-    ) {
-      return false;
-    }
-  }
-  return true;
 }
 
 /**

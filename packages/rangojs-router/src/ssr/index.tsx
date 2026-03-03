@@ -151,6 +151,7 @@ function createSsrEventController(pathname: string): EventController {
 
   return {
     getState: () => state,
+    getLocation: () => location,
     subscribe: () => () => {},
     getActionState: () => ({
       state: "idle",
