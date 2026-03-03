@@ -325,10 +325,25 @@ export async function executeMiddleware<TEnv>(
 
     const result = await entry.handler(ctx, wrappedNext);
 
-    // Explicit return takes precedence
+    // Explicit return takes precedence (middleware short-circuit).
+    // Merge stub headers (from ctx.header/setCookie before this point)
+    // into the returned Response so they are not lost.
     if (result instanceof Response) {
-      responseHolder.response = result;
-      return result;
+      const mergedHeaders = new Headers(result.headers);
+      stubResponse.headers.forEach((value, name) => {
+        if (name.toLowerCase() === "set-cookie") {
+          mergedHeaders.append(name, value);
+        } else if (!mergedHeaders.has(name)) {
+          mergedHeaders.set(name, value);
+        }
+      });
+      const merged = new Response(result.body, {
+        status: result.status,
+        statusText: result.statusText,
+        headers: mergedHeaders,
+      });
+      responseHolder.response = merged;
+      return merged;
     }
 
     // Warn about unexpected return values (non-Response, non-undefined)
@@ -367,69 +382,6 @@ export async function executeMiddleware<TEnv>(
   }
 
   return finalResponse;
-}
-
-/**
- * Execute middleware for server actions
- *
- * Server actions can't return Response directly, but headers/cookies set
- * on ctx.res (from getRequestContext().res) will be merged into the final response.
- *
- * - Runs middleware for auth checks, variable setting, headers, cookies
- * - Throws if middleware returns Response (can't short-circuit server action)
- */
-export async function executeServerActionMiddleware<TEnv>(
-  middlewares: MiddlewareFn<TEnv>[],
-  request: Request,
-  env: TEnv,
-  params: Record<string, string>,
-  variables: Record<string, any>,
-  stubResponse: Response,
-  reverse?: (
-    name: string,
-    params?: Record<string, string>,
-    search?: Record<string, unknown>,
-  ) => string,
-): Promise<void> {
-  if (middlewares.length === 0) {
-    return;
-  }
-
-  let index = 0;
-  const responseHolder: ResponseHolder = { response: stubResponse };
-
-  const next = async (): Promise<Response> => {
-    if (index >= middlewares.length) {
-      return stubResponse;
-    }
-
-    const middleware = middlewares[index++];
-    const ctx = createMiddlewareContext(
-      request,
-      env,
-      params,
-      variables,
-      responseHolder,
-      reverse,
-    );
-
-    const result = await middleware(ctx, next);
-
-    // If middleware returned a Response, throw an error
-    // Server actions can't short-circuit with a Response
-    if (result instanceof Response) {
-      throw new Error(
-        `Loader middleware returned a Response (status: ${result.status}). ` +
-          `Server actions cannot return Response. ` +
-          `Use GET-based loader fetching for redirects, or throw an error instead.`,
-      );
-    }
-
-    return stubResponse;
-  };
-
-  await next();
-  // Headers/cookies set on stubResponse will be merged by the caller
 }
 
 /**

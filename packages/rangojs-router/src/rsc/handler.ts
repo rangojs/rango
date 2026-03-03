@@ -24,6 +24,7 @@ import type { RscPayload, CreateRSCHandlerOptions } from "./types.js";
 import {
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
+  finalizeResponse,
 } from "./helpers.js";
 import { generateNonce, nonce as nonceToken } from "./nonce.js";
 import { VERSION } from "@rangojs/router:version";
@@ -361,7 +362,7 @@ export function createRSCHandler<
           return createSimpleRedirectResponse(redirectUrl);
         }
 
-        return mwResponse;
+        return finalizeResponse(mwResponse);
       }
 
       return coreHandler();
@@ -755,7 +756,7 @@ export function createRSCHandler<
         return createSimpleRedirectResponse(mwRedirectUrl);
       }
 
-      return mwResponse;
+      return finalizeResponse(mwResponse);
     }
 
     // No route middleware, proceed directly

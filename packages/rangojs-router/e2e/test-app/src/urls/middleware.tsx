@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { urls, getRequestContext } from "@rangojs/router";
 import {
   MiddlewareIndexHandler,
   MiddlewareProtectedHandler,
@@ -9,6 +9,7 @@ import {
   MiddlewareSharedVarsHandler,
   MiddlewareRouteLevelHandler,
   MiddlewareRouteLevelWithParamsHandler,
+  MiddlewareRouteShortcircuitHandler,
 } from "./middleware.handlers.js";
 
 /**
@@ -38,6 +39,32 @@ export const middlewarePatterns = urls(({ path, middleware }) => [
         ctx.set("routeMiddlewareApplied", "yes");
         await next();
         ctx.header("X-Route-Level-Middleware", "applied");
+      }),
+    ],
+  ),
+
+  // Route-shortcircuit: first middleware registers onResponse callback, second
+  // short-circuits with 403. Tests that onResponse callbacks survive route-
+  // level middleware short-circuits (finalizeResponse at handler.ts:759).
+  path(
+    "/route-shortcircuit",
+    MiddlewareRouteShortcircuitHandler,
+    { name: "routeShortcircuit" },
+    () => [
+      middleware(async (_ctx, next) => {
+        const reqCtx = getRequestContext();
+        reqCtx?.onResponse((response) => {
+          const headers = new Headers(response.headers);
+          headers.set("X-Route-OnResponse", "applied");
+          return new Response(response.body, {
+            status: response.status,
+            headers,
+          });
+        });
+        await next();
+      }),
+      middleware(async () => {
+        return new Response("blocked", { status: 403 });
       }),
     ],
   ),

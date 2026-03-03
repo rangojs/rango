@@ -103,6 +103,7 @@ export const NamedRoutes = {
   "middlewareTest.protectedDashboard": "/middleware-test/protected/dashboard",
   "middlewareTest.routeLevel": "/middleware-test/route-level",
   "middlewareTest.routeLevelWithParams": "/middleware-test/route-level/:routeId",
+  "middlewareTest.routeShortcircuit": "/middleware-test/route-shortcircuit",
   "middlewareTest.sharedVars": "/middleware-test/shared-vars",
   negotiateJsonFirst: "/negotiate-test-json-first",
   negotiateJsonFirstRsc: "/negotiate-test-json-first",

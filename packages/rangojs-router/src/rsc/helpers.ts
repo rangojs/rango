@@ -76,3 +76,23 @@ export function createSimpleRedirectResponse(redirectUrl: string): Response {
     headers: { "X-RSC-Redirect": redirectUrl },
   });
 }
+
+/**
+ * Run onResponse callbacks on an existing Response.
+ *
+ * Used for code paths that bypass createResponseWithMergedHeaders(), such as
+ * middleware short-circuits where the Response is already constructed but
+ * ctx.onResponse() callbacks still need to fire.
+ */
+export function finalizeResponse(response: Response): Response {
+  const ctx = _getRequestContext();
+  if (!ctx || ctx._onResponseCallbacks.length === 0) {
+    return response;
+  }
+
+  let result = response;
+  for (const callback of ctx._onResponseCallbacks) {
+    result = callback(result) ?? result;
+  }
+  return result;
+}

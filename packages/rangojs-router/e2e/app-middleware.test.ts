@@ -554,6 +554,46 @@ test.describe("app-middleware (dev)", () => {
     });
   });
 
+  test.describe("middleware-shortcircuit-headers", () => {
+    test("global middleware short-circuit should preserve stub headers and onResponse callbacks", async ({
+      page,
+    }) => {
+      // Hit protected route without auth cookie — authMiddleware short-circuits
+      // with redirect. The upstream middleware set a stub header and registered
+      // an onResponse callback; both must survive the short-circuit.
+      const responsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/middleware-test/protected") &&
+          !response.url().includes("auth=required"),
+      );
+
+      await page.goto(f.url("/middleware-test/protected"));
+      const response = await responsePromise;
+
+      // Stub header set before next() should survive the short-circuit
+      expect(response.headers()["x-stub-before-next"]).toBe("applied");
+      // onResponse callback should have fired via finalizeResponse()
+      expect(response.headers()["x-onresponse-applied"]).toBe("yes");
+    });
+
+    test("route middleware short-circuit should preserve onResponse callbacks", async ({
+      page,
+    }) => {
+      // Second route-level middleware short-circuits with 403; first middleware
+      // registered an onResponse callback that should still fire.
+      const responsePromise = page.waitForResponse((response) =>
+        response.url().includes("/middleware-test/route-shortcircuit"),
+      );
+
+      await page.goto(f.url("/middleware-test/route-shortcircuit"));
+      const response = await responsePromise;
+
+      expect(response.status()).toBe(403);
+      // onResponse callback from first middleware should have fired
+      expect(response.headers()["x-route-onresponse"]).toBe("applied");
+    });
+  });
+
   test.describe("intercept-middleware", () => {
     test("intercept middleware should set header on modal navigation", async ({
       page,
@@ -731,6 +771,36 @@ test.describe("app-middleware (production)", () => {
     await expect(
       page.locator('[data-testid="auth-required-message"]'),
     ).toBeVisible();
+  });
+
+  test("global middleware short-circuit should preserve stub headers and onResponse callbacks in production", async ({
+    page,
+  }) => {
+    const responsePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes("/middleware-test/protected") &&
+        !response.url().includes("auth=required"),
+    );
+
+    await page.goto(f.url("/middleware-test/protected"));
+    const response = await responsePromise;
+
+    expect(response.headers()["x-stub-before-next"]).toBe("applied");
+    expect(response.headers()["x-onresponse-applied"]).toBe("yes");
+  });
+
+  test("route middleware short-circuit should preserve onResponse callbacks in production", async ({
+    page,
+  }) => {
+    const responsePromise = page.waitForResponse((response) =>
+      response.url().includes("/middleware-test/route-shortcircuit"),
+    );
+
+    await page.goto(f.url("/middleware-test/route-shortcircuit"));
+    const response = await responsePromise;
+
+    expect(response.status()).toBe(403);
+    expect(response.headers()["x-route-onresponse"]).toBe("applied");
   });
 
   test("global middleware should still apply even when route has errors in production", async ({
