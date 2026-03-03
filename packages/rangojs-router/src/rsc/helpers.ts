@@ -118,8 +118,11 @@ export function interceptRedirectForPartial(
   // already on the intercepted response. This preserves cookies and custom
   // headers set by middleware before the redirect.
   response.headers.forEach((value, name) => {
-    // Skip hop-by-hop and already-handled headers
-    if (name.toLowerCase() === "location") return;
+    // Skip redirect-specific and already-handled headers.
+    // X-RSC-Redirect from the original 3xx carries "soft" which would
+    // collide with the intercepted response's redirect URL or Flight payload.
+    const lower = name.toLowerCase();
+    if (lower === "location" || lower === "x-rsc-redirect") return;
     if (name.toLowerCase() === "set-cookie") {
       intercepted.headers.append(name, value);
     } else if (!intercepted.headers.has(name)) {

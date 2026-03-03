@@ -412,6 +412,52 @@ describe("interceptRedirectForPartial", () => {
     expect(result!.headers.get("Location")).toBeNull();
   });
 
+  it("does not carry X-RSC-Redirect from original 3xx onto Flight response with location state", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    // Set location state so interceptRedirectForPartial takes the
+    // createRedirectFlightResponse path (Flight payload with state),
+    // not createSimpleRedirectResponse (which sets its own X-RSC-Redirect).
+    ctx.setLocationState([
+      { __rsc_ls_key: "flash", __rsc_ls_value: { text: "hello" } },
+    ]);
+
+    // Original redirect has X-RSC-Redirect: "soft" (from redirect() helper).
+    // The Flight response created by createRedirectFlightResponse has its own
+    // content; carrying over "soft" would break client-side redirect handling.
+    const response = new Response(null, {
+      status: 302,
+      headers: {
+        Location: "/target",
+        "X-RSC-Redirect": "soft",
+        "X-Custom": "keep-me",
+      },
+    });
+
+    const result = runWithRequestContext(ctx, () =>
+      interceptRedirectForPartial(
+        response,
+        (url) =>
+          new Response(`flight:${url}`, {
+            headers: { "content-type": "text/x-component" },
+          }),
+      ),
+    );
+
+    expect(result).not.toBeNull();
+    // Flight response should NOT have X-RSC-Redirect: "soft" from the original
+    expect(result!.headers.get("X-RSC-Redirect")).toBeNull();
+    // Other custom headers should still be carried over
+    expect(result!.headers.get("X-Custom")).toBe("keep-me");
+    // Location should not be carried over
+    expect(result!.headers.get("Location")).toBeNull();
+  });
+
   it("does not overwrite headers already on the intercepted response", () => {
     const ctx = createRequestContext({
       env: {},
