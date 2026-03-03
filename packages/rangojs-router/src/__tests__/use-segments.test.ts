@@ -3,17 +3,43 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 let capturedEffectFn: (() => (() => void) | void) | null = null;
 let capturedEffectDeps: any[] | undefined;
 
-// Mock react to track useEffect calls (subscription stability)
+// Simulate React's hook slot persistence across re-renders.
+// On the first render, hooks allocate slots. On re-renders, they read existing slots.
+let refSlots: Array<{ current: any }> = [];
+let refIndex = 0;
+let stateSlots: Array<[any, ReturnType<typeof vi.fn>]> = [];
+let stateIndex = 0;
+
+function resetHookIndices() {
+  refIndex = 0;
+  stateIndex = 0;
+}
+
 vi.mock("react", async () => {
   const actual = await vi.importActual<typeof import("react")>("react");
   return {
     ...actual,
     useContext: vi.fn(),
     useState: vi.fn((init: Function | any) => {
+      if (stateIndex < stateSlots.length) {
+        return stateSlots[stateIndex++];
+      }
       const val = typeof init === "function" ? init() : init;
-      return [val, vi.fn()];
+      const setter = vi.fn();
+      const slot: [any, ReturnType<typeof vi.fn>] = [val, setter];
+      stateSlots.push(slot);
+      stateIndex++;
+      return slot;
     }),
-    useRef: vi.fn((val: any) => ({ current: val })),
+    useRef: vi.fn((val: any) => {
+      if (refIndex < refSlots.length) {
+        return refSlots[refIndex++];
+      }
+      const ref = { current: val };
+      refSlots.push(ref);
+      refIndex++;
+      return ref;
+    }),
     useEffect: vi.fn((fn: () => (() => void) | void, deps?: any[]) => {
       capturedEffectFn = fn;
       capturedEffectDeps = deps;
@@ -44,6 +70,10 @@ describe("useSegments", () => {
     vi.clearAllMocks();
     capturedEffectFn = null;
     capturedEffectDeps = undefined;
+    refSlots = [];
+    refIndex = 0;
+    stateSlots = [];
+    stateIndex = 0;
   });
 
   it("subscribes to event controller when context is available", () => {
@@ -52,7 +82,6 @@ describe("useSegments", () => {
 
     useSegments((s) => s.path);
 
-    // Run the captured effect
     capturedEffectFn!();
 
     expect(ec.subscribe).toHaveBeenCalledOnce();
@@ -81,7 +110,6 @@ describe("useSegments", () => {
 
     const state = useSegments();
 
-    // Effect should still be captured but shouldn't subscribe
     capturedEffectFn!();
 
     expect(state).toHaveProperty("path");
@@ -89,14 +117,53 @@ describe("useSegments", () => {
     expect(state).toHaveProperty("location");
   });
 
-  it("useEffect has empty dependency array (selectorRef pattern)", () => {
+  it("useEffect has empty dependency array (stable subscription)", () => {
     const ec = createMockEventController();
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
     useSegments((s) => s.path);
 
-    // The key assertion: deps should be [] not [selector]
-    // This ensures inline selectors don't cause re-subscription
     expect(capturedEffectDeps).toEqual([]);
+  });
+
+  it("eagerly recomputes when selector produces a different result", () => {
+    const ec = createMockEventController();
+    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+
+    // First render: selector picks path
+    useSegments((s) => s.path);
+    const setState = stateSlots[0][1];
+
+    // The first render also triggers setState because SSR initial state
+    // (empty in Node where typeof document === "undefined") differs from
+    // the event controller state. Clear that so we only check the re-render.
+    setState.mockClear();
+
+    // Simulate re-render: reset hook indices so useState/useRef return
+    // existing slots, then call with a different selector
+    resetHookIndices();
+    useSegments((s) => s.segmentIds);
+
+    expect(setState).toHaveBeenCalledWith(["L0", "L0L1"]);
+  });
+
+  it("does not call setState when selector produces the same result", () => {
+    const ec = createMockEventController();
+    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+
+    // First render
+    useSegments((s) => s.path);
+    const setState = stateSlots[0][1];
+
+    // First render triggers setState (SSR → client mismatch). Clear it.
+    setState.mockClear();
+    // Update prevState to reflect the setState that would have happened
+    refSlots[0].current = ["shop", "products"];
+
+    // Re-render with same selector behavior (new identity, same result)
+    resetHookIndices();
+    useSegments((s) => s.path);
+
+    expect(setState).not.toHaveBeenCalled();
   });
 });
