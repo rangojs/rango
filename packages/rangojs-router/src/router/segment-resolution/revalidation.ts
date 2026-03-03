@@ -7,23 +7,14 @@
  */
 
 import type { ReactNode } from "react";
-import { DataNotFoundError, invariant } from "../../errors";
-import {
-  createErrorInfo,
-  createErrorSegment,
-  createNotFoundInfo,
-  createNotFoundSegment,
-} from "../error-handling.js";
+import { invariant } from "../../errors";
 import { revalidate } from "../loader-resolution.js";
 import { evaluateRevalidation } from "../revalidation.js";
-import { getRequestContext } from "../../server/request-context.js";
-import { DefaultErrorFallback } from "../../default-error-boundary.js";
 import type { EntryData } from "../../server/context";
 import type {
   HandlerContext,
   InternalHandlerContext,
   ResolvedSegment,
-  ErrorInfo,
   ShouldRevalidateFn,
 } from "../../types";
 import type {
@@ -32,9 +23,14 @@ import type {
   ActionContext,
 } from "../types.js";
 import { debugLog } from "../logging.js";
-import { tryStaticLookup } from "./static-store.js";
-import { handleHandlerResult } from "./fresh.js";
 import { resolveLoaderData } from "./loader-cache.js";
+import {
+  handleHandlerResult,
+  tryStaticHandler,
+  tryStaticSlot,
+  resolveLayoutComponent,
+  catchSegmentError,
+} from "./helpers.js";
 
 // ---------------------------------------------------------------------------
 // Revalidation path (partial match)
@@ -321,10 +317,8 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       })();
 
       let component: ReactNode | undefined;
-      // Static handler interception for individual parallel slots
-      const slotStaticId = (parallelEntry as any).staticHandlerIds?.[slot];
-      if (slotStaticId && shouldResolve) {
-        component = await tryStaticLookup(slotStaticId, parallelId);
+      if (shouldResolve) {
+        component = await tryStaticSlot(parallelEntry, slot, parallelId);
       }
       if (component === undefined) {
         const hasLoadingFallback =
@@ -457,20 +451,11 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
     async () => {
       (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
         entry.shortCode;
-      // Static handler interception: use pre-rendered component from build-time store
-      const entryAny = entry as any;
-      if (entryAny.isStaticPrerender && entryAny.staticHandlerId) {
-        const staticComponent = await tryStaticLookup(
-          entryAny.staticHandlerId,
-          entry.shortCode,
-        );
-        if (staticComponent !== undefined) return staticComponent;
-      }
       if (entry.type === "layout" || entry.type === "cache") {
-        return typeof entry.handler === "function"
-          ? handleHandlerResult(await entry.handler(context))
-          : entry.handler;
+        return resolveLayoutComponent(entry, context);
       }
+      const staticComponent = await tryStaticHandler(entry, entry.shortCode);
+      if (staticComponent !== undefined) return staticComponent;
       const routeEntry = entry as Extract<EntryData, { type: "route" }>;
       if (!routeEntry.loading) {
         return handleHandlerResult(await routeEntry.handler(context));
@@ -794,10 +779,8 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       })();
 
       let component: ReactNode | undefined;
-      // Static handler interception for individual parallel slots
-      const slotStaticId = (parallelEntry as any).staticHandlerIds?.[slot];
-      if (slotStaticId && shouldResolve) {
-        component = await tryStaticLookup(slotStaticId, parallelId);
+      if (shouldResolve) {
+        component = await tryStaticSlot(parallelEntry, slot, parallelId);
       }
       if (component === undefined) {
         const hasLoadingFallback =
@@ -869,20 +852,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         stale,
       });
     },
-    async () => {
-      // Static handler interception for orphan layouts
-      const orphanAny = orphan as any;
-      if (orphanAny.isStaticPrerender && orphanAny.staticHandlerId) {
-        const staticComponent = await tryStaticLookup(
-          orphanAny.staticHandlerId,
-          orphan.shortCode,
-        );
-        if (staticComponent !== undefined) return staticComponent;
-      }
-      return typeof orphan.handler === "function"
-        ? handleHandlerResult(await orphan.handler(context))
-        : orphan.handler;
-    },
+    async () => resolveLayoutComponent(orphan, context),
     () => null,
   );
 
@@ -928,106 +898,26 @@ export async function resolveWithRevalidationErrorHandling<TEnv>(
       throw error;
     }
 
-    if (error instanceof DataNotFoundError) {
-      const notFoundFallback = deps.findNearestNotFoundBoundary(entry);
-
-      if (notFoundFallback) {
-        const notFoundInfo = createNotFoundInfo(
-          error,
-          entry.shortCode,
-          entry.type,
-          pathname,
-        );
-
-        if (errorContext) {
-          deps.callOnError(error, "handler", {
+    const segment = catchSegmentError(
+      error,
+      entry,
+      params,
+      deps,
+      errorContext
+        ? {
             request: errorContext.request,
             url: errorContext.url,
             routeKey: errorContext.routeKey,
-            params,
-            segmentId: entry.shortCode,
-            segmentType: entry.type as any,
             env: errorContext.env,
             isPartial: errorContext.isPartial,
-            handledByBoundary: true,
-            metadata: { notFound: true, message: notFoundInfo.message },
             requestStartTime: errorContext.requestStartTime,
-          });
-        }
-
-        debugLog("segment", "notFound boundary handled error", {
-          segmentId: entry.shortCode,
-          message: notFoundInfo.message,
-        });
-
-        const reqCtx = getRequestContext();
-        if (reqCtx) {
-          reqCtx.res = new Response(null, {
-            status: 404,
-            headers: reqCtx.res.headers,
-          });
-        }
-
-        const notFoundSegment = createNotFoundSegment(
-          notFoundInfo,
-          notFoundFallback,
-          entry,
-          params,
-        );
-
-        return {
-          segments: [notFoundSegment],
-          matchedIds: [notFoundSegment.id],
-        };
-      }
-    }
-
-    const fallback = deps.findNearestErrorBoundary(entry);
-    const segmentType: ErrorInfo["segmentType"] = entry.type;
-    const errorInfo = createErrorInfo(error, entry.shortCode, segmentType);
-    const effectiveFallback = fallback ?? DefaultErrorFallback;
-
-    if (errorContext) {
-      deps.callOnError(error, "handler", {
-        request: errorContext.request,
-        url: errorContext.url,
-        routeKey: errorContext.routeKey,
-        params,
-        segmentId: entry.shortCode,
-        segmentType: entry.type as any,
-        env: errorContext.env,
-        isPartial: errorContext.isPartial,
-        handledByBoundary: !!effectiveFallback,
-        requestStartTime: errorContext.requestStartTime,
-      });
-    }
-
-    debugLog("segment", "error boundary handled error", {
-      segmentId: entry.shortCode,
-      boundary: fallback ? "custom" : "default",
-      message: errorInfo.message,
-    });
-
-    {
-      const reqCtx = getRequestContext();
-      if (reqCtx) {
-        reqCtx.res = new Response(null, {
-          status: 500,
-          headers: reqCtx.res.headers,
-        });
-      }
-    }
-
-    const errorSegment = createErrorSegment(
-      errorInfo,
-      effectiveFallback,
-      entry,
-      params,
+          }
+        : undefined,
+      pathname,
     );
-
     return {
-      segments: [errorSegment],
-      matchedIds: [errorSegment.id],
+      segments: [segment],
+      matchedIds: [segment.id],
     };
   }
 }

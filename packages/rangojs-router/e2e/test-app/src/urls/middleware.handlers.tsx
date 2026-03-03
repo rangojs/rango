@@ -163,6 +163,14 @@ export const MiddlewareSharedVarsHandler: Handler<
   </div>
 );
 
+export const MiddlewareRouteShortcircuitHandler: Handler<
+  "middlewareTest.routeShortcircuit"
+> = () => (
+  <div data-testid="middleware-test-route-shortcircuit">
+    <h1>This should never render (middleware short-circuits)</h1>
+  </div>
+);
+
 export const MiddlewareRouteLevelHandler: Handler<
   "middlewareTest.routeLevel"
 > = (ctx) => {
