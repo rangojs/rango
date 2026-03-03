@@ -5,6 +5,7 @@ import type {
   NavigateOptionsInternal,
   NavigationStore,
   ResolvedSegment,
+  StreamingToken,
 } from "./types.js";
 import * as React from "react";
 import { startTransition } from "react";
@@ -109,6 +110,11 @@ if (typeof Symbol.dispose === "undefined") {
 // which breaks when two navigations target the same URL.
 let navStamp = 0;
 
+/** Get IDs of non-loader segments (layouts, routes, parallels). */
+function getNonLoaderSegmentIds(segments: ResolvedSegment[]): string[] {
+  return segments.filter((s) => s.type !== "loader").map((s) => s.id);
+}
+
 /**
  * Options for committing a navigation transaction
  */
@@ -150,13 +156,6 @@ interface BoundCommitOverrides {
   cacheOnly?: boolean;
   /** Server-set location state to merge into history.pushState */
   serverState?: Record<string, unknown>;
-}
-
-/**
- * Token for tracking an active stream - call end() when stream completes
- */
-export interface StreamingToken {
-  end(): void;
 }
 
 /**
@@ -620,9 +619,7 @@ export function createNavigationBridge(
         await fetchPartialUpdate(
           url,
           hasUsableCache
-            ? cachedSegments!
-                .filter((s) => s.type !== "loader")
-                .map((s) => s.id)
+            ? getNonLoaderSegmentIds(cachedSegments!)
             : options?._skipCache
               ? [] // Action redirect: send no segments so server renders everything fresh
               : undefined,
@@ -829,9 +826,7 @@ export function createNavigationBridge(
           if (isStale) {
             debugLog("[Browser] Cache is stale, background revalidating...");
             // Background revalidation - don't await, just fire and forget
-            const segmentIds = cachedSegments
-              .filter((s) => s.type !== "loader")
-              .map((s) => s.id);
+            const segmentIds = getNonLoaderSegmentIds(cachedSegments);
 
             const tx = createNavigationTransaction(
               store,

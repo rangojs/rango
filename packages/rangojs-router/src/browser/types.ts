@@ -534,3 +534,11 @@ export interface NavigationBridgeConfig {
 
 // Re-export ResolvedSegment for convenience
 export type { ResolvedSegment };
+
+/**
+ * Token for tracking an active stream.
+ * Call end() when the stream completes.
+ */
+export interface StreamingToken {
+  end(): void;
+}
