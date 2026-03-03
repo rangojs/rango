@@ -103,19 +103,25 @@ export async function handleResponseRoute<TEnv>(
   const callHandler = async () => {
     const errorCtx = { request, url, env };
 
+    // Re-wrap a handler-returned Response through createResponseWithMergedHeaders
+    // so that stub headers (cookies, custom headers set via ctx.header()) are included.
+    const rewrapResponse = (result: Response) => {
+      const headers: Record<string, string> = {};
+      result.headers.forEach((value, key) => {
+        headers[key] = value;
+      });
+      return createResponseWithMergedHeaders(result.body, {
+        status: result.status,
+        headers,
+      });
+    };
+
     // JSON response routes: wrap in { data } / { error } envelope
     if (preview.responseType === "json") {
       try {
         const result = await (preview.handler as Function)(responseHandlerCtx);
         if (result instanceof Response) {
-          const mergedHeaders: Record<string, string> = {};
-          result.headers.forEach((value, key) => {
-            mergedHeaders[key] = value;
-          });
-          return createResponseWithMergedHeaders(result.body, {
-            status: result.status,
-            headers: mergedHeaders,
-          });
+          return rewrapResponse(result);
         }
         return createResponseWithMergedHeaders(
           JSON.stringify({ data: result }),
@@ -145,15 +151,7 @@ export async function handleResponseRoute<TEnv>(
       const result = await (preview.handler as Function)(responseHandlerCtx);
 
       if (result instanceof Response) {
-        // Handler returned a Response directly -- pass through
-        const mergedHeaders: Record<string, string> = {};
-        result.headers.forEach((value, key) => {
-          mergedHeaders[key] = value;
-        });
-        return createResponseWithMergedHeaders(result.body, {
-          status: result.status,
-          headers: mergedHeaders,
-        });
+        return rewrapResponse(result);
       }
 
       // Auto-wrap based on response type tag
@@ -227,9 +225,8 @@ export async function handleResponseRoute<TEnv>(
 
   // Resolve cache config from entry tree (same pattern as match-api.ts)
   if (preview.manifestEntry) {
-    const entries = [...traverseBack(preview.manifestEntry)];
     let cacheScope: ReturnType<typeof createCacheScope> = null;
-    for (const entry of entries) {
+    for (const entry of traverseBack(preview.manifestEntry)) {
       if (entry.cache) {
         cacheScope = createCacheScope(entry.cache, cacheScope);
       }

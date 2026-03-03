@@ -1,6 +1,19 @@
 import type { LinkInterceptorOptions, NavigateOptions } from "./types.js";
 
 /**
+ * Check if an anchor points to the same page with only a hash change.
+ * Used by both Link component and link-interceptor to let the browser
+ * handle anchor scrolling natively.
+ */
+export function isHashOnlyNavigation(anchor: HTMLAnchorElement): boolean {
+  return (
+    anchor.pathname === window.location.pathname &&
+    anchor.search === window.location.search &&
+    !!anchor.hash
+  );
+}
+
+/**
  * Default link interception predicate
  *
  * Returns true if the link should be intercepted for SPA navigation.
@@ -46,11 +59,7 @@ export function defaultShouldIntercept(link: HTMLAnchorElement): boolean {
 
   // Don't intercept hash-only navigation (same path, only fragment changes).
   // Let the browser handle anchor scrolling natively.
-  if (
-    link.pathname === window.location.pathname &&
-    link.search === window.location.search &&
-    link.hash
-  ) {
+  if (isHashOnlyNavigation(link)) {
     return false;
   }
 

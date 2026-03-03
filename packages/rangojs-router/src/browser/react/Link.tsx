@@ -12,6 +12,7 @@ import React, {
 import { NavigationStoreContext } from "./context.js";
 import { LinkContext } from "./use-link-status.js";
 import type { NavigateOptions } from "../types.js";
+import { isHashOnlyNavigation } from "../link-interceptor.js";
 import {
   isLocationStateEntry,
   type LocationStateEntry,
@@ -230,16 +231,8 @@ export const Link: ForwardRefExoticComponent<
       if (target && target !== "_self") return;
 
       // Hash-only navigation: let the browser handle anchor scrolling natively.
-      // The anchor element's properties are already browser-resolved from `href={to}`.
-      {
-        const anchor = e.currentTarget as HTMLAnchorElement;
-        if (
-          anchor.pathname === window.location.pathname &&
-          anchor.search === window.location.search &&
-          anchor.hash
-        ) {
-          return;
-        }
+      if (isHashOnlyNavigation(e.currentTarget as HTMLAnchorElement)) {
+        return;
       }
 
       // Prevent default and use SPA navigation

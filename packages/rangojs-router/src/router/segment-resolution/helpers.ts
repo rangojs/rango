@@ -125,11 +125,11 @@ export interface ErrorReportContext {
  * Shared by both resolveWithErrorHandling (fresh path) and
  * resolveWithRevalidationErrorHandling (revalidation path).
  */
-export function catchSegmentError(
+export function catchSegmentError<TEnv>(
   error: unknown,
   entry: EntryData,
   params: Record<string, string>,
-  deps: SegmentResolutionDeps<any>,
+  deps: SegmentResolutionDeps<TEnv>,
   report?: ErrorReportContext,
   pathname?: string,
 ): ResolvedSegment {
