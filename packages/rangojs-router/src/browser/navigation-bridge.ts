@@ -104,6 +104,11 @@ if (typeof Symbol.dispose === "undefined") {
   (Symbol as any).dispose = Symbol("Symbol.dispose");
 }
 
+// Monotonic counter for tagging early-pushed history entries.
+// Used by disposal to verify ownership without URL comparison,
+// which breaks when two navigations target the same URL.
+let navStamp = 0;
+
 /**
  * Options for committing a navigation transaction
  */
@@ -200,6 +205,7 @@ function createNavigationTransaction(
   let committed = false;
   let optimisticallyCommitted = false;
   let earlyStatePushed = false;
+  let earlyStateStamp: number | null = null;
   const currentUrl = window.location.href;
   const currentHistoryState = window.history.state;
 
@@ -209,8 +215,16 @@ function createNavigationTransaction(
   // If state is provided, push it to history immediately so loading UI can access it
   // This enables "optimistic state" - showing product names in skeletons etc.
   if (options?.state !== undefined && !options?.replace) {
+    earlyStateStamp = ++navStamp;
     const earlyHistoryState = buildHistoryState(options.state);
-    window.history.pushState(earlyHistoryState, "", url);
+    if (earlyHistoryState) {
+      (earlyHistoryState as any).__navStamp = earlyStateStamp;
+    }
+    window.history.pushState(
+      earlyHistoryState ?? { __navStamp: earlyStateStamp },
+      "",
+      url,
+    );
     earlyStatePushed = true;
   }
 
@@ -440,15 +454,16 @@ function createNavigationTransaction(
     [Symbol.dispose]() {
       // Superseded: another navigation took over. Roll back our early push
       // so the new navigation starts from a clean history position.
-      // Guard: only rollback if we still own the current URL. A newer
-      // navigation may have already pushed its own entry — touching
-      // history in that case would overwrite the winning navigation.
+      // Guard: only rollback if our early-pushed state is still the current
+      // history entry. Compare by stamp (monotonic counter embedded in state)
+      // so that a newer navigation targeting the same URL is not clobbered.
       if (handle.signal.aborted) {
         if (
           earlyStatePushed &&
           !committed &&
           !optimisticallyCommitted &&
-          window.location.href === url
+          earlyStateStamp !== null &&
+          window.history.state?.__navStamp === earlyStateStamp
         ) {
           window.history.replaceState(currentHistoryState, "", currentUrl);
         }

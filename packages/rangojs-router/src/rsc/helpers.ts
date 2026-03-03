@@ -60,8 +60,12 @@ export function createResponseWithMergedHeaders(
     headers: mergedHeaders,
   });
 
-  // Run onResponse callbacks - each can inspect/modify the response
-  for (const callback of ctx._onResponseCallbacks) {
+  // Run onResponse callbacks - each can inspect/modify the response.
+  // Drain the array so that downstream callers (e.g. finalizeResponse)
+  // do not re-execute the same callbacks on this response.
+  const callbacks = ctx._onResponseCallbacks;
+  ctx._onResponseCallbacks = [];
+  for (const callback of callbacks) {
     response = callback(response) ?? response;
   }
 
@@ -100,13 +104,30 @@ export function interceptRedirectForPartial(
     return null;
   }
   const locationState = getLocationState();
+  let intercepted: Response;
   if (locationState) {
-    return createRedirectFlightResponse(
+    intercepted = createRedirectFlightResponse(
       redirectUrl,
       resolveLocationStateEntries(locationState),
     );
+  } else {
+    intercepted = createSimpleRedirectResponse(redirectUrl);
   }
-  return createSimpleRedirectResponse(redirectUrl);
+
+  // Carry over headers from the original redirect response that are not
+  // already on the intercepted response. This preserves cookies and custom
+  // headers set by middleware before the redirect.
+  response.headers.forEach((value, name) => {
+    // Skip hop-by-hop and already-handled headers
+    if (name.toLowerCase() === "location") return;
+    if (name.toLowerCase() === "set-cookie") {
+      intercepted.headers.append(name, value);
+    } else if (!intercepted.headers.has(name)) {
+      intercepted.headers.set(name, value);
+    }
+  });
+
+  return intercepted;
 }
 
 /**
@@ -154,8 +175,11 @@ export function finalizeResponse(response: Response): Response {
     return response;
   }
 
+  // Drain the array so callbacks run at most once per request.
+  const callbacks = ctx._onResponseCallbacks;
+  ctx._onResponseCallbacks = [];
   let result = response;
-  for (const callback of ctx._onResponseCallbacks) {
+  for (const callback of callbacks) {
     result = callback(result) ?? result;
   }
   return result;
