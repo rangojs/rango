@@ -294,6 +294,11 @@ export function createRouter<TEnv = any>(
   const mergedRouteMap: Record<string, string> =
     flattenNamedRoutes(staticRouteNames);
 
+  // Track names that came from the static seed so we can silently overwrite
+  // them during routes() registration. The gen file may be stale during HMR,
+  // so conflicts between seeded and runtime-registered values are expected.
+  const seededNames = new Set(Object.keys(mergedRouteMap));
+
   // Lazy precomputed entries lookup: rebuilt when per-router data arrives.
   // In production multi-router setups, per-router data is loaded lazily via
   // ensureRouterManifest(). At createRouter() time the data isn't available yet,
@@ -626,15 +631,22 @@ export function createRouter<TEnv = any>(
 
       // Build route map from registered patterns
       for (const [name, pattern] of routePatterns.entries()) {
-        // Runtime validation: warn if key already exists with different pattern
+        // Runtime validation: warn if key already exists with different pattern.
+        // Skip warning for entries that came from the static seed — the gen file
+        // can be stale during HMR, so runtime registration is authoritative.
         const existingPattern = mergedRouteMap[name];
-        if (existingPattern !== undefined && existingPattern !== pattern) {
+        if (
+          existingPattern !== undefined &&
+          existingPattern !== pattern &&
+          !seededNames.has(name)
+        ) {
           console.warn(
             `[@rangojs/router] Route name conflict: "${name}" already maps to "${existingPattern}", ` +
               `overwriting with "${pattern}". Use unique route names to avoid this.`,
           );
         }
         mergedRouteMap[name] = pattern;
+        seededNames.delete(name);
       }
 
       // Detect lazy includes in handler result and create placeholder entries
