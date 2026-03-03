@@ -1,6 +1,6 @@
 // Barrel re-export -- see segment-resolution/ for implementations.
+export { handleHandlerResult } from "./segment-resolution/helpers.js";
 export {
-  handleHandlerResult,
   resolveLoaders,
   type ResolveSegmentOptions,
   resolveSegment,
