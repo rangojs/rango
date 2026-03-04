@@ -181,6 +181,9 @@ String keys still work (`ctx.set("key", value)` / `ctx.get("key")`), but
 Only route handlers and middleware can call `ctx.set()`. Layouts, parallels,
 and intercepts can only read via `ctx.get()`.
 
+For scope/revalidation guarantees and non-guarantees, see:
+[docs/execution-model.md](../../docs/internal/execution-model.md)
+
 ## Redirects
 
 ### Basic redirect

@@ -8,6 +8,9 @@ argument-hint: [@slot-name] [route-to-intercept]
 
 Intercept routes render a different component during soft navigation (client-side) while preserving the background route. Hard navigation (direct URL) shows the full page.
 
+Canonical semantics reference:
+[docs/execution-model.md](../../docs/internal/execution-model.md)
+
 ## Basic Intercept
 
 ```typescript

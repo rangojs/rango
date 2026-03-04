@@ -8,6 +8,9 @@ argument-hint: [@slot-name]
 
 Parallel routes render multiple components simultaneously in named slots.
 
+Canonical semantics reference:
+[docs/execution-model.md](../../docs/internal/execution-model.md)
+
 ## Basic Parallel Routes
 
 ```typescript
@@ -56,8 +59,16 @@ parallel({
 
 ## Reading Handler Data
 
-When a parallel is inside a route that uses `ctx.set()`, it can read that
-data via `ctx.get()`. The route handler always executes before its children.
+Parallels can read `ctx.set()` values from their parent handler or layout
+via `ctx.get()`. The handler always executes before its parallels
+(handler-first).
+
+Visibility follows tree structure:
+
+- Layout-level parallels see layout data, but not path handler data
+  (the path is a separate entry).
+- Parallels inside a path (or its orphan layouts) see both layout and
+  path handler data.
 
 This applies to full render passes. During partial action revalidation,
 only revalidated segments are recomputed. If a parallel depends on data

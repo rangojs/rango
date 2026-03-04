@@ -10,6 +10,9 @@ Middleware runs before/after route handlers using the onion model.
 
 ## Execution Model
 
+Canonical semantics reference:
+[docs/execution-model.md](../../docs/internal/execution-model.md)
+
 There are two levels of middleware with different execution scopes:
 
 ### Global middleware (`router.use()`)

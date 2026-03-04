@@ -8,6 +8,9 @@ argument-hint: [component]
 
 Layouts wrap child routes and persist during navigation within their scope.
 
+Canonical semantics reference:
+[docs/execution-model.md](../../docs/internal/execution-model.md)
+
 ## Basic Layout
 
 ```typescript
@@ -182,8 +185,10 @@ urls(({ path, layout, parallel }) => [
 ])
 ```
 
-Orphan layouts cannot call `ctx.set()` -- only the route handler and
-middleware can write context variables.
+Orphan layouts can call `ctx.get()` to read data set by their parent
+handler. They can also call `ctx.set()`, though the primary pattern is
+for route handlers and middleware to write context variables and for
+orphan layouts to read them.
 
 ## Layout Revalidation
 

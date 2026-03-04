@@ -11,6 +11,9 @@ deserialization path, same segment system. The worker handles every request --
 there are NO static .html or .rsc files served from assets. The worker reads
 pre-computed Flight payloads instead of executing handler code.
 
+Canonical semantics reference:
+[docs/execution-model.md](../../docs/internal/execution-model.md)
+
 ## API: Prerender
 
 ### Static Route (no params)
