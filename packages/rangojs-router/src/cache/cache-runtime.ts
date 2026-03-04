@@ -31,11 +31,7 @@ import {
 
 export { isCachedFunction };
 import { getCacheProfile } from "./profile-registry.js";
-import {
-  streamToString,
-  serializeResult,
-  deserializeResult,
-} from "./segment-codec.js";
+import { serializeResult, deserializeResult } from "./segment-codec.js";
 import type { SegmentHandleData } from "./types.js";
 import type { HandleStore } from "../server/handle-store.js";
 import { restoreHandles } from "./handle-snapshot.js";

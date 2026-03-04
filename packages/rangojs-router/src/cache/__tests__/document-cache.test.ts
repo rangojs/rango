@@ -509,6 +509,120 @@ describe("createDocumentCacheMiddleware", () => {
     });
   });
 
+  describe("onResponse callbacks", () => {
+    it("should fire onResponse callbacks on fresh cache HIT", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      // Pre-populate cache
+      const cachedResponse = new Response("Cached", {
+        headers: { "Cache-Control": "s-maxage=60" },
+      });
+      mockStore.cache.set("/page:html", {
+        response: cachedResponse,
+        staleAt: Date.now() + 60 * 1000,
+      });
+
+      const callback = vi.fn((r: Response) => {
+        const headers = new Headers(r.headers);
+        headers.set("x-custom", "from-callback");
+        return new Response(r.body, { status: r.status, headers });
+      });
+      mockRequestCtx._onResponseCallbacks.push(callback);
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+      const next = vi.fn();
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const response = (await middleware(ctx, next)) as Response;
+
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(response.headers.get("x-custom")).toBe("from-callback");
+      expect(response.headers.get("x-document-cache-status")).toBe("HIT");
+    });
+
+    it("should fire onResponse callbacks on stale cache HIT", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      // Pre-populate cache with stale entry
+      const staleResponse = new Response("Stale", {
+        headers: {
+          "Cache-Control": "s-maxage=60, stale-while-revalidate=300",
+        },
+      });
+      mockStore.cache.set("/page:html", {
+        response: staleResponse,
+        staleAt: Date.now() - 1000,
+      });
+
+      const callback = vi.fn((r: Response) => {
+        const headers = new Headers(r.headers);
+        headers.set("x-custom", "stale-callback");
+        return new Response(r.body, { status: r.status, headers });
+      });
+      mockRequestCtx._onResponseCallbacks.push(callback);
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+      const next = vi.fn().mockResolvedValue(
+        new Response("Fresh", {
+          headers: {
+            "Cache-Control": "s-maxage=60, stale-while-revalidate=300",
+          },
+        }),
+      );
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const response = (await middleware(ctx, next)) as Response;
+
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(response.headers.get("x-custom")).toBe("stale-callback");
+      expect(response.headers.get("x-document-cache-status")).toBe("STALE");
+    });
+
+    it("should drain callbacks so they do not fire twice", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      // Pre-populate cache
+      const cachedResponse = new Response("Cached", {
+        headers: { "Cache-Control": "s-maxage=60" },
+      });
+      mockStore.cache.set("/page:html", {
+        response: cachedResponse,
+        staleAt: Date.now() + 60 * 1000,
+      });
+
+      const callback = vi.fn((r: Response) => r);
+      mockRequestCtx._onResponseCallbacks.push(callback);
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+      const next = vi.fn();
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      await middleware(ctx, next);
+
+      expect(callback).toHaveBeenCalledTimes(1);
+      // Callbacks array should be drained
+      expect(mockRequestCtx._onResponseCallbacks).toHaveLength(0);
+    });
+  });
+
   describe("no cache store", () => {
     it("should pass through when no cache store is configured", async () => {
       const { createDocumentCacheMiddleware } =
