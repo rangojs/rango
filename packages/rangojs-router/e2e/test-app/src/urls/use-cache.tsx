@@ -9,6 +9,8 @@ import {
   getCachedReactNode,
   CachedWithSlots,
   getCachedActionData,
+  cachedReadsCookies,
+  cachedReadsHeaders,
 } from "./use-cache-fn.js";
 import { InterleaveActionButton } from "../components/InterleaveActionButton.js";
 import { Breadcrumbs } from "../handles.js";
@@ -392,6 +394,40 @@ export const useCachePatterns = urls(
         return { id: ctx.params.id, ts: Date.now(), rand: Math.random() };
       },
       { name: "useCacheTest.jsonCached" },
+    ),
+
+    // Guard: cookies() throws inside "use cache" when tainted ctx is passed.
+    path.json(
+      "/guard-cookies",
+      async (ctx) => {
+        try {
+          await cachedReadsCookies(ctx);
+          return { threw: false, message: null };
+        } catch (e) {
+          return {
+            threw: true,
+            message: e instanceof Error ? e.message : String(e),
+          };
+        }
+      },
+      { name: "useCacheTest.guardCookies" },
+    ),
+
+    // Guard: headers() throws inside "use cache" when tainted ctx is passed.
+    path.json(
+      "/guard-headers",
+      async (ctx) => {
+        try {
+          await cachedReadsHeaders(ctx);
+          return { threw: false, message: null };
+        } catch (e) {
+          return {
+            threw: true,
+            message: e instanceof Error ? e.message : String(e),
+          };
+        }
+      },
+      { name: "useCacheTest.guardHeaders" },
     ),
   ],
 );

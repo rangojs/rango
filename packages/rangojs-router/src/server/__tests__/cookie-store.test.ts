@@ -475,5 +475,7 @@ describe('"use cache" guards', () => {
 // The guard contract is tested in two parts:
 //   1. cookies()/headers() check INSIDE_CACHE_EXEC on RequestContext (above)
 //   2. registerCachedFunction stamps INSIDE_CACHE_EXEC on tainted args (cache-runtime.ts:252-257)
-// No existing e2e suite exercises "use cache" with cookies()/headers() reads yet;
-// end-to-end coverage for these guards would require a dedicated "use cache" e2e route.
+// The full transformed path (Vite transform -> registerCachedFunction -> guard -> throw)
+// is covered by e2e/use-cache.test.ts:
+//   "cookies() throws inside a 'use cache' function"
+//   "headers() throws inside a 'use cache' function"
