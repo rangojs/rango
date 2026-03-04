@@ -145,6 +145,13 @@ A layout as a child of `path()` wraps the route content and can read
 data set by the route handler via `ctx.get()`. The handler always
 executes before its children.
 
+This handler-first guarantee applies to a single full render pass
+(initial render, prerender, or full HTML re-render). During partial
+action revalidation, only the segments that revalidate are recomputed.
+If an orphan layout depends on data established by an outer handler or
+layout, that outer segment must also revalidate, or the orphan must
+guard/reload the data independently.
+
 ```typescript
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
@@ -197,6 +204,11 @@ layout(<CartLayout />, () => [
   path("/cart", CartPage, { name: "cart" }),
 ])
 ```
+
+If child segments read data that was established by this layout or by a
+route handler above them, revalidate the outer segment too. Partial
+revalidation does not re-run non-revalidated ancestors just to rebuild
+their `ctx.set()` state.
 
 ## Complete Example
 

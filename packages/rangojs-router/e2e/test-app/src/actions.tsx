@@ -280,3 +280,40 @@ export async function actionRedirectLogin(
 
   throw redirect("/action-redirect-revalidation");
 }
+
+/**
+ * Action that sets a cookie without redirecting.
+ * Used to test same-request read-after-write during revalidation:
+ * the action mutates a cookie, then the subsequent render pass lets
+ * route middleware and loaders observe the updated value.
+ */
+export async function actionSetSessionCookie(): Promise<void> {
+  cookies().set("mw-session", "action-set-value", {
+    path: "/",
+    maxAge: 86400,
+  });
+}
+
+/**
+ * Middleware chain test action.
+ * Sets a cookie, a context variable, and a response header.
+ * Exercises action writes across all three channels so the
+ * subsequent route middleware and loaders can verify propagation.
+ */
+export async function mwChainAction(): Promise<void> {
+  const ctx = getRequestContext();
+  cookies().set("chain-action", "av", { path: "/", maxAge: 86400 });
+  ctx.set("chainAction", "from-action");
+  ctx.header("X-Chain-Action", "applied");
+}
+
+/**
+ * Form-based variant of mwChainAction for progressive enhancement testing.
+ * Works with native HTML form POST (no-JS) and with React enhancement.
+ */
+export async function mwChainFormAction(_formData: FormData): Promise<void> {
+  const ctx = getRequestContext();
+  cookies().set("chain-action", "av", { path: "/", maxAge: 86400 });
+  ctx.set("chainAction", "from-action");
+  ctx.header("X-Chain-Action", "applied");
+}

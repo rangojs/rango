@@ -354,6 +354,8 @@ export interface CreateRequestContextOptions<TEnv> {
   request: Request;
   url: URL;
   variables: Record<string, any>;
+  /** Optional initial response stub headers/status to seed effective cookie reads */
+  initialResponse?: Response;
   /** Optional cache store for segment caching (used by CacheScope) */
   cacheStore?: SegmentCacheStore;
   /** Optional Cloudflare execution context for waitUntil support */
@@ -378,6 +380,7 @@ export function createRequestContext<TEnv>(
     request,
     url,
     variables,
+    initialResponse,
     cacheStore,
     executionContext,
     themeConfig,
@@ -387,7 +390,13 @@ export function createRequestContext<TEnv>(
 
   // Create stub response for collecting headers/cookies.
   // All cookie/header mutations go here; cookie reads derive from it.
-  let stubResponse = new Response(null, { status: 200 });
+  let stubResponse = initialResponse
+    ? new Response(null, {
+        status: initialResponse.status,
+        statusText: initialResponse.statusText,
+        headers: new Headers(initialResponse.headers),
+      })
+    : new Response(null, { status: 200 });
 
   // Create handle store and loader memoization for this request
   const handleStore = createHandleStore();

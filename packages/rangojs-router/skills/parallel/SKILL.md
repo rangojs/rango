@@ -59,6 +59,11 @@ parallel({
 When a parallel is inside a route that uses `ctx.set()`, it can read that
 data via `ctx.get()`. The route handler always executes before its children.
 
+This applies to full render passes. During partial action revalidation,
+only revalidated segments are recomputed. If a parallel depends on data
+set by an outer handler or layout, revalidate that outer segment too, or
+have the parallel reload/guard the data itself.
+
 ```typescript
 path("/dashboard/:id", (ctx) => {
   const user = await getUser(ctx.params.id);
@@ -141,6 +146,10 @@ parallel(
   ]
 )
 ```
+
+Revalidating only the parallel does not re-run outer handlers/layouts.
+If the slot reads `ctx.get()` data established above it, opt the outer
+segment into revalidation as well.
 
 ## Named Outlets
 

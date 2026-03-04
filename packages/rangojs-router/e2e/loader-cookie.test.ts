@@ -98,6 +98,127 @@ test.describe("RequestContext reverse()", () => {
   });
 });
 
+test.describe("Action sets cookie, loader reads via revalidation", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test("loader sees cookie set by action via read-after-write revalidation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Visit the page — no cookie yet
+    await page.goto(f.url("/loader-cookie/action-sets-cookie"));
+    await waitForHydration(page);
+    await expect(testId(page, "action-sets-cookie-page")).toBeVisible();
+    await expect(testId(page, "mw-session-value")).toHaveText("no-session");
+
+    // Trigger the action that calls cookies().set("mw-session", "action-set-value")
+    await testId(page, "action-set-cookie-btn").click();
+
+    // After action completes, the server revalidates. The loader re-runs and
+    // sees the cookie via read-after-write (response stub merge).
+    await expect(testId(page, "mw-session-value")).toHaveText(
+      "action-set-value",
+      { timeout: 10000 },
+    );
+  });
+});
+
+test.describe("Middleware reads cookie set by action", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test("middleware sees cookie set by action during same-request revalidation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/loader-cookie/mw-reads-cookie"));
+    await waitForHydration(page);
+    await expect(testId(page, "mw-reads-cookie-page")).toBeVisible();
+
+    // Both middleware and loader see no cookie initially
+    await expect(testId(page, "mw-session-from-middleware")).toHaveText(
+      "no-session",
+    );
+    await expect(testId(page, "mw-session-from-loader")).toHaveText(
+      "no-session",
+    );
+
+    // Action sets the cookie
+    await testId(page, "action-set-cookie-btn").click();
+
+    // Both the loader and route middleware should see the updated cookie during
+    // the same revalidation pass after the action completes.
+    await expect(testId(page, "mw-session-from-loader")).toHaveText(
+      "action-set-value",
+      { timeout: 10000 },
+    );
+    await expect(testId(page, "mw-session-from-middleware")).toHaveText(
+      "action-set-value",
+      { timeout: 10000 },
+    );
+
+    // The next full request should stay consistent.
+    await page.reload();
+    await waitForHydration(page);
+    await expect(testId(page, "mw-session-from-middleware")).toHaveText(
+      "action-set-value",
+    );
+    await expect(testId(page, "mw-session-from-loader")).toHaveText(
+      "action-set-value",
+    );
+  });
+});
+
+test.describe("Middleware post-next() header writes survive refresh", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test("ctx.header() after await next() is included in the action response", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/loader-cookie/mw-post-next-header"));
+    await waitForHydration(page);
+    await expect(testId(page, "mw-post-next-header-page")).toBeVisible();
+
+    // Initial state: no cookie, middleware sets X-Auth-Status: anonymous
+    await expect(testId(page, "mw-post-next-from-middleware")).toHaveText(
+      "no-session",
+    );
+
+    // Intercept the action's Flight response to check headers
+    const actionResponsePromise = page.waitForResponse((resp) =>
+      resp.url().includes("_rsc_action"),
+    );
+
+    await testId(page, "action-set-cookie-btn").click();
+
+    const actionResponse = await actionResponsePromise;
+    // Post-next() header should reflect the refreshed cookie state
+    expect(actionResponse.headers()["x-auth-status"]).toBe("authenticated");
+
+    // UI should also update
+    await expect(testId(page, "mw-post-next-from-middleware")).toHaveText(
+      "action-set-value",
+      { timeout: 10000 },
+    );
+    await expect(testId(page, "mw-post-next-from-loader")).toHaveText(
+      "action-set-value",
+      { timeout: 10000 },
+    );
+  });
+});
+
 // === Production mode tests ===
 
 test.describe("Loader cookies() (production)", () => {
@@ -193,6 +314,107 @@ test.describe("RequestContext reverse() (production)", () => {
     );
     await expect(testId(page, "action-reverse-href-index")).toContainText(
       "/href",
+    );
+  });
+});
+
+test.describe("Middleware reads cookie set by action (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("middleware sees cookie set by action during same-request revalidation in production", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/loader-cookie/mw-reads-cookie"));
+    await waitForHydration(page);
+    await expect(testId(page, "mw-reads-cookie-page")).toBeVisible();
+
+    await expect(testId(page, "mw-session-from-middleware")).toHaveText(
+      "no-session",
+    );
+    await expect(testId(page, "mw-session-from-loader")).toHaveText(
+      "no-session",
+    );
+
+    await testId(page, "action-set-cookie-btn").click();
+
+    await expect(testId(page, "mw-session-from-loader")).toHaveText(
+      "action-set-value",
+      { timeout: 10000 },
+    );
+    await expect(testId(page, "mw-session-from-middleware")).toHaveText(
+      "action-set-value",
+      { timeout: 10000 },
+    );
+  });
+});
+
+test.describe("Action sets cookie, loader reads via revalidation (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("loader sees cookie set by action via read-after-write revalidation (production)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/loader-cookie/action-sets-cookie"));
+    await waitForHydration(page);
+    await expect(testId(page, "action-sets-cookie-page")).toBeVisible();
+    await expect(testId(page, "mw-session-value")).toHaveText("no-session");
+
+    // Trigger the action
+    await testId(page, "action-set-cookie-btn").click();
+
+    // After action completes, revalidation re-runs the loader
+    await expect(testId(page, "mw-session-value")).toHaveText(
+      "action-set-value",
+      { timeout: 10000 },
+    );
+  });
+});
+
+test.describe("Middleware post-next() header writes survive refresh (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("ctx.header() after await next() is included in the action response (production)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/loader-cookie/mw-post-next-header"));
+    await waitForHydration(page);
+    await expect(testId(page, "mw-post-next-header-page")).toBeVisible();
+
+    await expect(testId(page, "mw-post-next-from-middleware")).toHaveText(
+      "no-session",
+    );
+
+    const actionResponsePromise = page.waitForResponse((resp) =>
+      resp.url().includes("_rsc_action"),
+    );
+
+    await testId(page, "action-set-cookie-btn").click();
+
+    const actionResponse = await actionResponsePromise;
+    expect(actionResponse.headers()["x-auth-status"]).toBe("authenticated");
+
+    await expect(testId(page, "mw-post-next-from-middleware")).toHaveText(
+      "action-set-value",
+      { timeout: 10000 },
+    );
+    await expect(testId(page, "mw-post-next-from-loader")).toHaveText(
+      "action-set-value",
+      { timeout: 10000 },
     );
   });
 });

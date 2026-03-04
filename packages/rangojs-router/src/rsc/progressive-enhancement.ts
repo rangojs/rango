@@ -6,13 +6,28 @@
  * reference. We detect these and return HTML instead of RSC stream.
  */
 
-import {
-  requireRequestContext,
-  setRequestContextParams,
-} from "../server/request-context.js";
+import { requireRequestContext } from "../server/request-context.js";
+import type { MiddlewareFn } from "../router/middleware.js";
+import { executeMiddleware } from "../router/middleware.js";
 import type { RscPayload, ReactFormState } from "./types.js";
-import { createResponseWithMergedHeaders } from "./helpers.js";
+import {
+  createResponseWithMergedHeaders,
+  buildRouteMiddlewareEntries,
+} from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
+
+export interface PeRouteMiddlewareInfo {
+  routeMiddleware?: Array<{
+    handler: MiddlewareFn;
+    params: Record<string, string>;
+  }>;
+  variables: Record<string, any>;
+  routeReverse?: (
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ) => string;
+}
 
 export async function handleProgressiveEnhancement<TEnv>(
   ctx: HandlerContext<TEnv>,
@@ -22,6 +37,7 @@ export async function handleProgressiveEnhancement<TEnv>(
   isAction: boolean,
   handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
   nonce: string | undefined,
+  routeMwInfo?: PeRouteMiddlewareInfo,
 ): Promise<Response | null> {
   const contentType = request.headers.get("content-type") || "";
   const isFormSubmission =
@@ -108,46 +124,65 @@ export async function handleProgressiveEnhancement<TEnv>(
     console.error("[RSC] Failed to decode form state:", error);
   }
 
-  // Re-render the page and return HTML
-  const renderRequest = new Request(url.toString(), {
-    method: "GET",
-    headers: new Headers({ accept: "text/html" }),
-  });
-
-  const match = await ctx.router.match(renderRequest, { env });
-
-  if (match.redirect) {
-    return createResponseWithMergedHeaders(null, {
-      status: 308,
-      headers: { Location: match.redirect },
+  // Re-render the page and return HTML.
+  // Route middleware wraps the render so context variables, headers, and
+  // cookies set by route middleware are available during re-render — matching
+  // the behavior of JS-enabled requests.
+  const renderPage = async (): Promise<Response> => {
+    const renderRequest = new Request(url.toString(), {
+      method: "GET",
+      headers: new Headers({ accept: "text/html" }),
     });
-  }
 
-  const payload: RscPayload = {
-    metadata: {
-      pathname: url.pathname,
-      segments: match.segments,
-      matched: match.matched,
-      diff: match.diff,
-      isPartial: false,
-      rootLayout: ctx.router.rootLayout,
-      handles: handleStore.stream(),
-      version: ctx.version,
-      themeConfig: ctx.router.themeConfig,
-      warmupEnabled: ctx.router.warmupEnabled,
-      initialTheme: requireRequestContext().theme,
-    },
-    formState: actionResult,
+    const match = await ctx.router.match(renderRequest, { env });
+
+    if (match.redirect) {
+      return createResponseWithMergedHeaders(null, {
+        status: 308,
+        headers: { Location: match.redirect },
+      });
+    }
+
+    const payload: RscPayload = {
+      metadata: {
+        pathname: url.pathname,
+        segments: match.segments,
+        matched: match.matched,
+        diff: match.diff,
+        isPartial: false,
+        rootLayout: ctx.router.rootLayout,
+        handles: handleStore.stream(),
+        version: ctx.version,
+        themeConfig: ctx.router.themeConfig,
+        warmupEnabled: ctx.router.warmupEnabled,
+        initialTheme: requireRequestContext().theme,
+      },
+      formState: actionResult,
+    };
+
+    const rscStream = ctx.renderToReadableStream<RscPayload>(payload);
+    const ssrModule = await ctx.loadSSRModule();
+    const htmlStream = await ssrModule.renderHTML(rscStream, {
+      formState: reactFormState,
+      nonce,
+    });
+
+    return createResponseWithMergedHeaders(htmlStream, {
+      headers: { "content-type": "text/html;charset=utf-8" },
+    });
   };
 
-  const rscStream = ctx.renderToReadableStream<RscPayload>(payload);
-  const ssrModule = await ctx.loadSSRModule();
-  const htmlStream = await ssrModule.renderHTML(rscStream, {
-    formState: reactFormState,
-    nonce,
-  });
+  // Execute route middleware wrapping the render, if any.
+  if (routeMwInfo?.routeMiddleware && routeMwInfo.routeMiddleware.length > 0) {
+    return executeMiddleware(
+      buildRouteMiddlewareEntries(routeMwInfo.routeMiddleware),
+      request,
+      env,
+      routeMwInfo.variables,
+      renderPage,
+      routeMwInfo.routeReverse,
+    );
+  }
 
-  return createResponseWithMergedHeaders(htmlStream, {
-    headers: { "content-type": "text/html;charset=utf-8" },
-  });
+  return renderPage();
 }
