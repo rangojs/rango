@@ -195,7 +195,7 @@ export const StreamingAction = async (_data: FormData) => {
  */
 export async function saveAndRedirect(): Promise<void> {
   return redirect("/location-state", {
-    state: [FlashMessage({ text: "Action saved successfully!" })],
+    state: FlashMessage({ text: "Action saved successfully!" }),
   }) as any;
 }
 
@@ -212,7 +212,7 @@ export async function actionSimpleRedirect(): Promise<void> {
  */
 export async function throwRedirectWithState(): Promise<void> {
   throw redirect("/location-state", {
-    state: [FlashMessage({ text: "Thrown redirect flash!" })],
+    state: FlashMessage({ text: "Thrown redirect flash!" }),
   });
 }
 

@@ -288,7 +288,7 @@ Attach location state to any server response (not just redirects):
 
 ```typescript
 path("/dashboard", (ctx) => {
-  ctx.setLocationState([ServerInfo({ data: "welcome" })]);
+  ctx.setLocationState(ServerInfo({ data: "welcome" }));
   return <Dashboard />;
 }, { name: "dashboard" })
 ```

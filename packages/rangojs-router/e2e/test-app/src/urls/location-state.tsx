@@ -89,7 +89,7 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
     "/trigger-redirect",
     (ctx) => {
       return redirect("/location-state", {
-        state: [FlashMessage({ text: "Item saved successfully!" })],
+        state: FlashMessage({ text: "Item saved successfully!" }),
       });
     },
     { name: "triggerRedirect" },
@@ -99,7 +99,7 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
   path(
     "/trigger-ctx-state",
     (ctx) => {
-      ctx.setLocationState([ServerInfo({ data: "server-set-value" })]);
+      ctx.setLocationState(ServerInfo({ data: "server-set-value" }));
       return (
         <div data-testid="ls-ctx-state-page">
           <h1>Page with server-set state</h1>
@@ -136,7 +136,7 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
     () => [
       middleware(async (ctx, next) => {
         return redirect("/location-state/target", {
-          state: [FlashMessage({ text: "Redirected by middleware!" })],
+          state: FlashMessage({ text: "Redirected by middleware!" }),
         });
       }),
     ],
@@ -148,7 +148,7 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
     (ctx) => {
       return redirect("/location-state/target", {
         status: 303,
-        state: [FlashMessage({ text: "303 redirect flash" })],
+        state: FlashMessage({ text: "303 redirect flash" }),
       });
     },
     { name: "redirect303" },

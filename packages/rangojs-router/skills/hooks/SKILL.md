@@ -484,7 +484,7 @@ Or via `ctx.setLocationState()` on any response:
 
 ```tsx
 (ctx) => {
-  ctx.setLocationState([FlashMessage({ text: "Welcome back!" })]);
+  ctx.setLocationState(FlashMessage({ text: "Welcome back!" }));
   return <Dashboard />;
 };
 ```

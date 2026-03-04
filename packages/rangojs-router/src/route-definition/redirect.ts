@@ -43,11 +43,16 @@ import {
 export function redirect(url: string, status?: number): Response;
 export function redirect(
   url: string,
-  options: { status?: number; state?: LocationStateEntry[] },
+  options: {
+    status?: number;
+    state?: LocationStateEntry | LocationStateEntry[];
+  },
 ): Response;
 export function redirect(
   url: string,
-  statusOrOptions?: number | { status?: number; state?: LocationStateEntry[] },
+  statusOrOptions?:
+    | number
+    | { status?: number; state?: LocationStateEntry | LocationStateEntry[] },
 ): Response {
   const status =
     typeof statusOrOptions === "number"

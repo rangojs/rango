@@ -292,6 +292,69 @@ describe("RequestContext", () => {
     });
   });
 
+  describe("setLocationState", () => {
+    it("accepts a single entry", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com"),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      ctx.setLocationState({
+        __rsc_ls_key: "flash",
+        __rsc_ls_value: { text: "hello" },
+      });
+
+      expect(ctx._locationState).toEqual([
+        { __rsc_ls_key: "flash", __rsc_ls_value: { text: "hello" } },
+      ]);
+    });
+
+    it("accepts an array of entries", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com"),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      ctx.setLocationState([
+        { __rsc_ls_key: "a", __rsc_ls_value: 1 },
+        { __rsc_ls_key: "b", __rsc_ls_value: 2 },
+      ]);
+
+      expect(ctx._locationState).toEqual([
+        { __rsc_ls_key: "a", __rsc_ls_value: 1 },
+        { __rsc_ls_key: "b", __rsc_ls_value: 2 },
+      ]);
+    });
+
+    it("accumulates across multiple calls mixing single and array", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com"),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      ctx.setLocationState({
+        __rsc_ls_key: "first",
+        __rsc_ls_value: "one",
+      });
+      ctx.setLocationState([
+        { __rsc_ls_key: "second", __rsc_ls_value: "two" },
+        { __rsc_ls_key: "third", __rsc_ls_value: "three" },
+      ]);
+
+      expect(ctx._locationState).toEqual([
+        { __rsc_ls_key: "first", __rsc_ls_value: "one" },
+        { __rsc_ls_key: "second", __rsc_ls_value: "two" },
+        { __rsc_ls_key: "third", __rsc_ls_value: "three" },
+      ]);
+    });
+  });
+
   describe("onResponse", () => {
     it("should register callbacks", () => {
       const ctx = createRequestContext({

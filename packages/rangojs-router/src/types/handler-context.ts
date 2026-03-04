@@ -379,12 +379,12 @@ export type HandlerContext<
    * @example
    * ```typescript
    * route("product", (ctx) => {
-   *   ctx.setLocationState([ServerInfo({ data: "value" })]);
+   *   ctx.setLocationState(ServerInfo({ data: "value" }));
    *   return <ProductPage />;
    * });
    * ```
    */
-  setLocationState(entries: LocationStateEntry[]): void;
+  setLocationState(entries: LocationStateEntry | LocationStateEntry[]): void;
   /**
    * Generate URLs from route names.
    *

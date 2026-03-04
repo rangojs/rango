@@ -214,10 +214,10 @@ export interface RequestContext<
    *
    * @example
    * ```typescript
-   * ctx.setLocationState([Flash({ text: "Item saved!" })]);
+   * ctx.setLocationState(Flash({ text: "Item saved!" }));
    * ```
    */
-  setLocationState(entries: LocationStateEntry[]): void;
+  setLocationState(entries: LocationStateEntry | LocationStateEntry[]): void;
 
   /** @internal Accumulated location state entries */
   _locationState?: LocationStateEntry[];
@@ -597,11 +597,12 @@ export function createRequestContext<TEnv>(
       : undefined,
     _themeConfig: themeConfig,
 
-    setLocationState(entries: LocationStateEntry[]): void {
+    setLocationState(entries: LocationStateEntry | LocationStateEntry[]): void {
       assertNotInsideCacheExec(ctx, "setLocationState");
+      const arr = Array.isArray(entries) ? entries : [entries];
       this._locationState = this._locationState
-        ? [...this._locationState, ...entries]
-        : entries;
+        ? [...this._locationState, ...arr]
+        : arr;
     },
     _locationState: undefined,
 
