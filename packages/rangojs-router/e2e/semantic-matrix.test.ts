@@ -190,6 +190,77 @@ const matrixRows: SemanticMatrixRow[] = [
     },
   },
   {
+    id: "MW1",
+    contract:
+      "global and route middleware set context vars and cookies readable by loaders on initial render",
+    transport: "js",
+    execution: "full-render",
+    scope: "n/a",
+    assert: async ({ page }) => {
+      // Global middleware set context var and cookie
+      await expect(testId(page, "layout-global-var")).toHaveText("from-global");
+      await expect(testId(page, "loader-global-cookie")).toHaveText("gv");
+      // Route middleware set context var and cookie
+      await expect(testId(page, "layout-route-var")).toHaveText(
+        "from-route-mw",
+      );
+      await expect(testId(page, "loader-route-cookie")).toHaveText("rv");
+    },
+  },
+  {
+    id: "I1",
+    contract:
+      "soft navigation triggers intercept when when() condition is true",
+    transport: "js",
+    execution: "full-render",
+    scope: "n/a",
+    url: "/prerender-intercept",
+    assert: async ({ page }) => {
+      await testId(page, "pri-link-alpha").click();
+      await expect(testId(page, "pri-modal")).toBeVisible();
+      await expect(testId(page, "pri-modal-indicator")).toHaveText(
+        "Intercepted",
+      );
+    },
+  },
+  {
+    id: "I2",
+    contract: "direct navigation bypasses intercept and renders full page",
+    transport: "js",
+    execution: "full-render",
+    scope: "n/a",
+    url: "/prerender-intercept/alpha",
+    assert: async ({ page }) => {
+      await expect(testId(page, "pri-detail")).toBeVisible();
+      await expect(testId(page, "pri-modal")).not.toBeVisible();
+    },
+  },
+  {
+    id: "W1",
+    contract: "when() returning false prevents intercept on soft navigation",
+    transport: "js",
+    execution: "full-render",
+    scope: "n/a",
+    url: "/",
+    assert: async ({ page }) => {
+      // Home page (from.pathname="/") does not match the prerender-intercept
+      // when condition: from.pathname.startsWith("/prerender-intercept")
+      await page.evaluate(() => {
+        const a = document.createElement("a");
+        a.href = "/prerender-intercept/alpha";
+        a.textContent = "go";
+        a.setAttribute("data-testid", "temp-nav-link");
+        document.body.appendChild(a);
+      });
+      await testId(page, "temp-nav-link").click();
+      await page.waitForURL("**/prerender-intercept/alpha");
+      await waitForHydration(page);
+      // when() returned false: full page renders, no modal
+      await expect(testId(page, "pri-detail")).toBeVisible();
+      await expect(testId(page, "pri-modal")).not.toBeVisible();
+    },
+  },
+  {
     id: "C1",
     contract: "loader without cache() runs fresh on every request",
     transport: "js",
