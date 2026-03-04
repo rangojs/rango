@@ -62,7 +62,14 @@ export function redirect(
 
     if (process.env.NODE_ENV !== "production") {
       const reqCtx = getRequestContext();
-      if (reqCtx && !reqCtx.url.searchParams.has("_rsc_partial")) {
+      // Warn only on true full-page SSR loads. SPA partial requests and server
+      // actions both deliver state through Flight payloads, so suppress for those.
+      if (
+        reqCtx &&
+        !reqCtx.url.searchParams.has("_rsc_partial") &&
+        !reqCtx.request.headers.has("rsc-action") &&
+        !reqCtx.url.searchParams.has("_rsc_action")
+      ) {
         console.warn(
           `[Router] redirect() with state during a full-page (SSR) request to "${url}". ` +
             "Location state is only delivered during SPA navigations and will be lost on this request.",
