@@ -446,41 +446,20 @@ test.describe("handle-meta", () => {
     });
   });
 
-  test.describe("async handle passthrough (delayed meta) - known limitation", () => {
-    /**
-     * KNOWN LIMITATION: Meta set from async children with loading fallbacks
-     * will NOT be included in the initial SSR response or update the DOM.
-     *
-     * This is because:
-     * 1. Handle values are collected when ctx.use(Handle) is called
-     * 2. For async children wrapped in Suspense, the parent renders immediately
-     * 3. The async child's meta() calls happen AFTER handles are collected
-     *
-     * Workaround: Set meta in the parent component before rendering async children,
-     * or use a loader to fetch data and set meta before the route handler returns.
-     */
-
-    test("async child content should render after delay", async ({ page }) => {
+  test.describe("async handle passthrough (late push error)", () => {
+    test("should show error boundary when async child pushes meta too late", async ({
+      page,
+    }) => {
       await page.goto(f.url("/handle-passthrough-async"));
       await waitForHydration(page);
 
-      // Wait for loading state to disappear first
-      await expect(testId(page, "async-passthrough-loading")).toBeHidden({
-        timeout: 10000,
-      });
-
-      // Then wait for async child content (2s delay in component)
-      await expect(testId(page, "async-child-meta-setter")).toBeVisible({
-        timeout: 5000,
-      });
-
-      // Child content is rendered
-      await expect(testId(page, "async-child-set-title")).toContainText(
-        "Async Child Title - RSC Router",
-      );
+      await expect(page.getByText("Internal Server Error")).toBeVisible();
+      await expect(
+        page.getByText(/was pushed after handle collection completed/i).first(),
+      ).toBeVisible();
     });
 
-    test("meta from async child should NOT be in SSR response (known limitation)", async ({
+    test("should include a clear late-push error in SSR output", async ({
       request,
     }) => {
       const response = await request.get(f.url("/handle-passthrough-async"), {
@@ -488,34 +467,18 @@ test.describe("handle-meta", () => {
       });
       const html = await response.text();
 
-      // The initial <title> is from root layout, NOT the async child
-      expect(html).toContain("<title>RSC Router Test App</title>");
-
-      // The async child's meta is NOT in the <head>
-      expect(html).not.toContain("<title>Async Child Title");
-
-      // But the async child's CONTENT is streamed (just not the meta)
-      expect(html).toContain("async-child-meta-setter");
+      expect(html).toContain("LateHandlePushError");
+      expect(html).toContain("was pushed after handle collection completed");
     });
 
-    test("meta should remain from parent (async child meta not applied)", async ({
+    test("should not render the async child content once the late push errors", async ({
       page,
     }) => {
       await page.goto(f.url("/handle-passthrough-async"));
       await waitForHydration(page);
 
-      // Wait for loading state to disappear first
-      await expect(testId(page, "async-passthrough-loading")).toBeHidden({
-        timeout: 10000,
-      });
-
-      // Then wait for async child content
-      await expect(testId(page, "async-child-meta-setter")).toBeVisible({
-        timeout: 5000,
-      });
-
-      // Title remains the root layout default (async child's meta not applied)
-      await expect(page).toHaveTitle("RSC Router Test App");
+      await expect(page.getByText("Internal Server Error")).toBeVisible();
+      await expect(testId(page, "async-child-meta-setter")).not.toBeVisible();
     });
   });
 

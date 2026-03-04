@@ -34,6 +34,7 @@ export const NamedRoutes = {
   changelog: "/changelog",
   "ctxClean.index": "/ctx-clean",
   "ctxClean.source": "/ctx-clean/source",
+  delayedBreadcrumbs: "/delayed-breadcrumbs",
   docs: "/docs",
   "docs.article": "/docs/:slug",
   "errors.clientError": "/errors/client-error",

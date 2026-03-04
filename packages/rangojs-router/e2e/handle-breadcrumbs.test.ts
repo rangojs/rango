@@ -63,6 +63,21 @@ test.describe("handle-breadcrumbs", () => {
     await expect(breadcrumbs.locator("text=Post post-1")).toBeVisible();
   });
 
+  test("should show a clear error when breadcrumbs are pushed late during jsx render", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/delayed-breadcrumbs"));
+
+    await expect(
+      page.getByText(/was pushed after handle collection completed/i).first(),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        /async jsx subtree suspended and later tried to push a handle/i,
+      ),
+    ).toBeVisible();
+  });
+
   test("should update breadcrumbs on navigation", async ({ page }) => {
     await page.goto(f.url("/"));
     await waitForHydration(page);
