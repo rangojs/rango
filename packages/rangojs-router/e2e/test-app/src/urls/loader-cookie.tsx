@@ -1,6 +1,13 @@
-import { urls, cookies } from "@rangojs/router";
-import { CookieTestLoader, CookieFromMiddlewareLoader } from "../loaders.js";
+import { urls, cookies, createVar } from "@rangojs/router";
+import {
+  CookieTestLoader,
+  CookieFromMiddlewareLoader,
+  ActionCookieLoader,
+} from "../loaders.js";
 import { RequestContextReverseClient } from "../components/RequestContextReverseClient.js";
+import { ActionSetCookieButton } from "../components/ActionSetCookieButton.js";
+
+const MwSession = createVar<string | null>();
 
 /**
  * Test patterns for LoaderContext cookie access and RequestContext reverse.
@@ -69,5 +76,59 @@ export const loaderCookiePatterns = urls(({ path, loader, middleware }) => [
       </div>
     ),
     { name: "reverseTest" },
+  ),
+
+  // Action sets cookie, loader reads it via revalidation (read-after-write).
+  // The action calls cookies().set(), then the server revalidates this route's
+  // loader which calls cookies().get() and sees the value via the response
+  // stub merge (same request, no navigation needed).
+  path(
+    "/action-sets-cookie",
+    async (ctx) => {
+      const data = await ctx.use(ActionCookieLoader);
+      return (
+        <div data-testid="action-sets-cookie-page">
+          <h1>Action Sets Cookie</h1>
+          <ActionSetCookieButton />
+          <span data-testid="mw-session-value">
+            {data.session ?? "no-session"}
+          </span>
+        </div>
+      );
+    },
+    { name: "actionSetsCookie" },
+    () => [loader(ActionCookieLoader)],
+  ),
+
+  // Route middleware reads a session cookie and exposes it via ctx.set().
+  // After a server action mutates the cookie, the middleware-derived value
+  // should be refreshed during same-request revalidation.
+  path(
+    "/mw-reads-cookie",
+    async (ctx) => {
+      const mwValue = ctx.get(MwSession);
+      const data = await ctx.use(ActionCookieLoader);
+      return (
+        <div data-testid="mw-reads-cookie-page">
+          <h1>Middleware Reads Cookie</h1>
+          <ActionSetCookieButton />
+          <span data-testid="mw-session-from-middleware">
+            {mwValue ?? "no-session"}
+          </span>
+          <span data-testid="mw-session-from-loader">
+            {data.session ?? "no-session"}
+          </span>
+        </div>
+      );
+    },
+    { name: "mwReadsCookie" },
+    () => [
+      middleware(async (ctx, next) => {
+        const session = cookies().get("mw-session")?.value ?? null;
+        ctx.set(MwSession, session);
+        await next();
+      }),
+      loader(ActionCookieLoader),
+    ],
   ),
 ]);

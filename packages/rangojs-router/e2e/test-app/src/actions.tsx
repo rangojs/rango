@@ -280,3 +280,15 @@ export async function actionRedirectLogin(
 
   throw redirect("/action-redirect-revalidation");
 }
+
+/**
+ * Action that sets a cookie without redirecting.
+ * Used to test that middleware sees the cookie on the NEXT navigation,
+ * not on the same-request revalidation (middleware runs before actions).
+ */
+export async function actionSetSessionCookie(): Promise<void> {
+  cookies().set("mw-session", "action-set-value", {
+    path: "/",
+    maxAge: 86400,
+  });
+}

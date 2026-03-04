@@ -11,6 +11,10 @@ import {
   setRequestContextParams,
   getLocationState,
 } from "../server/request-context.js";
+import {
+  refreshRouteMiddleware,
+  type CollectedMiddleware,
+} from "../router/middleware.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import type { RscPayload } from "./types.js";
 import {
@@ -39,6 +43,12 @@ export async function handleServerAction<TEnv>(
   url: URL,
   actionId: string,
   handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  routeMiddleware?: CollectedMiddleware[],
+  reverse?: (
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ) => string,
 ): Promise<Response> {
   const temporaryReferences = ctx.createTemporaryReferenceSet();
 
@@ -176,6 +186,21 @@ export async function handleServerAction<TEnv>(
     actionResult: returnValue.data,
     formData: actionFormData,
   };
+
+  const requestContext = requireRequestContext();
+  const refreshedMiddlewareResponse =
+    routeMiddleware && routeMiddleware.length > 0
+      ? await refreshRouteMiddleware(
+          routeMiddleware,
+          request,
+          env,
+          requestContext.var,
+          reverse,
+        )
+      : null;
+  if (refreshedMiddlewareResponse) {
+    return refreshedMiddlewareResponse;
+  }
 
   const matchResult = await ctx.router.matchPartial(
     request,

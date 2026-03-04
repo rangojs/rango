@@ -574,6 +574,15 @@ export const CookieFromMiddlewareLoader = createLoader(async () => {
   };
 });
 
+/**
+ * Loader that reads the "mw-session" cookie.
+ * Used to test action-sets-cookie -> revalidation -> loader-reads-cookie flow.
+ */
+export const ActionCookieLoader = createLoader(async () => {
+  const session = cookies().get("mw-session")?.value ?? null;
+  return { session };
+});
+
 // ============================================================================
 // Loader return type tests (ReactNode, null)
 // ============================================================================

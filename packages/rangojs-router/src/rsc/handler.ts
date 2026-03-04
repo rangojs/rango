@@ -9,7 +9,11 @@
 
 import { createElement } from "react";
 import { RouteNotFoundError } from "../errors.js";
-import { matchMiddleware, executeMiddleware } from "../router/middleware.js";
+import {
+  matchMiddleware,
+  executeMiddleware,
+  type CollectedMiddleware,
+} from "../router/middleware.js";
 import {
   runWithRequestContext,
   setRequestContextParams,
@@ -379,6 +383,7 @@ export function createRSCHandler<
     }
 
     // Wrap RSC handler to append Vary: Accept on content-negotiated routes
+    const routeReverse = createReverseFunction(getRequiredRouteMap());
     const rscHandler = async () => {
       const response = await coreRequestHandlerInner(
         request,
@@ -388,6 +393,8 @@ export function createRSCHandler<
         nonce,
         preview?.params,
         preview?.routeKey,
+        preview?.routeMiddleware,
+        routeReverse,
       );
       if (preview?.negotiated) {
         response.headers.append("Vary", "Accept");
@@ -396,14 +403,17 @@ export function createRSCHandler<
     };
 
     if (preview?.routeMiddleware && preview.routeMiddleware.length > 0) {
+      const routeVarKeys = new Set<string | symbol>();
       const mwResponse = await executeMiddleware(
         buildRouteMiddlewareEntries<TEnv>(preview.routeMiddleware),
         request,
         env,
         variables,
         rscHandler,
-        createReverseFunction(getRequiredRouteMap()),
+        routeReverse,
+        routeVarKeys,
       );
+      requireRequestContext()._routeMiddlewareVarKeys = routeVarKeys;
 
       if (url.searchParams.has("_rsc_partial")) {
         const intercepted = interceptRedirectForPartial(
@@ -429,6 +439,12 @@ export function createRSCHandler<
     nonce: string | undefined,
     routeParams?: Record<string, string>,
     routeKey?: string,
+    routeMiddleware?: CollectedMiddleware[],
+    reverse?: (
+      name: string,
+      params?: Record<string, string>,
+      search?: Record<string, unknown>,
+    ) => string,
   ): Promise<Response> {
     const isPartial = url.searchParams.has("_rsc_partial");
     const isAction =
@@ -539,6 +555,8 @@ export function createRSCHandler<
             url,
             actionId,
             handleStore,
+            routeMiddleware,
+            reverse,
           );
         } catch (error) {
           callOnError(error, "action", {
