@@ -13,6 +13,19 @@
  */
 export type HandleData = Record<string, Record<string, unknown[]>>;
 
+function createLateHandlePushError(
+  handleName: string,
+  segmentId: string,
+): Error {
+  const error = new Error(
+    `Handle "${handleName}" for segment "${segmentId}" was pushed after handle collection completed. ` +
+      `This usually means an async JSX subtree suspended and later tried to push a handle during streaming. ` +
+      `Push handles from the route/layout handler or during the initial synchronous JSX render instead.`,
+  );
+  error.name = "LateHandlePushError";
+  return error;
+}
+
 /**
  * Deep clone handle data to create a snapshot.
  * @internal
@@ -147,6 +160,10 @@ export function createHandleStore(): HandleStore {
     },
 
     push(handleName: string, segmentId: string, value: unknown): void {
+      if (completed) {
+        throw createLateHandlePushError(handleName, segmentId);
+      }
+
       if (!data[handleName]) {
         data[handleName] = {};
       }

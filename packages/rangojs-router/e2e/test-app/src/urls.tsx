@@ -39,6 +39,7 @@ import { ctxCleanPatterns } from "./urls/ctx-clean.js";
 import { actionRedirectRevalidationPatterns } from "./urls/action-redirect-revalidation.js";
 import { hashNavigationPatterns } from "./urls/hash-navigation.js";
 import { linkBehaviorPatterns } from "./urls/link-behavior.js";
+import { delayedBreadcrumbPatterns } from "./urls/delayed-breadcrumbs.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -452,6 +453,7 @@ export const urlpatterns = urls(
       // Handle passthrough and hydration patterns
       include("/", handlePatterns),
       include("/", hydrationPatterns),
+      include("/", delayedBreadcrumbPatterns),
 
       // Trailing slash patterns
       include("/", trailingSlashPatterns),
