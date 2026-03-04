@@ -599,3 +599,12 @@ export const NullTestLoader = createLoader(async () => {
   nullLoaderCount++;
   return { value: null, count: nullLoaderCount };
 });
+
+// ============================================================================
+// Root-level (orphan) loader test
+// Verifies that loader() placed at the root of urls() works correctly
+// ============================================================================
+
+export const RootLevelTestLoader = createLoader(async () => {
+  return { source: "root-level-loader", timestamp: new Date().toISOString() };
+});

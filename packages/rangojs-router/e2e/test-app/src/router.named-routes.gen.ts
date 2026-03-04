@@ -148,6 +148,7 @@ export const NamedRoutes = {
   "reverseAutofill.settings": "/reverse-autofill/:tenantId/settings",
   "reverseAutofill.user": "/reverse-autofill/:tenantId/users/:userId",
   reverseFallbackTest: "/reverse-fallback-test",
+  "rootLoader.index": "/root-loader",
   "search.detail": { path: "/search/:category", search: { q: "string?", active: "boolean?" } },
   "search.index": { path: "/search", search: { q: "string", page: "number?", sort: "string?" } },
   shopPlayground: "/shop-playground",

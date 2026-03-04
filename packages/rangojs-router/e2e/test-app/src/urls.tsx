@@ -40,6 +40,7 @@ import { actionRedirectRevalidationPatterns } from "./urls/action-redirect-reval
 import { hashNavigationPatterns } from "./urls/hash-navigation.js";
 import { linkBehaviorPatterns } from "./urls/link-behavior.js";
 import { delayedBreadcrumbPatterns } from "./urls/delayed-breadcrumbs.js";
+import { rootLoaderPatterns } from "./urls/root-loader.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -560,6 +561,9 @@ export const urlpatterns = urls(
       include("/link-behavior", linkBehaviorPatterns, {
         name: "linkBehavior",
       }),
+
+      // Root-level (orphan) loader test patterns
+      include("/root-loader", rootLoaderPatterns, { name: "rootLoader" }),
 
       // Prerender with parent route params (locale in include prefix)
       include("/:locale", prerenderLocalePatterns, { name: "locale" }),

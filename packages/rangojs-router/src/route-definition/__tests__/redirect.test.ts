@@ -70,10 +70,7 @@ describe("redirect()", () => {
     it("accumulates multiple state entries", () => {
       const ctx = withContext({}, () => {
         redirect("/target", {
-          state: [
-            fakeEntry("flash", "msg1"),
-            fakeEntry("info", "msg2"),
-          ],
+          state: [fakeEntry("flash", "msg1"), fakeEntry("info", "msg2")],
         });
       });
 
