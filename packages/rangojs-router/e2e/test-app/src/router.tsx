@@ -53,6 +53,11 @@ export interface AppVariables {
   sharedFromGetParams?: string;
   // Prerender locale test variable
   localeContent?: string;
+  // Middleware chain integration test variables
+  chainGlobal?: string;
+  chainAction?: string;
+  chainRouteReport?: string;
+  chainIntercept?: string;
 }
 
 export type AppEnv = AppBindings;
@@ -207,6 +212,13 @@ export const router = createRouter<AppEnv>({
   .use("/middleware-test/cookies", cookieMiddleware)
   // Pattern-based middleware with params
   .use("/middleware-test/params/:id", paramsMiddleware)
+  // Middleware chain integration test: global layer sets var, header, cookie
+  .use("/mw-chain/*", async (ctx, next) => {
+    ctx.set("chainGlobal", "from-global");
+    ctx.header("X-Chain-Global", "applied");
+    cookies().set("chain-global", "gv", { path: "/", maxAge: 86400 });
+    await next();
+  })
   // Pre-handler onResponse callback for response cache callback tests.
   // Registers a callback via getRequestContext().onResponse() which lands
   // in savedCallbacks (before the cache block), so it runs on every serve.

@@ -8,6 +8,46 @@ argument-hint: [middleware-name]
 
 Middleware runs before/after route handlers using the onion model.
 
+## Execution Model
+
+There are two levels of middleware with different execution scopes:
+
+### Global middleware (`router.use()`)
+
+Registered on the router instance. Wraps the **entire request**, including server actions, rendering, and progressive enhancement (PE) re-renders.
+
+```typescript
+const router = createRouter<AppEnv>({})
+  .use(loggerMiddleware) // all routes
+  .use("/admin/*", authMiddleware) // pattern-scoped
+  .routes(urlpatterns);
+```
+
+### Route middleware (`middleware()` in `urls()`)
+
+Registered inside `urls()` callback. Wraps **rendering only** -- it does NOT wrap server action execution. Actions run before route middleware, so when route middleware executes during post-action revalidation, it can observe state that the action set (cookies, context variables, headers).
+
+```
+Request flow (with action):
+  global mw -> action executes -> route mw -> layout -> handler -> loaders
+
+Request flow (no action):
+  global mw -> route mw -> layout -> handler -> loaders
+
+Progressive enhancement (no-JS form POST):
+  global mw -> action executes -> route mw -> full page re-render
+```
+
+The contract is: **route middleware wraps rendering regardless of transport** (JS-enabled RSC stream or no-JS HTML). During PE re-render, route middleware observes action-set state (cookies, context variables) the same way it does during JS-enabled post-action revalidation.
+
+Revalidation is still partial. Route middleware wraps the render pass that
+does happen, but it does not force unrelated outer segments to recompute.
+If a child segment depends on data established by an outer handler/layout,
+revalidate that outer segment too, or have the child guard/reload the
+data itself.
+
+Route middleware is the right place for per-route concerns that affect rendering (setting context variables for handlers, adding response headers, reading cookies set by actions). It is NOT the right place for action guards -- use global middleware for that.
+
 ## Basic Middleware
 
 ```typescript

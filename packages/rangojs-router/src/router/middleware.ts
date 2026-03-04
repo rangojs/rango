@@ -18,21 +18,7 @@ import type {
   MiddlewareFn,
   ResponseHolder,
 } from "./middleware-types.js";
-import {
-  _getRequestContext,
-  createRequestContext,
-  runWithRequestContext,
-} from "../server/request-context.js";
-
-type TrackedVariableKey = string | symbol;
-
-function trackVariableWrite(
-  trackedVarKeys: Set<TrackedVariableKey> | undefined,
-  keyOrVar: string | { key: symbol },
-): void {
-  if (!trackedVarKeys) return;
-  trackedVarKeys.add(typeof keyOrVar === "string" ? keyOrVar : keyOrVar.key);
-}
+import { _getRequestContext } from "../server/request-context.js";
 
 // Re-export types and cookie utilities for backward compatibility
 export type {
@@ -128,7 +114,6 @@ export function createMiddlewareContext<TEnv>(
   params: Record<string, string>,
   variables: Record<string, unknown>,
   responseHolder: ResponseHolder,
-  trackedVarKeys?: Set<TrackedVariableKey>,
   reverse?: (
     name: string,
     params?: Record<string, string>,
@@ -183,7 +168,6 @@ export function createMiddlewareContext<TEnv>(
       contextGet(variables, keyOrVar)) as MiddlewareContext<TEnv>["get"],
 
     set: ((keyOrVar: any, value: unknown) => {
-      trackVariableWrite(trackedVarKeys, keyOrVar);
       contextSet(variables, keyOrVar, value);
     }) as MiddlewareContext<TEnv>["set"],
 
@@ -270,7 +254,6 @@ export async function executeMiddleware<TEnv>(
     params?: Record<string, string>,
     search?: Record<string, unknown>,
   ) => string,
-  trackedVarKeys?: Set<TrackedVariableKey>,
 ): Promise<Response> {
   let index = 0;
 
@@ -323,7 +306,6 @@ export async function executeMiddleware<TEnv>(
       params,
       variables,
       responseHolder,
-      trackedVarKeys,
       reverse,
     );
 
@@ -409,90 +391,6 @@ export async function executeMiddleware<TEnv>(
 }
 
 /**
- * Recompute route middleware-derived variables after a server action mutates
- * request-scoped state (for example cookies()).
- *
- * Middleware runs inside an isolated request context seeded with the live
- * response stub, so cookies().get() sees action mutations while header/cookie
- * writes from the refresh pass do not leak into the real response unless the
- * middleware short-circuits with its own Response.
- */
-export async function refreshRouteMiddleware<TEnv>(
-  middlewares: CollectedMiddleware[],
-  request: Request,
-  env: TEnv,
-  variables: Record<string, any>,
-  reverse?: (
-    name: string,
-    params?: Record<string, string>,
-    search?: Record<string, unknown>,
-  ) => string,
-): Promise<Response | null> {
-  if (middlewares.length === 0) {
-    return null;
-  }
-
-  const liveCtx = _getRequestContext();
-  if (!liveCtx) {
-    return null;
-  }
-
-  for (const key of liveCtx._routeMiddlewareVarKeys ?? []) {
-    delete variables[key as keyof typeof variables];
-  }
-
-  const trackedVarKeys = new Set<TrackedVariableKey>();
-  const refreshTerminalHeader = "X-Rango-Refresh-Terminal";
-  const isolatedCtx = createRequestContext({
-    env: liveCtx.env as TEnv,
-    request: liveCtx.request,
-    url: liveCtx.url,
-    variables,
-    cacheStore: liveCtx._cacheStore,
-    themeConfig: liveCtx._themeConfig,
-    initialResponse: liveCtx.res,
-  });
-  isolatedCtx.params = liveCtx.params;
-  isolatedCtx._routeName = liveCtx._routeName;
-  isolatedCtx.reverse = liveCtx.reverse;
-
-  const middlewareEntries = middlewares.map(({ handler, params }) => ({
-    entry: {
-      pattern: null,
-      regex: null,
-      paramNames: [],
-      handler,
-      mountPrefix: null,
-    } as MiddlewareEntry<TEnv>,
-    params,
-  }));
-
-  const response = await runWithRequestContext(isolatedCtx, () =>
-    executeMiddleware(
-      middlewareEntries,
-      request,
-      env,
-      variables,
-      async () =>
-        new Response(null, {
-          status: 204,
-          headers: { [refreshTerminalHeader]: "1" },
-        }),
-      reverse,
-      trackedVarKeys,
-    ),
-  );
-
-  liveCtx._routeMiddlewareVarKeys = trackedVarKeys;
-
-  if (response.headers.has(refreshTerminalHeader)) {
-    return null;
-  }
-
-  return response;
-}
-
-/**
  * Execute middleware for intercepts (simplified execution)
  *
  * Intercepts use a shared stubResponse from the request context. This function:
@@ -542,7 +440,6 @@ export async function executeInterceptMiddleware<TEnv>(
       params,
       variables,
       responseHolder,
-      undefined,
       reverse,
     );
 

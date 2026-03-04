@@ -176,6 +176,49 @@ test.describe("Middleware reads cookie set by action", () => {
   });
 });
 
+test.describe("Middleware post-next() header writes survive refresh", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test("ctx.header() after await next() is included in the action response", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/loader-cookie/mw-post-next-header"));
+    await waitForHydration(page);
+    await expect(testId(page, "mw-post-next-header-page")).toBeVisible();
+
+    // Initial state: no cookie, middleware sets X-Auth-Status: anonymous
+    await expect(testId(page, "mw-post-next-from-middleware")).toHaveText(
+      "no-session",
+    );
+
+    // Intercept the action's Flight response to check headers
+    const actionResponsePromise = page.waitForResponse((resp) =>
+      resp.url().includes("_rsc_action"),
+    );
+
+    await testId(page, "action-set-cookie-btn").click();
+
+    const actionResponse = await actionResponsePromise;
+    // Post-next() header should reflect the refreshed cookie state
+    expect(actionResponse.headers()["x-auth-status"]).toBe("authenticated");
+
+    // UI should also update
+    await expect(testId(page, "mw-post-next-from-middleware")).toHaveText(
+      "action-set-value",
+      { timeout: 10000 },
+    );
+    await expect(testId(page, "mw-post-next-from-loader")).toHaveText(
+      "action-set-value",
+      { timeout: 10000 },
+    );
+  });
+});
+
 // === Production mode tests ===
 
 test.describe("Loader cookies() (production)", () => {
@@ -331,6 +374,45 @@ test.describe("Action sets cookie, loader reads via revalidation (production)", 
 
     // After action completes, revalidation re-runs the loader
     await expect(testId(page, "mw-session-value")).toHaveText(
+      "action-set-value",
+      { timeout: 10000 },
+    );
+  });
+});
+
+test.describe("Middleware post-next() header writes survive refresh (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("ctx.header() after await next() is included in the action response (production)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/loader-cookie/mw-post-next-header"));
+    await waitForHydration(page);
+    await expect(testId(page, "mw-post-next-header-page")).toBeVisible();
+
+    await expect(testId(page, "mw-post-next-from-middleware")).toHaveText(
+      "no-session",
+    );
+
+    const actionResponsePromise = page.waitForResponse((resp) =>
+      resp.url().includes("_rsc_action"),
+    );
+
+    await testId(page, "action-set-cookie-btn").click();
+
+    const actionResponse = await actionResponsePromise;
+    expect(actionResponse.headers()["x-auth-status"]).toBe("authenticated");
+
+    await expect(testId(page, "mw-post-next-from-middleware")).toHaveText(
+      "action-set-value",
+      { timeout: 10000 },
+    );
+    await expect(testId(page, "mw-post-next-from-loader")).toHaveText(
       "action-set-value",
       { timeout: 10000 },
     );

@@ -35,6 +35,7 @@ import { useCachePatterns } from "./urls/use-cache.js";
 import { prerenderLocalePatterns } from "./urls/prerender-locale.js";
 import { loaderReversePatterns } from "./urls/loader-reverse.js";
 import { loaderCookiePatterns } from "./urls/loader-cookie.js";
+import { mwChainPatterns } from "./urls/mw-chain.js";
 import { ctxCleanPatterns } from "./urls/ctx-clean.js";
 import { actionRedirectRevalidationPatterns } from "./urls/action-redirect-revalidation.js";
 import { hashNavigationPatterns } from "./urls/hash-navigation.js";
@@ -541,6 +542,9 @@ export const urlpatterns = urls(
       include("/loader-cookie", loaderCookiePatterns, {
         name: "loaderCookie",
       }),
+
+      // Middleware chain integration test (global mw + action + route mw + layout + loader)
+      include("/mw-chain", mwChainPatterns, { name: "mwChain" }),
 
       // Action redirect revalidation test patterns
       include(

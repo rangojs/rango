@@ -131,4 +131,42 @@ export const loaderCookiePatterns = urls(({ path, loader, middleware }) => [
       loader(ActionCookieLoader),
     ],
   ),
+
+  // Middleware sets a response header AFTER await next() based on cookie state.
+  // Tests that post-next() ctx.header() writes during the refresh pass are
+  // propagated to the live response stub (not silently dropped).
+  path(
+    "/mw-post-next-header",
+    async (ctx) => {
+      const mwValue = ctx.get(MwSession);
+      const data = await ctx.use(ActionCookieLoader);
+      return (
+        <div data-testid="mw-post-next-header-page">
+          <h1>Middleware Post-Next Header</h1>
+          <ActionSetCookieButton />
+          <span data-testid="mw-post-next-from-middleware">
+            {mwValue ?? "no-session"}
+          </span>
+          <span data-testid="mw-post-next-from-loader">
+            {data.session ?? "no-session"}
+          </span>
+        </div>
+      );
+    },
+    { name: "mwPostNextHeader" },
+    () => [
+      middleware(async (ctx, next) => {
+        const session = cookies().get("mw-session")?.value ?? null;
+        ctx.set(MwSession, session);
+        await next();
+        // Post-next header write using ctx.get() for the refreshed value.
+        // Using the captured local `session` would be stale after an action
+        // mutates the cookie because the outer middleware closure captured
+        // it before the action ran.
+        const current = ctx.get(MwSession);
+        ctx.header("X-Auth-Status", current ? "authenticated" : "anonymous");
+      }),
+      loader(ActionCookieLoader),
+    ],
+  ),
 ]);

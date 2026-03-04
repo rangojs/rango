@@ -9,11 +9,7 @@
 
 import { createElement } from "react";
 import { RouteNotFoundError } from "../errors.js";
-import {
-  matchMiddleware,
-  executeMiddleware,
-  type CollectedMiddleware,
-} from "../router/middleware.js";
+import { matchMiddleware, executeMiddleware } from "../router/middleware.js";
 import {
   runWithRequestContext,
   setRequestContextParams,
@@ -54,7 +50,11 @@ import {
 import type { HandlerContext } from "./handler-context.js";
 import { buildRouterTrieFromUrlpatterns } from "./manifest-init.js";
 import { handleProgressiveEnhancement } from "./progressive-enhancement.js";
-import { handleServerAction } from "./server-action.js";
+import {
+  executeServerAction,
+  revalidateAfterAction,
+  type ActionContinuation,
+} from "./server-action.js";
 import { handleLoaderFetch } from "./loader-fetch.js";
 import { handleRscRendering } from "./rsc-rendering.js";
 
@@ -364,7 +364,6 @@ export function createRSCHandler<
     variables: Record<string, any>,
     nonce: string | undefined,
   ): Promise<Response> {
-    // First, check for route-level middleware
     const previewStart = performance.now();
     const preview = await router.previewMatch(request, { env });
     const previewDur = performance.now() - previewStart;
@@ -382,9 +381,76 @@ export function createRSCHandler<
       );
     }
 
-    // Wrap RSC handler to append Vary: Accept on content-negotiated routes
     const routeReverse = createReverseFunction(getRequiredRouteMap());
-    const rscHandler = async () => {
+
+    const isAction =
+      request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
+    const actionId =
+      request.headers.get("rsc-action") || url.searchParams.get("_rsc_action");
+
+    // Get handle store from request context
+    const handleStore = requireRequestContext()._handleStore;
+
+    // Set route params early so all execution paths can access ctx.params.
+    if (preview?.params) {
+      setRequestContextParams(preview.params, preview.routeKey);
+    }
+
+    // Progressive enhancement runs before the normal action/render paths.
+    // Route middleware wraps the PE re-render so handlers see the same
+    // context variables regardless of JS/no-JS transport.
+    const progressiveResult = await handleProgressiveEnhancement(
+      handlerCtx,
+      request,
+      env,
+      url,
+      isAction,
+      handleStore,
+      nonce,
+      {
+        routeMiddleware: preview?.routeMiddleware,
+        variables,
+        routeReverse,
+      },
+    );
+    if (progressiveResult) {
+      return progressiveResult;
+    }
+
+    // --- Action execution: runs BEFORE route middleware ---
+    // Route middleware wraps rendering only. For actions, the action runs
+    // first in the global middleware context, then route middleware wraps
+    // the revalidation pass (identical to a normal render).
+    let actionContinuation: ActionContinuation | undefined;
+    if (isAction && actionId) {
+      try {
+        const result = await executeServerAction(
+          handlerCtx,
+          request,
+          env,
+          url,
+          actionId,
+          handleStore,
+        );
+        // Response means redirect or error boundary — done.
+        if (result instanceof Response) return result;
+        actionContinuation = result;
+      } catch (error) {
+        callOnError(error, "action", {
+          request,
+          url,
+          env,
+          actionId,
+          handledByBoundary: false,
+        });
+        console.error(`[RSC] Action error:`, error);
+        throw error;
+      }
+    }
+
+    // --- Rendering (action revalidation or navigation) ---
+    // Route middleware wraps this — same code path for both cases.
+    const renderHandler = async () => {
       const response = await coreRequestHandlerInner(
         request,
         env,
@@ -393,8 +459,8 @@ export function createRSCHandler<
         nonce,
         preview?.params,
         preview?.routeKey,
-        preview?.routeMiddleware,
-        routeReverse,
+        handleStore,
+        actionContinuation,
       );
       if (preview?.negotiated) {
         response.headers.append("Vary", "Accept");
@@ -403,17 +469,14 @@ export function createRSCHandler<
     };
 
     if (preview?.routeMiddleware && preview.routeMiddleware.length > 0) {
-      const routeVarKeys = new Set<string | symbol>();
       const mwResponse = await executeMiddleware(
         buildRouteMiddlewareEntries<TEnv>(preview.routeMiddleware),
         request,
         env,
         variables,
-        rscHandler,
+        renderHandler,
         routeReverse,
-        routeVarKeys,
       );
-      requireRequestContext()._routeMiddlewareVarKeys = routeVarKeys;
 
       if (url.searchParams.has("_rsc_partial")) {
         const intercepted = interceptRedirectForPartial(
@@ -427,10 +490,12 @@ export function createRSCHandler<
     }
 
     // No route middleware, proceed directly
-    return rscHandler();
+    return renderHandler();
   }
 
-  // Inner request handler (actual RSC logic, wrapped by route middleware if any)
+  // Inner request handler: rendering logic wrapped by route middleware.
+  // Handles action revalidation (when actionContinuation is present),
+  // loader fetches, and regular RSC rendering.
   async function coreRequestHandlerInner(
     request: Request,
     env: TEnv,
@@ -439,18 +504,12 @@ export function createRSCHandler<
     nonce: string | undefined,
     routeParams?: Record<string, string>,
     routeKey?: string,
-    routeMiddleware?: CollectedMiddleware[],
-    reverse?: (
-      name: string,
-      params?: Record<string, string>,
-      search?: Record<string, unknown>,
-    ) => string,
+    handleStore?: ReturnType<typeof requireRequestContext>["_handleStore"],
+    actionContinuation?: ActionContinuation,
   ): Promise<Response> {
     const isPartial = url.searchParams.has("_rsc_partial");
     const isAction =
       request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
-    const actionId =
-      request.headers.get("rsc-action") || url.searchParams.get("_rsc_action");
 
     // Version mismatch detection - client may have stale code after HMR/deployment
     // If versions don't match, tell the client to reload
@@ -516,59 +575,27 @@ export function createRSCHandler<
       );
     }
 
-    // Get handle store from request context (created at start of request)
-    const handleStore = requireRequestContext()._handleStore;
+    const store = handleStore ?? requireRequestContext()._handleStore;
 
     try {
-      // Set route params early so all execution paths (progressive enhancement,
-      // server actions, loader fetches) can access ctx.params via getRequestContext().
-      // Previously this was only done for JS actions, leaving PE actions with empty params.
+      // Route params were already set in coreRequestHandler, but set again
+      // for callers that enter coreRequestHandlerInner directly.
       if (routeParams) {
         setRequestContextParams(routeParams, routeKey);
       }
 
       // ============================================================================
-      // PROGRESSIVE ENHANCEMENT: No-JS Form Submissions
+      // ACTION REVALIDATION (action already executed, revalidate segments)
       // ============================================================================
-      const progressiveResult = await handleProgressiveEnhancement(
-        handlerCtx,
-        request,
-        env,
-        url,
-        isAction,
-        handleStore,
-        nonce,
-      );
-      if (progressiveResult) {
-        return progressiveResult;
-      }
-
-      // ============================================================================
-      // SERVER ACTION EXECUTION (JavaScript-enabled client)
-      // ============================================================================
-      if (isAction && actionId) {
-        try {
-          return await handleServerAction(
-            handlerCtx,
-            request,
-            env,
-            url,
-            actionId,
-            handleStore,
-            routeMiddleware,
-            reverse,
-          );
-        } catch (error) {
-          callOnError(error, "action", {
-            request,
-            url,
-            env,
-            actionId,
-            handledByBoundary: false,
-          });
-          console.error(`[RSC] Action error:`, error);
-          throw error;
-        }
+      if (actionContinuation) {
+        return await revalidateAfterAction(
+          handlerCtx,
+          request,
+          env,
+          url,
+          store,
+          actionContinuation,
+        );
       }
 
       // ============================================================================
@@ -596,7 +623,7 @@ export function createRSCHandler<
         env,
         url,
         isPartial,
-        handleStore,
+        store,
         nonce,
       );
     } catch (error) {
@@ -670,7 +697,7 @@ export function createRSCHandler<
             diff: [],
             isPartial: false,
             rootLayout: router.rootLayout,
-            handles: handleStore.stream(),
+            handles: store.stream(),
             version,
             themeConfig: router.themeConfig,
             warmupEnabled: router.warmupEnabled,

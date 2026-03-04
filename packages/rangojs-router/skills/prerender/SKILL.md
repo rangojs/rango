@@ -130,6 +130,16 @@ All items inside the path's use() callback (child layouts, parallels) also recei
 `BuildContext` during pre-rendering. Loaders are the exception -- they run at
 request time with full server context.
 
+This is one reason prerender is a good fit for handler-first composition:
+the handler and its child layouts/parallels participate in the same full
+render pass, so data set with `ctx.set()` is available downstream via
+`ctx.get()`.
+
+At runtime, partial action revalidation follows a narrower rule: only
+revalidated segments are recomputed. If a child segment depends on data
+established by an outer handler/layout, that outer segment must also be
+revalidated, or the child must load/guard the data independently.
+
 ## Supported Export Patterns
 
 All of the following are equivalent and fully supported by the Vite transform:
@@ -217,6 +227,10 @@ path("/blog/:slug", BlogPost, { name: "blog.post" }, () => [
 | `middleware()` | Skipped during pre-render (no request). Runs at request time for loaders.                                                                                                                                                                                           |
 | `loading()`    | Ignored without passthrough. Works for live fallback with passthrough.                                                                                                                                                                                              |
 | `intercept()`  | Pre-rendered at build time. Intercept variant stored under `/i` key alongside main segments. At runtime, the correct variant is served based on `ctx.isIntercept`. `when()` conditions are skipped at build time (all intercepts are pre-rendered unconditionally). |
+
+When passthrough revalidation is enabled, remember that revalidation is
+still partial: opting a child segment into revalidation does not
+implicitly re-run outer prerender-derived handlers/layouts.
 
 ## Dev Mode
 

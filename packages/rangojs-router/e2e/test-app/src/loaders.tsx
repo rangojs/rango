@@ -608,3 +608,51 @@ export const NullTestLoader = createLoader(async () => {
   nullLoaderCount++;
   return { value: null, count: nullLoaderCount };
 });
+
+// ============================================================================
+// Middleware chain integration test loaders
+// Reads cookies from all middleware layers to verify the full chain.
+// Fetchable so client components can display via useLoader.
+// ============================================================================
+
+export interface MwChainLoaderData {
+  globalCookie: string | null;
+  actionCookie: string | null;
+  routeCookie: string | null;
+}
+
+export const MwChainLoader = createLoader(
+  async () => {
+    const jar = cookies();
+    return {
+      globalCookie: jar.get("chain-global")?.value ?? null,
+      actionCookie: jar.get("chain-action")?.value ?? null,
+      routeCookie: jar.get("chain-route")?.value ?? null,
+    };
+  },
+  true, // fetchable — allows useLoader in client components
+);
+
+export const MwChainParallelLoader = createLoader(
+  async () => {
+    const jar = cookies();
+    return {
+      globalCookie: jar.get("chain-global")?.value ?? null,
+      actionCookie: jar.get("chain-action")?.value ?? null,
+      routeCookie: jar.get("chain-route")?.value ?? null,
+    };
+  },
+  true, // fetchable
+);
+
+export const MwChainInterceptLoader = createLoader(
+  async () => {
+    const jar = cookies();
+    return {
+      globalCookie: jar.get("chain-global")?.value ?? null,
+      actionCookie: jar.get("chain-action")?.value ?? null,
+      routeCookie: jar.get("chain-route")?.value ?? null,
+    };
+  },
+  true, // fetchable
+);

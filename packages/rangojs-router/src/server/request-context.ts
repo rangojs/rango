@@ -234,9 +234,6 @@ export interface RequestContext<
 
   /** @internal Route name from route matching, used for scoped reverse resolution */
   _routeName?: string;
-
-  /** @internal Variable keys last written by route middleware */
-  _routeMiddlewareVarKeys?: Set<string | symbol>;
 }
 
 /**
@@ -260,7 +257,6 @@ export type PublicRequestContext<
   | "_themeConfig"
   | "_locationState"
   | "_routeName"
-  | "_routeMiddlewareVarKeys"
 >;
 
 // AsyncLocalStorage instance for request context
@@ -610,8 +606,6 @@ export function createRequestContext<TEnv>(
     _locationState: undefined,
 
     reverse: createReverseFunction(getGlobalRouteMap(), undefined, {}),
-
-    _routeMiddlewareVarKeys: undefined,
   };
 
   // Now create use() with access to ctx

@@ -1,9 +1,18 @@
 /**
  * Server Action Handler
  *
- * Handles server action execution and post-action revalidation.
- * Decodes action arguments, executes the action, handles redirects
- * and error boundaries, then revalidates affected segments.
+ * Handles server action execution and post-action revalidation as two
+ * separate phases:
+ *
+ * 1. executeServerAction — decodes args, runs the action, handles redirects
+ *    and error boundaries. Returns either a final Response (redirect/error)
+ *    or an ActionContinuation for the revalidation phase.
+ *
+ * 2. revalidateAfterAction — takes the continuation, matches affected
+ *    segments, builds the RSC payload, and returns the Flight response.
+ *
+ * The handler (handler.ts) runs the action BEFORE route middleware, then
+ * wraps revalidation inside route middleware — identical to a normal render.
  */
 
 import {
@@ -11,10 +20,6 @@ import {
   setRequestContextParams,
   getLocationState,
 } from "../server/request-context.js";
-import {
-  refreshRouteMiddleware,
-  type CollectedMiddleware,
-} from "../router/middleware.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import type { RscPayload } from "./types.js";
 import {
@@ -36,20 +41,40 @@ function attachLocationState(payload: RscPayload): void {
   }
 }
 
-export async function handleServerAction<TEnv>(
+/**
+ * Data flowing from action execution to the revalidation phase.
+ * When the action completes without redirect/error-boundary, the handler
+ * passes this to route middleware → revalidateAfterAction.
+ */
+export interface ActionContinuation {
+  returnValue: { ok: boolean; data: unknown };
+  actionStatus: number;
+  temporaryReferences: ReturnType<
+    HandlerContext["createTemporaryReferenceSet"]
+  >;
+  actionContext: {
+    actionId: string;
+    actionUrl: URL;
+    actionResult: unknown;
+    formData?: FormData;
+  };
+}
+
+/**
+ * Phase 1: Execute the server action.
+ *
+ * Decodes arguments, runs the action, handles redirects and error
+ * boundaries. Returns a final Response (redirect, error boundary render)
+ * or an ActionContinuation for the revalidation phase.
+ */
+export async function executeServerAction<TEnv>(
   ctx: HandlerContext<TEnv>,
   request: Request,
   env: TEnv,
   url: URL,
   actionId: string,
   handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
-  routeMiddleware?: CollectedMiddleware[],
-  reverse?: (
-    name: string,
-    params?: Record<string, string>,
-    search?: Record<string, unknown>,
-  ) => string,
-): Promise<Response> {
+): Promise<Response | ActionContinuation> {
   const temporaryReferences = ctx.createTemporaryReferenceSet();
 
   // Decode action arguments from request body
@@ -175,32 +200,41 @@ export async function handleServerAction<TEnv>(
     }
   }
 
-  // Revalidate after action
+  // Build continuation for the revalidation phase
   const resolvedActionId =
     (loadedAction as { $id?: string; $$id?: string } | undefined)?.$id ??
     (loadedAction as { $$id?: string } | undefined)?.$$id ??
     actionId;
-  const actionContext = {
-    actionId: resolvedActionId,
-    actionUrl: new URL(request.url),
-    actionResult: returnValue.data,
-    formData: actionFormData,
-  };
 
-  const requestContext = requireRequestContext();
-  const refreshedMiddlewareResponse =
-    routeMiddleware && routeMiddleware.length > 0
-      ? await refreshRouteMiddleware(
-          routeMiddleware,
-          request,
-          env,
-          requestContext.var,
-          reverse,
-        )
-      : null;
-  if (refreshedMiddlewareResponse) {
-    return refreshedMiddlewareResponse;
-  }
+  return {
+    returnValue,
+    actionStatus,
+    temporaryReferences,
+    actionContext: {
+      actionId: resolvedActionId,
+      actionUrl: new URL(request.url),
+      actionResult: returnValue.data,
+      formData: actionFormData,
+    },
+  };
+}
+
+/**
+ * Phase 2: Revalidate after action.
+ *
+ * Matches affected segments, builds the RSC payload, and returns the
+ * Flight response. Called inside route middleware (same as a normal render).
+ */
+export async function revalidateAfterAction<TEnv>(
+  ctx: HandlerContext<TEnv>,
+  request: Request,
+  env: TEnv,
+  url: URL,
+  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  continuation: ActionContinuation,
+): Promise<Response> {
+  const { returnValue, actionStatus, temporaryReferences, actionContext } =
+    continuation;
 
   const matchResult = await ctx.router.matchPartial(
     request,
