@@ -239,12 +239,18 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
 
     // Stamp tainted args so ctx.set(), ctx.header(), etc. throw if called
     // inside the cached function body (those side effects are lost on hit).
+    // Also stamp the ALS RequestContext so cookies()/headers() guards fire
+    // (they read from getRequestContext(), which is a different object from
+    // the HandlerContext/ResponseHandlerContext passed as args).
     const taintedArgs: unknown[] = [];
     for (const arg of args) {
       if (isTainted(arg)) {
         (arg as any)[INSIDE_CACHE_EXEC] = true;
         taintedArgs.push(arg);
       }
+    }
+    if (hasTaintedArgs && requestCtx) {
+      (requestCtx as any)[INSIDE_CACHE_EXEC] = true;
     }
 
     let result: any;
@@ -254,6 +260,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       // Always remove the flag, even if the function throws
       for (const arg of taintedArgs) {
         delete (arg as any)[INSIDE_CACHE_EXEC];
+      }
+      if (hasTaintedArgs && requestCtx) {
+        delete (requestCtx as any)[INSIDE_CACHE_EXEC];
       }
     }
 

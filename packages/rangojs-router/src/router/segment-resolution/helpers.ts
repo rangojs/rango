@@ -155,10 +155,7 @@ export function catchSegmentError<TEnv>(
   const setResponseStatus = (status: number) => {
     const reqCtx = getRequestContext();
     if (reqCtx) {
-      reqCtx.res = new Response(null, {
-        status,
-        headers: reqCtx.res.headers,
-      });
+      reqCtx.setStatus(status);
     }
   };
 

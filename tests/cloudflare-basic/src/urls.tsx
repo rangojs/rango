@@ -1,8 +1,9 @@
-import { urls, type ResponseHandlerContext } from "@rangojs/router";
+import { urls, cookies, type ResponseHandlerContext } from "@rangojs/router";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
 import { FeatureLoading } from "./components/FeatureLoading.js";
 import { BlogSidebarLoader } from "./loaders/blog.js";
+import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
 
 // Page handlers
@@ -50,6 +51,8 @@ import {
   ProductReviewsPage,
   CatchAllPage,
 } from "./pages/trie-routing-test.js";
+import { CookieOverlayPage } from "./pages/cookie-overlay.js";
+import { ActionLocationStatePage } from "./pages/action-location-state.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
 
@@ -57,7 +60,7 @@ const docsPatterns = createDocsPatterns({ articles: docsArticles });
  * Main URL patterns - Django-style routing API
  */
 export const urlpatterns = urls(
-  ({ path, layout, parallel, loader, loading, cache, include }) => [
+  ({ path, layout, parallel, loader, loading, cache, include, middleware }) => [
     // API routes (response routes - skip RSC pipeline)
     include("/api", apiPatterns, { name: "api" }),
 
@@ -263,6 +266,25 @@ export const urlpatterns = urls(
 
         // Theme route
         path("/theme", ThemePage, { name: "theme" }),
+
+        // Cookie overlay test route
+        path(
+          "/cookie-overlay",
+          CookieOverlayPage,
+          { name: "cookieOverlay" },
+          () => [
+            middleware(async (ctx, next) => {
+              cookies().set("mw-overlay", "from-middleware", { path: "/" });
+              return next();
+            }),
+            loader(CookieOverlayLoader),
+          ],
+        ),
+
+        // Action location state test route (non-redirect flow)
+        path("/action-location-state", ActionLocationStatePage, {
+          name: "actionLocationState",
+        }),
 
         // Slow routes for navigation progress demo
         // /slow/1 uses handler pattern (blocks) - for testing

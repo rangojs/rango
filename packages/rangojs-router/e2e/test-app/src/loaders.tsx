@@ -1,4 +1,4 @@
-import { createLoader, getRequestContext } from "@rangojs/router";
+import { createLoader, cookies } from "@rangojs/router";
 
 // Simple loader for prerender client component tests
 export const PrerenderTestLoader = createLoader(async () => {
@@ -511,7 +511,7 @@ export const LoaderReverseClientScopedLoader = createLoader(
  * the target route's loader runs fresh (not from stale cache).
  */
 export const ActionRedirectAuthLoader = createLoader(async () => {
-  const session = getRequestContext()?.cookie("test-auth-session");
+  const session = cookies().get("test-auth-session")?.value;
   return {
     user: session || null,
     loadedAt: new Date().toISOString(),
@@ -545,29 +545,30 @@ export const LoaderReverseFetchScopedLoader = createLoader(
 );
 
 // ============================================================================
-// Loader cookie() tests
-// Test that loaders can read cookies directly via ctx.cookie()
+// Loader cookies() tests
+// Test that loaders can read cookies directly via cookies()
 // ============================================================================
 
 /**
- * Loader that reads cookies via ctx.cookie() and ctx.cookies()
- * Used to test that LoaderContext has cookie access
+ * Loader that reads cookies via cookies().get() and cookies().getAll()
+ * Used to test that loaders have cookie access via the standalone cookies() function
  */
-export const CookieTestLoader = createLoader(async (ctx) => {
-  const testSession = ctx.cookie("test-session");
-  const allCookies = ctx.cookies();
+export const CookieTestLoader = createLoader(async () => {
+  const jar = cookies();
+  const testSession = jar.get("test-session")?.value;
+  const allCookies = jar.getAll();
   return {
     session: testSession || null,
-    cookieCount: Object.keys(allCookies).length,
+    cookieCount: allCookies.length,
   };
 });
 
 /**
- * Loader that uses ctx.cookie() to read a cookie set by middleware.
+ * Loader that uses cookies().get() to read a cookie set by middleware.
  * Tests the full pipeline: middleware sets cookie -> loader reads it.
  */
-export const CookieFromMiddlewareLoader = createLoader(async (ctx) => {
-  const visitCount = ctx.cookie("visit-count");
+export const CookieFromMiddlewareLoader = createLoader(async () => {
+  const visitCount = cookies().get("visit-count")?.value;
   return {
     visitCount: visitCount ? parseInt(visitCount, 10) : null,
   };

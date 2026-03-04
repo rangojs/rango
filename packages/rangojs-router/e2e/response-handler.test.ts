@@ -78,8 +78,8 @@ test.describe("response-handler", () => {
     });
   });
 
-  test.describe("ctx.setCookie() on auto-wrapped responses", () => {
-    test("md handler can set cookies via ctx.setCookie()", async ({
+  test.describe("cookies().set() on auto-wrapped responses", () => {
+    test("md handler can set cookies via cookies().set()", async ({
       request,
     }) => {
       const res = await request.get(f.url("/response-wrap/with-headers"));
@@ -89,7 +89,7 @@ test.describe("response-handler", () => {
       expect(setCookie).toContain("md-visited=true");
     });
 
-    test("json handler can set cookies via ctx.setCookie()", async ({
+    test("json handler can set cookies via cookies().set()", async ({
       request,
     }) => {
       const res = await request.get(f.url("/response-wrap/json-headers"));

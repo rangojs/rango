@@ -569,6 +569,24 @@ export function createServerActionBridge(
           onUpdate({ root: newTree, metadata: metadata! });
         });
 
+        // Apply server-set location state to history.state (non-redirect flow)
+        const actionLocationState = metadata?.locationState;
+        if (actionLocationState) {
+          const merged = {
+            ...window.history.state,
+            ...actionLocationState,
+          };
+          window.history.replaceState(merged, "", window.location.href);
+          // Notify useLocationState hooks so they re-read from history.state
+          if (
+            Object.keys(actionLocationState).some((k) =>
+              k.startsWith("__rsc_ls_"),
+            )
+          ) {
+            window.dispatchEvent(new Event("__rsc_locationstate"));
+          }
+        }
+
         // Update store state
         store.setSegmentIds(matched);
         const currentHandleData = eventController.getHandleState().data;

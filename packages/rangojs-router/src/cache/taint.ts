@@ -22,8 +22,9 @@ export function isTainted(value: unknown): boolean {
 
 /**
  * Symbol stamped on tainted ctx during "use cache" function execution.
- * ctx.set(), ctx.header(), ctx.setCookie(), etc. check this flag and
- * throw if present — those side effects would be lost on cache hit.
+ * cookies(), headers(), ctx.set(), ctx.header(), etc. check this flag and
+ * throw if present — reads would cache per-request data under a shared key,
+ * and side effects would be lost on cache hit.
  */
 export const INSIDE_CACHE_EXEC: unique symbol = Symbol.for(
   "rango:inside-cache-exec",
@@ -31,7 +32,7 @@ export const INSIDE_CACHE_EXEC: unique symbol = Symbol.for(
 
 /**
  * Throw if ctx is inside a "use cache" execution.
- * Call from side-effecting ctx methods (set, header, setCookie, etc.).
+ * Call from side-effecting ctx methods (set, header, etc.) and cookie mutations.
  */
 export function assertNotInsideCacheExec(
   ctx: unknown,

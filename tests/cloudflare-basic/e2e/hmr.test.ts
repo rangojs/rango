@@ -523,8 +523,8 @@ test.describe.serial("hmr-route-mutations", () => {
 
     // Add Outlet import and wrap theme route in a layout
     let modified = content.replace(
-      'import { urls, type ResponseHandlerContext } from "@rangojs/router";',
-      `import { urls, type ResponseHandlerContext } from "@rangojs/router";
+      'import { urls, cookies, type ResponseHandlerContext } from "@rangojs/router";',
+      `import { urls, cookies, type ResponseHandlerContext } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";`,
     );
     modified = modified.replace(

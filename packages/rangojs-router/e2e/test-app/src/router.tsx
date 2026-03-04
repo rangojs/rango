@@ -1,4 +1,5 @@
 import {
+  cookies,
   createRouter,
   getRequestContext,
   redirect,
@@ -88,7 +89,7 @@ const timingMiddleware: Middleware = async (ctx, next) => {
  * Checks for auth cookie, redirects to /middleware-test if not authenticated
  */
 const authMiddleware: Middleware = async (ctx, next) => {
-  const authToken = ctx.cookie("auth-token");
+  const authToken = cookies().get("auth-token")?.value;
   if (!authToken) {
     // Set a header to indicate redirect happened (for test verification)
     return redirect("/middleware-test?auth=required", 302);
@@ -121,11 +122,12 @@ const errorMiddleware: Middleware = async (ctx, next) => {
  * Only applies to /middleware-test/cookies
  */
 const cookieMiddleware: Middleware = async (ctx, next) => {
+  const jar = cookies();
   // Read existing cookie
-  const visitCount = parseInt(ctx.cookie("visit-count") || "0", 10);
+  const visitCount = parseInt(jar.get("visit-count")?.value || "0", 10);
 
   // Set updated cookie
-  ctx.setCookie("visit-count", String(visitCount + 1), {
+  jar.set("visit-count", String(visitCount + 1), {
     path: "/",
     maxAge: 60 * 60 * 24, // 1 day
   });

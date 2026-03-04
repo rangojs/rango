@@ -1,6 +1,6 @@
 "use server";
 
-import { getRequestContext } from "@rangojs/router";
+import { cookies } from "@rangojs/router";
 
 /**
  * Shop Actions - Server-side mutations
@@ -28,17 +28,13 @@ function generateCartId(): string {
 
 // Helper to get or create cart ID from cookie
 function getOrCreateCartId(): string {
-  const ctx = getRequestContext();
-  if (!ctx) {
-    return "demo-cart"; // Fallback for non-request context
-  }
+  const jar = cookies();
 
-  const cookies = ctx.cookies();
-  let cartId = cookies[CART_ID_COOKIE_NAME];
+  let cartId = jar.get(CART_ID_COOKIE_NAME)?.value;
 
   if (!cartId) {
     cartId = generateCartId();
-    ctx.setCookie(CART_ID_COOKIE_NAME, cartId, {
+    jar.set(CART_ID_COOKIE_NAME, cartId, {
       path: "/",
       httpOnly: false,
       maxAge: 60 * 60 * 24, // 24 hours

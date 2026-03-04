@@ -68,24 +68,28 @@ export interface RequestContext<
    */
   params: TParams;
   /**
-   * Stub response for setting headers/cookies
-   * Headers set here are merged into the final response
+   * Stub response for setting headers/cookies (read-only).
+   * Headers set here are merged into the final response.
+   * Use header() or setStatus() to mutate response headers/status.
+   * Use cookies().set()/cookies().delete() for cookie mutations.
    */
-  res: Response;
+  readonly res: Response;
 
-  /** Get a cookie value from the request */
+  /** @internal Get a cookie value (effective: request + response mutations). Use cookies().get() instead. */
   cookie(name: string): string | undefined;
-  /** Get all cookies from the request */
+  /** @internal Get all cookies (effective merged view). Use cookies().getAll() instead. */
   cookies(): Record<string, string>;
-  /** Set a cookie on the response */
+  /** @internal Set a cookie on the response. Use cookies().set() instead. */
   setCookie(name: string, value: string, options?: CookieOptions): void;
-  /** Delete a cookie */
+  /** @internal Delete a cookie. Use cookies().delete() instead. */
   deleteCookie(
     name: string,
     options?: Pick<CookieOptions, "domain" | "path">,
   ): void;
   /** Set a response header */
   header(name: string, value: string): void;
+  /** Set the response status code */
+  setStatus(status: number): void;
 
   /**
    * Access loader data or push handle data.
@@ -232,6 +236,29 @@ export interface RequestContext<
   _routeName?: string;
 }
 
+/**
+ * Public view of RequestContext, without internal methods and fields.
+ *
+ * This is the type exported to library consumers. Internal code should
+ * use the full RequestContext interface directly.
+ */
+export type PublicRequestContext<
+  TEnv = unknown,
+  TParams = Record<string, string>,
+> = Omit<
+  RequestContext<TEnv, TParams>,
+  | "cookie"
+  | "cookies"
+  | "setCookie"
+  | "deleteCookie"
+  | "_handleStore"
+  | "_cacheStore"
+  | "_onResponseCallbacks"
+  | "_themeConfig"
+  | "_locationState"
+  | "_routeName"
+>;
+
 // AsyncLocalStorage instance for request context
 const requestContextStorage = new AsyncLocalStorage<RequestContext<any>>();
 
@@ -358,14 +385,15 @@ export function createRequestContext<TEnv>(
   const cookieHeader = request.headers.get("Cookie");
   let parsedCookies: Record<string, string> | null = null;
 
-  // Create stub response for collecting headers/cookies
-  const stubResponse = new Response(null, { status: 200 });
+  // Create stub response for collecting headers/cookies.
+  // All cookie/header mutations go here; cookie reads derive from it.
+  let stubResponse = new Response(null, { status: 200 });
 
   // Create handle store and loader memoization for this request
   const handleStore = createHandleStore();
   const loaderPromises = new Map<string, Promise<any>>();
 
-  // Lazy parse cookies
+  // Lazy parse cookies from the original Cookie header
   const getParsedCookies = (): Record<string, string> => {
     if (!parsedCookies) {
       parsedCookies = parseCookiesFromHeader(cookieHeader);
@@ -373,11 +401,35 @@ export function createRequestContext<TEnv>(
     return parsedCookies;
   };
 
+  // Cached response cookie mutations — invalidated on setCookie/deleteCookie/setTheme
+  let responseCookieCache: Map<string, string | null> | null = null;
+  const getResponseCookies = (): Map<string, string | null> => {
+    if (!responseCookieCache) {
+      responseCookieCache = parseResponseCookies(stubResponse);
+    }
+    return responseCookieCache;
+  };
+  const invalidateResponseCookieCache = () => {
+    responseCookieCache = null;
+  };
+
+  // Effective cookie read: response stub Set-Cookie wins, then original header.
+  // The stub IS the source of truth for same-request mutations.
+  const effectiveCookie = (name: string): string | undefined => {
+    const mutations = getResponseCookies();
+    if (mutations.has(name)) {
+      const v = mutations.get(name);
+      return v === null ? undefined : v;
+    }
+    return getParsedCookies()[name];
+  };
+
   // Theme helpers (only used when themeConfig is provided)
   const getTheme = (): Theme | undefined => {
     if (!themeConfig) return undefined;
 
-    const stored = getParsedCookies()[themeConfig.storageKey];
+    // Use overlay-aware read so setTheme() in the same request is reflected
+    const stored = effectiveCookie(themeConfig.storageKey);
     if (stored) {
       // Validate stored value
       if (stored === "system" && themeConfig.enableSystem) {
@@ -401,7 +453,7 @@ export function createRequestContext<TEnv>(
       return;
     }
 
-    // Set cookie
+    // Write to stub — effectiveCookie() will pick it up on next read
     stubResponse.headers.append(
       "Set-Cookie",
       serializeCookieValue(themeConfig.storageKey, theme, {
@@ -410,6 +462,7 @@ export function createRequestContext<TEnv>(
         sameSite: THEME_COOKIE.sameSite,
       }),
     );
+    invalidateResponseCookieCache();
   };
 
   // Build the context object first (without use), then add use
@@ -427,14 +480,37 @@ export function createRequestContext<TEnv>(
       contextSet(variables, keyOrVar, value);
     }) as RequestContext<TEnv>["set"],
     params: {} as Record<string, string>,
-    res: stubResponse,
+
+    get res(): Response {
+      return stubResponse;
+    },
+    set res(_: Response) {
+      throw new Error(
+        "ctx.res is read-only. Use ctx.header() to set response headers, or cookies() for cookie mutations.",
+      );
+    },
 
     cookie(name: string): string | undefined {
-      return getParsedCookies()[name];
+      return effectiveCookie(name);
     },
 
     cookies(): Record<string, string> {
-      return { ...getParsedCookies() };
+      const parsed = getParsedCookies();
+      const mutations = getResponseCookies();
+      if (mutations.size === 0) return { ...parsed };
+      // Build result without delete (avoids V8 dictionary-mode de-opt)
+      const deleted = new Set<string>();
+      for (const [k, v] of mutations) {
+        if (v === null) deleted.add(k);
+      }
+      const result: Record<string, string> = {};
+      for (const key of Object.keys(parsed)) {
+        if (!deleted.has(key)) result[key] = parsed[key];
+      }
+      for (const [k, v] of mutations) {
+        if (v !== null) result[k] = v;
+      }
+      return result;
     },
 
     setCookie(name: string, value: string, options?: CookieOptions): void {
@@ -443,6 +519,7 @@ export function createRequestContext<TEnv>(
         "Set-Cookie",
         serializeCookieValue(name, value, options),
       );
+      invalidateResponseCookieCache();
     },
 
     deleteCookie(
@@ -454,11 +531,22 @@ export function createRequestContext<TEnv>(
         "Set-Cookie",
         serializeCookieValue(name, "", { ...options, maxAge: 0 }),
       );
+      invalidateResponseCookieCache();
     },
 
     header(name: string, value: string): void {
       assertNotInsideCacheExec(ctx, "header");
       stubResponse.headers.set(name, value);
+    },
+
+    setStatus(status: number): void {
+      assertNotInsideCacheExec(ctx, "setStatus");
+      // Response.status is read-only, so we must create a new Response.
+      // Headers are passed by reference — no cookie cache invalidation needed.
+      stubResponse = new Response(null, {
+        status,
+        headers: stubResponse.headers,
+      });
     },
 
     // Placeholder - will be replaced below
@@ -489,7 +577,9 @@ export function createRequestContext<TEnv>(
     },
 
     // Theme properties (only set when themeConfig is provided)
-    theme: themeConfig ? getTheme() : undefined,
+    get theme() {
+      return themeConfig ? getTheme() : undefined;
+    },
     setTheme: themeConfig
       ? (theme: Theme) => {
           assertNotInsideCacheExec(ctx, "setTheme");
@@ -519,6 +609,43 @@ export function createRequestContext<TEnv>(
   // Brand with taint symbol so "use cache" excludes ctx from cache keys
   (ctx as any)[NOCACHE_SYMBOL] = true;
   return ctx;
+}
+
+/**
+ * Parse Set-Cookie headers from a response into effective cookie state.
+ * Returns a map of cookie name -> value (string) or name -> null (deleted).
+ * Last-write-wins: later Set-Cookie entries for the same name overwrite earlier ones.
+ * Max-Age=0 is treated as a delete.
+ */
+const MAX_AGE_ZERO_RE = /;\s*Max-Age\s*=\s*0/i;
+
+function parseResponseCookies(response: Response): Map<string, string | null> {
+  const result = new Map<string, string | null>();
+  const setCookies = response.headers.getSetCookie();
+
+  for (const header of setCookies) {
+    // First segment before ';' is the name=value pair
+    const semiIdx = header.indexOf(";");
+    const pair = semiIdx === -1 ? header : header.substring(0, semiIdx);
+    const eqIdx = pair.indexOf("=");
+    if (eqIdx === -1) continue;
+
+    let name: string;
+    let value: string;
+    try {
+      name = decodeURIComponent(pair.substring(0, eqIdx).trim());
+      value = decodeURIComponent(pair.substring(eqIdx + 1).trim());
+    } catch {
+      // Malformed encoding — skip this entry
+      continue;
+    }
+
+    // Max-Age=0 means the cookie is being deleted
+    const isDeleted = MAX_AGE_ZERO_RE.test(header);
+    result.set(name, isDeleted ? null : value);
+  }
+
+  return result;
 }
 
 /**
@@ -655,12 +782,6 @@ export function createUseFunction<TEnv>(
       env: ctx.env as any,
       var: ctx.var as any,
       get: ctx.get as any,
-      cookie(name: string) {
-        return ctx.cookie(name);
-      },
-      cookies() {
-        return ctx.cookies();
-      },
       use: <TDep, TDepParams = any>(
         dep: LoaderDefinition<TDep, TDepParams>,
       ): Promise<TDep> => {

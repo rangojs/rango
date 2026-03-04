@@ -67,9 +67,11 @@ HIT  → function body skipped, calling code runs, handle data replayed
 MISS → function body runs, return value + handle data cached
 ```
 
-Runtime guards throw if you call ctx.header(), ctx.set(), ctx.setCookie(),
+Runtime guards throw if you call cookies(), headers(), ctx.header(), ctx.set(),
 ctx.onResponse(), ctx.setTheme(), or ctx.setLocationState() inside a "use cache"
-function. Use ctx.use(Handle) instead — handle data is captured and replayed.
+function. cookies() and headers() are blocked because per-request data is not in the
+cache key. Side-effect methods are blocked because their effects are lost on hit.
+Use ctx.use(Handle) instead for data — handle data is captured and replayed.
 
 ## When to Use cache()
 
@@ -149,8 +151,8 @@ Neither mechanism caches response headers or cookies.
 - **cache()**: Headers set by handlers are naturally absent on hit because no
   handler runs. If you need headers on every response, set them in middleware
   (which runs before cache lookup).
-- **"use cache"**: ctx.header() and ctx.setCookie() throw inside the cached
-  function. Move them outside.
+- **"use cache"**: cookies() and headers() throw inside the cached function
+  (both reads and writes). ctx.header() also throws. Move them outside.
 
 ```typescript
 // Set headers that must appear on every response in middleware

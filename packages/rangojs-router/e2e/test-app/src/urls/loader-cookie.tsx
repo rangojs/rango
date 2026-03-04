@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { urls, cookies } from "@rangojs/router";
 import { CookieTestLoader, CookieFromMiddlewareLoader } from "../loaders.js";
 import { RequestContextReverseClient } from "../components/RequestContextReverseClient.js";
 
@@ -6,7 +6,7 @@ import { RequestContextReverseClient } from "../components/RequestContextReverse
  * Test patterns for LoaderContext cookie access and RequestContext reverse.
  *
  * Tests:
- * 1. Loader reads cookies via ctx.cookie() and ctx.cookies()
+ * 1. Loader reads cookies via cookies().get() and cookies().getAll()
  * 2. Loader reads cookie set by middleware
  * 3. Server action uses getRequestContext().reverse()
  */
@@ -46,9 +46,10 @@ export const loaderCookiePatterns = urls(({ path, loader, middleware }) => [
     },
     { name: "fromMiddleware" },
     () => [
-      middleware(async (ctx, next) => {
-        const visitCount = parseInt(ctx.cookie("visit-count") || "0", 10);
-        ctx.setCookie("visit-count", String(visitCount + 1), {
+      middleware(async (_ctx, next) => {
+        const jar = cookies();
+        const visitCount = parseInt(jar.get("visit-count")?.value || "0", 10);
+        jar.set("visit-count", String(visitCount + 1), {
           path: "/",
           maxAge: 60 * 60 * 24,
         });

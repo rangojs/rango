@@ -96,7 +96,7 @@ export interface MemorySegmentCacheStoreOptions<TEnv = unknown> {
    * @example
    * ```typescript
    * keyGenerator: (ctx, defaultKey) => {
-   *   const locale = ctx.cookie('locale') || 'en';
+   *   const locale = cookies().get('locale')?.value || 'en';
    *   return `${locale}:${defaultKey}`;
    * }
    * ```

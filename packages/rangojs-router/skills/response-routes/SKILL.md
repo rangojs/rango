@@ -94,7 +94,7 @@ interface ResponseHandlerContext<TParams, TEnv> {
   reverse: (name: string, params?: Record<string, string>) => string;
   get: GetVariableFn; // Read middleware variables
   header: (name: string, value: string) => void;
-  setCookie: (name: string, value: string, options?: CookieOptions) => void;
+  // Use cookies().set(name, value, opts) for cookie mutations (standalone API)
 }
 ```
 
@@ -108,14 +108,14 @@ path.md(
   "/docs/:slug.md",
   (ctx) => {
     ctx.header("Cache-Control", "public, max-age=3600");
-    ctx.setCookie("last-doc", ctx.params.slug, { path: "/" });
+    cookies().set("last-doc", ctx.params.slug, { path: "/" });
     return `# ${ctx.params.slug}\n\nContent here.`;
   },
   { name: "docs" },
 );
 ```
 
-Headers and cookies set via `ctx.header()` / `ctx.setCookie()` are merged into the
+Headers set via `ctx.header()` and cookies set via `cookies().set()` are merged into the
 auto-wrapped Response. If the handler returns a `Response` directly, these are ignored
 (use the Response headers instead).
 

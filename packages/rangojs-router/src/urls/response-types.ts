@@ -1,4 +1,3 @@
-import type { CookieOptions } from "../router/middleware.js";
 import type { ContextVar } from "../context-var.js";
 import type { DefaultVars } from "../types/global-namespace.js";
 
@@ -53,8 +52,8 @@ export type TextResponseHandler<
 
 /**
  * Lighter handler context for response routes.
- * No ctx.use() (no loaders). Supports setting response headers and cookies
- * without constructing a full Response object.
+ * No ctx.use() (no loaders). Supports setting response headers via ctx.header().
+ * Use the standalone cookies() function for cookie mutations.
  */
 export interface ResponseHandlerContext<
   TParams = Record<string, string>,
@@ -79,6 +78,4 @@ export interface ResponseHandlerContext<
   } & (<K extends keyof DefaultVars>(key: K) => DefaultVars[K]);
   /** Set a response header. Merged into the auto-wrapped or pass-through Response. */
   header: (name: string, value: string) => void;
-  /** Set a cookie on the response. */
-  setCookie: (name: string, value: string, options?: CookieOptions) => void;
 }

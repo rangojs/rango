@@ -20,6 +20,18 @@ import {
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 
+/**
+ * Attach location state set during the action to a payload's metadata.
+ * No-op if no location state was set.
+ */
+function attachLocationState(payload: RscPayload): void {
+  const locationState = getLocationState();
+  if (locationState) {
+    payload.metadata!.locationState =
+      resolveLocationStateEntries(locationState);
+  }
+}
+
 export async function handleServerAction<TEnv>(
   ctx: HandlerContext<TEnv>,
   request: Request,
@@ -138,6 +150,10 @@ export async function handleServerAction<TEnv>(
         returnValue,
       };
 
+      // Intentionally omit attachLocationState for error payloads:
+      // location state is a success-only semantic. Error boundary responses
+      // update the error UI but should not mutate browser history state.
+
       const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
         temporaryReferences,
       });
@@ -194,6 +210,8 @@ export async function handleServerAction<TEnv>(
       returnValue,
     };
 
+    attachLocationState(payload);
+
     const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
       temporaryReferences,
     });
@@ -229,6 +247,8 @@ export async function handleServerAction<TEnv>(
     },
     returnValue,
   };
+
+  attachLocationState(payload);
 
   const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
     temporaryReferences,

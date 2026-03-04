@@ -1,3 +1,4 @@
+import { cookies, headers } from "@rangojs/router";
 import { Breadcrumbs } from "../handles.js";
 
 // Function-level "use cache" — each function has its own directive.
@@ -114,4 +115,25 @@ export async function getCachedActionData(): Promise<{
 }> {
   "use cache";
   return { ts: Date.now(), rand: Math.random() };
+}
+
+/**
+ * Guard test: cookies() is called inside "use cache".
+ * Receives tainted ctx so registerCachedFunction stamps INSIDE_CACHE_EXEC,
+ * which causes cookies() to throw before reading anything.
+ */
+export async function cachedReadsCookies(ctx: any): Promise<string> {
+  "use cache";
+  cookies().get("test");
+  return "no-throw";
+}
+
+/**
+ * Guard test: headers() is called inside "use cache".
+ * Same taint mechanism as cachedReadsCookies.
+ */
+export async function cachedReadsHeaders(ctx: any): Promise<string> {
+  "use cache";
+  headers().get("x-test");
+  return "no-throw";
 }

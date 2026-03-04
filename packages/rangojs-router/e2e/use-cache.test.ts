@@ -407,6 +407,28 @@ test.describe("use-cache basic", () => {
     expect(body.data.plainFnBranded).toBe(false);
   });
 
+  test("cookies() throws inside a 'use cache' function", async ({
+    request,
+  }) => {
+    const res = await request.get(f.url("/use-cache-test/guard-cookies"));
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.data.threw).toBe(true);
+    expect(body.data.message).toMatch(/cookies\(\) cannot be called inside/i);
+    expect(body.data.message).toMatch(/cache key/i);
+  });
+
+  test("headers() throws inside a 'use cache' function", async ({
+    request,
+  }) => {
+    const res = await request.get(f.url("/use-cache-test/guard-headers"));
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+
+    expect(body.data.threw).toBe(true);
+    expect(body.data.message).toMatch(/headers\(\) cannot be called inside/i);
+  });
+
   test("cached function inside loader returns cached data", async ({
     page,
   }) => {
@@ -1011,6 +1033,28 @@ test.describe("use-cache (production)", () => {
 
     expect(body.data.cachedFnBranded).toBe(true);
     expect(body.data.plainFnBranded).toBe(false);
+  });
+
+  test("cookies() throws inside a 'use cache' function", async ({
+    request,
+  }) => {
+    const res = await request.get(f.url("/use-cache-test/guard-cookies"));
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.data.threw).toBe(true);
+    expect(body.data.message).toMatch(/cookies\(\) cannot be called inside/i);
+    expect(body.data.message).toMatch(/cache key/i);
+  });
+
+  test("headers() throws inside a 'use cache' function", async ({
+    request,
+  }) => {
+    const res = await request.get(f.url("/use-cache-test/guard-headers"));
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+
+    expect(body.data.threw).toBe(true);
+    expect(body.data.message).toMatch(/headers\(\) cannot be called inside/i);
   });
 
   test("cached function inside loader returns cached data", async ({

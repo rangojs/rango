@@ -169,6 +169,20 @@ export function getRequestContext(): never {
 }
 
 /**
+ * Error-throwing stub for server-only `cookies` function.
+ */
+export function cookies(): never {
+  throw new Error("cookies() is server-only and requires RSC context.");
+}
+
+/**
+ * Error-throwing stub for server-only `headers` function.
+ */
+export function headers(): never {
+  throw new Error("headers() is server-only and requires RSC context.");
+}
+
+/**
  * Error-throwing stub for server-only `createReverse` function.
  */
 export function createReverse(): never {
@@ -234,7 +248,14 @@ export function transition(): never {
 }
 
 // Request context type (safe for client)
-export type { RequestContext } from "./server/request-context.js";
+export type { PublicRequestContext as RequestContext } from "./server/request-context.js";
+
+// Cookie store types (safe for client)
+export type {
+  CookieStore,
+  Cookie,
+  ReadonlyHeaders,
+} from "./server/cookie-store.js";
 
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";

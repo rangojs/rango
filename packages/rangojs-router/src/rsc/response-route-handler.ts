@@ -91,8 +91,6 @@ export async function handleResponseRoute<TEnv>(
     },
     get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
     header: (name: string, value: string) => reqCtx.header(name, value),
-    setCookie: (name: string, value: string, options?: any) =>
-      reqCtx.setCookie(name, value, options),
     _responseType: preview.responseType,
   };
   // Brand with taint symbol so "use cache" detects it as request-scoped

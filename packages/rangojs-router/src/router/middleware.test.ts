@@ -13,6 +13,11 @@ import {
   type MiddlewareEntry,
   type MiddlewareCollectableEntry,
 } from "./middleware";
+import { cookies } from "../server/cookie-store.js";
+import {
+  createRequestContext,
+  runWithRequestContext,
+} from "../server/request-context.js";
 
 describe("middleware", () => {
   describe("parsePattern", () => {
@@ -381,7 +386,7 @@ describe("middleware", () => {
       let sessionValue: string | undefined;
 
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
-        sessionValue = ctx.cookie("session");
+        sessionValue = cookies().get("session")?.value;
         await next();
       };
 
@@ -389,12 +394,21 @@ describe("middleware", () => {
         headers: { Cookie: "session=abc123" },
       });
 
-      await executeMiddleware(
-        [createMockEntry(middleware)],
+      const reqCtx = createRequestContext({
+        env: {},
         request,
-        {},
-        {},
-        async () => new Response("OK"),
+        url: new URL(request.url),
+        variables: {},
+      });
+
+      await runWithRequestContext(reqCtx, () =>
+        executeMiddleware(
+          [createMockEntry(middleware)],
+          request,
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
       );
 
       expect(sessionValue).toBe("abc123");
@@ -402,40 +416,72 @@ describe("middleware", () => {
 
     it("should set cookies on response", async () => {
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
-        ctx.setCookie("session", "xyz789", { httpOnly: true });
+        cookies().set("session", "xyz789", { httpOnly: true });
         await next();
       };
 
-      const response = await executeMiddleware(
-        [createMockEntry(middleware)],
-        new Request("http://localhost/test"),
-        {},
-        {},
-        async () => new Response("OK"),
+      const request = new Request("http://localhost/test");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+
+      const result = await runWithRequestContext(reqCtx, () =>
+        executeMiddleware(
+          [createMockEntry(middleware)],
+          request,
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
       );
 
-      const setCookie = response.headers.get("Set-Cookie");
-      expect(setCookie).toContain("session=xyz789");
-      expect(setCookie).toContain("HttpOnly");
+      // Verify stub has the cookie (internal path)
+      const stubCookie = reqCtx.res.headers.get("Set-Cookie");
+      expect(stubCookie).toContain("session=xyz789");
+      expect(stubCookie).toContain("HttpOnly");
+
+      // Verify the returned Response has the merged cookie
+      const responseCookie = result.headers.get("Set-Cookie");
+      expect(responseCookie).toContain("session=xyz789");
+      expect(responseCookie).toContain("HttpOnly");
     });
 
     it("should delete cookies", async () => {
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
-        ctx.deleteCookie("session");
+        cookies().delete("session");
         await next();
       };
 
-      const response = await executeMiddleware(
-        [createMockEntry(middleware)],
-        new Request("http://localhost/test"),
-        {},
-        {},
-        async () => new Response("OK"),
+      const request = new Request("http://localhost/test");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+
+      const result = await runWithRequestContext(reqCtx, () =>
+        executeMiddleware(
+          [createMockEntry(middleware)],
+          request,
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
       );
 
-      const setCookie = response.headers.get("Set-Cookie");
-      expect(setCookie).toContain("session=");
-      expect(setCookie).toContain("Max-Age=0");
+      // Verify stub has the delete cookie (internal path)
+      const stubCookie = reqCtx.res.headers.get("Set-Cookie");
+      expect(stubCookie).toContain("session=");
+      expect(stubCookie).toContain("Max-Age=0");
+
+      // Verify the returned Response has the merged delete cookie
+      const responseCookie = result.headers.get("Set-Cookie");
+      expect(responseCookie).toContain("session=");
+      expect(responseCookie).toContain("Max-Age=0");
     });
 
     it("should throw if middleware doesn't call next() or return", async () => {
@@ -525,22 +571,21 @@ describe("middleware", () => {
       expect(receivedParams).toEqual({ id: "123" });
     });
 
-    it("should allow middleware to replace response via ctx.res setter", async () => {
+    it("should throw when middleware tries to assign ctx.res", async () => {
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         await next();
-        ctx.res = new Response("Replaced", { status: 201 });
+        (ctx as any).res = new Response("Replaced", { status: 201 });
       };
 
-      const response = await executeMiddleware(
-        [createMockEntry(middleware)],
-        new Request("http://localhost/test"),
-        {},
-        {},
-        async () => new Response("Original"),
-      );
-
-      expect(response.status).toBe(201);
-      expect(await response.text()).toBe("Replaced");
+      await expect(
+        executeMiddleware(
+          [createMockEntry(middleware)],
+          new Request("http://localhost/test"),
+          {},
+          {},
+          async () => new Response("Original"),
+        ),
+      ).rejects.toThrow("ctx.res is read-only");
     });
 
     it("should warn when middleware returns non-Response value", async () => {
@@ -617,7 +662,7 @@ describe("middleware", () => {
 
     it("should merge stub cookies into short-circuit Response", async () => {
       const outer: MiddlewareFn<unknown> = async (ctx, next) => {
-        ctx.setCookie("session", "abc123");
+        cookies().set("session", "abc123");
         await next();
       };
 
@@ -625,17 +670,27 @@ describe("middleware", () => {
         return new Response("Blocked", { status: 403 });
       };
 
-      const result = await executeMiddleware(
-        [createMockEntry(outer), createMockEntry(inner)],
-        new Request("http://localhost/test"),
-        {},
-        {},
-        async () => new Response("OK"),
+      const request = new Request("http://localhost/test");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+
+      const result = await runWithRequestContext(reqCtx, () =>
+        executeMiddleware(
+          [createMockEntry(outer), createMockEntry(inner)],
+          request,
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
       );
 
       expect(result.status).toBe(403);
-      const cookies = result.headers.getSetCookie();
-      expect(cookies).toContain("session=abc123");
+      const setCookies = result.headers.getSetCookie();
+      expect(setCookies).toContain("session=abc123");
     });
 
     it("should not overwrite short-circuit Response's own headers with stub headers", async () => {
@@ -855,52 +910,72 @@ describe("middleware", () => {
     });
 
     it("should apply cookies to short-circuit Response", async () => {
-      const stubResponse = new Response(null, { status: 200 });
+      const request = new Request("http://localhost/test");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+      const stubResponse = reqCtx.res;
+
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
-        ctx.setCookie("session", "abc123", { path: "/" });
+        cookies().set("session", "abc123", { path: "/" });
         return new Response("Redirecting", { status: 302 });
       };
 
-      const result = await executeInterceptMiddleware(
-        [middleware],
-        new Request("http://localhost/test"),
-        {},
-        {},
-        {},
-        stubResponse,
+      const result = await runWithRequestContext(reqCtx, () =>
+        executeInterceptMiddleware(
+          [middleware],
+          request,
+          {},
+          {},
+          {},
+          stubResponse,
+        ),
       );
 
       expect(result).toBeInstanceOf(Response);
-      const cookies = result!.headers.get("set-cookie");
-      expect(cookies).toContain("session=abc123");
-      expect(cookies).toContain("Path=/");
+      const setCookies = result!.headers.get("set-cookie");
+      expect(setCookies).toContain("session=abc123");
+      expect(setCookies).toContain("Path=/");
     });
 
     it("should apply multiple cookies to short-circuit Response", async () => {
-      const stubResponse = new Response(null, { status: 200 });
+      const request = new Request("http://localhost/test");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+      const stubResponse = reqCtx.res;
+
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
-        ctx.setCookie("token", "xyz", { httpOnly: true });
-        ctx.setCookie("preference", "dark");
+        cookies().set("token", "xyz", { httpOnly: true });
+        cookies().set("preference", "dark");
         return new Response(null, {
           status: 302,
           headers: { Location: "/login" },
         });
       };
 
-      const result = await executeInterceptMiddleware(
-        [middleware],
-        new Request("http://localhost/test"),
-        {},
-        {},
-        {},
-        stubResponse,
+      const result = await runWithRequestContext(reqCtx, () =>
+        executeInterceptMiddleware(
+          [middleware],
+          request,
+          {},
+          {},
+          {},
+          stubResponse,
+        ),
       );
 
       expect(result).toBeInstanceOf(Response);
-      const cookies = result!.headers.getSetCookie();
-      expect(cookies).toHaveLength(2);
-      expect(cookies.some((c) => c.includes("token=xyz"))).toBe(true);
-      expect(cookies.some((c) => c.includes("preference=dark"))).toBe(true);
+      const setCookies = result!.headers.getSetCookie();
+      expect(setCookies).toHaveLength(2);
+      expect(setCookies.some((c) => c.includes("token=xyz"))).toBe(true);
+      expect(setCookies.some((c) => c.includes("preference=dark"))).toBe(true);
     });
 
     it("should share variables between middleware and allow setting new ones", async () => {
@@ -1049,71 +1124,89 @@ describe("middleware", () => {
       expect(stubResponse.headers.get("X-Custom-Header")).toBe("custom-value");
     });
 
-    it("should short-circuit when middleware replaces ctx.res after next()", async () => {
+    it("should throw when middleware tries to assign ctx.res in intercept mode", async () => {
       const stubResponse = new Response(null, { status: 200 });
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         await next();
-        ctx.res = new Response("Custom body", { status: 201 });
+        (ctx as any).res = new Response("Custom body", { status: 201 });
       };
 
-      const result = await executeInterceptMiddleware(
-        [middleware],
-        new Request("http://localhost/test"),
-        {},
-        {},
-        {},
-        stubResponse,
-      );
-
-      expect(result).toBeInstanceOf(Response);
-      expect(result!.status).toBe(201);
-      expect(await result!.text()).toBe("Custom body");
+      await expect(
+        executeInterceptMiddleware(
+          [middleware],
+          new Request("http://localhost/test"),
+          {},
+          {},
+          {},
+          stubResponse,
+        ),
+      ).rejects.toThrow("ctx.res is read-only");
     });
 
     it("should NOT short-circuit when cookies set after next() - cookies go on stubResponse", async () => {
-      const stubResponse = new Response(null, { status: 200 });
+      const request = new Request("http://localhost/test");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+      const stubResponse = reqCtx.res;
+
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         await next();
         ctx.header("X-Modified", "true");
-        ctx.setCookie("after-next", "cookie-value");
+        cookies().set("after-next", "cookie-value");
       };
 
-      const result = await executeInterceptMiddleware(
-        [middleware],
-        new Request("http://localhost/test"),
-        {},
-        {},
-        {},
-        stubResponse,
+      const result = await runWithRequestContext(reqCtx, () =>
+        executeInterceptMiddleware(
+          [middleware],
+          request,
+          {},
+          {},
+          {},
+          stubResponse,
+        ),
       );
 
       // Should return null (no short-circuit) - headers/cookies are on stubResponse
       expect(result).toBeNull();
       expect(stubResponse.headers.get("X-Modified")).toBe("true");
-      const cookies = stubResponse.headers.get("set-cookie");
-      expect(cookies).toContain("after-next=cookie-value");
+      const setCookies = stubResponse.headers.get("set-cookie");
+      expect(setCookies).toContain("after-next=cookie-value");
     });
 
     it("should set cookies on stubResponse when only cookies are set after next()", async () => {
-      const stubResponse = new Response(null, { status: 200 });
+      const request = new Request("http://localhost/test");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+      const stubResponse = reqCtx.res;
+
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         await next();
-        ctx.setCookie("only-cookie", "value123");
+        cookies().set("only-cookie", "value123");
       };
 
-      const result = await executeInterceptMiddleware(
-        [middleware],
-        new Request("http://localhost/test"),
-        {},
-        {},
-        {},
-        stubResponse,
+      const result = await runWithRequestContext(reqCtx, () =>
+        executeInterceptMiddleware(
+          [middleware],
+          request,
+          {},
+          {},
+          {},
+          stubResponse,
+        ),
       );
 
       // Should return null (no short-circuit) - cookie is on stubResponse
       expect(result).toBeNull();
-      const cookies = stubResponse.headers.get("set-cookie");
-      expect(cookies).toContain("only-cookie=value123");
+      const setCookies = stubResponse.headers.get("set-cookie");
+      expect(setCookies).toContain("only-cookie=value123");
     });
   });
 
@@ -1233,21 +1326,36 @@ describe("middleware", () => {
 
     it("should apply cookies set by middleware", async () => {
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
-        ctx.setCookie("session", "new-session-id");
+        cookies().set("session", "new-session-id");
         await next();
       };
 
-      const result = await executeLoaderMiddleware(
-        [middleware],
-        new Request("http://localhost/test"),
-        {},
-        {},
-        {},
-        async () => new Response("OK"),
+      const request = new Request("http://localhost/test");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+
+      const result = await runWithRequestContext(reqCtx, () =>
+        executeLoaderMiddleware(
+          [middleware],
+          request,
+          {},
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
       );
 
-      const cookies = result.headers.get("set-cookie");
-      expect(cookies).toContain("session=new-session-id");
+      // Verify stub has the cookie (internal path)
+      const stubCookie = reqCtx.res.headers.get("set-cookie");
+      expect(stubCookie).toContain("session=new-session-id");
+
+      // Verify the returned Response has the merged cookie
+      const responseCookie = result.headers.get("set-cookie");
+      expect(responseCookie).toContain("session=new-session-id");
     });
 
     it("should allow middleware to modify response headers", async () => {
@@ -1266,6 +1374,277 @@ describe("middleware", () => {
       );
 
       expect(result.headers.get("X-Loader-Cache")).toBe("HIT");
+    });
+  });
+
+  describe("cookie response-derived delegation", () => {
+    it("middleware cookies().set visible to subsequent middleware cookies().get read", async () => {
+      const request = new Request("http://localhost/test", {
+        headers: { Cookie: "existing=original" },
+      });
+
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+
+      let readValue: string | undefined;
+
+      await runWithRequestContext(reqCtx, () =>
+        executeMiddleware<Record<string, unknown>>(
+          [
+            {
+              entry: {
+                pattern: null,
+                regex: null,
+                paramNames: [],
+                handler: async (ctx, next) => {
+                  cookies().set("session", "new-token");
+                  return next();
+                },
+                mountPrefix: null,
+              },
+              params: {},
+            },
+            {
+              entry: {
+                pattern: null,
+                regex: null,
+                paramNames: [],
+                handler: async (ctx, next) => {
+                  readValue = cookies().get("session")?.value;
+                  return next();
+                },
+                mountPrefix: null,
+              },
+              params: {},
+            },
+          ],
+          request,
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
+      );
+
+      expect(readValue).toBe("new-token");
+    });
+
+    it("middleware cookies().set visible to RequestContext cookie()", async () => {
+      const request = new Request("http://localhost/test");
+
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+
+      await runWithRequestContext(reqCtx, () =>
+        executeMiddleware<Record<string, unknown>>(
+          [
+            {
+              entry: {
+                pattern: null,
+                regex: null,
+                paramNames: [],
+                handler: async (ctx, next) => {
+                  cookies().set("mw-set", "hello");
+                  return next();
+                },
+                mountPrefix: null,
+              },
+              params: {},
+            },
+          ],
+          request,
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
+      );
+
+      // RequestContext should see the cookie set by middleware
+      expect(reqCtx.cookie("mw-set")).toBe("hello");
+    });
+
+    it("middleware cookies().delete makes subsequent reads return undefined", async () => {
+      const request = new Request("http://localhost/test", {
+        headers: { Cookie: "session=old" },
+      });
+
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+
+      let readValue: string | undefined = "sentinel";
+
+      await runWithRequestContext(reqCtx, () =>
+        executeMiddleware<Record<string, unknown>>(
+          [
+            {
+              entry: {
+                pattern: null,
+                regex: null,
+                paramNames: [],
+                handler: async (ctx, next) => {
+                  cookies().delete("session");
+                  return next();
+                },
+                mountPrefix: null,
+              },
+              params: {},
+            },
+            {
+              entry: {
+                pattern: null,
+                regex: null,
+                paramNames: [],
+                handler: async (ctx, next) => {
+                  readValue = cookies().get("session")?.value;
+                  return next();
+                },
+                mountPrefix: null,
+              },
+              params: {},
+            },
+          ],
+          request,
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
+      );
+
+      expect(readValue).toBeUndefined();
+      expect(reqCtx.cookie("session")).toBeUndefined();
+    });
+
+    it("middleware cookies().set visible on ctx.res before next()", async () => {
+      const request = new Request("http://localhost/test");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+
+      let setCookieHeaders: string[] = [];
+
+      await runWithRequestContext(reqCtx, () =>
+        executeMiddleware<Record<string, unknown>>(
+          [
+            {
+              entry: {
+                pattern: null,
+                regex: null,
+                paramNames: [],
+                handler: async (ctx, next) => {
+                  cookies().set("token", "abc123", { httpOnly: true });
+                  // ctx.res should reflect the cookie set above
+                  setCookieHeaders = ctx.res.headers.getSetCookie();
+                  return next();
+                },
+                mountPrefix: null,
+              },
+              params: {},
+            },
+          ],
+          request,
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
+      );
+
+      expect(setCookieHeaders.length).toBe(1);
+      expect(setCookieHeaders[0]).toContain("token=abc123");
+      expect(setCookieHeaders[0]).toContain("HttpOnly");
+    });
+
+    it("middleware ctx.header visible on ctx.res before next()", async () => {
+      const request = new Request("http://localhost/test");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+
+      let headerValue: string | null = null;
+
+      await runWithRequestContext(reqCtx, () =>
+        executeMiddleware<Record<string, unknown>>(
+          [
+            {
+              entry: {
+                pattern: null,
+                regex: null,
+                paramNames: [],
+                handler: async (ctx, next) => {
+                  ctx.header("X-Request-Id", "req-42");
+                  headerValue = ctx.res.headers.get("X-Request-Id");
+                  return next();
+                },
+                mountPrefix: null,
+              },
+              params: {},
+            },
+          ],
+          request,
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
+      );
+
+      expect(headerValue).toBe("req-42");
+    });
+
+    it("cookies() reads request cookies within request context", async () => {
+      const request = new Request("http://localhost/test", {
+        headers: { Cookie: "fallback=works" },
+      });
+
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+
+      let readValue: string | undefined;
+
+      await runWithRequestContext(reqCtx, () =>
+        executeMiddleware<Record<string, unknown>>(
+          [
+            {
+              entry: {
+                pattern: null,
+                regex: null,
+                paramNames: [],
+                handler: async (ctx, next) => {
+                  readValue = cookies().get("fallback")?.value;
+                  return next();
+                },
+                mountPrefix: null,
+              },
+              params: {},
+            },
+          ],
+          request,
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
+      );
+
+      expect(readValue).toBe("works");
     });
   });
 });

@@ -167,11 +167,26 @@ export type { HandlerCacheConfig } from "./rsc/types.js";
 // Built-in handles (server-side)
 export { Meta } from "./handles/meta.js";
 
-// Request context (for accessing request data in server actions/components)
+// Request context (for accessing request data in server actions/components).
+// Re-exported with a narrowed return type so that public consumers only see
+// public members. Internal code imports from "./server/request-context.js"
+// directly and gets the full type.
+import { getRequestContext as _getRequestContextInternal } from "./server/request-context.js";
+export type { PublicRequestContext as RequestContext } from "./server/request-context.js";
+import type { PublicRequestContext } from "./server/request-context.js";
+
+export const getRequestContext: <
+  TEnv = unknown,
+>() => PublicRequestContext<TEnv> = _getRequestContextInternal;
+
+// Request-scoped shorthands
 export {
-  getRequestContext,
-  type RequestContext,
-} from "./server/request-context.js";
+  cookies,
+  headers,
+  type CookieStore,
+  type Cookie,
+  type ReadonlyHeaders,
+} from "./server/cookie-store.js";
 
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";

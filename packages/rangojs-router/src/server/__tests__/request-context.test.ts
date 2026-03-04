@@ -79,6 +79,219 @@ describe("RequestContext", () => {
     });
   });
 
+  describe("cookie read-after-write (response-derived)", () => {
+    it("setCookie makes cookie() return the new value", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com", {
+          headers: { Cookie: "token=old" },
+        }),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      expect(ctx.cookie("token")).toBe("old");
+      ctx.setCookie("token", "new");
+      expect(ctx.cookie("token")).toBe("new");
+    });
+
+    it("setCookie makes cookies() include the new value", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com", {
+          headers: { Cookie: "a=1; b=2" },
+        }),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      ctx.setCookie("c", "3");
+      const all = ctx.cookies();
+      expect(all).toEqual({ a: "1", b: "2", c: "3" });
+    });
+
+    it("setCookie overwrites a header cookie in cookies()", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com", {
+          headers: { Cookie: "session=abc" },
+        }),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      ctx.setCookie("session", "xyz");
+      expect(ctx.cookies()).toEqual({ session: "xyz" });
+    });
+
+    it("deleteCookie makes cookie() return undefined", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com", {
+          headers: { Cookie: "session=abc" },
+        }),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      expect(ctx.cookie("session")).toBe("abc");
+      ctx.deleteCookie("session");
+      expect(ctx.cookie("session")).toBeUndefined();
+    });
+
+    it("deleteCookie removes the key from cookies()", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com", {
+          headers: { Cookie: "a=1; b=2" },
+        }),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      ctx.deleteCookie("a");
+      expect(ctx.cookies()).toEqual({ b: "2" });
+    });
+
+    it("last-write-wins: multiple setCookie calls for same name", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com"),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      ctx.setCookie("x", "first");
+      ctx.setCookie("x", "second");
+      ctx.setCookie("x", "third");
+      expect(ctx.cookie("x")).toBe("third");
+    });
+
+    it("setCookie for unknown cookie then deleteCookie makes it undefined", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com"),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      ctx.setCookie("temp", "value");
+      expect(ctx.cookie("temp")).toBe("value");
+      ctx.deleteCookie("temp");
+      expect(ctx.cookie("temp")).toBeUndefined();
+    });
+
+    it("cookies() returns a fresh copy each time, not the overlay itself", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com", {
+          headers: { Cookie: "a=1" },
+        }),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      const snap1 = ctx.cookies();
+      ctx.setCookie("b", "2");
+      const snap2 = ctx.cookies();
+
+      expect(snap1).toEqual({ a: "1" });
+      expect(snap2).toEqual({ a: "1", b: "2" });
+    });
+
+    it("setCookie still appends Set-Cookie to stub response", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com"),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      ctx.setCookie("token", "abc", { httpOnly: true, path: "/" });
+      const setCookieHeaders = ctx.res.headers.getSetCookie();
+      expect(setCookieHeaders.length).toBe(1);
+      expect(setCookieHeaders[0]).toContain("token=abc");
+      expect(setCookieHeaders[0]).toContain("HttpOnly");
+    });
+
+    it("cookie mutations visible across request context via runWithRequestContext", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com"),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      runWithRequestContext(ctx, () => {
+        const inner = getRequestContext();
+        inner.setCookie("shared", "value");
+        expect(ctx.cookie("shared")).toBe("value");
+      });
+    });
+  });
+
+  describe("setStatus", () => {
+    it("changes res.status", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com"),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      expect(ctx.res.status).toBe(200);
+      ctx.setStatus(404);
+      expect(ctx.res.status).toBe(404);
+    });
+
+    it("preserves existing headers after setStatus", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com"),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      ctx.header("X-Custom", "value");
+      ctx.setCookie("token", "abc");
+      ctx.setStatus(500);
+
+      expect(ctx.res.status).toBe(500);
+      expect(ctx.res.headers.get("X-Custom")).toBe("value");
+      expect(ctx.res.headers.getSetCookie()).toEqual(
+        expect.arrayContaining([expect.stringContaining("token=abc")]),
+      );
+    });
+
+    it("cookies set before setStatus are still readable", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com"),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      ctx.setCookie("before", "status-change");
+      ctx.setStatus(404);
+      expect(ctx.cookie("before")).toBe("status-change");
+    });
+  });
+
+  describe("ctx.res read-only guard", () => {
+    it("throws when attempting to assign ctx.res", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com"),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      expect(() => {
+        (ctx as any).res = new Response(null, { status: 500 });
+      }).toThrow("ctx.res is read-only");
+    });
+  });
+
   describe("onResponse", () => {
     it("should register callbacks", () => {
       const ctx = createRequestContext({
