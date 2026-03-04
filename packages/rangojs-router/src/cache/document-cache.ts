@@ -110,15 +110,24 @@ function addCacheStatusHeader(
 }
 
 /**
- * Run onResponse callbacks registered on the request context
+ * Drain and run onResponse callbacks registered on the request context.
+ * Mirrors the drain semantics of finalizeResponse() in rsc/helpers.ts:
+ * callbacks are spliced out so they fire at most once per request.
  */
-function runOnResponseCallbacks(
+function drainOnResponseCallbacks(
   response: Response,
-  callbacks: Array<(response: Response) => Response>,
+  requestCtx:
+    | { _onResponseCallbacks: Array<(r: Response) => Response> }
+    | undefined,
 ): Response {
+  if (!requestCtx || requestCtx._onResponseCallbacks.length === 0) {
+    return response;
+  }
+  const callbacks = requestCtx._onResponseCallbacks;
+  requestCtx._onResponseCallbacks = [];
   let result = response;
   for (const callback of callbacks) {
-    result = callback(result);
+    result = callback(result) ?? result;
   }
   return result;
 }
@@ -248,15 +257,10 @@ export function createDocumentCacheMiddleware<TEnv = any>(
         if (!cached.shouldRevalidate) {
           // Fresh hit - return immediately
           log(`[DocumentCache] HIT ${typeLabel}: ${url.pathname}`);
-          let response = addCacheStatusHeader(cached.response, "HIT");
-          // Run onResponse callbacks even for cache hits
-          if (requestCtx && requestCtx._onResponseCallbacks.length > 0) {
-            response = runOnResponseCallbacks(
-              response,
-              requestCtx._onResponseCallbacks,
-            );
-          }
-          return response;
+          return drainOnResponseCallbacks(
+            addCacheStatusHeader(cached.response, "HIT"),
+            requestCtx,
+          );
         }
 
         // Stale hit - return cached response, revalidate in background
@@ -287,15 +291,10 @@ export function createDocumentCacheMiddleware<TEnv = any>(
           });
         }
 
-        let response = addCacheStatusHeader(cached.response, "STALE");
-        // Run onResponse callbacks even for stale cache hits
-        if (requestCtx && requestCtx._onResponseCallbacks.length > 0) {
-          response = runOnResponseCallbacks(
-            response,
-            requestCtx._onResponseCallbacks,
-          );
-        }
-        return response;
+        return drainOnResponseCallbacks(
+          addCacheStatusHeader(cached.response, "STALE"),
+          requestCtx,
+        );
       }
 
       // 2. Cache miss - run handler

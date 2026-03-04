@@ -19,14 +19,6 @@ import {
 import { serializeSegments, deserializeSegments } from "./segment-codec.js";
 import { captureHandles, restoreHandles } from "./handle-snapshot.js";
 
-// Re-export codec functions for backwards compatibility.
-// Existing call sites import these from cache-scope.ts via dynamic import.
-export {
-  deserializeComponent,
-  serializeSegments,
-  deserializeSegments,
-} from "./segment-codec.js";
-
 // ============================================================================
 // Constants
 // ============================================================================

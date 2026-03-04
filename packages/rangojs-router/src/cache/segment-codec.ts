@@ -129,12 +129,10 @@ export async function deserializeResult<T>(encoded: string): Promise<T> {
 /**
  * RSC-deserialize a single encoded component string back to a React element.
  * Used by the static handler runtime to revive pre-rendered components.
+ * Identical to deserializeResult<unknown>.
  */
-export async function deserializeComponent(encoded: string): Promise<unknown> {
-  const temporaryReferences = createTemporaryReferenceSet();
-  const stream = stringToStream(encoded);
-  return createFromReadableStream(stream, { temporaryReferences });
-}
+export const deserializeComponent: (encoded: string) => Promise<unknown> =
+  deserializeResult;
 
 /**
  * Serialize segments for storage.
