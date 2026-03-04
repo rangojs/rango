@@ -25,6 +25,7 @@ import { extractHandlerExportsFromChunk } from "./utils/bundle-analysis.js";
 import {
   createDiscoveryState,
   VIRTUAL_ROUTES_MANIFEST_ID,
+  type DiscoveryState,
   type PluginOptions,
 } from "./discovery/state.js";
 import { consumeSelfGenWrite } from "./discovery/self-gen-tracking.js";
@@ -41,6 +42,55 @@ import {
 import { postprocessBundle } from "./discovery/bundle-postprocess.js";
 
 export { VIRTUAL_ROUTES_MANIFEST_ID };
+
+// ============================================================================
+// Temp Server Factory
+// ============================================================================
+
+/**
+ * Create a minimal Vite server for router discovery.
+ *
+ * Both dev-mode prerender and build-mode discovery need a temp RSC server
+ * to import user router files via module runner. This factory centralizes
+ * the shared config and the mode-specific differences:
+ * - Dev: path-based IDs (no forceBuild), separate cacheDir
+ * - Build: hashed IDs (forceBuild), hashClientRefs for production bundles
+ *
+ * Returns the ViteDevServer instance. Callers access .environments.rsc as needed.
+ */
+async function createTempRscServer(
+  state: DiscoveryState,
+  options: { forceBuild?: boolean; cacheDir?: string } = {},
+) {
+  const { default: rsc } = await import("@vitejs/plugin-rsc");
+  return createViteServer({
+    root: state.projectRoot,
+    configFile: false,
+    server: { middlewareMode: true },
+    appType: "custom",
+    logLevel: "silent",
+    resolve: { alias: state.userResolveAlias },
+    esbuild: { jsx: "automatic", jsxImportSource: "react" },
+    ...(options.cacheDir && { cacheDir: options.cacheDir }),
+    plugins: [
+      rsc({
+        entries: {
+          client: "virtual:entry-client",
+          ssr: "virtual:entry-ssr",
+          rsc: state.resolvedEntryPath!,
+        },
+      }),
+      // hashClientRefs only in build mode — production bundles need hashed refs
+      ...(options.forceBuild ? [hashClientRefs(state.projectRoot)] : []),
+      createVersionPlugin(),
+      createVirtualStubPlugin(),
+      // Dev prerender must use dev-mode IDs (path-based) to match the workerd
+      // runtime. forceBuild produces hashed IDs for production bundle consistency.
+      exposeInternalIds(options.forceBuild ? { forceBuild: true } : undefined),
+      exposeRouterId(),
+    ],
+  });
+}
 
 /**
  * Plugin that discovers router instances at dev/build time via the RSC environment.
@@ -185,32 +235,8 @@ export function createRouterDiscoveryPlugin(
           return (prerenderTempServer.environments as any)?.rsc ?? null;
         }
         try {
-          const { default: rsc } = await import("@vitejs/plugin-rsc");
-          prerenderTempServer = await createViteServer({
-            root: s.projectRoot,
-            configFile: false,
-            server: { middlewareMode: true },
-            appType: "custom",
-            logLevel: "silent",
+          prerenderTempServer = await createTempRscServer(s, {
             cacheDir: "node_modules/.vite_prerender",
-            resolve: { alias: s.userResolveAlias },
-            esbuild: { jsx: "automatic", jsxImportSource: "react" },
-            plugins: [
-              rsc({
-                entries: {
-                  client: "virtual:entry-client",
-                  ssr: "virtual:entry-ssr",
-                  rsc: s.resolvedEntryPath!,
-                },
-              }),
-              createVersionPlugin(),
-              createVirtualStubPlugin(),
-              // Dev prerender must use dev-mode IDs (path-based) to match the
-              // workerd runtime. forceBuild would produce hashed IDs causing
-              // handle data key mismatches when replayed into the runtime store.
-              exposeInternalIds(),
-              exposeRouterId(),
-            ],
           });
 
           const tempRscEnv = (prerenderTempServer.environments as any)?.rsc;
@@ -511,45 +537,7 @@ export function createRouterDiscoveryPlugin(
       // between the vite plugin and user code loaded via runner.import().
       (globalThis as any).__rscRouterDiscoveryActive = true;
       try {
-        // Create a minimal Vite server with just the RSC plugin.
-        // We bypass the user's config file because:
-        // - Custom environments (e.g., CloudflareDevEnvironment) may not expose
-        //   a module runner compatible with runner.import()
-        // - The temp server only needs RSC conditions to import the router
-        const { default: rsc } = await import("@vitejs/plugin-rsc");
-        tempServer = await createViteServer({
-          root: s.projectRoot,
-          configFile: false,
-          server: { middlewareMode: true },
-          appType: "custom",
-          logLevel: "silent",
-          // Use the resolved aliases from the real config (includes user's path aliases
-          // like @/ -> src/ AND package aliases from rsc-router)
-          resolve: { alias: s.userResolveAlias },
-          // Enable automatic JSX runtime so .tsx files don't need `import React`.
-          // Without this, esbuild defaults to classic mode (React.createElement)
-          // which fails when lazy host-router handlers load sub-app modules with JSX.
-          esbuild: { jsx: "automatic", jsxImportSource: "react" },
-          plugins: [
-            rsc({
-              entries: {
-                client: "virtual:entry-client",
-                ssr: "virtual:entry-ssr",
-                rsc: s.resolvedEntryPath!,
-              },
-            }),
-            hashClientRefs(s.projectRoot),
-            createVersionPlugin(),
-            // Stub virtual modules that the RSC entry may import
-            // (e.g., virtual:rsc-router/routes-manifest, virtual:rsc-router/loader-manifest)
-            createVirtualStubPlugin(),
-            // Inject handle + router IDs so prerender-collected handle data uses
-            // the same hashed keys as the production client/SSR bundles, and
-            // build-time router IDs match runtime IDs across environments.
-            exposeInternalIds({ forceBuild: true }),
-            exposeRouterId(),
-          ],
-        });
+        tempServer = await createTempRscServer(s, { forceBuild: true });
 
         const rscEnv = (tempServer.environments as any)?.rsc;
         if (!rscEnv?.runner) {
