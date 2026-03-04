@@ -134,7 +134,7 @@ export interface CacheOptions<TEnv = unknown> {
    * key: (ctx) => `${ctx.env.REGION}:product:${ctx.params.id}`
    *
    * // Include cookies
-   * key: (ctx) => `${ctx.cookie('locale')}:${ctx.pathname}`
+   * key: (ctx) => `${cookies().get('locale')?.value ?? 'en'}:${ctx.pathname}`
    * ```
    */
   key?: (

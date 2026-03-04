@@ -1,7 +1,7 @@
 "use server";
 
 import { ReactNode } from "react";
-import { getRequestContext, redirect } from "@rangojs/router";
+import { cookies, getRequestContext, redirect } from "@rangojs/router";
 import { FlashMessage } from "./location-states.js";
 
 // Simulated delay helper
@@ -11,11 +11,11 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const carts: Map<string, Map<string, number>> = new Map();
 
 function getCartId(): string {
-  const ctx = getRequestContext();
-  let cartId = ctx.cookie("cart-id");
+  const jar = cookies();
+  let cartId = jar.get("cart-id")?.value;
   if (!cartId) {
     cartId = Math.random().toString(36).slice(2);
-    ctx.setCookie("cart-id", cartId, { path: "/" });
+    jar.set("cart-id", cartId, { path: "/" });
   }
   return cartId;
 }
@@ -273,8 +273,7 @@ export async function actionRedirectLogin(
     return { error: "Email is required" };
   }
 
-  const ctx = getRequestContext();
-  ctx.setCookie("test-auth-session", email, {
+  cookies().set("test-auth-session", email, {
     path: "/",
     maxAge: 86400,
   });

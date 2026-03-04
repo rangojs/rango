@@ -102,14 +102,28 @@ export async function getProductData(ctx) {
 // On hit: return value restored, breadcrumb replayed.
 ```
 
-## ctx Side-Effect Guards
+## Request-Scoped Guards
+
+### Read Guards
+
+`cookies()` and `headers()` **throw** inside a `"use cache"` function because
+per-request values (cookies, headers) are not reflected in the cache key. Without
+this guard, one user's data would be served to another.
+
+Extract the value before the cached function and pass it as an argument:
+
+```typescript
+const locale = cookies().get("locale")?.value ?? "en";
+const data = await getCachedData(locale); // locale is now in the cache key
+```
+
+### Side-Effect Guards
 
 These ctx methods **throw** inside a `"use cache"` function because their effects
 are lost on cache hit (the function body is skipped):
 
 - `ctx.set()` / `ctx.get()` for passing values to children
 - `ctx.header()`
-- `ctx.setCookie()` / `ctx.deleteCookie()`
 - `ctx.setTheme()`
 - `ctx.setLocationState()`
 - `ctx.onResponse()`

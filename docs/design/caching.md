@@ -735,7 +735,7 @@ cache(
     // Skip cache for preview mode or authenticated users
     condition: (ctx) => {
       if (ctx.request.headers.get("x-preview")) return false;
-      if (ctx.cookies.get("session")) return false;
+      if (cookies().get("session")) return false;
       return true;
     },
   },

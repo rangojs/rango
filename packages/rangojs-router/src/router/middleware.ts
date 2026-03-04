@@ -11,7 +11,6 @@
 
 import { contextGet, contextSet } from "../context-var.js";
 import type {
-  CookieOptions,
   CollectedMiddleware,
   MiddlewareCollectableEntry,
   MiddlewareContext,
@@ -19,7 +18,6 @@ import type {
   MiddlewareFn,
   ResponseHolder,
 } from "./middleware-types.js";
-import { parseCookies, serializeCookie } from "./middleware-cookies.js";
 import { _getRequestContext } from "../server/request-context.js";
 
 // Re-export types and cookie utilities for backward compatibility
@@ -123,8 +121,6 @@ export function createMiddlewareContext<TEnv>(
   ) => string,
 ): MiddlewareContext<TEnv> {
   const url = new URL(request.url);
-  const cookieHeader = request.headers.get("Cookie");
-  let parsedCookies: Record<string, string> | null = null;
 
   // Track the initial response to detect pre/post-next() phase.
   // Before next(): responseHolder.response === initialResponse (the stub).
@@ -133,12 +129,12 @@ export function createMiddlewareContext<TEnv>(
   const isPreNext = () => responseHolder.response === initialResponse;
 
   // Delegation strategy for RequestContext (reqCtx):
-  // - cookie/cookies/setCookie/deleteCookie: delegate unconditionally.
-  //   Cookies must always accumulate on the shared reqCtx stub so loaders
-  //   and actions see a consistent view across all phases.
-  // - res getter / header(): delegate only before next(). After next(),
-  //   these operate on the real downstream response so middleware can
-  //   inspect/modify the actual response returned by the handler.
+  // - res getter: before next() returns shared reqCtx stub; after next() returns
+  //   the real downstream response.
+  // - header(): before next() delegates to reqCtx; after next() writes to the
+  //   real downstream response.
+  // Cookie operations are handled by the standalone cookies() function which
+  // delegates to the shared RequestContext internally.
   // The runtime implementation - types are enforced at call sites via MiddlewareContext<TEnv>
   return {
     request,
@@ -149,8 +145,8 @@ export function createMiddlewareContext<TEnv>(
     params,
 
     get res(): Response {
-      // Before next(): return shared RequestContext stub so cookies/headers
-      // set via ctx.setCookie()/ctx.header() are visible on ctx.res.
+      // Before next(): return shared RequestContext stub so headers
+      // set via ctx.header() are visible on ctx.res.
       if (isPreNext()) {
         const reqCtx = _getRequestContext();
         if (reqCtx) return reqCtx.res;
@@ -164,68 +160,7 @@ export function createMiddlewareContext<TEnv>(
     },
     set res(_: Response) {
       throw new Error(
-        "ctx.res is read-only. Use ctx.header(), ctx.setCookie(), or ctx.deleteCookie() to mutate the response.",
-      );
-    },
-
-    cookie(name: string): string | undefined {
-      // Delegate to RequestContext for response-derived cookie resolution
-      const reqCtx = _getRequestContext();
-      if (reqCtx) return reqCtx.cookie(name);
-      // Fallback: standalone usage (tests, edge cases)
-      if (!parsedCookies) {
-        parsedCookies = parseCookies(cookieHeader);
-      }
-      return parsedCookies[name];
-    },
-
-    cookies(): Record<string, string> {
-      const reqCtx = _getRequestContext();
-      if (reqCtx) return reqCtx.cookies();
-      if (!parsedCookies) {
-        parsedCookies = parseCookies(cookieHeader);
-      }
-      return { ...parsedCookies };
-    },
-
-    setCookie(name: string, value: string, options?: CookieOptions): void {
-      // Write to the shared RequestContext stub so all phases see the cookie
-      const reqCtx = _getRequestContext();
-      if (reqCtx) {
-        reqCtx.setCookie(name, value, options);
-        return;
-      }
-      // Fallback: standalone usage (tests, edge cases)
-      if (!responseHolder.response) {
-        throw new Error(
-          "ctx.setCookie() is not available - responseHolder was not initialized",
-        );
-      }
-      responseHolder.response.headers.append(
-        "Set-Cookie",
-        serializeCookie(name, value, options),
-      );
-    },
-
-    deleteCookie(
-      name: string,
-      options?: Pick<CookieOptions, "domain" | "path">,
-    ): void {
-      // Write to the shared RequestContext stub so all phases see the deletion
-      const reqCtx = _getRequestContext();
-      if (reqCtx) {
-        reqCtx.deleteCookie(name, options);
-        return;
-      }
-      // Fallback: standalone usage (tests, edge cases)
-      if (!responseHolder.response) {
-        throw new Error(
-          "ctx.deleteCookie() is not available - responseHolder was not initialized",
-        );
-      }
-      responseHolder.response.headers.append(
-        "Set-Cookie",
-        serializeCookie(name, "", { ...options, maxAge: 0 }),
+        "ctx.res is read-only. Use ctx.header() to set response headers, or cookies() for cookie mutations.",
       );
     },
 
@@ -342,6 +277,17 @@ export async function executeMiddleware<TEnv>(
           mergedHeaders.set(name, value);
         }
       });
+      // Also merge shared RequestContext stub (cookies written via cookies().set())
+      const reqCtx = _getRequestContext();
+      if (reqCtx) {
+        reqCtx.res.headers.forEach((value, name) => {
+          if (name.toLowerCase() === "set-cookie") {
+            mergedHeaders.append(name, value);
+          } else if (!mergedHeaders.has(name)) {
+            mergedHeaders.set(name, value);
+          }
+        });
+      }
 
       // Clone response with merged headers (mutable for post-next() modifications)
       responseHolder.response = new Response(response.body, {

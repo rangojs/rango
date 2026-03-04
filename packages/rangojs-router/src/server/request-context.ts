@@ -70,17 +70,18 @@ export interface RequestContext<
   /**
    * Stub response for setting headers/cookies (read-only).
    * Headers set here are merged into the final response.
-   * Use setCookie(), deleteCookie(), header(), or setStatus() to mutate.
+   * Use header() or setStatus() to mutate response headers/status.
+   * Use cookies().set()/cookies().delete() for cookie mutations.
    */
   readonly res: Response;
 
-  /** Get a cookie value from the request */
+  /** @internal Get a cookie value (effective: request + response mutations). Use cookies().get() instead. */
   cookie(name: string): string | undefined;
-  /** Get all cookies from the request */
+  /** @internal Get all cookies (effective merged view). Use cookies().getAll() instead. */
   cookies(): Record<string, string>;
-  /** Set a cookie on the response */
+  /** @internal Set a cookie on the response. Use cookies().set() instead. */
   setCookie(name: string, value: string, options?: CookieOptions): void;
-  /** Delete a cookie */
+  /** @internal Delete a cookie. Use cookies().delete() instead. */
   deleteCookie(
     name: string,
     options?: Pick<CookieOptions, "domain" | "path">,
@@ -234,6 +235,29 @@ export interface RequestContext<
   /** @internal Route name from route matching, used for scoped reverse resolution */
   _routeName?: string;
 }
+
+/**
+ * Public view of RequestContext, without internal methods and fields.
+ *
+ * This is the type exported to library consumers. Internal code should
+ * use the full RequestContext interface directly.
+ */
+export type PublicRequestContext<
+  TEnv = unknown,
+  TParams = Record<string, string>,
+> = Omit<
+  RequestContext<TEnv, TParams>,
+  | "cookie"
+  | "cookies"
+  | "setCookie"
+  | "deleteCookie"
+  | "_handleStore"
+  | "_cacheStore"
+  | "_onResponseCallbacks"
+  | "_themeConfig"
+  | "_locationState"
+  | "_routeName"
+>;
 
 // AsyncLocalStorage instance for request context
 const requestContextStorage = new AsyncLocalStorage<RequestContext<any>>();
@@ -462,7 +486,7 @@ export function createRequestContext<TEnv>(
     },
     set res(_: Response) {
       throw new Error(
-        "ctx.res is read-only. Use ctx.setStatus(), ctx.header(), ctx.setCookie(), or ctx.deleteCookie() to mutate the response.",
+        "ctx.res is read-only. Use ctx.header() to set response headers, or cookies() for cookie mutations.",
       );
     },
 
@@ -758,12 +782,6 @@ export function createUseFunction<TEnv>(
       env: ctx.env as any,
       var: ctx.var as any,
       get: ctx.get as any,
-      cookie(name: string) {
-        return ctx.cookie(name);
-      },
-      cookies() {
-        return ctx.cookies();
-      },
       use: <TDep, TDepParams = any>(
         dep: LoaderDefinition<TDep, TDepParams>,
       ): Promise<TDep> => {

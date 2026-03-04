@@ -1,17 +1,16 @@
 "use server";
 
-import { getRequestContext } from "@rangojs/router";
+import { cookies } from "@rangojs/router";
 
 export async function setCookieAction(): Promise<string> {
-  const ctx = getRequestContext();
+  const jar = cookies();
   // Read cookie set by middleware in this same request
-  const mwValue = ctx.cookie("mw-overlay") ?? "missing";
+  const mwValue = jar.get("mw-overlay")?.value ?? "missing";
   // Set a new cookie that the revalidation loader should see
-  ctx.setCookie("action-overlay", "from-action", { path: "/" });
+  jar.set("action-overlay", "from-action", { path: "/" });
   return mwValue;
 }
 
 export async function deleteCookieAction(): Promise<void> {
-  const ctx = getRequestContext();
-  ctx.deleteCookie("to-delete", { path: "/" });
+  cookies().delete("to-delete", { path: "/" });
 }

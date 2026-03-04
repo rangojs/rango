@@ -37,8 +37,8 @@ The base context is created once per request right after route matching. It hold
 - `res` -- stub response, headers merged into final response
 - `headers` -- alias for `res.headers`
 - `header(name, value)` -- shorthand for `res.headers.set()`
-- `cookie(name)`, `cookies()` -- read request cookies
-- `setCookie(name, value, opts)`, `deleteCookie(name, opts)` -- modify response cookies
+- `cookies()` -- standalone API: `cookies().get(name)`, `cookies().set(name, value, opts)`, `cookies().delete(name, opts)`
+- `headers()` -- standalone API: read-only view of request headers
 
 ## Capability Matrix
 

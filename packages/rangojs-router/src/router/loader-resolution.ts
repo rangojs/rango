@@ -251,12 +251,6 @@ function createLoaderExecutor<TEnv>(
       env: ctx.env,
       var: ctx.var,
       get: ctx.get,
-      cookie(name: string) {
-        return reqCtxRef?.cookie(name);
-      },
-      cookies() {
-        return reqCtxRef?.cookies() ?? {};
-      },
       use: <TDep, TDepParams = any>(
         dep: LoaderDefinition<TDep, TDepParams>,
       ): Promise<TDep> => {

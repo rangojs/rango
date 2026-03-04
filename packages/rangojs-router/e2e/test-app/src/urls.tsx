@@ -1,4 +1,4 @@
-import { urls, Meta } from "@rangojs/router";
+import { urls, cookies, Meta } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { RootLayout } from "./components/layouts/index.js";
 import { blogPatterns } from "./urls/blog.js";
@@ -428,7 +428,7 @@ export const urlpatterns = urls(
           middleware(async (ctx, next) => {
             await next();
             ctx.header("X-Intercept-Middleware", "applied");
-            ctx.setCookie("intercept-visited", "true", { path: "/" });
+            cookies().set("intercept-visited", "true", { path: "/" });
           }),
         ],
       ),
@@ -655,7 +655,7 @@ export const urlpatterns = urls(
         { name: "negotiateTestMd" },
       ),
 
-      // Response handler auto-wrap + ctx.header()/ctx.setCookie() tests
+      // Response handler auto-wrap + ctx.header()/cookies().set() tests
       path.md(
         "/response-wrap/auto",
         (ctx) => {
@@ -668,7 +668,7 @@ export const urlpatterns = urls(
         (ctx) => {
           ctx.header("X-Custom", "from-md-handler");
           ctx.header("Cache-Control", "public, max-age=3600");
-          ctx.setCookie("md-visited", "true", { path: "/", maxAge: 86400 });
+          cookies().set("md-visited", "true", { path: "/", maxAge: 86400 });
           return `# With Headers\n\nHeaders set via ctx.header().`;
         },
         { name: "responseWrapWithHeaders" },
@@ -677,7 +677,7 @@ export const urlpatterns = urls(
         "/response-wrap/json-headers",
         (ctx) => {
           ctx.header("X-Api-Version", "v2");
-          ctx.setCookie("api-session", "abc123", { httpOnly: true, path: "/" });
+          cookies().set("api-session", "abc123", { httpOnly: true, path: "/" });
           return { source: "json", version: 2 };
         },
         { name: "responseWrapJsonHeaders" },
@@ -745,7 +745,7 @@ export const urlpatterns = urls(
         () => [
           middleware(async (ctx, next) => {
             ctx.set("role", "admin");
-            ctx.setCookie("mw-role", "admin", { path: "/" });
+            cookies().set("mw-role", "admin", { path: "/" });
             await next();
           }),
         ],

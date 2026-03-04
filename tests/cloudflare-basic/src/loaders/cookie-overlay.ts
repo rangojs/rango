@@ -1,9 +1,10 @@
-import { createLoader } from "@rangojs/router";
+import { createLoader, cookies } from "@rangojs/router";
 
-export const CookieOverlayLoader = createLoader(async (ctx) => {
+export const CookieOverlayLoader = createLoader(async () => {
+  const jar = cookies();
   return {
-    mwCookie: ctx.cookie("mw-overlay") ?? null,
-    actionCookie: ctx.cookie("action-overlay") ?? null,
-    deletedCookie: ctx.cookie("to-delete") ?? null,
+    mwCookie: jar.get("mw-overlay")?.value ?? null,
+    actionCookie: jar.get("action-overlay")?.value ?? null,
+    deletedCookie: jar.get("to-delete")?.value ?? null,
   };
 });

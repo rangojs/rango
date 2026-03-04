@@ -50,10 +50,6 @@ export type LoaderContext<
   get: {
     <T>(contextVar: ContextVar<T>): T | undefined;
   } & (<K extends keyof DefaultVars>(key: K) => DefaultVars[K]);
-  /** Get a cookie value from the request */
-  cookie(name: string): string | undefined;
-  /** Get all cookies from the request */
-  cookies(): Record<string, string>;
   /**
    * Access another loader's data (returns promise since loaders run in parallel)
    */

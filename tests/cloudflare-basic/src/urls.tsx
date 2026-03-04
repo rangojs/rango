@@ -1,4 +1,4 @@
-import { urls, type ResponseHandlerContext } from "@rangojs/router";
+import { urls, cookies, type ResponseHandlerContext } from "@rangojs/router";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
 import { FeatureLoading } from "./components/FeatureLoading.js";
@@ -274,7 +274,7 @@ export const urlpatterns = urls(
           { name: "cookieOverlay" },
           () => [
             middleware(async (ctx, next) => {
-              ctx.setCookie("mw-overlay", "from-middleware", { path: "/" });
+              cookies().set("mw-overlay", "from-middleware", { path: "/" });
               return next();
             }),
             loader(CookieOverlayLoader),

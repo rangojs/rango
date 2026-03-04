@@ -176,7 +176,7 @@ This can be customized at two levels:
 loader(ProductLoader, () => [
   cache({
     ttl: 300,
-    key: (ctx) => `product:${ctx.params.slug}:${ctx.cookie("locale")}`,
+    key: (ctx) => `product:${ctx.params.slug}:${cookies().get("locale")?.value ?? "en"}`,
   }),
 ]),
 

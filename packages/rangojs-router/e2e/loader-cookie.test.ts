@@ -3,18 +3,18 @@ import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, testId } from "./helper";
 
 /**
- * Tests for LoaderContext cookie access (ctx.cookie / ctx.cookies)
+ * Tests for cookie access via cookies() standalone API
  * and RequestContext reverse (getRequestContext().reverse()).
  *
  * Covers both dev and production modes.
  */
-test.describe("Loader ctx.cookie()", () => {
+test.describe("Loader cookies()", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
   });
 
-  test("should read cookies via ctx.cookie()", async ({ page, context }) => {
+  test("should read cookies via cookies()", async ({ page, context }) => {
     using _ = expectNoPageError(page);
 
     // Set a test-session cookie before navigating
@@ -54,17 +54,15 @@ test.describe("Loader ctx.cookie()", () => {
     await waitForHydration(page);
 
     await expect(testId(page, "loader-cookie-mw-page")).toBeVisible();
-    // On first request, the cookie is not yet set when the loader runs
-    // (middleware sets it on the response, loader reads from request)
-    await expect(testId(page, "loader-cookie-mw-visit-count")).toHaveText(
-      "null",
-    );
+    // Middleware sets visit-count=1, loader sees it in the same request
+    // via response-derived read-after-write
+    await expect(testId(page, "loader-cookie-mw-visit-count")).toHaveText("1");
 
-    // Second visit - now the cookie is present from the previous response
+    // Second visit - middleware increments to 2
     await page.goto(f.url("/loader-cookie/from-middleware"));
     await waitForHydration(page);
 
-    await expect(testId(page, "loader-cookie-mw-visit-count")).toHaveText("1");
+    await expect(testId(page, "loader-cookie-mw-visit-count")).toHaveText("2");
   });
 });
 
@@ -102,13 +100,13 @@ test.describe("RequestContext reverse()", () => {
 
 // === Production mode tests ===
 
-test.describe("Loader ctx.cookie() (production)", () => {
+test.describe("Loader cookies() (production)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "build",
   });
 
-  test("should read cookies via ctx.cookie() in production", async ({
+  test("should read cookies via cookies() in production", async ({
     page,
     context,
   }) => {
@@ -156,15 +154,14 @@ test.describe("Loader ctx.cookie() (production)", () => {
     await waitForHydration(page);
 
     await expect(testId(page, "loader-cookie-mw-page")).toBeVisible();
-    await expect(testId(page, "loader-cookie-mw-visit-count")).toHaveText(
-      "null",
-    );
+    // Middleware sets visit-count=1, loader sees it in the same request
+    await expect(testId(page, "loader-cookie-mw-visit-count")).toHaveText("1");
 
-    // Second visit - cookie from previous response is now present
+    // Second visit - middleware increments to 2
     await page.goto(f.url("/loader-cookie/from-middleware"));
     await waitForHydration(page);
 
-    await expect(testId(page, "loader-cookie-mw-visit-count")).toHaveText("1");
+    await expect(testId(page, "loader-cookie-mw-visit-count")).toHaveText("2");
   });
 });
 
