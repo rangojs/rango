@@ -65,7 +65,9 @@ global middleware
 - Handler-first ordering is guaranteed within a full render pass:
   route handler runs before its child/orphan layouts and parallel children.
 - `ctx.set()` values flow downward through structural scope boundaries only.
-- Loaders are live by default unless explicitly cached.
+- Loaders are live by default unless explicitly cached via `cache()` in their
+  use params: `loader(Fn, () => [cache({ ttl })])`.
+- Route-level `cache()` does not cache loader segments; loaders remain live.
 - Prerendered handlers can be frozen while loaders remain live.
 
 ## Non-Guarantees

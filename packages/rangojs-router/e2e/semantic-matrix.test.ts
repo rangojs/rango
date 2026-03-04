@@ -21,6 +21,7 @@ type SemanticMatrixRow = {
   transport: TransportAxis;
   execution: ExecutionAxis;
   scope: ScopeAxis;
+  url?: string;
   assert: (ctx: MatrixContext) => Promise<void>;
 };
 
@@ -188,6 +189,37 @@ const matrixRows: SemanticMatrixRow[] = [
       await expect(testId(page, "parallel-handler-data")).toHaveText("none");
     },
   },
+  {
+    id: "C1",
+    contract: "loader without cache() runs fresh on every request",
+    transport: "js",
+    execution: "full-render",
+    scope: "n/a",
+    url: "/cache-test/non-cached-loader",
+    assert: async ({ page }) => {
+      const first = await testId(page, "loaded-at").textContent();
+      await page.waitForTimeout(100);
+      await openJsPage(page, page.url());
+      const second = await testId(page, "loaded-at").textContent();
+      expect(second).not.toBe(first);
+    },
+  },
+  {
+    id: "C2",
+    contract: "loader with cache() returns cached data on subsequent request",
+    transport: "js",
+    execution: "full-render",
+    scope: "n/a",
+    url: "/cache-test/cached-loader",
+    assert: async ({ page }) => {
+      const first = await testId(page, "loaded-at").textContent();
+      // Wait for async cache write (waitUntil)
+      await page.waitForTimeout(500);
+      await openJsPage(page, page.url());
+      const second = await testId(page, "loaded-at").textContent();
+      expect(second).toBe(first);
+    },
+  },
 ];
 
 function registerSemanticMatrixSuite(build: BuildAxis): void {
@@ -203,7 +235,7 @@ function registerSemanticMatrixSuite(build: BuildAxis): void {
     for (const row of matrixRows.filter((entry) => entry.transport === "js")) {
       test(rowTitle(row), async ({ page }) => {
         using _ = expectNoPageError(page);
-        await openJsPage(page, fixture.url("/mw-chain"));
+        await openJsPage(page, fixture.url(row.url ?? "/mw-chain"));
         await row.assert({ page });
       });
     }
