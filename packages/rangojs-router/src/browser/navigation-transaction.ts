@@ -4,10 +4,6 @@ import type {
   ResolvedSegment,
   StreamingToken,
 } from "./types.js";
-import {
-  isLocationStateEntry,
-  resolveLocationStateEntries,
-} from "./react/location-state-shared.js";
 import { generateHistoryKey } from "./navigation-store.js";
 import {
   handleNavigationStart,
@@ -16,71 +12,10 @@ import {
 } from "./scroll-restoration.js";
 import type { EventController, NavigationHandle } from "./event-controller.js";
 import { debugLog } from "./logging.js";
+import { buildHistoryState } from "./history-state.js";
 
-/**
- * Check if state is from typed LocationStateEntry[] (has __rsc_ls_ keys)
- */
-function isTypedLocationState(
-  state: unknown,
-): state is Record<string, unknown> {
-  if (state === null || typeof state !== "object") return false;
-  return Object.keys(state).some((key) => key.startsWith("__rsc_ls_"));
-}
-
-/**
- * Resolve navigation state - handles both LocationStateEntry[] and plain formats
- */
-export function resolveNavigationState(state: unknown): unknown {
-  // Check if it's an array of LocationStateEntry
-  if (
-    Array.isArray(state) &&
-    state.length > 0 &&
-    isLocationStateEntry(state[0])
-  ) {
-    return resolveLocationStateEntries(state);
-  }
-  // Return as-is for plain state formats
-  return state;
-}
-
-/**
- * Build history state object from user state
- * - Typed state: spread directly into history.state
- * - Plain state: store in history.state.state
- */
-function buildHistoryState(
-  userState: unknown,
-  routerState?: { intercept?: boolean; sourceUrl?: string },
-  serverState?: Record<string, unknown>,
-): Record<string, unknown> | null {
-  const result: Record<string, unknown> = {};
-
-  // Add router internal state
-  if (routerState?.intercept) {
-    result.intercept = true;
-    if (routerState.sourceUrl) {
-      result.sourceUrl = routerState.sourceUrl;
-    }
-  }
-
-  // Add user state
-  if (userState !== undefined) {
-    if (isTypedLocationState(userState)) {
-      // Typed state: spread directly
-      Object.assign(result, userState);
-    } else {
-      // Plain state: store in .state
-      result.state = userState;
-    }
-  }
-
-  // Merge server-set location state (from ctx.setLocationState on non-redirect responses)
-  if (serverState) {
-    Object.assign(result, serverState);
-  }
-
-  return Object.keys(result).length > 0 ? result : null;
-}
+// Re-export for consumers that import from navigation-transaction
+export { resolveNavigationState } from "./history-state.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {

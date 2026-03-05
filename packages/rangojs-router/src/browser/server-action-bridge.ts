@@ -28,6 +28,7 @@ import {
   emptyResponse,
   teeWithCompletion,
 } from "./response-adapter.js";
+import { mergeLocationState } from "./history-state.js";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -611,19 +612,7 @@ export function createServerActionBridge(
         // Apply server-set location state to history.state (non-redirect flow)
         const actionLocationState = metadata?.locationState;
         if (actionLocationState) {
-          const merged = {
-            ...window.history.state,
-            ...actionLocationState,
-          };
-          window.history.replaceState(merged, "", window.location.href);
-          // Notify useLocationState hooks so they re-read from history.state
-          if (
-            Object.keys(actionLocationState).some((k) =>
-              k.startsWith("__rsc_ls_"),
-            )
-          ) {
-            window.dispatchEvent(new Event("__rsc_locationstate"));
-          }
+          mergeLocationState(actionLocationState);
         }
 
         // Update store state
