@@ -33,6 +33,7 @@ vi.mock("../browser/logging.js", () => ({
 }));
 
 import { createServerActionBridge } from "../browser/server-action-bridge";
+import { reconcileErrorSegments } from "../browser/segment-reconciler";
 
 // ---------------------------------------------------------------------------
 // Window setup (no jsdom — manual globalThis.window like prefetch-fetch tests)
@@ -380,5 +381,124 @@ describe("server-action-bridge payload redirect origin validation", () => {
     expect(store.setSegmentIds).not.toHaveBeenCalled();
     expect(store.cacheSegmentsForHistory).not.toHaveBeenCalled();
     expect(completeFn).not.toHaveBeenCalled();
+  });
+});
+
+describe("server-action-bridge error path race guard", () => {
+  beforeEach(() => {
+    setupWindow();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+  });
+
+  it("skips UI/store mutations when user navigates during error renderSegments", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const store = createMockStore();
+    const { controller } = createMockEventController();
+    const onUpdate = vi.fn();
+
+    // Mock reconcileErrorSegments to return a minimal result
+    vi.mocked(reconcileErrorSegments).mockReturnValue({
+      segments: [],
+      mainSegments: [],
+      interceptSegments: [],
+    });
+
+    // renderSegments simulates user navigating away during async render
+    const renderSegments = vi.fn(async () => {
+      // Simulate navigation: change pathname
+      (window as any).location.pathname = "/other-page";
+      return "error-tree";
+    });
+
+    const payload: RscPayload = {
+      metadata: {
+        isPartial: true,
+        isError: true,
+        matched: ["root"],
+        diff: ["error-seg"],
+        segments: [],
+      },
+      returnValue: { ok: false, data: new Error("action failed") },
+    } as any;
+
+    const { deps, getActionCallback } = createMockDeps(payload);
+
+    const bridge = createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: controller as any,
+      deps,
+      onUpdate,
+      renderSegments,
+    });
+    bridge.register();
+
+    // The action should throw the error but NOT apply UI/store updates
+    await expect(getActionCallback()("test-action", [])).rejects.toThrow(
+      "action failed",
+    );
+
+    // renderSegments was called (error tree was prepared)
+    expect(renderSegments).toHaveBeenCalled();
+    // But onUpdate must NOT be called (user navigated away)
+    expect(onUpdate).not.toHaveBeenCalled();
+    expect(store.setSegmentIds).not.toHaveBeenCalled();
+    expect(store.cacheSegmentsForHistory).not.toHaveBeenCalled();
+  });
+
+  it("skips UI/store mutations when history key changes during error renderSegments", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const store = createMockStore();
+    const { controller } = createMockEventController();
+    const onUpdate = vi.fn();
+
+    vi.mocked(reconcileErrorSegments).mockReturnValue({
+      segments: [],
+      mainSegments: [],
+      interceptSegments: [],
+    });
+
+    // renderSegments simulates history key change during async render
+    const renderSegments = vi.fn(async () => {
+      store.getHistoryKey.mockReturnValue("/new-key");
+      return "error-tree";
+    });
+
+    const payload: RscPayload = {
+      metadata: {
+        isPartial: true,
+        isError: true,
+        matched: ["root"],
+        diff: ["error-seg"],
+        segments: [],
+      },
+      returnValue: { ok: false, data: new Error("action failed") },
+    } as any;
+
+    const { deps, getActionCallback } = createMockDeps(payload);
+
+    const bridge = createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: controller as any,
+      deps,
+      onUpdate,
+      renderSegments,
+    });
+    bridge.register();
+
+    await expect(getActionCallback()("test-action", [])).rejects.toThrow(
+      "action failed",
+    );
+
+    expect(renderSegments).toHaveBeenCalled();
+    expect(onUpdate).not.toHaveBeenCalled();
+    expect(store.setSegmentIds).not.toHaveBeenCalled();
+    expect(store.cacheSegmentsForHistory).not.toHaveBeenCalled();
   });
 });
