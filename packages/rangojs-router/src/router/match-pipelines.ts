@@ -86,19 +86,14 @@
  *     -> output: cached segments + fresh loader data
  *
  *
- * TWO PIPELINE VARIANTS
- * =====================
+ * PIPELINE VARIANT
+ * ================
  *
- * 1. createMatchPipeline (Full Match)
- *    - Used for document requests (initial page load)
- *    - No revalidation logic (no previous state to compare)
- *    - Simpler segment resolution
- *
- * 2. createMatchPartialPipeline (Partial Match)
- *    - Used for client-side navigation
- *    - Includes revalidation for SWR
- *    - Compares with previous params/URL
- *    - Supports intercepts (soft navigation modals)
+ * createMatchPartialPipeline handles both full (document) and partial
+ * (navigation) requests. The middleware steps adapt based on ctx.isFullMatch:
+ * - cache-lookup/store work for both
+ * - background-revalidation is a no-op for full matches (no stale state)
+ * - intercept-resolution is a no-op for full matches (no previous navigation)
  */
 import type { ResolvedSegment } from "../types.js";
 import type { MatchContext, MatchPipelineState } from "./match-context.js";
@@ -180,35 +175,5 @@ export function createMatchPartialPipeline<TEnv>(
   );
 
   // Start with empty source - cache lookup or segment resolution will produce segments
-  return pipeline(empty());
-}
-
-/**
- * Create the full match pipeline (simpler, no revalidation)
- *
- * Used for document requests (initial page load) where we don't need
- * revalidation logic since there's no previous state to compare against.
- */
-export function createMatchPipeline<TEnv>(
-  ctx: MatchContext<TEnv>,
-  state: MatchPipelineState,
-): AsyncGenerator<ResolvedSegment> {
-  // For full match, we only need:
-  // 1. Cache lookup
-  // 2. Segment resolution (without revalidation)
-  // 3. Intercept resolution
-  // 4. Cache store
-
-  // Note: Full match uses different resolution logic (resolveAllSegments instead of
-  // resolveAllSegmentsWithRevalidation). This will be handled by the segment resolution
-  // middleware checking ctx.isFullMatch or similar flag.
-
-  const pipeline = compose<ResolvedSegment>(
-    withCacheStore(ctx, state),
-    withInterceptResolution(ctx, state),
-    withSegmentResolution(ctx, state),
-    withCacheLookup(ctx, state),
-  );
-
   return pipeline(empty());
 }

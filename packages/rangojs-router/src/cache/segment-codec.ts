@@ -142,79 +142,75 @@ export const deserializeComponent: (encoded: string) => Promise<unknown> =
 export async function serializeSegments(
   segments: ResolvedSegment[],
 ): Promise<SerializedSegmentData[]> {
-  const serialized: SerializedSegmentData[] = [];
+  return Promise.all(
+    segments.map(async (segment): Promise<SerializedSegmentData> => {
+      const temporaryReferences = createTemporaryReferenceSet();
 
-  for (const segment of segments) {
-    const temporaryReferences = createTemporaryReferenceSet();
+      // Await component if it's a Promise (intercepts with loading keep component as Promise)
+      const componentResolved =
+        segment.component instanceof Promise
+          ? await segment.component
+          : segment.component;
 
-    // Await component if it's a Promise (intercepts with loading keep component as Promise)
-    const componentResolved =
-      segment.component instanceof Promise
-        ? await segment.component
-        : segment.component;
+      // Serialize the component to RSC stream
+      const stream = renderToReadableStream(componentResolved, {
+        temporaryReferences,
+      });
 
-    // Serialize the component to RSC stream
-    const stream = renderToReadableStream(componentResolved, {
-      temporaryReferences,
-    });
+      // RSC-serialize loading: "null" string distinguishes explicit null from undefined
+      const encodedLoading =
+        segment.loading !== undefined
+          ? segment.loading === null
+            ? "null"
+            : await rscSerialize(segment.loading)
+          : undefined;
 
-    // Convert stream to string
-    const encoded = await streamToString(stream);
+      // Await loaderData / loaderDataPromise if they're Promises
+      const loaderDataResolved =
+        segment.loaderData instanceof Promise
+          ? await segment.loaderData
+          : segment.loaderData;
+      const loaderDataPromiseResolved =
+        segment.loaderDataPromise instanceof Promise
+          ? await segment.loaderDataPromise
+          : segment.loaderDataPromise;
 
-    // RSC-serialize layout if present (ReactNode)
-    const encodedLayout = segment.layout
-      ? await rscSerialize(segment.layout)
-      : undefined;
+      // Parallelize stream-to-string and RSC serialization of sub-fields
+      const [
+        encoded,
+        encodedLayout,
+        encodedLoaderData,
+        encodedLoaderDataPromise,
+      ] = await Promise.all([
+        streamToString(stream),
+        segment.layout ? rscSerialize(segment.layout) : undefined,
+        rscSerialize(loaderDataResolved),
+        rscSerialize(loaderDataPromiseResolved),
+      ]);
 
-    // RSC-serialize loading if present (ReactNode) - preserves tree structure
-    // Use "null" string to distinguish explicit null from undefined
-    const encodedLoading =
-      segment.loading !== undefined
-        ? segment.loading === null
-          ? "null"
-          : await rscSerialize(segment.loading)
-        : undefined;
-
-    // Await and RSC-serialize loaderData if present
-    const loaderDataResolved =
-      segment.loaderData instanceof Promise
-        ? await segment.loaderData
-        : segment.loaderData;
-    const encodedLoaderData = await rscSerialize(loaderDataResolved);
-
-    // Await and RSC-serialize loaderDataPromise if present
-    const loaderDataPromiseResolved =
-      segment.loaderDataPromise instanceof Promise
-        ? await segment.loaderDataPromise
-        : segment.loaderDataPromise;
-    const encodedLoaderDataPromise = await rscSerialize(
-      loaderDataPromiseResolved,
-    );
-
-    serialized.push({
-      encoded,
-      encodedLayout,
-      encodedLoading,
-      encodedLoaderData,
-      encodedLoaderDataPromise,
-      metadata: {
-        id: segment.id,
-        type: segment.type,
-        namespace: segment.namespace,
-        index: segment.index,
-        params: segment.params,
-        slot: segment.slot,
-        belongsToRoute: segment.belongsToRoute,
-        layoutName: segment.layoutName,
-        parallelName: segment.parallelName,
-        loaderId: segment.loaderId,
-        loaderIds: segment.loaderIds,
-        transition: segment.transition,
-      },
-    });
-  }
-
-  return serialized;
+      return {
+        encoded,
+        encodedLayout,
+        encodedLoading,
+        encodedLoaderData,
+        encodedLoaderDataPromise,
+        metadata: {
+          id: segment.id,
+          type: segment.type,
+          namespace: segment.namespace,
+          index: segment.index,
+          params: segment.params,
+          slot: segment.slot,
+          belongsToRoute: segment.belongsToRoute,
+          layoutName: segment.layoutName,
+          parallelName: segment.parallelName,
+          loaderId: segment.loaderId,
+          loaderIds: segment.loaderIds,
+          transition: segment.transition,
+        },
+      };
+    }),
+  );
 }
 
 /**
@@ -224,44 +220,36 @@ export async function serializeSegments(
 export async function deserializeSegments(
   data: SerializedSegmentData[],
 ): Promise<ResolvedSegment[]> {
-  const segments: ResolvedSegment[] = [];
+  return Promise.all(
+    data.map(async (item): Promise<ResolvedSegment> => {
+      const temporaryReferences = createTemporaryReferenceSet();
 
-  for (const item of data) {
-    const temporaryReferences = createTemporaryReferenceSet();
+      // Handle the "null" sentinel for loading before RSC deserialization.
+      // During serialization, loading: null is stored as the string "null" to
+      // distinguish it from undefined.
+      const loadingIsNullSentinel = item.encodedLoading === "null";
 
-    // Revive the component from cached string
-    const stream = stringToStream(item.encoded);
-    const component = await createFromReadableStream(stream, {
-      temporaryReferences,
-    });
+      const [component, layout, loaderData, loaderDataPromise, loadingData] =
+        await Promise.all([
+          createFromReadableStream(stringToStream(item.encoded), {
+            temporaryReferences,
+          }),
+          rscDeserialize(item.encodedLayout),
+          rscDeserialize(item.encodedLoaderData),
+          rscDeserialize(item.encodedLoaderDataPromise),
+          loadingIsNullSentinel
+            ? (null as any)
+            : rscDeserialize(item.encodedLoading),
+        ]);
 
-    // RSC-deserialize layout, loaderData, loaderDataPromise in parallel.
-    // Handle the "null" sentinel for loading before RSC deserialization.
-    // During serialization, loading: null is stored as the string "null" to
-    // distinguish it from undefined. This sentinel must be intercepted here
-    // rather than passed to rscDeserialize, which would try to decode it as
-    // an RSC Flight payload.
-    const loadingIsNullSentinel = item.encodedLoading === "null";
-
-    const [layout, loaderData, loaderDataPromise, loadingData] =
-      await Promise.all([
-        rscDeserialize(item.encodedLayout),
-        rscDeserialize(item.encodedLoaderData),
-        rscDeserialize(item.encodedLoaderDataPromise),
-        loadingIsNullSentinel
-          ? (null as any)
-          : rscDeserialize(item.encodedLoading),
-      ]);
-
-    segments.push({
-      ...item.metadata,
-      component,
-      layout,
-      loading: loadingData,
-      loaderData,
-      loaderDataPromise,
-    } as ResolvedSegment);
-  }
-
-  return segments;
+      return {
+        ...item.metadata,
+        component,
+        layout,
+        loading: loadingData,
+        loaderData,
+        loaderDataPromise,
+      } as ResolvedSegment;
+    }),
+  );
 }

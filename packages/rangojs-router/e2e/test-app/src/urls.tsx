@@ -41,6 +41,7 @@ import { actionRedirectRevalidationPatterns } from "./urls/action-redirect-reval
 import { hashNavigationPatterns } from "./urls/hash-navigation.js";
 import { linkBehaviorPatterns } from "./urls/link-behavior.js";
 import { delayedBreadcrumbPatterns } from "./urls/delayed-breadcrumbs.js";
+import { manifestCacheTestPatterns } from "./urls/manifest-cache-test.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -636,6 +637,24 @@ export const urlpatterns = urls(
           return result;
         },
         { name: "testLastError" },
+      ),
+
+      // Manifest cache test route (its DSL handler increments a counter)
+      include("/manifest-cache-test", manifestCacheTestPatterns, {
+        name: "manifestCacheTest",
+      }),
+
+      // Manifest cache test: read the handler execution counter.
+      // The DSL handler in manifestCacheTestPatterns increments a counter
+      // each time loadManifest() runs it. After the first request the
+      // manifest is cached, so subsequent requests should NOT increment it.
+      path.json(
+        "/__test/manifest-cache-counter",
+        async () => {
+          const mod = await import("./manifest-cache-probe.js");
+          return { handlerExecutions: mod.handlerExecutions };
+        },
+        { name: "testManifestCacheCounter" },
       ),
 
       // Content negotiation test: RSC + JSON + MD on same URL
