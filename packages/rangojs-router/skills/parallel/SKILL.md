@@ -189,16 +189,11 @@ Handoff helper style also works:
 ```typescript
 import { revalidate } from "@rangojs/router";
 
-export const revalidateCart = () => [
-  revalidate(revalidateCartData),
-];
+export const revalidateCart = () => [revalidate(revalidateCartData)];
 
 layout(CartLayout, () => [
   revalidateCart(),
-  parallel(
-    { "@cart": CartSummary },
-    () => [revalidateCart()],
-  ),
+  parallel({ "@cart": CartSummary }, () => [revalidateCart()]),
 ]);
 ```
 

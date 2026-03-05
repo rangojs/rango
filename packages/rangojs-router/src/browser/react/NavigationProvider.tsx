@@ -23,7 +23,7 @@ import { RootErrorBoundary } from "../../root-error-boundary.js";
 import type { HandleData } from "../types.js";
 import { ThemeProvider } from "../../theme/ThemeProvider.js";
 import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
-import { cancelAllPrefetches } from "../prefetch-queue.js";
+import { cancelAllPrefetches } from "../prefetch/queue.js";
 
 /**
  * Process handles from an async generator, updating the event controller

@@ -196,10 +196,9 @@ path("/checkout", CheckoutPage, { name: "checkout" }, () => [
   revalidate(revalidateCheckoutData), // producer (route handler) reruns
   layout(CheckoutLayout, () => [
     revalidate(revalidateCheckoutData), // consumer reruns
-    parallel(
-      { "@summary": CheckoutSummary },
-      () => [revalidate(revalidateCheckoutData)],
-    ),
+    parallel({ "@summary": CheckoutSummary }, () => [
+      revalidate(revalidateCheckoutData),
+    ]),
   ]),
 ]);
 ```
@@ -212,15 +211,11 @@ For cleaner route trees, expose contract helpers and spread them:
 ```typescript
 import { revalidate } from "@rangojs/router";
 
-export const revalidateCheckout = () => [
-  revalidate(revalidateCheckoutData),
-];
+export const revalidateCheckout = () => [revalidate(revalidateCheckoutData)];
 
 path("/checkout", CheckoutPage, { name: "checkout" }, () => [
   revalidateCheckout(),
-  layout(CheckoutLayout, () => [
-    revalidateCheckout(),
-  ]),
+  layout(CheckoutLayout, () => [revalidateCheckout()]),
 ]);
 ```
 

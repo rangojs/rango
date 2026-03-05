@@ -12,9 +12,11 @@ import {
   markPrefetchInflight,
   markPrefetched,
   clearPrefetchInflight,
-} from "./prefetch-cache.js";
-import { getRangoState } from "./rango-state.js";
-import { enqueuePrefetch } from "./prefetch-queue.js";
+  currentGeneration,
+} from "./cache.js";
+import { getRangoState } from "../rango-state.js";
+import { enqueuePrefetch } from "./queue.js";
+import { shouldPrefetch } from "./policy.js";
 
 /**
  * Build an RSC partial URL for prefetching.
@@ -45,6 +47,7 @@ function executePrefetchFetch(
   fetchUrl: string,
   signal?: AbortSignal,
 ): Promise<void> {
+  const gen = currentGeneration();
   markPrefetchInflight(key);
 
   return fetch(fetchUrl, {
@@ -62,7 +65,7 @@ function executePrefetchFetch(
       if (response.ok && response.body) {
         return response.body
           .pipeTo(new WritableStream())
-          .then(() => markPrefetched(key));
+          .then(() => markPrefetched(key, gen));
       }
     })
     .catch(() => {
@@ -82,6 +85,8 @@ export function prefetchDirect(
   segmentIds: string[],
   version?: string,
 ): void {
+  if (!shouldPrefetch()) return;
+
   const targetUrl = buildPrefetchUrl(url, segmentIds, version);
   const key = targetUrl.pathname + targetUrl.search;
   if (hasPrefetch(key)) return;
@@ -98,6 +103,7 @@ export function prefetchQueued(
   segmentIds: string[],
   version?: string,
 ): string {
+  if (!shouldPrefetch()) return "";
   const targetUrl = buildPrefetchUrl(url, segmentIds, version);
   const key = targetUrl.pathname + targetUrl.search;
   if (hasPrefetch(key)) return key;
