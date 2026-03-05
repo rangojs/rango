@@ -814,7 +814,7 @@ test.describe("stateful-navigation-failure", () => {
     mode: "dev",
   });
 
-  test("failed stateful navigation shows error UI at target URL", async ({
+  test("failed stateful navigation shows error UI at source URL", async ({
     page,
   }) => {
     await page.goto(f.url("/location-state/link-state"));
@@ -832,14 +832,15 @@ test.describe("stateful-navigation-failure", () => {
       (route) => route.abort("failed"),
     );
 
-    // Click a Link with state — this triggers an early history.pushState
+    // Click a Link with state
     await page.locator('[data-testid="link-typed-eager"]').click();
 
-    // The error UI should appear at the target URL
+    // The error UI should appear
     await expect(page.getByRole("heading", { name: /error/i })).toBeVisible();
 
-    // URL stays at the target — the failed navigation owns it
-    expect(page.url()).toContain("/location-state/link-state/target");
+    // URL stays at source — pushState only happens on successful commit
+    expect(page.url()).toContain("/location-state/link-state");
+    expect(page.url()).not.toContain("/target");
   });
 });
 
@@ -852,7 +853,7 @@ test.describe("stateful-navigation-failure (production)", () => {
     mode: "build",
   });
 
-  test("failed stateful navigation shows error UI at target URL", async ({
+  test("failed stateful navigation shows error UI at source URL", async ({
     page,
   }) => {
     await page.goto(f.url("/location-state/link-state"));
@@ -870,14 +871,15 @@ test.describe("stateful-navigation-failure (production)", () => {
       (route) => route.abort("failed"),
     );
 
-    // Click a Link with state — this triggers an early history.pushState
+    // Click a Link with state
     await page.locator('[data-testid="link-typed-eager"]').click();
 
-    // The error UI should appear at the target URL
+    // The error UI should appear
     await expect(page.getByRole("heading", { name: /error/i })).toBeVisible();
 
-    // URL stays at the target — the failed navigation owns it
-    expect(page.url()).toContain("/location-state/link-state/target");
+    // URL stays at source — pushState only happens on successful commit
+    expect(page.url()).toContain("/location-state/link-state");
+    expect(page.url()).not.toContain("/target");
   });
 });
 
