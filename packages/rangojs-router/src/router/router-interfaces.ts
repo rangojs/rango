@@ -249,7 +249,10 @@ export interface RSCRouterInternal<
   /**
    * Cache profiles for "use cache" per-request resolution.
    */
-  readonly cacheProfiles?: Record<string, import("../cache/profile-registry.js").CacheProfile>;
+  readonly cacheProfiles?: Record<
+    string,
+    import("../cache/profile-registry.js").CacheProfile
+  >;
 
   /**
    * Cache-Control header value for prefetch responses.

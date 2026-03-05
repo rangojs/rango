@@ -129,7 +129,10 @@ export interface RequestContext<
   _cacheStore?: SegmentCacheStore;
 
   /** @internal Cache profiles for "use cache" profile resolution (per-router) */
-  _cacheProfiles?: Record<string, import("../cache/profile-registry.js").CacheProfile>;
+  _cacheProfiles?: Record<
+    string,
+    import("../cache/profile-registry.js").CacheProfile
+  >;
 
   /**
    * Schedule work to run after the response is sent.
@@ -363,7 +366,10 @@ export interface CreateRequestContextOptions<TEnv> {
   /** Optional cache store for segment caching (used by CacheScope) */
   cacheStore?: SegmentCacheStore;
   /** Optional cache profiles for "use cache" resolution (per-router) */
-  cacheProfiles?: Record<string, import("../cache/profile-registry.js").CacheProfile>;
+  cacheProfiles?: Record<
+    string,
+    import("../cache/profile-registry.js").CacheProfile
+  >;
   /** Optional Cloudflare execution context for waitUntil support */
   executionContext?: ExecutionContext;
   /** Optional theme configuration (enables ctx.theme and ctx.setTheme) */

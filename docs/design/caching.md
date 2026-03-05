@@ -644,7 +644,10 @@ cache({ ttl: 60 }, () => [
 ```typescript
 // All signatures supported:
 function cache(children: () => RouteChildren[]): RouteChild;
-function cache(profileName: string, children?: () => RouteChildren[]): RouteChild;
+function cache(
+  profileName: string,
+  children?: () => RouteChildren[],
+): RouteChild;
 function cache(
   options: CacheOptions | false,
   children?: () => RouteChildren[],
