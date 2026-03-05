@@ -18,7 +18,7 @@
 ### 🚧 Remaining
 
 - **Production storage backends** - Cloudflare KV, Redis adapters
-- **Cache invalidation API** - Tag-based invalidation, manual purge
+- **Cache invalidation API** - Tag-based invalidation (tags are accepted in config but not yet indexed by built-in stores), manual purge
 - **Proactive caching** - Render null-component segments in background for complete cache entries
 - **RSC stream caching** - Cache serialized stream directly (avoid deserialize/reserialize)
 

@@ -344,3 +344,88 @@ describe("cache key search param handling (via CacheScope)", () => {
     expect(key1).toBe(key2);
   });
 });
+
+// ============================================================================
+// 6. Route cache condition enforcement
+// ============================================================================
+
+describe("route cache condition enforcement", () => {
+  let CacheScope: typeof import("../cache-scope.js").CacheScope;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const mod = await import("../cache-scope.js");
+    CacheScope = mod.CacheScope;
+  });
+
+  function makeRequestContext(searchString: string) {
+    const url = new URL(`http://localhost/test${searchString}`);
+    return {
+      url,
+      _cacheStore: null,
+      _handleStore: null,
+      request: new Request(url),
+    };
+  }
+
+  it("skips cache read when condition returns false", async () => {
+    const store = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
+
+    mockGetRequestContext.mockReturnValue(makeRequestContext(""));
+    const scope = new CacheScope({ store, condition: () => false } as any);
+    const result = await scope.lookupRoute("/test", {});
+
+    expect(result).toBeNull();
+    // store.get should never have been called
+    expect(store.get).not.toHaveBeenCalled();
+  });
+
+  it("proceeds with cache read when condition returns true", async () => {
+    const store = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
+
+    mockGetRequestContext.mockReturnValue(makeRequestContext(""));
+    const scope = new CacheScope({ store, condition: () => true } as any);
+    await scope.lookupRoute("/test", {});
+
+    expect(store.get).toHaveBeenCalled();
+  });
+
+  it("skips cache write when condition returns false", async () => {
+    const store = { get: vi.fn(), set: vi.fn() };
+    const ctx = makeRequestContext("");
+    (ctx as any).waitUntil = (fn: () => Promise<void>) => fn();
+
+    mockGetRequestContext.mockReturnValue(ctx);
+    mock_getRequestContext.mockReturnValue({
+      ...ctx,
+      _handleStore: {
+        settled: Promise.resolve(),
+        getDataForSegment: () => ({}),
+      },
+    });
+
+    const scope = new CacheScope({ store, condition: () => false } as any);
+    await scope.cacheRoute("/test", {}, [
+      { type: "route", id: "R0", component: "<div/>" } as any,
+    ]);
+
+    expect(store.set).not.toHaveBeenCalled();
+  });
+
+  it("fails open when condition throws", async () => {
+    const store = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
+
+    mockGetRequestContext.mockReturnValue(makeRequestContext(""));
+    const scope = new CacheScope({
+      store,
+      condition: () => {
+        throw new Error("boom");
+      },
+    } as any);
+    const result = await scope.lookupRoute("/test", {});
+
+    // Should skip cache (fail open), not throw
+    expect(result).toBeNull();
+    expect(store.get).not.toHaveBeenCalled();
+  });
+});

@@ -64,7 +64,7 @@ createRouter({
 - `"use cache"` (no name) resolves to the `default` profile.
 - `"use cache: <name>"` resolves to the named profile. Names must match `[a-zA-Z0-9_-]+`.
 - Unknown profile names throw at runtime with an actionable error message.
-- Profiles are scoped per router: each `createRouter()` instance resolves profiles from its own `cacheProfiles` config via request context, with a global fallback for backwards compatibility.
+- Profiles are scoped per router: at DSL-time, `cache("profileName")` reads from `HelperContext.cacheProfiles` (set by `createRouter()` and propagated through `RSCRouterContext.run()`). At request-time, `registerCachedFunction` resolves from `requestCtx._cacheProfiles` (set per-request by the active router). There is no global fallback.
 
 ## Cache Key
 
@@ -175,7 +175,7 @@ registerCachedFunction(fn, id, profileName);
 
 ### Dev mode
 
-Shared cache is bypassed in development so HMR changes are immediately visible. Functions execute fresh every time. Cache-Control headers are still emitted for testing.
+Caching is active in development (backed by `MemorySegmentCacheStore`). This matches production behavior and allows testing cache semantics locally. HMR invalidates the in-memory store so code changes take effect immediately.
 
 ## Interaction with Existing Caching
 
@@ -185,10 +185,12 @@ Shared cache is bypassed in development so HMR changes are immediately visible. 
 | `Static()` / `Prerender()` | Route segment        | Captured via HandleStore         | Build-time |
 | `"use cache"`              | Function / component | Captured if tainted ctx detected | Runtime    |
 
-All three write to the same `SegmentCacheStore`. Tag-based invalidation (`revalidateTag`) works across all mechanisms.
+All three write to the same `SegmentCacheStore`.
+
+**Tags**: `CacheProfile.tags` and `CacheOptions.tags` are accepted and passed through to `setItem`/`setItem` options, but built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`) do not index or invalidate by tag. Tags are a forward-looking API — actual tag-based invalidation requires a store implementation that supports it (e.g., a future KV/Redis adapter with secondary indices).
 
 ## Remaining / Future
 
 - `"use cache: private"` variant for per-request in-memory caching (no shared store).
-- Integration with tag-based invalidation API (`cacheTag()` inside `"use cache"` functions).
+- Tag-based invalidation API (`revalidateTag()`) backed by stores with tag indexing.
 - Cache warming / pre-population strategies.

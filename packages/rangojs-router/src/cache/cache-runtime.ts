@@ -197,20 +197,34 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             restoreHandles(cached.handles, handleStore);
           }
         }
-        // Background revalidation
+        // Background revalidation — must capture handles if tainted args present
         if (requestCtx?.waitUntil) {
           requestCtx.waitUntil(async () => {
+            const bgHandleStore = hasTaintedArgs
+              ? requestCtx?._handleStore
+              : undefined;
+            let bgCapture: HandleCapture | undefined;
+            let bgStopCapture: (() => void) | undefined;
+            if (bgHandleStore) {
+              const c = startHandleCapture(bgHandleStore);
+              bgCapture = c.capture;
+              bgStopCapture = c.stop;
+            }
+
             try {
               const freshResult = await fn.apply(this, args);
+              bgStopCapture?.();
               const serialized = await serializeResult(freshResult);
               if (serialized !== null) {
                 await store.setItem!(cacheKey, serialized, {
+                  handles: bgCapture?.data,
                   ttl: profile.ttl,
                   swr: profile.swr,
                   tags: profile.tags,
                 });
               }
             } catch {
+              bgStopCapture?.();
               // Background revalidation failed silently
             }
           });
