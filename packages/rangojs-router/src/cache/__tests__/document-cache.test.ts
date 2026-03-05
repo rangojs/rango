@@ -140,6 +140,36 @@ describe("createDocumentCacheMiddleware", () => {
       expect(mockStore.cache.has("/page:html")).toBe(true);
     });
 
+    it("should handle cacheable response with null body without throwing", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      // A 200 response with cache headers but null body (e.g., from a redirect proxy)
+      const nullBodyResponse = new Response(null, {
+        status: 200,
+        headers: { "Cache-Control": "s-maxage=60" },
+      });
+
+      const next = vi.fn().mockResolvedValue(nullBodyResponse);
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      // Must not throw even though body is null
+      const response = (await middleware(ctx, next)) as Response;
+
+      expect(next).toHaveBeenCalledTimes(1);
+      // Returns the original response as-is (no caching attempted)
+      expect(response).toBe(nullBodyResponse);
+      // No cache entry written
+      expect(mockStore.cache.size).toBe(0);
+    });
+
     it("should not cache response without s-maxage", async () => {
       const { createDocumentCacheMiddleware } =
         await import("../document-cache.js");
@@ -290,6 +320,61 @@ describe("createDocumentCacheMiddleware", () => {
       const response = (await middleware(ctx, next)) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
+      expect(response.headers.has("x-document-cache-status")).toBe(false);
+    });
+
+    it("should skip non-GET requests", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+
+      for (const method of ["POST", "PUT", "DELETE", "PATCH"]) {
+        const ctx = createMockMiddlewareContext("http://localhost/page", {
+          method,
+        });
+
+        const next = vi
+          .fn()
+          .mockResolvedValue(new Response("Mutation response"));
+
+        const response = (await middleware(ctx, next)) as Response;
+
+        expect(next).toHaveBeenCalledTimes(1);
+        expect(response.headers.has("x-document-cache-status")).toBe(false);
+      }
+    });
+
+    it("should not serve cached response for POST request", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      // Pre-populate cache for the path
+      const cachedResponse = new Response("Cached GET", {
+        headers: { "Cache-Control": "s-maxage=60" },
+      });
+      mockStore.cache.set("/page:html", {
+        response: cachedResponse,
+        staleAt: Date.now() + 60 * 1000,
+      });
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page", {
+        method: "POST",
+      });
+
+      const next = vi.fn().mockResolvedValue(new Response("POST result"));
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const response = (await middleware(ctx, next)) as Response;
+
+      // Must call next() and NOT return the cached GET response
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(await response.text()).toBe("POST result");
       expect(response.headers.has("x-document-cache-status")).toBe(false);
     });
 
@@ -547,18 +632,14 @@ describe("createDocumentCacheMiddleware", () => {
   });
 
   describe("error handling", () => {
-    it("should fall through to handler on cache error", async () => {
+    it("should fall through to handler on cache lookup failure", async () => {
       const { createDocumentCacheMiddleware } =
         await import("../document-cache.js");
 
-      // Create a store that throws on getResponse
-      const brokenStore = {
-        async getResponse() {
-          throw new Error("Cache unavailable");
-        },
-        async putResponse() {},
-      };
-      const brokenCtx = createMockRequestContext(brokenStore as any);
+      // Cache lookup fails before the handler runs
+      vi.spyOn(mockStore, "getResponse").mockRejectedValue(
+        new Error("Cache unavailable"),
+      );
 
       const middleware = createDocumentCacheMiddleware();
       const ctx = createMockMiddlewareContext("http://localhost/page");
@@ -567,13 +648,64 @@ describe("createDocumentCacheMiddleware", () => {
 
       const originalModule = await import("../../server/request-context.js");
       vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
-        brokenCtx as any,
+        mockRequestCtx as any,
+      );
+
+      const response = (await middleware(ctx, next)) as Response;
+
+      // Handler called exactly once as graceful fallback
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(await response.text()).toBe("Fallback");
+    });
+
+    it("should re-throw post-handler errors without calling next() again", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      // Handler returns a response whose body.tee() will throw
+      const badResponse = new Response("ok", {
+        headers: { "Cache-Control": "s-maxage=60" },
+      });
+      // Consume the body so .tee() throws
+      await badResponse.text();
+
+      const next = vi.fn().mockResolvedValue(badResponse);
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      await expect(middleware(ctx, next)).rejects.toThrow();
+      // next() was called once (the handler ran), must not be called again
+      expect(next).toHaveBeenCalledTimes(1);
+    });
+
+    it("should fall through to handler when keyGenerator throws", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware({
+        keyGenerator: () => {
+          throw new Error("key generation failed");
+        },
+      });
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      const next = vi.fn().mockResolvedValue(new Response("Origin"));
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
       );
 
       const response = (await middleware(ctx, next)) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
-      expect(await response.text()).toBe("Fallback");
+      expect(await response.text()).toBe("Origin");
     });
   });
 
