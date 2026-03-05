@@ -52,7 +52,7 @@ export interface CommitOverrides {
 }
 
 /**
- * Discriminated update mode replacing boolean options.
+ * Discriminated update mode for partial updates.
  */
 export type UpdateMode =
   | {
