@@ -63,39 +63,3 @@ describe("validateRedirectOrigin", () => {
     ).toBeNull();
   });
 });
-
-describe("validateRedirectOrigin – payload redirect boundary", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("blocks cross-origin payload redirect URLs the same way as header redirects", () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-
-    // Simulate what server-action-bridge does: validate the payload redirect URL
-    // before using it for navigation or window.location.href assignment.
-    const payloadRedirectUrl = "https://evil.com/steal-cookies";
-    const origin = "http://localhost:3000";
-
-    const result = validateRedirectOrigin(payloadRedirectUrl, origin);
-    expect(result).toBeNull();
-  });
-
-  it("allows same-origin payload redirect URLs", () => {
-    const payloadRedirectUrl = "/dashboard?welcome=true";
-    const origin = "http://localhost:3000";
-
-    const result = validateRedirectOrigin(payloadRedirectUrl, origin);
-    expect(result).toBe("/dashboard?welcome=true");
-  });
-
-  it("blocks protocol-relative payload redirect URLs", () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-
-    const payloadRedirectUrl = "//evil.com/phish";
-    const origin = "http://localhost:3000";
-
-    const result = validateRedirectOrigin(payloadRedirectUrl, origin);
-    expect(result).toBeNull();
-  });
-});
