@@ -144,7 +144,7 @@ function createMockEventController() {
         fail: failFn,
         settled: false,
         hadConcurrentActions: false,
-        getConsolidationSegments: vi.fn(() => null),
+        getRevalidatedSegments: vi.fn(() => new Set<string>()),
         clearConsolidation: vi.fn(),
         [Symbol.dispose]: vi.fn(),
       })),

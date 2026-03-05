@@ -12,7 +12,11 @@ import {
   startBrowserTransaction,
 } from "./logging.js";
 import { getRangoState } from "./rango-state.js";
-import { validateRedirectOrigin } from "./validate-redirect-origin.js";
+import {
+  extractRscHeaderUrl,
+  emptyResponse,
+  teeWithCompletion,
+} from "./response-adapter.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -112,21 +116,18 @@ export function createNavigationClient(
         signal,
       }).then((response) => {
         // Check for version mismatch - server wants us to reload
-        const rawReloadUrl = response.headers.get("X-RSC-Reload");
-        if (rawReloadUrl) {
-          const reloadUrl = validateRedirectOrigin(
-            rawReloadUrl,
-            window.location.origin,
-          );
-          if (!reloadUrl) {
-            resolveStreamComplete();
-            return new Response(null, { status: 200 });
-          }
+        const reload = extractRscHeaderUrl(response, "X-RSC-Reload");
+        if (reload === "blocked") {
+          resolveStreamComplete();
+          return emptyResponse();
+        }
+        if (reload) {
           if (tx) {
-            browserDebugLog(tx, "version mismatch, reloading", { reloadUrl });
+            browserDebugLog(tx, "version mismatch, reloading", {
+              reloadUrl: reload.url,
+            });
           }
-          window.location.href = reloadUrl;
-          // Return a never-resolving promise to prevent further processing
+          window.location.href = reload.url;
           return new Promise<Response>(() => {});
         }
 
@@ -134,68 +135,29 @@ export function createNavigationClient(
         // X-RSC-Redirect instead of a 3xx (which fetch would auto-follow
         // to a URL rendering full HTML). Throw ServerRedirect so the
         // navigation bridge catches it and re-navigates with _skipCache.
-        const rawRedirectUrl = response.headers.get("X-RSC-Redirect");
-        if (rawRedirectUrl) {
-          const redirectUrl = validateRedirectOrigin(
-            rawRedirectUrl,
-            window.location.origin,
-          );
-          if (!redirectUrl) {
-            // Redirect was blocked — resolve stream and return an empty
-            // 200 so Flight parsing doesn't choke on a 204/empty body.
-            resolveStreamComplete();
-            return new Response(null, { status: 200 });
-          }
+        const redirect = extractRscHeaderUrl(response, "X-RSC-Redirect");
+        if (redirect === "blocked") {
+          resolveStreamComplete();
+          return emptyResponse();
+        }
+        if (redirect) {
           if (tx) {
-            browserDebugLog(tx, "server redirect", { redirectUrl });
+            browserDebugLog(tx, "server redirect", {
+              redirectUrl: redirect.url,
+            });
           }
           resolveStreamComplete();
-          throw new ServerRedirect(redirectUrl, undefined);
+          throw new ServerRedirect(redirect.url, undefined);
         }
 
-        if (!response.body) {
-          // No body means stream is already complete
-          resolveStreamComplete();
-          return response;
-        }
-
-        // Tee the stream: one for RSC runtime, one for tracking completion
-        const [rscStream, trackingStream] = response.body.tee();
-
-        // Consume the tracking stream to detect when it closes
-        (async () => {
-          const reader = trackingStream.getReader();
-
-          // Cancel tracking if navigation is aborted
-          const onAbort = reader.cancel.bind(reader);
-          signal?.addEventListener("abort", onAbort, { once: true });
-
-          try {
-            while (true) {
-              const { done } = await reader.read();
-              if (done) break;
-            }
-          } finally {
-            signal?.removeEventListener("abort", onAbort);
-            reader.releaseLock();
-            if (tx) {
-              browserDebugLog(tx, "stream complete");
-            }
+        return teeWithCompletion(
+          response,
+          () => {
+            if (tx) browserDebugLog(tx, "stream complete");
             resolveStreamComplete();
-          }
-        })().catch((error) => {
-          if (!signal?.aborted) {
-            console.error("[Browser] Error reading tracking stream:", error);
-          }
-          resolveStreamComplete();
-        });
-
-        // Return response with the RSC stream
-        return new Response(rscStream, {
-          headers: response.headers,
-          status: response.status,
-          statusText: response.statusText,
-        });
+          },
+          signal,
+        );
       });
 
       try {

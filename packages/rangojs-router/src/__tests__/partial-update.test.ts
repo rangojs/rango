@@ -398,6 +398,7 @@ describe("partial-update", () => {
       });
 
       await updater("http://localhost/page", undefined, false, undefined, tx, {
+        type: "navigate",
         targetCacheSegments: targetSegs,
       });
 
@@ -441,7 +442,7 @@ describe("partial-update", () => {
       });
 
       await updater("http://localhost/", undefined, false, undefined, tx, {
-        leavingIntercept: true,
+        type: "leave-intercept",
       });
 
       // Should render and update UI to remove modal
@@ -580,7 +581,7 @@ describe("partial-update", () => {
         false,
         undefined,
         tx,
-        { targetCacheSegments: [targetLayout, targetRoute] },
+        { type: "navigate", targetCacheSegments: [targetLayout, targetRoute] },
       );
 
       const mainSegs = (
@@ -627,7 +628,7 @@ describe("partial-update", () => {
       });
 
       await updater("http://localhost/", undefined, false, undefined, tx, {
-        leavingIntercept: true,
+        type: "leave-intercept",
       });
 
       // fetchPartial should be called with filtered segments (no intercept namespace segments)
@@ -749,7 +750,7 @@ describe("partial-update", () => {
       });
 
       await updater("http://localhost/page1", [], false, undefined, tx, {
-        staleRevalidation: true,
+        type: "stale-revalidation",
       });
 
       // Should render but NOT call onUpdate because history key changed
@@ -940,7 +941,7 @@ describe("partial-update", () => {
       });
 
       await updater("http://localhost/", ["R0"], false, undefined, tx, {
-        isAction: true,
+        type: "action",
       });
 
       // Our mocked startTransition runs synchronously, so onUpdate should be called
@@ -972,7 +973,7 @@ describe("partial-update", () => {
       });
 
       await updater("http://localhost/", ["R0"], false, undefined, tx, {
-        staleRevalidation: true,
+        type: "stale-revalidation",
       });
 
       expect(renderSegments).toHaveBeenCalledWith(
@@ -1043,7 +1044,7 @@ describe("partial-update", () => {
           undefined,
           tx,
           {
-            isAction: true,
+            type: "action",
           },
         );
 
@@ -1107,7 +1108,7 @@ describe("partial-update", () => {
           undefined,
           tx,
           {
-            isAction: true,
+            type: "action",
           },
         );
 
@@ -1172,7 +1173,7 @@ describe("partial-update", () => {
           undefined,
           tx,
           {
-            isAction: true,
+            type: "action",
           },
         );
 
@@ -1234,7 +1235,7 @@ describe("partial-update", () => {
           undefined,
           tx,
           {
-            isAction: true,
+            type: "action",
           },
         );
 
@@ -1397,7 +1398,7 @@ describe("partial-update", () => {
       });
 
       await updater("http://localhost/", ["R0"], false, undefined, tx, {
-        isAction: true,
+        type: "action",
       });
 
       expect(store.setInterceptSourceUrl).not.toHaveBeenCalled();

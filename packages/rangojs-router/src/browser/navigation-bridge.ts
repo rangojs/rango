@@ -82,7 +82,7 @@ export function createNavigationBridge(
   return {
     /**
      * Navigate to a URL
-     * Uses optimistic rendering from cache when available (SWR pattern)
+     * Uses cached segments for SWR revalidation when available
      */
     async navigate(
       url: string,
@@ -170,7 +170,7 @@ export function createNavigationBridge(
       const interceptHistoryKey = generateHistoryKey(url, { intercept: true });
       const hasInterceptCache = store.hasHistoryCache(interceptHistoryKey);
 
-      // Skip optimistic rendering for:
+      // Skip cached SWR for:
       // 1. intercept caches - interception depends on source page context
       // 2. routes that CAN be intercepted - we don't know if this navigation will intercept
       // 3. when leaving intercept - we need fresh non-intercept segments from server
@@ -206,19 +206,14 @@ export function createNavigationBridge(
             scroll: options?.scroll,
             state: resolvedState,
           }),
-          // Pass cached segments (merged with current page's fresh segments for shared IDs)
-          // so the segment map is consistent with what we tell the server we have.
-          // Server decides what needs revalidation based on route matching and custom functions.
-          // No need for staleRevalidation flag - we're sending the freshest segments we have.
-          // Also pass cached handle data for restoring breadcrumbs when server returns empty diff.
-          // When leaving intercept, pass the flag so fetchPartialUpdate knows to filter segments.
           hasUsableCache
             ? {
+                type: "navigate" as const,
                 targetCacheSegments: cachedSegments,
                 targetCacheHandleData: cachedHandleData,
               }
             : isLeavingIntercept
-              ? { leavingIntercept: true }
+              ? { type: "leave-intercept" as const }
               : undefined,
         );
       } catch (error) {
@@ -430,7 +425,7 @@ export function createNavigationBridge(
                 interceptSourceUrl,
                 cacheOnly: true,
               }),
-              { staleRevalidation: true, interceptSourceUrl },
+              { type: "stale-revalidation", interceptSourceUrl },
             )
               .catch((error) => {
                 if (isBackgroundSuppressible(error)) return;

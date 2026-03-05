@@ -121,7 +121,7 @@ export interface NavigationState {
   /** Whether RSC data is currently streaming (initial load or navigation) */
   isStreaming: boolean;
 
-  /** Current location (updated optimistically) */
+  /** Current location */
   location: NavigationLocation;
 
   /** URL being navigated to (null when idle) */

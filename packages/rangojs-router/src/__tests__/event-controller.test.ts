@@ -365,7 +365,7 @@ describe("createEventController", () => {
       expect(second.hadConcurrentActions).toBe(true); // second saw first
     });
 
-    it("recordRevalidatedSegments tracks segments for consolidation", () => {
+    it("recordRevalidatedSegments accumulates into shared set", () => {
       const ctrl = createController();
       const first = ctrl.startAction("hash#a", []);
       const second = ctrl.startAction("hash#b", []);
@@ -373,33 +373,18 @@ describe("createEventController", () => {
       first.recordRevalidatedSegments(["seg1", "seg2"]);
       second.recordRevalidatedSegments(["seg2", "seg3"]);
 
-      // Can't consolidate while any action is still fetching
-      expect(second.getConsolidationSegments()).toBeNull();
-
-      // Complete both so none are fetching
-      first.complete();
-      second.complete();
-
-      // Now consolidation returns all revalidated segments
-      const segments = second.getConsolidationSegments();
-      expect(segments).toContain("seg1");
-      expect(segments).toContain("seg2");
-      expect(segments).toContain("seg3");
+      // getRevalidatedSegments returns the raw shared set
+      const segments = second.getRevalidatedSegments();
+      expect(segments.has("seg1")).toBe(true);
+      expect(segments.has("seg2")).toBe(true);
+      expect(segments.has("seg3")).toBe(true);
+      expect(segments.size).toBe(3);
     });
 
-    it("getConsolidationSegments returns null when no concurrent actions", () => {
+    it("getRevalidatedSegments returns empty set when no segments recorded", () => {
       const ctrl = createController();
       const handle = ctrl.startAction("hash#a", []);
-      expect(handle.getConsolidationSegments()).toBeNull();
-    });
-
-    it("getConsolidationSegments returns null when segments are empty", () => {
-      const ctrl = createController();
-      const first = ctrl.startAction("hash#a", []);
-      const second = ctrl.startAction("hash#b", []);
-      first.complete();
-      // No segments were recorded
-      expect(second.getConsolidationSegments()).toBeNull();
+      expect(handle.getRevalidatedSegments().size).toBe(0);
     });
 
     it("clearConsolidation resets tracking", () => {
@@ -411,7 +396,7 @@ describe("createEventController", () => {
       first.complete();
       second.clearConsolidation();
 
-      expect(second.getConsolidationSegments()).toBeNull();
+      expect(second.getRevalidatedSegments().size).toBe(0);
     });
 
     it("settlement of last action resets concurrent tracking", () => {
