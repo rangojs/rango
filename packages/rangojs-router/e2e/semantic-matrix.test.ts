@@ -44,6 +44,11 @@ async function runPeAction(page: Page): Promise<void> {
   await page.waitForLoadState("domcontentloaded");
 }
 
+async function parseLoaderCount(page: Page): Promise<number> {
+  const text = await testId(page, "loader-count").textContent();
+  return Number(text!.replace(/\D/g, ""));
+}
+
 async function readRouteReport(page: Page): Promise<{
   sawGlobalVar: string | null;
   sawActionCookie: string | null;
@@ -268,11 +273,10 @@ const matrixRows: SemanticMatrixRow[] = [
     scope: "n/a",
     url: "/cache-test/non-cached-loader",
     assert: async ({ page }) => {
-      const first = await testId(page, "loaded-at").textContent();
-      await page.waitForTimeout(100);
+      const countBefore = await parseLoaderCount(page);
       await openJsPage(page, page.url());
-      const second = await testId(page, "loaded-at").textContent();
-      expect(second).not.toBe(first);
+      const countAfter = await parseLoaderCount(page);
+      expect(countAfter).toBeGreaterThan(countBefore);
     },
   },
   {
@@ -283,12 +287,12 @@ const matrixRows: SemanticMatrixRow[] = [
     scope: "n/a",
     url: "/cache-test/cached-loader",
     assert: async ({ page }) => {
-      const first = await testId(page, "loaded-at").textContent();
+      const countBefore = await parseLoaderCount(page);
       // Wait for async cache write (waitUntil)
       await page.waitForTimeout(500);
       await openJsPage(page, page.url());
-      const second = await testId(page, "loaded-at").textContent();
-      expect(second).toBe(first);
+      const countAfter = await parseLoaderCount(page);
+      expect(countAfter).toBe(countBefore);
     },
   },
 ];
