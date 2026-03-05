@@ -215,6 +215,51 @@ route handler above them, revalidate the outer segment too. Partial
 revalidation does not re-run non-revalidated ancestors just to rebuild
 their `ctx.set()` state.
 
+### Revalidation Contracts
+
+For shared upstream data, define named revalidation functions and reuse
+them on both producer and consumer segments:
+
+```typescript
+// revalidation-contracts.ts
+export const revalidateCartData = ({ actionId }) =>
+  actionId?.includes("src/actions/cart.ts#addToCart") ?? false;
+```
+
+```typescript
+layout(<CartLayout />, () => [
+  revalidate(revalidateCartData), // producer
+  path("/cart", CartPage, { name: "cart" }, () => [
+    revalidate(revalidateCartData), // consumer
+  ]),
+]);
+```
+
+If a segment depends on multiple upstream domains, compose multiple
+contracts (`revalidateAuthData`, `revalidateCartData`, and so on).
+
+You can also package them as importable handoff helpers:
+
+```typescript
+// revalidation-contracts.ts
+import { revalidate } from "@rangojs/router";
+
+export const revalidateAuthData = ({ actionId }) =>
+  actionId?.includes("src/actions/auth.ts#") ?? false;
+export const revalidateAuth = () => [
+  revalidate(revalidateAuthData),
+];
+```
+
+```typescript
+layout(<ShellLayout />, () => [
+  revalidateAuth(),
+  path("/account", AccountPage, { name: "account" }, () => [
+    revalidateAuth(),
+  ]),
+]);
+```
+
 ## Complete Example
 
 ```typescript

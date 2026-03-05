@@ -76,6 +76,7 @@ Deliverables:
   - PE vs JS parity
   - prerender vs passthrough vs live render
   - partial revalidation rules
+  - producer/consumer revalidation contracts for shared `ctx.set()` dependencies
 - Add explicit comments near implementation choke points:
   - RSC handler flow
   - progressive enhancement

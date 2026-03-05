@@ -109,6 +109,79 @@ Expected visibility pattern:
   - revalidate that outer segment too, or
   - load/guard the data in the child independently.
 
+### Revalidation Contracts Pattern
+
+For shared `ctx.set()` data, prefer named revalidation contracts and reuse
+them on both producer and consumer segments.
+
+```ts
+// revalidation-contracts.ts
+export const revalidateCartData = ({ actionId }: { actionId?: string }) =>
+  actionId?.includes("src/actions/cart.ts#addToCart") ?? false;
+```
+
+```ts
+layout(CartLayout, () => [
+  revalidate(revalidateCartData), // producer reruns
+  path("/cart", CartPage, { name: "cart" }, () => [
+    revalidate(revalidateCartData), // consumer reruns
+  ]),
+]);
+```
+
+Multiple dependency domains can coexist. Compose multiple contracts in the same
+segment when it depends on multiple upstream data sources.
+
+```ts
+layout(ShellLayout, () => [
+  revalidate(revalidateAuthData),
+  revalidate(revalidateCartData),
+  path("/checkout", CheckoutPage, { name: "checkout" }, () => [
+    revalidate(revalidateAuthData),
+    revalidate(revalidateCartData),
+  ]),
+]);
+```
+
+### Contract Handoff Helpers
+
+To avoid repeating `revalidate(contract)` at each callsite, package contracts
+as reusable DSL helpers that can be imported and spread into any segment.
+
+```ts
+// revalidation-contracts.ts
+import { revalidate } from "@rangojs/router";
+
+export const revalidateAuthData = ({ actionId }) =>
+  actionId?.includes("src/actions/auth.ts#") ?? false;
+
+export const revalidateCartData = ({ actionId }) =>
+  actionId?.includes("src/actions/cart.ts#") ?? false;
+
+export const revalidateAuth = () => [
+  revalidate(revalidateAuthData),
+];
+
+export const revalidateCart = () => [
+  revalidate(revalidateCartData),
+];
+```
+
+```ts
+import { revalidateAuth, revalidateCart } from "./revalidation-contracts";
+
+urls(({ path, layout }) => [
+  layout(ShellLayout, () => [
+    revalidateAuth(),
+    revalidateCart(),
+    path("/checkout", CheckoutPage, { name: "checkout" }, () => [
+      revalidateAuth(),
+      revalidateCart(),
+    ]),
+  ]),
+]);
+```
+
 ## Prerender Contract
 
 - Prerender build passes are full render passes.

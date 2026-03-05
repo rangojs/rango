@@ -162,6 +162,46 @@ Revalidating only the parallel does not re-run outer handlers/layouts.
 If the slot reads `ctx.get()` data established above it, opt the outer
 segment into revalidation as well.
 
+### Revalidation Contracts for Parallel Dependencies
+
+Prefer named revalidation contracts shared by both the upstream producer and
+the parallel consumer:
+
+```typescript
+// revalidation-contracts.ts
+export const revalidateCartData = ({ actionId }) =>
+  actionId?.includes("src/actions/cart.ts#") ?? false;
+
+layout(CartLayout, () => [
+  revalidate(revalidateCartData), // producer reruns
+  parallel(
+    { "@cart": CartSummary },
+    () => [revalidate(revalidateCartData)], // consumer reruns
+  ),
+]);
+```
+
+If the slot consumes multiple upstream domains, compose the contracts on both
+segments.
+
+Handoff helper style also works:
+
+```typescript
+import { revalidate } from "@rangojs/router";
+
+export const revalidateCart = () => [
+  revalidate(revalidateCartData),
+];
+
+layout(CartLayout, () => [
+  revalidateCart(),
+  parallel(
+    { "@cart": CartSummary },
+    () => [revalidateCart()],
+  ),
+]);
+```
+
 ## Named Outlets
 
 Use `ParallelOutlet` to render slots in layouts:

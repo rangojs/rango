@@ -181,6 +181,49 @@ String keys still work (`ctx.set("key", value)` / `ctx.get("key")`), but
 Only route handlers and middleware can call `ctx.set()`. Layouts, parallels,
 and intercepts can only read via `ctx.get()`.
 
+### Revalidation Contracts for Handler Data
+
+Handler-first guarantees apply within a single full render pass. For partial
+action revalidation, define named revalidation contracts and reuse them on both
+the producer route and the consumer child segments.
+
+```typescript
+// revalidation-contracts.ts
+export const revalidateCheckoutData = ({ actionId }) =>
+  actionId?.includes("src/actions/checkout.ts#") ?? false;
+
+path("/checkout", CheckoutPage, { name: "checkout" }, () => [
+  revalidate(revalidateCheckoutData), // producer (route handler) reruns
+  layout(CheckoutLayout, () => [
+    revalidate(revalidateCheckoutData), // consumer reruns
+    parallel(
+      { "@summary": CheckoutSummary },
+      () => [revalidate(revalidateCheckoutData)],
+    ),
+  ]),
+]);
+```
+
+If children depend on multiple upstream domains, compose multiple contracts on
+the same segment (`revalidateAuthData`, `revalidateCheckoutData`, and so on).
+
+For cleaner route trees, expose contract helpers and spread them:
+
+```typescript
+import { revalidate } from "@rangojs/router";
+
+export const revalidateCheckout = () => [
+  revalidate(revalidateCheckoutData),
+];
+
+path("/checkout", CheckoutPage, { name: "checkout" }, () => [
+  revalidateCheckout(),
+  layout(CheckoutLayout, () => [
+    revalidateCheckout(),
+  ]),
+]);
+```
+
 For scope/revalidation guarantees and non-guarantees, see:
 [docs/execution-model.md](../../docs/internal/execution-model.md)
 
