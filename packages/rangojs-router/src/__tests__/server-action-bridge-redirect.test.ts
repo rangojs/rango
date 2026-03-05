@@ -317,7 +317,7 @@ describe("server-action-bridge payload redirect origin validation", () => {
     const result = await getActionCallback()("test-action", []);
 
     expect(completeFn).toHaveBeenCalledWith("redirect-result");
-    expect(onNavigate).toHaveBeenCalledWith("/dashboard", {
+    expect(onNavigate).toHaveBeenCalledWith("http://localhost:3000/dashboard", {
       state: { __rsc_ls_tab: "home" },
       replace: true,
       _skipCache: true,

@@ -42,19 +42,24 @@ Largest e2e files by line count:
 ## Key Findings
 
 1. Synchronization debt is the primary flake risk.
+
 - Many tests rely on fixed sleep intervals instead of deterministic signals.
 - Sleep-heavy files cluster around cache, prefetch, navigation, and revalidation behavior.
 
 2. Oversized specs reduce reliability and review quality.
+
 - Multi-thousand-line test files combine multiple concerns and create cascade failures.
 
 3. Helper behavior is duplicated across suites.
+
 - Hydration wait and page error capture patterns diverge between projects.
 
 4. Assertion strictness is inconsistent.
+
 - Some tests still rely on permissive text visibility checks where ordering/count/negative assertions are safer.
 
 5. Security-sensitive behavior needs explicit negative-path coverage.
+
 - `routeParams` vs user-provided params boundaries
 - malformed headers/URL parsing behavior
 - cache-key isolation boundaries
