@@ -282,7 +282,10 @@ export async function handleResponseRoute<TEnv>(
             // Stale hit (SWR) - return cached, revalidate in background
             reqCtx.waitUntil(async () => {
               try {
-                const fresh = await executeHandler();
+                // finalizeResponse drains any onResponse callbacks registered
+                // during middleware execution (e.g. middleware short-circuit)
+                // that createResponseWithMergedHeaders didn't reach.
+                const fresh = finalizeResponse(await executeHandler());
                 if (isCacheableStatus(fresh.status)) {
                   await store.putResponse!(
                     cacheKey,
@@ -303,10 +306,11 @@ export async function handleResponseRoute<TEnv>(
         }
 
         // Cache miss - execute handler and cache the result.
-        // createResponseWithMergedHeaders inside the handler applies
-        // any callbacks registered during execution, so the response
-        // (and its clone) already include those transforms.
-        const response = await executeHandler();
+        // createResponseWithMergedHeaders inside the handler drains callbacks
+        // registered during handler execution. finalizeResponse catches any
+        // remaining callbacks (e.g. from middleware short-circuit where the
+        // handler never ran) so the cached artifact includes all transforms.
+        const response = finalizeResponse(await executeHandler());
 
         if (isCacheableStatus(response.status)) {
           reqCtx.waitUntil(async () => {
