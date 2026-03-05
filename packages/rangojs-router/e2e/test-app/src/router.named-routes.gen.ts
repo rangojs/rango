@@ -190,6 +190,7 @@ export const NamedRoutes = {
   "useCacheTest.useCacheTest.namedProfile": "/use-cache-test/named-profile",
   "useCacheTest.useCacheTest.plainData": "/use-cache-test/plain-data",
   "useCacheTest.useCacheTest.streaming": "/use-cache-test/streaming",
+  "useCacheTest.useCacheTest.swr": "/use-cache-test/swr",
   "useCacheTest.useCacheTest.withArgs": "/use-cache-test/with-args/:category",
   "useCacheTest.useCacheTest.withHandles": "/use-cache-test/with-handles",
   "useCacheTest.useCacheTest.withLoader": "/use-cache-test/with-loader",

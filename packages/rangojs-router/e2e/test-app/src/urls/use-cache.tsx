@@ -11,6 +11,7 @@ import {
   getCachedActionData,
   cachedReadsCookies,
   cachedReadsHeaders,
+  getSwrTestData,
 } from "./use-cache-fn.js";
 import { InterleaveActionButton } from "../components/InterleaveActionButton.js";
 import { Breadcrumbs } from "../handles.js";
@@ -93,6 +94,26 @@ export const useCachePatterns = urls(
         );
       },
       { name: "useCacheTest.withHandles" },
+    ),
+
+    // SWR: stale-while-revalidate test with very short TTL (2s).
+    // On stale hit, returns cached value and revalidates in background.
+    // Third visit should see fresh value from background revalidation.
+    path(
+      "/swr",
+      async (ctx) => {
+        const data = await getSwrTestData(ctx);
+        const serverNow = Date.now();
+        return (
+          <div data-testid="use-cache-swr-page">
+            <h1>SWR Cache Test</h1>
+            <span data-testid="use-cache-swr-ts">{data.ts}</span>
+            <span data-testid="use-cache-swr-rand">{data.rand}</span>
+            <span data-testid="use-cache-swr-server-ts">{serverNow}</span>
+          </div>
+        );
+      },
+      { name: "useCacheTest.swr" },
     ),
 
     // Streaming: slow cached data function rendered via loading() boundary.

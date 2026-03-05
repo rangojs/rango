@@ -694,6 +694,64 @@ test.describe("use-cache basic", () => {
     expect(body3.data.id).toBe("2");
     expect(body3.data.ts).not.toBe(body1.data.ts);
   });
+
+  test("SWR: stale value returned, background revalidation produces fresh value", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Visit 1: cache miss — runs function, caches result
+    await page.goto(f.url("/use-cache-test/swr"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("use-cache-swr-page")).toBeVisible();
+    const ts1 = await page.getByTestId("use-cache-swr-ts").textContent();
+    const rand1 = await page.getByTestId("use-cache-swr-rand").textContent();
+
+    // Breadcrumbs captured on miss
+    const breadcrumbs = page.getByTestId("breadcrumbs");
+    await expect(breadcrumbs).toBeVisible();
+    await expect(breadcrumbs).toContainText("SWR Cached Page");
+
+    expect(ts1).toBeTruthy();
+    expect(rand1).toBeTruthy();
+
+    // Wait for TTL to expire (profile: ttl=2s, swr=60s)
+    await page.waitForTimeout(3000);
+
+    // Visit 2: stale hit — returns same cached value, triggers background revalidation
+    await page.goto(f.url("/use-cache-test/swr"));
+    await waitForHydration(page);
+
+    const ts2 = await page.getByTestId("use-cache-swr-ts").textContent();
+    const rand2 = await page.getByTestId("use-cache-swr-rand").textContent();
+
+    // Stale value is identical to visit 1
+    expect(ts2).toBe(ts1);
+    expect(rand2).toBe(rand1);
+
+    // Breadcrumbs still present (replayed from stale cache entry)
+    await expect(breadcrumbs).toBeVisible();
+    await expect(breadcrumbs).toContainText("SWR Cached Page");
+
+    // Wait for background revalidation to complete
+    await page.waitForTimeout(2000);
+
+    // Visit 3: fresh value from background revalidation
+    await page.goto(f.url("/use-cache-test/swr"));
+    await waitForHydration(page);
+
+    const ts3 = await page.getByTestId("use-cache-swr-ts").textContent();
+    const rand3 = await page.getByTestId("use-cache-swr-rand").textContent();
+
+    // Value should differ — background revalidation wrote a new entry
+    expect(ts3).not.toBe(ts1);
+    expect(rand3).not.toBe(rand1);
+
+    // Breadcrumbs still present (captured during background revalidation)
+    await expect(breadcrumbs).toBeVisible();
+    await expect(breadcrumbs).toContainText("SWR Cached Page");
+  });
 });
 
 // ============================================================================
@@ -1297,5 +1355,63 @@ test.describe("use-cache (production)", () => {
     const body3 = await res3.json();
     expect(body3.data.id).toBe("2");
     expect(body3.data.ts).not.toBe(body1.data.ts);
+  });
+
+  test("SWR: stale value returned, background revalidation produces fresh value", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Visit 1: cache miss — runs function, caches result
+    await page.goto(f.url("/use-cache-test/swr"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("use-cache-swr-page")).toBeVisible();
+    const ts1 = await page.getByTestId("use-cache-swr-ts").textContent();
+    const rand1 = await page.getByTestId("use-cache-swr-rand").textContent();
+
+    // Breadcrumbs captured on miss
+    const breadcrumbs = page.getByTestId("breadcrumbs");
+    await expect(breadcrumbs).toBeVisible();
+    await expect(breadcrumbs).toContainText("SWR Cached Page");
+
+    expect(ts1).toBeTruthy();
+    expect(rand1).toBeTruthy();
+
+    // Wait for TTL to expire (profile: ttl=2s, swr=60s)
+    await page.waitForTimeout(3000);
+
+    // Visit 2: stale hit — returns same cached value, triggers background revalidation
+    await page.goto(f.url("/use-cache-test/swr"));
+    await waitForHydration(page);
+
+    const ts2 = await page.getByTestId("use-cache-swr-ts").textContent();
+    const rand2 = await page.getByTestId("use-cache-swr-rand").textContent();
+
+    // Stale value is identical to visit 1
+    expect(ts2).toBe(ts1);
+    expect(rand2).toBe(rand1);
+
+    // Breadcrumbs still present (replayed from stale cache entry)
+    await expect(breadcrumbs).toBeVisible();
+    await expect(breadcrumbs).toContainText("SWR Cached Page");
+
+    // Wait for background revalidation to complete
+    await page.waitForTimeout(2000);
+
+    // Visit 3: fresh value from background revalidation
+    await page.goto(f.url("/use-cache-test/swr"));
+    await waitForHydration(page);
+
+    const ts3 = await page.getByTestId("use-cache-swr-ts").textContent();
+    const rand3 = await page.getByTestId("use-cache-swr-rand").textContent();
+
+    // Value should differ — background revalidation wrote a new entry
+    expect(ts3).not.toBe(ts1);
+    expect(rand3).not.toBe(rand1);
+
+    // Breadcrumbs still present (captured during background revalidation)
+    await expect(breadcrumbs).toBeVisible();
+    await expect(breadcrumbs).toContainText("SWR Cached Page");
   });
 });

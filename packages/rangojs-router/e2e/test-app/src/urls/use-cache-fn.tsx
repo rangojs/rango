@@ -118,6 +118,23 @@ export async function getCachedActionData(): Promise<{
 }
 
 /**
+ * SWR test function with very short TTL (2s) and wide SWR window (60s).
+ * Receives tainted ctx and pushes breadcrumbs to verify handle capture
+ * through the stale-while-revalidate background path.
+ */
+export async function getSwrTestData(
+  ctx: any,
+): Promise<{ ts: number; rand: number }> {
+  "use cache: swr-test";
+  const pushBreadcrumb = ctx.use(Breadcrumbs);
+  pushBreadcrumb({
+    label: "SWR Cached Page",
+    href: "/use-cache-test/swr",
+  });
+  return { ts: Date.now(), rand: Math.random() };
+}
+
+/**
  * Guard test: cookies() is called inside "use cache".
  * Receives tainted ctx so registerCachedFunction stamps INSIDE_CACHE_EXEC,
  * which causes cookies() to throw before reading anything.

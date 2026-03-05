@@ -525,4 +525,259 @@ describe("MemorySegmentCacheStore", () => {
       expect(result!.data.segments).toEqual([]);
     });
   });
+
+  // ==========================================================================
+  // Function Cache Methods (getItem / setItem)
+  // ==========================================================================
+
+  describe("getItem/setItem", () => {
+    it("should return null for missing key", async () => {
+      const store = new MemorySegmentCacheStore();
+      const result = await store.getItem("missing");
+      expect(result).toBeNull();
+    });
+
+    it("should store and retrieve a value", async () => {
+      const store = new MemorySegmentCacheStore();
+      await store.setItem("fn:key", "serialized-value");
+      const result = await store.getItem("fn:key");
+
+      expect(result).not.toBeNull();
+      expect(result!.value).toBe("serialized-value");
+      expect(result!.shouldRevalidate).toBe(false);
+    });
+
+    it("should persist handles alongside value", async () => {
+      const store = new MemorySegmentCacheStore();
+      const handles = {
+        seg1: { breadcrumbs: ["Home", "Products"] },
+        seg2: { meta: [{ title: "Page" }] },
+      };
+
+      await store.setItem("fn:with-handles", "value", { handles });
+      const result = await store.getItem("fn:with-handles");
+
+      expect(result!.handles).toEqual(handles);
+    });
+
+    it("should use explicit TTL", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const store = new MemorySegmentCacheStore();
+      await store.setItem("fn:ttl", "value", { ttl: 30 });
+
+      vi.advanceTimersByTime(29 * 1000);
+      expect(await store.getItem("fn:ttl")).not.toBeNull();
+
+      vi.advanceTimersByTime(2 * 1000);
+      expect(await store.getItem("fn:ttl")).toBeNull();
+    });
+
+    it("should fall back to store defaults for TTL", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const store = new MemorySegmentCacheStore({ defaults: { ttl: 10 } });
+      await store.setItem("fn:default-ttl", "value");
+
+      vi.advanceTimersByTime(9 * 1000);
+      expect(await store.getItem("fn:default-ttl")).not.toBeNull();
+
+      vi.advanceTimersByTime(2 * 1000);
+      expect(await store.getItem("fn:default-ttl")).toBeNull();
+    });
+
+    it("should fall back to 900s TTL when no explicit or default TTL", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const store = new MemorySegmentCacheStore();
+      await store.setItem("fn:fallback-ttl", "value");
+
+      vi.advanceTimersByTime(899 * 1000);
+      expect(await store.getItem("fn:fallback-ttl")).not.toBeNull();
+
+      vi.advanceTimersByTime(2 * 1000);
+      expect(await store.getItem("fn:fallback-ttl")).toBeNull();
+    });
+
+    it("should return shouldRevalidate=true when stale within SWR window", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const store = new MemorySegmentCacheStore();
+      await store.setItem("fn:swr", "stale-value", { ttl: 60, swr: 300 });
+
+      // Still fresh
+      vi.advanceTimersByTime(30 * 1000);
+      let result = await store.getItem("fn:swr");
+      expect(result!.shouldRevalidate).toBe(false);
+
+      // Past TTL, within SWR window — stale
+      vi.advanceTimersByTime(60 * 1000);
+      result = await store.getItem("fn:swr");
+      expect(result!.shouldRevalidate).toBe(true);
+      expect(result!.value).toBe("stale-value");
+    });
+
+    it("should expire after TTL + SWR window", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const store = new MemorySegmentCacheStore();
+      await store.setItem("fn:expire", "value", { ttl: 60, swr: 300 });
+
+      // Within SWR window — still returns data
+      vi.advanceTimersByTime(350 * 1000);
+      expect(await store.getItem("fn:expire")).not.toBeNull();
+
+      // Past TTL + SWR — fully expired
+      vi.advanceTimersByTime(20 * 1000);
+      expect(await store.getItem("fn:expire")).toBeNull();
+    });
+
+    it("should use store defaults for SWR", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const store = new MemorySegmentCacheStore({
+        defaults: { ttl: 60, swr: 120 },
+      });
+      await store.setItem("fn:default-swr", "value");
+
+      // Past TTL, within default SWR
+      vi.advanceTimersByTime(90 * 1000);
+      const result = await store.getItem("fn:default-swr");
+      expect(result!.shouldRevalidate).toBe(true);
+      expect(result!.value).toBe("value");
+    });
+
+    it("should return shouldRevalidate=false when no SWR configured", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const store = new MemorySegmentCacheStore();
+      await store.setItem("fn:no-swr", "value", { ttl: 60 });
+
+      // Past TTL with no SWR — staleAt === expiresAt, immediately expired
+      vi.advanceTimersByTime(61 * 1000);
+      expect(await store.getItem("fn:no-swr")).toBeNull();
+    });
+
+    it("should delete expired items on getItem", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const store = new MemorySegmentCacheStore();
+      await store.setItem("fn:gc", "value", { ttl: 5 });
+
+      vi.advanceTimersByTime(6 * 1000);
+      await store.getItem("fn:gc");
+
+      // Verify internal cleanup by trying to get again
+      expect(await store.getItem("fn:gc")).toBeNull();
+    });
+
+    it("should be cleared by clear()", async () => {
+      const store = new MemorySegmentCacheStore();
+      await store.setItem("fn:clear-test", "value");
+
+      await store.clear();
+
+      expect(await store.getItem("fn:clear-test")).toBeNull();
+    });
+  });
+
+  // ==========================================================================
+  // Response Cache Methods (getResponse / putResponse)
+  // ==========================================================================
+
+  describe("getResponse/putResponse", () => {
+    it("should return null for missing key", async () => {
+      const store = new MemorySegmentCacheStore();
+      const result = await store.getResponse("missing");
+      expect(result).toBeNull();
+    });
+
+    it("should store and retrieve a response", async () => {
+      const store = new MemorySegmentCacheStore();
+      const response = new Response("hello", {
+        status: 200,
+        headers: { "Content-Type": "text/plain" },
+      });
+
+      await store.putResponse("doc:key", response, 60);
+      const result = await store.getResponse("doc:key");
+
+      expect(result).not.toBeNull();
+      expect(result!.response.status).toBe(200);
+      expect(await result!.response.text()).toBe("hello");
+      expect(result!.response.headers.get("Content-Type")).toBe("text/plain");
+    });
+
+    it("should return shouldRevalidate=false for fresh responses", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const store = new MemorySegmentCacheStore();
+      await store.putResponse("doc:fresh", new Response("ok"), 60, 300);
+
+      vi.advanceTimersByTime(30 * 1000);
+      const result = await store.getResponse("doc:fresh");
+      expect(result!.shouldRevalidate).toBe(false);
+    });
+
+    it("should return shouldRevalidate=true for stale responses within SWR", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const store = new MemorySegmentCacheStore();
+      await store.putResponse("doc:stale", new Response("stale-body"), 60, 300);
+
+      // Past TTL, within SWR
+      vi.advanceTimersByTime(120 * 1000);
+      const result = await store.getResponse("doc:stale");
+      expect(result!.shouldRevalidate).toBe(true);
+      expect(await result!.response.text()).toBe("stale-body");
+    });
+
+    it("should expire after TTL + SWR", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const store = new MemorySegmentCacheStore();
+      await store.putResponse("doc:expire", new Response("body"), 60, 300);
+
+      vi.advanceTimersByTime(361 * 1000);
+      expect(await store.getResponse("doc:expire")).toBeNull();
+    });
+
+    it("should use store defaults for SWR", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const store = new MemorySegmentCacheStore({ defaults: { swr: 120 } });
+      await store.putResponse("doc:default-swr", new Response("body"), 60);
+
+      // Past TTL, within default SWR
+      vi.advanceTimersByTime(90 * 1000);
+      const result = await store.getResponse("doc:default-swr");
+      expect(result!.shouldRevalidate).toBe(true);
+    });
+
+    it("should preserve multiple headers", async () => {
+      const store = new MemorySegmentCacheStore();
+      const response = new Response("body", {
+        status: 200,
+        headers: {
+          "Content-Type": "text/html",
+          "X-Custom": "value",
+        },
+      });
+
+      await store.putResponse("doc:headers", response, 60);
+      const result = await store.getResponse("doc:headers");
+
+      expect(result!.response.headers.get("Content-Type")).toBe("text/html");
+      expect(result!.response.headers.get("X-Custom")).toBe("value");
+    });
+
+    it("should be cleared by clear()", async () => {
+      const store = new MemorySegmentCacheStore();
+      await store.putResponse("doc:clear-test", new Response("body"), 60);
+
+      await store.clear();
+
+      expect(await store.getResponse("doc:clear-test")).toBeNull();
+    });
+  });
 });
