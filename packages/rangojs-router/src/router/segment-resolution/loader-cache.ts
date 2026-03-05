@@ -32,7 +32,7 @@ import {
   resolveSwrWindow,
   DEFAULT_ROUTE_TTL,
 } from "../../cache/cache-policy.js";
-import { runBackground } from "../../cache/background-task.js";
+import { readThroughItem } from "../../cache/read-through-swr.js";
 // Lazy-loaded to avoid pulling @vitejs/plugin-rsc/rsc into modules that
 // import segment-resolution but never use loader caching.
 let _serializeResult: typeof import("../../cache/segment-codec.js").serializeResult;
@@ -223,65 +223,20 @@ export function resolveLoaderData<TEnv>(
       ctx.params,
     );
 
-    // Cache lookup
-    try {
-      const cached = await store.getItem!(key);
-
-      if (cached) {
-        const data = await codec.deserializeResult(cached.value);
-
-        if (!cached.shouldRevalidate) {
-          debugLoaderCacheLog(`[LoaderCache] HIT: ${key}`);
-          return data;
-        }
-
-        // Stale hit — return stale data, revalidate in background
-        debugLoaderCacheLog(`[LoaderCache] STALE: ${key}`);
-        const requestCtx = getRequestContext();
-        runBackground(
-          requestCtx,
-          async () => {
-            try {
-              const fresh = await originalUse(loaderEntry.loader);
-              const serialized = await codec.serializeResult(fresh);
-              if (serialized !== null) {
-                await store.setItem!(key, serialized, { ttl, swr, tags });
-              }
-            } catch {
-              // Background revalidation failed silently
-            }
-          },
-          true,
-        );
-        return data;
-      }
-    } catch {
-      // Cache lookup failed, fall through to fresh execution
-    }
-
-    // Cache miss — execute loader via ctx.use() (which memoizes it)
-    debugLoaderCacheLog(`[LoaderCache] MISS: ${key}`);
-    const data = await originalUse(loaderEntry.loader);
-
-    // Non-blocking cache write
-    const requestCtx = getRequestContext();
-    await runBackground(
-      requestCtx,
-      async () => {
-        try {
-          const serialized = await codec.serializeResult(data);
-          if (serialized !== null) {
-            await store.setItem!(key, serialized, { ttl, swr, tags });
-            debugLoaderCacheLog(`[LoaderCache] Cached: ${key}`);
-          }
-        } catch {
-          // Cache write failed silently
-        }
-      },
-      true,
-    );
-
-    return data;
+    return readThroughItem({
+      getItem: (k) => store.getItem!(k),
+      setItem: (k, v, o) => store.setItem!(k, v, o),
+      key,
+      execute: () => originalUse(loaderEntry.loader),
+      serialize: (d) => codec.serializeResult(d),
+      deserialize: (v) => codec.deserializeResult(v),
+      storeOptions: { ttl, swr, tags },
+      onHit: () => debugLoaderCacheLog(`[LoaderCache] HIT: ${key}`),
+      onStale: () => debugLoaderCacheLog(`[LoaderCache] STALE: ${key}`),
+      onMiss: () => debugLoaderCacheLog(`[LoaderCache] MISS: ${key}`),
+      onCached: () => debugLoaderCacheLog(`[LoaderCache] Cached: ${key}`),
+      host: getRequestContext(),
+    });
   })();
 
   // Temporarily replace ctx.use() so the handler's call returns cached data.
