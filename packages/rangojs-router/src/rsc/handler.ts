@@ -300,6 +300,7 @@ export function createRSCHandler<
       url,
       variables,
       cacheStore,
+      cacheProfiles: router.cacheProfiles,
       executionContext: executionCtx,
       themeConfig: router.themeConfig,
     });

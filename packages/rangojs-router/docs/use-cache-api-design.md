@@ -62,8 +62,9 @@ createRouter({
 ```
 
 - `"use cache"` (no name) resolves to the `default` profile.
-- `"use cache: <name>"` resolves to the named profile.
-- Unknown profile names are a build-time error.
+- `"use cache: <name>"` resolves to the named profile. Names must match `[a-zA-Z0-9_-]+`.
+- Unknown profile names throw at runtime with an actionable error message.
+- Profiles are scoped per router: at DSL-time, `cache("profileName")` reads from `HelperContext.cacheProfiles` (set by `createRouter()` and propagated through `RSCRouterContext.run()`). At request-time, `registerCachedFunction` resolves from `requestCtx._cacheProfiles` (set per-request by the active router). There is no global fallback.
 
 ## Cache Key
 
@@ -80,8 +81,8 @@ Request-scoped objects (`ctx`, `env`, `req`) are branded with a taint symbol (`S
 
 When `registerCachedFunction` detects a tainted argument:
 
-1. **Exclude it from the cache key** -- it is request-scoped and not meaningful for keying.
-2. **Cache handle data alongside the return value** -- on miss, capture side effects (breadcrumbs, metadata) via the existing `captureHandles()` mechanism.
+1. **Extract route-scoping dimensions into the cache key** -- `pathname`, sorted `params`, `_responseType`, and normalized user-facing search params (excluding internal `_rsc*`/`__*` params) are included so different routes, param combinations, and query variants produce distinct cache entries.
+2. **Cache handle data alongside the return value** -- on miss, capture side effects (breadcrumbs, metadata) via a reentrant save/restore capture on `HandleStore.push`. Nested cached function calls capture/restore correctly in LIFO order.
 3. **Replay handle data on hit** -- restore via `restoreHandles()` into the current request's `HandleStore`.
 
 This means handlers that call `ctx.breadcrumb()`, `ctx.set()`, etc. work correctly with `"use cache"`. Side effects are captured and replayed, same as the existing `cache()` DSL and `Static()` handler.
@@ -174,7 +175,7 @@ registerCachedFunction(fn, id, profileName);
 
 ### Dev mode
 
-Shared cache is bypassed in development so HMR changes are immediately visible. Functions execute fresh every time. Cache-Control headers are still emitted for testing.
+Caching is active in development (backed by `MemorySegmentCacheStore`). This matches production behavior and allows testing cache semantics locally. HMR invalidates the in-memory store so code changes take effect immediately.
 
 ## Interaction with Existing Caching
 
@@ -184,11 +185,12 @@ Shared cache is bypassed in development so HMR changes are immediately visible. 
 | `Static()` / `Prerender()` | Route segment        | Captured via HandleStore         | Build-time |
 | `"use cache"`              | Function / component | Captured if tainted ctx detected | Runtime    |
 
-All three write to the same `SegmentCacheStore`. Tag-based invalidation (`revalidateTag`) works across all mechanisms.
+All three write to the same `SegmentCacheStore`.
+
+**Tags**: `CacheProfile.tags` and `CacheOptions.tags` are accepted and passed through to `setItem`/`setItem` options, but built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`) do not index or invalidate by tag. Tags are a forward-looking API — actual tag-based invalidation requires a store implementation that supports it (e.g., a future KV/Redis adapter with secondary indices).
 
 ## Remaining / Future
 
-- Validate profile names at build time (requires access to router config from Vite plugin).
 - `"use cache: private"` variant for per-request in-memory caching (no shared store).
-- Integration with tag-based invalidation API (`cacheTag()` inside `"use cache"` functions).
+- Tag-based invalidation API (`revalidateTag()`) backed by stores with tag indexing.
 - Cache warming / pre-population strategies.

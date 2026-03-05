@@ -145,6 +145,11 @@ export interface CacheOptions<TEnv = unknown> {
    * Tags for cache invalidation.
    * Can be a static array or a function that returns tags.
    *
+   * Note: Tags are passed through to the store but built-in stores
+   * (MemorySegmentCacheStore, CFCacheStore) do not yet index or
+   * invalidate by tag. Effective tag-based invalidation requires a
+   * custom store implementation with secondary indices.
+   *
    * @example
    * ```typescript
    * // Static tags

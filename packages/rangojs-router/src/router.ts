@@ -1,6 +1,9 @@
 import { type ReactNode } from "react";
 import { createCacheScope } from "./cache/cache-scope.js";
-import { setCacheProfiles } from "./cache/profile-registry.js";
+import {
+  setCacheProfiles,
+  resolveCacheProfiles,
+} from "./cache/profile-registry.js";
 import { isCachedFunction } from "./cache/taint.js";
 import { assertClientComponent } from "./component-utils.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
@@ -144,10 +147,11 @@ export function createRouter<TEnv = any>(
     allowDebugManifest: allowDebugManifestOption = false,
   } = options;
 
-  // Set cache profiles for "use cache" directive
-  if (cacheProfilesOption) {
-    setCacheProfiles(cacheProfilesOption);
-  }
+  // Resolve cache profiles: merge user config with guaranteed default profile.
+  // This resolved map is both stored on the router (for per-request context)
+  // and written to the global registry (for DSL-time cache("profileName")).
+  const resolvedCacheProfiles = resolveCacheProfiles(cacheProfilesOption);
+  setCacheProfiles(resolvedCacheProfiles);
 
   // Source file: prefer Vite-injected path (zero cost), fall back to
   // stack trace parsing for non-Vite environments (e.g. tests).
@@ -568,6 +572,7 @@ export function createRouter<TEnv = any>(
           parent: syntheticMapRoot,
           counters: {},
           mountIndex: currentMountIndex,
+          cacheProfiles: resolvedCacheProfiles,
         },
         () => {
           handlerResult = urlPatterns.handler() as AllUseItems[];
@@ -608,6 +613,7 @@ export function createRouter<TEnv = any>(
             trailingSlash: trailingSlashConfig,
             handler: urlPatterns.handler,
             mountIndex: currentMountIndex,
+            cacheProfiles: resolvedCacheProfiles,
             ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
           });
         }
@@ -625,6 +631,7 @@ export function createRouter<TEnv = any>(
           trailingSlash: trailingSlashConfig,
           handler: urlPatterns.handler,
           mountIndex: currentMountIndex,
+          cacheProfiles: resolvedCacheProfiles,
           ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
         });
       }
@@ -734,6 +741,9 @@ export function createRouter<TEnv = any>(
 
     // Expose resolved theme configuration for NavigationProvider and MetaTags
     themeConfig: resolvedThemeConfig,
+
+    // Expose resolved cache profiles for per-request resolution
+    cacheProfiles: resolvedCacheProfiles,
 
     // Expose prefetch cache control for RSC handler
     prefetchCacheControl,

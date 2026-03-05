@@ -17,7 +17,6 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
 
 import {
-  createTemporaryReferenceSet,
   encodeReply,
   createClientTemporaryReferenceSet,
 } from "@vitejs/plugin-rsc/rsc";
@@ -30,15 +29,32 @@ import {
 } from "./taint.js";
 
 export { isCachedFunction };
-import { getCacheProfile } from "./profile-registry.js";
 import { serializeResult, deserializeResult } from "./segment-codec.js";
-import type { SegmentHandleData } from "./types.js";
 import type { HandleStore } from "../server/handle-store.js";
 import { restoreHandles } from "./handle-snapshot.js";
+import { startHandleCapture, type HandleCapture } from "./handle-capture.js";
 
 // ============================================================================
 // Cache Key Generation
 // ============================================================================
+
+/**
+ * Build a sorted, deterministic query string from URLSearchParams,
+ * excluding internal _rsc* and __* params.
+ */
+function sortedSearchString(searchParams: URLSearchParams): string {
+  const pairs: [string, string][] = [];
+  for (const [k, v] of searchParams) {
+    if (!k.startsWith("_rsc") && !k.startsWith("__")) {
+      pairs.push([k, v]);
+    }
+  }
+  if (pairs.length === 0) return "";
+  pairs.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return pairs
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join("&");
+}
 
 /**
  * Convert encodeReply result to a stable string key.
@@ -49,47 +65,6 @@ async function replyToCacheKey(encoded: string | FormData): Promise<string> {
   // FormData: convert to Response body, then to string for deterministic key
   const text = await new Response(encoded).text();
   return text;
-}
-
-// ============================================================================
-// Handle Capture
-// ============================================================================
-
-interface HandleCapture {
-  data: Record<string, SegmentHandleData>;
-}
-
-function startHandleCapture(handleStore: HandleStore): HandleCapture {
-  const capture: HandleCapture = { data: {} };
-  const originalPush = handleStore.push.bind(handleStore);
-
-  // Intercept push() calls to record them
-  handleStore.push = (
-    handleName: string,
-    segmentId: string,
-    value: unknown,
-  ) => {
-    if (!capture.data[segmentId]) {
-      capture.data[segmentId] = {};
-    }
-    if (!capture.data[segmentId][handleName]) {
-      capture.data[segmentId][handleName] = [];
-    }
-    capture.data[segmentId][handleName].push(value);
-    // Still call the original so the data flows through normally
-    originalPush(handleName, segmentId, value);
-  };
-
-  return capture;
-}
-
-function stopHandleCapture(
-  handleStore: HandleStore,
-  _capture: HandleCapture,
-): void {
-  // Restore original push by deleting the override
-  // (the original is on the prototype/closure, our override is an own property)
-  delete (handleStore as any).push;
 }
 
 // ============================================================================
@@ -112,17 +87,30 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
   const wrapped = async function (this: any, ...args: any[]): Promise<any> {
     const requestCtx = getRequestContext();
     const store = requestCtx?._cacheStore;
-    const profile = getCacheProfile(profileName || "default");
+    const resolvedProfileName = profileName || "default";
 
-    // Bypass: no store, no getItem support, or no profile configured
-    if (!store?.getItem || !profile) {
+    // Bypass: no store or no getItem support
+    if (!store?.getItem) {
       return fn.apply(this, args);
     }
 
+    // Resolve profile strictly from request-scoped config (set by the
+    // active router via createRequestContext). No global fallback —
+    // global profile state is only for DSL-time cache("profileName").
+    const profile = requestCtx?._cacheProfiles?.[resolvedProfileName];
+
+    if (!profile) {
+      throw new Error(
+        `[use cache] "${id}" uses unknown cache profile "${resolvedProfileName}". ` +
+          `Define it in createRouter({ cacheProfiles: { "${resolvedProfileName}": { ttl: ... } } }).`,
+      );
+    }
+
     // Separate tainted args (ctx, env, req) from key-generating args.
-    // For tainted objects that carry route context (params, pathname),
-    // extract those serializable values into the key so different routes
-    // and param combinations produce distinct cache entries.
+    // For tainted objects that carry route context (params, pathname,
+    // searchParams), extract serializable values into the key so
+    // different routes, param combinations, and query variants produce
+    // distinct cache entries.
     const keyArgs: unknown[] = [];
     let hasTaintedArgs = false;
     for (const arg of args) {
@@ -133,6 +121,13 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           keyArgs.push(ctx.pathname, ctx.params);
           if (ctx._responseType) {
             keyArgs.push(ctx._responseType);
+          }
+          // Include user-facing search params (exclude internal _rsc*/__ params)
+          if (ctx.searchParams instanceof URLSearchParams) {
+            const normalized = sortedSearchString(ctx.searchParams);
+            if (normalized) {
+              keyArgs.push(normalized);
+            }
           }
         }
       } else {
@@ -202,20 +197,34 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             restoreHandles(cached.handles, handleStore);
           }
         }
-        // Background revalidation
+        // Background revalidation — must capture handles if tainted args present
         if (requestCtx?.waitUntil) {
           requestCtx.waitUntil(async () => {
+            const bgHandleStore = hasTaintedArgs
+              ? requestCtx?._handleStore
+              : undefined;
+            let bgCapture: HandleCapture | undefined;
+            let bgStopCapture: (() => void) | undefined;
+            if (bgHandleStore) {
+              const c = startHandleCapture(bgHandleStore);
+              bgCapture = c.capture;
+              bgStopCapture = c.stop;
+            }
+
             try {
               const freshResult = await fn.apply(this, args);
+              bgStopCapture?.();
               const serialized = await serializeResult(freshResult);
               if (serialized !== null) {
                 await store.setItem!(cacheKey, serialized, {
+                  handles: bgCapture?.data,
                   ttl: profile.ttl,
                   swr: profile.swr,
                   tags: profile.tags,
                 });
               }
             } catch {
+              bgStopCapture?.();
               // Background revalidation failed silently
             }
           });
@@ -229,8 +238,11 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // Cache miss: execute, serialize, store
     const handleStore = hasTaintedArgs ? requestCtx?._handleStore : undefined;
     let capture: HandleCapture | undefined;
+    let stopCapture: (() => void) | undefined;
     if (handleStore && hasTaintedArgs) {
-      capture = startHandleCapture(handleStore);
+      const c = startHandleCapture(handleStore);
+      capture = c.capture;
+      stopCapture = c.stop;
     }
 
     // Stamp tainted args so ctx.set(), ctx.header(), etc. throw if called
@@ -260,10 +272,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       if (hasTaintedArgs && requestCtx) {
         delete (requestCtx as any)[INSIDE_CACHE_EXEC];
       }
-    }
-
-    if (capture && handleStore) {
-      stopHandleCapture(handleStore, capture);
+      // Remove this capture token (order-independent, safe for concurrent use)
+      stopCapture?.();
     }
 
     // Serialize and store — fully non-blocking when waitUntil is available.

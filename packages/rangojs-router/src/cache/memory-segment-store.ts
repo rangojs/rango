@@ -52,6 +52,7 @@ interface CachedItemEntry {
   value: string;
   handles?: Record<string, SegmentHandleData>;
   expiresAt: number;
+  staleAt: number;
 }
 
 /**
@@ -261,15 +262,17 @@ export class MemorySegmentCacheStore<
     const cached = this.itemCache.get(key);
     if (!cached) return null;
 
-    if (Date.now() > cached.expiresAt) {
+    const now = Date.now();
+    if (now > cached.expiresAt) {
       this.itemCache.delete(key);
       return null;
     }
 
+    const isStale = now > cached.staleAt;
     return {
       value: cached.value,
       handles: cached.handles,
-      shouldRevalidate: false,
+      shouldRevalidate: isStale,
     };
   }
 
@@ -279,10 +282,14 @@ export class MemorySegmentCacheStore<
     options?: CacheItemOptions,
   ): Promise<void> {
     const ttl = options?.ttl ?? this.defaults?.ttl ?? 900;
+    const swrWindow = options?.swr ?? this.defaults?.swr ?? 0;
+    const staleAt = Date.now() + ttl * 1000;
+    const expiresAt = staleAt + swrWindow * 1000;
     this.itemCache.set(key, {
       value,
       handles: options?.handles,
-      expiresAt: Date.now() + ttl * 1000,
+      expiresAt,
+      staleAt,
     });
   }
 

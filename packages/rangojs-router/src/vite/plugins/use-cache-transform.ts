@@ -97,7 +97,7 @@ export function useCacheTransform(): Plugin {
 
       // Check for function-level "use cache" / "use cache: profileName"
       // (only if there's no file-level directive but code still contains the string)
-      return transformFunctionLevelUseCache(
+      const functionResult = transformFunctionLevelUseCache(
         code,
         ast,
         filePath,
@@ -105,6 +105,13 @@ export function useCacheTransform(): Plugin {
         isBuild,
         transformHoistInlineDirective,
       );
+
+      // Always check for near-miss directives, even when valid directives
+      // exist. A file may contain both valid and invalid "use cache" directives
+      // in different functions — the invalid ones should still warn.
+      warnOnNearMissDirectives(ast, id, this.warn.bind(this));
+
+      if (functionResult) return functionResult;
     },
   };
 }
@@ -180,7 +187,7 @@ function transformFunctionLevelUseCache(
 ) {
   try {
     const { output, names } = transformHoistInlineDirective(code, ast, {
-      directive: /^use cache(:\s*\w+)?$/,
+      directive: /^use cache(:\s*[\w-]+)?$/,
       runtime: (
         value: string,
         name: string,
@@ -232,4 +239,66 @@ function findFileLevelDirective(
     }
   }
   return null;
+}
+
+/**
+ * The valid directive regex (must stay in sync with transformFunctionLevelUseCache).
+ */
+const VALID_DIRECTIVE_RE = /^use cache(:\s*[\w-]+)?$/;
+
+/**
+ * Regex for near-miss: starts with "use cache:" but has invalid tokens.
+ */
+const NEAR_MISS_RE = /^use cache:\s*.+$/;
+
+/**
+ * Walk the AST looking for string literals that look like malformed
+ * "use cache" directives and emit a Vite warning for each.
+ *
+ * This catches cases like `"use cache: bad.name"` or `"use cache: "`
+ * that the transform regex silently ignores.
+ */
+function warnOnNearMissDirectives(
+  ast: any,
+  fileId: string,
+  warn: (message: string) => void,
+): void {
+  const visit = (node: any) => {
+    if (!node || typeof node !== "object") return;
+
+    if (
+      node.type === "ExpressionStatement" &&
+      node.expression?.type === "Literal" &&
+      typeof node.expression.value === "string"
+    ) {
+      const value = node.expression.value;
+      if (
+        value.startsWith("use cache") &&
+        NEAR_MISS_RE.test(value) &&
+        !VALID_DIRECTIVE_RE.test(value)
+      ) {
+        const profilePart = value.slice("use cache:".length).trim();
+        warn(
+          `[rango:use-cache] "${value}" in ${fileId} has an invalid profile name "${profilePart}". ` +
+            `Profile names must match [a-zA-Z0-9_-]+. This directive will be ignored.`,
+        );
+      }
+    }
+
+    // Walk into function bodies where directives appear
+    for (const key of Object.keys(node)) {
+      const child = node[key];
+      if (Array.isArray(child)) {
+        for (const item of child) {
+          visit(item);
+        }
+      } else if (child && typeof child === "object" && child.type) {
+        visit(child);
+      }
+    }
+  };
+
+  for (const node of ast.body ?? []) {
+    visit(node);
+  }
 }

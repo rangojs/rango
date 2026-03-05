@@ -127,6 +127,15 @@ export async function loadManifest(
       }
     }
 
+    // Propagate cache profiles for DSL-time cache("profileName") resolution.
+    // Non-lazy entries carry profiles directly; lazy entries carry them
+    // in the captured lazyContext from include() time.
+    const entryProfiles =
+      entry.cacheProfiles ?? (lazyContext as any)?.cacheProfiles;
+    if (entryProfiles) {
+      Store.cacheProfiles = entryProfiles;
+    }
+
     const handlerExecStart = performance.now();
     const useItems = await getContext().runWithStore(
       Store,

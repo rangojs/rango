@@ -8,6 +8,10 @@ export interface LazyIncludeContext {
   urlPrefix: string;
   namePrefix: string | undefined;
   parent: unknown; // EntryData - avoid circular import
+  cacheProfiles?: Record<
+    string,
+    import("../cache/profile-registry.js").CacheProfile
+  >;
 }
 
 /**
@@ -71,4 +75,14 @@ export interface RouteEntry<TEnv = any> {
    * For lazy entries: whether patterns have been evaluated
    */
   lazyEvaluated?: boolean;
+
+  /**
+   * Cache profiles for DSL-time cache("profileName") resolution.
+   * Set on all entries (lazy and non-lazy) so loadManifest() can
+   * propagate them into the HelperContext Store.
+   */
+  cacheProfiles?: Record<
+    string,
+    import("../cache/profile-registry.js").CacheProfile
+  >;
 }

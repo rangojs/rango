@@ -277,6 +277,27 @@ export class CacheScope {
   } | null> {
     if (!this.enabled) return null;
 
+    // Evaluate condition — skip cache read when condition returns false
+    if (this.config !== false && this.config.condition) {
+      const requestCtx = getRequestContext();
+      if (requestCtx) {
+        try {
+          if (!this.config.condition(requestCtx)) {
+            debugCacheLog(
+              `[CacheScope] condition returned false, skipping cache read`,
+            );
+            return null;
+          }
+        } catch (error) {
+          console.error(
+            `[CacheScope] condition function threw, skipping cache read:`,
+            error,
+          );
+          return null;
+        }
+      }
+    }
+
     const store = this.getStore();
     if (!store) return null;
 
@@ -335,6 +356,27 @@ export class CacheScope {
     isIntercept?: boolean,
   ): Promise<void> {
     if (!this.enabled || segments.length === 0) return;
+
+    // Evaluate condition — skip cache write when condition returns false
+    if (this.config !== false && this.config.condition) {
+      const conditionCtx = getRequestContext();
+      if (conditionCtx) {
+        try {
+          if (!this.config.condition(conditionCtx)) {
+            debugCacheLog(
+              `[CacheScope] condition returned false, skipping cache write`,
+            );
+            return;
+          }
+        } catch (error) {
+          console.error(
+            `[CacheScope] condition function threw, skipping cache write:`,
+            error,
+          );
+          return;
+        }
+      }
+    }
 
     const store = this.getStore();
     if (!store) return;

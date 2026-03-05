@@ -137,6 +137,7 @@ export function evaluateLazyEntry<TEnv = any>(
       namespace: "lazy",
       parent: (lazyContext?.parent as EntryData | null) ?? null,
       counters: lazyCounters,
+      cacheProfiles: (lazyContext as any)?.cacheProfiles,
     },
     () => {
       // Run the lazy patterns handler with the original context prefixes

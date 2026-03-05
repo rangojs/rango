@@ -150,6 +150,7 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
         namePrefix: fullNamePrefix,
         parent: capturedParent,
         counters: capturedCounters,
+        cacheProfiles: ctx.cacheProfiles,
       },
     } as IncludeItem;
   };
