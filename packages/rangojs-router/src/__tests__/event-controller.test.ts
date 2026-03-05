@@ -534,9 +534,12 @@ describe("createEventController", () => {
       const handle = ctrl.startNavigation("/about");
       expect(ctrl.getState().pendingUrl).toBe("/about");
 
-      // Once streaming starts, we don't report pendingUrl
-      // (but navigation entry phase doesn't change via startStreaming on navigation handle)
-      // pendingUrl comes from currentNavigation.phase === "fetching"
+      // Once streaming starts, phase transitions to "streaming" and
+      // pendingUrl should clear (URL is no longer pending — data is arriving)
+      const token = handle.startStreaming();
+      expect(ctrl.getState().pendingUrl).toBeNull();
+
+      token.end();
       handle.complete(loc("/about"));
       expect(ctrl.getState().pendingUrl).toBeNull();
     });

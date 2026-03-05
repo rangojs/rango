@@ -353,4 +353,42 @@ describe("createNavigationTransaction", () => {
     // Should roll back to the original URL
     expect(locationHref).toBe("http://localhost/start");
   });
+
+  it("cacheOnly commit completes the navigation handle", () => {
+    const { store, eventController } = createTestContext();
+
+    const tx = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/target",
+      { skipLoadingState: true, replace: true },
+    );
+
+    // Before commit: navigation is in-flight
+    expect(eventController.getState().state).toBe("idle"); // skipLoadingState
+
+    tx.commit({
+      url: "http://localhost/target",
+      segmentIds: ["root"],
+      segments: [],
+      cacheOnly: true,
+    });
+    tx[Symbol.dispose]();
+
+    // After cacheOnly commit + dispose: navigation handle should be cleared
+    // (no dangling currentNavigation entry)
+    expect(eventController.getState().state).toBe("idle");
+    // Starting a new navigation should work without aborting a stale one
+    const tx2 = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/other",
+    );
+    tx2.commit({
+      url: "http://localhost/other",
+      segmentIds: ["root"],
+      segments: [],
+    });
+    tx2[Symbol.dispose]();
+  });
 });

@@ -286,6 +286,9 @@ export function createNavigationTransaction(
     if (cacheOnly) {
       const currentHandleData = eventController.getHandleState().data;
       store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
+      // Complete the navigation handle so currentNavigation is cleared.
+      // Without this, the entry lingers and weakens state-machine invariants.
+      handle.complete(parsedUrl);
       debugLog("[Browser] Cache-only commit, historyKey:", historyKey);
       return;
     }
