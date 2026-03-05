@@ -544,13 +544,11 @@ describe("createEventController", () => {
       expect(ctrl.getState().pendingUrl).toBeNull();
     });
 
-    it("pendingUrl is set for skipLoadingState navigations (useLinkStatus)", () => {
+    it("pendingUrl is null for skipLoadingState navigations (background revalidations)", () => {
       const ctrl = createController();
       ctrl.startNavigation("/slow", { skipLoadingState: true });
-      // pendingUrl must be exposed even when global loading state is suppressed,
-      // so useLinkStatus can show per-link pending indicators.
-      expect(ctrl.getState().pendingUrl).toBe("/slow");
-      // Global state stays idle — no loading skeleton
+      // Background revalidations don't expose pendingUrl
+      expect(ctrl.getState().pendingUrl).toBeNull();
       expect(ctrl.getState().state).toBe("idle");
     });
 

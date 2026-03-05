@@ -388,11 +388,13 @@ export function createEventController(
       state,
       isStreaming,
       location,
-      // pendingUrl during fetching phase - once streaming starts (URL changed), not pending.
-      // Exposed regardless of skipLoadingState so useLinkStatus works on routes
-      // without a loading boundary.
+      // pendingUrl only during fetching phase - once streaming starts (URL changed), not pending.
+      // Background revalidations (skipLoadingState) don't expose a pending URL.
       pendingUrl:
-        currentNavigation?.phase === "fetching" ? currentNavigation.url : null,
+        currentNavigation?.phase === "fetching" &&
+        !currentNavigation.options?.skipLoadingState
+          ? currentNavigation.url
+          : null,
       inflightActions: inflightActionsList,
     };
   }

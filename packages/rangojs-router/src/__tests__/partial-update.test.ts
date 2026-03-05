@@ -1458,9 +1458,8 @@ describe("partial-update", () => {
       expect(endFn).toHaveBeenCalled();
     });
 
-    it("ends streaming token when fetchPartial throws", async () => {
+    it("does not start streaming when fetchPartial throws", async () => {
       const store = createMockStore({ cachedSegments: [seg("R0")] });
-      const endFn = vi.fn();
 
       const fetchError = new Error("network failure");
       const client = {
@@ -1470,7 +1469,6 @@ describe("partial-update", () => {
       };
 
       const tx = createMockTx();
-      tx.startStreaming.mockReturnValue({ end: endFn });
 
       const updater = createPartialUpdater({
         store: store as any,
@@ -1484,12 +1482,9 @@ describe("partial-update", () => {
         updater("http://localhost/", ["R0"], false, undefined, tx),
       ).rejects.toThrow("network failure");
 
-      // startStreaming was called before the fetch
-      expect(tx.startStreaming).toHaveBeenCalled();
-
-      // streamingToken.end() must be called even though fetchPartial threw,
-      // otherwise isStreaming is permanently stuck as true
-      expect(endFn).toHaveBeenCalled();
+      // startStreaming is called after fetchPartial, so on error it's never reached.
+      // This avoids setting phase = "streaming" before any data arrives.
+      expect(tx.startStreaming).not.toHaveBeenCalled();
     });
   });
 });
