@@ -180,7 +180,7 @@ function transformFunctionLevelUseCache(
 ) {
   try {
     const { output, names } = transformHoistInlineDirective(code, ast, {
-      directive: /^use cache(:\s*\w+)?$/,
+      directive: /^use cache(:\s*[\w-]+)?$/,
       runtime: (
         value: string,
         name: string,

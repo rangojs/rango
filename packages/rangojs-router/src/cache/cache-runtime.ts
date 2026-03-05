@@ -117,9 +117,16 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       requestCtx?._cacheProfiles?.[resolvedProfileName] ??
       getGlobalCacheProfile(resolvedProfileName);
 
-    // Bypass: no store, no getItem support, or no profile configured
-    if (!store?.getItem || !profile) {
+    // Bypass: no store or no getItem support
+    if (!store?.getItem) {
       return fn.apply(this, args);
+    }
+
+    if (!profile) {
+      throw new Error(
+        `[use cache] "${id}" uses unknown cache profile "${resolvedProfileName}". ` +
+          `Define it in createRouter({ cacheProfiles: { "${resolvedProfileName}": { ttl: ... } } }).`,
+      );
     }
 
     // Separate tainted args (ctx, env, req) from key-generating args.

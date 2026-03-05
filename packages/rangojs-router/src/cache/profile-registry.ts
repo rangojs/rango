@@ -19,10 +19,21 @@ let _profiles: Record<string, CacheProfile> = {
   default: { ttl: 900, swr: 1800 },
 };
 
+const PROFILE_NAME_RE = /^[a-zA-Z0-9_-]+$/;
+
 /**
  * Set all cache profiles. Called by createRouter() at startup.
+ * Validates that all profile names match the grammar [a-zA-Z0-9_-]+.
  */
 export function setCacheProfiles(profiles: Record<string, CacheProfile>): void {
+  for (const name of Object.keys(profiles)) {
+    if (!PROFILE_NAME_RE.test(name)) {
+      throw new Error(
+        `Invalid cache profile name "${name}". ` +
+          `Profile names must match [a-zA-Z0-9_-]+.`,
+      );
+    }
+  }
   _profiles = { ...profiles };
   // Ensure a default profile always exists
   if (!_profiles.default) {
