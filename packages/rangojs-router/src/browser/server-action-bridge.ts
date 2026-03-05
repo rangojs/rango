@@ -22,6 +22,7 @@ import {
   isBrowserDebugEnabled,
   startBrowserTransaction,
 } from "./logging.js";
+import { validateRedirectOrigin } from "./validate-redirect-origin.js";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -193,20 +194,12 @@ export function createServerActionBridge(
         }),
       },
       body: encodedBody,
+      signal: handle.signal,
     }).then(async (response) => {
       // Check for version mismatch - server wants us to reload
       const reloadUrl = response.headers.get("X-RSC-Reload");
       if (reloadUrl) {
-        // Validate origin to prevent open redirect via crafted headers
-        try {
-          const target = new URL(reloadUrl, window.location.origin);
-          if (target.origin !== window.location.origin) {
-            throw new Error(
-              `X-RSC-Reload blocked: origin mismatch (${target.origin})`,
-            );
-          }
-        } catch (e) {
-          console.error("[rango]", e);
+        if (!validateRedirectOrigin(reloadUrl, window.location.origin)) {
           return response;
         }
         log("version mismatch on action, reloading", { reloadUrl });
@@ -221,6 +214,11 @@ export function createServerActionBridge(
       // when the user has already navigated away.
       const simpleRedirectUrl = response.headers.get("X-RSC-Redirect");
       if (simpleRedirectUrl && !handle.signal.aborted) {
+        if (
+          !validateRedirectOrigin(simpleRedirectUrl, window.location.origin)
+        ) {
+          return response;
+        }
         if (tx) {
           browserDebugLog(tx, "action simple redirect", {
             url: simpleRedirectUrl,
@@ -294,6 +292,13 @@ export function createServerActionBridge(
       // resolveStreamComplete is assigned in the Promise constructor so it's safe to call
       resolveStreamComplete!();
 
+      // Silently swallow abort errors — the action was intentionally cancelled
+      // (e.g., user navigated away or abortAllActions was called).
+      // Return undefined instead of throwing to avoid surfacing as a page error.
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return undefined;
+      }
+
       // Convert network-level errors to NetworkError for proper handling
       const networkError = toNetworkError(error, {
         url: url.toString(),
@@ -349,6 +354,12 @@ export function createServerActionBridge(
     if (isError && isPartial && segments && diff) {
       log("processing error boundary response");
 
+      // Fail current handle BEFORE aborting all actions so the event controller
+      // records the error state (abortAllActions clears inflight entries)
+      if (returnValue && !returnValue.ok) {
+        handle.fail(returnValue.data);
+      }
+
       // Abort all other pending action requests - error takes precedence
       // This prevents other actions from completing and overwriting the error UI
       eventController.abortAllActions();
@@ -395,7 +406,6 @@ export function createServerActionBridge(
 
       // Throw the error so the action promise rejects
       if (returnValue && !returnValue.ok) {
-        handle.fail(returnValue.data);
         throw returnValue.data;
       }
 
@@ -615,16 +625,6 @@ export function createServerActionBridge(
       }
       deps.setServerCallback(handleServerAction);
       isRegistered = true;
-    },
-
-    /**
-     * Unregister the server action callback
-     */
-    unregister(): void {
-      if (!isRegistered) {
-        return;
-      }
-      isRegistered = false;
     },
   };
 }

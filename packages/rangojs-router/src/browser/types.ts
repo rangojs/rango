@@ -488,7 +488,6 @@ export interface LinkInterceptorOptions {
  */
 export interface ServerActionBridge {
   register(): void;
-  unregister(): void;
 }
 
 /**

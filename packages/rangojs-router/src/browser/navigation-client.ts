@@ -12,6 +12,7 @@ import {
   startBrowserTransaction,
 } from "./logging.js";
 import { getRangoState } from "./rango-state.js";
+import { validateRedirectOrigin } from "./validate-redirect-origin.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -113,16 +114,7 @@ export function createNavigationClient(
         // Check for version mismatch - server wants us to reload
         const reloadUrl = response.headers.get("X-RSC-Reload");
         if (reloadUrl) {
-          // Validate origin to prevent open redirect via crafted headers
-          try {
-            const target = new URL(reloadUrl, window.location.origin);
-            if (target.origin !== window.location.origin) {
-              throw new Error(
-                `X-RSC-Reload blocked: origin mismatch (${target.origin})`,
-              );
-            }
-          } catch (e) {
-            console.error("[rango]", e);
+          if (!validateRedirectOrigin(reloadUrl, window.location.origin)) {
             return response;
           }
           if (tx) {
@@ -139,6 +131,9 @@ export function createNavigationClient(
         // navigation bridge catches it and re-navigates with _skipCache.
         const redirectUrl = response.headers.get("X-RSC-Redirect");
         if (redirectUrl) {
+          if (!validateRedirectOrigin(redirectUrl, window.location.origin)) {
+            return response;
+          }
           if (tx) {
             browserDebugLog(tx, "server redirect", { redirectUrl });
           }
