@@ -501,7 +501,11 @@ test.describe("cache-intercept-routes", () => {
     await expect(page.getByTestId("cache-intercept-detail")).toBeVisible();
 
     // Wait for async cache write (doc:/cache-test/intercept/item-b)
-    await waitForCacheWrite(f.proc(), beforeDocVisit, "/cache-test/intercept/item-b");
+    await waitForCacheWrite(
+      f.proc(),
+      beforeDocVisit,
+      "/cache-test/intercept/item-b",
+    );
 
     // Now go to intercept index and do intercept navigation to item-b
     await page.goto(f.url("/cache-test/intercept"));
@@ -818,10 +822,9 @@ test.describe("cache-response-type", () => {
     await expect
       .poll(
         async () => {
-          const res = await request.get(
-            f.url("/cache-response-type/data/42"),
-            { headers: { Accept: "application/json" } },
-          );
+          const res = await request.get(f.url("/cache-response-type/data/42"), {
+            headers: { Accept: "application/json" },
+          });
           const data = await res.json();
           return data.data.ts;
         },
@@ -1001,7 +1004,11 @@ test.describe("cache-status-segment", () => {
       .textContent();
 
     // Wait for async cache write to complete
-    await waitForCacheWrite(f.proc(), beforeSuccessVisit, "/cache-status/success");
+    await waitForCacheWrite(
+      f.proc(),
+      beforeSuccessVisit,
+      "/cache-status/success",
+    );
 
     // Navigate away and back
     await page.goto(f.url("/"));
@@ -1131,10 +1138,9 @@ test.describe("cache-response-type (production)", () => {
     await expect
       .poll(
         async () => {
-          const res = await request.get(
-            f.url("/cache-response-type/data/42"),
-            { headers: { Accept: "application/json" } },
-          );
+          const res = await request.get(f.url("/cache-response-type/data/42"), {
+            headers: { Accept: "application/json" },
+          });
           const data = await res.json();
           return data.data.ts;
         },

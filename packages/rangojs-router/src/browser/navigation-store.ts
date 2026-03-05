@@ -338,7 +338,6 @@ export function createNavigationStore(
    * Clear the history cache and broadcast to other tabs
    */
   function clearCacheAndBroadcast(): void {
-    console.log("[Browser] Clearing cache and broadcasting to other tabs");
     clearCacheInternal();
     broadcastInvalidation();
   }
@@ -347,9 +346,6 @@ export function createNavigationStore(
    * Mark cache as stale and broadcast to other tabs
    */
   function markStaleAndBroadcast(): void {
-    console.log(
-      "[Browser] Marking cache as stale and broadcasting to other tabs",
-    );
     markCacheAsStaleInternal();
     broadcastInvalidation();
   }
@@ -372,14 +368,6 @@ export function createNavigationStore(
         path: currentPath,
         segmentIds: currentSegmentIds,
       });
-      console.log(
-        "[Browser] Broadcast sent for path:",
-        currentPath,
-        "segments:",
-        currentSegmentIds.join(", "),
-      );
-    } else {
-      console.warn("[Browser] No BroadcastChannel available");
     }
   }
 
@@ -404,34 +392,21 @@ export function createNavigationStore(
             return;
           }
 
-          console.log(
-            "[Browser] Cache marked stale by another tab, shared segments:",
-            mutatedSegmentIds
-              .filter((id) => currentSegmentIds.includes(id))
-              .join(", "),
-          );
           markCacheAsStaleInternal();
 
           // Auto-refresh if enabled and callback is registered
           if (crossTabAutoRefresh && crossTabRefreshCallback) {
             // If idle, refresh immediately. If loading, wait for idle then refresh.
             if (navState.state === "idle") {
-              console.log("[Browser] Cross-tab refresh triggered (idle)");
               crossTabRefreshCallback();
             } else if (!pendingCrossTabRefresh) {
               // Only queue one refresh, ignore subsequent events while loading
               pendingCrossTabRefresh = true;
-              console.log(
-                "[Browser] Navigation in progress, deferring cross-tab refresh",
-              );
               // Subscribe to state changes, refresh when idle
               const listener: StateListener = () => {
                 if (navState.state === "idle") {
                   stateListeners.delete(listener);
                   pendingCrossTabRefresh = false;
-                  console.log(
-                    "[Browser] Cross-tab refresh triggered (deferred)",
-                  );
                   crossTabRefreshCallback?.();
                 }
               };
@@ -656,11 +631,6 @@ export function createNavigationStore(
      */
     markCacheAsStale(): void {
       markCacheAsStaleInternal();
-      console.log(
-        "[Browser] Marked",
-        historyCache.length,
-        "cache entries as stale",
-      );
     },
 
     /**

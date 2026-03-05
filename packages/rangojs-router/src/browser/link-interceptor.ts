@@ -131,10 +131,7 @@ export function setupLinkInterception(
 
   document.addEventListener("click", handleClick);
 
-  console.log("[Browser] Link interception enabled");
-
   return () => {
     document.removeEventListener("click", handleClick);
-    console.log("[Browser] Link interception disabled");
   };
 }
