@@ -112,10 +112,15 @@ export function createNavigationClient(
         signal,
       }).then((response) => {
         // Check for version mismatch - server wants us to reload
-        const reloadUrl = response.headers.get("X-RSC-Reload");
-        if (reloadUrl) {
-          if (!validateRedirectOrigin(reloadUrl, window.location.origin)) {
-            return response;
+        const rawReloadUrl = response.headers.get("X-RSC-Reload");
+        if (rawReloadUrl) {
+          const reloadUrl = validateRedirectOrigin(
+            rawReloadUrl,
+            window.location.origin,
+          );
+          if (!reloadUrl) {
+            resolveStreamComplete();
+            return new Response(null, { status: 200 });
           }
           if (tx) {
             browserDebugLog(tx, "version mismatch, reloading", { reloadUrl });
@@ -129,10 +134,17 @@ export function createNavigationClient(
         // X-RSC-Redirect instead of a 3xx (which fetch would auto-follow
         // to a URL rendering full HTML). Throw ServerRedirect so the
         // navigation bridge catches it and re-navigates with _skipCache.
-        const redirectUrl = response.headers.get("X-RSC-Redirect");
-        if (redirectUrl) {
-          if (!validateRedirectOrigin(redirectUrl, window.location.origin)) {
-            return response;
+        const rawRedirectUrl = response.headers.get("X-RSC-Redirect");
+        if (rawRedirectUrl) {
+          const redirectUrl = validateRedirectOrigin(
+            rawRedirectUrl,
+            window.location.origin,
+          );
+          if (!redirectUrl) {
+            // Redirect was blocked — resolve stream and return an empty
+            // 200 so Flight parsing doesn't choke on a 204/empty body.
+            resolveStreamComplete();
+            return new Response(null, { status: 200 });
           }
           if (tx) {
             browserDebugLog(tx, "server redirect", { redirectUrl });
@@ -172,7 +184,9 @@ export function createNavigationClient(
             resolveStreamComplete();
           }
         })().catch((error) => {
-          console.error("[Browser] Error reading tracking stream:", error);
+          if (!signal?.aborted) {
+            console.error("[Browser] Error reading tracking stream:", error);
+          }
           resolveStreamComplete();
         });
 

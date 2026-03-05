@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import type { ResolvedSegment } from "../browser/types";
+import { ServerRedirect } from "../errors";
 
 // Mock startTransition to run callbacks synchronously
 vi.mock("react", async () => {
@@ -446,6 +447,78 @@ describe("partial-update", () => {
       // Should render and update UI to remove modal
       expect(renderSegments).toHaveBeenCalled();
       expect(onUpdate).toHaveBeenCalled();
+    });
+  });
+
+  describe("redirect payload validation", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("throws ServerRedirect for same-origin redirect payload", async () => {
+      vi.stubGlobal("window", {
+        location: { origin: "http://localhost" },
+      });
+
+      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const { client } = createMockClient({
+        metadata: {
+          redirect: { url: "/target" },
+          locationState: { __rsc_ls_flash: "ok" },
+        },
+      });
+
+      const tx = createMockTx();
+      const updater = createPartialUpdater({
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments: vi.fn(async () => "tree"),
+      });
+
+      await expect(
+        updater("http://localhost/", ["R0"], false, undefined, tx),
+      ).rejects.toMatchObject({
+        name: "ServerRedirect",
+        url: "http://localhost/target",
+      } satisfies Partial<ServerRedirect>);
+    });
+
+    it("ignores cross-origin redirect payload", async () => {
+      vi.stubGlobal("window", {
+        location: { origin: "http://localhost" },
+      });
+
+      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const { client } = createMockClient({
+        metadata: {
+          redirect: { url: "https://evil.example/phish" },
+          locationState: { __rsc_ls_flash: "blocked" },
+        },
+      });
+
+      const onUpdate = vi.fn();
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+
+      const updater = createPartialUpdater({
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments,
+      });
+
+      await expect(
+        updater("http://localhost/", ["R0"], false, undefined, tx),
+      ).resolves.toBeUndefined();
+
+      expect(tx.commit).not.toHaveBeenCalled();
+      expect(onUpdate).not.toHaveBeenCalled();
+      expect(renderSegments).not.toHaveBeenCalled();
+      expect(consoleError).toHaveBeenCalled();
     });
   });
 

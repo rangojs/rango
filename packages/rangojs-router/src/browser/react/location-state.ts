@@ -80,6 +80,8 @@ export function useLocationState<TArgs extends unknown[], TState>(
         } else {
           setState(val);
         }
+      } else {
+        setState(window.history.state?.state as TState | undefined);
       }
     };
 

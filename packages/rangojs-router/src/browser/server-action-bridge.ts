@@ -208,10 +208,15 @@ export function createServerActionBridge(
       // abortAllActions() doesn't disrupt the in-progress Flight stream.
       handle.signal.removeEventListener("abort", onHandleAbort);
       // Check for version mismatch - server wants us to reload
-      const reloadUrl = response.headers.get("X-RSC-Reload");
-      if (reloadUrl) {
-        if (!validateRedirectOrigin(reloadUrl, window.location.origin)) {
-          return response;
+      const rawReloadUrl = response.headers.get("X-RSC-Reload");
+      if (rawReloadUrl) {
+        const reloadUrl = validateRedirectOrigin(
+          rawReloadUrl,
+          window.location.origin,
+        );
+        if (!reloadUrl) {
+          resolveStreamComplete();
+          return new Response(null, { status: 200 });
         }
         log("version mismatch on action, reloading", { reloadUrl });
         window.location.href = reloadUrl;
@@ -223,12 +228,15 @@ export function createServerActionBridge(
       // Short-circuits before createFromFetch — no Flight deserialization needed.
       // Check handle.signal.aborted to avoid redirecting from a stale action
       // when the user has already navigated away.
-      const simpleRedirectUrl = response.headers.get("X-RSC-Redirect");
-      if (simpleRedirectUrl && !handle.signal.aborted) {
-        if (
-          !validateRedirectOrigin(simpleRedirectUrl, window.location.origin)
-        ) {
-          return response;
+      const rawSimpleRedirectUrl = response.headers.get("X-RSC-Redirect");
+      if (rawSimpleRedirectUrl && !handle.signal.aborted) {
+        const simpleRedirectUrl = validateRedirectOrigin(
+          rawSimpleRedirectUrl,
+          window.location.origin,
+        );
+        if (!simpleRedirectUrl) {
+          resolveStreamComplete();
+          return new Response(null, { status: 200 });
         }
         if (tx) {
           browserDebugLog(tx, "action simple redirect", {
@@ -334,6 +342,14 @@ export function createServerActionBridge(
       diffCount: payload.metadata?.diff?.length ?? 0,
     });
 
+    // Guard: if the action was aborted while streaming (e.g., user navigated
+    // away or abortAllActions fired), bail out before any reconcile/render/cache
+    // writes to avoid overwriting the current UI with stale action results.
+    if (handle.signal.aborted) {
+      log("action aborted after response, skipping reconciliation");
+      return undefined;
+    }
+
     // Process response
     const { metadata, returnValue } = payload;
 
@@ -342,13 +358,17 @@ export function createServerActionBridge(
     // Check handle.signal.aborted to avoid redirecting from a stale action
     // when the user has already navigated away.
     if (metadata?.redirect && !handle.signal.aborted) {
-      const { url: redirectUrl } = metadata.redirect;
-      if (!validateRedirectOrigin(redirectUrl, window.location.origin)) {
+      const redirectUrl = validateRedirectOrigin(
+        metadata.redirect.url,
+        window.location.origin,
+      );
+      if (!redirectUrl) {
+        log("blocked action redirect payload", { url: metadata.redirect.url });
         handle.complete(returnValue?.data);
         return returnValue?.data;
       }
       const redirectState = metadata.locationState;
-      log("action payload redirect", { url: redirectUrl });
+      log("action redirect", { url: redirectUrl });
       handle.complete(returnValue?.data);
       if (onNavigate) {
         await onNavigate(redirectUrl, {

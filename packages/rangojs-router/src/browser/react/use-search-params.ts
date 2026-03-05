@@ -41,7 +41,8 @@ export function useSearchParams(): ReadonlyURLSearchParams {
       const nextSearch = location.searchParams.toString();
       if (nextSearch !== prevSearch.current) {
         prevSearch.current = nextSearch;
-        setSearchParams(location.searchParams);
+        // Create a snapshot so callers cannot mutate the source URLSearchParams
+        setSearchParams(new URLSearchParams(nextSearch));
       }
     };
 

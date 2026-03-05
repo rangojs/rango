@@ -18,6 +18,7 @@ import { hasActiveIntercept as hasActiveInterceptSlots } from "./intercept-utils
 import type { BoundTransaction } from "./navigation-transaction.js";
 import { ServerRedirect } from "../errors.js";
 import { debugLog } from "./logging.js";
+import { validateRedirectOrigin } from "./validate-redirect-origin.js";
 
 /**
  * Configuration for creating a partial updater
@@ -80,7 +81,7 @@ export type PartialUpdater = (
      * as fallback and force a fresh render from server */
     leavingIntercept?: boolean;
   },
-) => Promise<Promise<void>>;
+) => Promise<void>;
 
 /**
  * Create a partial updater for fetching and applying RSC partial updates
@@ -119,7 +120,6 @@ export function createPartialUpdater(
 
   /**
    * Fetch partial update and trigger UI update
-   * Returns a promise that resolves when the RSC stream is fully consumed
    *
    * @param tx - Transaction for committing segment state (required)
    * @param signal - AbortSignal to check if navigation is stale (not for aborting fetch)
@@ -138,7 +138,7 @@ export function createPartialUpdater(
       targetCacheHandleData?: Record<string, Record<string, unknown[]>>;
       leavingIntercept?: boolean;
     },
-  ): Promise<Promise<void>> {
+  ): Promise<void> {
     const {
       isAction = false,
       staleRevalidation = false,
@@ -235,10 +235,17 @@ export function createPartialUpdater(
     // must not redirect from a stale response.
     if (payload.metadata?.redirect) {
       if (signal?.aborted) {
-        console.log(`[Browser] Ignoring stale redirect (aborted)`);
-        return streamComplete;
+        debugLog("[Browser] Ignoring stale redirect (aborted)");
+        return;
       }
-      const { url: redirectUrl } = payload.metadata.redirect;
+      const redirectUrl = validateRedirectOrigin(
+        payload.metadata.redirect.url,
+        window.location.origin,
+      );
+      if (!redirectUrl) {
+        debugLog("[Browser] Ignoring blocked redirect payload");
+        return;
+      }
       const serverState = payload.metadata.locationState;
       throw new ServerRedirect(redirectUrl, serverState);
     }
@@ -249,7 +256,7 @@ export function createPartialUpdater(
       // Check if this navigation is stale (a newer one started)
       if (signal?.aborted) {
         debugLog("[Browser] Ignoring stale navigation (aborted)");
-        return streamComplete;
+        return;
       }
 
       debugLog(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
@@ -308,7 +315,7 @@ export function createPartialUpdater(
           }
 
           debugLog("[Browser] Navigation complete (rendered from cache)");
-          return streamComplete;
+          return;
         }
 
         // When leaving intercept, force re-render even with empty diff
@@ -331,7 +338,7 @@ export function createPartialUpdater(
           });
 
           debugLog("[Browser] Navigation complete (left intercept)");
-          return streamComplete;
+          return;
         }
 
         // Same route revalidation with no changes - skip UI update
@@ -340,7 +347,7 @@ export function createPartialUpdater(
         );
         tx.commit(matchedIds, existingSegments);
         debugLog("[Browser] Navigation complete (no re-render)");
-        return streamComplete;
+        return;
       }
 
       // Reconcile server segments with cached segments (single source of truth)
@@ -376,10 +383,10 @@ export function createPartialUpdater(
           debugLog(
             "[Browser] Ignoring stale navigation (aborted during HMR retry)",
           );
-          return streamComplete;
+          return;
         }
         if (isAction) {
-          return streamComplete;
+          return;
         }
         console.warn(
           `[Browser] HMR detected: Missing ${missingCount} segments. Refetching all...`,
@@ -391,7 +398,7 @@ export function createPartialUpdater(
 
       if (signal?.aborted) {
         debugLog("[Browser] Ignoring stale navigation (aborted before render)");
-        return streamComplete;
+        return;
       }
 
       // Rebuild tree on client (await for loader data resolution)
@@ -423,7 +430,7 @@ export function createPartialUpdater(
       // Final abort check before committing - another navigation may have started
       if (signal?.aborted) {
         debugLog("[Browser] Ignoring stale navigation (aborted before commit)");
-        return streamComplete;
+        return;
       }
 
       // Check if this is an intercept response (any slot is active)
@@ -468,7 +475,7 @@ export function createPartialUpdater(
           debugLog(
             `[Browser] Stale revalidation: history key changed (${historyKeyAtStart} -> ${historyKeyNow}), skipping UI update`,
           );
-          return streamComplete;
+          return;
         }
       }
 
@@ -508,7 +515,7 @@ export function createPartialUpdater(
       }
 
       debugLog("[Browser] Navigation complete");
-      return streamComplete;
+      return;
     } else {
       // Full update (fallback)
       // Reconstruct the tree client-side from segments via renderSegments
@@ -520,7 +527,7 @@ export function createPartialUpdater(
       // Check if this navigation is stale (a newer one started)
       if (signal?.aborted) {
         debugLog("[Browser] Ignoring stale navigation (aborted)");
-        return streamComplete;
+        return;
       }
 
       const segmentIds = segments.map((s: ResolvedSegment) => s.id);
@@ -531,7 +538,7 @@ export function createPartialUpdater(
       // Final abort check before committing - another navigation may have started
       if (signal?.aborted) {
         debugLog("[Browser] Ignoring stale navigation (aborted before commit)");
-        return streamComplete;
+        return;
       }
 
       // Commit navigation - transaction handles all store mutations atomically
@@ -588,7 +595,7 @@ export function createPartialUpdater(
         });
       }
 
-      return streamComplete;
+      return;
     }
   }
 

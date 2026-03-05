@@ -332,12 +332,13 @@ export function createNavigationTransaction(
       // Ensure new history entry has a scroll restoration key
       ensureHistoryKey();
 
-      // Notify location state hooks when history state includes typed entries.
+      // Notify location state hooks when history state includes user state.
       // Needed for same-page redirects where components don't remount and
       // useState initializers don't re-run, even though history.state was updated.
       if (
         historyState &&
-        Object.keys(historyState).some((k) => k.startsWith("__rsc_ls_"))
+        (Object.keys(historyState).some((k) => k.startsWith("__rsc_ls_")) ||
+          "state" in historyState)
       ) {
         window.dispatchEvent(new Event("__rsc_locationstate"));
       }

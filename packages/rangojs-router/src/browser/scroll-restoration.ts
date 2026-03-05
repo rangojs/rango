@@ -8,6 +8,8 @@
  * - Supports hash link scrolling
  */
 
+import { debugLog } from "./logging.js";
+
 const SCROLL_STORAGE_KEY = "rsc-router-scroll-positions";
 
 /**
@@ -139,12 +141,13 @@ export function initScrollRestoration(options?: {
 
   window.addEventListener("pagehide", handlePageHide);
 
-  console.log(
+  debugLog(
     "[Scroll] Initialized, loaded positions:",
     Object.keys(savedScrollPositions).length,
   );
 
   return () => {
+    cancelScrollRestorationPolling();
     window.removeEventListener("pagehide", handlePageHide);
     window.history.scrollRestoration = "auto";
     initialized = false;
@@ -267,13 +270,13 @@ export function restoreScrollPosition(options?: {
 
   if (canScrollToPosition) {
     window.scrollTo(0, savedY);
-    console.log("[Scroll] Restored position:", savedY, "for key:", key);
+    debugLog("[Scroll] Restored position:", savedY, "for key:", key);
     return true;
   }
 
   // Scroll as far as we can for now
   window.scrollTo(0, maxScrollY);
-  console.log("[Scroll] Partial restore to:", maxScrollY, "target:", savedY);
+  debugLog("[Scroll] Partial restore to:", maxScrollY, "target:", savedY);
 
   // Poll while streaming until we can scroll to target position
   if (options?.retryIfStreaming && options?.isStreaming?.()) {
@@ -282,14 +285,14 @@ export function restoreScrollPosition(options?: {
     pendingPollInterval = setInterval(() => {
       // Stop if we've exceeded the timeout
       if (Date.now() - startTime > SCROLL_POLL_TIMEOUT_MS) {
-        console.log("[Scroll] Polling timeout, giving up");
+        debugLog("[Scroll] Polling timeout, giving up");
         cancelScrollRestorationPolling();
         return;
       }
 
       // Stop if streaming ended
       if (!options.isStreaming?.()) {
-        console.log("[Scroll] Streaming ended, stopping poll");
+        debugLog("[Scroll] Streaming ended, stopping poll");
         cancelScrollRestorationPolling();
         return;
       }
@@ -299,7 +302,7 @@ export function restoreScrollPosition(options?: {
         document.documentElement.scrollHeight - window.innerHeight;
       if (savedY <= currentMaxScrollY) {
         window.scrollTo(0, savedY);
-        console.log("[Scroll] Poll restored position:", savedY);
+        debugLog("[Scroll] Poll restored position:", savedY);
         cancelScrollRestorationPolling();
       }
     }, SCROLL_POLL_INTERVAL_MS);
@@ -322,7 +325,7 @@ export function scrollToHash(): boolean {
     const element = document.getElementById(id);
     if (element) {
       element.scrollIntoView();
-      console.log("[Scroll] Scrolled to hash element:", id);
+      debugLog("[Scroll] Scrolled to hash element:", id);
       return true;
     }
   } catch (e) {

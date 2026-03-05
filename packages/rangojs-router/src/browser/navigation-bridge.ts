@@ -28,6 +28,7 @@ import {
 } from "./network-error-handler.js";
 import { debugLog } from "./logging.js";
 import { ServerRedirect } from "../errors.js";
+import { validateRedirectOrigin } from "./validate-redirect-origin.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -93,10 +94,24 @@ export function createNavigationBridge(
           ? resolveNavigationState(options.state)
           : undefined;
 
+      // Cross-origin URLs are not handled by SPA navigation.
+      // Fall back to a full browser navigation for http/https only.
+      const targetUrl = new URL(url, window.location.origin);
+      if (targetUrl.origin !== window.location.origin) {
+        if (targetUrl.protocol !== "http:" && targetUrl.protocol !== "https:") {
+          console.error(
+            `[rango] navigate() blocked: unsupported scheme "${targetUrl.protocol}"`,
+          );
+          return;
+        }
+        window.location.href = targetUrl.href;
+        return;
+      }
+
       // Only abort pending requests when navigating to a different route
       // Same-route navigation (e.g., /todos -> /todos) should not cancel in-flight actions
       const currentPath = new URL(window.location.href).pathname;
-      const targetPath = new URL(url, window.location.origin).pathname;
+      const targetPath = targetUrl.pathname;
       if (currentPath !== targetPath) {
         eventController.abortNavigation();
       }
@@ -211,7 +226,14 @@ export function createNavigationBridge(
         // `using` cleanup resets loading state. Re-navigate to the redirect
         // target carrying the server-set state into history.pushState.
         if (error instanceof ServerRedirect) {
-          return this.navigate(error.url, {
+          const redirectUrl = validateRedirectOrigin(
+            error.url,
+            window.location.origin,
+          );
+          if (!redirectUrl) {
+            return;
+          }
+          return this.navigate(redirectUrl, {
             state: error.state,
             replace: options?.replace,
             _skipCache: true,

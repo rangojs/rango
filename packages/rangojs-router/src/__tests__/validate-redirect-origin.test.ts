@@ -6,9 +6,9 @@ describe("validateRedirectOrigin", () => {
     vi.restoreAllMocks();
   });
 
-  it("accepts relative paths", () => {
+  it("normalizes relative paths", () => {
     expect(validateRedirectOrigin("/about", "http://localhost:3000")).toBe(
-      "/about",
+      "http://localhost:3000/about",
     );
   });
 
@@ -35,15 +35,16 @@ describe("validateRedirectOrigin", () => {
     ).toBeNull();
   });
 
-  it("accepts paths with query strings and fragments", () => {
+  it("normalizes paths with query strings and fragments", () => {
     expect(
       validateRedirectOrigin("/page?q=1#section", "http://localhost:3000"),
-    ).toBe("/page?q=1#section");
+    ).toBe("http://localhost:3000/page?q=1#section");
   });
 
-  it("accepts empty path", () => {
-    // new URL("", origin) resolves to origin
-    expect(validateRedirectOrigin("", "http://localhost:3000")).toBe("");
+  it("normalizes empty path to origin root", () => {
+    expect(validateRedirectOrigin("", "http://localhost:3000")).toBe(
+      "http://localhost:3000/",
+    );
   });
 
   it("rejects URLs with different port (different origin)", () => {
