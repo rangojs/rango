@@ -156,6 +156,7 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
   routeKey: string,
   deps: SegmentResolutionDeps<TEnv>,
   actionContext?: ActionContext,
+  stale?: boolean,
 ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
   const allLoaderSegments: ResolvedSegment[] = [];
   const allMatchedIds: string[] = [];
@@ -174,6 +175,8 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
       routeKey,
       deps,
       actionContext,
+      undefined, // shortCodeOverride
+      stale,
     );
     allLoaderSegments.push(...segments);
     allMatchedIds.push(...matchedIds);

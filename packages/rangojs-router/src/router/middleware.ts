@@ -467,12 +467,14 @@ export async function executeInterceptMiddleware<TEnv>(
     });
 
     if (hasStubHeaders) {
-      // Clone and merge headers from stub into early response
+      // Clone and merge headers from stub into early response.
+      // Only fill in missing headers — the returned Response's explicit
+      // headers take precedence, matching executeMiddleware behavior.
       const mergedHeaders = new Headers(response.headers);
       stubResponse.headers.forEach((value, name) => {
         if (name.toLowerCase() === "set-cookie") {
           mergedHeaders.append(name, value);
-        } else {
+        } else if (!mergedHeaders.has(name)) {
           mergedHeaders.set(name, value);
         }
       });

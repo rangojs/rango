@@ -495,6 +495,7 @@ export function withCacheLookup<TEnv>(
         routeKey: ctx.routeKey,
         context: ctx.handlerContext,
         actionContext: ctx.actionContext,
+        stale: cacheResult.shouldRevalidate || undefined,
       });
 
       if (!shouldRevalidate) {
@@ -541,6 +542,7 @@ export function withCacheLookup<TEnv>(
             ctx.url,
             ctx.routeKey,
             ctx.actionContext,
+            cacheResult.shouldRevalidate || undefined,
           ),
         );
 
