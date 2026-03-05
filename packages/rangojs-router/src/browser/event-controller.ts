@@ -388,8 +388,8 @@ export function createEventController(
       state,
       isStreaming,
       location,
-      // pendingUrl only during fetching phase - once streaming starts (URL changed), not pending
-      // Background revalidations don't expose a pending URL
+      // pendingUrl only during fetching phase - once streaming starts (URL changed), not pending.
+      // Background revalidations (skipLoadingState) don't expose a pending URL.
       pendingUrl:
         currentNavigation?.phase === "fetching" &&
         !currentNavigation.options?.skipLoadingState

@@ -544,6 +544,14 @@ describe("createEventController", () => {
       expect(ctrl.getState().pendingUrl).toBeNull();
     });
 
+    it("pendingUrl is null for skipLoadingState navigations (background revalidations)", () => {
+      const ctrl = createController();
+      ctrl.startNavigation("/slow", { skipLoadingState: true });
+      // Background revalidations don't expose pendingUrl
+      expect(ctrl.getState().pendingUrl).toBeNull();
+      expect(ctrl.getState().state).toBe("idle");
+    });
+
     it("inflightActions excludes settling actions", () => {
       const ctrl = createController();
       const handle = ctrl.startAction("hash#save", []);

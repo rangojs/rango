@@ -198,29 +198,23 @@ export function createPartialUpdater(
       targetCacheSegments && targetCacheSegments.length > 0
         ? targetCacheSegments
         : getCurrentCachedSegments();
-    // Mark navigation as streaming (response received, now parsing RSC)
-    // The token is ended when the stream completes
-    const streamingToken = tx.startStreaming();
     // Fetch partial payload (no abort signal - RSC doesn't support it well)
-    // Wrapped in try/catch to ensure streamingToken.end() is called if fetch throws,
-    // preventing isStreaming from being permanently stuck as true.
     let fetchResult: Awaited<ReturnType<NavigationClient["fetchPartial"]>>;
-    try {
-      fetchResult = await client.fetchPartial({
-        targetUrl: url,
-        segmentIds: segments,
-        previousUrl,
-        // Mark stale when explicitly requested OR when no segments are sent
-        // (action redirect sends empty segments for a fresh render).
-        // Only the fetch URL param is affected here — behavioral side effects
-        // (forceAwait, history key check) are controlled by the staleRevalidation variable.
-        staleRevalidation: staleRevalidation || segments.length === 0,
-        version,
-      });
-    } catch (err) {
-      streamingToken.end();
-      throw err;
-    }
+    fetchResult = await client.fetchPartial({
+      targetUrl: url,
+      segmentIds: segments,
+      previousUrl,
+      // Mark stale when explicitly requested OR when no segments are sent
+      // (action redirect sends empty segments for a fresh render).
+      // Only the fetch URL param is affected here — behavioral side effects
+      // (forceAwait, history key check) are controlled by the staleRevalidation variable.
+      staleRevalidation: staleRevalidation || segments.length === 0,
+      version,
+    });
+    // Mark navigation as streaming (response received, now parsing RSC).
+    // Called after fetchPartial so pendingUrl stays set during the network wait,
+    // allowing useLinkStatus to show per-link pending indicators.
+    const streamingToken = tx.startStreaming();
     const { payload, streamComplete: rawStreamComplete } = fetchResult;
     debugLog("payload.metadata", payload.metadata);
 
