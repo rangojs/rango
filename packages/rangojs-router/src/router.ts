@@ -735,6 +735,9 @@ export function createRouter<TEnv = any>(
     // Expose resolved theme configuration for NavigationProvider and MetaTags
     themeConfig: resolvedThemeConfig,
 
+    // Expose cache profiles for per-request resolution
+    cacheProfiles: cacheProfilesOption,
+
     // Expose prefetch cache control for RSC handler
     prefetchCacheControl,
 

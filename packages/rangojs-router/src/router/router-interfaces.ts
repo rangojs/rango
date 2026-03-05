@@ -247,6 +247,11 @@ export interface RSCRouterInternal<
   readonly themeConfig: import("../theme/types.js").ResolvedThemeConfig | null;
 
   /**
+   * Cache profiles for "use cache" per-request resolution.
+   */
+  readonly cacheProfiles?: Record<string, import("../cache/profile-registry.js").CacheProfile>;
+
+  /**
    * Cache-Control header value for prefetch responses.
    * False means no browser caching of prefetch responses.
    */

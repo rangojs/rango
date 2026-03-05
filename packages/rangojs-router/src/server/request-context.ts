@@ -128,6 +128,9 @@ export interface RequestContext<
   /** @internal Cache store for segment caching (optional, used by CacheScope) */
   _cacheStore?: SegmentCacheStore;
 
+  /** @internal Cache profiles for "use cache" profile resolution (per-router) */
+  _cacheProfiles?: Record<string, import("../cache/profile-registry.js").CacheProfile>;
+
   /**
    * Schedule work to run after the response is sent.
    * On Cloudflare Workers, uses ctx.waitUntil().
@@ -253,6 +256,7 @@ export type PublicRequestContext<
   | "deleteCookie"
   | "_handleStore"
   | "_cacheStore"
+  | "_cacheProfiles"
   | "_onResponseCallbacks"
   | "_themeConfig"
   | "_locationState"
@@ -358,6 +362,8 @@ export interface CreateRequestContextOptions<TEnv> {
   initialResponse?: Response;
   /** Optional cache store for segment caching (used by CacheScope) */
   cacheStore?: SegmentCacheStore;
+  /** Optional cache profiles for "use cache" resolution (per-router) */
+  cacheProfiles?: Record<string, import("../cache/profile-registry.js").CacheProfile>;
   /** Optional Cloudflare execution context for waitUntil support */
   executionContext?: ExecutionContext;
   /** Optional theme configuration (enables ctx.theme and ctx.setTheme) */
@@ -382,6 +388,7 @@ export function createRequestContext<TEnv>(
     variables,
     initialResponse,
     cacheStore,
+    cacheProfiles,
     executionContext,
     themeConfig,
   } = options;
@@ -565,6 +572,7 @@ export function createRequestContext<TEnv>(
 
     _handleStore: handleStore,
     _cacheStore: cacheStore,
+    _cacheProfiles: cacheProfiles,
 
     waitUntil(fn: () => Promise<void>): void {
       if (executionContext?.waitUntil) {

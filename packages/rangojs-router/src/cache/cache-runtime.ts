@@ -30,7 +30,7 @@ import {
 } from "./taint.js";
 
 export { isCachedFunction };
-import { getCacheProfile } from "./profile-registry.js";
+import { getCacheProfile as getGlobalCacheProfile } from "./profile-registry.js";
 import { serializeResult, deserializeResult } from "./segment-codec.js";
 import type { SegmentHandleData } from "./types.js";
 import type { HandleStore } from "../server/handle-store.js";
@@ -112,7 +112,10 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
   const wrapped = async function (this: any, ...args: any[]): Promise<any> {
     const requestCtx = getRequestContext();
     const store = requestCtx?._cacheStore;
-    const profile = getCacheProfile(profileName || "default");
+    const resolvedProfileName = profileName || "default";
+    const profile =
+      requestCtx?._cacheProfiles?.[resolvedProfileName] ??
+      getGlobalCacheProfile(resolvedProfileName);
 
     // Bypass: no store, no getItem support, or no profile configured
     if (!store?.getItem || !profile) {
