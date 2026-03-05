@@ -482,6 +482,7 @@ export function createEventController(
 
       startStreaming(): StreamingToken {
         let ended = false;
+        entry.phase = "streaming";
         activeStreamCount++;
         notify();
 
