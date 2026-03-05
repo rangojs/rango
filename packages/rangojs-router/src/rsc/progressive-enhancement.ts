@@ -12,6 +12,7 @@ import { executeMiddleware } from "../router/middleware.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import {
   createResponseWithMergedHeaders,
+  finalizeResponse,
   buildRouteMiddlewareEntries,
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
@@ -173,14 +174,18 @@ export async function handleProgressiveEnhancement<TEnv>(
   };
 
   // Execute route middleware wrapping the render, if any.
+  // finalizeResponse drains onResponse callbacks that middleware short-circuits
+  // may leave behind (executeMiddleware does not finalize them itself).
   if (routeMwInfo?.routeMiddleware && routeMwInfo.routeMiddleware.length > 0) {
-    return executeMiddleware(
-      buildRouteMiddlewareEntries(routeMwInfo.routeMiddleware),
-      request,
-      env,
-      routeMwInfo.variables,
-      renderPage,
-      routeMwInfo.routeReverse,
+    return finalizeResponse(
+      await executeMiddleware(
+        buildRouteMiddlewareEntries(routeMwInfo.routeMiddleware),
+        request,
+        env,
+        routeMwInfo.variables,
+        renderPage,
+        routeMwInfo.routeReverse,
+      ),
     );
   }
 

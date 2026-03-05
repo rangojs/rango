@@ -16,7 +16,10 @@ import { executeLoaderMiddleware } from "../router/middleware.js";
 import { requireRequestContext } from "../server/request-context.js";
 import { createReverseFunction } from "../router/handler-context.js";
 import { getGlobalRouteMap } from "../route-map-builder.js";
-import { createResponseWithMergedHeaders } from "./helpers.js";
+import {
+  createResponseWithMergedHeaders,
+  finalizeResponse,
+} from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 
 export async function handleLoaderFetch<TEnv>(
@@ -90,53 +93,57 @@ export async function handleLoaderFetch<TEnv>(
     }
   }
 
-  // Execute the loader with middleware
+  // Execute the loader with middleware.
+  // finalizeResponse drains onResponse callbacks that middleware short-circuits
+  // may leave behind (executeLoaderMiddleware does not finalize them itself).
   try {
     const { fn, middleware } = registeredLoader;
 
-    return await executeLoaderMiddleware(
-      middleware,
-      request,
-      env,
-      loaderParams,
-      variables,
-      async () => {
-        const reqCtx = requireRequestContext();
-        // Merge route params (from previewMatch) with explicit loader params.
-        // Explicit params take precedence over route-matched params.
-        const resolvedRouteParams = routeParams ?? {};
-        const mergedParams = {
-          ...resolvedRouteParams,
-          ...loaderParams,
-        };
-        const loaderCtx: any = {
-          ...reqCtx,
-          params: mergedParams,
-          routeParams: resolvedRouteParams,
-          body: loaderBody,
-          method: request.method,
-          reverse: createReverseFunction(
-            getGlobalRouteMap(),
-            reqCtx._routeName,
-            mergedParams,
-          ),
-          ...(loaderFormData ? { formData: loaderFormData } : {}),
-        };
+    return finalizeResponse(
+      await executeLoaderMiddleware(
+        middleware,
+        request,
+        env,
+        loaderParams,
+        variables,
+        async () => {
+          const reqCtx = requireRequestContext();
+          // Merge route params (from previewMatch) with explicit loader params.
+          // Explicit params take precedence over route-matched params.
+          const resolvedRouteParams = routeParams ?? {};
+          const mergedParams = {
+            ...resolvedRouteParams,
+            ...loaderParams,
+          };
+          const loaderCtx: any = {
+            ...reqCtx,
+            params: mergedParams,
+            routeParams: resolvedRouteParams,
+            body: loaderBody,
+            method: request.method,
+            reverse: createReverseFunction(
+              getGlobalRouteMap(),
+              reqCtx._routeName,
+              mergedParams,
+            ),
+            ...(loaderFormData ? { formData: loaderFormData } : {}),
+          };
 
-        const result = await fn(loaderCtx);
+          const result = await fn(loaderCtx);
 
-        interface LoaderPayload {
-          loaderResult: unknown;
-        }
-        const loaderPayload: LoaderPayload = { loaderResult: result };
-        const rscStream =
-          ctx.renderToReadableStream<LoaderPayload>(loaderPayload);
+          interface LoaderPayload {
+            loaderResult: unknown;
+          }
+          const loaderPayload: LoaderPayload = { loaderResult: result };
+          const rscStream =
+            ctx.renderToReadableStream<LoaderPayload>(loaderPayload);
 
-        return createResponseWithMergedHeaders(rscStream, {
-          headers: { "content-type": "text/x-component;charset=utf-8" },
-        });
-      },
-      createReverseFunction(ctx.getRequiredRouteMap()),
+          return createResponseWithMergedHeaders(rscStream, {
+            headers: { "content-type": "text/x-component;charset=utf-8" },
+          });
+        },
+        createReverseFunction(ctx.getRequiredRouteMap()),
+      ),
     );
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
