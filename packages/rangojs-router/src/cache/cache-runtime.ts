@@ -41,6 +41,24 @@ import { restoreHandles } from "./handle-snapshot.js";
 // ============================================================================
 
 /**
+ * Build a sorted, deterministic query string from URLSearchParams,
+ * excluding internal _rsc* and __* params.
+ */
+function sortedSearchString(searchParams: URLSearchParams): string {
+  const pairs: [string, string][] = [];
+  for (const [k, v] of searchParams) {
+    if (!k.startsWith("_rsc") && !k.startsWith("__")) {
+      pairs.push([k, v]);
+    }
+  }
+  if (pairs.length === 0) return "";
+  pairs.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return pairs
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join("&");
+}
+
+/**
  * Convert encodeReply result to a stable string key.
  * encodeReply may return string or FormData — normalize to string.
  */
@@ -130,9 +148,10 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     }
 
     // Separate tainted args (ctx, env, req) from key-generating args.
-    // For tainted objects that carry route context (params, pathname),
-    // extract those serializable values into the key so different routes
-    // and param combinations produce distinct cache entries.
+    // For tainted objects that carry route context (params, pathname,
+    // searchParams), extract serializable values into the key so
+    // different routes, param combinations, and query variants produce
+    // distinct cache entries.
     const keyArgs: unknown[] = [];
     let hasTaintedArgs = false;
     for (const arg of args) {
@@ -143,6 +162,13 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           keyArgs.push(ctx.pathname, ctx.params);
           if (ctx._responseType) {
             keyArgs.push(ctx._responseType);
+          }
+          // Include user-facing search params (exclude internal _rsc*/__ params)
+          if (ctx.searchParams instanceof URLSearchParams) {
+            const normalized = sortedSearchString(ctx.searchParams);
+            if (normalized) {
+              keyArgs.push(normalized);
+            }
           }
         }
       } else {
