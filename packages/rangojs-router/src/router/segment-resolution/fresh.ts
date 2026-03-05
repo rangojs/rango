@@ -128,19 +128,8 @@ export async function resolveSegment<TEnv>(
       segments.push(...loaderSegments);
     }
 
-    for (const parallelEntry of entry.parallel) {
-      const parallelSegments = await resolveParallelEntry(
-        parallelEntry,
-        params,
-        context,
-        false,
-        entry.shortCode,
-        deps,
-        options,
-      );
-      segments.push(...parallelSegments);
-    }
-
+    // Handler-first: layout handler executes before its parallels and orphan
+    // layouts so that ctx.set() values are visible to all children.
     (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
       entry.shortCode;
 
@@ -159,6 +148,19 @@ export async function resolveSegment<TEnv>(
       layoutName: entry.id,
       ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
     });
+
+    for (const parallelEntry of entry.parallel) {
+      const parallelSegments = await resolveParallelEntry(
+        parallelEntry,
+        params,
+        context,
+        false,
+        entry.shortCode,
+        deps,
+        options,
+      );
+      segments.push(...parallelSegments);
+    }
 
     for (const orphan of entry.layout) {
       const orphanSegments = await resolveOrphanLayout(
@@ -274,19 +276,8 @@ export async function resolveOrphanLayout<TEnv>(
     segments.push(...loaderSegments);
   }
 
-  for (const parallelEntry of orphan.parallel) {
-    const parallelSegments = await resolveParallelEntry(
-      parallelEntry,
-      params,
-      context,
-      belongsToRoute,
-      orphan.shortCode,
-      deps,
-      options,
-    );
-    segments.push(...parallelSegments);
-  }
-
+  // Handler-first: orphan layout handler executes before its parallels
+  // so that ctx.set() values are visible to parallel children.
   const component = await resolveLayoutComponent(orphan, context);
 
   segments.push({
@@ -302,6 +293,19 @@ export async function resolveOrphanLayout<TEnv>(
     transition: orphan.transition,
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
   });
+
+  for (const parallelEntry of orphan.parallel) {
+    const parallelSegments = await resolveParallelEntry(
+      parallelEntry,
+      params,
+      context,
+      belongsToRoute,
+      orphan.shortCode,
+      deps,
+      options,
+    );
+    segments.push(...parallelSegments);
+  }
 
   return segments;
 }

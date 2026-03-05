@@ -21,6 +21,12 @@ Named-route RSC router with structural composability and type-safe partial rende
 - **Trailing slash control** — Per-route canonical URLs with `"never"`, `"always"`, or `"ignore"`
 - **CLI codegen** — `rango generate` for route type generation
 
+## Design Docs
+
+- [Execution model](./docs/internal/execution-model.md)
+- [Semantic change checklist](./docs/internal/semantic-change-checklist.md)
+- [Stability roadmap](./docs/internal/stability-roadmap.md)
+
 ## Installation
 
 ```bash

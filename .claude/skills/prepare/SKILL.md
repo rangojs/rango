@@ -41,7 +41,36 @@ Then check whether the corresponding **skills** in `packages/rangojs-router/skil
 
 If no public API files were modified, report: "No public API changes detected."
 
-## Step 3: Suggest /simplify if appropriate
+## Step 3: Semantic matrix gate
+
+Check whether the diff touches any semantic-critical files:
+
+- `packages/rangojs-router/src/router/segment-resolution/**`
+- `packages/rangojs-router/src/router/middleware/**`
+- `packages/rangojs-router/src/router/action/**`
+- `packages/rangojs-router/src/router/intercept/**`
+- `packages/rangojs-router/src/router/revalidation/**`
+- `packages/rangojs-router/src/router/prerender/**`
+- `packages/rangojs-router/e2e/test-app/src/urls/**`
+- `packages/rangojs-router/e2e/test-app/src/loaders.tsx`
+- `packages/rangojs-router/e2e/test-app/src/router.tsx`
+- `packages/rangojs-router/docs/internal/execution-model.md`
+- `packages/rangojs-router/skills/middleware/SKILL.md`
+- `packages/rangojs-router/skills/layout/SKILL.md`
+- `packages/rangojs-router/skills/parallel/SKILL.md`
+- `packages/rangojs-router/skills/intercept/SKILL.md`
+
+If any of these files are modified, run the semantic matrix tests in both dev and production:
+
+```bash
+cd packages/rangojs-router && pnpm exec playwright test semantic-matrix
+```
+
+All rows must pass. If any fail, report them and fix before continuing.
+
+If none of those files are modified, skip this step and report: "No semantic-critical changes detected — skipping matrix."
+
+## Step 4: Suggest /simplify if appropriate
 
 Look at the diff from Step 2. If the changes include non-trivial new or modified code (not just config, formatting, or test-only changes), suggest running `/simplify` to review the changed code for reuse, quality, and efficiency. Phrase it as a suggestion, e.g.:
 

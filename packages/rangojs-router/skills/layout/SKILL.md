@@ -8,6 +8,9 @@ argument-hint: [component]
 
 Layouts wrap child routes and persist during navigation within their scope.
 
+Canonical semantics reference:
+[docs/execution-model.md](../../docs/internal/execution-model.md)
+
 ## Basic Layout
 
 ```typescript
@@ -182,8 +185,10 @@ urls(({ path, layout, parallel }) => [
 ])
 ```
 
-Orphan layouts cannot call `ctx.set()` -- only the route handler and
-middleware can write context variables.
+Orphan layouts can call `ctx.get()` to read data set by their parent
+handler. They can also call `ctx.set()`, though the primary pattern is
+for route handlers and middleware to write context variables and for
+orphan layouts to read them.
 
 ## Layout Revalidation
 
@@ -209,6 +214,51 @@ If child segments read data that was established by this layout or by a
 route handler above them, revalidate the outer segment too. Partial
 revalidation does not re-run non-revalidated ancestors just to rebuild
 their `ctx.set()` state.
+
+### Revalidation Contracts
+
+For shared upstream data, define named revalidation functions and reuse
+them on both producer and consumer segments:
+
+```typescript
+// revalidation-contracts.ts
+export const revalidateCartData = ({ actionId }) =>
+  actionId?.includes("src/actions/cart.ts#addToCart") ?? false;
+```
+
+```typescript
+layout(<CartLayout />, () => [
+  revalidate(revalidateCartData), // producer
+  path("/cart", CartPage, { name: "cart" }, () => [
+    revalidate(revalidateCartData), // consumer
+  ]),
+]);
+```
+
+If a segment depends on multiple upstream domains, compose multiple
+contracts (`revalidateAuthData`, `revalidateCartData`, and so on).
+
+You can also package them as importable handoff helpers:
+
+```typescript
+// revalidation-contracts.ts
+import { revalidate } from "@rangojs/router";
+
+export const revalidateAuthData = ({ actionId }) =>
+  actionId?.includes("src/actions/auth.ts#") ?? false;
+export const revalidateAuth = () => [
+  revalidate(revalidateAuthData),
+];
+```
+
+```typescript
+layout(<ShellLayout />, () => [
+  revalidateAuth(),
+  path("/account", AccountPage, { name: "account" }, () => [
+    revalidateAuth(),
+  ]),
+]);
+```
 
 ## Complete Example
 

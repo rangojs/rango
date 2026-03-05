@@ -79,8 +79,11 @@ test.describe("Middleware chain (dev)", () => {
     await expect(testId(page, "orphan-parallel-handler-data")).toHaveText(
       "none",
     );
-    // @panel (layout-level parallel): independent segment, fresh scope
-    await expect(testId(page, "parallel-layout-data")).toHaveText("none");
+    // @panel (layout-level parallel): handler-first — sees layout data
+    // but NOT handler data (path handler runs in a separate entry)
+    await expect(testId(page, "parallel-layout-data")).toHaveText(
+      "from-main-layout",
+    );
     await expect(testId(page, "parallel-handler-data")).toHaveText("none");
 
     // Loader (via useLoader client component) sees cookies from global + route mw
@@ -447,7 +450,9 @@ test.describe("Middleware chain (dev)", () => {
       await expect(testId(page, "orphan-parallel-handler-data")).toHaveText(
         "none",
       );
-      await expect(testId(page, "parallel-layout-data")).toHaveText("none");
+      await expect(testId(page, "parallel-layout-data")).toHaveText(
+        "from-main-layout",
+      );
       await expect(testId(page, "parallel-handler-data")).toHaveText("none");
 
       // --- Loader (path, via useLoader): sees all cookies ---
@@ -552,7 +557,9 @@ test.describe("Middleware chain (production)", () => {
     await expect(testId(page, "orphan-parallel-handler-data")).toHaveText(
       "none",
     );
-    await expect(testId(page, "parallel-layout-data")).toHaveText("none");
+    await expect(testId(page, "parallel-layout-data")).toHaveText(
+      "from-main-layout",
+    );
     await expect(testId(page, "parallel-handler-data")).toHaveText("none");
 
     await expect(testId(page, "loader-global-cookie")).toHaveText("gv");
@@ -872,7 +879,9 @@ test.describe("Middleware chain (production)", () => {
       await expect(testId(page, "orphan-parallel-handler-data")).toHaveText(
         "none",
       );
-      await expect(testId(page, "parallel-layout-data")).toHaveText("none");
+      await expect(testId(page, "parallel-layout-data")).toHaveText(
+        "from-main-layout",
+      );
       await expect(testId(page, "parallel-handler-data")).toHaveText("none");
 
       // --- Loader (path) ---

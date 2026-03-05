@@ -8,6 +8,9 @@ argument-hint: [@slot-name] [route-to-intercept]
 
 Intercept routes render a different component during soft navigation (client-side) while preserving the background route. Hard navigation (direct URL) shows the full page.
 
+Canonical semantics reference:
+[docs/execution-model.md](../../docs/internal/execution-model.md)
+
 ## Basic Intercept
 
 ```typescript
@@ -100,6 +103,45 @@ action revalidation only recomputes segments that actually revalidate.
 If an intercept depends on data established by an outer layout/handler,
 revalidate that outer segment too or reload/guard the data inside the
 intercept.
+
+### Revalidation Contracts for Intercept Dependencies
+
+Use named revalidation contracts on both the outer producer and the intercept
+consumer when they share `ctx.set()` data:
+
+```typescript
+export const revalidateProductShell = ({ actionId }) =>
+  actionId?.includes("src/actions/product.ts#") ?? false;
+
+layout(ProductLayout, () => [
+  revalidate(revalidateProductShell), // producer reruns
+  intercept("@modal", "product", <ProductModal />, () => [
+    revalidate(revalidateProductShell), // consumer reruns
+    loader(ProductLoader),
+  ]),
+]);
+```
+
+Compose multiple contracts if the intercept depends on multiple upstream
+domains.
+
+Helper handoff style keeps intercept trees terse:
+
+```typescript
+import { revalidate } from "@rangojs/router";
+
+export const revalidateProduct = () => [
+  revalidate(revalidateProductShell),
+];
+
+layout(ProductLayout, () => [
+  revalidateProduct(),
+  intercept("@modal", "product", <ProductModal />, () => [
+    revalidateProduct(),
+    loader(ProductLoader),
+  ]),
+]);
+```
 
 ## Conditional Intercept with when()
 

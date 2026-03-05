@@ -138,6 +138,46 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ]);
 ```
 
+### Revalidation Contracts for Loader Dependencies
+
+If a loader reads `ctx.get()` data produced by an outer handler/layout, share
+the same named revalidation contract across producer and consumer segments.
+
+```typescript
+// revalidation-contracts.ts
+export const revalidateAccountScope = ({ actionId }) =>
+  actionId?.includes("src/actions/account.ts#") ?? false;
+
+layout(AccountLayout, () => [
+  revalidate(revalidateAccountScope), // producer reruns
+  path("/account/orders", OrdersPage, { name: "account.orders" }, () => [
+    loader(OrdersLoader, () => [
+      revalidate(revalidateAccountScope), // consumer reruns
+    ]),
+  ]),
+]);
+```
+
+For segments that depend on multiple upstream domains, compose multiple
+contracts on both sides.
+
+To keep loader route trees concise, export helper wrappers:
+
+```typescript
+import { revalidate } from "@rangojs/router";
+
+export const revalidateAccount = () => [
+  revalidate(revalidateAccountScope),
+];
+
+layout(AccountLayout, () => [
+  revalidateAccount(),
+  path("/account/orders", OrdersPage, { name: "account.orders" }, () => [
+    loader(OrdersLoader, () => [revalidateAccount()]),
+  ]),
+]);
+```
+
 ## Loaders: The Live Data Layer
 
 Loaders are the live data layer of the router. They resolve fresh on every

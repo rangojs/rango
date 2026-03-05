@@ -590,31 +590,32 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     }
   }
 
-  const parallelResult = await resolveParallelSegmentsWithRevalidation(
-    entry,
-    params,
-    context,
-    belongsToRoute,
-    clientSegmentIds,
-    prevParams,
-    request,
-    prevUrl,
-    nextUrl,
-    routeKey,
-    deps,
-    actionContext,
-    stale,
-  );
-  segments.push(...parallelResult.segments);
-  matchedIds.push(...parallelResult.matchedIds);
-
-  // Push handler BEFORE orphan layouts for layout/cache entries (matching SSR
-  // order in resolveSegment). Route handler was already executed and is pushed
-  // after children for tree composition.
   if (routeHandlerResult) {
+    // Route entry: handler already executed above; resolve parallels
+    // (handler data visible) then push handler segment last for tree order.
+    const parallelResult = await resolveParallelSegmentsWithRevalidation(
+      entry,
+      params,
+      context,
+      belongsToRoute,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      deps,
+      actionContext,
+      stale,
+    );
+    segments.push(...parallelResult.segments);
+    matchedIds.push(...parallelResult.matchedIds);
+
     segments.push(routeHandlerResult.segment);
     matchedIds.push(routeHandlerResult.matchedId);
   } else {
+    // Layout/cache entry: handler-first — resolve handler before parallels
+    // so ctx.set() values are visible to parallel children.
     const handlerResult = await resolveEntryHandlerWithRevalidation(
       entry,
       params,
@@ -632,9 +633,25 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     );
     segments.push(handlerResult.segment);
     matchedIds.push(handlerResult.matchedId);
-  }
 
-  if (entry.type === "layout" || entry.type === "cache") {
+    const parallelResult = await resolveParallelSegmentsWithRevalidation(
+      entry,
+      params,
+      context,
+      belongsToRoute,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      deps,
+      actionContext,
+      stale,
+    );
+    segments.push(...parallelResult.segments);
+    matchedIds.push(...parallelResult.matchedIds);
+
     for (const orphan of entry.layout) {
       const orphanResult = await resolveOrphanLayoutWithRevalidation(
         orphan,
@@ -704,6 +721,61 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   );
   segments.push(...loaderResult.segments);
   matchedIds.push(...loaderResult.matchedIds);
+
+  // Handler-first: resolve orphan layout handler before its parallels
+  // so ctx.set() values are visible to parallel children.
+  matchedIds.push(orphan.shortCode);
+
+  const component = await revalidate(
+    async () => {
+      if (!clientSegmentIds.has(orphan.shortCode)) return true;
+
+      const dummySegment: ResolvedSegment = {
+        id: orphan.shortCode,
+        namespace: orphan.id,
+        type: "layout",
+        index: 0,
+        component: null as any,
+        params,
+        belongsToRoute,
+        layoutName: orphan.id,
+        ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
+      };
+
+      return await evaluateRevalidation({
+        segment: dummySegment,
+        prevParams,
+        getPrevSegment: null,
+        request,
+        prevUrl,
+        nextUrl,
+        revalidations: orphan.revalidate.map((fn, i) => ({
+          name: `revalidate${i}`,
+          fn,
+        })),
+        routeKey,
+        context,
+        actionContext,
+        stale,
+      });
+    },
+    async () => resolveLayoutComponent(orphan, context),
+    () => null,
+  );
+
+  segments.push({
+    id: orphan.shortCode,
+    namespace: orphan.id,
+    type: "layout",
+    index: 0,
+    component,
+    params,
+    belongsToRoute,
+    layoutName: orphan.id,
+    loading: orphan.loading === false ? null : orphan.loading,
+    transition: orphan.transition,
+    ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
+  });
 
   for (const parallelEntry of orphan.parallel) {
     invariant(
@@ -816,59 +888,6 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       });
     }
   }
-
-  matchedIds.push(orphan.shortCode);
-
-  const component = await revalidate(
-    async () => {
-      if (!clientSegmentIds.has(orphan.shortCode)) return true;
-
-      const dummySegment: ResolvedSegment = {
-        id: orphan.shortCode,
-        namespace: orphan.id,
-        type: "layout",
-        index: 0,
-        component: null as any,
-        params,
-        belongsToRoute,
-        layoutName: orphan.id,
-        ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
-      };
-
-      return await evaluateRevalidation({
-        segment: dummySegment,
-        prevParams,
-        getPrevSegment: null,
-        request,
-        prevUrl,
-        nextUrl,
-        revalidations: orphan.revalidate.map((fn, i) => ({
-          name: `revalidate${i}`,
-          fn,
-        })),
-        routeKey,
-        context,
-        actionContext,
-        stale,
-      });
-    },
-    async () => resolveLayoutComponent(orphan, context),
-    () => null,
-  );
-
-  segments.push({
-    id: orphan.shortCode,
-    namespace: orphan.id,
-    type: "layout",
-    index: 0,
-    component,
-    params,
-    belongsToRoute,
-    layoutName: orphan.id,
-    loading: orphan.loading === false ? null : orphan.loading,
-    transition: orphan.transition,
-    ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
-  });
 
   return { segments, matchedIds };
 }
