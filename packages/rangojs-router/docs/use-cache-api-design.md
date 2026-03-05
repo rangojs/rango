@@ -62,8 +62,9 @@ createRouter({
 ```
 
 - `"use cache"` (no name) resolves to the `default` profile.
-- `"use cache: <name>"` resolves to the named profile.
-- Unknown profile names are a build-time error.
+- `"use cache: <name>"` resolves to the named profile. Names must match `[a-zA-Z0-9_-]+`.
+- Unknown profile names throw at runtime with an actionable error message.
+- Profiles are scoped per router: each `createRouter()` instance resolves profiles from its own `cacheProfiles` config via request context, with a global fallback for backwards compatibility.
 
 ## Cache Key
 
@@ -80,8 +81,8 @@ Request-scoped objects (`ctx`, `env`, `req`) are branded with a taint symbol (`S
 
 When `registerCachedFunction` detects a tainted argument:
 
-1. **Exclude it from the cache key** -- it is request-scoped and not meaningful for keying.
-2. **Cache handle data alongside the return value** -- on miss, capture side effects (breadcrumbs, metadata) via the existing `captureHandles()` mechanism.
+1. **Extract route-scoping dimensions into the cache key** -- `pathname`, sorted `params`, `_responseType`, and normalized user-facing search params (excluding internal `_rsc*`/`__*` params) are included so different routes, param combinations, and query variants produce distinct cache entries.
+2. **Cache handle data alongside the return value** -- on miss, capture side effects (breadcrumbs, metadata) via a reentrant save/restore capture on `HandleStore.push`. Nested cached function calls capture/restore correctly in LIFO order.
 3. **Replay handle data on hit** -- restore via `restoreHandles()` into the current request's `HandleStore`.
 
 This means handlers that call `ctx.breadcrumb()`, `ctx.set()`, etc. work correctly with `"use cache"`. Side effects are captured and replayed, same as the existing `cache()` DSL and `Static()` handler.
@@ -188,7 +189,6 @@ All three write to the same `SegmentCacheStore`. Tag-based invalidation (`revali
 
 ## Remaining / Future
 
-- Validate profile names at build time (requires access to router config from Vite plugin).
 - `"use cache: private"` variant for per-request in-memory caching (no shared store).
 - Integration with tag-based invalidation API (`cacheTag()` inside `"use cache"` functions).
 - Cache warming / pre-population strategies.

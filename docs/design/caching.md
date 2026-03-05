@@ -297,28 +297,25 @@ Compose cached + fresh segments into single RSC stream
 
 ## Cache Key Structure
 
-Cache keys combine entry namespace with sorted route params:
+Cache keys combine request type prefix, pathname, sorted route params, and sorted user-facing search params:
 
-```typescript
-function getSegmentCacheKey(
-  entryId: string,
-  params?: Record<string, string>,
-): string {
-  const paramStr = params
-    ? Object.entries(params)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => `${k}=${v}`)
-        .join("&")
-    : "";
-  return paramStr ? `${entryId}:${paramStr}` : entryId;
-}
-
-// Examples:
-// "#router.$root.$layout.0" (no params)
-// "#router.$root.$layout.0.$route.1.post:slug=react-server-components"
+```
+{prefix}:{pathname}:{sortedParams}?{sortedSearchParams}
 ```
 
-Key uses `entry.namespace` (not `segment.id`) to ensure cache lookups match storage.
+- **Prefix**: `doc` (full page), `partial` (navigation), or `intercept` (modal/overlay).
+- **Search params**: User-facing params are included (sorted, URL-encoded). Internal `_rsc*` and `__*` params are excluded.
+- **Determinism**: Both route params and search params are sorted alphabetically for stable keys regardless of insertion order.
+
+```typescript
+// Examples:
+// "doc:/products"
+// "partial:/products:slug=shoes"
+// "partial:/products:slug=shoes?page=2&sort=asc"
+// "intercept:/products:slug=shoes"
+```
+
+For `"use cache"` functions, cache keys follow the format `use-cache:{functionId}:{serializedArgs}` where tainted ctx arguments contribute `pathname`, `params`, `_responseType`, and normalized search params to the key.
 
 ## Storage Backend
 
@@ -645,8 +642,9 @@ cache({ ttl: 60 }, () => [
 ### API Signature
 
 ```typescript
-// Both signatures supported:
+// All signatures supported:
 function cache(children: () => RouteChildren[]): RouteChild;
+function cache(profileName: string, children?: () => RouteChildren[]): RouteChild;
 function cache(
   options: CacheOptions | false,
   children?: () => RouteChildren[],
