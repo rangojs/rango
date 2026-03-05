@@ -733,9 +733,14 @@ export function createEventController(
     hadAnyConcurrentActions = false;
     concurrentRevalidatedSegments.clear();
     notify();
-    // Notify all action listeners
-    for (const actionId of actionListeners.keys()) {
-      notifyAction(actionId);
+    // Notify all action listeners directly by subscription ID.
+    // actionListeners keys are subscription IDs (possibly short names like
+    // "addToCart"), not full entry actionIds. Passing them to notifyAction
+    // would fail the suffix matcher — instead, notify each subscriber with
+    // its own state.
+    for (const [subscriptionId, listeners] of actionListeners) {
+      const state = getActionState(subscriptionId);
+      listeners.forEach((listener) => listener(state));
     }
   }
 

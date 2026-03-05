@@ -130,12 +130,13 @@ function createMockStore() {
 function createMockEventController() {
   const completeFn = vi.fn();
   const failFn = vi.fn();
+  const abortCtrl = new AbortController();
   return {
     controller: {
       startAction: vi.fn(() => ({
         id: "test-action-1",
-        abort: new AbortController(),
-        signal: new AbortController().signal,
+        abort: abortCtrl,
+        signal: abortCtrl.signal,
         startStreaming: vi.fn(() => ({ end: vi.fn() })),
         recordRevalidatedSegments: vi.fn(),
         complete: completeFn,
@@ -143,6 +144,7 @@ function createMockEventController() {
         settled: false,
         hadConcurrentActions: false,
         getConsolidationSegments: vi.fn(() => null),
+        clearConsolidation: vi.fn(),
         [Symbol.dispose]: vi.fn(),
       })),
       abortAllActions: vi.fn(),
@@ -166,14 +168,20 @@ function createMockEventController() {
     },
     completeFn,
     failFn,
+    abortCtrl,
   };
 }
 
 /**
  * Build mock deps that resolve createFromFetch with the given payload.
+ * Accepts an optional sideEffect callback that runs during createFromFetch
+ * (useful for aborting the handle mid-stream).
  * Captures the handleServerAction callback via setServerCallback.
  */
-function createMockDeps(payload: RscPayload) {
+function createMockDeps(
+  payload: RscPayload,
+  sideEffect?: () => void | Promise<void>,
+) {
   let actionCallback: ((id: string, args: any[]) => Promise<any>) | null = null;
 
   vi.stubGlobal(
@@ -190,7 +198,10 @@ function createMockDeps(payload: RscPayload) {
 
   return {
     deps: {
-      createFromFetch: vi.fn(() => Promise.resolve(payload)) as any,
+      createFromFetch: vi.fn(async () => {
+        await sideEffect?.();
+        return payload;
+      }) as any,
       createFromReadableStream: vi.fn(),
       encodeReply: vi.fn(() => Promise.resolve("encoded")),
       setServerCallback: vi.fn(
@@ -323,5 +334,51 @@ describe("server-action-bridge payload redirect origin validation", () => {
       _skipCache: true,
     });
     expect(result).toBe("redirect-result");
+  });
+
+  it("bails out of post-payload mutations when action is aborted", async () => {
+    const store = createMockStore();
+    const { controller, completeFn, abortCtrl } = createMockEventController();
+    const onUpdate = vi.fn();
+    const renderSegments = vi.fn();
+
+    const payload: RscPayload = {
+      metadata: {
+        isPartial: true,
+        matched: ["root"],
+        diff: ["root"],
+        segments: [],
+      },
+      returnValue: { ok: true, data: "stale-result" },
+    } as any;
+
+    // Abort the handle after createFromFetch resolves but before
+    // post-payload processing. The bridge already returns undefined
+    // for aborted-during-fetch via the catch block; the new bailout
+    // guards the post-deserialization path. Both paths must avoid
+    // store mutations and UI updates.
+    const { deps, getActionCallback } = createMockDeps(payload, async () => {
+      await Promise.resolve();
+      abortCtrl.abort();
+    });
+
+    const bridge = createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: controller as any,
+      deps,
+      onUpdate,
+      renderSegments,
+    });
+    bridge.register();
+
+    await getActionCallback()("test-action", []);
+
+    // Must not mutate store or UI for an aborted action
+    expect(renderSegments).not.toHaveBeenCalled();
+    expect(onUpdate).not.toHaveBeenCalled();
+    expect(store.setSegmentIds).not.toHaveBeenCalled();
+    expect(store.cacheSegmentsForHistory).not.toHaveBeenCalled();
+    expect(completeFn).not.toHaveBeenCalled();
   });
 });

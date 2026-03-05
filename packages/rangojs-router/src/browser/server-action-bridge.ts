@@ -382,6 +382,15 @@ export function createServerActionBridge(
       return returnValue?.data;
     }
 
+    // Bail out if the action was aborted after deserialization (e.g. user
+    // navigated away or abortAllActions was called while the Flight stream
+    // was being consumed). Without this check the code below would mutate
+    // the store / UI for a stale action.
+    if (handle.signal.aborted) {
+      log("action aborted after deserialization, skipping mutations");
+      return returnValue?.data;
+    }
+
     const { matched, diff, segments, isPartial, isError } = metadata || {};
 
     // Log action result
