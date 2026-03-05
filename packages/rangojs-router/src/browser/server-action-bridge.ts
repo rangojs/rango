@@ -432,6 +432,26 @@ export function createServerActionBridge(
             : undefined,
       });
 
+      // Re-check route stability after async renderSegments — user may have
+      // navigated away while the error tree was being prepared.
+      if (window.location.pathname !== actionStartPathname) {
+        log("user navigated during error render, skipping");
+        if (returnValue && !returnValue.ok) {
+          throw returnValue.data;
+        }
+        handle.complete(undefined);
+        return undefined;
+      }
+      const currentKeyNow = store.getHistoryKey();
+      if (currentKeyNow !== currentKey) {
+        log("history key changed during error render, skipping cache update");
+        if (returnValue && !returnValue.ok) {
+          throw returnValue.data;
+        }
+        handle.complete(undefined);
+        return undefined;
+      }
+
       // Update UI with error boundary
       startTransition(() => {
         onUpdate({ root: errorTree, metadata: metadata! });
