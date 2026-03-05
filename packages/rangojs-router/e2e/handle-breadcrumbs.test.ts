@@ -3,29 +3,25 @@ import { useFixture } from "./fixture";
 import { waitForHydration, testId } from "./helper";
 
 /**
- * Asserts breadcrumb trail order and count within the breadcrumbs container.
- * Each breadcrumb is an <li> element. Separator <span> elements ("/" chars)
- * live inside the <li>, so counting <li> elements gives the breadcrumb count
- * (plus extra <li> for async content if present).
- *
- * labels: expected breadcrumb labels in order (excluding async content items).
+ * Asserts exact breadcrumb trail: order, content, AND count.
+ * Selects only label <li> elements (excludes async-content <li> which
+ * carries data-testid="breadcrumbs-content").
  */
 async function expectBreadcrumbOrder(
-  page: ReturnType<typeof testId> extends infer T ? T : never,
+  container: ReturnType<typeof testId> extends infer T ? T : never,
   labels: string[],
 ) {
-  const items = page.locator("ol > li");
-  // Each breadcrumb label is either a <a> (link) or <span> (current).
-  // Async content <li> elements have data-testid="breadcrumbs-content" and
-  // are separate from label items. We check labels in sequence.
+  const labelItems = container.locator("ol > li:not([data-testid])");
+  await expect(labelItems).toHaveCount(labels.length);
   for (let i = 0; i < labels.length; i++) {
-    await expect(items.nth(i)).toContainText(labels[i]);
+    await expect(labelItems.nth(i)).toContainText(labels[i]);
   }
 }
 
 /**
  * Handle API tests - breadcrumbs accumulated across route segments.
- * Assertions verify exact order, count, and structure of breadcrumbs.
+ * expectBreadcrumbOrder enforces exact label count and ordered content
+ * via toHaveCount + nth(i) assertions on label <li> elements.
  */
 
 function breadcrumbTests(mode: "dev" | "build") {
@@ -114,8 +110,11 @@ function breadcrumbTests(mode: "dev" | "build") {
           ),
         ).toBeVisible();
       } else {
-        // Production builds show a generic RSC error
-        await expect(page.getByText(/error occurred/i).first()).toBeVisible();
+        // Production builds strip the specific message but React's RSC error
+        // includes "Server Components render" — more specific than generic "error"
+        await expect(
+          page.getByText(/Server Components render/i).first(),
+        ).toBeVisible();
       }
     });
 
