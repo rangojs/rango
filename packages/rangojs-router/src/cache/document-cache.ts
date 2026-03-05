@@ -245,9 +245,26 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     const segmentHash =
       isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
     const typeSuffix = isPartial ? ":rsc" : ":html";
+
+    // Build sorted user-facing search params string for cache key scoping.
+    // Without this, /products?page=1 and /products?page=2 would share a cache entry.
+    let searchSuffix = "";
+    if (!keyGenerator) {
+      const pairs: [string, string][] = [];
+      for (const [k, v] of url.searchParams) {
+        if (!k.startsWith("_rsc") && !k.startsWith("__")) {
+          pairs.push([k, v]);
+        }
+      }
+      if (pairs.length > 0) {
+        pairs.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+        searchSuffix = `?${pairs.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&")}`;
+      }
+    }
+
     const cacheKey = keyGenerator
       ? keyGenerator(url) + segmentHash + typeSuffix
-      : `${url.pathname}${segmentHash}${typeSuffix}`;
+      : `${url.pathname}${searchSuffix}${segmentHash}${typeSuffix}`;
 
     try {
       // 1. Check cache

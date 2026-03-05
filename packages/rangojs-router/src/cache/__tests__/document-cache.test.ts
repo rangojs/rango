@@ -422,6 +422,74 @@ describe("createDocumentCacheMiddleware", () => {
       expect(next2).toHaveBeenCalledTimes(1);
       expect(response2.headers.get("x-document-cache-status")).toBe("MISS");
     });
+
+    it("should scope default cache key by user-facing search params", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      // Cache page=1
+      const ctx1 = createMockMiddlewareContext("http://localhost/page?page=1");
+      const next1 = vi.fn().mockResolvedValue(
+        new Response("Page 1", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+      await middleware(ctx1, next1);
+      await vi.runAllTimersAsync();
+
+      // page=2 should be a MISS (different key)
+      const ctx2 = createMockMiddlewareContext("http://localhost/page?page=2");
+      const next2 = vi.fn().mockResolvedValue(
+        new Response("Page 2", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+      const response2 = (await middleware(ctx2, next2)) as Response;
+      expect(next2).toHaveBeenCalledTimes(1);
+      expect(response2.headers.get("x-document-cache-status")).toBe("MISS");
+    });
+
+    it("should ignore internal _rsc* and __* query params in default key", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      // Cache entry with internal query params present
+      const withInternal = createMockMiddlewareContext(
+        "http://localhost/page?tab=all&__debug_manifest=1&_rsc_v=abc",
+      );
+      const next1 = vi.fn().mockResolvedValue(
+        new Response("Tabbed", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+      await middleware(withInternal, next1);
+      await vi.runAllTimersAsync();
+
+      // Same user-facing query, without internal params, should HIT same key
+      const withoutInternal = createMockMiddlewareContext(
+        "http://localhost/page?tab=all",
+      );
+      const next2 = vi.fn();
+      const response2 = (await middleware(withoutInternal, next2)) as Response;
+
+      expect(next2).not.toHaveBeenCalled();
+      expect(response2.headers.get("x-document-cache-status")).toBe("HIT");
+      expect(await response2.text()).toBe("Tabbed");
+    });
   });
 
   describe("debug logging", () => {

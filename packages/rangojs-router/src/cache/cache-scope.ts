@@ -37,13 +37,34 @@ function debugCacheLog(message: string): void {
 // ============================================================================
 
 /**
- * Generate cache key base from pathname and params.
- * Params are sorted alphabetically for consistent key generation.
+ * Build a sorted, deterministic query string from URLSearchParams,
+ * excluding internal _rsc* params.
+ * @internal
+ */
+function sortedSearchString(searchParams: URLSearchParams): string {
+  const pairs: [string, string][] = [];
+  for (const [k, v] of searchParams) {
+    if (!k.startsWith("_rsc") && !k.startsWith("__")) {
+      pairs.push([k, v]);
+    }
+  }
+  if (pairs.length === 0) return "";
+  pairs.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return pairs
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join("&");
+}
+
+/**
+ * Generate cache key base from pathname, route params, and search params.
+ * Route params and search params are sorted alphabetically for deterministic keys.
+ * Internal _rsc* and __* query params are excluded.
  * @internal
  */
 function getCacheKeyBase(
   pathname: string,
   params?: Record<string, string>,
+  searchParams?: URLSearchParams,
 ): string {
   const paramStr = params
     ? Object.entries(params)
@@ -52,12 +73,18 @@ function getCacheKeyBase(
         .join("&")
     : "";
 
-  return paramStr ? `${pathname}:${paramStr}` : pathname;
+  const searchStr = searchParams ? sortedSearchString(searchParams) : "";
+
+  let key = pathname;
+  if (paramStr) key += `:${paramStr}`;
+  if (searchStr) key += `?${searchStr}`;
+  return key;
 }
 
 /**
  * Generate default cache key for a route request.
- * Single cache entry per route - uses pathname as the key.
+ * Includes pathname, route params, and user-facing search params for
+ * correct scoping. Internal _rsc* params are excluded.
  * Includes request type prefix since they produce different segment sets:
  * - doc: document requests (full page load)
  * - partial: navigation requests (client-side navigation)
@@ -71,11 +98,12 @@ function getDefaultRouteCacheKey(
 ): string {
   const ctx = getRequestContext();
   const isPartial = ctx?.url.searchParams.has("_rsc_partial") ?? false;
+  const searchParams = ctx?.url.searchParams;
 
   // Intercept navigations get their own cache namespace
   const prefix = isIntercept ? "intercept" : isPartial ? "partial" : "doc";
 
-  return `${prefix}:${getCacheKeyBase(pathname, params)}`;
+  return `${prefix}:${getCacheKeyBase(pathname, params, searchParams)}`;
 }
 
 // ============================================================================
@@ -180,7 +208,7 @@ export class CacheScope {
    * Resolution priority:
    * 1. Route-level `key` function (full override)
    * 2. Store-level `keyGenerator` (modifies default key)
-   * 3. Default key generation (prefix:pathname:params)
+   * 3. Default key generation (prefix:pathname:routeParams?searchParams)
    *
    * @internal
    */
