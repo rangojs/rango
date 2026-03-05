@@ -83,6 +83,67 @@ test.describe("link-behavior", () => {
     expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("1");
   });
 
+  test("prefetch hover then navigate serves response from browser cache", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Use CDP to track cache status on network responses
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Network.enable");
+
+    const blogResponses: Array<{
+      url: string;
+      fromCache: boolean;
+    }> = [];
+
+    cdp.on("Network.responseReceived", (params: Record<string, any>) => {
+      const resp = params.response as Record<string, any>;
+      if (
+        (resp.url as string).includes("/blog") &&
+        (resp.url as string).includes("_rsc_partial")
+      ) {
+        blogResponses.push({
+          url: resp.url as string,
+          fromCache: !!(resp.fromDiskCache || resp.fromPrefetchCache),
+        });
+      }
+    });
+
+    await page.goto(f.url("/link-behavior"));
+    await waitForHydration(page);
+
+    // Wait for prefetch response to complete
+    const prefetchDone = page.waitForResponse(
+      (res) =>
+        res.url().includes("/blog") && res.url().includes("_rsc_partial"),
+    );
+
+    await page.locator('[data-testid="link-prefetch-hover"]').hover();
+    await prefetchDone;
+
+    // Small delay to ensure cache entry is written
+    await page.waitForTimeout(200);
+
+    // Clear tracked responses so we only see the navigation request
+    blogResponses.length = 0;
+
+    // Click to navigate — should use cached prefetch response
+    await page.locator('[data-testid="link-prefetch-hover"]').click();
+    await expect(page).toHaveURL(/\/blog/);
+
+    // Wait for any pending network events
+    await page.waitForTimeout(500);
+
+    // Either no network request was made (memory cache, blogResponses empty)
+    // or the request was served from disk cache (fromCache: true)
+    for (const resp of blogResponses) {
+      expect(resp.fromCache).toBe(true);
+    }
+
+    await cdp.detach();
+  });
+
   test("Link prefetch='render' sends prefetch request after hydration", async ({
     page,
   }) => {
@@ -250,6 +311,59 @@ test.describe("link-behavior (production)", () => {
     const prefetchReq = await prefetchPromise;
     expect(prefetchReq.url()).toContain("_rsc_partial");
     expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("1");
+  });
+
+  test("prefetch hover then navigate serves response from browser cache", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Network.enable");
+
+    const blogResponses: Array<{
+      url: string;
+      fromCache: boolean;
+    }> = [];
+
+    cdp.on("Network.responseReceived", (params: Record<string, any>) => {
+      const resp = params.response as Record<string, any>;
+      if (
+        (resp.url as string).includes("/blog") &&
+        (resp.url as string).includes("_rsc_partial")
+      ) {
+        blogResponses.push({
+          url: resp.url as string,
+          fromCache: !!(resp.fromDiskCache || resp.fromPrefetchCache),
+        });
+      }
+    });
+
+    await page.goto(f.url("/link-behavior"));
+    await waitForHydration(page);
+
+    const prefetchDone = page.waitForResponse(
+      (res) =>
+        res.url().includes("/blog") && res.url().includes("_rsc_partial"),
+    );
+
+    await page.locator('[data-testid="link-prefetch-hover"]').hover();
+    await prefetchDone;
+
+    await page.waitForTimeout(200);
+
+    blogResponses.length = 0;
+
+    await page.locator('[data-testid="link-prefetch-hover"]').click();
+    await expect(page).toHaveURL(/\/blog/);
+
+    await page.waitForTimeout(500);
+
+    for (const resp of blogResponses) {
+      expect(resp.fromCache).toBe(true);
+    }
+
+    await cdp.detach();
   });
 
   test("Link prefetch='render' sends prefetch request after hydration", async ({

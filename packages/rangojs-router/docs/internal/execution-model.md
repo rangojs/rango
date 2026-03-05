@@ -158,13 +158,9 @@ export const revalidateAuthData = ({ actionId }) =>
 export const revalidateCartData = ({ actionId }) =>
   actionId?.includes("src/actions/cart.ts#") ?? false;
 
-export const revalidateAuth = () => [
-  revalidate(revalidateAuthData),
-];
+export const revalidateAuth = () => [revalidate(revalidateAuthData)];
 
-export const revalidateCart = () => [
-  revalidate(revalidateCartData),
-];
+export const revalidateCart = () => [revalidate(revalidateCartData)];
 ```
 
 ```ts

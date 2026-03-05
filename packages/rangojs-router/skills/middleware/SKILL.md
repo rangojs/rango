@@ -78,17 +78,12 @@ You can package those contracts as importable helpers to avoid repeating
 ```typescript
 import { revalidate } from "@rangojs/router";
 
-export const revalidateCart = () => [
-  revalidate(revalidateCartData),
-];
+export const revalidateCart = () => [revalidate(revalidateCartData)];
 
 layout(CartLayout, () => [
   middleware(cartRenderMiddleware),
   revalidateCart(),
-  parallel(
-    { "@cart": CartSummary },
-    () => [revalidateCart()],
-  ),
+  parallel({ "@cart": CartSummary }, () => [revalidateCart()]),
 ]);
 ```
 

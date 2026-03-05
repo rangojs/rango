@@ -166,9 +166,7 @@ To keep loader route trees concise, export helper wrappers:
 ```typescript
 import { revalidate } from "@rangojs/router";
 
-export const revalidateAccount = () => [
-  revalidate(revalidateAccountScope),
-];
+export const revalidateAccount = () => [revalidate(revalidateAccountScope)];
 
 layout(AccountLayout, () => [
   revalidateAccount(),

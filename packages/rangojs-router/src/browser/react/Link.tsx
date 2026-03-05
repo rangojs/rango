@@ -31,11 +31,11 @@ export type LinkState =
   | LocationStateEntry[]
   | StateOrGetter<Record<string, unknown>>;
 
-import { prefetchDirect, prefetchQueued } from "../prefetch-fetch.js";
+import { prefetchDirect, prefetchQueued } from "../prefetch/fetch.js";
 import {
   observeForPrefetch,
   unobserveForPrefetch,
-} from "../prefetch-observer.js";
+} from "../prefetch/observer.js";
 
 // Touch device detection for hybrid strategy.
 // Checked once at module load (Link.tsx is "use client", runs only in browser).
@@ -281,6 +281,7 @@ export const Link: ForwardRefExoticComponent<
 
     let cancelled = false;
     let unsubIdle: (() => void) | undefined;
+    let observedElement: Element | null = null;
 
     const triggerPrefetch = () => {
       if (cancelled) return;
@@ -311,6 +312,7 @@ export const Link: ForwardRefExoticComponent<
     } else if (isViewport) {
       const element = internalRef.current;
       if (!element) return;
+      observedElement = element;
       observeForPrefetch(element, () => {
         scheduleWhenIdle(triggerPrefetch);
       });
@@ -319,8 +321,8 @@ export const Link: ForwardRefExoticComponent<
     return () => {
       cancelled = true;
       unsubIdle?.();
-      if (isViewport && internalRef.current) {
-        unobserveForPrefetch(internalRef.current);
+      if (isViewport && observedElement) {
+        unobserveForPrefetch(observedElement);
       }
     };
   }, [resolvedStrategy, to, isExternal, ctx]);

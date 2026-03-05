@@ -12,7 +12,7 @@ import type {
   ActionStateListener,
   HandleData,
 } from "./types.js";
-import { clearPrefetchCache } from "./prefetch-cache.js";
+import { clearPrefetchCache } from "./prefetch/cache.js";
 
 /**
  * Default action state (idle with no payload)

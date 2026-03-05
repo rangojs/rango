@@ -28,8 +28,12 @@ function startExecution(
   executing.add(key);
   abortController ??= new AbortController();
   execute(abortController.signal).finally(() => {
-    active--;
-    executing.delete(key);
+    // Only decrement if this key wasn't already cleared by cancelAllPrefetches.
+    // Without this guard, cancelled tasks' .finally() would underflow active
+    // below zero, breaking the MAX_CONCURRENT guarantee.
+    if (executing.delete(key)) {
+      active--;
+    }
     drain();
   });
 }
@@ -76,6 +80,9 @@ export function cancelAllPrefetches(): void {
 
   queue.length = 0;
   queued.clear();
+  // Clear executing before resetting active. In-flight .finally() callbacks
+  // check executing.delete(key) — if the key is gone, they skip decrementing,
+  // so active settles at 0 without underflow.
   executing.clear();
-  // active count resets naturally as aborted fetches settle in .finally()
+  active = 0;
 }

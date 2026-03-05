@@ -246,9 +246,7 @@ import { revalidate } from "@rangojs/router";
 
 export const revalidateAuthData = ({ actionId }) =>
   actionId?.includes("src/actions/auth.ts#") ?? false;
-export const revalidateAuth = () => [
-  revalidate(revalidateAuthData),
-];
+export const revalidateAuth = () => [revalidate(revalidateAuthData)];
 ```
 
 ```typescript

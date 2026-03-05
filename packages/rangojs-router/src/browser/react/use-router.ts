@@ -2,7 +2,7 @@
 
 import { useContext, useMemo } from "react";
 import { NavigationStoreContext } from "./context.js";
-import { prefetchDirect } from "../prefetch-fetch.js";
+import { prefetchDirect } from "../prefetch/fetch.js";
 import type { RouterInstance, RouterNavigateOptions } from "../types.js";
 
 /**
