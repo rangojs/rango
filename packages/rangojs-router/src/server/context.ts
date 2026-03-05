@@ -258,6 +258,11 @@ interface HelperContext {
   run?: <T>(fn: () => T | Promise<T>) => T | Promise<T>;
   /** Tracked includes for build-time manifest generation */
   trackedIncludes?: TrackedInclude[];
+  /** Cache profiles for DSL-time cache("profileName") resolution */
+  cacheProfiles?: Record<
+    string,
+    import("../cache/profile-registry.js").CacheProfile
+  >;
 }
 // Use a global symbol key so the AsyncLocalStorage instance survives HMR
 // module re-evaluation. Without this, Vite's RSC module runner may create
@@ -400,6 +405,7 @@ export const getContext = (): {
           urlPrefix: store.urlPrefix,
           namePrefix: store.namePrefix,
           trackedIncludes: store.trackedIncludes,
+          cacheProfiles: store.cacheProfiles,
         },
         callback,
       );
@@ -437,6 +443,7 @@ export const getContext = (): {
           urlPrefix: store?.urlPrefix,
           namePrefix: store?.namePrefix,
           trackedIncludes: store?.trackedIncludes,
+          cacheProfiles: store?.cacheProfiles,
         },
         callback,
       );

@@ -1,18 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { HandleStore } from "../../server/handle-store.js";
 
 // ============================================================================
-// 1. Profile validation and grammar
+// 1. Profile validation and grammar (exercises production code)
 // ============================================================================
 
 describe("cache profile validation", () => {
   let setCacheProfiles: typeof import("../profile-registry.js").setCacheProfiles;
   let getCacheProfile: typeof import("../profile-registry.js").getCacheProfile;
+  let resolveCacheProfiles: typeof import("../profile-registry.js").resolveCacheProfiles;
 
   beforeEach(async () => {
-    // Re-import to get fresh module state
     const mod = await import("../profile-registry.js");
     setCacheProfiles = mod.setCacheProfiles;
     getCacheProfile = mod.getCacheProfile;
+    resolveCacheProfiles = mod.resolveCacheProfiles;
   });
 
   it("accepts names with letters, digits, hyphens, and underscores", () => {
@@ -66,6 +68,31 @@ describe("cache profile validation", () => {
     const defaultProfile = getCacheProfile("default");
     expect(defaultProfile!.ttl).toBe(42);
   });
+
+  describe("resolveCacheProfiles", () => {
+    it("returns default profile when called with undefined", () => {
+      const resolved = resolveCacheProfiles(undefined);
+      expect(resolved.default).toBeDefined();
+      expect(resolved.default.ttl).toBe(900);
+    });
+
+    it("merges user profiles with default", () => {
+      const resolved = resolveCacheProfiles({ short: { ttl: 10 } });
+      expect(resolved.default).toBeDefined();
+      expect(resolved.short.ttl).toBe(10);
+    });
+
+    it("allows overriding default profile", () => {
+      const resolved = resolveCacheProfiles({ default: { ttl: 42 } });
+      expect(resolved.default.ttl).toBe(42);
+    });
+
+    it("validates profile names", () => {
+      expect(() => resolveCacheProfiles({ "bad.name": { ttl: 10 } })).toThrow(
+        /Invalid cache profile name/,
+      );
+    });
+  });
 });
 
 // ============================================================================
@@ -105,7 +132,8 @@ describe("multi-router profile isolation", () => {
 // ============================================================================
 
 describe("use-cache directive grammar", () => {
-  // The regex used by the Vite transform for function-level directives
+  // The regex used by the Vite transform for function-level directives.
+  // Must stay in sync with use-cache-transform.ts.
   const directiveRegex = /^use cache(:\s*[\w-]+)?$/;
 
   it("matches plain 'use cache'", () => {
@@ -147,163 +175,172 @@ describe("use-cache directive grammar", () => {
 });
 
 // ============================================================================
-// 4. Handle capture reentrance (save/restore pattern)
+// 4. Handle capture concurrency (exercises production startHandleCapture)
 // ============================================================================
 
-describe("handle capture reentrance", () => {
-  it("nested captures restore correctly in LIFO order", () => {
-    // Simulate HandleStore as an object with push as own property
-    const pushLog: string[] = [];
-    const store = {
-      push(handleName: string, segmentId: string, value: unknown) {
-        pushLog.push(`original:${handleName}:${segmentId}:${value}`);
-      },
-    };
+// Import the production startHandleCapture indirectly by importing the
+// cache-runtime module. Since startHandleCapture is not exported, we test
+// through the public interface: create a real HandleStore, run captures
+// via the internal mechanism (activeCapturesMap + interceptor).
+//
+// The key behavior to verify: overlapping captures that finish out of
+// order do not corrupt the push chain.
 
-    type PushFn = (
-      handleName: string,
-      segmentId: string,
-      value: unknown,
-    ) => void;
+describe("handle capture concurrency", () => {
+  let createHandleStore: typeof import("../../server/handle-store.js").createHandleStore;
+  let startHandleCapture: typeof import("../handle-capture.js").startHandleCapture;
 
-    // Simulate startHandleCapture (save/restore pattern)
-    function startCapture(s: { push: PushFn }) {
-      const capturedData: string[] = [];
-      const previousPush = s.push.bind(s);
-
-      s.push = (handleName: string, segmentId: string, value: unknown) => {
-        capturedData.push(`${handleName}:${segmentId}:${value}`);
-        previousPush(handleName, segmentId, value);
-      };
-
-      return {
-        data: capturedData,
-        stop() {
-          s.push = previousPush;
-        },
-      };
-    }
-
-    // Outer capture
-    const outer = startCapture(store);
-    store.push("breadcrumbs", "seg1", "Home");
-
-    // Nested capture
-    const inner = startCapture(store);
-    store.push("meta", "seg2", "Title");
-
-    // Stop inner capture (LIFO)
-    inner.stop();
-
-    // After inner stop, push should still go through outer capture
-    store.push("breadcrumbs", "seg1", "Shop");
-
-    // Stop outer capture
-    outer.stop();
-
-    // After both stopped, push goes to original
-    store.push("breadcrumbs", "seg1", "Final");
-
-    // Verify inner captured only its push
-    expect(inner.data).toEqual(["meta:seg2:Title"]);
-
-    // Verify outer captured its own pushes AND the inner push (via chain)
-    expect(outer.data).toEqual([
-      "breadcrumbs:seg1:Home",
-      "meta:seg2:Title",
-      "breadcrumbs:seg1:Shop",
-    ]);
-
-    // Verify original received all pushes
-    expect(pushLog).toEqual([
-      "original:breadcrumbs:seg1:Home",
-      "original:meta:seg2:Title",
-      "original:breadcrumbs:seg1:Shop",
-      "original:breadcrumbs:seg1:Final",
-    ]);
+  beforeEach(async () => {
+    const storeModule = await import("../../server/handle-store.js");
+    createHandleStore = storeModule.createHandleStore;
+    const captureModule = await import("../handle-capture.js");
+    startHandleCapture = captureModule.startHandleCapture;
   });
 
-  it("store.push still works after capture stop", () => {
-    let pushCount = 0;
-    const store = {
-      push(_h: string, _s: string, _v: unknown) {
-        pushCount++;
-      },
-    };
+  it("push still works on a real HandleStore after any capture lifecycle", () => {
+    const store = createHandleStore();
 
-    type PushFn = (h: string, s: string, v: unknown) => void;
+    // Push should work before any capture
+    expect(() => store.push("handle1", "seg1", "value1")).not.toThrow();
 
-    function startCapture(s: { push: PushFn }) {
-      const previousPush = s.push.bind(s);
-      s.push = (h: string, seg: string, v: unknown) => {
-        previousPush(h, seg, v);
-      };
-      return {
-        stop() {
-          s.push = previousPush;
-        },
-      };
-    }
+    // Verify data was stored
+    const data = store.getDataForSegment("seg1");
+    expect(data["handle1"]).toEqual(["value1"]);
+  });
 
-    const capture = startCapture(store);
-    store.push("h", "s", 1);
-    capture.stop();
-    store.push("h", "s", 2);
+  it("concurrent captures are order-independent (production startHandleCapture)", () => {
+    const store = createHandleStore();
 
-    // Both pushes should reach the original
-    expect(pushCount).toBe(2);
+    // Start capture A using production startHandleCapture
+    const captureA = startHandleCapture(store);
+    store.push("breadcrumbs", "seg1", "A-1");
+
+    // Start capture B (overlapping)
+    const captureB = startHandleCapture(store);
+    store.push("meta", "seg2", "B-1");
+
+    // Stop A FIRST (out of order — A started first but stops first)
+    captureA.stop();
+    store.push("title", "seg3", "B-2");
+
+    // Stop B
+    captureB.stop();
+    store.push("breadcrumbs", "seg1", "after-both");
+
+    // A captured: its own push + B's first push (both were active)
+    expect(captureA.capture.data["seg1"]?.["breadcrumbs"]).toEqual(["A-1"]);
+    expect(captureA.capture.data["seg2"]?.["meta"]).toEqual(["B-1"]);
+    expect(captureA.capture.data["seg3"]).toBeUndefined();
+
+    // B captured: B's pushes + the overlap with A
+    expect(captureB.capture.data["seg2"]?.["meta"]).toEqual(["B-1"]);
+    expect(captureB.capture.data["seg3"]?.["title"]).toEqual(["B-2"]);
+    expect(captureB.capture.data["seg1"]?.["breadcrumbs"]).toBeUndefined();
+
+    // Original store received everything
+    const seg1Data = store.getDataForSegment("seg1");
+    expect(seg1Data["breadcrumbs"]).toEqual(["A-1", "after-both"]);
+    const seg2Data = store.getDataForSegment("seg2");
+    expect(seg2Data["meta"]).toEqual(["B-1"]);
+    const seg3Data = store.getDataForSegment("seg3");
+    expect(seg3Data["title"]).toEqual(["B-2"]);
   });
 });
 
 // ============================================================================
-// 5. sortedSearchString (shared key generation logic)
+// 5. sortedSearchString (cache key correctness)
 // ============================================================================
 
-describe("sorted search string for cache keys", () => {
-  // Replicate the function to test its behavior directly
-  function sortedSearchString(searchParams: URLSearchParams): string {
-    const pairs: [string, string][] = [];
-    for (const [k, v] of searchParams) {
-      if (!k.startsWith("_rsc") && !k.startsWith("__")) {
-        pairs.push([k, v]);
-      }
-    }
-    if (pairs.length === 0) return "";
-    pairs.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    return pairs
-      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-      .join("&");
+// Mock request-context to test CacheScope key generation (which uses
+// the production sortedSearchString internally).
+const mockGetRequestContext = vi.fn<() => any>(() => null);
+const mock_getRequestContext = vi.fn<() => any>(() => null);
+
+vi.mock("../../server/request-context.js", () => ({
+  getRequestContext: () => mockGetRequestContext(),
+  _getRequestContext: () => mock_getRequestContext(),
+}));
+
+vi.mock("../../internal-debug.js", () => ({
+  INTERNAL_RANGO_DEBUG: false,
+}));
+
+vi.mock("../segment-codec.js", () => ({
+  serializeSegments: vi.fn(),
+  deserializeSegments: vi.fn(),
+}));
+
+vi.mock("../handle-snapshot.js", () => ({
+  captureHandles: vi.fn(),
+  restoreHandles: vi.fn(),
+}));
+
+describe("cache key search param handling (via CacheScope)", () => {
+  let CacheScope: typeof import("../cache-scope.js").CacheScope;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockGetRequestContext.mockReturnValue(null);
+    mock_getRequestContext.mockReturnValue(null);
+    const mod = await import("../cache-scope.js");
+    CacheScope = mod.CacheScope;
+  });
+
+  function makeRequestContext(searchString: string) {
+    const url = new URL(`http://localhost/test${searchString}`);
+    return { url, _cacheStore: null, _handleStore: null };
   }
 
-  it("returns empty string when no user-facing params", () => {
-    const sp = new URLSearchParams("_rsc_partial=1&__debug=true");
-    expect(sortedSearchString(sp)).toBe("");
+  it("produces distinct keys for different query params", async () => {
+    const store = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
+
+    mockGetRequestContext.mockReturnValue(
+      makeRequestContext("?page=1&sort=asc"),
+    );
+    const scope1 = new CacheScope({ store } as any);
+    await scope1.lookupRoute("/products", {});
+    const key1 = store.get.mock.calls[0][0];
+
+    store.get.mockClear();
+    mockGetRequestContext.mockReturnValue(
+      makeRequestContext("?page=2&sort=asc"),
+    );
+    const scope2 = new CacheScope({ store } as any);
+    await scope2.lookupRoute("/products", {});
+    const key2 = store.get.mock.calls[0][0];
+
+    expect(key1).not.toBe(key2);
   });
 
-  it("excludes _rsc* params", () => {
-    const sp = new URLSearchParams("page=1&_rsc_partial=1&_rsc_segments=M0L0");
-    expect(sortedSearchString(sp)).toBe("page=1");
+  it("excludes _rsc* and __* params from key", async () => {
+    const store = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
+
+    mockGetRequestContext.mockReturnValue(
+      makeRequestContext("?page=1&_rsc_partial=1&__debug=true"),
+    );
+    const scope = new CacheScope({ store } as any);
+    await scope.lookupRoute("/test", {});
+    const key = store.get.mock.calls[0][0] as string;
+
+    expect(key).toContain("page=1");
+    expect(key).not.toContain("_rsc");
+    expect(key).not.toContain("__debug");
   });
 
-  it("excludes __* params", () => {
-    const sp = new URLSearchParams("page=1&__debug=true&__trace=abc");
-    expect(sortedSearchString(sp)).toBe("page=1");
-  });
+  it("sorts params deterministically", async () => {
+    const store = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
 
-  it("sorts params alphabetically", () => {
-    const sp = new URLSearchParams("z=1&a=2&m=3");
-    expect(sortedSearchString(sp)).toBe("a=2&m=3&z=1");
-  });
+    mockGetRequestContext.mockReturnValue(makeRequestContext("?z=1&a=2&m=3"));
+    const scope1 = new CacheScope({ store } as any);
+    await scope1.lookupRoute("/test", {});
+    const key1 = store.get.mock.calls[0][0];
 
-  it("produces same output regardless of insertion order", () => {
-    const sp1 = new URLSearchParams("z=1&a=2&m=3");
-    const sp2 = new URLSearchParams("m=3&z=1&a=2");
-    expect(sortedSearchString(sp1)).toBe(sortedSearchString(sp2));
-  });
+    store.get.mockClear();
+    mockGetRequestContext.mockReturnValue(makeRequestContext("?m=3&z=1&a=2"));
+    const scope2 = new CacheScope({ store } as any);
+    await scope2.lookupRoute("/test", {});
+    const key2 = store.get.mock.calls[0][0];
 
-  it("encodes special characters", () => {
-    const sp = new URLSearchParams("q=hello world&tag=a+b");
-    const result = sortedSearchString(sp);
-    expect(result).toContain("q=hello%20world");
+    expect(key1).toBe(key2);
   });
 });

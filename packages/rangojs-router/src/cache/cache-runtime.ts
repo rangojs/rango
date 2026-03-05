@@ -17,7 +17,6 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
 
 import {
-  createTemporaryReferenceSet,
   encodeReply,
   createClientTemporaryReferenceSet,
 } from "@vitejs/plugin-rsc/rsc";
@@ -30,11 +29,10 @@ import {
 } from "./taint.js";
 
 export { isCachedFunction };
-import { getCacheProfile as getGlobalCacheProfile } from "./profile-registry.js";
 import { serializeResult, deserializeResult } from "./segment-codec.js";
-import type { SegmentHandleData } from "./types.js";
 import type { HandleStore } from "../server/handle-store.js";
 import { restoreHandles } from "./handle-snapshot.js";
+import { startHandleCapture, type HandleCapture } from "./handle-capture.js";
 
 // ============================================================================
 // Cache Key Generation
@@ -70,55 +68,6 @@ async function replyToCacheKey(encoded: string | FormData): Promise<string> {
 }
 
 // ============================================================================
-// Handle Capture
-// ============================================================================
-
-interface HandleCapture {
-  data: Record<string, SegmentHandleData>;
-}
-
-/**
- * Start capturing handle pushes for a cached function execution.
- *
- * Uses a save/restore pattern instead of monkey-patching with delete.
- * Since HandleStore.push is an own property (not on a prototype),
- * we save the previous push and wrap it. stopHandleCapture restores
- * the saved reference. This is safe for nested/concurrent captures
- * because each start/stop pair saves and restores its own predecessor.
- */
-function startHandleCapture(handleStore: HandleStore): {
-  capture: HandleCapture;
-  stop: () => void;
-} {
-  const capture: HandleCapture = { data: {} };
-  const previousPush = handleStore.push.bind(handleStore);
-
-  handleStore.push = (
-    handleName: string,
-    segmentId: string,
-    value: unknown,
-  ) => {
-    if (!capture.data[segmentId]) {
-      capture.data[segmentId] = {};
-    }
-    if (!capture.data[segmentId][handleName]) {
-      capture.data[segmentId][handleName] = [];
-    }
-    capture.data[segmentId][handleName].push(value);
-    // Still call through so the data flows to the store (and any outer capture)
-    previousPush(handleName, segmentId, value);
-  };
-
-  return {
-    capture,
-    stop() {
-      // Restore the previous push (which may be the original or an outer capture)
-      handleStore.push = previousPush;
-    },
-  };
-}
-
-// ============================================================================
 // Core: registerCachedFunction
 // ============================================================================
 
@@ -139,14 +88,16 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     const requestCtx = getRequestContext();
     const store = requestCtx?._cacheStore;
     const resolvedProfileName = profileName || "default";
-    const profile =
-      requestCtx?._cacheProfiles?.[resolvedProfileName] ??
-      getGlobalCacheProfile(resolvedProfileName);
 
     // Bypass: no store or no getItem support
     if (!store?.getItem) {
       return fn.apply(this, args);
     }
+
+    // Resolve profile strictly from request-scoped config (set by the
+    // active router via createRequestContext). No global fallback —
+    // global profile state is only for DSL-time cache("profileName").
+    const profile = requestCtx?._cacheProfiles?.[resolvedProfileName];
 
     if (!profile) {
       throw new Error(
@@ -307,7 +258,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       if (hasTaintedArgs && requestCtx) {
         delete (requestCtx as any)[INSIDE_CACHE_EXEC];
       }
-      // Restore handle store push (safe for nested captures — LIFO order)
+      // Remove this capture token (order-independent, safe for concurrent use)
       stopCapture?.();
     }
 

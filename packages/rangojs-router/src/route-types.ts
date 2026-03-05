@@ -169,6 +169,11 @@ export type IncludeItem = {
     parent: unknown; // EntryData - avoid circular import
     /** Counter snapshot from pattern extraction for consistent shortCode indices */
     counters?: Record<string, number>;
+    /** Cache profiles for DSL-time cache("profileName") resolution */
+    cacheProfiles?: Record<
+      string,
+      import("./cache/profile-registry.js").CacheProfile
+    >;
   };
   [IncludeBrand]: void;
 };

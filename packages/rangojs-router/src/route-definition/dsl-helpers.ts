@@ -16,7 +16,7 @@ import {
 } from "../server/context";
 import { invariant } from "../errors";
 import { isCachedFunction } from "../cache/taint.js";
-import { getCacheProfile } from "../cache/profile-registry.js";
+import { RSCRouterContext } from "../server/context";
 import { isStaticHandler } from "../static-handler.js";
 import RootLayout from "../server/root-layout";
 import type {
@@ -227,7 +227,9 @@ const cache: RouteHelpers<any, any>["cache"] = (
     children = undefined;
   } else if (typeof optionsOrChildren === "string") {
     // cache('profileName') or cache('profileName', () => [...])
-    const profile = getCacheProfile(optionsOrChildren);
+    // Resolve from context-scoped profiles (set per-router via HelperContext).
+    const ctxStore = RSCRouterContext.getStore();
+    const profile = ctxStore?.cacheProfiles?.[optionsOrChildren];
     invariant(
       profile,
       `cache("${optionsOrChildren}"): unknown cache profile. ` +
