@@ -3,9 +3,20 @@ import {
   resolveTtl,
   resolveSwrWindow,
   computeExpiration,
+  resolveCacheKey,
+  resolveCacheStore,
   DEFAULT_ROUTE_TTL,
   DEFAULT_FUNCTION_TTL,
 } from "../cache-policy.js";
+import {
+  getRequestContext,
+  _getRequestContext,
+} from "../../server/request-context.js";
+
+vi.mock("../../server/request-context.js");
+
+const mockedGetCtx = vi.mocked(getRequestContext);
+const mockedGetCtxInternal = vi.mocked(_getRequestContext);
 
 describe("resolveTtl", () => {
   it("returns explicit value when provided", () => {
@@ -87,5 +98,128 @@ describe("constants", () => {
 
   it("DEFAULT_FUNCTION_TTL is 900", () => {
     expect(DEFAULT_FUNCTION_TTL).toBe(900);
+  });
+});
+
+function setMockCtx(ctx: any) {
+  mockedGetCtx.mockReturnValue(ctx);
+  mockedGetCtxInternal.mockReturnValue(ctx);
+}
+
+describe("resolveCacheKey", () => {
+  afterEach(() => {
+    setMockCtx(undefined);
+  });
+
+  it("returns defaultKey when no keyFn, no keyGenerator, no requestCtx", async () => {
+    const result = await resolveCacheKey(
+      undefined,
+      null,
+      "default:key",
+      "Test",
+    );
+    expect(result).toBe("default:key");
+  });
+
+  it("returns defaultKey when no keyFn and no keyGenerator", async () => {
+    setMockCtx({ url: new URL("http://localhost/") });
+    const result = await resolveCacheKey(
+      undefined,
+      null,
+      "default:key",
+      "Test",
+    );
+    expect(result).toBe("default:key");
+  });
+
+  it("uses keyFn when provided (priority 1)", async () => {
+    setMockCtx({ url: new URL("http://localhost/") });
+    const keyFn = vi.fn().mockResolvedValue("custom:key");
+    const store = {
+      keyGenerator: vi.fn().mockResolvedValue("modified:key"),
+    } as any;
+    const result = await resolveCacheKey(keyFn, store, "default:key", "Test");
+    expect(result).toBe("custom:key");
+    expect(store.keyGenerator).not.toHaveBeenCalled();
+  });
+
+  it("uses store.keyGenerator when no keyFn (priority 2)", async () => {
+    setMockCtx({ url: new URL("http://localhost/") });
+    const store = {
+      keyGenerator: vi.fn(async (_ctx: any, dk: string) => `modified:${dk}`),
+    } as any;
+    const result = await resolveCacheKey(
+      undefined,
+      store,
+      "default:key",
+      "Test",
+    );
+    expect(result).toBe("modified:default:key");
+  });
+
+  it("falls through to keyGenerator when keyFn throws", async () => {
+    setMockCtx({ url: new URL("http://localhost/") });
+    const keyFn = vi.fn().mockRejectedValue(new Error("boom"));
+    const store = {
+      keyGenerator: vi.fn(async (_ctx: any, dk: string) => `modified:${dk}`),
+    } as any;
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await resolveCacheKey(keyFn, store, "default:key", "Test");
+    expect(result).toBe("modified:default:key");
+    consoleSpy.mockRestore();
+  });
+
+  it("falls through to defaultKey when both keyFn and keyGenerator throw", async () => {
+    setMockCtx({ url: new URL("http://localhost/") });
+    const keyFn = vi.fn().mockRejectedValue(new Error("key error"));
+    const store = {
+      keyGenerator: vi.fn().mockRejectedValue(new Error("gen error")),
+    } as any;
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await resolveCacheKey(keyFn, store, "default:key", "Test");
+    expect(result).toBe("default:key");
+    consoleSpy.mockRestore();
+  });
+
+  it("skips keyFn and keyGenerator when no requestCtx", async () => {
+    const keyFn = vi.fn().mockResolvedValue("custom:key");
+    const store = { keyGenerator: vi.fn().mockResolvedValue("mod:key") } as any;
+    const result = await resolveCacheKey(keyFn, store, "default:key", "Test");
+    expect(result).toBe("default:key");
+    expect(keyFn).not.toHaveBeenCalled();
+    expect(store.keyGenerator).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveCacheStore", () => {
+  afterEach(() => {
+    setMockCtx(undefined);
+  });
+
+  it("returns explicit store when provided", () => {
+    const store = { get: vi.fn(), set: vi.fn(), delete: vi.fn() } as any;
+    expect(resolveCacheStore(store)).toBe(store);
+  });
+
+  it("returns app-level store from request context", () => {
+    const store = { get: vi.fn(), set: vi.fn(), delete: vi.fn() } as any;
+    setMockCtx({ _cacheStore: store });
+    expect(resolveCacheStore(undefined)).toBe(store);
+  });
+
+  it("returns null when no store and no request context", () => {
+    expect(resolveCacheStore(undefined)).toBeNull();
+  });
+
+  it("returns null when no store and request context has no cache store", () => {
+    setMockCtx({});
+    expect(resolveCacheStore(undefined)).toBeNull();
+  });
+
+  it("prefers explicit store over request context store", () => {
+    const explicit = { get: vi.fn(), set: vi.fn(), delete: vi.fn() } as any;
+    const appLevel = { get: vi.fn(), set: vi.fn(), delete: vi.fn() } as any;
+    setMockCtx({ _cacheStore: appLevel });
+    expect(resolveCacheStore(explicit)).toBe(explicit);
   });
 });

@@ -19,7 +19,11 @@ import {
 import { serializeSegments, deserializeSegments } from "./segment-codec.js";
 import { captureHandles, restoreHandles } from "./handle-snapshot.js";
 import { sortedSearchString, sortedRouteParams } from "./cache-key-utils.js";
-import { DEFAULT_ROUTE_TTL } from "./cache-policy.js";
+import {
+  DEFAULT_ROUTE_TTL,
+  resolveCacheKey,
+  resolveCacheStore,
+} from "./cache-policy.js";
 
 function debugCacheLog(message: string): void {
   if (INTERNAL_RANGO_DEBUG) {
@@ -163,23 +167,11 @@ export class CacheScope {
    * 2. App-level store from request context
    */
   getStore(): SegmentCacheStore | null {
-    // Explicit store from cache() options takes precedence
-    if (this.explicitStore) {
-      return this.explicitStore;
-    }
-    // Fall back to app-level store from request context
-    const ctx = getRequestContext();
-    return ctx?._cacheStore ?? null;
+    return resolveCacheStore(this.explicitStore);
   }
 
   /**
-   * Resolve the cache key using custom key functions or default generation.
-   *
-   * Resolution priority:
-   * 1. Route-level `key` function (full override)
-   * 2. Store-level `keyGenerator` (modifies default key)
-   * 3. Default key generation (prefix:pathname:routeParams?searchParams)
-   *
+   * Resolve the cache key using the shared 3-tier priority.
    * @internal
    */
   private async resolveKey(
@@ -187,46 +179,9 @@ export class CacheScope {
     params: Record<string, string>,
     isIntercept?: boolean,
   ): Promise<string> {
-    const requestCtx = getRequestContext();
-    if (!requestCtx) {
-      // Fallback to default key if no request context
-      return getDefaultRouteCacheKey(pathname, params, isIntercept);
-    }
-
-    // Priority 1: Route-level key function (full override)
-    if (this.config !== false && this.config.key) {
-      try {
-        const customKey = await this.config.key(requestCtx);
-        return customKey;
-      } catch (error) {
-        console.error(
-          `[CacheScope] Custom key function failed, using default:`,
-          error,
-        );
-        return getDefaultRouteCacheKey(pathname, params, isIntercept);
-      }
-    }
-
-    // Generate default key
     const defaultKey = getDefaultRouteCacheKey(pathname, params, isIntercept);
-
-    // Priority 2: Store-level keyGenerator (modifies default key)
-    const store = this.getStore();
-    if (store?.keyGenerator) {
-      try {
-        const modifiedKey = await store.keyGenerator(requestCtx, defaultKey);
-        return modifiedKey;
-      } catch (error) {
-        console.error(
-          `[CacheScope] Store keyGenerator failed, using default:`,
-          error,
-        );
-        return defaultKey;
-      }
-    }
-
-    // Priority 3: Default key
-    return defaultKey;
+    const keyFn = this.config !== false ? this.config.key : undefined;
+    return resolveCacheKey(keyFn, this.getStore(), defaultKey, "CacheScope");
   }
 
   /**

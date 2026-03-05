@@ -20,16 +20,14 @@
 
 import type { LoaderEntry } from "../../server/context.js";
 import type { HandlerContext } from "../../types.js";
-import type { SegmentCacheStore } from "../../cache/types.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
-import {
-  getRequestContext,
-  _getRequestContext,
-} from "../../server/request-context.js";
+import { getRequestContext } from "../../server/request-context.js";
 import { sortedRouteParams } from "../../cache/cache-key-utils.js";
 import {
   resolveTtl,
   resolveSwrWindow,
+  resolveCacheKey,
+  resolveCacheStore,
   DEFAULT_ROUTE_TTL,
 } from "../../cache/cache-policy.js";
 import { readThroughItem } from "../../cache/read-through-swr.js";
@@ -66,53 +64,19 @@ function getDefaultLoaderCacheKey(
 }
 
 /**
- * Resolve cache key using the same 3-tier priority as CacheScope.resolveKey():
- * 1. options.key (full override)
- * 2. store.keyGenerator (modifies default)
- * 3. Default loader key
+ * Resolve cache key using the shared 3-tier priority.
  */
 async function resolveLoaderKey(
   loaderEntry: LoaderEntry,
-  store: SegmentCacheStore,
+  store: import("../../cache/types.js").SegmentCacheStore,
   loaderId: string,
   pathname: string,
   params: Record<string, string>,
 ): Promise<string> {
   const options = loaderEntry.cache!.options;
-  if (options === false) {
-    return getDefaultLoaderCacheKey(loaderId, pathname, params);
-  }
-
-  const requestCtx = getRequestContext();
-
-  // Priority 1: Route-level key function (full override)
-  if (options.key && requestCtx) {
-    try {
-      return await options.key(requestCtx);
-    } catch (error) {
-      console.error(
-        `[LoaderCache] Custom key function failed, using default:`,
-        error,
-      );
-    }
-  }
-
   const defaultKey = getDefaultLoaderCacheKey(loaderId, pathname, params);
-
-  // Priority 2: Store-level keyGenerator
-  if (store.keyGenerator && requestCtx) {
-    try {
-      return await store.keyGenerator(requestCtx, defaultKey);
-    } catch (error) {
-      console.error(
-        `[LoaderCache] Store keyGenerator failed, using default:`,
-        error,
-      );
-    }
-  }
-
-  // Priority 3: Default key
-  return defaultKey;
+  if (options === false) return defaultKey;
+  return resolveCacheKey(options.key, store, defaultKey, "LoaderCache");
 }
 
 /**
@@ -141,35 +105,12 @@ function resolveTags(loaderEntry: LoaderEntry): string[] | undefined {
   return options.tags;
 }
 
-function getLoaderStore(loaderEntry: LoaderEntry): SegmentCacheStore | null {
+function getLoaderStore(
+  loaderEntry: LoaderEntry,
+): import("../../cache/types.js").SegmentCacheStore | null {
   const cacheConfig = loaderEntry.cache;
   if (!cacheConfig || cacheConfig.options === false) return null;
-  const options = cacheConfig.options;
-
-  // Explicit store from cache() options
-  if (options.store) return options.store;
-
-  // App-level store from request context
-  return _getRequestContext()?._cacheStore ?? null;
-}
-
-function getLoaderTtl(
-  loaderEntry: LoaderEntry,
-  store: SegmentCacheStore,
-): number {
-  const cacheConfig = loaderEntry.cache;
-  if (!cacheConfig || cacheConfig.options === false) return DEFAULT_ROUTE_TTL;
-  return resolveTtl(cacheConfig.options.ttl, store.defaults, DEFAULT_ROUTE_TTL);
-}
-
-function getLoaderSwr(
-  loaderEntry: LoaderEntry,
-  store: SegmentCacheStore,
-): number | undefined {
-  const cacheConfig = loaderEntry.cache;
-  if (!cacheConfig || cacheConfig.options === false) return undefined;
-  const swr = resolveSwrWindow(cacheConfig.options.swr, store.defaults);
-  return swr || undefined;
+  return resolveCacheStore(cacheConfig.options.store);
 }
 
 /**
@@ -205,8 +146,9 @@ export function resolveLoaderData<TEnv>(
   }
 
   const loaderId = loaderEntry.loader.$$id;
-  const ttl = getLoaderTtl(loaderEntry, store);
-  const swr = getLoaderSwr(loaderEntry, store);
+  const ttl = resolveTtl(options.ttl, store.defaults, DEFAULT_ROUTE_TTL);
+  const swrWindow = resolveSwrWindow(options.swr, store.defaults);
+  const swr = swrWindow || undefined;
   const tags = resolveTags(loaderEntry);
 
   // Wrap ctx.use() so cache HIT primes the handler's memoization map.

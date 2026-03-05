@@ -1,12 +1,17 @@
 /**
  * Shared Cache Policy Utilities
  *
- * TTL/SWR resolution and expiration timestamp math.
- * Consolidates the resolution cascade:
+ * Resolution cascades for TTL, SWR, cache key, and cache store.
+ * Consolidates the multi-tier resolution pattern:
  *   explicit option → store defaults → fallback constant
  */
 
-import type { CacheDefaults } from "./types.js";
+import type { CacheDefaults, SegmentCacheStore } from "./types.js";
+import {
+  getRequestContext,
+  _getRequestContext,
+} from "../server/request-context.js";
+import type { RequestContext } from "../server/request-context.js";
 
 /**
  * Default TTL for route-level cache() DSL and loader cache.
@@ -64,4 +69,68 @@ export function computeExpiration(
   const staleAt = now + ttlSeconds * 1000;
   const expiresAt = staleAt + swrSeconds * 1000;
   return { staleAt, expiresAt };
+}
+
+// ============================================================================
+// Cache Key Resolution
+// ============================================================================
+
+/**
+ * Resolve cache key using the 3-tier priority:
+ * 1. keyFn (full override from route/loader cache options)
+ * 2. store.keyGenerator (modifies default key)
+ * 3. defaultKey (fallback)
+ *
+ * On error at any tier, falls through to the next rather than failing.
+ */
+export async function resolveCacheKey(
+  keyFn: ((ctx: RequestContext) => string | Promise<string>) | undefined,
+  store: SegmentCacheStore | null,
+  defaultKey: string,
+  label: string,
+): Promise<string> {
+  const requestCtx = getRequestContext();
+
+  // Priority 1: Route/loader-level key function (full override)
+  if (keyFn && requestCtx) {
+    try {
+      return await keyFn(requestCtx);
+    } catch (error) {
+      console.error(
+        `[${label}] Custom key function failed, using default:`,
+        error,
+      );
+    }
+  }
+
+  // Priority 2: Store-level keyGenerator (modifies default key)
+  if (store?.keyGenerator && requestCtx) {
+    try {
+      return await store.keyGenerator(requestCtx, defaultKey);
+    } catch (error) {
+      console.error(
+        `[${label}] Store keyGenerator failed, using default:`,
+        error,
+      );
+    }
+  }
+
+  // Priority 3: Default key
+  return defaultKey;
+}
+
+// ============================================================================
+// Cache Store Resolution
+// ============================================================================
+
+/**
+ * Resolve cache store from the 2-tier priority:
+ * 1. Explicit store from cache options
+ * 2. App-level store from request context
+ */
+export function resolveCacheStore(
+  explicitStore: SegmentCacheStore | undefined,
+): SegmentCacheStore | null {
+  if (explicitStore) return explicitStore;
+  return _getRequestContext()?._cacheStore ?? null;
 }
