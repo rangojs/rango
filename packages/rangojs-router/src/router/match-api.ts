@@ -207,10 +207,21 @@ export async function createMatchContextForPartial<TEnv>(
     return null;
   }
 
-  const prevUrl = new URL(previousUrl, url.origin);
-  const interceptContextUrl = interceptSourceUrl
-    ? new URL(interceptSourceUrl, url.origin)
-    : prevUrl;
+  let prevUrl: URL;
+  try {
+    prevUrl = new URL(previousUrl, url.origin);
+  } catch {
+    return null;
+  }
+
+  let interceptContextUrl: URL;
+  try {
+    interceptContextUrl = interceptSourceUrl
+      ? new URL(interceptSourceUrl, url.origin)
+      : prevUrl;
+  } catch {
+    interceptContextUrl = prevUrl;
+  }
 
   const routeMatchStart = metricsStore ? performance.now() : 0;
   const prevMatch = deps.findMatch(prevUrl.pathname);

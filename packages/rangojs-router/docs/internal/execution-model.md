@@ -70,6 +70,21 @@ global middleware
 - Route-level `cache()` does not cache loader segments; loaders remain live.
 - Prerendered handlers can be frozen while loaders remain live.
 
+## Loader Context: params vs routeParams
+
+Loaders receive two param fields:
+
+- `ctx.params` — merged route params + explicit loader params. When a fetchable
+  loader is called with `load(Loader, { params: { ... } })`, the explicit params
+  override route-matched params.
+- `ctx.routeParams` — server-trusted route params extracted from URL pattern
+  matching. These cannot be overridden by client-provided loader params.
+
+Use `ctx.routeParams` when the loader needs trusted route identity for
+authorization or resource scoping (e.g., verifying the user owns the resource
+at the matched URL). Use `ctx.params` for general data fetching where
+client-provided params are acceptable.
+
 ## Non-Guarantees
 
 - Route middleware is not an action guard.

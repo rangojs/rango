@@ -98,8 +98,11 @@ Loaders receive the same context as route handlers:
 export const ProductLoader = createLoader(async (ctx) => {
   "use server";
 
-  // URL params
+  // URL params (may include client-provided overrides for fetchable loaders)
   const { slug } = ctx.params;
+
+  // Server-trusted route params (from URL pattern matching, cannot be overridden)
+  const { slug: trustedSlug } = ctx.routeParams;
 
   // Query params
   const variant = ctx.url.searchParams.get("variant");
@@ -114,6 +117,33 @@ export const ProductLoader = createLoader(async (ctx) => {
   const user = ctx.get("user");
 
   return { product: await fetchProduct(slug) };
+});
+```
+
+### params vs routeParams
+
+- `ctx.params` — merged route params + explicit loader params. For fetchable
+  loaders called with `load(Loader, { params: { ... } })`, explicit params
+  override route-matched params.
+- `ctx.routeParams` — server-trusted route params from URL pattern matching.
+  Cannot be overridden by client-provided params.
+
+Use `ctx.routeParams` when you need trusted route identity for authorization
+or resource scoping:
+
+```typescript
+export const OrderLoader = createLoader(async (ctx) => {
+  "use server";
+
+  // Use routeParams for auth checks — client cannot spoof the URL-matched ID
+  const { orderId } = ctx.routeParams;
+  const user = ctx.get("user");
+
+  const order = await db.orders.get(orderId);
+  if (order.userId !== user.id)
+    throw new Response("Forbidden", { status: 403 });
+
+  return { order };
 });
 ```
 
