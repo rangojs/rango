@@ -784,6 +784,7 @@ export function createUseFunction<TEnv>(
     // Create loader context with recursive use() support
     const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> = {
       params: ctx.params,
+      routeParams: (ctx.params ?? {}) as Record<string, string>,
       request: ctx.request,
       searchParams: ctx.searchParams,
       search: (ctx as any).search ?? {},

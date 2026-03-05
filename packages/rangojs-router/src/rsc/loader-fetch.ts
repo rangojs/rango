@@ -104,13 +104,15 @@ export async function handleLoaderFetch<TEnv>(
         const reqCtx = requireRequestContext();
         // Merge route params (from previewMatch) with explicit loader params.
         // Explicit params take precedence over route-matched params.
+        const resolvedRouteParams = routeParams ?? {};
         const mergedParams = {
-          ...(routeParams ?? {}),
+          ...resolvedRouteParams,
           ...loaderParams,
         };
         const loaderCtx: any = {
           ...reqCtx,
           params: mergedParams,
+          routeParams: resolvedRouteParams,
           body: loaderBody,
           method: request.method,
           reverse: createReverseFunction(

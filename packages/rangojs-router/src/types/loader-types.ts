@@ -40,6 +40,13 @@ export type LoaderContext<
   TSearch extends SearchSchema = {},
 > = {
   params: TParams;
+  /**
+   * Route params extracted from the URL pattern match (server-side only).
+   * Unlike `params`, these cannot be overridden by client-provided loader params.
+   * Use this when you need trusted, server-matched route params for auth or
+   * resource scoping.
+   */
+  routeParams: Record<string, string>;
   request: Request;
   searchParams: URLSearchParams;
   search: {} extends TSearch ? {} : ResolveSearchSchema<TSearch>;
