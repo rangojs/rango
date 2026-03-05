@@ -487,6 +487,27 @@ describe("createEventController", () => {
       handle.fail(new Error("late error"));
       expect(handle.settled).toBe(false);
     });
+
+    it("abortAllActions notifies short-name subscribers (suffix match)", () => {
+      const ctrl = createController();
+      ctrl.startAction("hash#save", []);
+
+      const observed: unknown[] = [];
+      ctrl.subscribeToAction("save", (s) => {
+        observed.push(s.state);
+      });
+
+      // Flush the startAction notification first
+      vi.advanceTimersByTime(0);
+      observed.length = 0;
+
+      ctrl.abortAllActions();
+
+      // abortAllActions should notify "save" subscribers immediately
+      // (not via debounced notifyAction which would fail suffix matching)
+      expect(observed.length).toBeGreaterThan(0);
+      expect(observed).toContain("idle");
+    });
   });
 
   // ======================================================================
