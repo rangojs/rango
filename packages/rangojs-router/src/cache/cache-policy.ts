@@ -7,10 +7,7 @@
  */
 
 import type { CacheDefaults, SegmentCacheStore } from "./types.js";
-import {
-  getRequestContext,
-  _getRequestContext,
-} from "../server/request-context.js";
+import { _getRequestContext } from "../server/request-context.js";
 import type { RequestContext } from "../server/request-context.js";
 
 /**
@@ -82,6 +79,8 @@ export function computeExpiration(
  * 3. defaultKey (fallback)
  *
  * On error at any tier, falls through to the next rather than failing.
+ * Uses _getRequestContext (non-throwing) so that callers outside ALS
+ * gracefully fall back to defaultKey instead of crashing.
  */
 export async function resolveCacheKey(
   keyFn: ((ctx: RequestContext) => string | Promise<string>) | undefined,
@@ -89,7 +88,7 @@ export async function resolveCacheKey(
   defaultKey: string,
   label: string,
 ): Promise<string> {
-  const requestCtx = getRequestContext();
+  const requestCtx = _getRequestContext();
 
   // Priority 1: Route/loader-level key function (full override)
   if (keyFn && requestCtx) {

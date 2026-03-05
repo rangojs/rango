@@ -106,30 +106,13 @@ function setMockCtx(ctx: any) {
   mockedGetCtxInternal.mockReturnValue(ctx);
 }
 
+// Both resolveCacheKey and resolveCacheStore use _getRequestContext (non-throwing).
+// This is intentional: outside ALS they return defaultKey/null rather than throwing.
+// All callers (CacheScope, loader-cache) handle null store and default keys gracefully.
+
 describe("resolveCacheKey", () => {
   afterEach(() => {
     setMockCtx(undefined);
-  });
-
-  it("returns defaultKey when no keyFn, no keyGenerator, no requestCtx", async () => {
-    const result = await resolveCacheKey(
-      undefined,
-      null,
-      "default:key",
-      "Test",
-    );
-    expect(result).toBe("default:key");
-  });
-
-  it("returns defaultKey when no keyFn and no keyGenerator", async () => {
-    setMockCtx({ url: new URL("http://localhost/") });
-    const result = await resolveCacheKey(
-      undefined,
-      null,
-      "default:key",
-      "Test",
-    );
-    expect(result).toBe("default:key");
   });
 
   it("uses keyFn when provided (priority 1)", async () => {
@@ -157,6 +140,17 @@ describe("resolveCacheKey", () => {
     expect(result).toBe("modified:default:key");
   });
 
+  it("returns defaultKey when no keyFn and no keyGenerator (priority 3)", async () => {
+    setMockCtx({ url: new URL("http://localhost/") });
+    const result = await resolveCacheKey(
+      undefined,
+      null,
+      "default:key",
+      "Test",
+    );
+    expect(result).toBe("default:key");
+  });
+
   it("falls through to keyGenerator when keyFn throws", async () => {
     setMockCtx({ url: new URL("http://localhost/") });
     const keyFn = vi.fn().mockRejectedValue(new Error("boom"));
@@ -181,7 +175,8 @@ describe("resolveCacheKey", () => {
     consoleSpy.mockRestore();
   });
 
-  it("skips keyFn and keyGenerator when no requestCtx", async () => {
+  it("gracefully returns defaultKey outside ALS (no request context)", async () => {
+    // _getRequestContext returns undefined outside ALS — keyFn/keyGenerator are skipped
     const keyFn = vi.fn().mockResolvedValue("custom:key");
     const store = { keyGenerator: vi.fn().mockResolvedValue("mod:key") } as any;
     const result = await resolveCacheKey(keyFn, store, "default:key", "Test");
@@ -207,19 +202,20 @@ describe("resolveCacheStore", () => {
     expect(resolveCacheStore(undefined)).toBe(store);
   });
 
-  it("returns null when no store and no request context", () => {
-    expect(resolveCacheStore(undefined)).toBeNull();
-  });
-
-  it("returns null when no store and request context has no cache store", () => {
-    setMockCtx({});
-    expect(resolveCacheStore(undefined)).toBeNull();
-  });
-
   it("prefers explicit store over request context store", () => {
     const explicit = { get: vi.fn(), set: vi.fn(), delete: vi.fn() } as any;
     const appLevel = { get: vi.fn(), set: vi.fn(), delete: vi.fn() } as any;
     setMockCtx({ _cacheStore: appLevel });
     expect(resolveCacheStore(explicit)).toBe(explicit);
+  });
+
+  it("returns null outside ALS (no request context)", () => {
+    // _getRequestContext returns undefined outside ALS — returns null, not throws
+    expect(resolveCacheStore(undefined)).toBeNull();
+  });
+
+  it("returns null when request context has no cache store", () => {
+    setMockCtx({});
+    expect(resolveCacheStore(undefined)).toBeNull();
   });
 });
