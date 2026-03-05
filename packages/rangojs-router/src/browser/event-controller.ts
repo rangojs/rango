@@ -11,11 +11,6 @@ import type {
   StreamingToken,
 } from "./types.js";
 import { filterSegmentOrder } from "./react/filter-segment-order.js";
-import {
-  classifyActionResponse,
-  type ActionScenario,
-  type ClassifierInput,
-} from "./action-response-classifier.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -163,29 +158,11 @@ export interface ActionHandle extends Disposable {
   readonly settled: boolean;
   /** Check if any concurrent actions were started */
   hadConcurrentActions: boolean;
-  /** Get segments to consolidate (only valid when this is the last action) */
-  getConsolidationSegments(): string[] | null;
+  /** Get raw set of segments revalidated by concurrent actions */
+  getRevalidatedSegments(): Set<string>;
   /** Clear consolidation tracking */
   clearConsolidation(): void;
-  /** Classify this action's response into a post-reconciliation scenario */
-  classify(input: ActionClassifyInput): ActionScenario;
 }
-
-/**
- * Bridge-provided fields for action response classification.
- * The handle adds consolidation segments and other-fetching-action count internally.
- */
-export interface ActionClassifyInput {
-  actionStartPathname: string;
-  currentPathname: string;
-  actionStartLocationKey: string | undefined;
-  currentLocationKey: string | undefined;
-  reconciledSegmentCount: number;
-  matchedCount: number;
-  currentInterceptSource: string | null;
-}
-
-export type { ActionScenario };
 
 /**
  * Event controller interface
@@ -233,6 +210,8 @@ export interface EventController {
   // Direct state access for advanced use
   getCurrentNavigation(): NavigationEntry | null;
   getInflightActions(): Map<string, ActionEntry>;
+  /** Whether any concurrent actions have occurred (shared across all handles) */
+  hadAnyConcurrentActions(): boolean;
 }
 
 // ============================================================================
@@ -693,42 +672,13 @@ export function createEventController(
         // If streaming is in progress, tryFinalize() will be called when streaming ends
       },
 
-      getConsolidationSegments(): string[] | null {
-        // Only consolidate if all actions have at least received their response
-        // We don't need to wait for streaming to complete since we're refetching anyway
-        // Count actions that are still fetching (waiting for server response)
-        const stillFetchingCount = [...inflightActions.values()].filter(
-          (a) => a.phase === "fetching",
-        ).length;
-
-        if (stillFetchingCount > 0) {
-          return null; // Some actions still waiting for server response
-        }
-        if (!hadAnyConcurrentActions) {
-          return null; // No concurrent actions occurred
-        }
-        if (concurrentRevalidatedSegments.size === 0) {
-          return null; // No segments to consolidate
-        }
-        return Array.from(concurrentRevalidatedSegments);
+      getRevalidatedSegments(): Set<string> {
+        return concurrentRevalidatedSegments;
       },
 
       clearConsolidation() {
         concurrentRevalidatedSegments.clear();
         hadAnyConcurrentActions = false;
-      },
-
-      classify(input: ActionClassifyInput): ActionScenario {
-        const consolidationSegments = this.getConsolidationSegments();
-        const otherFetchingActionCount = [...inflightActions.values()].filter(
-          (a) => a.phase === "fetching" && a.id !== id,
-        ).length;
-
-        return classifyActionResponse({
-          ...input,
-          consolidationSegments: consolidationSegments || null,
-          otherFetchingActionCount,
-        });
       },
 
       // Disposable: cleanup if not settled (e.g., error thrown without calling fail)
@@ -907,6 +857,7 @@ export function createEventController(
     // Direct access
     getCurrentNavigation: () => currentNavigation,
     getInflightActions: () => inflightActions,
+    hadAnyConcurrentActions: () => hadAnyConcurrentActions,
   };
 }
 

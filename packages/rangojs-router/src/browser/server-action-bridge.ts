@@ -28,6 +28,7 @@ import {
   teeWithCompletion,
 } from "./response-adapter.js";
 import { mergeLocationState } from "./history-state.js";
+import { classifyActionOutcome } from "./action-coordinator.js";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -488,7 +489,11 @@ export function createServerActionBridge(
     }
 
     // Classify the post-reconciliation scenario
-    const scenario = handle.classify({
+    const scenario = classifyActionOutcome({
+      handleId: handle.id,
+      inflightActions: eventController.getInflightActions(),
+      hadAnyConcurrentActions: eventController.hadAnyConcurrentActions(),
+      revalidatedSegments: handle.getRevalidatedSegments(),
       actionStartPathname,
       currentPathname: window.location.pathname,
       actionStartLocationKey: locationKey,
