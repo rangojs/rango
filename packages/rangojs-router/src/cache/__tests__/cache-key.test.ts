@@ -292,4 +292,28 @@ describe("segment cache key generation", () => {
       expect(key).toMatch(/^partial:\/test$/);
     });
   });
+
+  describe("hard-fail on key() error", () => {
+    it("propagates route key() error through CacheScope.lookupRoute", async () => {
+      const store = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn(),
+      };
+
+      mock_getRequestContext.mockReturnValue(makeRequestContext(""));
+      mockGetRequestContext.mockReturnValue(makeRequestContext(""));
+
+      const scope = new CacheScope({
+        store,
+        key: () => {
+          throw new Error("route key exploded");
+        },
+      } as any);
+
+      await expect(scope.lookupRoute("/test", {})).rejects.toThrow(
+        "route key exploded",
+      );
+      expect(store.get).not.toHaveBeenCalled();
+    });
+  });
 });

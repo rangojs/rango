@@ -15,6 +15,12 @@ import type {
   SegmentHandleData,
 } from "./types.js";
 import type { RequestContext } from "../server/request-context.js";
+import {
+  resolveTtl,
+  resolveSwrWindow,
+  computeExpiration,
+  DEFAULT_FUNCTION_TTL,
+} from "./cache-policy.js";
 
 const CACHE_REGISTRY_KEY = "__rsc_router_segment_cache_registry__";
 const RESPONSE_CACHE_REGISTRY_KEY = "__rsc_router_response_cache_registry__";
@@ -245,9 +251,8 @@ export class MemorySegmentCacheStore<
       headers.push([name, value]);
     });
 
-    const swrWindow = swr ?? this.defaults?.swr ?? 0;
-    const staleAt = Date.now() + ttl * 1000;
-    const expiresAt = staleAt + swrWindow * 1000;
+    const swrWindow = resolveSwrWindow(swr, this.defaults);
+    const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
 
     this.responseCache.set(key, {
       body,
@@ -281,10 +286,9 @@ export class MemorySegmentCacheStore<
     value: string,
     options?: CacheItemOptions,
   ): Promise<void> {
-    const ttl = options?.ttl ?? this.defaults?.ttl ?? 900;
-    const swrWindow = options?.swr ?? this.defaults?.swr ?? 0;
-    const staleAt = Date.now() + ttl * 1000;
-    const expiresAt = staleAt + swrWindow * 1000;
+    const ttl = resolveTtl(options?.ttl, this.defaults, DEFAULT_FUNCTION_TTL);
+    const swrWindow = resolveSwrWindow(options?.swr, this.defaults);
+    const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
     this.itemCache.set(key, {
       value,
       handles: options?.handles,

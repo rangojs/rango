@@ -13,6 +13,8 @@
 
 import type { MiddlewareFn, MiddlewareContext } from "../router/middleware.js";
 import { getRequestContext } from "../server/request-context.js";
+import { sortedSearchString } from "./cache-key-utils.js";
+import { runBackground } from "./background-task.js";
 
 // ============================================================================
 // Constants
@@ -250,6 +252,8 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     try {
       // Generate cache key inside try so a throwing keyGenerator degrades
       // gracefully to the origin handler instead of rejecting the request.
+      // This is a deliberate fail-open-to-origin policy: the fallback is
+      // "serve uncached from origin", not "use a different cache key".
       const clientSegments = url.searchParams.get("_rsc_segments") || "";
       const segmentHash =
         isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
@@ -257,15 +261,9 @@ export function createDocumentCacheMiddleware<TEnv = any>(
 
       let searchSuffix = "";
       if (!keyGenerator) {
-        const pairs: [string, string][] = [];
-        for (const [k, v] of url.searchParams) {
-          if (!k.startsWith("_rsc") && !k.startsWith("__")) {
-            pairs.push([k, v]);
-          }
-        }
-        if (pairs.length > 0) {
-          pairs.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-          searchSuffix = `?${pairs.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&")}`;
+        const sorted = sortedSearchString(url.searchParams);
+        if (sorted) {
+          searchSuffix = `?${sorted}`;
         }
       }
 
@@ -290,28 +288,24 @@ export function createDocumentCacheMiddleware<TEnv = any>(
           `[DocumentCache] STALE ${typeLabel}: ${url.pathname} (revalidating)`,
         );
 
-        if (requestCtx) {
-          requestCtx.waitUntil(async () => {
-            try {
-              const fresh = await next();
-              const directives = shouldCacheResponse(fresh);
+        runBackground(requestCtx, async () => {
+          try {
+            const fresh = await next();
+            const directives = shouldCacheResponse(fresh);
 
-              if (directives) {
-                await store.putResponse!(
-                  cacheKey,
-                  fresh,
-                  directives.sMaxAge!,
-                  directives.staleWhileRevalidate,
-                );
-                log(
-                  `[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`,
-                );
-              }
-            } catch (error) {
-              console.error(`[DocumentCache] Revalidation failed:`, error);
+            if (directives) {
+              await store.putResponse!(
+                cacheKey,
+                fresh,
+                directives.sMaxAge!,
+                directives.staleWhileRevalidate,
+              );
+              log(`[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`);
             }
-          });
-        }
+          } catch (error) {
+            console.error(`[DocumentCache] Revalidation failed:`, error);
+          }
+        });
 
         return drainOnResponseCallbacks(
           addCacheStatusHeader(cached.response, "STALE"),
@@ -340,20 +334,18 @@ export function createDocumentCacheMiddleware<TEnv = any>(
         const [returnStream, cacheStream] = originalResponse.body.tee();
 
         // Clone response for caching (non-blocking)
-        if (requestCtx) {
-          requestCtx.waitUntil(async () => {
-            try {
-              await store.putResponse!(
-                cacheKey,
-                new Response(cacheStream, originalResponse),
-                directives.sMaxAge!,
-                directives.staleWhileRevalidate,
-              );
-            } catch (error) {
-              console.error(`[DocumentCache] Cache write failed:`, error);
-            }
-          });
-        }
+        runBackground(requestCtx, async () => {
+          try {
+            await store.putResponse!(
+              cacheKey,
+              new Response(cacheStream, originalResponse),
+              directives.sMaxAge!,
+              directives.staleWhileRevalidate,
+            );
+          } catch (error) {
+            console.error(`[DocumentCache] Cache write failed:`, error);
+          }
+        });
 
         return addCacheStatusHeader(
           new Response(returnStream, originalResponse),

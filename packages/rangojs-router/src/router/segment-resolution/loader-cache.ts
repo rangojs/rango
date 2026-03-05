@@ -20,12 +20,17 @@
 
 import type { LoaderEntry } from "../../server/context.js";
 import type { HandlerContext } from "../../types.js";
-import type { SegmentCacheStore } from "../../cache/types.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
+import { getRequestContext } from "../../server/request-context.js";
+import { sortedRouteParams } from "../../cache/cache-key-utils.js";
 import {
-  getRequestContext,
-  _getRequestContext,
-} from "../../server/request-context.js";
+  resolveTtl,
+  resolveSwrWindow,
+  resolveCacheKey,
+  resolveCacheStore,
+  DEFAULT_ROUTE_TTL,
+} from "../../cache/cache-policy.js";
+import { readThroughItem } from "../../cache/read-through-swr.js";
 // Lazy-loaded to avoid pulling @vitejs/plugin-rsc/rsc into modules that
 // import segment-resolution but never use loader caching.
 let _serializeResult: typeof import("../../cache/segment-codec.js").serializeResult;
@@ -42,8 +47,6 @@ async function getCodec() {
   };
 }
 
-const DEFAULT_TTL_SECONDS = 60;
-
 function debugLoaderCacheLog(message: string): void {
   if (INTERNAL_RANGO_DEBUG) {
     console.log(message);
@@ -55,69 +58,32 @@ function getDefaultLoaderCacheKey(
   pathname: string,
   params: Record<string, string>,
 ): string {
-  const paramStr = Object.entries(params)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join("&");
-
+  const paramStr = sortedRouteParams(params);
   const base = paramStr ? `${pathname}:${paramStr}` : pathname;
   return `loader:${loaderId}:${base}`;
 }
 
 /**
- * Resolve cache key using the same 3-tier priority as CacheScope.resolveKey():
- * 1. options.key (full override)
- * 2. store.keyGenerator (modifies default)
- * 3. Default loader key
+ * Resolve cache key using the shared 3-tier priority.
  */
 async function resolveLoaderKey(
   loaderEntry: LoaderEntry,
-  store: SegmentCacheStore,
+  store: import("../../cache/types.js").SegmentCacheStore,
   loaderId: string,
   pathname: string,
   params: Record<string, string>,
 ): Promise<string> {
   const options = loaderEntry.cache!.options;
-  if (options === false) {
-    return getDefaultLoaderCacheKey(loaderId, pathname, params);
-  }
-
-  const requestCtx = getRequestContext();
-
-  // Priority 1: Route-level key function (full override)
-  if (options.key && requestCtx) {
-    try {
-      return await options.key(requestCtx);
-    } catch (error) {
-      console.error(
-        `[LoaderCache] Custom key function failed, using default:`,
-        error,
-      );
-    }
-  }
-
   const defaultKey = getDefaultLoaderCacheKey(loaderId, pathname, params);
-
-  // Priority 2: Store-level keyGenerator
-  if (store.keyGenerator && requestCtx) {
-    try {
-      return await store.keyGenerator(requestCtx, defaultKey);
-    } catch (error) {
-      console.error(
-        `[LoaderCache] Store keyGenerator failed, using default:`,
-        error,
-      );
-    }
-  }
-
-  // Priority 3: Default key
-  return defaultKey;
+  if (options === false) return defaultKey;
+  return resolveCacheKey(options.key, store, defaultKey, "LoaderCache");
 }
 
 /**
  * Resolve tags from cache options (static array or function).
  * Fails open: a thrown tag callback falls back to no tags rather than
- * aborting the request, consistent with resolveLoaderKey().
+ * aborting the request. Tags are additive metadata (not identity), so
+ * a missing tag does not cause cache collisions.
  */
 function resolveTags(loaderEntry: LoaderEntry): string[] | undefined {
   const options = loaderEntry.cache?.options;
@@ -140,41 +106,12 @@ function resolveTags(loaderEntry: LoaderEntry): string[] | undefined {
   return options.tags;
 }
 
-function getLoaderStore(loaderEntry: LoaderEntry): SegmentCacheStore | null {
+function getLoaderStore(
+  loaderEntry: LoaderEntry,
+): import("../../cache/types.js").SegmentCacheStore | null {
   const cacheConfig = loaderEntry.cache;
   if (!cacheConfig || cacheConfig.options === false) return null;
-  const options = cacheConfig.options;
-
-  // Explicit store from cache() options
-  if (options.store) return options.store;
-
-  // App-level store from request context
-  return _getRequestContext()?._cacheStore ?? null;
-}
-
-function getLoaderTtl(
-  loaderEntry: LoaderEntry,
-  store: SegmentCacheStore,
-): number {
-  const cacheConfig = loaderEntry.cache;
-  if (!cacheConfig || cacheConfig.options === false) return DEFAULT_TTL_SECONDS;
-  const options = cacheConfig.options;
-
-  if (options.ttl !== undefined) return options.ttl;
-  if (store.defaults?.ttl !== undefined) return store.defaults.ttl;
-  return DEFAULT_TTL_SECONDS;
-}
-
-function getLoaderSwr(
-  loaderEntry: LoaderEntry,
-  store: SegmentCacheStore,
-): number | undefined {
-  const cacheConfig = loaderEntry.cache;
-  if (!cacheConfig || cacheConfig.options === false) return undefined;
-  const options = cacheConfig.options;
-
-  if (options.swr !== undefined) return options.swr;
-  return store.defaults?.swr;
+  return resolveCacheStore(cacheConfig.options.store);
 }
 
 /**
@@ -210,8 +147,9 @@ export function resolveLoaderData<TEnv>(
   }
 
   const loaderId = loaderEntry.loader.$$id;
-  const ttl = getLoaderTtl(loaderEntry, store);
-  const swr = getLoaderSwr(loaderEntry, store);
+  const ttl = resolveTtl(options.ttl, store.defaults, DEFAULT_ROUTE_TTL);
+  const swrWindow = resolveSwrWindow(options.swr, store.defaults);
+  const swr = swrWindow || undefined;
   const tags = resolveTags(loaderEntry);
 
   // Wrap ctx.use() so cache HIT primes the handler's memoization map.
@@ -228,67 +166,20 @@ export function resolveLoaderData<TEnv>(
       ctx.params,
     );
 
-    // Cache lookup
-    try {
-      const cached = await store.getItem!(key);
-
-      if (cached) {
-        const data = await codec.deserializeResult(cached.value);
-
-        if (!cached.shouldRevalidate) {
-          debugLoaderCacheLog(`[LoaderCache] HIT: ${key}`);
-          return data;
-        }
-
-        // Stale hit — return stale data, revalidate in background
-        debugLoaderCacheLog(`[LoaderCache] STALE: ${key}`);
-        const requestCtx = getRequestContext();
-        const revalidate = async () => {
-          try {
-            const fresh = await originalUse(loaderEntry.loader);
-            const serialized = await codec.serializeResult(fresh);
-            if (serialized !== null) {
-              await store.setItem!(key, serialized, { ttl, swr, tags });
-            }
-          } catch {
-            // Background revalidation failed silently
-          }
-        };
-        if (requestCtx?.waitUntil) {
-          requestCtx.waitUntil(revalidate);
-        } else {
-          revalidate();
-        }
-        return data;
-      }
-    } catch {
-      // Cache lookup failed, fall through to fresh execution
-    }
-
-    // Cache miss — execute loader via ctx.use() (which memoizes it)
-    debugLoaderCacheLog(`[LoaderCache] MISS: ${key}`);
-    const data = await originalUse(loaderEntry.loader);
-
-    // Non-blocking cache write
-    const requestCtx = getRequestContext();
-    const cacheWrite = async () => {
-      try {
-        const serialized = await codec.serializeResult(data);
-        if (serialized !== null) {
-          await store.setItem!(key, serialized, { ttl, swr, tags });
-          debugLoaderCacheLog(`[LoaderCache] Cached: ${key}`);
-        }
-      } catch {
-        // Cache write failed silently
-      }
-    };
-    if (requestCtx?.waitUntil) {
-      requestCtx.waitUntil(cacheWrite);
-    } else {
-      await cacheWrite();
-    }
-
-    return data;
+    return readThroughItem({
+      getItem: (k) => store.getItem!(k),
+      setItem: (k, v, o) => store.setItem!(k, v, o),
+      key,
+      execute: () => originalUse(loaderEntry.loader),
+      serialize: (d) => codec.serializeResult(d),
+      deserialize: (v) => codec.deserializeResult(v),
+      storeOptions: { ttl, swr, tags },
+      onHit: () => debugLoaderCacheLog(`[LoaderCache] HIT: ${key}`),
+      onStale: () => debugLoaderCacheLog(`[LoaderCache] STALE: ${key}`),
+      onMiss: () => debugLoaderCacheLog(`[LoaderCache] MISS: ${key}`),
+      onCached: () => debugLoaderCacheLog(`[LoaderCache] Cached: ${key}`),
+      host: getRequestContext(),
+    });
   })();
 
   // Temporarily replace ctx.use() so the handler's call returns cached data.

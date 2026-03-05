@@ -18,13 +18,12 @@ import {
 } from "../server/request-context.js";
 import { serializeSegments, deserializeSegments } from "./segment-codec.js";
 import { captureHandles, restoreHandles } from "./handle-snapshot.js";
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-/** Default TTL when no explicit value or store defaults are configured */
-const DEFAULT_TTL_SECONDS = 60;
+import { sortedSearchString, sortedRouteParams } from "./cache-key-utils.js";
+import {
+  DEFAULT_ROUTE_TTL,
+  resolveCacheKey,
+  resolveCacheStore,
+} from "./cache-policy.js";
 
 function debugCacheLog(message: string): void {
   if (INTERNAL_RANGO_DEBUG) {
@@ -37,25 +36,6 @@ function debugCacheLog(message: string): void {
 // ============================================================================
 
 /**
- * Build a sorted, deterministic query string from URLSearchParams,
- * excluding internal _rsc* params.
- * @internal
- */
-function sortedSearchString(searchParams: URLSearchParams): string {
-  const pairs: [string, string][] = [];
-  for (const [k, v] of searchParams) {
-    if (!k.startsWith("_rsc") && !k.startsWith("__")) {
-      pairs.push([k, v]);
-    }
-  }
-  if (pairs.length === 0) return "";
-  pairs.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return pairs
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join("&");
-}
-
-/**
  * Generate cache key base from pathname, route params, and search params.
  * Route params and search params are sorted alphabetically for deterministic keys.
  * Internal _rsc* and __* query params are excluded.
@@ -66,13 +46,7 @@ function getCacheKeyBase(
   params?: Record<string, string>,
   searchParams?: URLSearchParams,
 ): string {
-  const paramStr = params
-    ? Object.entries(params)
-        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-        .join("&")
-    : "";
-
+  const paramStr = sortedRouteParams(params);
   const searchStr = searchParams ? sortedSearchString(searchParams) : "";
 
   let key = pathname;
@@ -168,7 +142,7 @@ export class CacheScope {
     }
 
     // Hardcoded fallback
-    return DEFAULT_TTL_SECONDS;
+    return DEFAULT_ROUTE_TTL;
   }
 
   /**
@@ -193,23 +167,11 @@ export class CacheScope {
    * 2. App-level store from request context
    */
   getStore(): SegmentCacheStore | null {
-    // Explicit store from cache() options takes precedence
-    if (this.explicitStore) {
-      return this.explicitStore;
-    }
-    // Fall back to app-level store from request context
-    const ctx = getRequestContext();
-    return ctx?._cacheStore ?? null;
+    return resolveCacheStore(this.explicitStore);
   }
 
   /**
-   * Resolve the cache key using custom key functions or default generation.
-   *
-   * Resolution priority:
-   * 1. Route-level `key` function (full override)
-   * 2. Store-level `keyGenerator` (modifies default key)
-   * 3. Default key generation (prefix:pathname:routeParams?searchParams)
-   *
+   * Resolve the cache key using the shared 3-tier priority.
    * @internal
    */
   private async resolveKey(
@@ -217,46 +179,9 @@ export class CacheScope {
     params: Record<string, string>,
     isIntercept?: boolean,
   ): Promise<string> {
-    const requestCtx = getRequestContext();
-    if (!requestCtx) {
-      // Fallback to default key if no request context
-      return getDefaultRouteCacheKey(pathname, params, isIntercept);
-    }
-
-    // Priority 1: Route-level key function (full override)
-    if (this.config !== false && this.config.key) {
-      try {
-        const customKey = await this.config.key(requestCtx);
-        return customKey;
-      } catch (error) {
-        console.error(
-          `[CacheScope] Custom key function failed, using default:`,
-          error,
-        );
-        return getDefaultRouteCacheKey(pathname, params, isIntercept);
-      }
-    }
-
-    // Generate default key
     const defaultKey = getDefaultRouteCacheKey(pathname, params, isIntercept);
-
-    // Priority 2: Store-level keyGenerator (modifies default key)
-    const store = this.getStore();
-    if (store?.keyGenerator) {
-      try {
-        const modifiedKey = await store.keyGenerator(requestCtx, defaultKey);
-        return modifiedKey;
-      } catch (error) {
-        console.error(
-          `[CacheScope] Store keyGenerator failed, using default:`,
-          error,
-        );
-        return defaultKey;
-      }
-    }
-
-    // Priority 3: Default key
-    return defaultKey;
+    const keyFn = this.config !== false ? this.config.key : undefined;
+    return resolveCacheKey(keyFn, this.getStore(), defaultKey, "CacheScope");
   }
 
   /**

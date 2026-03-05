@@ -33,6 +33,11 @@ import {
   type RequestContext,
 } from "../../server/request-context.js";
 import { VERSION } from "@rangojs/router:version";
+import {
+  resolveTtl,
+  resolveSwrWindow,
+  DEFAULT_FUNCTION_TTL,
+} from "../cache-policy.js";
 
 // ============================================================================
 // Constants
@@ -299,7 +304,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const request = this.keyToRequest(key);
 
       // Extended TTL covers SWR window
-      const swrWindow = swr ?? this.defaults?.swr ?? 0;
+      const swrWindow = resolveSwrWindow(swr, this.defaults);
       const totalTtl = ttl + swrWindow;
       const staleAt = Date.now() + ttl * 1000;
 
@@ -389,7 +394,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const request = this.keyToRequest(`doc:${key}`);
 
       // Extended TTL covers SWR window
-      const swrWindow = swr ?? this.defaults?.swr ?? 0;
+      const swrWindow = resolveSwrWindow(swr, this.defaults);
       const totalTtl = ttl + swrWindow;
       const staleAt = Date.now() + ttl * 1000;
 
@@ -490,8 +495,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const cache = await this.getCache();
       const request = this.keyToRequest(`fn:${key}`);
 
-      const ttl = options?.ttl ?? this.defaults?.ttl ?? 900;
-      const swrWindow = options?.swr ?? this.defaults?.swr ?? 0;
+      const ttl = resolveTtl(options?.ttl, this.defaults, DEFAULT_FUNCTION_TTL);
+      const swrWindow = resolveSwrWindow(options?.swr, this.defaults);
       const totalTtl = ttl + swrWindow;
       const staleAt = Date.now() + ttl * 1000;
 

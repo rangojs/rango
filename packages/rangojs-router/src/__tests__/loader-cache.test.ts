@@ -194,10 +194,7 @@ describe("loader-cache", () => {
       expect(store.getItem).toHaveBeenCalledWith("custom-key-wins");
     });
 
-    it("falls back to default when options.key throws", async () => {
-      const consoleError = vi
-        .spyOn(console, "error")
-        .mockImplementation(() => {});
+    it("throws when options.key throws (hard-fail, no silent fallback)", async () => {
       const store = createMockStore();
       const loader = createMockLoader("loader-fallback");
       const entry = createLoaderEntry(loader, {
@@ -208,22 +205,13 @@ describe("loader-cache", () => {
       });
       const ctx = createMockCtx();
 
-      await resolveLoaderData(entry, ctx, "/fallback");
-
-      expect(store.getItem).toHaveBeenCalledWith(
-        "loader:loader-fallback:/fallback",
+      await expect(resolveLoaderData(entry, ctx, "/fallback")).rejects.toThrow(
+        "key function failed",
       );
-      expect(consoleError).toHaveBeenCalledWith(
-        expect.stringContaining("Custom key function failed"),
-        expect.any(Error),
-      );
-      consoleError.mockRestore();
+      expect(store.getItem).not.toHaveBeenCalled();
     });
 
-    it("falls back to default when store.keyGenerator throws", async () => {
-      const consoleError = vi
-        .spyOn(console, "error")
-        .mockImplementation(() => {});
+    it("throws when store.keyGenerator throws (hard-fail, no silent fallback)", async () => {
       const store = createMockStore({
         keyGenerator: vi.fn(async () => {
           throw new Error("keyGenerator failed");
@@ -233,16 +221,10 @@ describe("loader-cache", () => {
       const entry = createLoaderEntry(loader, { store });
       const ctx = createMockCtx();
 
-      await resolveLoaderData(entry, ctx, "/fallback");
-
-      expect(store.getItem).toHaveBeenCalledWith(
-        "loader:loader-keygen-fail:/fallback",
+      await expect(resolveLoaderData(entry, ctx, "/fallback")).rejects.toThrow(
+        "keyGenerator failed",
       );
-      expect(consoleError).toHaveBeenCalledWith(
-        expect.stringContaining("Store keyGenerator failed"),
-        expect.any(Error),
-      );
-      consoleError.mockRestore();
+      expect(store.getItem).not.toHaveBeenCalled();
     });
   });
 
