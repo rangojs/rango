@@ -343,8 +343,12 @@ export function createServerActionBridge(
     // when the user has already navigated away.
     if (metadata?.redirect && !handle.signal.aborted) {
       const { url: redirectUrl } = metadata.redirect;
+      if (!validateRedirectOrigin(redirectUrl, window.location.origin)) {
+        handle.complete(returnValue?.data);
+        return returnValue?.data;
+      }
       const redirectState = metadata.locationState;
-      console.log(`[Browser] Action redirect to ${redirectUrl}`);
+      log("action payload redirect", { url: redirectUrl });
       handle.complete(returnValue?.data);
       if (onNavigate) {
         await onNavigate(redirectUrl, {
