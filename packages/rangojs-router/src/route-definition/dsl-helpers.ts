@@ -245,7 +245,9 @@ const cache: RouteHelpers<any, any>["cache"] = (
     children = maybeChildren;
   }
 
-  const name = `$${store.getNextIndex("cache")}`;
+  // Allocate a single index for this cache() call (used in all paths)
+  const cacheIndex = store.getNextIndex("cache");
+  const name = `$${cacheIndex}`;
   const cacheConfig = { options };
 
   // If no children, create an orphan cache entry (like orphan layouts)
@@ -262,7 +264,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
 
     // Create orphan cache entry (like orphan layout)
     // Subsequent siblings in the same array will attach to this entry
-    const namespace = `${ctx.namespace}.${store.getNextIndex("cache")}`;
+    const namespace = `${ctx.namespace}.${cacheIndex}`;
     const cacheUrlPrefix = getUrlPrefix();
 
     const entry = {
@@ -297,8 +299,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
   }
 
   // With children: create a cache entry (like layout with caching semantics)
-  const cacheNextIndex = store.getNextIndex("cache");
-  const namespace = `${ctx.namespace}.${cacheNextIndex}`;
+  const namespace = `${ctx.namespace}.${cacheIndex}`;
   const cacheShortCode = store.getShortCode("cache");
 
   const cacheUrlPrefix2 = getUrlPrefix();
