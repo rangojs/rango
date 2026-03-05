@@ -33,28 +33,8 @@ import { serializeResult, deserializeResult } from "./segment-codec.js";
 import type { HandleStore } from "../server/handle-store.js";
 import { restoreHandles } from "./handle-snapshot.js";
 import { startHandleCapture, type HandleCapture } from "./handle-capture.js";
-
-// ============================================================================
-// Cache Key Generation
-// ============================================================================
-
-/**
- * Build a sorted, deterministic query string from URLSearchParams,
- * excluding internal _rsc* and __* params.
- */
-function sortedSearchString(searchParams: URLSearchParams): string {
-  const pairs: [string, string][] = [];
-  for (const [k, v] of searchParams) {
-    if (!k.startsWith("_rsc") && !k.startsWith("__")) {
-      pairs.push([k, v]);
-    }
-  }
-  if (pairs.length === 0) return "";
-  pairs.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return pairs
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join("&");
-}
+import { sortedSearchString } from "./cache-key-utils.js";
+import { runBackground } from "./background-task.js";
 
 /**
  * Convert encodeReply result to a stable string key.
@@ -198,37 +178,35 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           }
         }
         // Background revalidation — must capture handles if tainted args present
-        if (requestCtx?.waitUntil) {
-          requestCtx.waitUntil(async () => {
-            const bgHandleStore = hasTaintedArgs
-              ? requestCtx?._handleStore
-              : undefined;
-            let bgCapture: HandleCapture | undefined;
-            let bgStopCapture: (() => void) | undefined;
-            if (bgHandleStore) {
-              const c = startHandleCapture(bgHandleStore);
-              bgCapture = c.capture;
-              bgStopCapture = c.stop;
-            }
+        runBackground(requestCtx, async () => {
+          const bgHandleStore = hasTaintedArgs
+            ? requestCtx?._handleStore
+            : undefined;
+          let bgCapture: HandleCapture | undefined;
+          let bgStopCapture: (() => void) | undefined;
+          if (bgHandleStore) {
+            const c = startHandleCapture(bgHandleStore);
+            bgCapture = c.capture;
+            bgStopCapture = c.stop;
+          }
 
-            try {
-              const freshResult = await fn.apply(this, args);
-              bgStopCapture?.();
-              const serialized = await serializeResult(freshResult);
-              if (serialized !== null) {
-                await store.setItem!(cacheKey, serialized, {
-                  handles: bgCapture?.data,
-                  ttl: profile.ttl,
-                  swr: profile.swr,
-                  tags: profile.tags,
-                });
-              }
-            } catch {
-              bgStopCapture?.();
-              // Background revalidation failed silently
+          try {
+            const freshResult = await fn.apply(this, args);
+            bgStopCapture?.();
+            const serialized = await serializeResult(freshResult);
+            if (serialized !== null) {
+              await store.setItem!(cacheKey, serialized, {
+                handles: bgCapture?.data,
+                ttl: profile.ttl,
+                swr: profile.swr,
+                tags: profile.tags,
+              });
             }
-          });
-        }
+          } catch {
+            bgStopCapture?.();
+            // Background revalidation failed silently
+          }
+        });
         return result;
       } catch {
         // Deserialization of stale value failed, fall through
@@ -294,12 +272,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       }
     };
 
-    if (requestCtx?.waitUntil) {
-      requestCtx.waitUntil(cacheWrite);
-    } else {
-      // No waitUntil (e.g. Node.js dev server): run inline as best-effort
-      await cacheWrite();
-    }
+    await runBackground(requestCtx, cacheWrite, true);
 
     return result;
   };

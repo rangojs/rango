@@ -26,6 +26,13 @@ import {
   getRequestContext,
   _getRequestContext,
 } from "../../server/request-context.js";
+import { sortedRouteParams } from "../../cache/cache-key-utils.js";
+import {
+  resolveTtl,
+  resolveSwrWindow,
+  DEFAULT_ROUTE_TTL,
+} from "../../cache/cache-policy.js";
+import { runBackground } from "../../cache/background-task.js";
 // Lazy-loaded to avoid pulling @vitejs/plugin-rsc/rsc into modules that
 // import segment-resolution but never use loader caching.
 let _serializeResult: typeof import("../../cache/segment-codec.js").serializeResult;
@@ -42,8 +49,6 @@ async function getCodec() {
   };
 }
 
-const DEFAULT_TTL_SECONDS = 60;
-
 function debugLoaderCacheLog(message: string): void {
   if (INTERNAL_RANGO_DEBUG) {
     console.log(message);
@@ -55,11 +60,7 @@ function getDefaultLoaderCacheKey(
   pathname: string,
   params: Record<string, string>,
 ): string {
-  const paramStr = Object.entries(params)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join("&");
-
+  const paramStr = sortedRouteParams(params);
   const base = paramStr ? `${pathname}:${paramStr}` : pathname;
   return `loader:${loaderId}:${base}`;
 }
@@ -157,12 +158,8 @@ function getLoaderTtl(
   store: SegmentCacheStore,
 ): number {
   const cacheConfig = loaderEntry.cache;
-  if (!cacheConfig || cacheConfig.options === false) return DEFAULT_TTL_SECONDS;
-  const options = cacheConfig.options;
-
-  if (options.ttl !== undefined) return options.ttl;
-  if (store.defaults?.ttl !== undefined) return store.defaults.ttl;
-  return DEFAULT_TTL_SECONDS;
+  if (!cacheConfig || cacheConfig.options === false) return DEFAULT_ROUTE_TTL;
+  return resolveTtl(cacheConfig.options.ttl, store.defaults, DEFAULT_ROUTE_TTL);
 }
 
 function getLoaderSwr(
@@ -171,10 +168,8 @@ function getLoaderSwr(
 ): number | undefined {
   const cacheConfig = loaderEntry.cache;
   if (!cacheConfig || cacheConfig.options === false) return undefined;
-  const options = cacheConfig.options;
-
-  if (options.swr !== undefined) return options.swr;
-  return store.defaults?.swr;
+  const swr = resolveSwrWindow(cacheConfig.options.swr, store.defaults);
+  return swr || undefined;
 }
 
 /**
@@ -243,22 +238,21 @@ export function resolveLoaderData<TEnv>(
         // Stale hit — return stale data, revalidate in background
         debugLoaderCacheLog(`[LoaderCache] STALE: ${key}`);
         const requestCtx = getRequestContext();
-        const revalidate = async () => {
-          try {
-            const fresh = await originalUse(loaderEntry.loader);
-            const serialized = await codec.serializeResult(fresh);
-            if (serialized !== null) {
-              await store.setItem!(key, serialized, { ttl, swr, tags });
+        runBackground(
+          requestCtx,
+          async () => {
+            try {
+              const fresh = await originalUse(loaderEntry.loader);
+              const serialized = await codec.serializeResult(fresh);
+              if (serialized !== null) {
+                await store.setItem!(key, serialized, { ttl, swr, tags });
+              }
+            } catch {
+              // Background revalidation failed silently
             }
-          } catch {
-            // Background revalidation failed silently
-          }
-        };
-        if (requestCtx?.waitUntil) {
-          requestCtx.waitUntil(revalidate);
-        } else {
-          revalidate();
-        }
+          },
+          true,
+        );
         return data;
       }
     } catch {
@@ -271,22 +265,21 @@ export function resolveLoaderData<TEnv>(
 
     // Non-blocking cache write
     const requestCtx = getRequestContext();
-    const cacheWrite = async () => {
-      try {
-        const serialized = await codec.serializeResult(data);
-        if (serialized !== null) {
-          await store.setItem!(key, serialized, { ttl, swr, tags });
-          debugLoaderCacheLog(`[LoaderCache] Cached: ${key}`);
+    await runBackground(
+      requestCtx,
+      async () => {
+        try {
+          const serialized = await codec.serializeResult(data);
+          if (serialized !== null) {
+            await store.setItem!(key, serialized, { ttl, swr, tags });
+            debugLoaderCacheLog(`[LoaderCache] Cached: ${key}`);
+          }
+        } catch {
+          // Cache write failed silently
         }
-      } catch {
-        // Cache write failed silently
-      }
-    };
-    if (requestCtx?.waitUntil) {
-      requestCtx.waitUntil(cacheWrite);
-    } else {
-      await cacheWrite();
-    }
+      },
+      true,
+    );
 
     return data;
   })();

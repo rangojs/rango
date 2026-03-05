@@ -18,13 +18,8 @@ import {
 } from "../server/request-context.js";
 import { serializeSegments, deserializeSegments } from "./segment-codec.js";
 import { captureHandles, restoreHandles } from "./handle-snapshot.js";
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-/** Default TTL when no explicit value or store defaults are configured */
-const DEFAULT_TTL_SECONDS = 60;
+import { sortedSearchString, sortedRouteParams } from "./cache-key-utils.js";
+import { DEFAULT_ROUTE_TTL } from "./cache-policy.js";
 
 function debugCacheLog(message: string): void {
   if (INTERNAL_RANGO_DEBUG) {
@@ -37,25 +32,6 @@ function debugCacheLog(message: string): void {
 // ============================================================================
 
 /**
- * Build a sorted, deterministic query string from URLSearchParams,
- * excluding internal _rsc* params.
- * @internal
- */
-function sortedSearchString(searchParams: URLSearchParams): string {
-  const pairs: [string, string][] = [];
-  for (const [k, v] of searchParams) {
-    if (!k.startsWith("_rsc") && !k.startsWith("__")) {
-      pairs.push([k, v]);
-    }
-  }
-  if (pairs.length === 0) return "";
-  pairs.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return pairs
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join("&");
-}
-
-/**
  * Generate cache key base from pathname, route params, and search params.
  * Route params and search params are sorted alphabetically for deterministic keys.
  * Internal _rsc* and __* query params are excluded.
@@ -66,13 +42,7 @@ function getCacheKeyBase(
   params?: Record<string, string>,
   searchParams?: URLSearchParams,
 ): string {
-  const paramStr = params
-    ? Object.entries(params)
-        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-        .join("&")
-    : "";
-
+  const paramStr = sortedRouteParams(params);
   const searchStr = searchParams ? sortedSearchString(searchParams) : "";
 
   let key = pathname;
@@ -168,7 +138,7 @@ export class CacheScope {
     }
 
     // Hardcoded fallback
-    return DEFAULT_TTL_SECONDS;
+    return DEFAULT_ROUTE_TTL;
   }
 
   /**
