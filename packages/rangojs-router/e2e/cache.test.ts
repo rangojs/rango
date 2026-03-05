@@ -3,6 +3,36 @@ import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
 
 /**
+ * Poll server stdout for a [CacheScope] Cached: log entry matching the given path.
+ * Replaces fixed waitForTimeout(500) calls for async cache write completion.
+ */
+async function waitForCacheWrite(
+  proc: { stdout: () => string },
+  sinceOffset: number,
+  pathPattern: string,
+  timeout = 5000,
+) {
+  await expect
+    .poll(
+      () => {
+        const newOutput = proc.stdout().slice(sinceOffset);
+        return newOutput
+          .split("\n")
+          .some(
+            (line) =>
+              line.includes("[CacheScope] Cached:") &&
+              line.includes(pathPattern),
+          );
+      },
+      {
+        timeout,
+        message: `Expected single [CacheScope] Cached: log line containing "${pathPattern}"`,
+      },
+    )
+    .toBeTruthy();
+}
+
+/**
  * Tests that validate caching behavior by checking server logs.
  * The test-app has blog routes wrapped in cache({ ttl: 600 }) for testing.
  *
@@ -55,8 +85,8 @@ test.describe("cache-server-logs", () => {
     // Verify page content
     await expect(page.getByTestId("blog-title")).toHaveText("Blog");
 
-    // Wait a bit for cache write to complete (async via waitUntil)
-    await page.waitForTimeout(500);
+    // Wait for async cache write to complete
+    await waitForCacheWrite(f.proc(), initialLength, "/blog");
 
     // Get new logs since first request
     const afterFirstStdout = f.proc().stdout();
@@ -122,8 +152,8 @@ test.describe("cache-server-logs", () => {
     // Verify navigation completed
     await expect(page.getByTestId("blog-title")).toHaveText("Blog");
 
-    // Wait for cache write
-    await page.waitForTimeout(500);
+    // Wait for async cache write to complete
+    await waitForCacheWrite(f.proc(), beforeNavLength, "/blog");
 
     // Check logs - should see partial:/blog MISS
     const afterNavStdout = f.proc().stdout();
@@ -180,8 +210,8 @@ test.describe("cache-server-logs", () => {
       "Post: post-1",
     );
 
-    // Wait for cache write
-    await page.waitForTimeout(500);
+    // Wait for async cache write to complete
+    await waitForCacheWrite(f.proc(), initialLength, "/blog/post-1");
 
     const afterFirstStdout = f.proc().stdout();
     const firstLogs = getCacheLogs(afterFirstStdout.substring(initialLength));
@@ -237,10 +267,9 @@ test.describe("cache-server-logs", () => {
   test("__no_cache query param should bypass cache", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    // First, populate the cache
+    // Populate the cache (likely already cached by previous tests in this block)
     await page.goto(f.url("/blog"));
     await waitForHydration(page);
-    await page.waitForTimeout(500);
 
     // Navigate away and back to verify cache is working
     await page.goto(f.url("/"));
@@ -273,6 +302,7 @@ test.describe("cache-loader-behavior", () => {
     root: "./e2e/test-app",
     mode: "dev",
     isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
   test("non-cached loader runs on every request", async ({ page }) => {
@@ -309,10 +339,7 @@ test.describe("cache-loader-behavior", () => {
     const firstCount = await page.getByTestId("loader-count").textContent();
     const firstLoadedAt = await page.getByTestId("loaded-at").textContent();
 
-    // Allow non-blocking cache write to complete
-    await page.waitForTimeout(500);
-
-    // Navigate away
+    // Navigate away (round-trip provides time for async loader cache write)
     await page.goto(f.url("/"));
     await waitForHydration(page);
 
@@ -340,6 +367,7 @@ test.describe("cache-loader-behavior (production)", () => {
     root: "./e2e/test-app",
     mode: "build",
     isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
   test("non-cached loader runs on every request", async ({ page }) => {
@@ -372,8 +400,7 @@ test.describe("cache-loader-behavior (production)", () => {
     const firstCount = await page.getByTestId("loader-count").textContent();
     const firstLoadedAt = await page.getByTestId("loaded-at").textContent();
 
-    await page.waitForTimeout(500);
-
+    // Round-trip provides time for async loader cache write
     await page.goto(f.url("/"));
     await waitForHydration(page);
 
@@ -440,8 +467,8 @@ test.describe("cache-intercept-routes", () => {
       "Cache Test Intercept",
     );
 
-    // Wait for cache write
-    await page.waitForTimeout(500);
+    // Wait for async cache write to complete
+    await waitForCacheWrite(f.proc(), beforeInterceptLen, "intercept:");
 
     // Check logs - should see intercept: prefix in cache key
     const afterInterceptStdout = f.proc().stdout();
@@ -466,14 +493,19 @@ test.describe("cache-intercept-routes", () => {
     using _ = expectNoPageError(page);
 
     // First, do a document request to the detail page (direct navigation)
+    const beforeDocVisit = f.proc().stdout().length;
     await page.goto(f.url("/cache-test/intercept/item-b"));
     await waitForHydration(page);
 
     // Verify it's the full detail page (not modal)
     await expect(page.getByTestId("cache-intercept-detail")).toBeVisible();
 
-    // Wait for cache write - this caches doc:/cache-test/intercept/item-b
-    await page.waitForTimeout(500);
+    // Wait for async cache write (doc:/cache-test/intercept/item-b)
+    await waitForCacheWrite(
+      f.proc(),
+      beforeDocVisit,
+      "/cache-test/intercept/item-b",
+    );
 
     // Now go to intercept index and do intercept navigation to item-b
     await page.goto(f.url("/cache-test/intercept"));
@@ -489,8 +521,8 @@ test.describe("cache-intercept-routes", () => {
     // Should show modal (intercept)
     await expect(page.getByTestId("cache-test-modal")).toBeVisible();
 
-    // Wait for cache write
-    await page.waitForTimeout(500);
+    // Wait for async cache write to complete
+    await waitForCacheWrite(f.proc(), beforeInterceptLen, "intercept:");
 
     // Check logs - should be a MISS for intercept: (separate cache from doc:)
     const afterInterceptStdout = f.proc().stdout();
@@ -511,13 +543,10 @@ test.describe("cache-intercept-routes", () => {
     await page.goto(f.url("/cache-test/intercept"));
     await waitForHydration(page);
 
-    // First intercept navigation
+    // First intercept navigation (cache already populated by previous test)
     await page.getByTestId("cache-intercept-link-a").click();
     await waitForHydration(page);
     await expect(page.getByTestId("cache-test-modal")).toBeVisible();
-
-    // Wait for cache write
-    await page.waitForTimeout(500);
 
     // Close modal by navigating back
     await page.goBack();
@@ -551,7 +580,7 @@ test.describe("cache-intercept-routes", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    // First navigation - populate cache
+    // First navigation - cache already populated by previous tests
     await page.goto(f.url("/cache-test/intercept"));
     await waitForHydration(page);
 
@@ -564,9 +593,6 @@ test.describe("cache-intercept-routes", () => {
       .getByTestId("cache-test-modal-count")
       .textContent();
     expect(firstCount).toContain("Count:");
-
-    // Wait for cache write
-    await page.waitForTimeout(500);
 
     // Go back and do another intercept navigation
     await page.goBack();
@@ -740,11 +766,12 @@ test.describe("proactive-caching", () => {
     await expect(page.getByTestId("proactive-index-page")).toBeVisible();
 
     // Step 2: Partial nav to item-a (triggers proactive caching for layout)
+    const beforeNavA = f.proc().stdout().length;
     await page.getByTestId("proactive-nav-a").click();
     await expect(page.getByTestId("proactive-item-a-page")).toBeVisible();
 
-    // Wait for proactive caching to complete
-    await page.waitForTimeout(500);
+    // Wait for proactive cache write to complete
+    await waitForCacheWrite(f.proc(), beforeNavA, "/proactive-cache/item-a");
 
     // Step 3: Navigate to home (outside cached layout)
     await page.getByTestId("proactive-back-home").click();
@@ -791,16 +818,26 @@ test.describe("cache-response-type", () => {
     expect(json1.data.type).toBe("json");
     expect(json1.data.id).toBe("42");
 
-    // Small delay for async cache write
-    await new Promise((r) => setTimeout(r, 300));
+    // Poll until cache write completes and second request returns cached data
+    await expect
+      .poll(
+        async () => {
+          const res = await request.get(f.url("/cache-response-type/data/42"), {
+            headers: { Accept: "application/json" },
+          });
+          const data = await res.json();
+          return data.data.ts;
+        },
+        { timeout: 5000, message: "Expected cached JSON response for /42" },
+      )
+      .toBe(json1.data.ts);
 
-    // JSON response — cache hit (same data)
+    // Verify full cache hit (rand should also match)
     const jsonRes2 = await request.get(f.url("/cache-response-type/data/42"), {
       headers: { Accept: "application/json" },
     });
     expect(jsonRes2.status()).toBe(200);
     const json2 = await jsonRes2.json();
-    expect(json2.data.ts).toBe(json1.data.ts);
     expect(json2.data.rand).toBe(json1.data.rand);
 
     // Text response at same URL — cache miss (different responseType key)
@@ -826,7 +863,20 @@ test.describe("cache-response-type", () => {
     const body1 = await res1.json();
     expect(body1.data.id).toBe("alpha");
 
-    await new Promise((r) => setTimeout(r, 300));
+    // Poll until cache write completes for alpha
+    await expect
+      .poll(
+        async () => {
+          const res = await request.get(
+            f.url("/cache-response-type/data/alpha"),
+            { headers: { Accept: "application/json" } },
+          );
+          const data = await res.json();
+          return data.data.ts;
+        },
+        { timeout: 5000, message: "Expected cached JSON response for /alpha" },
+      )
+      .toBe(body1.data.ts);
 
     // Different param — cache miss
     const res2 = await request.get(f.url("/cache-response-type/data/beta"), {
@@ -869,9 +919,6 @@ test.describe("cache-status-json", () => {
     const body1 = await res1.json();
     expect(body1.error).toBe("not found");
 
-    // Wait to give cache write a chance (it shouldn't happen)
-    await new Promise((r) => setTimeout(r, 300));
-
     // Second request — handler re-executes (NOT cached, only 200 is cached)
     const res2 = await request.get(f.url("/cache-status-json/not-found"));
     expect(res2.status()).toBe(404);
@@ -885,9 +932,6 @@ test.describe("cache-status-json", () => {
     expect(res1.status()).toBe(500);
     const body1 = await res1.json();
     expect(body1.error).toBe("server error");
-
-    // Wait to give cache write a chance (it shouldn't happen)
-    await new Promise((r) => setTimeout(r, 300));
 
     // Second request — handler re-executes (NOT cached)
     const res2 = await request.get(f.url("/cache-status-json/server-error"));
@@ -914,8 +958,6 @@ test.describe("cache-status-json (production)", () => {
     const body1 = await res1.json();
     expect(body1.error).toBe("not found");
 
-    await new Promise((r) => setTimeout(r, 300));
-
     const res2 = await request.get(f.url("/cache-status-json/not-found"));
     expect(res2.status()).toBe(404);
     const body2 = await res2.json();
@@ -927,8 +969,6 @@ test.describe("cache-status-json (production)", () => {
     expect(res1.status()).toBe(500);
     const body1 = await res1.json();
     expect(body1.error).toBe("server error");
-
-    await new Promise((r) => setTimeout(r, 300));
 
     const res2 = await request.get(f.url("/cache-status-json/server-error"));
     expect(res2.status()).toBe(500);
@@ -952,6 +992,7 @@ test.describe("cache-status-segment", () => {
   test("200 segment route is cached on second visit", async ({ page }) => {
     using _ = expectNoPageError(page);
 
+    const beforeSuccessVisit = f.proc().stdout().length;
     await page.goto(f.url("/cache-status/success"));
     await waitForHydration(page);
 
@@ -962,8 +1003,12 @@ test.describe("cache-status-segment", () => {
       .getByTestId("cache-status-success-rendered")
       .textContent();
 
-    // Wait for cache write
-    await page.waitForTimeout(500);
+    // Wait for async cache write to complete
+    await waitForCacheWrite(
+      f.proc(),
+      beforeSuccessVisit,
+      "/cache-status/success",
+    );
 
     // Navigate away and back
     await page.goto(f.url("/"));
@@ -1016,6 +1061,8 @@ test.describe("cache-status-segment (production)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "build",
+    isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
   test("200 segment route is cached on second visit", async ({ page }) => {
@@ -1031,8 +1078,7 @@ test.describe("cache-status-segment (production)", () => {
       .getByTestId("cache-status-success-rendered")
       .textContent();
 
-    await page.waitForTimeout(500);
-
+    // Round-trip provides time for async cache write
     await page.goto(f.url("/"));
     await waitForHydration(page);
     await page.goto(f.url("/cache-status/success"));
@@ -1088,14 +1134,26 @@ test.describe("cache-response-type (production)", () => {
     expect(json1.data.type).toBe("json");
     expect(json1.data.id).toBe("42");
 
-    await new Promise((r) => setTimeout(r, 300));
+    // Poll until cache write completes and second request returns cached data
+    await expect
+      .poll(
+        async () => {
+          const res = await request.get(f.url("/cache-response-type/data/42"), {
+            headers: { Accept: "application/json" },
+          });
+          const data = await res.json();
+          return data.data.ts;
+        },
+        { timeout: 5000, message: "Expected cached JSON response for /42" },
+      )
+      .toBe(json1.data.ts);
 
+    // Verify full cache hit (rand should also match)
     const jsonRes2 = await request.get(f.url("/cache-response-type/data/42"), {
       headers: { Accept: "application/json" },
     });
     expect(jsonRes2.status()).toBe(200);
     const json2 = await jsonRes2.json();
-    expect(json2.data.ts).toBe(json1.data.ts);
     expect(json2.data.rand).toBe(json1.data.rand);
 
     const textRes1 = await request.get(f.url("/cache-response-type/data/42"), {
@@ -1119,7 +1177,20 @@ test.describe("cache-response-type (production)", () => {
     const body1 = await res1.json();
     expect(body1.data.id).toBe("alpha");
 
-    await new Promise((r) => setTimeout(r, 300));
+    // Poll until cache write completes for alpha
+    await expect
+      .poll(
+        async () => {
+          const res = await request.get(
+            f.url("/cache-response-type/data/alpha"),
+            { headers: { Accept: "application/json" } },
+          );
+          const data = await res.json();
+          return data.data.ts;
+        },
+        { timeout: 5000, message: "Expected cached JSON response for /alpha" },
+      )
+      .toBe(body1.data.ts);
 
     const res2 = await request.get(f.url("/cache-response-type/data/beta"), {
       headers: { Accept: "application/json" },
@@ -1147,6 +1218,7 @@ test.describe("cache-loader-reactnode", () => {
     root: "./e2e/test-app",
     mode: "dev",
     isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
   test("cached ReactNode loader returns serialized JSX on cache hit", async ({
@@ -1164,10 +1236,7 @@ test.describe("cache-loader-reactnode", () => {
     expect(firstCount).toBeTruthy();
     expect(firstTs).toBeTruthy();
 
-    // Wait for cache write
-    await page.waitForTimeout(500);
-
-    // Navigate away
+    // Navigate away (round-trip provides time for async loader cache write)
     await page.goto(f.url("/"));
     await waitForHydration(page);
 
@@ -1216,6 +1285,7 @@ test.describe("cache-loader-reactnode (production)", () => {
     root: "./e2e/test-app",
     mode: "build",
     isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
   test("cached ReactNode loader returns serialized JSX on cache hit", async ({
@@ -1231,8 +1301,6 @@ test.describe("cache-loader-reactnode (production)", () => {
     const firstTs = await page.getByTestId("rn-ts").textContent();
     expect(firstCount).toBeTruthy();
     expect(firstTs).toBeTruthy();
-
-    await page.waitForTimeout(500);
 
     await page.goto(f.url("/"));
     await waitForHydration(page);
@@ -1279,6 +1347,7 @@ test.describe("cache-loader-null", () => {
     root: "./e2e/test-app",
     mode: "dev",
     isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
   test("cached null-value loader preserves null through cache round-trip", async ({
@@ -1294,10 +1363,7 @@ test.describe("cache-loader-null", () => {
     await expect(page.getByTestId("null-value")).toHaveText("null");
     const firstCount = await page.getByTestId("null-count").textContent();
 
-    // Wait for cache write
-    await page.waitForTimeout(500);
-
-    // Navigate away
+    // Navigate away (round-trip provides time for async loader cache write)
     await page.goto(f.url("/"));
     await waitForHydration(page);
 
@@ -1347,6 +1413,7 @@ test.describe("cache-loader-null (production)", () => {
     root: "./e2e/test-app",
     mode: "build",
     isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
   test("cached null-value loader preserves null through cache round-trip", async ({
@@ -1360,8 +1427,6 @@ test.describe("cache-loader-null (production)", () => {
     await expect(page.getByTestId("null-cached-page")).toBeVisible();
     await expect(page.getByTestId("null-value")).toHaveText("null");
     const firstCount = await page.getByTestId("null-count").textContent();
-
-    await page.waitForTimeout(500);
 
     await page.goto(f.url("/"));
     await waitForHydration(page);

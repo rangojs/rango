@@ -21,13 +21,23 @@ import { shouldPrefetch } from "./policy.js";
 /**
  * Build an RSC partial URL for prefetching.
  * Includes _rsc_v for version mismatch detection when available.
+ * Returns null for malformed or cross-origin URLs to prevent
+ * leaking router headers to external origins.
  */
 function buildPrefetchUrl(
   url: string,
   segmentIds: string[],
   version?: string,
-): URL {
-  const targetUrl = new URL(url, window.location.origin);
+): URL | null {
+  let targetUrl: URL;
+  try {
+    targetUrl = new URL(url, window.location.origin);
+  } catch {
+    return null;
+  }
+  if (targetUrl.origin !== window.location.origin) {
+    return null;
+  }
   targetUrl.searchParams.set("_rsc_partial", "true");
   if (segmentIds.length > 0) {
     targetUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
@@ -88,6 +98,7 @@ export function prefetchDirect(
   if (!shouldPrefetch()) return;
 
   const targetUrl = buildPrefetchUrl(url, segmentIds, version);
+  if (!targetUrl) return;
   const key = targetUrl.pathname + targetUrl.search;
   if (hasPrefetch(key)) return;
   executePrefetchFetch(key, targetUrl.toString());
@@ -105,6 +116,7 @@ export function prefetchQueued(
 ): string {
   if (!shouldPrefetch()) return "";
   const targetUrl = buildPrefetchUrl(url, segmentIds, version);
+  if (!targetUrl) return "";
   const key = targetUrl.pathname + targetUrl.search;
   if (hasPrefetch(key)) return key;
   const fetchUrlStr = targetUrl.toString();
