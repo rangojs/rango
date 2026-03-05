@@ -252,6 +252,8 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     try {
       // Generate cache key inside try so a throwing keyGenerator degrades
       // gracefully to the origin handler instead of rejecting the request.
+      // This is a deliberate fail-open-to-origin policy: the fallback is
+      // "serve uncached from origin", not "use a different cache key".
       const clientSegments = url.searchParams.get("_rsc_segments") || "";
       const segmentHash =
         isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";

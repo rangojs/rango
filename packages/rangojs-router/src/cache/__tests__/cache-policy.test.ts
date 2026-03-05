@@ -106,9 +106,10 @@ function setMockCtx(ctx: any) {
   mockedGetCtxInternal.mockReturnValue(ctx);
 }
 
-// Both resolveCacheKey and resolveCacheStore use _getRequestContext (non-throwing).
-// This is intentional: outside ALS they return defaultKey/null rather than throwing.
-// All callers (CacheScope, loader-cache) handle null store and default keys gracefully.
+// resolveCacheKey and resolveCacheStore use _getRequestContext (non-throwing).
+// Outside ALS they return defaultKey/null rather than throwing.
+// Errors from explicit keyFn or store.keyGenerator propagate (hard-fail):
+// cache identity is correctness-critical, silent fallback risks collisions.
 
 describe("resolveCacheKey", () => {
   afterEach(() => {
@@ -151,28 +152,27 @@ describe("resolveCacheKey", () => {
     expect(result).toBe("default:key");
   });
 
-  it("falls through to keyGenerator when keyFn throws", async () => {
+  it("throws when keyFn throws (hard-fail, no silent fallback)", async () => {
     setMockCtx({ url: new URL("http://localhost/") });
     const keyFn = vi.fn().mockRejectedValue(new Error("boom"));
     const store = {
       keyGenerator: vi.fn(async (_ctx: any, dk: string) => `modified:${dk}`),
     } as any;
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const result = await resolveCacheKey(keyFn, store, "default:key", "Test");
-    expect(result).toBe("modified:default:key");
-    consoleSpy.mockRestore();
+    await expect(
+      resolveCacheKey(keyFn, store, "default:key", "Test"),
+    ).rejects.toThrow("boom");
+    // keyGenerator must not be called as a fallback
+    expect(store.keyGenerator).not.toHaveBeenCalled();
   });
 
-  it("falls through to defaultKey when both keyFn and keyGenerator throw", async () => {
+  it("throws when store.keyGenerator throws (hard-fail, no silent fallback)", async () => {
     setMockCtx({ url: new URL("http://localhost/") });
-    const keyFn = vi.fn().mockRejectedValue(new Error("key error"));
     const store = {
       keyGenerator: vi.fn().mockRejectedValue(new Error("gen error")),
     } as any;
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const result = await resolveCacheKey(keyFn, store, "default:key", "Test");
-    expect(result).toBe("default:key");
-    consoleSpy.mockRestore();
+    await expect(
+      resolveCacheKey(undefined, store, "default:key", "Test"),
+    ).rejects.toThrow("gen error");
   });
 
   it("gracefully returns defaultKey outside ALS (no request context)", async () => {

@@ -76,45 +76,35 @@ export function computeExpiration(
  * Resolve cache key using the 3-tier priority:
  * 1. keyFn (full override from route/loader cache options)
  * 2. store.keyGenerator (modifies default key)
- * 3. defaultKey (fallback)
+ * 3. defaultKey (used when neither keyFn nor keyGenerator is provided)
  *
- * On error at any tier, falls through to the next rather than failing.
- * Uses _getRequestContext (non-throwing) so that callers outside ALS
- * gracefully fall back to defaultKey instead of crashing.
+ * Errors from keyFn and store.keyGenerator propagate to the caller.
+ * Cache identity is correctness-critical: if explicit key logic throws,
+ * silently remapping to a different key could cause cache collisions or
+ * serve stale/wrong data. Callers must handle the error or let it surface.
+ *
+ * Uses _getRequestContext (non-throwing) so that calls outside ALS
+ * (e.g. build-time) gracefully fall back to defaultKey.
  */
 export async function resolveCacheKey(
   keyFn: ((ctx: RequestContext) => string | Promise<string>) | undefined,
   store: SegmentCacheStore | null,
   defaultKey: string,
-  label: string,
+  _label: string,
 ): Promise<string> {
   const requestCtx = _getRequestContext();
 
   // Priority 1: Route/loader-level key function (full override)
   if (keyFn && requestCtx) {
-    try {
-      return await keyFn(requestCtx);
-    } catch (error) {
-      console.error(
-        `[${label}] Custom key function failed, using default:`,
-        error,
-      );
-    }
+    return await keyFn(requestCtx);
   }
 
   // Priority 2: Store-level keyGenerator (modifies default key)
   if (store?.keyGenerator && requestCtx) {
-    try {
-      return await store.keyGenerator(requestCtx, defaultKey);
-    } catch (error) {
-      console.error(
-        `[${label}] Store keyGenerator failed, using default:`,
-        error,
-      );
-    }
+    return await store.keyGenerator(requestCtx, defaultKey);
   }
 
-  // Priority 3: Default key
+  // Priority 3: Default key (no custom key logic provided)
   return defaultKey;
 }
 

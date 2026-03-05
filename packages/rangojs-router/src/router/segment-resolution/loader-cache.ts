@@ -82,7 +82,8 @@ async function resolveLoaderKey(
 /**
  * Resolve tags from cache options (static array or function).
  * Fails open: a thrown tag callback falls back to no tags rather than
- * aborting the request, consistent with resolveLoaderKey().
+ * aborting the request. Tags are additive metadata (not identity), so
+ * a missing tag does not cause cache collisions.
  */
 function resolveTags(loaderEntry: LoaderEntry): string[] | undefined {
   const options = loaderEntry.cache?.options;
