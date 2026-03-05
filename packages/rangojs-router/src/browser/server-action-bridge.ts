@@ -22,6 +22,7 @@ import {
   isBrowserDebugEnabled,
   startBrowserTransaction,
 } from "./logging.js";
+import { validateRedirectOrigin } from "./validate-redirect-origin.js";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -180,6 +181,14 @@ export function createServerActionBridge(
     // Track streaming token - will be set when response arrives
     let streamingToken: { end(): void } | null = null;
 
+    // Use a dedicated abort controller for the fetch so we can cancel network
+    // I/O without disrupting the Flight stream once the response has arrived.
+    // Aborting a response mid-stream causes React's Flight decoder to throw
+    // asynchronous unhandled errors (BodyStreamBuffer was aborted).
+    const fetchAbort = new AbortController();
+    const onHandleAbort = () => fetchAbort.abort();
+    handle.signal.addEventListener("abort", onHandleAbort, { once: true });
+
     // Send action request with stream tracking
     const responsePromise = fetch(url, {
       method: "POST",
@@ -193,20 +202,15 @@ export function createServerActionBridge(
         }),
       },
       body: encodedBody,
+      signal: fetchAbort.signal,
     }).then(async (response) => {
+      // Response arrived — disconnect fetch abort from handle abort so
+      // abortAllActions() doesn't disrupt the in-progress Flight stream.
+      handle.signal.removeEventListener("abort", onHandleAbort);
       // Check for version mismatch - server wants us to reload
       const reloadUrl = response.headers.get("X-RSC-Reload");
       if (reloadUrl) {
-        // Validate origin to prevent open redirect via crafted headers
-        try {
-          const target = new URL(reloadUrl, window.location.origin);
-          if (target.origin !== window.location.origin) {
-            throw new Error(
-              `X-RSC-Reload blocked: origin mismatch (${target.origin})`,
-            );
-          }
-        } catch (e) {
-          console.error("[rango]", e);
+        if (!validateRedirectOrigin(reloadUrl, window.location.origin)) {
           return response;
         }
         log("version mismatch on action, reloading", { reloadUrl });
@@ -221,6 +225,11 @@ export function createServerActionBridge(
       // when the user has already navigated away.
       const simpleRedirectUrl = response.headers.get("X-RSC-Redirect");
       if (simpleRedirectUrl && !handle.signal.aborted) {
+        if (
+          !validateRedirectOrigin(simpleRedirectUrl, window.location.origin)
+        ) {
+          return response;
+        }
         if (tx) {
           browserDebugLog(tx, "action simple redirect", {
             url: simpleRedirectUrl,
@@ -268,7 +277,9 @@ export function createServerActionBridge(
           resolveStreamComplete();
         }
       })().catch((error) => {
-        console.error("[STREAMING] Error reading tracking stream:", error);
+        if (!handle.signal.aborted) {
+          console.error("[STREAMING] Error reading tracking stream:", error);
+        }
         streamingToken?.end();
       });
 
@@ -293,6 +304,15 @@ export function createServerActionBridge(
       (streamingToken as { end(): void } | null)?.end();
       // resolveStreamComplete is assigned in the Promise constructor so it's safe to call
       resolveStreamComplete!();
+
+      // Silently swallow abort errors — the action was intentionally cancelled
+      // (e.g., user navigated away or abortAllActions was called).
+      // Return undefined instead of throwing to avoid surfacing as a page error.
+      // Check both DOMException AbortError and stream-level abort messages
+      // (BodyStreamBuffer was aborted) that propagate from the aborted fetch.
+      if (handle.signal.aborted) {
+        return undefined;
+      }
 
       // Convert network-level errors to NetworkError for proper handling
       const networkError = toNetworkError(error, {
@@ -349,6 +369,12 @@ export function createServerActionBridge(
     if (isError && isPartial && segments && diff) {
       log("processing error boundary response");
 
+      // Fail current handle BEFORE aborting all actions so the event controller
+      // records the error state (abortAllActions clears inflight entries)
+      if (returnValue && !returnValue.ok) {
+        handle.fail(returnValue.data);
+      }
+
       // Abort all other pending action requests - error takes precedence
       // This prevents other actions from completing and overwriting the error UI
       eventController.abortAllActions();
@@ -395,7 +421,6 @@ export function createServerActionBridge(
 
       // Throw the error so the action promise rejects
       if (returnValue && !returnValue.ok) {
-        handle.fail(returnValue.data);
         throw returnValue.data;
       }
 
@@ -615,16 +640,6 @@ export function createServerActionBridge(
       }
       deps.setServerCallback(handleServerAction);
       isRegistered = true;
-    },
-
-    /**
-     * Unregister the server action callback
-     */
-    unregister(): void {
-      if (!isRegistered) {
-        return;
-      }
-      isRegistered = false;
     },
   };
 }

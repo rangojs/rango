@@ -444,6 +444,49 @@ describe("createEventController", () => {
       expect(ctrl.getInflightActions().size).toBe(0);
       expect(ctrl.getState().state).toBe("idle");
     });
+
+    it("fail() before abortAllActions() delivers error to subscribers", () => {
+      const ctrl = createController();
+      const handle = ctrl.startAction("hash#save", []);
+      const error = new Error("action error");
+
+      // Subscribe to capture notifications
+      const observed: { error: unknown }[] = [];
+      ctrl.subscribeToAction("save", (s) => {
+        observed.push({ error: s.error });
+      });
+
+      // Fail the handle first (while it's still in inflightActions)
+      handle.fail(error);
+
+      // abortAllActions preserves settling entries so the debounced
+      // notification can still find the entry and deliver the error
+      ctrl.abortAllActions();
+
+      // Settling entry should survive abort
+      expect(ctrl.getInflightActions().size).toBe(1);
+      expect(handle.settled).toBe(true);
+
+      // Flush debounced notification — subscriber should see the error
+      vi.advanceTimersByTime(0);
+      expect(observed.some((s) => s.error === error)).toBe(true);
+
+      // After settlement timeout, entry is cleaned up
+      vi.advanceTimersByTime(100);
+      expect(ctrl.getInflightActions().size).toBe(0);
+    });
+
+    it("fail() after abortAllActions() is a no-op (entry already removed)", () => {
+      const ctrl = createController();
+      const handle = ctrl.startAction("hash#save", []);
+
+      // Abort first — removes the entry from the map
+      ctrl.abortAllActions();
+
+      // Fail after abort — should be a no-op, not throw
+      handle.fail(new Error("late error"));
+      expect(handle.settled).toBe(false);
+    });
   });
 
   // ======================================================================

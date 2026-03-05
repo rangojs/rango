@@ -721,10 +721,15 @@ export function createEventController(
   }
 
   function abortAllActions() {
-    for (const entry of inflightActions.values()) {
+    for (const [id, entry] of inflightActions) {
+      // Preserve settling entries — they have already been handled by
+      // fail()/complete() and will self-cleanup via the settlement timeout.
+      // Clearing them here would prevent debounced notifications from
+      // delivering the error/result state to subscribers.
+      if (entry.phase === "settling") continue;
       entry.abort.abort();
+      inflightActions.delete(id);
     }
-    inflightActions.clear();
     hadAnyConcurrentActions = false;
     concurrentRevalidatedSegments.clear();
     notify();
