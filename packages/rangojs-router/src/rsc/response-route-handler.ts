@@ -23,6 +23,7 @@ import type { HandlerContext } from "./handler-context.js";
 import { createResponseErrorPayload } from "./response-error.js";
 import {
   createResponseWithMergedHeaders,
+  finalizeResponse,
   isCacheableStatus,
   buildRouteMiddlewareEntries,
 } from "./helpers.js";
@@ -70,25 +71,15 @@ export async function handleResponseRoute<TEnv>(
 
   // Build lightweight context for response handler
   const reqCtx = requireRequestContext();
+  const cleanUrl = stripInternalParams(url);
   const responseHandlerCtx = {
     request,
     params: preview.params || {},
     env,
-    searchParams: url.searchParams,
-    url,
+    searchParams: cleanUrl.searchParams,
+    url: cleanUrl,
     pathname: url.pathname,
-    href: (name: string, hrefParams?: Record<string, string>) => {
-      if (name.startsWith("/")) {
-        if (!hrefParams) return name;
-        return name.replace(/:([^/]+)/g, (_, key) => {
-          const value = hrefParams[key];
-          if (value === undefined)
-            throw new Error(`Missing param "${key}" for path "${name}"`);
-          return encodeURIComponent(value);
-        });
-      }
-      return name;
-    },
+    reverse: createReverseFunction(handlerCtx.getRequiredRouteMap()),
     get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
     header: (name: string, value: string) => reqCtx.header(name, value),
     _responseType: preview.responseType,
@@ -103,10 +94,15 @@ export async function handleResponseRoute<TEnv>(
 
     // Re-wrap a handler-returned Response through createResponseWithMergedHeaders
     // so that stub headers (cookies, custom headers set via ctx.header()) are included.
+    // Use Headers (not Record<string, string>) to preserve duplicate entries like Set-Cookie.
     const rewrapResponse = (result: Response) => {
-      const headers: Record<string, string> = {};
+      const headers = new Headers();
       result.headers.forEach((value, key) => {
-        headers[key] = value;
+        if (key.toLowerCase() === "set-cookie") {
+          headers.append(key, value);
+        } else {
+          headers.set(key, value);
+        }
       });
       return createResponseWithMergedHeaders(result.body, {
         status: result.status,
@@ -332,5 +328,5 @@ export async function handleResponseRoute<TEnv>(
     }
   }
 
-  return executeHandler();
+  return executeHandler().then(finalizeResponse);
 }
