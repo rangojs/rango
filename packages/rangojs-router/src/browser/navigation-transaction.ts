@@ -87,11 +87,6 @@ if (typeof Symbol.dispose === "undefined") {
   (Symbol as any).dispose = Symbol("Symbol.dispose");
 }
 
-// Monotonic counter for tagging early-pushed history entries.
-// Used by disposal to verify ownership without URL comparison,
-// which breaks when two navigations target the same URL.
-let navStamp = 0;
-
 /**
  * Options for committing a navigation transaction
  */
@@ -154,9 +149,6 @@ export interface BoundTransaction {
  * Uses the event controller handle for lifecycle management
  */
 interface NavigationTransaction extends Disposable {
-  /** Optimistically commit from cache - instant render before revalidation */
-  optimisticCommit(options: CommitOptions): void;
-  /** Final commit with server data (or reconciliation after optimistic) */
   commit(options: CommitOptions): void;
   with(
     options: Omit<CommitOptions, "segmentIds" | "segments">,
@@ -168,9 +160,6 @@ interface NavigationTransaction extends Disposable {
 /**
  * Creates a navigation transaction that coordinates with the event controller.
  * Handles loading state transitions and cleanup on completion/abort.
- *
- * Supports optimistic navigation: render from cache immediately,
- * then revalidate in background and reconcile if data changed.
  */
 export function createNavigationTransaction(
   store: NavigationStore,
@@ -179,102 +168,29 @@ export function createNavigationTransaction(
   options?: NavigateOptions & { skipLoadingState?: boolean },
 ): NavigationTransaction {
   let committed = false;
-  let optimisticallyCommitted = false;
-  let earlyStatePushed = false;
-  let earlyStateStamp: number | null = null;
   const currentUrl = window.location.href;
-  const currentHistoryState = window.history.state;
 
   // Start navigation in event controller (this sets loading state)
   const handle = eventController.startNavigation(url, options);
 
-  // If state is provided, push it to history immediately so loading UI can access it
-  // This enables "optimistic state" - showing product names in skeletons etc.
-  if (options?.state !== undefined && !options?.replace) {
-    earlyStateStamp = ++navStamp;
-    const earlyHistoryState = buildHistoryState(options.state);
-    if (earlyHistoryState) {
-      (earlyHistoryState as any).__navStamp = earlyStateStamp;
-    }
-    window.history.pushState(
-      earlyHistoryState ?? { __navStamp: earlyStateStamp },
-      "",
-      url,
-    );
-    earlyStatePushed = true;
-  }
-
-  /**
-   * Optimistically commit from cache - renders immediately before revalidation
-   * Sets optimisticallyCommitted flag so final commit() knows to reconcile
-   */
-  function optimisticCommit(opts: CommitOptions): void {
-    optimisticallyCommitted = true;
-
-    const { url, segmentIds, segments, replace, scroll } = opts;
-    const parsedUrl = new URL(url, window.location.origin);
-
-    // Save current scroll position before navigating
-    handleNavigationStart();
-
-    // Update segment state
-    store.setSegmentIds(segmentIds);
-    store.setCurrentUrl(url);
-    store.setPath(parsedUrl.pathname);
-
-    // Generate history key from URL
-    const historyKey = generateHistoryKey(url);
-    store.setHistoryKey(historyKey);
-
-    // Cache segments with current handleData (will be overwritten by fresh data on final commit)
-    const currentHandleData = eventController.getHandleState().data;
-    store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
-
-    // Build history state with user state if provided
-    const historyState = buildHistoryState(opts.state);
-
-    // Update browser URL
-    // Use replaceState if we already pushed early (for optimistic state access)
-    if (replace || earlyStatePushed) {
-      window.history.replaceState(historyState, "", url);
-    } else {
-      window.history.pushState(historyState, "", url);
-    }
-
-    // Ensure new history entry has a scroll restoration key
-    ensureHistoryKey();
-
-    // Complete the navigation in event controller (sets idle state)
-    handle.complete(parsedUrl);
-
-    // Handle scroll after navigation
-    handleNavigationEnd({ scroll });
-
-    debugLog("[Browser] Optimistic commit from cache, historyKey:", historyKey);
-  }
-
   /**
    * Commit the navigation - updates store and URL atomically
-   * If optimisticCommit was called, this becomes a reconciliation
    */
   function commit(opts: CommitOptions): void {
     committed = true;
 
-    // If optimistic commit already done, adjust options for reconciliation
-    const isReconciliation = optimisticallyCommitted;
     const {
       url,
       segmentIds,
       segments,
+      replace,
+      scroll,
       storeOnly,
       intercept,
       interceptSourceUrl,
       cacheOnly,
       serverState,
     } = opts;
-    // For reconciliation: always replace (URL already pushed), no scroll
-    const replace = isReconciliation ? true : opts.replace;
-    const scroll = isReconciliation ? false : opts.scroll;
 
     const parsedUrl = new URL(url, window.location.origin);
 
@@ -293,10 +209,8 @@ export function createNavigationTransaction(
       return;
     }
 
-    // Save current scroll position before navigating (only for non-reconciliation)
-    if (!isReconciliation) {
-      handleNavigationStart();
-    }
+    // Save current scroll position before navigating
+    handleNavigationStart();
 
     // Update segment state atomically
     store.setSegmentIds(segmentIds);
@@ -305,7 +219,7 @@ export function createNavigationTransaction(
 
     store.setHistoryKey(historyKey);
 
-    // Cache segments with current handleData for this history entry (fresh data overwrites optimistic)
+    // Cache segments with current handleData for this history entry
     const currentHandleData = eventController.getHandleState().data;
     store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
 
@@ -324,51 +238,41 @@ export function createNavigationTransaction(
       serverState,
     );
 
-    // Update browser URL (skip if reconciliation - already done in optimisticCommit)
-    if (!isReconciliation) {
-      // Use replaceState if we already pushed early (for optimistic state access) or replace requested
-      if (replace || earlyStatePushed) {
-        window.history.replaceState(historyState, "", url);
-      } else {
-        window.history.pushState(historyState, "", url);
-      }
-      // Ensure new history entry has a scroll restoration key
-      ensureHistoryKey();
+    // Update browser URL
+    if (replace) {
+      window.history.replaceState(historyState, "", url);
+    } else {
+      window.history.pushState(historyState, "", url);
+    }
+    // Ensure new history entry has a scroll restoration key
+    ensureHistoryKey();
 
-      // Notify location state hooks when history state includes user state.
-      // Needed for same-page redirects where components don't remount and
-      // useState initializers don't re-run, even though history.state was updated.
-      if (
-        historyState &&
-        (Object.keys(historyState).some((k) => k.startsWith("__rsc_ls_")) ||
-          "state" in historyState)
-      ) {
-        window.dispatchEvent(new Event("__rsc_locationstate"));
-      }
+    // Notify location state hooks when history state includes user state.
+    // Needed for same-page redirects where components don't remount and
+    // useState initializers don't re-run, even though history.state was updated.
+    if (
+      historyState &&
+      (Object.keys(historyState).some((k) => k.startsWith("__rsc_ls_")) ||
+        "state" in historyState)
+    ) {
+      window.dispatchEvent(new Event("__rsc_locationstate"));
     }
 
     // Complete the navigation in event controller (sets idle state, updates location)
     handle.complete(parsedUrl);
 
-    // Handle scroll after navigation (skip if reconciliation)
-    if (!isReconciliation) {
-      handleNavigationEnd({ scroll });
-    }
+    // Handle scroll after navigation
+    handleNavigationEnd({ scroll });
 
-    if (isReconciliation) {
-      debugLog("[Browser] Reconciliation commit, historyKey:", historyKey);
-    } else {
-      debugLog(
-        "[Browser] Navigation committed, historyKey:",
-        historyKey,
-        intercept ? "(intercept)" : "",
-      );
-    }
+    debugLog(
+      "[Browser] Navigation committed, historyKey:",
+      historyKey,
+      intercept ? "(intercept)" : "",
+    );
   }
 
   return {
     handle,
-    optimisticCommit,
     commit,
 
     /**
@@ -432,27 +336,14 @@ export function createNavigationTransaction(
     },
 
     [Symbol.dispose]() {
-      // Superseded: another navigation took over. Roll back our early push
-      // so the new navigation starts from a clean history position.
-      // Guard: only rollback if our early-pushed state is still the current
-      // history entry. Compare by stamp (monotonic counter embedded in state)
-      // so that a newer navigation targeting the same URL is not clobbered.
+      // Superseded: another navigation took over.
       if (handle.signal.aborted) {
-        if (
-          earlyStatePushed &&
-          !committed &&
-          !optimisticallyCommitted &&
-          earlyStateStamp !== null &&
-          window.history.state?.__navStamp === earlyStateStamp
-        ) {
-          window.history.replaceState(currentHistoryState, "", currentUrl);
-        }
         return;
       }
 
       // Failed (not committed): keep the target URL -- the error UI owns it.
       // Just reset the event controller to idle.
-      if (!committed && !optimisticallyCommitted) {
+      if (!committed) {
         handle[Symbol.dispose]();
       }
     },

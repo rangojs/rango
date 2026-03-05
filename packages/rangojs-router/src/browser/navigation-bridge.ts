@@ -82,7 +82,7 @@ export function createNavigationBridge(
   return {
     /**
      * Navigate to a URL
-     * Uses optimistic rendering from cache when available (SWR pattern)
+     * Uses cached segments for SWR revalidation when available
      */
     async navigate(
       url: string,
@@ -170,7 +170,7 @@ export function createNavigationBridge(
       const interceptHistoryKey = generateHistoryKey(url, { intercept: true });
       const hasInterceptCache = store.hasHistoryCache(interceptHistoryKey);
 
-      // Skip optimistic rendering for:
+      // Skip cached SWR for:
       // 1. intercept caches - interception depends on source page context
       // 2. routes that CAN be intercepted - we don't know if this navigation will intercept
       // 3. when leaving intercept - we need fresh non-intercept segments from server
