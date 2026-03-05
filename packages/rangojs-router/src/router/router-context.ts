@@ -234,6 +234,7 @@ export interface RouterContext<TEnv = any> {
     nextUrl: URL,
     routeKey: string,
     actionContext?: any,
+    stale?: boolean,
   ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
 
   // Entry revalidation map

@@ -204,6 +204,11 @@ export function createDocumentCacheMiddleware<TEnv = any>(
   ): Promise<Response> {
     const url = ctx.url;
 
+    // Only cache GET requests — mutations and other methods must not be cached
+    if (ctx.request.method !== "GET") {
+      return next();
+    }
+
     // Skip RSC action requests (mutations shouldn't be cached)
     if (url.searchParams.has("_rsc_action")) {
       return next();
@@ -240,29 +245,29 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     const isPartial = url.searchParams.has("_rsc_partial");
     const typeLabel = isPartial ? "RSC" : "HTML";
 
-    // Generate cache key
-    // For partial requests, include hash of client segments to prevent serving
-    // wrong cached response when navigating from different pages with different layouts
-    const clientSegments = url.searchParams.get("_rsc_segments") || "";
-    const segmentHash =
-      isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
-    const typeSuffix = isPartial ? ":rsc" : ":html";
-
-    // Build sorted user-facing search params string for cache key scoping.
-    // Without this, /products?page=1 and /products?page=2 would share a cache entry.
-    let searchSuffix = "";
-    if (!keyGenerator) {
-      const sorted = sortedSearchString(url.searchParams);
-      if (sorted) {
-        searchSuffix = `?${sorted}`;
-      }
-    }
-
-    const cacheKey = keyGenerator
-      ? keyGenerator(url) + segmentHash + typeSuffix
-      : `${url.pathname}${searchSuffix}${segmentHash}${typeSuffix}`;
+    // Track whether next() has been called so the catch block knows
+    // whether it is safe to fall through to the handler.
+    let handlerCalled = false;
 
     try {
+      // Generate cache key inside try so a throwing keyGenerator degrades
+      // gracefully to the origin handler instead of rejecting the request.
+      const clientSegments = url.searchParams.get("_rsc_segments") || "";
+      const segmentHash =
+        isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
+      const typeSuffix = isPartial ? ":rsc" : ":html";
+
+      let searchSuffix = "";
+      if (!keyGenerator) {
+        const sorted = sortedSearchString(url.searchParams);
+        if (sorted) {
+          searchSuffix = `?${sorted}`;
+        }
+      }
+
+      const cacheKey = keyGenerator
+        ? keyGenerator(url) + segmentHash + typeSuffix
+        : `${url.pathname}${searchSuffix}${segmentHash}${typeSuffix}`;
       // 1. Check cache
       const cached = await store.getResponse(cacheKey);
 
@@ -307,6 +312,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       }
 
       // 2. Cache miss - run handler
+      handlerCalled = true;
       const originalResponse = await next();
 
       // 3. Cache if response has appropriate headers
@@ -317,8 +323,13 @@ export function createDocumentCacheMiddleware<TEnv = any>(
           `[DocumentCache] MISS ${typeLabel}: ${url.pathname} (caching with s-maxage=${directives.sMaxAge})`,
         );
 
+        // If the response has no body (e.g., 200 with empty body), skip caching
+        if (!originalResponse.body) {
+          return originalResponse;
+        }
+
         // Tee the body so we can return one stream and cache the other
-        const [returnStream, cacheStream] = originalResponse.body!.tee();
+        const [returnStream, cacheStream] = originalResponse.body.tee();
 
         // Clone response for caching (non-blocking)
         runBackground(requestCtx, async () => {
@@ -344,7 +355,12 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       return originalResponse;
     } catch (error) {
       console.error(`[DocumentCache] Error:`, error);
-      // On any cache error, fall through to handler
+      if (handlerCalled) {
+        // Post-handler failure (e.g. body.tee()): do not call next() again
+        // as that would re-run handler side effects.
+        throw error;
+      }
+      // Pre-handler failure (cache lookup): degrade gracefully to origin
       return next();
     }
   };

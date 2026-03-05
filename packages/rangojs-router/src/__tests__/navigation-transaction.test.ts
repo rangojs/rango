@@ -124,7 +124,7 @@ function createTestContext(href = "http://localhost/start") {
 }
 
 describe("createNavigationTransaction", () => {
-  it("pushes state to history immediately when state is provided", () => {
+  it("does not push state before commit", () => {
     const { store, eventController } = createTestContext();
 
     const tx = createNavigationTransaction(
@@ -134,36 +134,25 @@ describe("createNavigationTransaction", () => {
       { state: { productName: "Widget" } },
     );
 
-    expect(pushStateSpy).toHaveBeenCalledOnce();
-    expect(locationHref).toBe("http://localhost/target");
+    // No history change until commit
+    expect(pushStateSpy).not.toHaveBeenCalled();
+    expect(locationHref).toBe("http://localhost/start");
 
-    // Commit to prevent dispose from rolling back
     tx.commit({
       url: "http://localhost/target",
       segmentIds: [],
       segments: [],
+      state: { productName: "Widget" },
     });
-    tx[Symbol.dispose]();
-  });
 
-  it("does not push early state when replace is true", () => {
-    const { store, eventController } = createTestContext();
-
-    const tx = createNavigationTransaction(
-      store,
-      eventController,
-      "http://localhost/target",
-      { state: { productName: "Widget" }, replace: true },
-    );
-
-    // pushState should not have been called for early state
-    expect(pushStateSpy).not.toHaveBeenCalled();
-    expect(locationHref).toBe("http://localhost/start");
+    // Now the URL is updated
+    expect(pushStateSpy).toHaveBeenCalledOnce();
+    expect(locationHref).toBe("http://localhost/target");
 
     tx[Symbol.dispose]();
   });
 
-  it("keeps target URL on failed navigation — error UI owns it", () => {
+  it("URL stays at origin on failed navigation (no commit)", () => {
     const { store, eventController } = createTestContext();
 
     const tx = createNavigationTransaction(
@@ -173,17 +162,16 @@ describe("createNavigationTransaction", () => {
       { state: { productName: "Widget" } },
     );
 
-    expect(locationHref).toBe("http://localhost/target");
-
     // Dispose without committing (simulates navigation failure)
     tx[Symbol.dispose]();
 
-    // URL stays at target — the error UI is rendered for this destination
-    expect(locationHref).toBe("http://localhost/target");
+    // URL unchanged — no push happened
+    expect(locationHref).toBe("http://localhost/start");
+    expect(pushStateSpy).not.toHaveBeenCalled();
     expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
-  it("keeps target URL on failed navigation without state", () => {
+  it("URL stays at origin on failed navigation without state", () => {
     const { store, eventController } = createTestContext();
 
     const tx = createNavigationTransaction(
@@ -192,12 +180,10 @@ describe("createNavigationTransaction", () => {
       "http://localhost/target",
     );
 
-    // No early push without state — URL is still at start
     expect(locationHref).toBe("http://localhost/start");
 
     tx[Symbol.dispose]();
 
-    // URL unchanged — no early push happened
     expect(locationHref).toBe("http://localhost/start");
     expect(replaceStateSpy).not.toHaveBeenCalled();
   });
@@ -216,6 +202,7 @@ describe("createNavigationTransaction", () => {
       url: "http://localhost/target",
       segmentIds: ["root"],
       segments: [],
+      state: { productName: "Widget" },
     });
 
     replaceStateSpy.mockClear();
@@ -225,7 +212,7 @@ describe("createNavigationTransaction", () => {
     expect(locationHref).toBe("http://localhost/target");
   });
 
-  it("rolls back URL when superseded and new nav has not pushed yet", () => {
+  it("superseded navigation does not touch URL", () => {
     const { store, eventController } = createTestContext();
 
     const txA = createNavigationTransaction(
@@ -235,122 +222,55 @@ describe("createNavigationTransaction", () => {
       { state: { productName: "Widget" } },
     );
 
-    expect(locationHref).toBe("http://localhost/target-a");
+    // No early push — URL is still at start
+    expect(locationHref).toBe("http://localhost/start");
 
-    // Abort A (simulates the first thing navigate() does for B)
+    // Abort A (simulates newer navigation taking over)
     eventController.abortNavigation();
 
-    // B has NOT pushed yet — A still owns the URL
     txA[Symbol.dispose]();
 
-    // A correctly rolled back since URL was still its target
+    // URL unchanged — A never pushed
     expect(locationHref).toBe("http://localhost/start");
+    expect(pushStateSpy).not.toHaveBeenCalled();
+    expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
-  it("does not overwrite newer navigation's URL on superseded dispose", () => {
+  it("cacheOnly commit completes the navigation handle", () => {
     const { store, eventController } = createTestContext();
 
-    // Nav A starts with state — early pushes to target-a
-    const txA = createNavigationTransaction(
+    const tx = createNavigationTransaction(
       store,
       eventController,
-      "http://localhost/target-a",
-      { state: { from: "list" } },
+      "http://localhost/target",
+      { skipLoadingState: true, replace: true },
     );
-    expect(locationHref).toBe("http://localhost/target-a");
 
-    // Nav B aborts A and creates its own transaction with state.
-    // This mirrors the real navigate() flow: abort first, then create tx.
-    eventController.abortNavigation();
-    const txB = createNavigationTransaction(
+    // Before commit: navigation is in-flight
+    expect(eventController.getState().state).toBe("idle"); // skipLoadingState
+
+    tx.commit({
+      url: "http://localhost/target",
+      segmentIds: ["root"],
+      segments: [],
+      cacheOnly: true,
+    });
+    tx[Symbol.dispose]();
+
+    // After cacheOnly commit + dispose: navigation handle should be cleared
+    // (no dangling currentNavigation entry)
+    expect(eventController.getState().state).toBe("idle");
+    // Starting a new navigation should work without aborting a stale one
+    const tx2 = createNavigationTransaction(
       store,
       eventController,
-      "http://localhost/target-b",
-      { state: { from: "search" } },
+      "http://localhost/other",
     );
-    expect(locationHref).toBe("http://localhost/target-b");
-
-    // Now A's dispose fires (like the microtask-deferred using cleanup).
-    // It must NOT overwrite B's URL.
-    txA[Symbol.dispose]();
-    expect(locationHref).toBe("http://localhost/target-b");
-    // replaceState should not have been called for A's rollback
-    expect(replaceStateSpy).not.toHaveBeenCalled();
-
-    // Clean up B
-    txB.commit({
-      url: "http://localhost/target-b",
+    tx2.commit({
+      url: "http://localhost/other",
       segmentIds: ["root"],
       segments: [],
     });
-    txB[Symbol.dispose]();
-  });
-
-  it("does not clobber newer navigation when both target the same URL", () => {
-    const { store, eventController } = createTestContext();
-
-    // Nav A navigates to /product with state { view: "gallery" }
-    const txA = createNavigationTransaction(
-      store,
-      eventController,
-      "http://localhost/product",
-      { state: { view: "gallery" } },
-    );
-    expect(locationHref).toBe("http://localhost/product");
-
-    // Nav B aborts A and navigates to the SAME URL with different state.
-    // This happens when the user clicks a link to the same page but with
-    // different state (e.g., switching tabs on a product page).
-    eventController.abortNavigation();
-    const txB = createNavigationTransaction(
-      store,
-      eventController,
-      "http://localhost/product",
-      { state: { view: "details" } },
-    );
-    expect(locationHref).toBe("http://localhost/product");
-
-    // A's dispose fires. Without stamp-based ownership, A would see
-    // window.location.href === url and roll back, clobbering B's state.
-    txA[Symbol.dispose]();
-
-    // B's URL and state must survive
-    expect(locationHref).toBe("http://localhost/product");
-    // B's state should be the current history state (not A's or the original).
-    // buildHistoryState wraps plain objects as { state: <value> }.
-    expect(historyState).toHaveProperty("state");
-    expect(historyState.state).toEqual({ view: "details" });
-    // replaceState should NOT have been called for A's rollback
-    expect(replaceStateSpy).not.toHaveBeenCalled();
-
-    // Clean up B
-    txB.commit({
-      url: "http://localhost/product",
-      segmentIds: ["root"],
-      segments: [],
-    });
-    txB[Symbol.dispose]();
-  });
-
-  it("still rolls back superseded navigation when no newer push has happened", () => {
-    const { store, eventController } = createTestContext();
-
-    // Nav A navigates to /product with state
-    const txA = createNavigationTransaction(
-      store,
-      eventController,
-      "http://localhost/product",
-      { state: { view: "gallery" } },
-    );
-    expect(locationHref).toBe("http://localhost/product");
-
-    // Abort A, but do NOT start a new navigation that pushes state
-    eventController.abortNavigation();
-
-    // A's dispose fires — A's stamp is still in history.state, so rollback is valid
-    txA[Symbol.dispose]();
-
-    // Should roll back to the original URL
-    expect(locationHref).toBe("http://localhost/start");
+    tx2[Symbol.dispose]();
   });
 });

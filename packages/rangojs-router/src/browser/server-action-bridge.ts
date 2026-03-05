@@ -9,7 +9,6 @@ import {
   reconcileSegments,
   reconcileErrorSegments,
 } from "./segment-reconciler.js";
-import { classifyActionResponse } from "./action-response-classifier.js";
 import { startTransition } from "react";
 import type { EventController } from "./event-controller.js";
 import {
@@ -23,6 +22,13 @@ import {
   startBrowserTransaction,
 } from "./logging.js";
 import { validateRedirectOrigin } from "./validate-redirect-origin.js";
+import {
+  extractRscHeaderUrl,
+  emptyResponse,
+  teeWithCompletion,
+} from "./response-adapter.js";
+import { mergeLocationState } from "./history-state.js";
+import { classifyActionOutcome } from "./action-coordinator.js";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -110,7 +116,7 @@ export function createServerActionBridge(
         ...(src ? { intercept: true, interceptSourceUrl: src } : {}),
       }),
       {
-        isAction: true,
+        type: "action" as const,
         ...(src ? { interceptSourceUrl: src } : {}),
       },
     );
@@ -207,20 +213,16 @@ export function createServerActionBridge(
       // Response arrived — disconnect fetch abort from handle abort so
       // abortAllActions() doesn't disrupt the in-progress Flight stream.
       handle.signal.removeEventListener("abort", onHandleAbort);
+
       // Check for version mismatch - server wants us to reload
-      const rawReloadUrl = response.headers.get("X-RSC-Reload");
-      if (rawReloadUrl) {
-        const reloadUrl = validateRedirectOrigin(
-          rawReloadUrl,
-          window.location.origin,
-        );
-        if (!reloadUrl) {
-          resolveStreamComplete();
-          return new Response(null, { status: 200 });
-        }
-        log("version mismatch on action, reloading", { reloadUrl });
-        window.location.href = reloadUrl;
-        // Return a never-resolving promise to prevent further processing
+      const reload = extractRscHeaderUrl(response, "X-RSC-Reload");
+      if (reload === "blocked") {
+        resolveStreamComplete();
+        return emptyResponse();
+      }
+      if (reload) {
+        log("version mismatch on action, reloading", { reloadUrl: reload.url });
+        window.location.href = reload.url;
         return new Promise<Response>(() => {});
       }
 
@@ -228,31 +230,23 @@ export function createServerActionBridge(
       // Short-circuits before createFromFetch — no Flight deserialization needed.
       // Check handle.signal.aborted to avoid redirecting from a stale action
       // when the user has already navigated away.
-      const rawSimpleRedirectUrl = response.headers.get("X-RSC-Redirect");
-      if (rawSimpleRedirectUrl && !handle.signal.aborted) {
-        const simpleRedirectUrl = validateRedirectOrigin(
-          rawSimpleRedirectUrl,
-          window.location.origin,
-        );
-        if (!simpleRedirectUrl) {
-          resolveStreamComplete();
-          return new Response(null, { status: 200 });
-        }
-        if (tx) {
-          browserDebugLog(tx, "action simple redirect", {
-            url: simpleRedirectUrl,
-          });
-        }
+      const redirect = extractRscHeaderUrl(response, "X-RSC-Redirect");
+      if (redirect && redirect !== "blocked" && !handle.signal.aborted) {
+        log("action simple redirect", { url: redirect.url });
         handle.complete(undefined);
         if (onNavigate) {
-          await onNavigate(simpleRedirectUrl, {
+          await onNavigate(redirect.url, {
             replace: true,
             _skipCache: true,
           });
         } else {
-          window.location.href = simpleRedirectUrl;
+          window.location.href = redirect.url;
         }
         return new Promise<Response>(() => {});
+      }
+      if (redirect === "blocked") {
+        resolveStreamComplete();
+        return emptyResponse();
       }
 
       // Start streaming immediately when response arrives
@@ -260,42 +254,10 @@ export function createServerActionBridge(
         streamingToken = handle.startStreaming();
       }
 
-      if (!response.body) {
-        // No body means stream is already complete
+      return teeWithCompletion(response, () => {
+        log("stream complete");
         streamingToken?.end();
         resolveStreamComplete();
-        return response;
-      }
-
-      // Tee the stream: one for RSC runtime, one for tracking completion
-      const [rscStream, trackingStream] = response.body.tee();
-
-      // Consume the tracking stream to detect when it closes
-      (async () => {
-        const reader = trackingStream.getReader();
-        try {
-          while (true) {
-            const { done } = await reader.read();
-            if (done) break;
-          }
-        } finally {
-          reader.releaseLock();
-          log("stream complete");
-          streamingToken?.end();
-          resolveStreamComplete();
-        }
-      })().catch((error) => {
-        if (!handle.signal.aborted) {
-          console.error("[STREAMING] Error reading tracking stream:", error);
-        }
-        streamingToken?.end();
-      });
-
-      // Return response with the RSC stream
-      return new Response(rscStream, {
-        headers: response.headers,
-        status: response.status,
-        statusText: response.statusText,
       });
     });
 
@@ -527,20 +489,17 @@ export function createServerActionBridge(
     }
 
     // Classify the post-reconciliation scenario
-    const consolidationSegments = handle.getConsolidationSegments();
-    const otherFetchingActions = [
-      ...eventController.getInflightActions().values(),
-    ].filter((a) => a.phase === "fetching" && a.id !== handle.id);
-
-    const scenario = classifyActionResponse({
+    const scenario = classifyActionOutcome({
+      handleId: handle.id,
+      inflightActions: eventController.getInflightActions(),
+      hadAnyConcurrentActions: eventController.hadAnyConcurrentActions(),
+      revalidatedSegments: handle.getRevalidatedSegments(),
       actionStartPathname,
       currentPathname: window.location.pathname,
       actionStartLocationKey: locationKey,
       currentLocationKey: window.history.state?.key,
       reconciledSegmentCount: fullSegments.length,
       matchedCount: matched.length,
-      consolidationSegments: consolidationSegments || null,
-      otherFetchingActionCount: otherFetchingActions.length,
       currentInterceptSource: store.getInterceptSourceUrl(),
     });
 
@@ -650,19 +609,7 @@ export function createServerActionBridge(
         // Apply server-set location state to history.state (non-redirect flow)
         const actionLocationState = metadata?.locationState;
         if (actionLocationState) {
-          const merged = {
-            ...window.history.state,
-            ...actionLocationState,
-          };
-          window.history.replaceState(merged, "", window.location.href);
-          // Notify useLocationState hooks so they re-read from history.state
-          if (
-            Object.keys(actionLocationState).some((k) =>
-              k.startsWith("__rsc_ls_"),
-            )
-          ) {
-            window.dispatchEvent(new Event("__rsc_locationstate"));
-          }
+          mergeLocationState(actionLocationState);
         }
 
         // Update store state

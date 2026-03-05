@@ -384,10 +384,12 @@ export async function resolveInterceptLoadersOnly<TEnv>(
     return null;
   }
 
-  const loaderDataPromise =
-    interceptEntry.loading !== undefined
-      ? Promise.all(loaderPromises)
-      : await Promise.all(loaderPromises);
+  // Match fresh-path semantics: only defer (no await) when loading is truthy.
+  // `loading: false` means "no loading UI, await loaders before render" —
+  // same as the fresh path's `if (interceptEntry.loading && ...)` check.
+  const loaderDataPromise = interceptEntry.loading
+    ? Promise.all(loaderPromises)
+    : await Promise.all(loaderPromises);
 
   return { loaderDataPromise, loaderIds };
 }
