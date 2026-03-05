@@ -166,6 +166,7 @@ export const router = createRouter<AppEnv>({
   cache: { store: cacheStore },
   cacheProfiles: {
     short: { ttl: 10, swr: 20 },
+    "swr-test": { ttl: 2, swr: 60 },
   },
   prefetchCacheControl: "private, max-age=60",
   theme: {
