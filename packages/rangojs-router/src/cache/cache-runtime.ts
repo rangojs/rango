@@ -77,11 +77,22 @@ interface HandleCapture {
   data: Record<string, SegmentHandleData>;
 }
 
-function startHandleCapture(handleStore: HandleStore): HandleCapture {
+/**
+ * Start capturing handle pushes for a cached function execution.
+ *
+ * Uses a save/restore pattern instead of monkey-patching with delete.
+ * Since HandleStore.push is an own property (not on a prototype),
+ * we save the previous push and wrap it. stopHandleCapture restores
+ * the saved reference. This is safe for nested/concurrent captures
+ * because each start/stop pair saves and restores its own predecessor.
+ */
+function startHandleCapture(handleStore: HandleStore): {
+  capture: HandleCapture;
+  stop: () => void;
+} {
   const capture: HandleCapture = { data: {} };
-  const originalPush = handleStore.push.bind(handleStore);
+  const previousPush = handleStore.push.bind(handleStore);
 
-  // Intercept push() calls to record them
   handleStore.push = (
     handleName: string,
     segmentId: string,
@@ -94,20 +105,17 @@ function startHandleCapture(handleStore: HandleStore): HandleCapture {
       capture.data[segmentId][handleName] = [];
     }
     capture.data[segmentId][handleName].push(value);
-    // Still call the original so the data flows through normally
-    originalPush(handleName, segmentId, value);
+    // Still call through so the data flows to the store (and any outer capture)
+    previousPush(handleName, segmentId, value);
   };
 
-  return capture;
-}
-
-function stopHandleCapture(
-  handleStore: HandleStore,
-  _capture: HandleCapture,
-): void {
-  // Restore original push by deleting the override
-  // (the original is on the prototype/closure, our override is an own property)
-  delete (handleStore as any).push;
+  return {
+    capture,
+    stop() {
+      // Restore the previous push (which may be the original or an outer capture)
+      handleStore.push = previousPush;
+    },
+  };
 }
 
 // ============================================================================
@@ -265,8 +273,11 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // Cache miss: execute, serialize, store
     const handleStore = hasTaintedArgs ? requestCtx?._handleStore : undefined;
     let capture: HandleCapture | undefined;
+    let stopCapture: (() => void) | undefined;
     if (handleStore && hasTaintedArgs) {
-      capture = startHandleCapture(handleStore);
+      const c = startHandleCapture(handleStore);
+      capture = c.capture;
+      stopCapture = c.stop;
     }
 
     // Stamp tainted args so ctx.set(), ctx.header(), etc. throw if called
@@ -296,10 +307,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       if (hasTaintedArgs && requestCtx) {
         delete (requestCtx as any)[INSIDE_CACHE_EXEC];
       }
-    }
-
-    if (capture && handleStore) {
-      stopHandleCapture(handleStore, capture);
+      // Restore handle store push (safe for nested captures — LIFO order)
+      stopCapture?.();
     }
 
     // Serialize and store — fully non-blocking when waitUntil is available.
