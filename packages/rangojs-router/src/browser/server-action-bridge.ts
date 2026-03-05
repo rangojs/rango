@@ -115,7 +115,7 @@ export function createServerActionBridge(
         ...(src ? { intercept: true, interceptSourceUrl: src } : {}),
       }),
       {
-        isAction: true,
+        type: "action" as const,
         ...(src ? { interceptSourceUrl: src } : {}),
       },
     );
