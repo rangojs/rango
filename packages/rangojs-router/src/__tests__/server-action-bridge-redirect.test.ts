@@ -181,8 +181,12 @@ function createMockEventController() {
  */
 function createMockDeps(
   payload: RscPayload,
-  sideEffect?: () => void | Promise<void>,
+  opts?: {
+    sideEffect?: () => void | Promise<void>;
+    responseHeaders?: Record<string, string>;
+  },
 ) {
+  const sideEffect = opts?.sideEffect;
   let actionCallback: ((id: string, args: any[]) => Promise<any>) | null = null;
 
   vi.stubGlobal(
@@ -191,7 +195,10 @@ function createMockDeps(
       Promise.resolve(
         new Response(null, {
           status: 200,
-          headers: { "content-type": "text/x-component" },
+          headers: {
+            "content-type": "text/x-component",
+            ...opts?.responseHeaders,
+          },
         }),
       ),
     ),
@@ -358,9 +365,11 @@ describe("server-action-bridge payload redirect origin validation", () => {
     // for aborted-during-fetch via the catch block; the new bailout
     // guards the post-deserialization path. Both paths must avoid
     // store mutations and UI updates.
-    const { deps, getActionCallback } = createMockDeps(payload, async () => {
-      await Promise.resolve();
-      abortCtrl.abort();
+    const { deps, getActionCallback } = createMockDeps(payload, {
+      sideEffect: async () => {
+        await Promise.resolve();
+        abortCtrl.abort();
+      },
     });
 
     const bridge = createServerActionBridge({
@@ -500,5 +509,59 @@ describe("server-action-bridge error path race guard", () => {
     expect(onUpdate).not.toHaveBeenCalled();
     expect(store.setSegmentIds).not.toHaveBeenCalled();
     expect(store.cacheSegmentsForHistory).not.toHaveBeenCalled();
+  });
+});
+
+describe("server-action-bridge header redirect abort safety", () => {
+  let locationHrefSetter: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    ({ locationHrefSetter } = setupWindow());
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+  });
+
+  it("does not navigate on X-RSC-Redirect when handle is aborted", async () => {
+    const store = createMockStore();
+    const { controller, completeFn, abortCtrl } = createMockEventController();
+    const onNavigate = vi.fn();
+
+    // Payload has no redirect — the redirect comes via response header.
+    // After the header redirect is skipped (aborted), createFromFetch
+    // resolves with this minimal payload that triggers the abort bailout.
+    const payload: RscPayload = {
+      metadata: { isPartial: true, matched: ["root"], diff: [], segments: [] },
+      returnValue: { ok: true, data: "ignored" },
+    } as any;
+
+    // Abort synchronously during createFromFetch so that by the time the
+    // fetch .then() microtask runs, handle.signal.aborted is already true.
+    const { deps, getActionCallback } = createMockDeps(payload, {
+      sideEffect: () => {
+        abortCtrl.abort();
+      },
+      responseHeaders: { "X-RSC-Redirect": "/should-not-navigate" },
+    });
+
+    const bridge = createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: controller as any,
+      deps,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(),
+      onNavigate,
+    });
+    bridge.register();
+
+    await getActionCallback()("test-action", []);
+
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(completeFn).not.toHaveBeenCalled();
+    expect(locationHrefSetter).not.toHaveBeenCalled();
   });
 });
