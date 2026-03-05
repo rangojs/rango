@@ -300,12 +300,8 @@ describe("segment cache key generation", () => {
         set: vi.fn(),
       };
 
-      mock_getRequestContext.mockReturnValue(
-        makeRequestContext(""),
-      );
-      mockGetRequestContext.mockReturnValue(
-        makeRequestContext(""),
-      );
+      mock_getRequestContext.mockReturnValue(makeRequestContext(""));
+      mockGetRequestContext.mockReturnValue(makeRequestContext(""));
 
       const scope = new CacheScope({
         store,
