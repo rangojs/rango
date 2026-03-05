@@ -181,6 +181,14 @@ export function createServerActionBridge(
     // Track streaming token - will be set when response arrives
     let streamingToken: { end(): void } | null = null;
 
+    // Use a dedicated abort controller for the fetch so we can cancel network
+    // I/O without disrupting the Flight stream once the response has arrived.
+    // Aborting a response mid-stream causes React's Flight decoder to throw
+    // asynchronous unhandled errors (BodyStreamBuffer was aborted).
+    const fetchAbort = new AbortController();
+    const onHandleAbort = () => fetchAbort.abort();
+    handle.signal.addEventListener("abort", onHandleAbort, { once: true });
+
     // Send action request with stream tracking
     const responsePromise = fetch(url, {
       method: "POST",
@@ -194,8 +202,11 @@ export function createServerActionBridge(
         }),
       },
       body: encodedBody,
-      signal: handle.signal,
+      signal: fetchAbort.signal,
     }).then(async (response) => {
+      // Response arrived — disconnect fetch abort from handle abort so
+      // abortAllActions() doesn't disrupt the in-progress Flight stream.
+      handle.signal.removeEventListener("abort", onHandleAbort);
       // Check for version mismatch - server wants us to reload
       const reloadUrl = response.headers.get("X-RSC-Reload");
       if (reloadUrl) {
@@ -266,7 +277,9 @@ export function createServerActionBridge(
           resolveStreamComplete();
         }
       })().catch((error) => {
-        console.error("[STREAMING] Error reading tracking stream:", error);
+        if (!handle.signal.aborted) {
+          console.error("[STREAMING] Error reading tracking stream:", error);
+        }
         streamingToken?.end();
       });
 
@@ -295,7 +308,9 @@ export function createServerActionBridge(
       // Silently swallow abort errors — the action was intentionally cancelled
       // (e.g., user navigated away or abortAllActions was called).
       // Return undefined instead of throwing to avoid surfacing as a page error.
-      if (error instanceof DOMException && error.name === "AbortError") {
+      // Check both DOMException AbortError and stream-level abort messages
+      // (BodyStreamBuffer was aborted) that propagate from the aborted fetch.
+      if (handle.signal.aborted) {
         return undefined;
       }
 
