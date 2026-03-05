@@ -11,6 +11,11 @@ import type {
   StreamingToken,
 } from "./types.js";
 import { filterSegmentOrder } from "./react/filter-segment-order.js";
+import {
+  classifyActionResponse,
+  type ActionScenario,
+  type ClassifierInput,
+} from "./action-response-classifier.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -162,7 +167,25 @@ export interface ActionHandle extends Disposable {
   getConsolidationSegments(): string[] | null;
   /** Clear consolidation tracking */
   clearConsolidation(): void;
+  /** Classify this action's response into a post-reconciliation scenario */
+  classify(input: ActionClassifyInput): ActionScenario;
 }
+
+/**
+ * Bridge-provided fields for action response classification.
+ * The handle adds consolidation segments and other-fetching-action count internally.
+ */
+export interface ActionClassifyInput {
+  actionStartPathname: string;
+  currentPathname: string;
+  actionStartLocationKey: string | undefined;
+  currentLocationKey: string | undefined;
+  reconciledSegmentCount: number;
+  matchedCount: number;
+  currentInterceptSource: string | null;
+}
+
+export type { ActionScenario };
 
 /**
  * Event controller interface
@@ -693,6 +716,19 @@ export function createEventController(
       clearConsolidation() {
         concurrentRevalidatedSegments.clear();
         hadAnyConcurrentActions = false;
+      },
+
+      classify(input: ActionClassifyInput): ActionScenario {
+        const consolidationSegments = this.getConsolidationSegments();
+        const otherFetchingActionCount = [...inflightActions.values()].filter(
+          (a) => a.phase === "fetching" && a.id !== id,
+        ).length;
+
+        return classifyActionResponse({
+          ...input,
+          consolidationSegments: consolidationSegments || null,
+          otherFetchingActionCount,
+        });
       },
 
       // Disposable: cleanup if not settled (e.g., error thrown without calling fail)

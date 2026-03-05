@@ -9,7 +9,6 @@ import {
   reconcileSegments,
   reconcileErrorSegments,
 } from "./segment-reconciler.js";
-import { classifyActionResponse } from "./action-response-classifier.js";
 import { startTransition } from "react";
 import type { EventController } from "./event-controller.js";
 import {
@@ -489,20 +488,13 @@ export function createServerActionBridge(
     }
 
     // Classify the post-reconciliation scenario
-    const consolidationSegments = handle.getConsolidationSegments();
-    const otherFetchingActions = [
-      ...eventController.getInflightActions().values(),
-    ].filter((a) => a.phase === "fetching" && a.id !== handle.id);
-
-    const scenario = classifyActionResponse({
+    const scenario = handle.classify({
       actionStartPathname,
       currentPathname: window.location.pathname,
       actionStartLocationKey: locationKey,
       currentLocationKey: window.history.state?.key,
       reconciledSegmentCount: fullSegments.length,
       matchedCount: matched.length,
-      consolidationSegments: consolidationSegments || null,
-      otherFetchingActionCount: otherFetchingActions.length,
       currentInterceptSource: store.getInterceptSourceUrl(),
     });
 
