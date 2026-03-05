@@ -54,9 +54,4 @@ export {
 export { generateThemeScript, getNonceAttribute } from "./theme-script.js";
 
 // Context (for advanced use cases)
-export {
-  ThemeContext,
-  useThemeContext,
-  initThemeConfigSync,
-  getSSRThemeConfig,
-} from "./theme-context.js";
+export { ThemeContext, useThemeContext } from "./theme-context.js";

@@ -10,7 +10,7 @@
  */
 
 import { createContext, useContext, type Context } from "react";
-import type { ResolvedThemeConfig, ThemeContextValue } from "./types.js";
+import type { ThemeContextValue } from "./types.js";
 
 /**
  * React context for theme state
@@ -18,33 +18,6 @@ import type { ResolvedThemeConfig, ThemeContextValue } from "./types.js";
  */
 export const ThemeContext: Context<ThemeContextValue | null> =
   createContext<ThemeContextValue | null>(null);
-
-/**
- * SSR module-level state for theme config.
- * Populated by initThemeConfigSync before React renders.
- * Used by MetaTags during SSR to render the theme script.
- */
-let ssrThemeConfig: ResolvedThemeConfig | null = null;
-
-/**
- * Initialize theme config synchronously for SSR.
- * Called before rendering to populate state for MetaTags.
- *
- * @param config - Theme config from router, or null if theme is disabled
- */
-export function initThemeConfigSync(config: ResolvedThemeConfig | null): void {
-  ssrThemeConfig = config;
-}
-
-/**
- * Get theme config for SSR/hydration.
- * Used by MetaTags to render the theme script.
- *
- * @returns Theme config if available, null otherwise
- */
-export function getSSRThemeConfig(): ResolvedThemeConfig | null {
-  return ssrThemeConfig;
-}
 
 /**
  * Get theme context (internal use)

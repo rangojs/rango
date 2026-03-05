@@ -235,31 +235,34 @@ export const Link: ForwardRefExoticComponent<
         return;
       }
 
+      // No navigation context (outside provider): fall back to native navigation.
+      if (!ctx?.navigate) {
+        return;
+      }
+
       // Prevent default and use SPA navigation
       e.preventDefault();
       // Stop propagation to prevent link-interceptor from also handling this
       e.stopPropagation();
 
-      if (ctx?.navigate) {
-        const currentState = stateRef.current;
-        let resolvedState: unknown;
+      const currentState = stateRef.current;
+      let resolvedState: unknown;
 
-        if (
-          Array.isArray(currentState) &&
-          currentState.length > 0 &&
-          isLocationStateEntry(currentState[0])
-        ) {
-          resolvedState = resolveLocationStateEntries(
-            currentState as LocationStateEntry[],
-          );
-        } else if (typeof currentState === "function") {
-          resolvedState = currentState();
-        } else if (currentState != null) {
-          resolvedState = currentState;
-        }
-
-        ctx.navigate(to, { replace, scroll, state: resolvedState });
+      if (
+        Array.isArray(currentState) &&
+        currentState.length > 0 &&
+        isLocationStateEntry(currentState[0])
+      ) {
+        resolvedState = resolveLocationStateEntries(
+          currentState as LocationStateEntry[],
+        );
+      } else if (typeof currentState === "function") {
+        resolvedState = currentState();
+      } else if (currentState != null) {
+        resolvedState = currentState;
       }
+
+      ctx.navigate(to, { replace, scroll, state: resolvedState });
     },
     [to, isExternal, reloadDocument, replace, scroll, ctx, onClick],
   );

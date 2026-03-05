@@ -1,8 +1,6 @@
 import React from "react";
 import { renderSegments } from "../segment-system.js";
-import { initHandleDataSync } from "../browser/react/use-handle.js";
-import { initSegmentsSync } from "../browser/react/use-segments.js";
-import { initThemeConfigSync } from "../theme/theme-context.js";
+import { filterSegmentOrder } from "../browser/react/filter-segment-order.js";
 import { ThemeProvider } from "../theme/ThemeProvider.js";
 import { NavigationStoreContext } from "../browser/react/context.js";
 import type { NavigationStoreContextValue } from "../browser/react/context.js";
@@ -139,8 +137,18 @@ async function consumeAsyncGenerator(
  * Create a minimal event controller for SSR.
  * This provides the correct pathname so useNavigation returns the right value during SSR.
  */
-function createSsrEventController(pathname: string): EventController {
-  const location = new URL(pathname, "http://localhost");
+function createSsrEventController(opts: {
+  pathname: string;
+  params?: Record<string, string>;
+  handleData?: HandleData;
+  matched?: string[];
+}): EventController {
+  const location = new URL(opts.pathname, "http://localhost");
+  let params = opts.params ?? {};
+  const handleState = {
+    data: opts.handleData ?? {},
+    segmentOrder: filterSegmentOrder(opts.matched ?? []),
+  };
   const state: DerivedNavigationState = {
     state: "idle",
     isStreaming: false,
@@ -163,9 +171,11 @@ function createSsrEventController(pathname: string): EventController {
     subscribeToAction: () => () => {},
     subscribeToHandles: () => () => {},
     setHandleData: () => {},
-    getHandleState: () => ({ data: {}, segmentOrder: [] }),
-    setParams: () => {},
-    getParams: () => ({}),
+    getHandleState: () => handleState,
+    setParams: (nextParams) => {
+      params = nextParams;
+    },
+    getParams: () => params,
     setLocation: () => {},
     startNavigation: () => {
       throw new Error("Navigation not supported during SSR");
@@ -233,33 +243,28 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       function SsrRoot() {
         payload ??= createFromReadableStream<RscPayload>(rscStream1);
         const resolved = React.use(payload);
-
-        // Initialize segments state before children render (for useSegments hook)
-        initSegmentsSync(
-          resolved.metadata?.matched,
-          resolved.metadata?.pathname,
-          resolved.metadata?.params,
-        );
-
-        // Initialize theme config for MetaTags to render theme script
         const themeConfig = resolved.metadata?.themeConfig ?? null;
-        initThemeConfigSync(themeConfig);
+        const pathname = resolved.metadata?.pathname ?? "/";
 
-        // Await handles and initialize state before children render
+        // Await handles before creating SSR event controller so hooks can
+        // read request-local handle data via NavigationStoreContext.
         // The handles property is an async generator that yields on each push
         // Memoize the promise since async generators can only be iterated once
+        let handleData: HandleData = {};
         if (resolved.metadata?.handles) {
           handlesPromise ??= consumeAsyncGenerator(resolved.metadata.handles);
-          const handleData = React.use(handlesPromise);
-          initHandleDataSync(handleData, resolved.metadata.matched);
+          handleData = React.use(handlesPromise);
         }
 
-        // Create SSR context with correct pathname for useNavigation
+        // Create SSR context with request-local pathname/params/handles.
         ssrContextValue ??= {
           store: null as any,
-          eventController: createSsrEventController(
-            resolved.metadata?.pathname ?? "/",
-          ),
+          eventController: createSsrEventController({
+            pathname,
+            params: resolved.metadata?.params,
+            handleData,
+            matched: resolved.metadata?.matched,
+          }),
           navigate: async () => {},
           refresh: async () => {},
           version: resolved.metadata?.version,

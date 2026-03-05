@@ -73,35 +73,35 @@ describe("useParams", () => {
     stateIndex = 0;
   });
 
-  it("returns full params via effect sync (SSR initial, then client update)", () => {
+  it("returns full params from event controller on initial render", () => {
     const ec = createMockEventController();
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
-    useParams();
+    const result = useParams();
     const setValue = stateSlots[0][1];
 
-    // Initial render returns SSR params (empty in Node.js).
-    // Run effect to trigger the initial sync which calls update().
-    capturedEffectFn!();
-
-    // The effect's initial sync should set client params
-    expect(setValue).toHaveBeenCalledWith({
+    expect(result).toEqual({
       productId: "123",
       slug: "test-item",
     });
+
+    // Effect sync sees no change and should not enqueue an update.
+    capturedEffectFn!();
+    expect(setValue).not.toHaveBeenCalled();
   });
 
-  it("applies selector via effect sync", () => {
+  it("applies selector on initial render", () => {
     const ec = createMockEventController();
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
-    useParams((p) => p.productId);
+    const result = useParams((p) => p.productId);
     const setValue = stateSlots[0][1];
 
-    // Run effect to trigger initial sync
-    capturedEffectFn!();
+    expect(result).toBe("123");
 
-    expect(setValue).toHaveBeenCalledWith("123");
+    // Effect sync sees no change and should not enqueue an update.
+    capturedEffectFn!();
+    expect(setValue).not.toHaveBeenCalled();
   });
 
   it("subscribes to event controller with empty dependency array", () => {
