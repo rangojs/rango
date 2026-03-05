@@ -28,7 +28,7 @@ import { use } from "react";
 import { useHandle } from "../browser/react/use-handle.js";
 import { Meta } from "./meta.js";
 import type { MetaDescriptor, MetaDescriptorBase } from "../router/types.js";
-import { getSSRThemeConfig } from "../theme/theme-context.js";
+import { useThemeContext } from "../theme/theme-context.js";
 import { generateThemeScript } from "../theme/theme-script.js";
 
 // Type guards for MetaDescriptorBase variants
@@ -216,7 +216,7 @@ function AsyncMetaTag({
  */
 export function MetaTags(): React.ReactNode {
   const descriptors = useHandle(Meta) as MetaDescriptor[];
-  const themeConfig = getSSRThemeConfig();
+  const themeConfig = useThemeContext()?.config ?? null;
 
   return (
     <>

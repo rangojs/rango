@@ -11,12 +11,7 @@ import { createEventController } from "./event-controller.js";
 import { createNavigationClient } from "./navigation-client.js";
 import { createServerActionBridge } from "./server-action-bridge.js";
 import { createNavigationBridge } from "./navigation-bridge.js";
-import {
-  NavigationProvider,
-  initHandleDataSync,
-  initSegmentsSync,
-} from "./react/index.js";
-import { initThemeConfigSync } from "../theme/theme-context.js";
+import { NavigationProvider } from "./react/index.js";
 import type {
   RscPayload,
   RscBrowserDependencies,
@@ -169,16 +164,6 @@ export async function initBrowserApp(
     initialLocation: new URL(window.location.href),
   });
 
-  // Initialize segments state BEFORE hydration to avoid mismatch
-  initSegmentsSync(
-    initialPayload.metadata?.matched,
-    initialPayload.metadata?.pathname,
-    initialPayload.metadata?.params,
-  );
-
-  // Initialize theme config for MetaTags (must match SSR state)
-  initThemeConfigSync(effectiveThemeConfig);
-
   // Initialize event controller with segment order (even without handles)
   eventController.setHandleData({}, initialPayload.metadata?.matched);
 
@@ -194,12 +179,11 @@ export async function initBrowserApp(
     for await (const handleData of handlesGenerator) {
       lastHandleData = handleData;
     }
-    // Initialize both event controller AND module-level SSR state for hydration compatibility
+    // Initialize event controller with initial handle state before hydration.
     eventController.setHandleData(
       lastHandleData,
       initialPayload.metadata?.matched,
     );
-    initHandleDataSync(lastHandleData, initialPayload.metadata?.matched);
 
     // Update the initial cache entry with the processed handleData
     // The cache entry was created by createNavigationStore but without handleData

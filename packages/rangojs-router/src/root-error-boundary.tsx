@@ -109,6 +109,8 @@ function RootErrorFallback({
   error,
   reset,
 }: ClientErrorBoundaryFallbackProps): ReactNode {
+  const isDev = process.env.NODE_ENV !== "production";
+
   return (
     <div
       style={{
@@ -135,38 +137,40 @@ function RootErrorFallback({
       >
         An unexpected error occurred while processing your request.
       </p>
-      <div
-        style={{
-          background: "#fef2f2",
-          border: "1px solid #fecaca",
-          borderRadius: "0.5rem",
-          padding: "1rem",
-          marginBottom: "1rem",
-        }}
-      >
-        <p
+      {isDev && (
+        <div
           style={{
-            fontWeight: 600,
-            color: "#991b1b",
-            marginBottom: "0.5rem",
+            background: "#fef2f2",
+            border: "1px solid #fecaca",
+            borderRadius: "0.5rem",
+            padding: "1rem",
+            marginBottom: "1rem",
           }}
         >
-          {error.name}: {error.message}
-        </p>
-        {error.stack && (
-          <pre
+          <p
             style={{
-              fontSize: "0.75rem",
-              color: "#6b7280",
-              overflow: "auto",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
+              fontWeight: 600,
+              color: "#991b1b",
+              marginBottom: "0.5rem",
             }}
           >
-            {error.stack}
-          </pre>
-        )}
-      </div>
+            {error.name}: {error.message}
+          </p>
+          {error.stack && (
+            <pre
+              style={{
+                fontSize: "0.75rem",
+                color: "#6b7280",
+                overflow: "auto",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {error.stack}
+            </pre>
+          )}
+        </div>
+      )}
       <div style={{ display: "flex", gap: "1rem" }}>
         <button
           type="button"

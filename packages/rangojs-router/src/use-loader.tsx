@@ -88,6 +88,7 @@ function useLoaderInternal<T>(
   const [fetchedData, setFetchedData] = useState<T | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const requestIdRef = useRef(0);
 
   // Track context data changes to reset fetched data on navigation
   const prevContextDataRef = useRef(contextData);
@@ -118,6 +119,7 @@ function useLoaderInternal<T>(
   // Supports GET (data fetching) and POST/PUT/PATCH/DELETE (mutations).
   const load = useCallback(
     async (loadOptions?: LoadOptions): Promise<T> => {
+      const requestId = ++requestIdRef.current;
       const loaderId = loaderIdRef.current;
       // Verify the loader has $$id
       if (!loaderId) {
@@ -212,11 +214,15 @@ function useLoaderInternal<T>(
         }
 
         const result = payload.loaderResult;
-        setFetchedData(result);
+        if (requestId === requestIdRef.current) {
+          setFetchedData(result);
+        }
         return result;
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
-        setError(err);
+        if (requestId === requestIdRef.current) {
+          setError(err);
+        }
         if (throwOnError) {
           throw err;
         }
@@ -224,7 +230,9 @@ function useLoaderInternal<T>(
         // successful value or undefined). Caller should check error state.
         return dataRef.current as T;
       } finally {
-        setIsLoading(false);
+        if (requestId === requestIdRef.current) {
+          setIsLoading(false);
+        }
       }
     },
     [throwOnError],

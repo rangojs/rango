@@ -12,16 +12,7 @@ import type { Handle } from "../../handle.js";
 import { getCollectFn } from "../../handle.js";
 import type { HandleData } from "../types.js";
 import { NavigationStoreContext } from "./context.js";
-import { filterSegmentOrder } from "./filter-segment-order.js";
 import { shallowEqual } from "./shallow-equal.js";
-
-/**
- * SSR module-level state.
- * Populated by initHandleDataSync before React renders.
- * Used by useState initializer during SSR.
- */
-let ssrHandleData: HandleData = {};
-let ssrSegmentOrder: string[] = [];
 
 /**
  * Resolve the collect function for a handle.
@@ -77,18 +68,6 @@ function collectHandle<T, A>(
 }
 
 /**
- * Initialize handle data synchronously for SSR.
- * Called before rendering to populate state for useState initializer.
- *
- * @param data - Handle data from RSC payload
- * @param matched - Segment order for reduction
- */
-export function initHandleDataSync(data: HandleData, matched?: string[]): void {
-  ssrHandleData = data;
-  ssrSegmentOrder = filterSegmentOrder(matched ?? []);
-}
-
-/**
  * Hook to access collected handle data.
  *
  * Returns the collected value from all route segments that pushed to this handle.
@@ -117,11 +96,10 @@ export function useHandle<T, A, S>(
 ): A | S {
   const ctx = useContext(NavigationStoreContext);
 
-  // Initial state from SSR module state or event controller
+  // Initial state from context event controller, or empty fallback without provider.
   const [value, setValue] = useState<A | S>(() => {
-    // During SSR, use module-level state
-    if (typeof document === "undefined" || !ctx) {
-      const collected = collectHandle(handle, ssrHandleData, ssrSegmentOrder);
+    if (!ctx) {
+      const collected = collectHandle(handle, {}, []);
       return selector ? selector(collected) : collected;
     }
 

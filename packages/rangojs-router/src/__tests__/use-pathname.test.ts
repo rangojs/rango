@@ -64,18 +64,18 @@ describe("usePathname", () => {
     stateIndex = 0;
   });
 
-  it("syncs pathname from event controller via effect", () => {
+  it("initializes pathname from event controller", () => {
     const ec = createMockEventController("/shop/items");
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
-    usePathname();
+    const result = usePathname();
     const setPathname = stateSlots[0][1];
 
-    // Initial render returns SSR pathname (/ in Node.js).
-    // Run effect to trigger initial sync.
-    capturedEffectFn!();
+    expect(result).toBe("/shop/items");
 
-    expect(setPathname).toHaveBeenCalledWith("/shop/items");
+    // Effect sync sees no change and should not enqueue an update.
+    capturedEffectFn!();
+    expect(setPathname).not.toHaveBeenCalled();
   });
 
   it("subscribes with empty dependency array", () => {

@@ -423,10 +423,10 @@ import { useLoader } from "@rangojs/router/client";
 import { BlogSidebarLoader } from "./loaders/blog";
 
 function BlogSidebar() {
-  const { posts } = useLoader(BlogSidebarLoader);
+  const { data } = useLoader(BlogSidebarLoader);
   return (
     <ul>
-      {posts.map((p) => (
+      {data.posts.map((p) => (
         <li key={p.slug}>{p.title}</li>
       ))}
     </ul>
@@ -488,7 +488,7 @@ function Nav() {
   return (
     <nav>
       <Link to={href("/")}>Home</Link>
-      <Link to={href("/blog")} prefetch="intent">
+      <Link to={href("/blog")} prefetch="hybrid">
         Blog
       </Link>
       <Link to={href("/about")}>About</Link>
@@ -499,20 +499,21 @@ function Nav() {
 
 `href()` validates that the path matches a registered route pattern at compile time (e.g. `/blog/my-post` matches `/blog/:slug`).
 
-### Navigation Hook
+### Navigation Hooks
 
 ```tsx
 "use client";
-import { useNavigation } from "@rangojs/router/client";
+import { useNavigation, useRouter } from "@rangojs/router/client";
 
 function SearchForm() {
-  const { navigate, isPending } = useNavigation();
+  const router = useRouter();
+  const nav = useNavigation();
 
   function handleSubmit(query: string) {
-    navigate(`/search?q=${encodeURIComponent(query)}`);
+    router.push(`/search?q=${encodeURIComponent(query)}`);
   }
 
-  return <form onSubmit={...}>{isPending && <Spinner />}</form>;
+  return <form onSubmit={...}>{nav.state !== "idle" && <Spinner />}</form>;
 }
 ```
 

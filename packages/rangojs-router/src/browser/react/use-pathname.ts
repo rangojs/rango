@@ -2,7 +2,6 @@
 
 import { useContext, useState, useEffect, useRef } from "react";
 import { NavigationStoreContext } from "./context.js";
-import { getSsrPathname } from "./use-segments.js";
 
 /**
  * Hook to access the current pathname.
@@ -20,8 +19,8 @@ export function usePathname(): string {
   const ctx = useContext(NavigationStoreContext);
 
   const [pathname, setPathname] = useState<string>(() => {
-    if (typeof document === "undefined" || !ctx) {
-      return getSsrPathname();
+    if (!ctx) {
+      return "/";
     }
     return (ctx.eventController.getState().location as URL).pathname;
   });
