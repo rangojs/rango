@@ -88,7 +88,7 @@ describe("evaluateRevalidation trace integration", () => {
     expect(entry.source).toBe("segment-resolution");
     expect(entry.defaultShouldRevalidate).toBe(true);
     expect(entry.finalShouldRevalidate).toBe(true);
-    expect(entry.reason).toBe("default");
+    expect(entry.reason).toBe("nav:params-changed");
 
     consoleSpy.mockRestore();
   });
@@ -224,7 +224,87 @@ describe("evaluateRevalidation trace integration", () => {
 
     expect(trace!.entries).toHaveLength(2);
     expect(trace!.entries[0].finalShouldRevalidate).toBe(true);
+    expect(trace!.entries[0].reason).toBe("action:route-segment");
     expect(trace!.entries[1].finalShouldRevalidate).toBe(false);
+    expect(trace!.entries[1].reason).toBe("action:parent-chain-skip");
+
+    consoleSpy.mockRestore();
+  });
+
+  it("pushes trace with soft-chain reason including revalidator names", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const trace = await runWithRouterLogContext(
+      { request: new Request("http://localhost/b"), transaction: "test" },
+      async () => {
+        startRevalidationTrace({
+          method: "GET",
+          prevUrl: "http://localhost/a",
+          nextUrl: "http://localhost/b",
+          routeKey: "test.route",
+          isAction: false,
+        });
+
+        await evaluateRevalidation({
+          segment: makeSegment({ type: "layout", belongsToRoute: false }),
+          prevParams: {},
+          getPrevSegment: null,
+          request: new Request("http://localhost/b"),
+          prevUrl: new URL("http://localhost/a"),
+          nextUrl: new URL("http://localhost/b"),
+          revalidations: [
+            {
+              name: "myRevalidator",
+              fn: () => ({ defaultShouldRevalidate: true }),
+            },
+          ],
+          routeKey: "test.route",
+          context: makeContext(),
+        });
+
+        return flushRevalidationTrace();
+      },
+    );
+
+    expect(trace!.entries[0].reason).toBe("soft-chain:myRevalidator");
+    expect(trace!.entries[0].finalShouldRevalidate).toBe(true);
+    expect(trace!.entries[0].defaultShouldRevalidate).toBe(false);
+
+    consoleSpy.mockRestore();
+  });
+
+  it("uses nav:params-unchanged when route params don't change", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const trace = await runWithRouterLogContext(
+      { request: new Request("http://localhost/b"), transaction: "test" },
+      async () => {
+        startRevalidationTrace({
+          method: "GET",
+          prevUrl: "http://localhost/a",
+          nextUrl: "http://localhost/b",
+          routeKey: "test.route",
+          isAction: false,
+        });
+
+        await evaluateRevalidation({
+          segment: makeSegment({ type: "route", params: { id: "1" } }),
+          prevParams: { id: "1" },
+          getPrevSegment: null,
+          request: new Request("http://localhost/b"),
+          prevUrl: new URL("http://localhost/a"),
+          nextUrl: new URL("http://localhost/b"),
+          revalidations: [],
+          routeKey: "test.route",
+          context: makeContext(),
+        });
+
+        return flushRevalidationTrace();
+      },
+    );
+
+    expect(trace!.entries[0].reason).toBe("nav:params-unchanged");
+    expect(trace!.entries[0].finalShouldRevalidate).toBe(false);
 
     consoleSpy.mockRestore();
   });

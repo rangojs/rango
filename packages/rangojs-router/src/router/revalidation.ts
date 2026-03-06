@@ -100,22 +100,27 @@ export async function evaluateRevalidation<TEnv>(
 
   // Calculate default revalidation based on segment type and request method
   let defaultShouldRevalidate: boolean;
+  let defaultReason: string;
 
   if (request.method === "POST") {
     // Actions: revalidate segments that belong to the route, skip parent chain
     if (segment.type === "route") {
       // Route segment always revalidates on actions
       defaultShouldRevalidate = true;
+      defaultReason = "action:route-segment";
     } else if (segment.type === "loader") {
       // Loaders always revalidate on actions - they often contain action-sensitive data
       // (e.g., cart count after add-to-cart action)
       defaultShouldRevalidate = true;
+      defaultReason = "action:loader-segment";
     } else if (segment.belongsToRoute) {
       // Segment belongs to route (orphan layouts/parallels) - revalidate
       defaultShouldRevalidate = true;
+      defaultReason = "action:belongs-to-route";
     } else {
       // Parent chain segment (shared layouts/parallels) - don't revalidate
       defaultShouldRevalidate = false;
+      defaultReason = "action:parent-chain-skip";
     }
   } else {
     // Navigation (GET): Conservative defaults to minimize unnecessary revalidations
@@ -125,6 +130,9 @@ export async function evaluateRevalidation<TEnv>(
       // Route segments revalidate when params change
       // Routes are the primary param-dependent content and always need updates
       defaultShouldRevalidate = paramsChanged;
+      defaultReason = paramsChanged
+        ? "nav:params-changed"
+        : "nav:params-unchanged";
       if (paramsChanged) {
         debugLog("revalidation", "route params changed, revalidating", {
           segmentId: segment.id,
@@ -135,6 +143,7 @@ export async function evaluateRevalidation<TEnv>(
       // Cannot assume these segments depend on params without explicit declaration
       // Use custom revalidation functions to opt-in when needed
       defaultShouldRevalidate = false;
+      defaultReason = "nav:non-route-skip";
       debugLog("revalidation", "non-route segment skipped by default", {
         segmentId: segment.id,
         segmentType: segment.type,
@@ -155,7 +164,7 @@ export async function evaluateRevalidation<TEnv>(
         segmentId: segment.id,
       });
     }
-    pushTrace(defaultShouldRevalidate, defaultShouldRevalidate, "default");
+    pushTrace(defaultShouldRevalidate, defaultShouldRevalidate, defaultReason);
     return defaultShouldRevalidate;
   }
 
@@ -231,6 +240,11 @@ export async function evaluateRevalidation<TEnv>(
     segmentId: segment.id,
     revalidate: currentSuggestion,
   });
-  pushTrace(defaultShouldRevalidate, currentSuggestion, "soft-chain");
+  const softNames = revalidations.map((r) => r.name).join(",");
+  pushTrace(
+    defaultShouldRevalidate,
+    currentSuggestion,
+    `soft-chain:${softNames}`,
+  );
   return currentSuggestion;
 }

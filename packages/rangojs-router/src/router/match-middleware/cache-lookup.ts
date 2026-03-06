@@ -92,6 +92,7 @@
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
+import { pushRevalidationTraceEntry } from "../logging.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
 import type { HandleStore } from "../../server/handle-store.js";
 import {
@@ -460,6 +461,15 @@ export function withCacheLookup<TEnv>(
     for (const segment of cacheResult.segments) {
       // Skip segments client doesn't have - they need their component
       if (!ctx.clientSegmentSet.has(segment.id)) {
+        pushRevalidationTraceEntry({
+          segmentId: segment.id,
+          segmentType: segment.type,
+          belongsToRoute: segment.belongsToRoute ?? false,
+          source: "cache-hit",
+          defaultShouldRevalidate: true,
+          finalShouldRevalidate: true,
+          reason: "new-segment",
+        });
         yield segment;
         continue;
       }
@@ -474,6 +484,15 @@ export function withCacheLookup<TEnv>(
       const entryInfo = entryRevalidateMap?.get(segment.id);
       if (!entryInfo || entryInfo.revalidate.length === 0) {
         // No revalidation rules, use default behavior (skip if client has)
+        pushRevalidationTraceEntry({
+          segmentId: segment.id,
+          segmentType: segment.type,
+          belongsToRoute: segment.belongsToRoute ?? false,
+          source: "cache-hit",
+          defaultShouldRevalidate: false,
+          finalShouldRevalidate: false,
+          reason: "cached-no-rules",
+        });
         segment.component = null;
         segment.loading = undefined;
         yield segment;
