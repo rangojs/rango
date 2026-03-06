@@ -140,7 +140,12 @@ export function redirect(): never {
 export { createHandle, isHandle, type Handle } from "./handle.js";
 
 // Context variable API (typed ctx.set/ctx.get tokens)
-export { createVar, type ContextVar } from "./context-var.js";
+export {
+  createVar,
+  markStableVar,
+  type ContextVar,
+  type CreateVarOptions,
+} from "./context-var.js";
 
 // CSP nonce token (use with ctx.get(nonce) in middleware/handlers)
 export { nonce } from "./rsc/nonce.js";
