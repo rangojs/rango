@@ -1232,7 +1232,7 @@ test.describe("cache-loader-reactnode", () => {
     const firstCount = await page.getByTestId("rn-count").textContent();
     const firstTs = await page.getByTestId("rn-ts").textContent();
     expect(firstCount).toMatch(/^\d+$/);
-    expect(firstTs).toMatch(/^\d+$/);
+    expect(firstTs).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
     // Navigate away (round-trip provides time for async loader cache write)
     await page.goto(f.url("/"));
@@ -1298,7 +1298,7 @@ test.describe("cache-loader-reactnode (production)", () => {
     const firstCount = await page.getByTestId("rn-count").textContent();
     const firstTs = await page.getByTestId("rn-ts").textContent();
     expect(firstCount).toMatch(/^\d+$/);
-    expect(firstTs).toMatch(/^\d+$/);
+    expect(firstTs).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
     await page.goto(f.url("/"));
     await waitForHydration(page);
