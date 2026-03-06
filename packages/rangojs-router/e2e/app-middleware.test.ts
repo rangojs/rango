@@ -711,6 +711,30 @@ test.describe("app-middleware (dev)", () => {
   });
 });
 
+test.describe("W5: ctx.set() then redirect warning (dev)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+    isolatedServer: true,
+  });
+
+  test("route middleware that calls ctx.set() then redirects should emit dev warning", async ({
+    page,
+  }) => {
+    const stderrBefore = f.proc().stderr();
+
+    await page.goto(f.url("/middleware-test/w5-redirect"));
+
+    // Middleware redirects to /middleware-test
+    await expect(page).toHaveURL(/\/middleware-test(?:\?|$)/);
+
+    const newStderr = f.proc().stderr().slice(stderrBefore.length);
+    expect(newStderr).toContain("ctx.set()");
+    expect(newStderr).toContain("redirect");
+    expect(newStderr).toContain("w5SetThenRedirect");
+  });
+});
+
 test.describe("app-middleware (production)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
@@ -816,5 +840,19 @@ test.describe("app-middleware (production)", () => {
     // Global middleware headers should still be present
     expect(response.headers()["x-global-middleware"]).toBe("applied");
     expect(response.headers()["x-header-shorthand"]).toBe("works");
+  });
+
+  test("W5: ctx.set() then redirect should still redirect in production (no warning)", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/middleware-test/w5-redirect"));
+
+    // Middleware redirects to /middleware-test
+    await expect(page).toHaveURL(/\/middleware-test(?:\?|$)/);
+
+    await waitForHydration(page);
+    await expect(
+      page.locator('[data-testid="middleware-test-title"]'),
+    ).toBeVisible();
   });
 });
