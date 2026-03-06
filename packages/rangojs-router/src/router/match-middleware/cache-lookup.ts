@@ -92,6 +92,7 @@
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
+import { resolveSink, safeEmit } from "../telemetry.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
 import type { HandleStore } from "../../server/handle-store.js";
 import {
@@ -185,6 +186,7 @@ async function* yieldFromStore<TEnv>(
   }
 
   state.cacheHit = true;
+  state.cacheSource = "prerender";
   state.cachedSegments = segments;
   state.cachedMatchedIds = segments.map((s) => s.id);
 
@@ -442,6 +444,7 @@ export function withCacheLookup<TEnv>(
 
     // Cache HIT
     state.cacheHit = true;
+    state.cacheSource = "runtime";
     state.shouldRevalidate = cacheResult.shouldRevalidate;
     state.cachedSegments = cacheResult.segments;
     state.cachedMatchedIds = cacheResult.segments.map((s) => s.id);
@@ -496,6 +499,17 @@ export function withCacheLookup<TEnv>(
         context: ctx.handlerContext,
         actionContext: ctx.actionContext,
         stale: cacheResult.shouldRevalidate || undefined,
+      });
+
+      const routerCtx = getRouterContext<TEnv>();
+      const tSink = resolveSink(routerCtx.telemetry);
+      safeEmit(tSink, {
+        type: "revalidation.decision",
+        timestamp: performance.now(),
+        segmentId: segment.id,
+        pathname: ctx.pathname,
+        routeKey: ctx.routeKey,
+        shouldRevalidate,
       });
 
       if (!shouldRevalidate) {

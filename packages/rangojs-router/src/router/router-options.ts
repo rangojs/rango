@@ -9,6 +9,7 @@ import type { NonceProvider } from "../rsc/types.js";
 import type { ExecutionContext } from "../server/request-context.js";
 import type { UrlPatterns } from "../urls.js";
 import type { NamedRouteEntry } from "./content-negotiation.js";
+import type { TelemetrySink } from "./telemetry.js";
 
 /**
  * Props passed to the root layout component
@@ -384,4 +385,35 @@ export interface RSCRouterOptions<TEnv = any> {
    * @default true
    */
   warmup?: boolean;
+
+  /**
+   * Telemetry sink for structured lifecycle events.
+   *
+   * When provided, the router emits events for request start/end,
+   * loader start/end/error, handler errors, cache decisions, and
+   * revalidation decisions.
+   *
+   * No-op when not configured (zero overhead).
+   *
+   * @example Console logging
+   * ```typescript
+   * import { createConsoleSink } from "@rangojs/router";
+   *
+   * const router = createRouter({
+   *   telemetry: createConsoleSink(),
+   * });
+   * ```
+   *
+   * @example Custom sink
+   * ```typescript
+   * const router = createRouter({
+   *   telemetry: {
+   *     emit(event) {
+   *       myTracer.record(event);
+   *     },
+   *   },
+   * });
+   * ```
+   */
+  telemetry?: TelemetrySink;
 }

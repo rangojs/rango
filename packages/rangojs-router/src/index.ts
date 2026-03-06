@@ -282,3 +282,19 @@ export {
 
 // Path-based response type lookup from RegisteredRoutes
 export type { PathResponse } from "./href-client.js";
+
+// Telemetry sink
+export { createConsoleSink } from "./router/telemetry.js";
+export type {
+  TelemetrySink,
+  TelemetryEvent,
+  RequestStartEvent,
+  RequestEndEvent,
+  RequestErrorEvent,
+  LoaderStartEvent,
+  LoaderEndEvent,
+  LoaderErrorEvent,
+  HandlerErrorEvent,
+  CacheDecisionEvent,
+  RevalidationDecisionEvent,
+} from "./router/telemetry.js";

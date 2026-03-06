@@ -71,6 +71,7 @@ import {
   extractStaticPrefix,
   traverseBack,
 } from "./router/pattern-matching.js";
+import { resolveSink, safeEmit } from "./router/telemetry.js";
 import { evaluateRevalidation } from "./router/revalidation.js";
 import {
   type RouterContext,
@@ -145,7 +146,11 @@ export function createRouter<TEnv = any>(
     prefetchCacheControl: prefetchCacheControlOption,
     warmup: warmupOption,
     allowDebugManifest: allowDebugManifestOption = false,
+    telemetry: telemetrySink,
   } = options;
+
+  // Resolve telemetry sink (no-op when not configured)
+  const telemetry = resolveSink(telemetrySink);
 
   // Resolve cache profiles: merge user config with guaranteed default profile.
   // This resolved map is both stored on the router (for per-request context)
@@ -351,7 +356,7 @@ export function createRouter<TEnv = any>(
   };
 
   // Wrapper for wrapLoaderWithErrorHandling that uses router's error boundary finder
-  // Includes onError callback for loader error notification
+  // Includes onError callback for loader error notification and telemetry emission.
   function wrapLoaderPromise<T>(
     promise: Promise<T>,
     entry: EntryData,
@@ -367,7 +372,17 @@ export function createRouter<TEnv = any>(
       requestStartTime?: number;
     },
   ): Promise<LoaderDataResult<T>> {
-    return wrapLoaderWithErrorHandling(
+    const loaderName = segmentId.split(".").pop() || "unknown";
+    const loaderStart = performance.now();
+    safeEmit(telemetry, {
+      type: "loader.start",
+      timestamp: loaderStart,
+      segmentId,
+      loaderName,
+      pathname,
+    });
+
+    const result = wrapLoaderWithErrorHandling(
       promise,
       entry,
       segmentId,
@@ -390,9 +405,37 @@ export function createRouter<TEnv = any>(
               handledByBoundary: ctx.handledByBoundary,
               requestStartTime: errorContext.requestStartTime,
             });
+            const errorObj =
+              error instanceof Error ? error : new Error(String(error));
+            safeEmit(telemetry, {
+              type: "loader.error",
+              timestamp: performance.now(),
+              segmentId: ctx.segmentId,
+              loaderName: ctx.loaderName,
+              pathname,
+              error: errorObj,
+              handledByBoundary: ctx.handledByBoundary,
+            });
           }
         : undefined,
     );
+
+    // Emit loader.end after the promise settles (fire-and-forget)
+    if (telemetrySink) {
+      result.then((r) => {
+        safeEmit(telemetry, {
+          type: "loader.end",
+          timestamp: performance.now(),
+          segmentId,
+          loaderName,
+          pathname,
+          durationMs: performance.now() - loaderStart,
+          ok: r.ok,
+        });
+      });
+    }
+
+    return result;
   }
 
   // Dependencies object for extracted segment resolution functions.
@@ -472,6 +515,7 @@ export function createRouter<TEnv = any>(
       resolveLoadersOnlyWithRevalidation,
       resolveInterceptLoadersOnly,
       resolveLoadersOnly,
+      telemetry: telemetrySink,
     };
   }
 
@@ -512,6 +556,7 @@ export function createRouter<TEnv = any>(
     defaultErrorBoundary,
     findMatch,
     findInterceptForRoute,
+    telemetry: telemetrySink,
   });
 
   const { match, matchPartial, matchError, previewMatch } = matchHandlers;
