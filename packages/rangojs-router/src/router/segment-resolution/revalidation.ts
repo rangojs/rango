@@ -330,8 +330,15 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         if (!shouldResolve) {
           component = null;
         } else if (hasLoadingFallback) {
+          const result =
+            typeof handler === "function" ? handler(context) : handler;
           component = (
-            typeof handler === "function" ? handler(context) : handler
+            result instanceof Promise
+              ? deps.trackHandler(result, {
+                  segmentId: parallelId,
+                  segmentType: "parallel",
+                })
+              : result
           ) as ReactNode;
         } else {
           component =
@@ -869,8 +876,15 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         if (!shouldResolve) {
           component = null;
         } else if (hasLoadingFallback) {
+          const result =
+            typeof handler === "function" ? handler(context) : handler;
           component = (
-            typeof handler === "function" ? handler(context) : handler
+            result instanceof Promise
+              ? deps.trackHandler(result, {
+                  segmentId: parallelId,
+                  segmentType: "parallel",
+                })
+              : result
           ) as ReactNode;
         } else {
           component =

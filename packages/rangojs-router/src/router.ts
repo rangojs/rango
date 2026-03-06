@@ -368,12 +368,16 @@ export function createRouter<TEnv = any>(
 
     // Report streaming handler errors to onError as a side-effect.
     // The rejection still propagates to the RSC stream for client error boundaries.
+    // Captures request context eagerly (closure) so the catch handler has full context.
     const reqCtx = _getRequestContext();
     if (reqCtx && onError) {
       tracked.catch((error) => {
         callOnError(error, "handler", {
           request: reqCtx.request,
           url: reqCtx.url,
+          routeKey: reqCtx._routeName,
+          params: reqCtx.params as Record<string, string>,
+          env: reqCtx.env as TEnv,
           segmentId: errorContext?.segmentId,
           segmentType: errorContext?.segmentType as any,
           handledByBoundary: true,
