@@ -117,6 +117,7 @@ export const NamedRoutes = {
   negotiateTest: "/negotiate-test",
   negotiateTestJson: "/negotiate-test",
   negotiateTestMd: "/negotiate-test",
+  peRedirect: "/pe-redirect",
   "prerender-reverse": "/prerender-reverse",
   "prerenderComplex.detail": "/prerender-complex/:slug",
   "prerenderComplex.index": "/prerender-complex",
