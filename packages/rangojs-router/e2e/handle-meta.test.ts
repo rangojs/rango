@@ -22,6 +22,7 @@ test.describe("handle-meta", () => {
 
       // Check viewport meta tag
       const viewport = await page.locator('meta[name="viewport"]');
+      await expect(viewport).toHaveCount(1);
       await expect(viewport).toHaveAttribute(
         "content",
         "width=device-width, initial-scale=1",
@@ -40,6 +41,7 @@ test.describe("handle-meta", () => {
       await waitForHydration(page);
 
       const description = await page.locator('meta[name="description"]');
+      await expect(description).toHaveCount(1);
       await expect(description).toHaveAttribute(
         "content",
         "E2E test application for RSC Router",
@@ -60,6 +62,7 @@ test.describe("handle-meta", () => {
       await waitForHydration(page);
 
       const description = await page.locator('meta[name="description"]');
+      await expect(description).toHaveCount(1);
       await expect(description).toHaveAttribute(
         "content",
         "Blog posts from RSC Router",
@@ -96,6 +99,7 @@ test.describe("handle-meta", () => {
       await waitForHydration(page);
 
       const description = await page.locator('meta[name="description"]');
+      await expect(description).toHaveCount(1);
       await expect(description).toHaveAttribute(
         "content",
         "First test product",
@@ -110,6 +114,7 @@ test.describe("handle-meta", () => {
       await waitForHydration(page);
 
       const ogTitle = await page.locator('meta[property="og:title"]');
+      await expect(ogTitle).toHaveCount(1);
       await expect(ogTitle).toHaveAttribute("content", "Product A", {
         timeout: 5000,
       });
@@ -124,6 +129,7 @@ test.describe("handle-meta", () => {
       // The og:description is pushed as a Promise that resolves after 500ms
       // It should stream in and be present in the DOM
       const ogDescription = page.locator('meta[property="og:description"]');
+      await expect(ogDescription).toHaveCount(1);
       await expect(ogDescription).toHaveAttribute(
         "content",
         "Async meta for post-1",
@@ -137,6 +143,7 @@ test.describe("handle-meta", () => {
 
       // The author meta is pushed as an async IIFE that resolves after 300ms
       const author = page.locator('meta[name="author"]');
+      await expect(author).toHaveCount(1);
       await expect(author).toHaveAttribute("content", "Author of post-1", {
         timeout: 3000,
       });
@@ -148,6 +155,7 @@ test.describe("handle-meta", () => {
 
       // Wait for async meta to stream in
       let ogDescription = page.locator('meta[property="og:description"]');
+      await expect(ogDescription).toHaveCount(1);
       await expect(ogDescription).toHaveAttribute(
         "content",
         "Async meta for post-1",
@@ -167,6 +175,7 @@ test.describe("handle-meta", () => {
 
       // Async meta should update for post-2
       ogDescription = page.locator('meta[property="og:description"]');
+      await expect(ogDescription).toHaveCount(1);
       await expect(ogDescription).toHaveAttribute(
         "content",
         "Async meta for post-2",
@@ -281,6 +290,7 @@ test.describe("handle-meta", () => {
       await waitForHydration(page);
 
       let description = page.locator('meta[name="description"]');
+      await expect(description).toHaveCount(1);
       await expect(description).toHaveAttribute(
         "content",
         "E2E test application for RSC Router",
@@ -291,6 +301,7 @@ test.describe("handle-meta", () => {
       await waitForHydration(page);
 
       description = page.locator('meta[name="description"]');
+      await expect(description).toHaveCount(1);
       await expect(description).toHaveAttribute(
         "content",
         "Blog posts from RSC Router",
@@ -310,7 +321,9 @@ test.describe("handle-meta", () => {
       const html = await response.text();
 
       expect(html).toContain('<meta charSet="utf-8"');
+      expect((html.match(/<meta charSet="utf-8"/g) || []).length).toBe(1);
       expect(html).toContain('<meta name="viewport"');
+      expect((html.match(/<meta name="viewport"/g) || []).length).toBe(1);
       expect(html).toContain("width=device-width, initial-scale=1");
     });
 
@@ -326,6 +339,7 @@ test.describe("handle-meta", () => {
       const html = await response.text();
 
       expect(html).toContain('<meta name="description"');
+      expect((html.match(/<meta name="description"/g) || []).length).toBe(1);
       expect(html).toContain("E2E test application for RSC Router");
     });
 
@@ -349,6 +363,7 @@ test.describe("handle-meta", () => {
       const html = await response.text();
 
       expect(html).toContain('<meta name="description"');
+      expect((html.match(/<meta name="description"/g) || []).length).toBe(1);
       expect(html).toContain("Blog posts from RSC Router");
     });
 
@@ -406,12 +421,14 @@ test.describe("handle-meta", () => {
       await expect(page).toHaveTitle("Child Set Title - RSC Router");
 
       const description = page.locator('meta[name="description"]');
+      await expect(description).toHaveCount(1);
       await expect(description).toHaveAttribute(
         "content",
         "Meta set by child RSC component",
       );
 
       const ogTitle = page.locator('meta[property="og:title"]');
+      await expect(ogTitle).toHaveCount(1);
       await expect(ogTitle).toHaveAttribute(
         "content",
         "Child Set Title - RSC Router",
@@ -611,15 +628,18 @@ test.describe("handle-meta", () => {
       await expect(page).toHaveTitle("Parent Title");
 
       const robots = page.locator('meta[name="robots"]');
+      await expect(robots).toHaveCount(1);
       await expect(robots).toHaveAttribute("content", "index, follow");
 
       const description = page.locator('meta[name="description"]');
+      await expect(description).toHaveCount(1);
       await expect(description).toHaveAttribute(
         "content",
         "Parent description",
       );
 
       const ogImage = page.locator('meta[property="og:image"]');
+      await expect(ogImage).toHaveCount(1);
       await expect(ogImage).toHaveAttribute(
         "content",
         "https://example.com/parent.jpg",
@@ -634,6 +654,7 @@ test.describe("handle-meta", () => {
       await expect(page).toHaveTitle("Parent Title");
 
       const description = page.locator('meta[name="description"]');
+      await expect(description).toHaveCount(1);
       await expect(description).toHaveAttribute(
         "content",
         "Parent description",
@@ -656,6 +677,7 @@ test.describe("handle-meta", () => {
 
       // Description should be the new value after unset + set
       const description = page.locator('meta[name="description"]');
+      await expect(description).toHaveCount(1);
       await expect(description).toHaveAttribute(
         "content",
         "New description after unset",
@@ -663,6 +685,7 @@ test.describe("handle-meta", () => {
 
       // robots should still be present (not unset in this route)
       const robots = page.locator('meta[name="robots"]');
+      await expect(robots).toHaveCount(1);
       await expect(robots).toHaveAttribute("content", "index, follow");
     });
 
@@ -725,6 +748,7 @@ test.describe("handle-meta", () => {
 
       // keywords overridden by child
       const keywords = page.locator('meta[name="keywords"]');
+      await expect(keywords).toHaveCount(1);
       await expect(keywords).toHaveAttribute("content", "child, override");
     });
 
@@ -736,10 +760,12 @@ test.describe("handle-meta", () => {
 
       // author inherited from parent (not set by child)
       const author = page.locator('meta[name="author"]');
+      await expect(author).toHaveCount(1);
       await expect(author).toHaveAttribute("content", "Root Author");
 
       // og:site_name inherited from parent
       const ogSiteName = page.locator('meta[property="og:site_name"]');
+      await expect(ogSiteName).toHaveCount(1);
       await expect(ogSiteName).toHaveAttribute("content", "Merge Test Site");
     });
 
@@ -749,6 +775,7 @@ test.describe("handle-meta", () => {
 
       // description added by child (not in parent)
       const description = page.locator('meta[name="description"]');
+      await expect(description).toHaveCount(1);
       await expect(description).toHaveAttribute("content", "Child description");
     });
 
@@ -761,18 +788,22 @@ test.describe("handle-meta", () => {
 
       // keywords from root (not overridden by middle or deep)
       const keywords = page.locator('meta[name="keywords"]');
+      await expect(keywords).toHaveCount(1);
       await expect(keywords).toHaveAttribute("content", "root, test");
 
       // author from middle layout (overrides root)
       const author = page.locator('meta[name="author"]');
+      await expect(author).toHaveCount(1);
       await expect(author).toHaveAttribute("content", "Middle Author");
 
       // og:site_name from root (not overridden)
       const ogSiteName = page.locator('meta[property="og:site_name"]');
+      await expect(ogSiteName).toHaveCount(1);
       await expect(ogSiteName).toHaveAttribute("content", "Merge Test Site");
 
       // og:title from deep page (newly added)
       const ogTitle = page.locator('meta[property="og:title"]');
+      await expect(ogTitle).toHaveCount(1);
       await expect(ogTitle).toHaveAttribute("content", "Deep OG Title");
     });
 
@@ -805,12 +836,15 @@ test.describe("handle-meta", () => {
       await expect(page).toHaveTitle("Merge Root");
 
       const author = page.locator('meta[name="author"]');
+      await expect(author).toHaveCount(1);
       await expect(author).toHaveAttribute("content", "Root Author");
 
       const keywords = page.locator('meta[name="keywords"]');
+      await expect(keywords).toHaveCount(1);
       await expect(keywords).toHaveAttribute("content", "root, test");
 
       const ogSiteName = page.locator('meta[property="og:site_name"]');
+      await expect(ogSiteName).toHaveCount(1);
       await expect(ogSiteName).toHaveAttribute("content", "Merge Test Site");
     });
   });

@@ -380,6 +380,11 @@ test.describe("stale-revalidation", () => {
 
     // Index content should be restored
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+
+    // Modal should be gone on index
+    await expect(
+      page.locator('[data-testid="product-modal"]'),
+    ).not.toBeVisible();
   });
 
   test("should update quantity on intercept after action on detail page and back navigation", async ({
@@ -410,9 +415,7 @@ test.describe("stale-revalidation", () => {
     await modalIncrementButton.click();
 
     // Wait for optimistic update
-    await expect(modalQuantityDisplay).toContainText(
-      String(initialQuantity + 1),
-    );
+    await expect(modalQuantityDisplay).toHaveText(String(initialQuantity + 1));
 
     // 3. Go to details page
     await page.locator('[data-testid="view-full-details"]').click();
@@ -436,10 +439,9 @@ test.describe("stale-revalidation", () => {
 
     // 6. Verify quantity was updated after revalidation
     // The quantity should reflect the add to cart action (initialQuantity + 1 from modal + 1 from add to cart = initialQuantity + 2)
-    await expect(modalQuantityDisplay).toContainText(
-      String(initialQuantity + 2),
-      { timeout: 3000 },
-    );
+    await expect(modalQuantityDisplay).toHaveText(String(initialQuantity + 2), {
+      timeout: 3000,
+    });
   });
 
   test("should not show modal on detail page after back to intercept and forward to detail", async ({
@@ -711,9 +713,7 @@ test.describe("conditional-intercept-when", () => {
     await incrementButton.click();
 
     // Wait for action to complete
-    await expect(modalQuantityDisplay).toContainText(
-      String(initialQuantity + 1),
-    );
+    await expect(modalQuantityDisplay).toHaveText(String(initialQuantity + 1));
 
     // Modal should still be visible (when() was skipped during action revalidation)
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
@@ -964,7 +964,7 @@ test.describe("intercept-loading-states", () => {
     // Wait for action to complete (3s delay)
     await expect(
       page.locator('[data-testid="slow-modal-streaming-btn-result"]'),
-    ).toContainText("Completed", { timeout: 10000 });
+    ).toHaveText("Completed!", { timeout: 10000 });
 
     // Modal should still be visible after action completes
     await expect(
@@ -1068,7 +1068,7 @@ test.describe("intercept-loading-states", () => {
     // Wait for action to complete
     await expect(
       page.locator('[data-testid="slow-modal-streaming-btn-result"]'),
-    ).toContainText("Completed", { timeout: 10000 });
+    ).toHaveText("Completed!", { timeout: 10000 });
 
     // After action completes: still no loading component, content visible
     await expect(
@@ -1117,14 +1117,14 @@ test.describe("use-segments-hook", () => {
     await expect(segmentsDisplay).toBeVisible();
 
     // Path should be empty array for root
-    await expect(page.locator('[data-testid="segments-path"]')).toContainText(
-      "[]",
+    await expect(page.locator('[data-testid="segments-path"]')).toHaveText(
+      "Path: []",
     );
 
     // Pathname should show /
-    await expect(
-      page.locator('[data-testid="segments-pathname"]'),
-    ).toContainText("Pathname: /");
+    await expect(page.locator('[data-testid="segments-pathname"]')).toHaveText(
+      "Pathname: /",
+    );
 
     // Should have segment IDs
     await expect(page.locator('[data-testid="segments-ids"]')).toContainText(
@@ -1136,14 +1136,14 @@ test.describe("use-segments-hook", () => {
     await expect(page).toHaveURL(/\/product\/product-a/);
 
     // Path should update
-    await expect(page.locator('[data-testid="segments-path"]')).toContainText(
-      '["product","product-a"]',
+    await expect(page.locator('[data-testid="segments-path"]')).toHaveText(
+      'Path: ["product","product-a"]',
     );
 
     // Pathname should update
-    await expect(
-      page.locator('[data-testid="segments-pathname"]'),
-    ).toContainText("/product/product-a");
+    await expect(page.locator('[data-testid="segments-pathname"]')).toHaveText(
+      "Pathname: /product/product-a",
+    );
 
     // Log any errors for debugging
     if (errors.length > 0) {
@@ -1275,12 +1275,12 @@ test.describe("use-link-status-hook", () => {
 
     // Navigation state should still be idle (not loading from action)
     const navState = page.locator('[data-testid="nav-status-state"]');
-    await expect(navState).toContainText("idle");
+    await expect(navState).toHaveText("state:idle");
 
     // Wait for action to complete
     await expect(
       page.locator('[data-testid="streaming-btn-result"]'),
-    ).toContainText("Completed", { timeout: 10000 });
+    ).toHaveText("Completed!", { timeout: 10000 });
   });
 
   test("should resolve pending state when intercept navigation completes", async ({
@@ -1463,6 +1463,11 @@ test.describe("navigation (production)", () => {
     await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible({
       timeout: 5000,
     });
+
+    // Modal should be gone after navigating to full details
+    await expect(
+      page.locator('[data-testid="product-modal"]'),
+    ).not.toBeVisible();
   });
 
   test("back navigation works in production", async ({ page }) => {
@@ -1492,6 +1497,11 @@ test.describe("navigation (production)", () => {
     // Back again should show index
     await page.goBack();
     await expect(page).toHaveURL(/\/$/);
+
+    // Modal should be gone on index
+    await expect(
+      page.locator('[data-testid="product-modal"]'),
+    ).not.toBeVisible();
   });
 
   test("hard navigation to product shows full page in production", async ({

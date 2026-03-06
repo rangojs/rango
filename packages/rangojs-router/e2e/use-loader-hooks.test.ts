@@ -44,7 +44,7 @@ test.describe("useLoader hook", () => {
       "Route ID:",
     );
     await expect(testId(page, "use-loader-count")).toContainText("Count:");
-    await expect(testId(page, "use-loader-source")).toContainText(
+    await expect(testId(page, "use-loader-source")).toHaveText(
       "Source: server",
     );
     await expect(testId(page, "use-loader-timestamp")).toContainText(
@@ -80,9 +80,9 @@ test.describe("useFetchLoader hook - with pre-loaded data", () => {
     await expect(
       testId(page, "use-fetch-loader-preloaded-route-id"),
     ).toContainText("Route ID:");
-    await expect(
-      testId(page, "use-fetch-loader-preloaded-source"),
-    ).toContainText("Source: server");
+    await expect(testId(page, "use-fetch-loader-preloaded-source")).toHaveText(
+      "Source: server",
+    );
 
     // "No data" should NOT be visible (we have context data)
     await expect(
@@ -153,7 +153,7 @@ test.describe("useFetchLoader hook - without pre-loaded data", () => {
     // Verify fetched data
     await expect(
       testId(page, "use-fetch-loader-unregistered-message"),
-    ).toContainText("Fetched from unregistered loader");
+    ).toHaveText("Message: Fetched from unregistered loader");
   });
 });
 
@@ -174,7 +174,7 @@ test.describe("Navigation updates loader data", () => {
     await waitForHydration(page);
 
     // Verify we're on route A with HookTestLoader data
-    await expect(testId(page, "use-loader-source")).toContainText(
+    await expect(testId(page, "use-loader-source")).toHaveText(
       "Source: server",
     );
 
@@ -185,7 +185,7 @@ test.describe("Navigation updates loader data", () => {
     await expect(testId(page, "route-b-title")).toBeVisible({ timeout: 5000 });
 
     // useLoaderB should have different data (source is "server-b")
-    await expect(testId(page, "use-loader-source-b")).toContainText(
+    await expect(testId(page, "use-loader-source-b")).toHaveText(
       "Source: server-b",
     );
   });
@@ -199,9 +199,9 @@ test.describe("Navigation updates loader data", () => {
     await waitForHydration(page);
 
     // Verify we're on route A
-    await expect(
-      testId(page, "use-fetch-loader-preloaded-source"),
-    ).toContainText("Source: server");
+    await expect(testId(page, "use-fetch-loader-preloaded-source")).toHaveText(
+      "Source: server",
+    );
 
     // Navigate to route B
     await testId(page, "navigate-to-b-link").click();
@@ -210,7 +210,7 @@ test.describe("Navigation updates loader data", () => {
     await expect(testId(page, "route-b-title")).toBeVisible({ timeout: 5000 });
 
     // useFetchLoaderB should have different data
-    await expect(testId(page, "use-fetch-loader-source-b")).toContainText(
+    await expect(testId(page, "use-fetch-loader-source-b")).toHaveText(
       "Source: server-b",
     );
   });
@@ -235,7 +235,7 @@ test.describe("SSR behavior", () => {
     // Data should be visible immediately without waiting for hydration
     // This tests that the SSR rendered the data correctly
     await expect(testId(page, "use-loader-data")).toBeVisible({ timeout: 500 });
-    await expect(testId(page, "use-loader-source")).toContainText(
+    await expect(testId(page, "use-loader-source")).toHaveText(
       "Source: server",
     );
 
@@ -412,6 +412,9 @@ test.describe("Error handling - throwOnError: false", () => {
     await expect(testId(page, "error-loader-error")).toContainText(
       "Intentional loader error",
     );
+
+    // Data should NOT be visible when error is present
+    await expect(testId(page, "error-loader-data")).not.toBeVisible();
   });
 
   test("should recover from error on successful fetch", async ({ page }) => {
@@ -437,8 +440,8 @@ test.describe("Error handling - throwOnError: false", () => {
     // Error should be cleared, data should be visible
     await expect(testId(page, "error-loader-error")).not.toBeVisible();
     await expect(testId(page, "error-loader-data")).toBeVisible();
-    await expect(testId(page, "error-loader-message")).toContainText(
-      "Success - error was bypassed",
+    await expect(testId(page, "error-loader-message")).toHaveText(
+      "Message: Success - error was bypassed",
     );
   });
 });
@@ -540,6 +543,9 @@ test.describe("Middleware security for fetchable loaders", () => {
     await expect(testId(page, "protected-loader-error")).toContainText(
       "Unauthorized",
     );
+
+    // Data should NOT be visible when error is present
+    await expect(testId(page, "protected-loader-data")).not.toBeVisible();
   });
 
   test("middleware allows valid auth token", async ({ page }) => {
@@ -558,15 +564,18 @@ test.describe("Middleware security for fetchable loaders", () => {
 
     // Should show data (protected content)
     await expect(testId(page, "protected-loader-data")).toBeVisible();
-    await expect(testId(page, "protected-loader-secret")).toContainText(
-      "This is protected data",
+    await expect(testId(page, "protected-loader-secret")).toHaveText(
+      "Secret: This is protected data",
     );
-    await expect(testId(page, "protected-loader-user-id")).toContainText(
+    await expect(testId(page, "protected-loader-user-id")).toHaveText(
       "User ID: user1",
     );
 
     // Error should NOT be visible
     await expect(testId(page, "protected-loader-error")).not.toBeVisible();
+
+    // "No data" should NOT be visible
+    await expect(testId(page, "protected-loader-no-data")).not.toBeVisible();
   });
 });
 
@@ -610,9 +619,9 @@ test.describe("Fetched data resets on navigation", () => {
     await expect(
       testId(page, "use-fetch-loader-preloaded-route-id"),
     ).not.toContainText("custom-fetched");
-    await expect(
-      testId(page, "use-fetch-loader-preloaded-source"),
-    ).toContainText("Source: server");
+    await expect(testId(page, "use-fetch-loader-preloaded-source")).toHaveText(
+      "Source: server",
+    );
   });
 });
 
@@ -665,7 +674,7 @@ test.describe("isLoading state verification", () => {
     await waitForHydration(page);
 
     // Initially isLoading should be false
-    await expect(testId(page, "is-loading-status")).toContainText(
+    await expect(testId(page, "is-loading-status")).toHaveText(
       "isLoading: false",
     );
 
@@ -673,7 +682,7 @@ test.describe("isLoading state verification", () => {
     await testId(page, "is-loading-fetch-btn").click();
 
     // isLoading should become true
-    await expect(testId(page, "is-loading-status")).toContainText(
+    await expect(testId(page, "is-loading-status")).toHaveText(
       "isLoading: true",
     );
 
@@ -683,7 +692,7 @@ test.describe("isLoading state verification", () => {
     });
 
     // isLoading should be false again
-    await expect(testId(page, "is-loading-status")).toContainText(
+    await expect(testId(page, "is-loading-status")).toHaveText(
       "isLoading: false",
     );
   });
@@ -717,12 +726,15 @@ test.describe("Server action form (useActionState)", () => {
       timeout: 5000,
     });
 
+    // "No data" should be gone after submission
+    await expect(testId(page, "server-action-form-no-data")).not.toBeVisible();
+
     // Verify server action returned data
-    await expect(testId(page, "server-action-form-message")).toContainText(
-      "Submitted via server action",
+    await expect(testId(page, "server-action-form-message")).toHaveText(
+      "Message: Submitted via server action",
     );
-    await expect(testId(page, "server-action-form-id")).toContainText(
-      "form-submitted",
+    await expect(testId(page, "server-action-form-id")).toHaveText(
+      "ID: form-submitted",
     );
   });
 
@@ -778,11 +790,12 @@ test.describe("Server action form without JavaScript", () => {
 
     // The result should show the submitted data
     await expect(testId(page, "server-action-form-data")).toBeVisible();
-    await expect(testId(page, "server-action-form-message")).toContainText(
-      "Submitted via server action",
+    await expect(testId(page, "server-action-form-no-data")).not.toBeVisible();
+    await expect(testId(page, "server-action-form-message")).toHaveText(
+      "Message: Submitted via server action",
     );
-    await expect(testId(page, "server-action-form-id")).toContainText(
-      "form-submitted",
+    await expect(testId(page, "server-action-form-id")).toHaveText(
+      "ID: form-submitted",
     );
   });
 });
@@ -810,7 +823,9 @@ test.describe("useLoader hooks (production)", () => {
     await expect(testId(page, "use-loader-route-id")).toContainText(
       "Route ID:",
     );
-    await expect(testId(page, "use-loader-source")).toContainText("server");
+    await expect(testId(page, "use-loader-source")).toHaveText(
+      "Source: server",
+    );
   });
 
   test("useFetchLoader works with preloaded data", async ({ page }) => {
@@ -864,7 +879,12 @@ test.describe("useLoader hooks (production)", () => {
     });
     await expect(
       testId(page, "use-fetch-loader-unregistered-message"),
-    ).toContainText("Fetched from unregistered loader");
+    ).toHaveText("Message: Fetched from unregistered loader");
+
+    // "No data" should be gone after fetch
+    await expect(
+      testId(page, "use-fetch-loader-unregistered-no-data"),
+    ).not.toBeVisible();
   });
 
   test("useFetchLoader load() with custom params works", async ({ page }) => {
@@ -899,6 +919,9 @@ test.describe("useLoader hooks (production)", () => {
       timeout: 5000,
     });
 
+    // Data should NOT be visible when error is present
+    await expect(testId(page, "protected-loader-data")).not.toBeVisible();
+
     // Try authorized request
     await testId(page, "protected-loader-authorized-btn").click();
 
@@ -906,9 +929,12 @@ test.describe("useLoader hooks (production)", () => {
     await expect(testId(page, "protected-loader-data")).toBeVisible({
       timeout: 5000,
     });
-    await expect(testId(page, "protected-loader-secret")).toContainText(
-      "This is protected data",
+    await expect(testId(page, "protected-loader-secret")).toHaveText(
+      "Secret: This is protected data",
     );
+
+    // Error should NOT be visible after successful auth
+    await expect(testId(page, "protected-loader-error")).not.toBeVisible();
   });
 
   test("server action form submission works in production", async ({
@@ -921,6 +947,7 @@ test.describe("useLoader hooks (production)", () => {
 
     // Initially no data
     await expect(testId(page, "server-action-form-no-data")).toBeVisible();
+    await expect(testId(page, "server-action-form-data")).not.toBeVisible();
 
     // Submit the form
     await testId(page, "server-action-form-submit-btn").click();
@@ -930,12 +957,15 @@ test.describe("useLoader hooks (production)", () => {
       timeout: 5000,
     });
 
+    // "No data" should be gone after submission
+    await expect(testId(page, "server-action-form-no-data")).not.toBeVisible();
+
     // Verify server action returned data
-    await expect(testId(page, "server-action-form-message")).toContainText(
-      "Submitted via server action",
+    await expect(testId(page, "server-action-form-message")).toHaveText(
+      "Message: Submitted via server action",
     );
-    await expect(testId(page, "server-action-form-id")).toContainText(
-      "form-submitted",
+    await expect(testId(page, "server-action-form-id")).toHaveText(
+      "ID: form-submitted",
     );
   });
 
@@ -985,11 +1015,12 @@ test.describe("Server action form without JavaScript (production)", () => {
 
     // The result should show the submitted data
     await expect(testId(page, "server-action-form-data")).toBeVisible();
-    await expect(testId(page, "server-action-form-message")).toContainText(
-      "Submitted via server action",
+    await expect(testId(page, "server-action-form-no-data")).not.toBeVisible();
+    await expect(testId(page, "server-action-form-message")).toHaveText(
+      "Message: Submitted via server action",
     );
-    await expect(testId(page, "server-action-form-id")).toContainText(
-      "form-submitted",
+    await expect(testId(page, "server-action-form-id")).toHaveText(
+      "ID: form-submitted",
     );
   });
 });
