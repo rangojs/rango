@@ -292,10 +292,7 @@ export function createRouterDiscoveryPlugin(
             serverMod.setManifestReadyPromise(discoveryPromise);
           }
 
-          const serverModAfterDiscovery = await discoverRouters(s, rscEnv);
-
-          // Save registry for the /__rsc_prerender endpoint (avoids creating a temp server)
-          mainRegistry = serverModAfterDiscovery?.RouterRegistry ?? null;
+          await discoverRouters(s, rscEnv);
 
           // Store server origin for dev prerender endpoint (virtual module injection)
           s.devServerOrigin = getDevServerOrigin();
@@ -307,37 +304,8 @@ export function createRouterDiscoveryPlugin(
           // won't cause unnecessary HMR triggers.
           writeRouteTypesFiles(s);
 
-          // Populate the route map in the RSC env
-          if (s.mergedRouteManifest && serverMod?.setCachedManifest) {
-            serverMod.setCachedManifest(s.mergedRouteManifest);
-          }
-          if (
-            s.mergedPrecomputedEntries &&
-            s.mergedPrecomputedEntries.length > 0 &&
-            serverMod?.setPrecomputedEntries
-          ) {
-            serverMod.setPrecomputedEntries(s.mergedPrecomputedEntries);
-          }
-          if (s.mergedRouteTrie && serverMod?.setRouteTrie) {
-            serverMod.setRouteTrie(s.mergedRouteTrie);
-          }
-          // Populate per-router isolated data eagerly in dev (HMR).
-          // In production builds, per-router data is loaded lazily via import().
-          if (serverMod?.setRouterManifest) {
-            for (const [routerId, manifest] of s.perRouterManifestDataMap) {
-              serverMod.setRouterManifest(routerId, manifest);
-            }
-          }
-          if (serverMod?.setRouterTrie) {
-            for (const [routerId, trie] of s.perRouterTrieMap) {
-              serverMod.setRouterTrie(routerId, trie);
-            }
-          }
-          if (serverMod?.setRouterPrecomputedEntries) {
-            for (const [routerId, entries] of s.perRouterPrecomputedMap) {
-              serverMod.setRouterPrecomputedEntries(routerId, entries);
-            }
-          }
+          // Populate the route map and per-router data in the RSC env
+          await propagateDiscoveryState(rscEnv);
         } catch (err: any) {
           console.warn(
             `[rsc-router] Router discovery failed: ${err.message}\n${err.stack}`,
@@ -364,6 +332,43 @@ export function createRouterDiscoveryPlugin(
 
       // Registry from the main server's RSC environment (populated by discoverRouters)
       let mainRegistry: Map<string, any> | null = null;
+
+      // Push discovery state (manifest, trie, precomputed entries) to the
+      // server module so runtime request handling uses the current routes.
+      // Shared by initial discovery and HMR-triggered re-discovery.
+      const propagateDiscoveryState = async (rscEnv: any) => {
+        const serverMod = await rscEnv.runner.import("@rangojs/router/server");
+        if (!serverMod) return;
+        mainRegistry = serverMod.RouterRegistry ?? null;
+        if (s.mergedRouteManifest && serverMod.setCachedManifest) {
+          serverMod.setCachedManifest(s.mergedRouteManifest);
+        }
+        if (
+          s.mergedPrecomputedEntries &&
+          s.mergedPrecomputedEntries.length > 0 &&
+          serverMod.setPrecomputedEntries
+        ) {
+          serverMod.setPrecomputedEntries(s.mergedPrecomputedEntries);
+        }
+        if (s.mergedRouteTrie && serverMod.setRouteTrie) {
+          serverMod.setRouteTrie(s.mergedRouteTrie);
+        }
+        if (serverMod.setRouterManifest) {
+          for (const [routerId, manifest] of s.perRouterManifestDataMap) {
+            serverMod.setRouterManifest(routerId, manifest);
+          }
+        }
+        if (serverMod.setRouterTrie) {
+          for (const [routerId, trie] of s.perRouterTrieMap) {
+            serverMod.setRouterTrie(routerId, trie);
+          }
+        }
+        if (serverMod.setRouterPrecomputedEntries) {
+          for (const [routerId, entries] of s.perRouterPrecomputedMap) {
+            serverMod.setRouterPrecomputedEntries(routerId, entries);
+          }
+        }
+      };
 
       server.middlewares.use("/__rsc_prerender", async (req: any, res: any) => {
         if (s.discoveryDone) await s.discoveryDone;
@@ -459,6 +464,26 @@ export function createRouterDiscoveryPlugin(
         // only the expensive regeneration is debounced.
         let routeChangeTimer: ReturnType<typeof setTimeout> | undefined;
 
+        // Re-run runtime discovery so factory-generated routes that the
+        // static parser cannot see are refreshed after source changes.
+        let runtimeRediscoveryInProgress = false;
+        const refreshRuntimeDiscovery = async () => {
+          const rscEnv = (server.environments as any)?.rsc;
+          if (!rscEnv?.runner || runtimeRediscoveryInProgress) return;
+          runtimeRediscoveryInProgress = true;
+          try {
+            await discoverRouters(s, rscEnv);
+            writeRouteTypesFiles(s);
+            await propagateDiscoveryState(rscEnv);
+          } catch (err: any) {
+            console.warn(
+              `[rsc-router] Runtime re-discovery failed: ${err.message}`,
+            );
+          } finally {
+            runtimeRediscoveryInProgress = false;
+          }
+        };
+
         const scheduleRouteRegeneration = () => {
           clearTimeout(routeChangeTimer);
           routeChangeTimer = setTimeout(() => {
@@ -472,6 +497,15 @@ export function createRouterDiscoveryPlugin(
               console.error(
                 `[rsc-router] Route regeneration error: ${err.message}`,
               );
+            }
+            // Async: re-run runtime discovery to refresh factory-generated
+            // routes that the static parser cannot resolve.
+            if (s.perRouterManifests.length > 0) {
+              refreshRuntimeDiscovery().catch((err: any) => {
+                console.warn(
+                  `[rsc-router] Runtime re-discovery error: ${err.message}`,
+                );
+              });
             }
           }, 100);
         };
