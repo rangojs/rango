@@ -331,14 +331,14 @@ has higher confidence).
 
 ## Implementation Priority
 
-| #   | Guardrail                      | Confidence | Complexity | Priority |
-| --- | ------------------------------ | ---------- | ---------- | -------- |
-| W1  | Middleware != action guard     | High       | Low        | **P0**   |
-| W3  | PE Response dropped            | High       | Low        | **P0**   |
-| W5  | Redirect after ctx.set()       | Medium     | Medium     | **P1**   |
-| W2  | Upstream ctx.set contract docs/tests only | N/A | Low | **Docs/Test** |
-| W4  | Cache vs revalidation conflict | Medium     | High       | **P2**   |
-| W6  | Action headers dropped         | Low-Med    | High       | **P3**   |
+| #   | Guardrail                                 | Confidence | Complexity | Priority      |
+| --- | ----------------------------------------- | ---------- | ---------- | ------------- |
+| W1  | Middleware != action guard                | High       | Low        | **P0**        |
+| W3  | PE Response dropped                       | High       | Low        | **P0**        |
+| W5  | Redirect after ctx.set()                  | Medium     | Medium     | **P1**        |
+| W2  | Upstream ctx.set contract docs/tests only | N/A        | Low        | **Docs/Test** |
+| W4  | Cache vs revalidation conflict            | Medium     | High       | **P2**        |
+| W6  | Action headers dropped                    | Low-Med    | High       | **P3**        |
 
 Start with W1 and W3 — highest confidence, lowest complexity, directly
 address the most common misunderstandings documented in execution-model.md.

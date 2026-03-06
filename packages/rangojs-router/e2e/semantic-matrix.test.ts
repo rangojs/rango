@@ -182,9 +182,9 @@ const matrixRows: SemanticMatrixRow[] = [
     scope: "in-scope-child",
     url: "/revalidation-contract",
     assert: async ({ page }) => {
-      await expect(
-        testId(page, "revalidation-contract-upstream"),
-      ).toHaveText("from-layout");
+      await expect(testId(page, "revalidation-contract-upstream")).toHaveText(
+        "from-layout",
+      );
       await expect(
         testId(page, "revalidation-contract-action-cookie"),
       ).toHaveText("none");
