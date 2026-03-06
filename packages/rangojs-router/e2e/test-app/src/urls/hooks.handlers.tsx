@@ -305,6 +305,39 @@ export const ProgressiveEnhancementHandler: Handler<
   );
 };
 
+export const PeRedirectHandler: Handler<"peRedirect"> = async () => {
+  const { peReturnRedirect, peThrowRedirect } = await import("../actions.js");
+
+  return (
+    <div data-testid="pe-redirect-page">
+      <Link to="/" data-testid="back-link">
+        ← Back to Home
+      </Link>
+      <h1 data-testid="pe-redirect-title">PE Redirect Test</h1>
+
+      <form
+        action={peReturnRedirect}
+        method="post"
+        data-testid="pe-return-redirect-form"
+      >
+        <button type="submit" data-testid="pe-return-redirect-btn">
+          Return redirect
+        </button>
+      </form>
+
+      <form
+        action={peThrowRedirect}
+        method="post"
+        data-testid="pe-throw-redirect-form"
+      >
+        <button type="submit" data-testid="pe-throw-redirect-btn">
+          Throw redirect
+        </button>
+      </form>
+    </div>
+  );
+};
+
 // ==================== useRouter test handlers ====================
 
 export const UseRouterHandler: Handler<"hookTests.useRouter"> = () => (

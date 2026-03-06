@@ -311,6 +311,18 @@ export async function mwChainAction(): Promise<void> {
  * Form-based variant of mwChainAction for progressive enhancement testing.
  * Works with native HTML form POST (no-JS) and with React enhancement.
  */
+/**
+ * PE redirect actions for testing progressive enhancement redirect handling.
+ * These are form-compatible (accept FormData) so they work with native HTML forms.
+ */
+export async function peReturnRedirect(_formData: FormData): Promise<void> {
+  return redirect("/progressive-enhancement") as any;
+}
+
+export async function peThrowRedirect(_formData: FormData): Promise<void> {
+  throw redirect("/progressive-enhancement");
+}
+
 export async function mwChainFormAction(_formData: FormData): Promise<void> {
   const ctx = getRequestContext();
   cookies().set("chain-action", "av", { path: "/", maxAge: 86400 });
