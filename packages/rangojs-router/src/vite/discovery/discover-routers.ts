@@ -31,13 +31,26 @@ export async function discoverRouters(
 ): Promise<any> {
   if (!state.resolvedEntryPath) return;
 
+  // Import the router package first so we can clear the registries before
+  // re-importing the entry. Library modules are always cached (not
+  // invalidated by HMR), so this import is cheap. Clearing ensures
+  // routers removed from the entry graph don't survive as stale entries —
+  // only routers whose createRouter() / createHostRouter() calls run
+  // during the entry import will be re-registered.
+  const serverMod = await rscEnv.runner.import("@rangojs/router/server");
+  serverMod.RouterRegistry.clear();
+  try {
+    const hostMod = await rscEnv.runner.import("@rangojs/router/host");
+    if (hostMod.HostRouterRegistry) hostMod.HostRouterRegistry.clear();
+  } catch {
+    // @rangojs/router/host not available, skip
+  }
+
   // Import the entry file via RSC environment.
   // For node preset: this is the router file (createRouter() registers in RouterRegistry).
   // For cloudflare preset: this is the worker entry (which imports the router).
   await rscEnv.runner.import(state.resolvedEntryPath);
 
-  // Import the router package to access the registry
-  const serverMod = await rscEnv.runner.import("@rangojs/router/server");
   let registry: Map<string, any> = serverMod.RouterRegistry;
 
   if (!registry || registry.size === 0) {
