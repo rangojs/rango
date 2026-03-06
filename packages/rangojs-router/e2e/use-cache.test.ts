@@ -574,7 +574,7 @@ test.describe("use-cache basic", () => {
 
     expect(cachedTs1).toMatch(/^\d+$/);
     expect(cachedRand1).toMatch(/^0\.\d+$/);
-    expect(headerContent1).toMatch(/.+/);
+    expect(headerContent1).toMatch(/^.+$/);
 
     // Header and children should show the same dynamicTs
     expect(headerContent1).toBe(childrenContent1);
@@ -1245,7 +1245,7 @@ test.describe("use-cache (production)", () => {
 
     expect(cachedTs1).toMatch(/^\d+$/);
     expect(cachedRand1).toMatch(/^0\.\d+$/);
-    expect(headerContent1).toMatch(/.+/);
+    expect(headerContent1).toMatch(/^.+$/);
 
     expect(headerContent1).toBe(childrenContent1);
 

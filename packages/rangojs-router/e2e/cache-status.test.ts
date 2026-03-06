@@ -76,7 +76,7 @@ test.describe("cache-status-behavior", () => {
             "Expected [CacheScope] Cached: log for /cache-status/success",
         },
       )
-      .toBeTruthy();
+      .toBe(true);
 
     // Check logs
     const afterFirstStdout = f.proc().stdout();
@@ -85,12 +85,12 @@ test.describe("cache-status-behavior", () => {
     // Should have MISS (first visit)
     expect(
       firstLogs.misses.some((log) => log.includes("/cache-status/success")),
-    ).toBeTruthy();
+    ).toBe(true);
 
     // Should have Cached (200 response without errors)
     expect(
       firstLogs.cached.some((log) => log.includes("/cache-status/success")),
-    ).toBeTruthy();
+    ).toBe(true);
   });
 
   test("notFound() should return 404 and NOT be cached", async ({ page }) => {
@@ -112,7 +112,7 @@ test.describe("cache-status-behavior", () => {
 
     expect(
       logs.misses.some((log) => log.includes("/cache-status/not-found")),
-    ).toBeTruthy();
+    ).toBe(true);
 
     // Should NOT have Cached (non-200 responses are skipped)
     expect(
@@ -139,7 +139,7 @@ test.describe("cache-status-behavior", () => {
 
     expect(
       logs.misses.some((log) => log.includes("/cache-status/server-error")),
-    ).toBeTruthy();
+    ).toBe(true);
 
     // Should NOT have Cached (non-200 responses are skipped)
     expect(
@@ -172,7 +172,7 @@ test.describe("cache-status-behavior", () => {
           message: "Expected cache write to complete for /cache-status/success",
         },
       )
-      .toBeTruthy();
+      .toBe(true);
 
     // Navigate away
     await page.goto(f.url("/"));
@@ -195,7 +195,7 @@ test.describe("cache-status-behavior", () => {
     // Should have HIT (from cache)
     expect(
       secondLogs.hits.some((log) => log.includes("/cache-status/success")),
-    ).toBeTruthy();
+    ).toBe(true);
 
     // Should NOT have MISS
     expect(
@@ -231,7 +231,7 @@ test.describe("cache-status-behavior", () => {
     // Should still have MISS (not cached from first request)
     expect(
       secondLogs.misses.some((log) => log.includes("/cache-status/not-found")),
-    ).toBeTruthy();
+    ).toBe(true);
 
     // Should NOT have HIT
     expect(
