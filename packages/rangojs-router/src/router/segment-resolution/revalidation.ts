@@ -22,7 +22,11 @@ import type {
   SegmentRevalidationResult,
   ActionContext,
 } from "../types.js";
-import { debugLog, pushRevalidationTraceEntry } from "../logging.js";
+import {
+  debugLog,
+  pushRevalidationTraceEntry,
+  isTraceActive,
+} from "../logging.js";
 import { resolveLoaderData } from "./loader-cache.js";
 import {
   handleHandlerResult,
@@ -82,15 +86,17 @@ export async function resolveLoadersWithRevalidation<TEnv>(
         const shouldRun = await revalidate(
           async () => {
             if (!clientSegmentIds.has(segmentId)) {
-              pushRevalidationTraceEntry({
-                segmentId,
-                segmentType: "loader",
-                belongsToRoute,
-                source: "loader",
-                defaultShouldRevalidate: true,
-                finalShouldRevalidate: true,
-                reason: "new-segment",
-              });
+              if (isTraceActive()) {
+                pushRevalidationTraceEntry({
+                  segmentId,
+                  segmentType: "loader",
+                  belongsToRoute,
+                  source: "loader",
+                  defaultShouldRevalidate: true,
+                  finalShouldRevalidate: true,
+                  reason: "new-segment",
+                });
+              }
               return true;
             }
 
@@ -295,28 +301,32 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
 
       const shouldResolve = await (async () => {
         if (isFullRefetch) {
-          pushRevalidationTraceEntry({
-            segmentId: parallelId,
-            segmentType: "parallel",
-            belongsToRoute,
-            source: "parallel",
-            defaultShouldRevalidate: true,
-            finalShouldRevalidate: true,
-            reason: "full-refetch",
-          });
+          if (isTraceActive()) {
+            pushRevalidationTraceEntry({
+              segmentId: parallelId,
+              segmentType: "parallel",
+              belongsToRoute,
+              source: "parallel",
+              defaultShouldRevalidate: true,
+              finalShouldRevalidate: true,
+              reason: "full-refetch",
+            });
+          }
           return true;
         }
         if (!clientSegmentIds.has(parallelId)) {
           const result = belongsToRoute || isNewParent;
-          pushRevalidationTraceEntry({
-            segmentId: parallelId,
-            segmentType: "parallel",
-            belongsToRoute,
-            source: "parallel",
-            defaultShouldRevalidate: result,
-            finalShouldRevalidate: result,
-            reason: result ? "new-segment" : "skip-parent-chain",
-          });
+          if (isTraceActive()) {
+            pushRevalidationTraceEntry({
+              segmentId: parallelId,
+              segmentType: "parallel",
+              belongsToRoute,
+              source: "parallel",
+              defaultShouldRevalidate: result,
+              finalShouldRevalidate: result,
+              reason: result ? "new-segment" : "skip-parent-chain",
+            });
+          }
           return result;
         }
 
@@ -446,19 +456,21 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         belongsToRoute,
       });
       if (!hasSegment) {
-        const segType =
-          entry.type === "cache"
-            ? "layout"
-            : (entry.type as "layout" | "route");
-        pushRevalidationTraceEntry({
-          segmentId: entry.shortCode,
-          segmentType: segType,
-          belongsToRoute,
-          source: "segment-resolution",
-          defaultShouldRevalidate: true,
-          finalShouldRevalidate: true,
-          reason: "new-segment",
-        });
+        if (isTraceActive()) {
+          const segType =
+            entry.type === "cache"
+              ? "layout"
+              : (entry.type as "layout" | "route");
+          pushRevalidationTraceEntry({
+            segmentId: entry.shortCode,
+            segmentType: segType,
+            belongsToRoute,
+            source: "segment-resolution",
+            defaultShouldRevalidate: true,
+            finalShouldRevalidate: true,
+            reason: "new-segment",
+          });
+        }
         return true;
       }
 
@@ -782,15 +794,17 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   const component = await revalidate(
     async () => {
       if (!clientSegmentIds.has(orphan.shortCode)) {
-        pushRevalidationTraceEntry({
-          segmentId: orphan.shortCode,
-          segmentType: "layout",
-          belongsToRoute,
-          source: "orphan-layout",
-          defaultShouldRevalidate: true,
-          finalShouldRevalidate: true,
-          reason: "new-segment",
-        });
+        if (isTraceActive()) {
+          pushRevalidationTraceEntry({
+            segmentId: orphan.shortCode,
+            segmentType: "layout",
+            belongsToRoute,
+            source: "orphan-layout",
+            defaultShouldRevalidate: true,
+            finalShouldRevalidate: true,
+            reason: "new-segment",
+          });
+        }
         return true;
       }
 
@@ -881,15 +895,17 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
 
       const shouldResolve = await (async () => {
         if (!clientSegmentIds.has(parallelId)) {
-          pushRevalidationTraceEntry({
-            segmentId: parallelId,
-            segmentType: "parallel",
-            belongsToRoute,
-            source: "parallel",
-            defaultShouldRevalidate: true,
-            finalShouldRevalidate: true,
-            reason: "new-segment",
-          });
+          if (isTraceActive()) {
+            pushRevalidationTraceEntry({
+              segmentId: parallelId,
+              segmentType: "parallel",
+              belongsToRoute,
+              source: "parallel",
+              defaultShouldRevalidate: true,
+              finalShouldRevalidate: true,
+              reason: "new-segment",
+            });
+          }
           return true;
         }
 

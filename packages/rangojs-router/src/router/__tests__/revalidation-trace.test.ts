@@ -10,6 +10,7 @@ import {
   startRevalidationTrace,
   pushRevalidationTraceEntry,
   flushRevalidationTrace,
+  isTraceActive,
   type RevalidationTraceEntry,
   type RevalidationTraceMeta,
 } from "../logging.js";
@@ -222,5 +223,40 @@ describe("revalidation trace collector", () => {
     pushRevalidationTraceEntry(makeEntry());
     const result = flushRevalidationTrace();
     expect(result).toBeNull();
+  });
+
+  it("isTraceActive returns false outside log context", () => {
+    expect(isTraceActive()).toBe(false);
+  });
+
+  it("isTraceActive returns false when no trace started", () => {
+    const result = runWithRouterLogContext(
+      { request: new Request("http://localhost/"), transaction: "test" },
+      () => isTraceActive(),
+    );
+    expect(result).toBe(false);
+  });
+
+  it("isTraceActive returns true after trace started", () => {
+    const result = runWithRouterLogContext(
+      { request: new Request("http://localhost/"), transaction: "test" },
+      () => {
+        startRevalidationTrace(makeMeta());
+        return isTraceActive();
+      },
+    );
+    expect(result).toBe(true);
+  });
+
+  it("isTraceActive returns false after flush", () => {
+    const result = runWithRouterLogContext(
+      { request: new Request("http://localhost/"), transaction: "test" },
+      () => {
+        startRevalidationTrace(makeMeta());
+        flushRevalidationTrace();
+        return isTraceActive();
+      },
+    );
+    expect(result).toBe(false);
   });
 });

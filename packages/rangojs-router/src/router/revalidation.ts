@@ -6,7 +6,11 @@
 
 import type { ResolvedSegment, HandlerContext } from "../types";
 import type { ActionContext } from "./types";
-import { debugLog, pushRevalidationTraceEntry } from "./logging.js";
+import {
+  debugLog,
+  pushRevalidationTraceEntry,
+  isTraceActive,
+} from "./logging.js";
 import type { RevalidationTraceEntry } from "./logging.js";
 
 function paramsEqual(
@@ -79,13 +83,15 @@ export async function evaluateRevalidation<TEnv>(
   const nextParams = segment.params || {};
   const paramsChanged = !paramsEqual(nextParams, prevParams);
 
-  // Trace helper: push a structured entry to the request-scoped trace buffer
+  // Trace helper: push a structured entry to the request-scoped trace buffer.
+  // Guarded by isTraceActive() so object construction is skipped in production.
   function pushTrace(
     defaultVal: boolean,
     finalVal: boolean,
     reason: string,
   ): void {
-    const entry: RevalidationTraceEntry = {
+    if (!isTraceActive()) return;
+    pushRevalidationTraceEntry({
       segmentId: segment.id,
       segmentType: segment.type,
       belongsToRoute: segment.belongsToRoute ?? false,
@@ -94,8 +100,7 @@ export async function evaluateRevalidation<TEnv>(
       finalShouldRevalidate: finalVal,
       reason,
       customRevalidators: revalidations.length || undefined,
-    };
-    pushRevalidationTraceEntry(entry);
+    });
   }
 
   // Calculate default revalidation based on segment type and request method

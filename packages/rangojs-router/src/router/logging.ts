@@ -187,6 +187,12 @@ export function debugWarn(
 
 // -- Revalidation trace helpers --
 
+export function isTraceActive(): boolean {
+  if (!INTERNAL_RANGO_DEBUG) return false;
+  const ctx = routerLogContext.getStore();
+  return !!ctx?.revalidationTrace;
+}
+
 export function startRevalidationTrace(meta: RevalidationTraceMeta): void {
   const ctx = routerLogContext.getStore();
   if (!ctx || !INTERNAL_RANGO_DEBUG) return;
