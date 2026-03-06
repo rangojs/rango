@@ -31,6 +31,7 @@ import {
   resolveLayoutComponent,
   resolveWithErrorBoundary,
 } from "./helpers.js";
+import { getRouterContext } from "../router-context.js";
 
 // ---------------------------------------------------------------------------
 // Revalidation path (partial match)
@@ -920,6 +921,8 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
   const seenSegIds = new Set<string>();
   const seenMatchIds = new Set<string>();
 
+  const telemetry = getRouterContext()?.telemetry;
+
   for (const entry of entries) {
     if (entry.type === "route" && interceptResult) {
       debugLog(
@@ -959,7 +962,9 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
         ),
       (seg) => ({ segments: [seg], matchedIds: [seg.id] }),
       deps,
-      undefined,
+      telemetry
+        ? { request, url: context.url, routeKey, isPartial: true, telemetry }
+        : undefined,
       pathname,
     );
 

@@ -372,15 +372,17 @@ export function createRouter<TEnv = any>(
       requestStartTime?: number;
     },
   ): Promise<LoaderDataResult<T>> {
-    const loaderName = segmentId.split(".").pop() || "unknown";
-    const loaderStart = performance.now();
-    safeEmit(telemetry, {
-      type: "loader.start",
-      timestamp: loaderStart,
-      segmentId,
-      loaderName,
-      pathname,
-    });
+    const loaderStart = telemetrySink ? performance.now() : 0;
+    if (telemetrySink) {
+      const loaderName = segmentId.split(".").pop() || "unknown";
+      safeEmit(telemetry, {
+        type: "loader.start",
+        timestamp: loaderStart,
+        segmentId,
+        loaderName,
+        pathname,
+      });
+    }
 
     const result = wrapLoaderWithErrorHandling(
       promise,
@@ -405,23 +407,26 @@ export function createRouter<TEnv = any>(
               handledByBoundary: ctx.handledByBoundary,
               requestStartTime: errorContext.requestStartTime,
             });
-            const errorObj =
-              error instanceof Error ? error : new Error(String(error));
-            safeEmit(telemetry, {
-              type: "loader.error",
-              timestamp: performance.now(),
-              segmentId: ctx.segmentId,
-              loaderName: ctx.loaderName,
-              pathname,
-              error: errorObj,
-              handledByBoundary: ctx.handledByBoundary,
-            });
+            if (telemetrySink) {
+              const errorObj =
+                error instanceof Error ? error : new Error(String(error));
+              safeEmit(telemetry, {
+                type: "loader.error",
+                timestamp: performance.now(),
+                segmentId: ctx.segmentId,
+                loaderName: ctx.loaderName,
+                pathname,
+                error: errorObj,
+                handledByBoundary: ctx.handledByBoundary,
+              });
+            }
           }
         : undefined,
     );
 
     // Emit loader.end after the promise settles (fire-and-forget)
     if (telemetrySink) {
+      const loaderName = segmentId.split(".").pop() || "unknown";
       result.then((r) => {
         safeEmit(telemetry, {
           type: "loader.end",

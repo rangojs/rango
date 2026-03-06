@@ -502,15 +502,17 @@ export function withCacheLookup<TEnv>(
       });
 
       const routerCtx = getRouterContext<TEnv>();
-      const tSink = resolveSink(routerCtx.telemetry);
-      safeEmit(tSink, {
-        type: "revalidation.decision",
-        timestamp: performance.now(),
-        segmentId: segment.id,
-        pathname: ctx.pathname,
-        routeKey: ctx.routeKey,
-        shouldRevalidate,
-      });
+      if (routerCtx.telemetry) {
+        const tSink = resolveSink(routerCtx.telemetry);
+        safeEmit(tSink, {
+          type: "revalidation.decision",
+          timestamp: performance.now(),
+          segmentId: segment.id,
+          pathname: ctx.pathname,
+          routeKey: ctx.routeKey,
+          shouldRevalidate,
+        });
+      }
 
       if (!shouldRevalidate) {
         // Client has it, no revalidation needed

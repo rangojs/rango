@@ -22,6 +22,7 @@ import {
   resolveLayoutComponent,
   resolveWithErrorBoundary,
 } from "./helpers.js";
+import { getRouterContext } from "../router-context.js";
 
 // ---------------------------------------------------------------------------
 // Fresh path (full match, no revalidation)
@@ -409,6 +410,12 @@ export async function resolveAllSegments<TEnv>(
     safeRequest = context.request;
   } catch {}
 
+  // Get telemetry sink from RouterContext (may not exist during prerendering)
+  let telemetry;
+  try {
+    telemetry = getRouterContext()?.telemetry;
+  } catch {}
+
   for (const entry of entries) {
     const resolvedSegments = await resolveWithErrorBoundary(
       entry,
@@ -426,7 +433,7 @@ export async function resolveAllSegments<TEnv>(
         ),
       (seg) => [seg],
       deps,
-      { request: safeRequest, url: context.url, routeKey },
+      { request: safeRequest, url: context.url, routeKey, telemetry },
       context.pathname,
     );
     // Deduplicate by segment ID. include() scopes can produce entries that

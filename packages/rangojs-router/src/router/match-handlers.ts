@@ -100,6 +100,7 @@ export function createMatchHandlers<TEnv = any>(
     defaultErrorBoundary,
     findInterceptForRoute,
   } = deps;
+  const hasTelemetry = !!deps.telemetry;
   const telemetry = resolveSink(deps.telemetry);
 
   async function createMatchContextForFull(
@@ -148,19 +149,33 @@ export function createMatchHandlers<TEnv = any>(
         withRouterLogScope("match", async () => {
           const matchStart = performance.now();
           const pathname = new URL(request.url).pathname;
-          safeEmit(telemetry, {
-            type: "request.start",
-            timestamp: matchStart,
-            method: request.method,
-            pathname,
-            transaction: "match",
-            isPartial: false,
-          });
+          if (hasTelemetry) {
+            safeEmit(telemetry, {
+              type: "request.start",
+              timestamp: matchStart,
+              method: request.method,
+              pathname,
+              transaction: "match",
+              isPartial: false,
+            });
+          }
 
           const result = await createMatchContextForFull(request, env);
 
           // Handle redirect case
           if ("type" in result && result.type === "redirect") {
+            if (hasTelemetry) {
+              safeEmit(telemetry, {
+                type: "request.end",
+                timestamp: performance.now(),
+                method: request.method,
+                pathname,
+                transaction: "match",
+                durationMs: performance.now() - matchStart,
+                segmentCount: 0,
+                cacheHit: false,
+              });
+            }
             return {
               segments: [],
               matched: [],
@@ -176,40 +191,44 @@ export function createMatchHandlers<TEnv = any>(
             const state = createPipelineState();
             const pipeline = createMatchPartialPipeline(ctx, state);
             const matchResult = await collectMatchResult(pipeline, ctx, state);
-            safeEmit(telemetry, {
-              type: "cache.decision",
-              timestamp: performance.now(),
-              pathname,
-              routeKey: ctx.routeKey,
-              hit: state.cacheHit,
-              shouldRevalidate: !!state.shouldRevalidate,
-              source: state.cacheSource,
-            });
-            safeEmit(telemetry, {
-              type: "request.end",
-              timestamp: performance.now(),
-              method: request.method,
-              pathname,
-              transaction: "match",
-              durationMs: performance.now() - matchStart,
-              segmentCount: matchResult.segments.length,
-              cacheHit: state.cacheHit,
-            });
+            if (hasTelemetry) {
+              safeEmit(telemetry, {
+                type: "cache.decision",
+                timestamp: performance.now(),
+                pathname,
+                routeKey: ctx.routeKey,
+                hit: state.cacheHit,
+                shouldRevalidate: !!state.shouldRevalidate,
+                source: state.cacheSource,
+              });
+              safeEmit(telemetry, {
+                type: "request.end",
+                timestamp: performance.now(),
+                method: request.method,
+                pathname,
+                transaction: "match",
+                durationMs: performance.now() - matchStart,
+                segmentCount: matchResult.segments.length,
+                cacheHit: state.cacheHit,
+              });
+            }
             return matchResult;
           } catch (error) {
+            if (hasTelemetry) {
+              const errorObj =
+                error instanceof Error ? error : new Error(String(error));
+              safeEmit(telemetry, {
+                type: "request.error",
+                timestamp: performance.now(),
+                method: request.method,
+                pathname,
+                transaction: "match",
+                error: errorObj,
+                phase: error instanceof Response ? "redirect" : "routing",
+                durationMs: performance.now() - matchStart,
+              });
+            }
             if (error instanceof Response) throw error;
-            const errorObj =
-              error instanceof Error ? error : new Error(String(error));
-            safeEmit(telemetry, {
-              type: "request.error",
-              timestamp: performance.now(),
-              method: request.method,
-              pathname,
-              transaction: "match",
-              error: errorObj,
-              phase: "routing",
-              durationMs: performance.now() - matchStart,
-            });
             // Report unhandled errors during full match pipeline
             callOnError(error, "routing", {
               request,
@@ -267,21 +286,37 @@ export function createMatchHandlers<TEnv = any>(
           withRouterLogScope("matchPartial", async () => {
             const matchStart = performance.now();
             const pathname = new URL(request.url).pathname;
-            safeEmit(telemetry, {
-              type: "request.start",
-              timestamp: matchStart,
-              method: request.method,
-              pathname,
-              transaction: "matchPartial",
-              isPartial: true,
-            });
+            if (hasTelemetry) {
+              safeEmit(telemetry, {
+                type: "request.start",
+                timestamp: matchStart,
+                method: request.method,
+                pathname,
+                transaction: "matchPartial",
+                isPartial: true,
+              });
+            }
 
             const ctx = await createMatchContextForPartial(
               request,
               context,
               actionContext,
             );
-            if (!ctx) return null;
+            if (!ctx) {
+              if (hasTelemetry) {
+                safeEmit(telemetry, {
+                  type: "request.end",
+                  timestamp: performance.now(),
+                  method: request.method,
+                  pathname,
+                  transaction: "matchPartial",
+                  durationMs: performance.now() - matchStart,
+                  segmentCount: 0,
+                  cacheHit: false,
+                });
+              }
+              return null;
+            }
 
             try {
               const state = createPipelineState();
@@ -291,41 +326,45 @@ export function createMatchHandlers<TEnv = any>(
                 ctx,
                 state,
               );
-              safeEmit(telemetry, {
-                type: "cache.decision",
-                timestamp: performance.now(),
-                pathname,
-                routeKey: ctx.routeKey,
-                hit: state.cacheHit,
-                shouldRevalidate: !!state.shouldRevalidate,
-                source: state.cacheSource,
-              });
-              safeEmit(telemetry, {
-                type: "request.end",
-                timestamp: performance.now(),
-                method: request.method,
-                pathname,
-                transaction: "matchPartial",
-                durationMs: performance.now() - matchStart,
-                segmentCount: matchResult.segments.length,
-                cacheHit: state.cacheHit,
-              });
+              if (hasTelemetry) {
+                safeEmit(telemetry, {
+                  type: "cache.decision",
+                  timestamp: performance.now(),
+                  pathname,
+                  routeKey: ctx.routeKey,
+                  hit: state.cacheHit,
+                  shouldRevalidate: !!state.shouldRevalidate,
+                  source: state.cacheSource,
+                });
+                safeEmit(telemetry, {
+                  type: "request.end",
+                  timestamp: performance.now(),
+                  method: request.method,
+                  pathname,
+                  transaction: "matchPartial",
+                  durationMs: performance.now() - matchStart,
+                  segmentCount: matchResult.segments.length,
+                  cacheHit: state.cacheHit,
+                });
+              }
               return matchResult;
             } catch (error) {
+              if (hasTelemetry) {
+                const errorObj =
+                  error instanceof Error ? error : new Error(String(error));
+                const phase = actionContext ? "action" : "revalidation";
+                safeEmit(telemetry, {
+                  type: "request.error",
+                  timestamp: performance.now(),
+                  method: request.method,
+                  pathname,
+                  transaction: "matchPartial",
+                  error: errorObj,
+                  phase: error instanceof Response ? "redirect" : phase,
+                  durationMs: performance.now() - matchStart,
+                });
+              }
               if (error instanceof Response) throw error;
-              const errorObj =
-                error instanceof Error ? error : new Error(String(error));
-              const phase = actionContext ? "action" : "revalidation";
-              safeEmit(telemetry, {
-                type: "request.error",
-                timestamp: performance.now(),
-                method: request.method,
-                pathname,
-                transaction: "matchPartial",
-                error: errorObj,
-                phase,
-                durationMs: performance.now() - matchStart,
-              });
               // Report unhandled errors during partial match pipeline
               callOnError(error, actionContext ? "action" : "revalidation", {
                 request,
