@@ -45,11 +45,16 @@ export async function buildDebugManifest<TEnv = any>(
         if (promiseResult !== null) {
           const load = await (promiseResult as Promise<any>);
           if (load && typeof load === "object" && "default" in load) {
+            // Promise<{ default: fn }> — e.g. dynamic import
             const useItems = load.default;
             if (typeof useItems === "function") {
               useItems(helpers);
             }
+          } else if (typeof load === "function") {
+            // Promise<fn>
+            load(helpers);
           }
+          // Promise<Array> — routes already registered by the handler call
         }
       },
     );
