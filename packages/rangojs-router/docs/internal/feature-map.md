@@ -36,17 +36,17 @@ Related docs:
 
 These subpaths are consumed by the Vite plugin, RSC handler, or build tooling. They are not part of the public API and may change without notice.
 
-| Export                               | Description                                                   |
-| ------------------------------------ | ------------------------------------------------------------- |
-| `./server`                           | Manifest/build internals: plugin bridge, route-map management |
-| `./__internal`                       | Internal plumbing shared by build/runtime/Vite                |
-| `./internal/deps/browser`            | Browser runtime dependency bridge                             |
-| `./internal/deps/ssr`                | SSR runtime dependency bridge                                 |
-| `./internal/deps/rsc`                | RSC runtime dependency bridge                                 |
-| `./internal/deps/html-stream-client` | HTML stream client dependency bridge                          |
-| `./internal/deps/html-stream-server` | HTML stream server dependency bridge                          |
-| `./internal/rsc-handler`             | RSC handler internals                                         |
-| `./cache-runtime`                    | Cache runtime dependencies                                    |
+| Export                               | Description                                                        |
+| ------------------------------------ | ------------------------------------------------------------------ |
+| `./server`                           | Manifest/build internals: plugin bridge, route-map management      |
+| `./__internal`                       | Internal plumbing shared by build/runtime/Vite                     |
+| `./internal/deps/browser`            | Browser runtime dependency bridge                                  |
+| `./internal/deps/ssr`                | SSR runtime dependency bridge                                      |
+| `./internal/deps/rsc`                | RSC runtime dependency bridge                                      |
+| `./internal/deps/html-stream-client` | HTML stream client dependency bridge                               |
+| `./internal/deps/html-stream-server` | HTML stream server dependency bridge                               |
+| `./internal/rsc-handler`             | RSC handler internals                                              |
+| `./cache-runtime`                    | Cache runtime dependencies                                         |
 | `./types`                            | Type declarations for the `@rangojs/router:version` virtual module |
 
 ### CLI
