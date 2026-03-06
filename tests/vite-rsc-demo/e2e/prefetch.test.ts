@@ -3,6 +3,27 @@ import { test as base, expect as baseExpect } from "@playwright/test";
 import { waitForHydration, expectNoPageError } from "./helper";
 import { useFixture } from "./fixture";
 
+type ExpectLike = typeof expect;
+
+async function expectCountToRemain(
+  expectFn: ExpectLike,
+  getCount: () => number | Promise<number>,
+  expected: number,
+  durationMs = 500,
+): Promise<void> {
+  const start = Date.now();
+  await expectFn
+    .poll(
+      async () =>
+        (await getCount()) === expected && Date.now() - start >= durationMs,
+      {
+        timeout: durationMs + 3000,
+        message: `Expected count to remain ${expected} for ${durationMs}ms`,
+      },
+    )
+    .toBe(true);
+}
+
 /**
  * Prefetch on hover tests (router mode — default)
  *
@@ -74,18 +95,16 @@ test.describe("prefetch-on-hover (router mode)", () => {
 
     // Hover, move away, hover again
     await blogLink.hover();
-    await page.waitForTimeout(300);
+    await expect.poll(() => prefetchRequests.length, { timeout: 3000 }).toBe(1);
 
     // Move away from the link
     await page.locator("h1").first().hover();
-    await page.waitForTimeout(200);
 
     // Hover again
     await blogLink.hover();
-    await page.waitForTimeout(300);
 
     // Only one prefetch request should have been made
-    expect(prefetchRequests.length).toBe(1);
+    await expectCountToRemain(expect, () => prefetchRequests.length, 1);
   });
 
   test("should prefetch multiple links independently", async ({
@@ -107,11 +126,24 @@ test.describe("prefetch-on-hover (router mode)", () => {
 
     // Hover over Blog link
     await page.locator('nav a:has-text("Blog")').hover();
-    await page.waitForTimeout(300);
+    await expect
+      .poll(
+        () => prefetchUrls.filter((u) => u.includes("/blog")).length,
+        { timeout: 3000 },
+      )
+      .toBe(1);
 
     // Hover over Shop link
     await page.locator('nav a:has-text("Shop")').hover();
-    await page.waitForTimeout(300);
+    await expect
+      .poll(
+        () => ({
+          blog: prefetchUrls.filter((u) => u.includes("/blog")).length,
+          shop: prefetchUrls.filter((u) => u.includes("/shop")).length,
+        }),
+        { timeout: 3000 },
+      )
+      .toEqual({ blog: 1, shop: 1 });
 
     // Both prefetch requests should have been made
     const blogPrefetches = prefetchUrls.filter((u) => u.includes("/blog"));
@@ -145,7 +177,6 @@ test.describe("prefetch-on-hover (router mode)", () => {
 
     // Wait for prefetch request
     await expect.poll(() => rscRequests.length, { timeout: 3000 }).toBe(1);
-    await page.waitForTimeout(200);
 
     // Click the link to navigate
     await blogLink.click();
@@ -273,11 +304,9 @@ test.describe("prefetch-on-hover (router mode)", () => {
 
     // Wait for prefetch to complete
     await expect.poll(() => prefetchStates.length, { timeout: 3000 }).toBe(1);
-    await page.waitForTimeout(200);
 
     // Move cursor away from Blog link
     await page.locator("h1").first().hover();
-    await page.waitForTimeout(200);
 
     // Perform server action: add a todo
     // This triggers markCacheAsStale -> clearPrefetchCache -> invalidateRangoState
@@ -289,7 +318,13 @@ test.describe("prefetch-on-hover (router mode)", () => {
     await expect(page.locator("button:has-text('Add Todo')")).toBeVisible({
       timeout: 10000,
     });
-    await page.waitForTimeout(300);
+
+    await expect
+      .poll(
+        () => page.evaluate(() => localStorage.getItem("rango-state")),
+        { timeout: 5000 },
+      )
+      .not.toBe(prefetchStates[0]);
 
     // Hover Blog link again — should trigger a NEW prefetch
     // because the cache was cleared and state key changed
@@ -435,7 +470,6 @@ base.describe("prefetch-on-hover (production)", () => {
       await baseExpect
         .poll(() => rscRequests.length, { timeout: 3000 })
         .toBe(1);
-      await page.waitForTimeout(200);
 
       await blogLink.click();
       await page.waitForURL("**/blog", { timeout: 5000 });
@@ -552,11 +586,9 @@ base.describe("prefetch-on-hover (production)", () => {
       await baseExpect
         .poll(() => prefetchStates.length, { timeout: 3000 })
         .toBe(1);
-      await page.waitForTimeout(200);
 
       // Move cursor away from Blog link
       await page.locator("h1").first().hover();
-      await page.waitForTimeout(200);
 
       // Perform server action: add a todo
       const input = page.locator('input[placeholder="What needs to be done?"]');
@@ -567,7 +599,13 @@ base.describe("prefetch-on-hover (production)", () => {
       await baseExpect(page.locator("button:has-text('Add Todo')")).toBeVisible(
         { timeout: 10000 },
       );
-      await page.waitForTimeout(300);
+
+      await baseExpect
+        .poll(
+          () => page.evaluate(() => localStorage.getItem("rango-state")),
+          { timeout: 5000 },
+        )
+        .not.toBe(prefetchStates[0]);
 
       // Hover Blog link again — should trigger a NEW prefetch
       // because state key changed after invalidation
@@ -691,7 +729,7 @@ test.describe("prefetch-viewport (dev)", () => {
     await waitForHydration(page);
 
     // Wait for visible viewport links to fire
-    await page.waitForTimeout(500);
+    await expectCountToRemain(expect, () => prefetchRequests.length, 0);
 
     // Shop link is below a 3000px spacer — should NOT have been prefetched
     expect(prefetchRequests.length).toBe(0);
@@ -746,7 +784,7 @@ test.describe("prefetch-viewport (dev)", () => {
 
     // On desktop (pointer device), hybrid resolves to hover.
     // No prefetch should happen without hovering.
-    await page.waitForTimeout(500);
+    await expectCountToRemain(expect, () => prefetchRequests.length, 0);
     expect(prefetchRequests.length).toBe(0);
 
     // Hover the hybrid link — should trigger prefetch
@@ -801,7 +839,7 @@ base.describe("prefetch-viewport (production)", () => {
       await page.goto(f.url("/prefetch-test"));
       await waitForHydration(page);
 
-      await page.waitForTimeout(500);
+      await expectCountToRemain(baseExpect, () => prefetchRequests.length, 0);
       baseExpect(prefetchRequests.length).toBe(0);
 
       await page
@@ -843,7 +881,7 @@ base.describe("prefetch-viewport (production)", () => {
     await page.goto(f.url("/prefetch-test"));
     await waitForHydration(page);
 
-    await page.waitForTimeout(500);
+    await expectCountToRemain(baseExpect, () => prefetchRequests.length, 0);
     baseExpect(prefetchRequests.length).toBe(0);
 
     await page.locator('a:has-text("Magazine (hybrid)")').hover();
