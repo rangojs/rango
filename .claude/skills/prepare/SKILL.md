@@ -70,7 +70,24 @@ All rows must pass. If any fail, report them and fix before continuing.
 
 If none of those files are modified, skip this step and report: "No semantic-critical changes detected — skipping matrix."
 
-## Step 4: Suggest /simplify if appropriate
+## Step 4: Review internal reference docs
+
+Check whether the diff touches any files that would require updates to the internal reference docs:
+
+- **Export surface changes** (new/removed/renamed exports, new subpath exports, `package.json` `exports` field changes) → update `packages/rangojs-router/docs/internal/feature-map.md` export surface tables
+- **New features, hooks, DSL primitives, or architectural changes** → update the capability sections in `packages/rangojs-router/docs/internal/feature-map.md`
+- **Source files added, removed, or renamed** → update `packages/rangojs-router/docs/internal/feature-file-map.md`
+- **Doc files added or removed** in `packages/rangojs-router/docs/` → update `packages/rangojs-router/docs/README.md`
+
+Read the current content of the affected doc(s) and compare against the diff. Report any entries that are now stale or missing:
+
+> **Internal docs out of sync**: list specific stale/missing entries and which doc file needs updating.
+
+If nothing needs updating, report: "Internal reference docs are up to date."
+
+Do NOT auto-edit these docs — just report the findings so they can be addressed before merging.
+
+## Step 5: Suggest /simplify if appropriate
 
 Look at the diff from Step 2. If the changes include non-trivial new or modified code (not just config, formatting, or test-only changes), suggest running `/simplify` to review the changed code for reuse, quality, and efficiency. Phrase it as a suggestion, e.g.:
 

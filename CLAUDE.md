@@ -25,6 +25,16 @@
 
 - `packages/rangojs-router/docs/tree-structure.md` — Tree-structure-critical files and rules. Read before modifying segment rendering, merging, or wrapper components.
 
+## Internal Reference Docs
+
+The following docs in `packages/rangojs-router/docs/` must stay in sync with the codebase:
+
+- `docs/README.md` — docs navigation hub; update when adding or removing doc files
+- `docs/internal/feature-map.md` — export surface tables and capability inventory; update when exports, hooks, DSL primitives, or architectural layers change
+- `docs/internal/feature-file-map.md` — feature-to-source-file ownership map; update when files are added, removed, renamed, or when feature ownership shifts
+
+When a PR changes exports, adds/removes source files, or introduces new features, update these docs in the same PR.
+
 ## Design Documents
 
 Before implementing features, check the design docs for target architecture:
