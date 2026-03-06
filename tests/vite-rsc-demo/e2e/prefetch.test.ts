@@ -127,10 +127,9 @@ test.describe("prefetch-on-hover (router mode)", () => {
     // Hover over Blog link
     await page.locator('nav a:has-text("Blog")').hover();
     await expect
-      .poll(
-        () => prefetchUrls.filter((u) => u.includes("/blog")).length,
-        { timeout: 3000 },
-      )
+      .poll(() => prefetchUrls.filter((u) => u.includes("/blog")).length, {
+        timeout: 3000,
+      })
       .toBe(1);
 
     // Hover over Shop link
@@ -320,10 +319,9 @@ test.describe("prefetch-on-hover (router mode)", () => {
     });
 
     await expect
-      .poll(
-        () => page.evaluate(() => localStorage.getItem("rango-state")),
-        { timeout: 5000 },
-      )
+      .poll(() => page.evaluate(() => localStorage.getItem("rango-state")), {
+        timeout: 5000,
+      })
       .not.toBe(prefetchStates[0]);
 
     // Hover Blog link again — should trigger a NEW prefetch
@@ -601,10 +599,9 @@ base.describe("prefetch-on-hover (production)", () => {
       );
 
       await baseExpect
-        .poll(
-          () => page.evaluate(() => localStorage.getItem("rango-state")),
-          { timeout: 5000 },
-        )
+        .poll(() => page.evaluate(() => localStorage.getItem("rango-state")), {
+          timeout: 5000,
+        })
         .not.toBe(prefetchStates[0]);
 
       // Hover Blog link again — should trigger a NEW prefetch
