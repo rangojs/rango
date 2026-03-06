@@ -339,6 +339,12 @@ export function createRouterDiscoveryPlugin(
       const propagateDiscoveryState = async (rscEnv: any) => {
         const serverMod = await rscEnv.runner.import("@rangojs/router/server");
         if (!serverMod) return;
+        // Clear stale per-router and global route data before repopulating.
+        // Without this, removed routers/routes survive in the per-router maps
+        // and shrunk precomputed entries or tries are never purged.
+        if (serverMod.clearAllRouterData) {
+          serverMod.clearAllRouterData();
+        }
         mainRegistry = serverMod.RouterRegistry ?? null;
         if (s.mergedRouteManifest && serverMod.setCachedManifest) {
           serverMod.setCachedManifest(s.mergedRouteManifest);
