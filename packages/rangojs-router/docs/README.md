@@ -1,0 +1,47 @@
+# Rango Router Docs
+
+This package has a small core and a larger advanced model.
+
+If you are new to Rango, start with named routes, `urls()`, `path()`,
+`layout()`, `include()`, and `reverse()`. Everything else builds on top of
+that route tree.
+
+## Core Topics
+
+- `README.md` - package overview and quick start
+- [Route definition rules](./route-definition-rules.md) - what the route DSL
+  allows and rejects
+- [Manifests](./manifests.md) - generated route maps and runtime manifest data
+
+## Rendering And Semantics
+
+- [Execution model](./internal/execution-model.md) - request flow, middleware
+  scope, propagation rules, and revalidation semantics
+- [Tree structure](./tree-structure.md) - React tree invariants that must stay
+  stable across SSR, navigation, and action renders
+- [Stability roadmap](./internal/stability-roadmap.md) - where the router is
+  trying to get stricter and easier to reason about
+
+## Caching And Prerender
+
+- [Prerender design](./prerender-api-design.md) - build-time rendering and
+  runtime cache lookup model
+- [`"use cache"` API design](./use-cache-api-design.md) - function/component
+  caching and cache profiles
+
+## Design Notes
+
+- [Consolidate generated route type files](./design/consolidate-gen-files.md)
+
+## Reference
+
+- [Feature map](./internal/feature-map.md) - complete API inventory by
+  export path and capability
+- [Feature-to-file map](./internal/feature-file-map.md) - which source
+  files own each feature
+
+## Internal Review Docs
+
+Internal notes and review plans live under [`docs/internal`](./internal).
+They are useful when changing router semantics, tests, or implementation
+details, but they are not the first stop for learning the public API.
