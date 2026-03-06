@@ -22,7 +22,12 @@ import {
   matchError as _matchError,
 } from "./match-api.js";
 import { previewMatch as _previewMatch } from "./preview-match.js";
-import { runWithRouterLogContext, withRouterLogScope } from "./logging.js";
+import {
+  runWithRouterLogContext,
+  withRouterLogScope,
+  startRevalidationTrace,
+  flushRevalidationTrace,
+} from "./logging.js";
 import type { ErrorBoundaryHandler, NotFoundBoundaryHandler } from "../types";
 import type { MiddlewareFn } from "./middleware.js";
 
@@ -226,11 +231,23 @@ export function createMatchHandlers<TEnv = any>(
             );
             if (!ctx) return null;
 
+            startRevalidationTrace({
+              method: request.method,
+              prevUrl: ctx.prevUrl.href,
+              nextUrl: ctx.url.href,
+              routeKey: ctx.routeKey,
+              isAction: !!actionContext,
+              stale: ctx.stale || undefined,
+            });
+
             try {
               const state = createPipelineState();
               const pipeline = createMatchPartialPipeline(ctx, state);
-              return await collectMatchResult(pipeline, ctx, state);
+              const result = await collectMatchResult(pipeline, ctx, state);
+              flushRevalidationTrace();
+              return result;
             } catch (error) {
+              flushRevalidationTrace();
               if (error instanceof Response) throw error;
               // Report unhandled errors during partial match pipeline
               callOnError(error, actionContext ? "action" : "revalidation", {

@@ -6,7 +6,8 @@
 
 import type { ResolvedSegment, HandlerContext } from "../types";
 import type { ActionContext } from "./types";
-import { debugLog } from "./logging.js";
+import { debugLog, pushRevalidationTraceEntry } from "./logging.js";
+import type { RevalidationTraceEntry } from "./logging.js";
 
 function paramsEqual(
   a: Record<string, string>,
@@ -50,6 +51,8 @@ interface EvaluateRevalidationOptions<TEnv> {
   actionContext?: ActionContext;
   /** If true, this is a stale cache revalidation request */
   stale?: boolean;
+  /** Trace source hint for the revalidation trace */
+  traceSource?: RevalidationTraceEntry["source"];
 }
 
 /**
@@ -71,9 +74,29 @@ export async function evaluateRevalidation<TEnv>(
     context,
     actionContext,
     stale,
+    traceSource,
   } = options;
   const nextParams = segment.params || {};
   const paramsChanged = !paramsEqual(nextParams, prevParams);
+
+  // Trace helper: push a structured entry to the request-scoped trace buffer
+  function pushTrace(
+    defaultVal: boolean,
+    finalVal: boolean,
+    reason: string,
+  ): void {
+    const entry: RevalidationTraceEntry = {
+      segmentId: segment.id,
+      segmentType: segment.type,
+      belongsToRoute: segment.belongsToRoute ?? false,
+      source: traceSource ?? "segment-resolution",
+      defaultShouldRevalidate: defaultVal,
+      finalShouldRevalidate: finalVal,
+      reason,
+      customRevalidators: revalidations.length || undefined,
+    };
+    pushRevalidationTraceEntry(entry);
+  }
 
   // Calculate default revalidation based on segment type and request method
   let defaultShouldRevalidate: boolean;
@@ -132,6 +155,7 @@ export async function evaluateRevalidation<TEnv>(
         segmentId: segment.id,
       });
     }
+    pushTrace(defaultShouldRevalidate, defaultShouldRevalidate, "default");
     return defaultShouldRevalidate;
   }
 
@@ -176,6 +200,7 @@ export async function evaluateRevalidation<TEnv>(
         revalidator: name,
         revalidate: result,
       });
+      pushTrace(defaultShouldRevalidate, result, `hard:${name}`);
       return result;
     } else if (
       result &&
@@ -206,5 +231,6 @@ export async function evaluateRevalidation<TEnv>(
     segmentId: segment.id,
     revalidate: currentSuggestion,
   });
+  pushTrace(defaultShouldRevalidate, currentSuggestion, "soft-chain");
   return currentSuggestion;
 }

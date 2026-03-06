@@ -109,6 +109,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
               context: ctx,
               actionContext,
               stale,
+              traceSource: "loader",
             });
           },
           async () => true,
@@ -316,6 +317,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
           context,
           actionContext,
           stale,
+          traceSource: "parallel",
         });
       })();
 
@@ -760,6 +762,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         context,
         actionContext,
         stale,
+        traceSource: "orphan-layout",
       });
     },
     async () => resolveLayoutComponent(orphan, context),
@@ -850,6 +853,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
           context,
           actionContext,
           stale,
+          traceSource: "parallel",
         });
       })();
 

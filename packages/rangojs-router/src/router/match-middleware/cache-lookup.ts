@@ -496,6 +496,7 @@ export function withCacheLookup<TEnv>(
         context: ctx.handlerContext,
         actionContext: ctx.actionContext,
         stale: cacheResult.shouldRevalidate || undefined,
+        traceSource: "cache-hit",
       });
 
       if (!shouldRevalidate) {
