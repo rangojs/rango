@@ -295,6 +295,18 @@ export async function actionSetSessionCookie(): Promise<void> {
 }
 
 /**
+ * Action for the revalidation-contract fixture.
+ * It mutates a cookie so the child route has a visible signal that the action
+ * follow-up render happened, without repopulating upstream ctx.set() state.
+ */
+export async function revalidationContractAction(): Promise<void> {
+  cookies().set("revalidation-contract-action", "set", {
+    path: "/",
+    maxAge: 86400,
+  });
+}
+
+/**
  * Middleware chain test action.
  * Sets a cookie, a context variable, and a response header.
  * Exercises action writes across all three channels so the
