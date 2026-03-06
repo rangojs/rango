@@ -39,8 +39,8 @@ test.describe("use-cache basic", () => {
     const ts1 = await page.getByTestId("use-cache-basic-ts").textContent();
     const rand1 = await page.getByTestId("use-cache-basic-rand").textContent();
 
-    expect(ts1).toBeTruthy();
-    expect(rand1).toBeTruthy();
+    expect(ts1).toMatch(/^\d+$/);
+    expect(rand1).toMatch(/^0\.\d+$/);
 
     // Navigate away
     await page.goto(f.url("/"));
@@ -105,7 +105,7 @@ test.describe("use-cache basic", () => {
 
     await expect(page.getByTestId("use-cache-profile-page")).toBeVisible();
     const ts1 = await page.getByTestId("use-cache-profile-ts").textContent();
-    expect(ts1).toBeTruthy();
+    expect(ts1).toMatch(/^\d+$/);
 
     // Navigate away and back — should hit cache
     await page.goto(f.url("/"));
@@ -183,8 +183,8 @@ test.describe("use-cache basic", () => {
     const serverTs1 = await page
       .getByTestId("use-cache-streaming-server-ts")
       .textContent();
-    expect(cachedTs1).toBeTruthy();
-    expect(serverTs1).toBeTruthy();
+    expect(cachedTs1).toMatch(/^\d+$/);
+    expect(serverTs1).toMatch(/^\d+$/);
 
     // Navigate away
     await page.goto(f.url("/"));
@@ -228,8 +228,8 @@ test.describe("use-cache basic", () => {
       .getByTestId("use-cache-node-server-ts")
       .textContent();
 
-    expect(cachedTs1).toBeTruthy();
-    expect(cachedRand1).toBeTruthy();
+    expect(cachedTs1).toMatch(/^\d+$/);
+    expect(cachedRand1).toMatch(/^0\.\d+$/);
 
     // Navigate away
     await page.goto(f.url("/"));
@@ -307,7 +307,7 @@ test.describe("use-cache basic", () => {
       .getByTestId("inline-params-rand")
       .textContent();
 
-    expect(alphaTs).toBeTruthy();
+    expect(alphaTs).toMatch(/^\d+$/);
 
     // Visit slug "beta" — different cache entry
     await page.goto(f.url("/use-cache-test/inline-params/beta"));
@@ -449,8 +449,8 @@ test.describe("use-cache basic", () => {
       .getByTestId("use-cache-loader-server-ts")
       .textContent();
 
-    expect(cachedTs1).toBeTruthy();
-    expect(cachedRand1).toBeTruthy();
+    expect(cachedTs1).toMatch(/^\d+$/);
+    expect(cachedRand1).toMatch(/^0\.\d+$/);
 
     // Navigate away
     await page.goto(f.url("/"));
@@ -494,8 +494,8 @@ test.describe("use-cache basic", () => {
       .getByTestId("intercept-path-rand")
       .textContent();
 
-    expect(pathTs1).toBeTruthy();
-    expect(pathRand1).toBeTruthy();
+    expect(pathTs1).toMatch(/^\d+$/);
+    expect(pathRand1).toMatch(/^0\.\d+$/);
 
     // Navigate away and back — path handler cache hit
     await page.goto(f.url("/"));
@@ -572,9 +572,9 @@ test.describe("use-cache basic", () => {
       .getByTestId("interleave-slots-server-ts")
       .textContent();
 
-    expect(cachedTs1).toBeTruthy();
-    expect(cachedRand1).toBeTruthy();
-    expect(headerContent1).toBeTruthy();
+    expect(cachedTs1).toMatch(/^\d+$/);
+    expect(cachedRand1).toMatch(/^0\.\d+$/);
+    expect(headerContent1).toMatch(/.+/);
 
     // Header and children should show the same dynamicTs
     expect(headerContent1).toBe(childrenContent1);
@@ -634,8 +634,8 @@ test.describe("use-cache basic", () => {
       .getByTestId("interleave-action-server-ts")
       .textContent();
 
-    expect(cachedTs1).toBeTruthy();
-    expect(cachedRand1).toBeTruthy();
+    expect(cachedTs1).toMatch(/^\d+$/);
+    expect(cachedRand1).toMatch(/^0\.\d+$/);
 
     // Client component with server action renders alongside cached data
     await expect(page.getByTestId("interleave-action-btn")).toBeVisible();
@@ -713,8 +713,8 @@ test.describe("use-cache basic", () => {
     await expect(breadcrumbs).toBeVisible();
     await expect(breadcrumbs).toContainText("SWR Cached Page");
 
-    expect(ts1).toBeTruthy();
-    expect(rand1).toBeTruthy();
+    expect(ts1).toMatch(/^\d+$/);
+    expect(rand1).toMatch(/^0\.\d+$/);
 
     // Wait for TTL to expire (profile: ttl=2s, swr=60s)
     await page.waitForTimeout(3000);
@@ -776,8 +776,8 @@ test.describe("use-cache (production)", () => {
     const ts1 = await page.getByTestId("use-cache-basic-ts").textContent();
     const rand1 = await page.getByTestId("use-cache-basic-rand").textContent();
 
-    expect(ts1).toBeTruthy();
-    expect(rand1).toBeTruthy();
+    expect(ts1).toMatch(/^\d+$/);
+    expect(rand1).toMatch(/^0\.\d+$/);
 
     await page.goto(f.url("/"));
     await waitForHydration(page);
@@ -1008,7 +1008,7 @@ test.describe("use-cache (production)", () => {
       .getByTestId("inline-params-rand")
       .textContent();
 
-    expect(alphaTs).toBeTruthy();
+    expect(alphaTs).toMatch(/^\d+$/);
 
     await page.goto(f.url("/use-cache-test/inline-params/beta"));
     await waitForHydration(page);
@@ -1134,8 +1134,8 @@ test.describe("use-cache (production)", () => {
       .getByTestId("use-cache-loader-server-ts")
       .textContent();
 
-    expect(cachedTs1).toBeTruthy();
-    expect(cachedRand1).toBeTruthy();
+    expect(cachedTs1).toMatch(/^\d+$/);
+    expect(cachedRand1).toMatch(/^0\.\d+$/);
 
     await page.goto(f.url("/"));
     await waitForHydration(page);
@@ -1174,8 +1174,8 @@ test.describe("use-cache (production)", () => {
       .getByTestId("intercept-path-rand")
       .textContent();
 
-    expect(pathTs1).toBeTruthy();
-    expect(pathRand1).toBeTruthy();
+    expect(pathTs1).toMatch(/^\d+$/);
+    expect(pathRand1).toMatch(/^0\.\d+$/);
 
     await page.goto(f.url("/"));
     await waitForHydration(page);
@@ -1243,9 +1243,9 @@ test.describe("use-cache (production)", () => {
       .getByTestId("interleave-slots-server-ts")
       .textContent();
 
-    expect(cachedTs1).toBeTruthy();
-    expect(cachedRand1).toBeTruthy();
-    expect(headerContent1).toBeTruthy();
+    expect(cachedTs1).toMatch(/^\d+$/);
+    expect(cachedRand1).toMatch(/^0\.\d+$/);
+    expect(headerContent1).toMatch(/.+/);
 
     expect(headerContent1).toBe(childrenContent1);
 
@@ -1300,8 +1300,8 @@ test.describe("use-cache (production)", () => {
       .getByTestId("interleave-action-server-ts")
       .textContent();
 
-    expect(cachedTs1).toBeTruthy();
-    expect(cachedRand1).toBeTruthy();
+    expect(cachedTs1).toMatch(/^\d+$/);
+    expect(cachedRand1).toMatch(/^0\.\d+$/);
 
     // Client component with server action renders alongside cached data
     await expect(page.getByTestId("interleave-action-btn")).toBeVisible();
@@ -1375,8 +1375,8 @@ test.describe("use-cache (production)", () => {
     await expect(breadcrumbs).toBeVisible();
     await expect(breadcrumbs).toContainText("SWR Cached Page");
 
-    expect(ts1).toBeTruthy();
-    expect(rand1).toBeTruthy();
+    expect(ts1).toMatch(/^\d+$/);
+    expect(rand1).toMatch(/^0\.\d+$/);
 
     // Wait for TTL to expire (profile: ttl=2s, swr=60s)
     await page.waitForTimeout(3000);

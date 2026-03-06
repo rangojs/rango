@@ -47,15 +47,14 @@ test.describe("response-cache (dev)", () => {
     expect(body1.data.source).toBe("cached-json");
     expect(typeof ts1).toBe("number");
 
-    // Wait for async cache write via waitUntil
-    await new Promise((r) => setTimeout(r, 500));
-
-    const res2 = await request.get(f.url("/response-cache/cached-json"));
-    expect(res2.status()).toBe(200);
-    const body2 = await res2.json();
-
-    // Cached: timestamp must be exactly the same
-    expect(body2.data.ts).toBe(ts1);
+    // Poll until async cache write via waitUntil completes
+    await expect(async () => {
+      const res2 = await request.get(f.url("/response-cache/cached-json"));
+      expect(res2.status()).toBe(200);
+      const body2 = await res2.json();
+      // Cached: timestamp must be exactly the same
+      expect(body2.data.ts).toBe(ts1);
+    }).toPass({ timeout: 5_000 });
   });
 
   test("path.text() with cache() returns identical body on second request", async ({
@@ -68,14 +67,14 @@ test.describe("response-cache (dev)", () => {
     // Body contains embedded timestamp
     expect(body1).toMatch(/^text:\d+$/);
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    const res2 = await request.get(f.url("/response-cache/cached-text"));
-    expect(res2.status()).toBe(200);
-    const body2 = await res2.text();
-
-    // Cached: exact same body including timestamp
-    expect(body2).toBe(body1);
+    // Poll until async cache write via waitUntil completes
+    await expect(async () => {
+      const res2 = await request.get(f.url("/response-cache/cached-text"));
+      expect(res2.status()).toBe(200);
+      const body2 = await res2.text();
+      // Cached: exact same body including timestamp
+      expect(body2).toBe(body1);
+    }).toPass({ timeout: 5_000 });
   });
 
   test("path.xml() with cache() returns identical body on second request", async ({
@@ -87,13 +86,13 @@ test.describe("response-cache (dev)", () => {
     const body1 = await res1.text();
     expect(body1).toMatch(/<ts>\d+<\/ts>/);
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    const res2 = await request.get(f.url("/response-cache/cached-xml"));
-    expect(res2.status()).toBe(200);
-    const body2 = await res2.text();
-
-    expect(body2).toBe(body1);
+    // Poll until async cache write via waitUntil completes
+    await expect(async () => {
+      const res2 = await request.get(f.url("/response-cache/cached-xml"));
+      expect(res2.status()).toBe(200);
+      const body2 = await res2.text();
+      expect(body2).toBe(body1);
+    }).toPass({ timeout: 5_000 });
   });
 
   test("path.html() with cache() returns identical body on second request", async ({
@@ -105,13 +104,13 @@ test.describe("response-cache (dev)", () => {
     const body1 = await res1.text();
     expect(body1).toMatch(/data-ts="\d+"/);
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    const res2 = await request.get(f.url("/response-cache/cached-html"));
-    expect(res2.status()).toBe(200);
-    const body2 = await res2.text();
-
-    expect(body2).toBe(body1);
+    // Poll until async cache write via waitUntil completes
+    await expect(async () => {
+      const res2 = await request.get(f.url("/response-cache/cached-html"));
+      expect(res2.status()).toBe(200);
+      const body2 = await res2.text();
+      expect(body2).toBe(body1);
+    }).toPass({ timeout: 5_000 });
   });
 
   test("path.md() with cache() returns identical body on second request", async ({
@@ -123,13 +122,13 @@ test.describe("response-cache (dev)", () => {
     const body1 = await res1.text();
     expect(body1).toMatch(/^# ts:\d+$/);
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    const res2 = await request.get(f.url("/response-cache/cached-md"));
-    expect(res2.status()).toBe(200);
-    const body2 = await res2.text();
-
-    expect(body2).toBe(body1);
+    // Poll until async cache write via waitUntil completes
+    await expect(async () => {
+      const res2 = await request.get(f.url("/response-cache/cached-md"));
+      expect(res2.status()).toBe(200);
+      const body2 = await res2.text();
+      expect(body2).toBe(body1);
+    }).toPass({ timeout: 5_000 });
   });
 
   test("different query strings produce separate cache entries", async ({
@@ -144,7 +143,14 @@ test.describe("response-cache (dev)", () => {
     expect(body1.data.q).toBe("alpha");
     const ts1 = body1.data.ts;
 
-    await new Promise((r) => setTimeout(r, 500));
+    // Poll until async cache write via waitUntil completes for alpha
+    await expect(async () => {
+      const check = await request.get(
+        f.url("/response-cache/cached-json-query?q=alpha"),
+      );
+      const checkBody = await check.json();
+      expect(checkBody.data.ts).toBe(ts1);
+    }).toPass({ timeout: 5_000 });
 
     const res2 = await request.get(
       f.url("/response-cache/cached-json-query?q=beta"),
@@ -168,17 +174,17 @@ test.describe("response-cache (dev)", () => {
     const preTs1 = res1.headers()["x-pre-handler-ts"];
     expect(preTs1).toBeTruthy();
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    // Second request (cache hit) — pre-handler callback should still run
-    // with a fresh timestamp (not baked into cache)
-    const res2 = await request.get(
-      f.url("/response-cache/cb-test/with-route-cb"),
-    );
-    expect(res2.status()).toBe(200);
-    const preTs2 = res2.headers()["x-pre-handler-ts"];
-    expect(preTs2).toBeTruthy();
-    expect(Number(preTs2)).toBeGreaterThanOrEqual(Number(preTs1));
+    // Poll until async cache write via waitUntil completes, then verify
+    // pre-handler callback still runs with a fresh timestamp (not baked into cache)
+    await expect(async () => {
+      const res2 = await request.get(
+        f.url("/response-cache/cb-test/with-route-cb"),
+      );
+      expect(res2.status()).toBe(200);
+      const preTs2 = res2.headers()["x-pre-handler-ts"];
+      expect(preTs2).toBeTruthy();
+      expect(Number(preTs2)).toBeGreaterThanOrEqual(Number(preTs1));
+    }).toPass({ timeout: 5_000 });
   });
 
   test("route-level onResponse callback is baked into cache, not replayed on hit", async ({
@@ -194,20 +200,19 @@ test.describe("response-cache (dev)", () => {
     const body1 = await res1.json();
     const bodyTs1 = body1.data.ts;
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    // Second request (cache hit) — route callback header should be
-    // present with the SAME value (baked into cached response, not re-run)
-    const res2 = await request.get(
-      f.url("/response-cache/cb-test/with-route-cb"),
-    );
-    expect(res2.status()).toBe(200);
-    const routeTs2 = res2.headers()["x-route-callback-ts"];
-    expect(routeTs2).toBe(routeTs1);
-
-    // Body timestamp should also match (confirming cache hit)
-    const body2 = await res2.json();
-    expect(body2.data.ts).toBe(bodyTs1);
+    // Poll until async cache write via waitUntil completes, then verify
+    // route callback header is present with the SAME value (baked into cached response)
+    await expect(async () => {
+      const res2 = await request.get(
+        f.url("/response-cache/cb-test/with-route-cb"),
+      );
+      expect(res2.status()).toBe(200);
+      const routeTs2 = res2.headers()["x-route-callback-ts"];
+      expect(routeTs2).toBe(routeTs1);
+      // Body timestamp should also match (confirming cache hit)
+      const body2 = await res2.json();
+      expect(body2.data.ts).toBe(bodyTs1);
+    }).toPass({ timeout: 5_000 });
   });
 });
 
@@ -245,13 +250,13 @@ test.describe("response-cache (production)", () => {
     expect(body1.data.source).toBe("cached-json");
     expect(typeof ts1).toBe("number");
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    const res2 = await request.get(f.url("/response-cache/cached-json"));
-    expect(res2.status()).toBe(200);
-    const body2 = await res2.json();
-
-    expect(body2.data.ts).toBe(ts1);
+    // Poll until async cache write via waitUntil completes
+    await expect(async () => {
+      const res2 = await request.get(f.url("/response-cache/cached-json"));
+      expect(res2.status()).toBe(200);
+      const body2 = await res2.json();
+      expect(body2.data.ts).toBe(ts1);
+    }).toPass({ timeout: 5_000 });
   });
 
   test("path.text() with cache() returns identical body on second request", async ({
@@ -263,13 +268,13 @@ test.describe("response-cache (production)", () => {
     const body1 = await res1.text();
     expect(body1).toMatch(/^text:\d+$/);
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    const res2 = await request.get(f.url("/response-cache/cached-text"));
-    expect(res2.status()).toBe(200);
-    const body2 = await res2.text();
-
-    expect(body2).toBe(body1);
+    // Poll until async cache write via waitUntil completes
+    await expect(async () => {
+      const res2 = await request.get(f.url("/response-cache/cached-text"));
+      expect(res2.status()).toBe(200);
+      const body2 = await res2.text();
+      expect(body2).toBe(body1);
+    }).toPass({ timeout: 5_000 });
   });
 
   test("path.xml() with cache() returns identical body on second request", async ({
@@ -281,13 +286,13 @@ test.describe("response-cache (production)", () => {
     const body1 = await res1.text();
     expect(body1).toMatch(/<ts>\d+<\/ts>/);
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    const res2 = await request.get(f.url("/response-cache/cached-xml"));
-    expect(res2.status()).toBe(200);
-    const body2 = await res2.text();
-
-    expect(body2).toBe(body1);
+    // Poll until async cache write via waitUntil completes
+    await expect(async () => {
+      const res2 = await request.get(f.url("/response-cache/cached-xml"));
+      expect(res2.status()).toBe(200);
+      const body2 = await res2.text();
+      expect(body2).toBe(body1);
+    }).toPass({ timeout: 5_000 });
   });
 
   test("path.html() with cache() returns identical body on second request", async ({
@@ -299,13 +304,13 @@ test.describe("response-cache (production)", () => {
     const body1 = await res1.text();
     expect(body1).toMatch(/data-ts="\d+"/);
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    const res2 = await request.get(f.url("/response-cache/cached-html"));
-    expect(res2.status()).toBe(200);
-    const body2 = await res2.text();
-
-    expect(body2).toBe(body1);
+    // Poll until async cache write via waitUntil completes
+    await expect(async () => {
+      const res2 = await request.get(f.url("/response-cache/cached-html"));
+      expect(res2.status()).toBe(200);
+      const body2 = await res2.text();
+      expect(body2).toBe(body1);
+    }).toPass({ timeout: 5_000 });
   });
 
   test("path.md() with cache() returns identical body on second request", async ({
@@ -317,13 +322,13 @@ test.describe("response-cache (production)", () => {
     const body1 = await res1.text();
     expect(body1).toMatch(/^# ts:\d+$/);
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    const res2 = await request.get(f.url("/response-cache/cached-md"));
-    expect(res2.status()).toBe(200);
-    const body2 = await res2.text();
-
-    expect(body2).toBe(body1);
+    // Poll until async cache write via waitUntil completes
+    await expect(async () => {
+      const res2 = await request.get(f.url("/response-cache/cached-md"));
+      expect(res2.status()).toBe(200);
+      const body2 = await res2.text();
+      expect(body2).toBe(body1);
+    }).toPass({ timeout: 5_000 });
   });
 
   test("different query strings produce separate cache entries", async ({
@@ -338,7 +343,14 @@ test.describe("response-cache (production)", () => {
     expect(body1.data.q).toBe("alpha");
     const ts1 = body1.data.ts;
 
-    await new Promise((r) => setTimeout(r, 500));
+    // Poll until async cache write via waitUntil completes for alpha
+    await expect(async () => {
+      const check = await request.get(
+        f.url("/response-cache/cached-json-query?q=alpha"),
+      );
+      const checkBody = await check.json();
+      expect(checkBody.data.ts).toBe(ts1);
+    }).toPass({ timeout: 5_000 });
 
     const res2 = await request.get(
       f.url("/response-cache/cached-json-query?q=beta"),
@@ -347,6 +359,7 @@ test.describe("response-cache (production)", () => {
     const body2 = await res2.json();
     expect(body2.data.q).toBe("beta");
 
+    // Different query string must produce a different cache entry
     expect(body2.data.ts).not.toBe(ts1);
   });
 
@@ -360,15 +373,17 @@ test.describe("response-cache (production)", () => {
     const preTs1 = res1.headers()["x-pre-handler-ts"];
     expect(preTs1).toBeTruthy();
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    const res2 = await request.get(
-      f.url("/response-cache/cb-test/with-route-cb"),
-    );
-    expect(res2.status()).toBe(200);
-    const preTs2 = res2.headers()["x-pre-handler-ts"];
-    expect(preTs2).toBeTruthy();
-    expect(Number(preTs2)).toBeGreaterThanOrEqual(Number(preTs1));
+    // Poll until async cache write via waitUntil completes, then verify
+    // pre-handler callback still runs with a fresh timestamp (not baked into cache)
+    await expect(async () => {
+      const res2 = await request.get(
+        f.url("/response-cache/cb-test/with-route-cb"),
+      );
+      expect(res2.status()).toBe(200);
+      const preTs2 = res2.headers()["x-pre-handler-ts"];
+      expect(preTs2).toBeTruthy();
+      expect(Number(preTs2)).toBeGreaterThanOrEqual(Number(preTs1));
+    }).toPass({ timeout: 5_000 });
   });
 
   test("route-level onResponse callback is baked into cache, not replayed on hit", async ({
@@ -383,16 +398,18 @@ test.describe("response-cache (production)", () => {
     const body1 = await res1.json();
     const bodyTs1 = body1.data.ts;
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    const res2 = await request.get(
-      f.url("/response-cache/cb-test/with-route-cb"),
-    );
-    expect(res2.status()).toBe(200);
-    const routeTs2 = res2.headers()["x-route-callback-ts"];
-    expect(routeTs2).toBe(routeTs1);
-
-    const body2 = await res2.json();
-    expect(body2.data.ts).toBe(bodyTs1);
+    // Poll until async cache write via waitUntil completes, then verify
+    // route callback header is present with the SAME value (baked into cached response)
+    await expect(async () => {
+      const res2 = await request.get(
+        f.url("/response-cache/cb-test/with-route-cb"),
+      );
+      expect(res2.status()).toBe(200);
+      const routeTs2 = res2.headers()["x-route-callback-ts"];
+      expect(routeTs2).toBe(routeTs1);
+      // Body timestamp should also match (confirming cache hit)
+      const body2 = await res2.json();
+      expect(body2.data.ts).toBe(bodyTs1);
+    }).toPass({ timeout: 5_000 });
   });
 });
