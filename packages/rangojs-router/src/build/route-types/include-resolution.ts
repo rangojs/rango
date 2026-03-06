@@ -394,5 +394,11 @@ export function buildCombinedRouteMapWithSearch(
     searchSchemas,
     diagnosticsOut,
   );
+
+  // Remove from visited so sibling branches can include the same variable
+  // without false circular-include detection. Only ancestors in the current
+  // recursion path should trigger the cycle guard.
+  visited.delete(key);
+
   return { routes, searchSchemas };
 }

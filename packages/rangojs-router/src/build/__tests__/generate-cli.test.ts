@@ -308,6 +308,62 @@ describe("generate-cli e2e fixtures", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Shared-include fixture (app-with-shared-include)
+// ---------------------------------------------------------------------------
+
+describe("shared-include fixture", () => {
+  const sharedFixtureDir = join(
+    __dirname,
+    "__fixtures__",
+    "app-with-shared-include",
+  );
+  const sharedRouterGenPath = join(
+    sharedFixtureDir,
+    "router.named-routes.gen.ts",
+  );
+  const sharedUrlsGenPath = join(sharedFixtureDir, "urls.gen.ts");
+
+  afterEach(() => {
+    for (const f of [sharedRouterGenPath, sharedUrlsGenPath]) {
+      try {
+        if (existsSync(f)) unlinkSync(f);
+      } catch {}
+    }
+  });
+
+  it("writeCombinedRouteTypes includes both mounts of shared patterns", () => {
+    const routerFile = join(sharedFixtureDir, "router.tsx");
+    writeCombinedRouteTypes(sharedFixtureDir, [routerFile]);
+
+    expect(existsSync(sharedRouterGenPath)).toBe(true);
+    const content = readFileSync(sharedRouterGenPath, "utf-8");
+
+    // Both mounts should be present — the second is NOT a cycle
+    expect(content).toContain('"api.health"');
+    expect(content).toContain('"/api/health"');
+    expect(content).toContain('"api.detail"');
+    expect(content).toContain('"/api/:id"');
+    expect(content).toContain('"v2.health"');
+    expect(content).toContain('"/v2/health"');
+    expect(content).toContain('"v2.detail"');
+    expect(content).toContain('"/v2/:id"');
+  });
+
+  it("writePerModuleRouteTypesForFile includes both mounts of shared patterns", () => {
+    const urlsFile = join(sharedFixtureDir, "urls.tsx");
+    writePerModuleRouteTypesForFile(urlsFile);
+
+    expect(existsSync(sharedUrlsGenPath)).toBe(true);
+    const content = readFileSync(sharedUrlsGenPath, "utf-8");
+
+    expect(content).toContain('"api.health"');
+    expect(content).toContain('"v2.health"');
+    expect(content).toContain('"api.detail"');
+    expect(content).toContain('"v2.detail"');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Factory fixture (app-with-factory)
 // ---------------------------------------------------------------------------
 
