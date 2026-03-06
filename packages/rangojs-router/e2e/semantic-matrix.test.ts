@@ -1,9 +1,14 @@
-import { expect, test, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Page,
+} from "@playwright/test";
 import { useFixture } from "./fixture";
 import { expectNoPageError, testId, waitForHydration } from "./helper";
 
 type BuildAxis = "dev" | "prod";
-type TransportAxis = "js" | "pe";
+type TransportAxis = "js" | "pe" | "request";
 type ExecutionAxis = "full-render" | "action-followup";
 type ScopeAxis =
   | "in-scope-child"
@@ -12,12 +17,16 @@ type ScopeAxis =
   | "n/a";
 
 type MatrixContext = {
+  baseUrl: (path: string) => string;
+  build: BuildAxis;
   page: Page;
+  request: APIRequestContext;
 };
 
 type SemanticMatrixRow = {
   id: string;
   contract: string;
+  builds?: BuildAxis[];
   transport: TransportAxis;
   execution: ExecutionAxis;
   scope: ScopeAxis;
@@ -47,6 +56,19 @@ async function runPeAction(page: Page): Promise<void> {
 async function parseLoaderCount(page: Page): Promise<number> {
   const text = await testId(page, "loader-count").textContent();
   return Number(text!.replace(/\D/g, ""));
+}
+
+async function readTestIdText(page: Page, id: string): Promise<string> {
+  return (await testId(page, id).textContent())?.trim() ?? "";
+}
+
+async function readResponseJson(
+  request: APIRequestContext,
+  url: string,
+): Promise<any> {
+  const response = await request.get(url);
+  expect(response.status()).toBe(200);
+  return response.json();
 }
 
 async function readRouteReport(page: Page): Promise<{
@@ -288,11 +310,159 @@ const matrixRows: SemanticMatrixRow[] = [
     url: "/cache-test/cached-loader",
     assert: async ({ page }) => {
       const countBefore = await parseLoaderCount(page);
-      // Wait for async cache write (waitUntil)
-      await page.waitForTimeout(500);
-      await openJsPage(page, page.url());
-      const countAfter = await parseLoaderCount(page);
-      expect(countAfter).toBe(countBefore);
+
+      await expect(async () => {
+        await openJsPage(page, page.url());
+        const countAfter = await parseLoaderCount(page);
+        expect(countAfter).toBe(countBefore);
+      }).toPass({ timeout: 5000 });
+    },
+  },
+  {
+    id: "RC1",
+    contract:
+      "cached response route returns the same payload on a follow-up request",
+    transport: "request",
+    execution: "full-render",
+    scope: "n/a",
+    url: "/response-cache/cached-json",
+    assert: async ({ baseUrl, request }) => {
+      const body1 = await readResponseJson(
+        request,
+        baseUrl("/response-cache/cached-json"),
+      );
+      const ts1 = body1.data.ts;
+
+      await expect(async () => {
+        const body2 = await readResponseJson(
+          request,
+          baseUrl("/response-cache/cached-json"),
+        );
+        expect(body2.data.ts).toBe(ts1);
+      }).toPass({ timeout: 5000 });
+    },
+  },
+  {
+    id: "RC2",
+    contract:
+      "uncached response route re-executes on every request and changes payload",
+    transport: "request",
+    execution: "full-render",
+    scope: "n/a",
+    url: "/response-cache/uncached-json",
+    assert: async ({ baseUrl, request }) => {
+      const body1 = await readResponseJson(
+        request,
+        baseUrl("/response-cache/uncached-json"),
+      );
+      const body2 = await readResponseJson(
+        request,
+        baseUrl("/response-cache/uncached-json"),
+      );
+      expect(body2.data.ts).toBeGreaterThan(body1.data.ts);
+    },
+  },
+  {
+    id: "SWR1",
+    contract:
+      "SWR returns stale data first, then a later request sees the background refresh",
+    transport: "js",
+    execution: "full-render",
+    scope: "n/a",
+    url: "/use-cache-test/swr",
+    assert: async ({ baseUrl, page }) => {
+      const url = baseUrl("/use-cache-test/swr");
+
+      const initialTs = Number(await readTestIdText(page, "use-cache-swr-ts"));
+      expect(initialTs).toBeGreaterThan(0);
+
+      await expect
+        .poll(
+          async () => {
+            await openJsPage(page, url);
+            const staleTs = Number(
+              await readTestIdText(page, "use-cache-swr-ts"),
+            );
+            const serverTs = Number(
+              await readTestIdText(page, "use-cache-swr-server-ts"),
+            );
+            return staleTs === initialTs && serverTs - initialTs >= 2000;
+          },
+          {
+            timeout: 10000,
+            message: "expected a stale hit after the SWR TTL expired",
+          },
+        )
+        .toBe(true);
+
+      await expect
+        .poll(
+          async () => {
+            await openJsPage(page, url);
+            const freshTs = Number(
+              await readTestIdText(page, "use-cache-swr-ts"),
+            );
+            return freshTs !== initialTs;
+          },
+          {
+            timeout: 10000,
+            message: "expected a fresh value after background revalidation",
+          },
+        )
+        .toBe(true);
+    },
+  },
+  {
+    id: "PR1",
+    contract:
+      "pre-rendered content stays frozen across reloads while preserving build-time shared data",
+    builds: ["prod"],
+    transport: "js",
+    execution: "full-render",
+    scope: "in-scope-child",
+    url: "/prerender-ctx/alpha",
+    assert: async ({ page }) => {
+      await expect(testId(page, "prerender-ctx-build")).toHaveText("true");
+      await expect(testId(page, "prerender-ctx-shared")).toHaveText(
+        "fetched-at-build",
+      );
+      await expect(testId(page, "prerender-ctx-layout-data")).toHaveText(
+        "data-for-alpha",
+      );
+      await expect(testId(page, "prerender-ctx-sidebar-data")).toHaveText(
+        "data-for-alpha",
+      );
+
+      const ts1 = await readTestIdText(page, "prerender-ctx-timestamp");
+      await page.reload();
+      await waitForHydration(page);
+      const ts2 = await readTestIdText(page, "prerender-ctx-timestamp");
+      expect(ts2).toBe(ts1);
+    },
+  },
+  {
+    id: "PT1",
+    contract:
+      "passthrough prerender routes fall back to live execution for unknown params",
+    builds: ["prod"],
+    transport: "js",
+    execution: "full-render",
+    scope: "in-scope-child",
+    url: "/prerender-ctx/unknown-slug",
+    assert: async ({ page }) => {
+      await expect(testId(page, "prerender-ctx-build")).toHaveText("false");
+      await expect(testId(page, "prerender-ctx-layout-data")).toHaveText(
+        "data-for-unknown-slug",
+      );
+      await expect(testId(page, "prerender-ctx-sidebar-data")).toHaveText(
+        "data-for-unknown-slug",
+      );
+
+      const ts1 = await readTestIdText(page, "prerender-ctx-timestamp");
+      await page.reload();
+      await waitForHydration(page);
+      const ts2 = await readTestIdText(page, "prerender-ctx-timestamp");
+      expect(ts2).not.toBe(ts1);
     },
   },
 ];
@@ -307,26 +477,55 @@ function registerSemanticMatrixSuite(build: BuildAxis): void {
       mode,
     });
 
-    for (const row of matrixRows.filter((entry) => entry.transport === "js")) {
-      test(rowTitle(row), async ({ page }) => {
+    const rowsForBuild = matrixRows.filter(
+      (entry) => !entry.builds || entry.builds.includes(build),
+    );
+
+    for (const row of rowsForBuild.filter(
+      (entry) => entry.transport === "js",
+    )) {
+      test(rowTitle(row), async ({ page, request }) => {
         using _ = expectNoPageError(page);
         await openJsPage(page, fixture.url(row.url ?? "/mw-chain"));
-        await row.assert({ page });
+        await row.assert({
+          baseUrl: fixture.url,
+          build,
+          page,
+          request,
+        });
       });
     }
 
     test.describe("PE transport", () => {
       test.use({ javaScriptEnabled: false });
 
-      for (const row of matrixRows.filter(
+      for (const row of rowsForBuild.filter(
         (entry) => entry.transport === "pe",
       )) {
-        test(rowTitle(row), async ({ page }) => {
+        test(rowTitle(row), async ({ page, request }) => {
           await openPePage(page, fixture.url("/mw-chain"));
-          await row.assert({ page });
+          await row.assert({
+            baseUrl: fixture.url,
+            build,
+            page,
+            request,
+          });
         });
       }
     });
+
+    for (const row of rowsForBuild.filter(
+      (entry) => entry.transport === "request",
+    )) {
+      test(rowTitle(row), async ({ page, request }) => {
+        await row.assert({
+          baseUrl: fixture.url,
+          build,
+          page,
+          request,
+        });
+      });
+    }
   });
 }
 
