@@ -312,14 +312,12 @@ describe("generate-cli e2e fixtures", () => {
 // ---------------------------------------------------------------------------
 
 describe("factory fixture", () => {
-  const factoryFixtureDir = join(__dirname, "__fixtures__", "app-with-factory");
-
   afterEach(() => {
     // Clean up gen files in factory fixture
     const possibleGens = [
-      join(factoryFixtureDir, "router.named-routes.gen.ts"),
-      join(factoryFixtureDir, "urls.gen.ts"),
-      join(factoryFixtureDir, "api", "urls.gen.ts"),
+      factoryGenPath,
+      factoryUrlsGenPath,
+      factoryApiUrlsGenPath,
     ];
     for (const f of possibleGens) {
       try {
@@ -434,12 +432,12 @@ const factoryFixtureRouter = join(
   "app-with-factory",
   "router.tsx",
 );
-const factoryGenPath = join(
-  __dirname,
-  "__fixtures__",
-  "app-with-factory",
-  "router.named-routes.gen.ts",
-);
+const factoryFixtureDir = join(__dirname, "__fixtures__", "app-with-factory");
+const factoryFixtureUrls = join(factoryFixtureDir, "urls.tsx");
+const factoryGenPath = join(factoryFixtureDir, "router.named-routes.gen.ts");
+const factoryUrlsGenPath = join(factoryFixtureDir, "urls.gen.ts");
+const factoryApiUrlsGenPath = join(factoryFixtureDir, "api", "urls.gen.ts");
+const factoryFactoryGenPath = join(factoryFixtureDir, "factory.gen.ts");
 const staticGenPath = join(
   __dirname,
   "__fixtures__",
@@ -461,7 +459,13 @@ function runRango(args: string) {
 
 describe("CLI command-level tests", () => {
   afterEach(() => {
-    for (const f of [factoryGenPath, staticGenPath]) {
+    for (const f of [
+      factoryGenPath,
+      factoryUrlsGenPath,
+      factoryApiUrlsGenPath,
+      factoryFactoryGenPath,
+      staticGenPath,
+    ]) {
       try {
         if (existsSync(f)) unlinkSync(f);
       } catch {}
@@ -536,5 +540,50 @@ describe("CLI command-level tests", () => {
     expect(result.combined).toContain(
       "--config is only used with --runtime, ignoring",
     );
+  });
+
+  // --- Atomicity (P20 / E11) ---
+
+  it("default mode directory generation is atomic: no partial gen files on failure", () => {
+    const result = runRango(`generate ${factoryFixtureDir}`);
+    expect(result.status).not.toBe(0);
+    expect(result.combined).toContain("Unresolvable includes detected");
+
+    // No gen files should have been written — the command failed before
+    // reaching the write phase.
+    expect(existsSync(factoryGenPath)).toBe(false);
+    expect(existsSync(factoryUrlsGenPath)).toBe(false);
+    expect(existsSync(factoryApiUrlsGenPath)).toBe(false);
+    expect(existsSync(factoryFactoryGenPath)).toBe(false);
+  });
+
+  // --- Standalone urls() fail-fast (P21 / E12) ---
+
+  it("default mode fails for standalone urls() with unresolvable factory include", () => {
+    const result = runRango(`generate ${factoryFixtureUrls}`);
+    expect(result.status).not.toBe(0);
+    expect(result.combined).toContain("Unresolvable includes detected");
+    expect(result.combined).toContain("factory-call");
+    expect(result.combined).toContain("--runtime");
+    expect(result.combined).toContain("--static");
+
+    // No gen file should have been written
+    expect(existsSync(factoryUrlsGenPath)).toBe(false);
+  });
+
+  it("--static mode succeeds for standalone urls() with partial output", () => {
+    const result = runRango(`generate ${factoryFixtureUrls} --static`);
+    expect(result.status).toBe(0);
+    expect(result.combined).toContain("partial output");
+
+    expect(existsSync(factoryUrlsGenPath)).toBe(true);
+    const content = readFileSync(factoryUrlsGenPath, "utf-8");
+    // Static routes present
+    expect(content).toContain("home");
+    expect(content).toContain("about");
+    expect(content).toContain('"api.health"');
+    // Factory routes absent (unresolvable)
+    expect(content).not.toContain("docs.index");
+    expect(content).not.toContain("docs.page");
   });
 });
