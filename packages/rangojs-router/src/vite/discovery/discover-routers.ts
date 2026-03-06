@@ -100,12 +100,15 @@ export async function discoverRouters(
   const buildMod = await rscEnv.runner.import("@rangojs/router/build");
   const generateManifestFull = buildMod.generateManifestFull;
 
-  state.mergedRouteManifest = {};
-  state.mergedPrecomputedEntries = [];
-  state.perRouterManifests = [];
-  state.perRouterManifestDataMap = new Map();
-  state.perRouterPrecomputedMap = new Map();
-  state.perRouterTrieMap = new Map();
+  // Build into local variables first. Only commit to state after the
+  // full pass succeeds, so a failed re-discovery preserves the last
+  // known-good state instead of leaving it partially wiped.
+  const newMergedRouteManifest: Record<string, string> = {};
+  const newMergedPrecomputedEntries: PrecomputedEntry[] = [];
+  const newPerRouterManifests: typeof state.perRouterManifests = [];
+  const newPerRouterManifestDataMap = new Map<string, any>();
+  const newPerRouterPrecomputedMap = new Map<string, PrecomputedEntry[]>();
+  const newPerRouterTrieMap = new Map<string, any>();
   let mergedRouteAncestry: Record<string, string[]> = {};
   let mergedRouteTrailingSlash: Record<string, string> = {};
 
@@ -128,7 +131,7 @@ export async function discoverRouters(
     const dynamicRoutes = routeCount - staticRoutes;
 
     // Merge into the combined manifest
-    Object.assign(state.mergedRouteManifest, manifest.routeManifest);
+    Object.assign(newMergedRouteManifest, manifest.routeManifest);
 
     // Compute factory-only prefixes: dot-prefixed groups in the runtime
     // manifest that the static parser cannot see. These are routes created
@@ -152,7 +155,7 @@ export async function discoverRouters(
       if (factoryOnlyPrefixes.size === 0) factoryOnlyPrefixes = undefined;
     }
 
-    state.perRouterManifests.push({
+    newPerRouterManifests.push({
       id,
       routeManifest: manifest.routeManifest,
       routeSearchSchemas: manifest.routeSearchSchemas,
@@ -175,18 +178,18 @@ export async function discoverRouters(
     flattenLeafEntries(
       manifest.prefixTree,
       manifest.routeManifest,
-      state.mergedPrecomputedEntries,
+      newMergedPrecomputedEntries,
     );
 
     // Store per-router manifest and precomputed entries for isolated virtual modules.
-    state.perRouterManifestDataMap.set(id, manifest.routeManifest);
+    newPerRouterManifestDataMap.set(id, manifest.routeManifest);
     const routerPrecomputed: PrecomputedEntry[] = [];
     flattenLeafEntries(
       manifest.prefixTree,
       manifest.routeManifest,
       routerPrecomputed,
     );
-    state.perRouterPrecomputedMap.set(id, routerPrecomputed);
+    newPerRouterPrecomputedMap.set(id, routerPrecomputed);
 
     console.log(
       `[rsc-router] Router "${id}" -> ${routeCount} routes ` +
@@ -214,10 +217,8 @@ export async function discoverRouters(
   }
 
   // Build route trie from merged manifest + ancestry
-  if (
-    state.mergedRouteManifest &&
-    Object.keys(state.mergedRouteManifest).length > 0
-  ) {
+  let newMergedRouteTrie: any = null;
+  if (Object.keys(newMergedRouteManifest).length > 0) {
     const buildRouteTrie = buildMod.buildRouteTrie;
     if (buildRouteTrie && mergedRouteAncestry) {
       // Build routeToStaticPrefix from saved manifests
@@ -252,8 +253,8 @@ export async function discoverRouters(
         }
       }
 
-      state.mergedRouteTrie = buildRouteTrie(
-        state.mergedRouteManifest,
+      newMergedRouteTrie = buildRouteTrie(
+        newMergedRouteManifest,
         mergedRouteAncestry,
         routeToStaticPrefix,
         Object.keys(mergedRouteTrailingSlash).length > 0
@@ -305,10 +306,21 @@ export async function discoverRouters(
             ? manifest.responseTypeRoutes
             : undefined,
         );
-        state.perRouterTrieMap.set(id, perRouterTrie);
+        newPerRouterTrieMap.set(id, perRouterTrie);
       }
     }
   }
+
+  // Commit all local state to the shared discovery state atomically.
+  // This ensures a failed re-discovery (e.g. from a transient module
+  // evaluation error) preserves the last known-good state.
+  state.mergedRouteManifest = newMergedRouteManifest;
+  state.mergedPrecomputedEntries = newMergedPrecomputedEntries;
+  state.perRouterManifests = newPerRouterManifests;
+  state.perRouterManifestDataMap = newPerRouterManifestDataMap;
+  state.perRouterPrecomputedMap = newPerRouterPrecomputedMap;
+  state.perRouterTrieMap = newPerRouterTrieMap;
+  state.mergedRouteTrie = newMergedRouteTrie;
 
   // Expand prerender routes and render static handlers (build mode only)
   await expandPrerenderRoutes(state, rscEnv, registry, allManifests);
