@@ -26,6 +26,8 @@ revalidation, intercepts, prerender, or request context propagation.
 - Does this change alter which segments revalidate?
 - Are non-revalidated ancestors still left untouched?
 - If child segments depend on outer `ctx.set()` data, is this documented/tested?
+- If the producer does not revalidate, does the consumer correctly see missing/
+  `undefined` data rather than retained prior-pass output?
 - Are shared producer/consumer dependencies using explicit named revalidation contracts?
 
 ## Context Scope

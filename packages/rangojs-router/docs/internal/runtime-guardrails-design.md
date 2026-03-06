@@ -64,81 +64,40 @@ Mitigation: fire once per route per process (deduplicate by route key).
 
 ## W2: Child reads upstream context that won't revalidate
 
-### Trigger condition
+### Decision
 
-A child segment calls `ctx.get(SomeVar)` and the value was set by an
-ancestor segment that will NOT revalidate during a partial action
-revalidation. The child gets stale data silently.
+**Do not implement as a runtime warning.**
 
-Per `execution-model.md:120-125`, non-revalidated ancestors do not rerun
-to rebuild `ctx.set()` state.
+### Rationale
 
-### Where detection happens
+For the producer/consumer contract case, the observed failure mode is not a
+hidden stale carry-over. During partial action revalidation, non-revalidated
+ancestors do not rerun to rebuild `ctx.set()` state, so downstream consumers
+see missing/`undefined` data unless the producer shares the same revalidation
+contract.
 
-**Runtime in `evaluateRevalidation()`** (`revalidation.ts:59+`): after
-computing which segments revalidate, check if any revalidating segment
-calls `ctx.get()` for a variable whose `ctx.set()` producer segment is
-NOT in the revalidation set.
+That means the app-level failure is already explicit:
 
-This requires tracking which segments produce and consume which context
-variables — metadata that doesn't exist today.
+- the producer did not rerun
+- the consumer did rerun
+- the consumer sees missing upstream data
 
-**Alternative (lighter)**: instrument `contextGet()` in `context-var.ts`.
-When a segment reads a variable during a revalidation render pass, check
-if the value was set in the _current_ render pass or is leftover from a
-previous pass. If leftover, warn.
+Adding freshness tracking and stable-var metadata would add meaningful
+complexity for limited benefit if the runtime is not actually surfacing a
+misleading retained value.
 
-Preferred: the `contextGet()` instrumentation approach. It requires minimal
-metadata — just a per-request "freshness" flag on each variable indicating
-whether it was set in the current render pass.
+### Hardening strategy
 
-### Warning text
+Instead of a warning:
 
-```
-[rango] ctx.get(<varName>) in segment "<childId>" returned a value set by
-a non-revalidated ancestor. The value may be stale. Either add
-revalidate() to the ancestor segment, or load the data independently in
-the child. See: execution-model.md#revalidation-contract
-```
+1. Keep the execution-model docs explicit about the contract.
+2. Add a semantic-matrix row that proves the consumer sees missing data when
+   the producer does not rerun.
+3. Keep the checklist wording sharp so reviews treat this as a semantic
+   contract, not a future runtime fix.
 
-### Confidence / false-positive risk
-
-**Medium confidence, medium false-positive risk.** The variable may be
-intentionally stable (e.g., a locale string that never changes). Users who
-set context once in a layout and never expect it to change will see a
-spurious warning on every action.
-
-Mitigations:
-
-- Only warn during POST (action revalidation), not GET navigation.
-- Only warn when the child segment IS in the revalidation set (it was
-  re-rendered and received potentially stale data).
-- Opt-out mechanism: maintain a `Set` of variable keys (symbols for typed
-  vars, strings for legacy vars) that are marked stable. Provide both:
-  - `createVar<T>({ stable: true })` — typed vars opt-out at declaration.
-    Requires extending `createVar()` to accept an options object (currently
-    takes no args, `context-var.ts:36`).
-  - `markStableVar("legacyKey")` — string keys opt-out explicitly. Needed
-    because the codebase uses string keys heavily (e.g., `router.tsx`,
-    `dashboard.tsx`), and there is no declaration site to attach options to.
-- The stable set is checked in the instrumented `contextGet()` path; if the
-  key is in the set, skip the staleness warning.
-
-### Scope: typed vars vs string keys
-
-Both typed `ContextVar` tokens and legacy string keys must be supported.
-String keys lack a declaration site, so `markStableVar()` is the escape
-hatch. Long-term, migrating to typed vars reduces false-positive surface,
-but the warning must not punish users still on string keys.
-
-### Tests needed
-
-1. Unit test: child reads var from non-revalidated parent during POST — warns.
-2. Unit test: child reads var from revalidated parent during POST — no warning.
-3. Unit test: GET navigation — no warning regardless of revalidation.
-4. Unit test: `createVar({ stable: true })` suppresses warning (typed var).
-5. Unit test: `markStableVar("key")` suppresses warning (string key).
-6. E2e: semantic-matrix row for partial revalidation context visibility.
+Revisit only if a concrete hidden stale-read case is reproduced in the real
+request pipeline.
 
 ---
 
@@ -377,7 +336,7 @@ has higher confidence).
 | W1  | Middleware != action guard     | High       | Low        | **P0**   |
 | W3  | PE Response dropped            | High       | Low        | **P0**   |
 | W5  | Redirect after ctx.set()       | Medium     | Medium     | **P1**   |
-| W2  | Stale upstream context         | Medium     | High       | **P2**   |
+| W2  | Upstream ctx.set contract docs/tests only | N/A | Low | **Docs/Test** |
 | W4  | Cache vs revalidation conflict | Medium     | High       | **P2**   |
 | W6  | Action headers dropped         | Low-Med    | High       | **P3**   |
 
