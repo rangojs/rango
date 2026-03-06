@@ -85,4 +85,63 @@ describe("tryTrieMatch", () => {
 
     expect(tryTrieMatch(trie, "/missing")).toBeNull();
   });
+
+  describe("malformed URL handling", () => {
+    it("does not match path traversal segments", () => {
+      const trie = buildTestTrie({
+        secret: "/admin/secret",
+        param: "/admin/:page",
+      });
+
+      expect(tryTrieMatch(trie, "/admin/../admin/secret")).toBeNull();
+      expect(tryTrieMatch(trie, "/admin/..")).not.toBeNull();
+      // ".." is treated as a literal segment value, not traversal
+      expect(tryTrieMatch(trie, "/admin/..")?.params).toEqual({ page: ".." });
+    });
+
+    it("does not match double-slash paths against single-segment routes", () => {
+      const trie = buildTestTrie({
+        about: "/about",
+        param: "/:slug",
+      });
+
+      expect(tryTrieMatch(trie, "//about")).toBeNull();
+    });
+
+    it("treats percent-encoded slash in a segment as a literal value", () => {
+      const trie = buildTestTrie({
+        "blog.post": "/blog/:slug",
+      });
+
+      const result = tryTrieMatch(trie, "/blog/hello%2Fworld");
+      expect(result?.params).toEqual({ slug: "hello%2Fworld" });
+    });
+
+    it("treats empty pathname as root match", () => {
+      const trie = buildTestTrie({ home: "/" });
+      const result = tryTrieMatch(trie, "");
+      expect(result?.routeKey).toBe("home");
+    });
+
+    it("handles very long pathnames without crashing", () => {
+      const trie = buildTestTrie({
+        "files.any": "/files/*",
+      });
+
+      const longPath = "/files/" + "a".repeat(8000);
+      const result = tryTrieMatch(trie, longPath);
+      expect(result?.routeKey).toBe("files.any");
+      expect(result?.params["*"]).toHaveLength(8000);
+    });
+
+    it("captures percent-encoded characters in param values", () => {
+      const trie = buildTestTrie({
+        "user.profile": "/user/:name",
+      });
+
+      // The trie matches against the raw pathname; encoding is the caller's concern
+      const result = tryTrieMatch(trie, "/user/hello%20world");
+      expect(result?.params).toEqual({ name: "hello%20world" });
+    });
+  });
 });
