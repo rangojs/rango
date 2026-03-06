@@ -110,6 +110,7 @@ export const NamedRoutes = {
   "middlewareTest.routeLevelWithParams": "/middleware-test/route-level/:routeId",
   "middlewareTest.routeShortcircuit": "/middleware-test/route-shortcircuit",
   "middlewareTest.sharedVars": "/middleware-test/shared-vars",
+  "middlewareTest.w5Redirect": "/middleware-test/w5-redirect",
   "mwChain.detail": "/mw-chain/detail/:slug",
   "mwChain.index": "/mw-chain",
   negotiateJsonFirst: "/negotiate-test-json-first",

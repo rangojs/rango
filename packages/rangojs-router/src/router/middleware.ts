@@ -32,6 +32,27 @@ export type {
 } from "./middleware-types.js";
 export { parseCookies, serializeCookie } from "./middleware-cookies.js";
 
+// W5: Deduplicate by function reference so each distinct middleware warns once,
+// regardless of whether it is named or anonymous.
+let warnedRedirectMiddleware = new WeakSet<Function>();
+
+function warnCtxSetBeforeRedirect(handler: Function): void {
+  if (warnedRedirectMiddleware.has(handler)) return;
+  warnedRedirectMiddleware.add(handler);
+  const label = handler.name || "(anonymous)";
+  console.warn(
+    `[rango] Route middleware "${label}" called ctx.set() then returned a ` +
+      `redirect. Context variables are per-request and won't be available ` +
+      `on the redirect target. Use cookies to persist state across ` +
+      `redirects, or move ctx.set() to the target route's middleware.`,
+  );
+}
+
+/** Reset W5 deduplication state (for tests only). */
+export function _resetW5Warnings(): void {
+  warnedRedirectMiddleware = new WeakSet();
+}
+
 /**
  * Parse a route pattern into regex and param names
  * Supports: *, /path, /path/*, /path/:param, /path/:param/*
@@ -317,6 +338,16 @@ export async function executeMiddleware<TEnv>(
       return nextPromise;
     };
 
+    // W5: track whether ctx.set() is called during this middleware
+    let ctxSetCalled = false;
+    if (process.env.NODE_ENV !== "production") {
+      const originalSet = ctx.set;
+      ctx.set = ((...args: any[]) => {
+        ctxSetCalled = true;
+        return (originalSet as Function).apply(ctx, args);
+      }) as typeof ctx.set;
+    }
+
     const result = await entry.handler(ctx, wrappedNext);
 
     // Explicit return takes precedence (middleware short-circuit).
@@ -324,6 +355,16 @@ export async function executeMiddleware<TEnv>(
     // RequestContext stub headers (from ctx.setCookie) into the
     // returned Response so they are not lost.
     if (result instanceof Response) {
+      // W5: warn if ctx.set() was called but middleware returned a redirect
+      if (
+        process.env.NODE_ENV !== "production" &&
+        ctxSetCalled &&
+        result.status >= 300 &&
+        result.status < 400
+      ) {
+        warnCtxSetBeforeRedirect(entry.handler);
+      }
+
       const mergedHeaders = new Headers(result.headers);
       stubResponse.headers.forEach((value, name) => {
         if (name.toLowerCase() === "set-cookie") {

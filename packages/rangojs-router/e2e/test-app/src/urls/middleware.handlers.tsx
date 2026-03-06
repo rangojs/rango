@@ -192,6 +192,14 @@ export const MiddlewareRouteLevelHandler: Handler<
   );
 };
 
+export const MiddlewareW5RedirectHandler: Handler<
+  "middlewareTest.w5Redirect"
+> = () => (
+  <div data-testid="middleware-test-w5-redirect">
+    <h1>This should never render (middleware redirects)</h1>
+  </div>
+);
+
 export const MiddlewareRouteLevelWithParamsHandler: Handler<
   "middlewareTest.routeLevelWithParams"
 > = (ctx) => {
