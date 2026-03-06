@@ -441,8 +441,8 @@ test.describe.serial("route-types-hmr", () => {
   // These test routes that the static parser cannot resolve (the include()
   // second arg is a function call, classified as "factory-call"). They only
   // appear after runtime discovery via discoverRouters() + module evaluation.
-  // Verifies the full watcher -> refreshRuntimeDiscovery() -> clearRegistry ->
-  // re-import -> propagateDiscoveryState() pipeline.
+  // Verifies the full watcher -> refreshRuntimeDiscovery() ->
+  // discoverRouters() -> propagateDiscoveryState() pipeline.
 
   test("factory routes should appear in runtime manifest after discovery", async () => {
     // Factory routes (factoryHmr.alpha, factoryHmr.beta) should be in the
@@ -501,9 +501,8 @@ test.describe.serial("route-types-hmr", () => {
     await fs.writeFile(factoryHmrPath, originalFactoryHmrContent);
 
     // Verify gamma is purged from the runtime manifest.
-    // This exercises: RouterRegistry.clear() in discoverRouters(),
-    // clearAllRouterData() in propagateDiscoveryState(), and the full
-    // re-import pipeline that only re-registers current routes.
+    // This exercises: clearAllRouterData() in propagateDiscoveryState()
+    // and the full re-import pipeline that re-evaluates the factory module.
     await expect(async () => {
       const result = await queryReverse([
         "factoryHmr.alpha",
