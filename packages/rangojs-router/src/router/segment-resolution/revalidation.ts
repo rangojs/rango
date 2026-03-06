@@ -467,7 +467,12 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         const result = handleHandlerResult(routeEntry.handler(context));
         return {
           content:
-            result instanceof Promise ? deps.trackHandler(result) : result,
+            result instanceof Promise
+              ? deps.trackHandler(result, {
+                  segmentId: entry.shortCode,
+                  segmentType: entry.type,
+                })
+              : result,
         };
       }
       debugLog("segment.action", "resolving action route with awaited value", {

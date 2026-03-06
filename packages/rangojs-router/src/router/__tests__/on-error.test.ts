@@ -131,10 +131,12 @@ describe("OnError Types", () => {
         "rendering",
         "action",
         "revalidation",
+        "prerender",
+        "static",
         "unknown",
       ];
 
-      expect(phases).toHaveLength(9);
+      expect(phases).toHaveLength(11);
       phases.forEach((phase) => {
         expect(typeof phase).toBe("string");
       });
@@ -877,6 +879,8 @@ describe("invokeOnError Shared Utility", () => {
       "rendering",
       "action",
       "revalidation",
+      "prerender",
+      "static",
       "unknown",
     ];
 
