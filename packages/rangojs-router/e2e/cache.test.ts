@@ -29,7 +29,7 @@ async function waitForCacheWrite(
         message: `Expected single [CacheScope] Cached: log line containing "${pathPattern}"`,
       },
     )
-    .toBeTruthy();
+    .toBe(true);
 }
 
 /**
@@ -93,14 +93,14 @@ test.describe("cache-server-logs", () => {
     const firstLogs = getCacheLogs(afterFirstStdout.substring(initialLength));
 
     // Should have exactly one MISS for doc:/blog
-    expect(
-      firstLogs.misses.some((log) => log.includes("doc:/blog")),
-    ).toBeTruthy();
+    expect(firstLogs.misses.some((log) => log.includes("doc:/blog"))).toBe(
+      true,
+    );
 
     // Should have a Cached log after async write
-    expect(
-      firstLogs.cached.some((log) => log.includes("doc:/blog")),
-    ).toBeTruthy();
+    expect(firstLogs.cached.some((log) => log.includes("doc:/blog"))).toBe(
+      true,
+    );
 
     // Navigate away
     await page.goto(f.url("/"));
@@ -124,9 +124,7 @@ test.describe("cache-server-logs", () => {
     );
 
     // Should have a HIT for doc:/blog (not MISS)
-    expect(
-      secondLogs.hits.some((log) => log.includes("doc:/blog")),
-    ).toBeTruthy();
+    expect(secondLogs.hits.some((log) => log.includes("doc:/blog"))).toBe(true);
     expect(
       secondLogs.misses.some((log) => log.includes("doc:/blog")),
     ).toBeFalsy();
@@ -160,14 +158,14 @@ test.describe("cache-server-logs", () => {
     const navLogs = getCacheLogs(afterNavStdout.substring(beforeNavLength));
 
     // Should have MISS for partial:/blog
-    expect(
-      navLogs.misses.some((log) => log.includes("partial:/blog")),
-    ).toBeTruthy();
+    expect(navLogs.misses.some((log) => log.includes("partial:/blog"))).toBe(
+      true,
+    );
 
     // Should have Cached for partial:/blog
-    expect(
-      navLogs.cached.some((log) => log.includes("partial:/blog")),
-    ).toBeTruthy();
+    expect(navLogs.cached.some((log) => log.includes("partial:/blog"))).toBe(
+      true,
+    );
 
     // Navigate back to home
     await page.getByTestId("back-link").click();
@@ -191,7 +189,7 @@ test.describe("cache-server-logs", () => {
 
     expect(
       secondNavLogs.hits.some((log) => log.includes("partial:/blog")),
-    ).toBeTruthy();
+    ).toBe(true);
   });
 
   test("blog post with params should cache with params in key", async ({
@@ -222,7 +220,7 @@ test.describe("cache-server-logs", () => {
         (log) =>
           log.includes("doc:/blog/post-1") || log.includes("postId=post-1"),
       ),
-    ).toBeTruthy();
+    ).toBe(true);
 
     // Different post should have its own cache entry
     const beforeSecondPost = f.proc().stdout();
@@ -244,7 +242,7 @@ test.describe("cache-server-logs", () => {
         (log) =>
           log.includes("doc:/blog/post-2") || log.includes("postId=post-2"),
       ),
-    ).toBeTruthy();
+    ).toBe(true);
 
     // Going back to post-1 should be a HIT
     const beforeThirdPost = f.proc().stdout();
@@ -261,7 +259,7 @@ test.describe("cache-server-logs", () => {
         (log) =>
           log.includes("doc:/blog/post-1") || log.includes("postId=post-1"),
       ),
-    ).toBeTruthy();
+    ).toBe(true);
   });
 
   test("__no_cache query param should bypass cache", async ({ page }) => {
@@ -477,14 +475,14 @@ test.describe("cache-intercept-routes", () => {
     );
 
     // Should have MISS for intercept:
-    expect(
-      interceptLogs.misses.some((log) => log.includes("intercept:")),
-    ).toBeTruthy();
+    expect(interceptLogs.misses.some((log) => log.includes("intercept:"))).toBe(
+      true,
+    );
 
     // Should have Cached for intercept:
-    expect(
-      interceptLogs.cached.some((log) => log.includes("intercept:")),
-    ).toBeTruthy();
+    expect(interceptLogs.cached.some((log) => log.includes("intercept:"))).toBe(
+      true,
+    );
   });
 
   test("intercept cache should be separate from document cache", async ({
@@ -531,9 +529,9 @@ test.describe("cache-intercept-routes", () => {
     );
 
     // Should be a MISS because intercept cache is separate from doc cache
-    expect(
-      interceptLogs.misses.some((log) => log.includes("intercept:")),
-    ).toBeTruthy();
+    expect(interceptLogs.misses.some((log) => log.includes("intercept:"))).toBe(
+      true,
+    );
   });
 
   test("intercept cache hit on second navigation", async ({ page }) => {
@@ -570,9 +568,9 @@ test.describe("cache-intercept-routes", () => {
       afterSecondStdout.substring(beforeSecondLen),
     );
 
-    expect(
-      secondLogs.hits.some((log) => log.includes("intercept:")),
-    ).toBeTruthy();
+    expect(secondLogs.hits.some((log) => log.includes("intercept:"))).toBe(
+      true,
+    );
   });
 
   test("loader data is rendered in cached intercept segment", async ({
@@ -755,7 +753,7 @@ test.describe("proactive-caching", () => {
           message: "Expected proactive cache write for /proactive-cache/item-b",
         },
       )
-      .toBeTruthy();
+      .toBe(true);
   });
 
   test("layout renders correctly after proactive caching", async ({ page }) => {
@@ -1233,8 +1231,8 @@ test.describe("cache-loader-reactnode", () => {
     await expect(page.getByTestId("react-node-cached-page")).toBeVisible();
     const firstCount = await page.getByTestId("rn-count").textContent();
     const firstTs = await page.getByTestId("rn-ts").textContent();
-    expect(firstCount).toBeTruthy();
-    expect(firstTs).toBeTruthy();
+    expect(firstCount).toMatch(/^\d+$/);
+    expect(firstTs).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
     // Navigate away (round-trip provides time for async loader cache write)
     await page.goto(f.url("/"));
@@ -1299,8 +1297,8 @@ test.describe("cache-loader-reactnode (production)", () => {
     await expect(page.getByTestId("react-node-cached-page")).toBeVisible();
     const firstCount = await page.getByTestId("rn-count").textContent();
     const firstTs = await page.getByTestId("rn-ts").textContent();
-    expect(firstCount).toBeTruthy();
-    expect(firstTs).toBeTruthy();
+    expect(firstCount).toMatch(/^\d+$/);
+    expect(firstTs).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
     await page.goto(f.url("/"));
     await waitForHydration(page);
