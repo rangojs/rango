@@ -287,9 +287,6 @@ export function createRSCHandler<
     }
     const manifestCacheDur = performance.now() - manifestCacheStart;
 
-    // Note: Route map for useHref() is loaded lazily via getGlobalRouteMap()
-    // This allows it to include all routes from lazy includes after manifest loading
-
     // Create unified request context with all methods
     // Includes: stub response, handle store, loader memoization, use(), cookies, headers, cache store
     // params starts empty, populated after route matching via setRequestContextParams
