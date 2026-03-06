@@ -1,6 +1,10 @@
-# Rango Feature Map
+# Rango Feature Map (Internal)
 
 Package: `@rangojs/router`
+
+> **Internal implementation map.** This documents all capabilities including
+> internal-only APIs. It is not a public API reference. For the public contract,
+> see the actual export surfaces in `package.json` and source entrypoints.
 
 Related docs:
 
@@ -12,47 +16,48 @@ Related docs:
 
 ## Export Surface
 
-### Core
-
-| Export      | Description                                                                                                                                                                              |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.`         | Universal router API: `createRouter`, `createLoader`, `redirect`, `cookies()`, `headers()`, route DSL, errors, helpers, URL/route utilities, reverse lookup, server-only runtime helpers |
-| `./client`  | Client-side components and hooks (see [Client API](#client-api) below)                                                                                                                   |
-| `./vite`    | `rango()` plugin factory and plugin options                                                                                                                                              |
-| `./browser` | Browser bootstrap: `initBrowserApp`, `RSCRouter`, `RSCRouterProps`, `invalidateRangoState`                                                                                               |
-
-### Server
-
-| Export     | Description                                                                                              |
-| ---------- | -------------------------------------------------------------------------------------------------------- |
-| `./rsc`    | Advanced server APIs: `createRSCHandler`, server-side request context, handle store, segment cache types |
-| `./ssr`    | RSC payload to HTML bridge: `createSSRHandler`, nonce/form-state support                                 |
-| `./server` | Internal manifest/build internals: plugin bridge and route-map management                                |
-
-### Build and Tooling
+### Public
 
 | Export           | Description                                                                                                                                                                                                                                       |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.`              | Universal router API: `createRouter`, `createLoader`, `redirect`, `cookies()`, `headers()`, route DSL, errors, helpers, URL/route utilities, reverse lookup, server-only runtime helpers                                                          |
+| `./client`       | Client-side components and hooks (see [Client API](#client-api) below)                                                                                                                                                                            |
+| `./vite`         | `rango()` plugin factory and plugin options                                                                                                                                                                                                       |
+| `./browser`      | Browser bootstrap: `initBrowserApp`, `RSCRouter`, `InitBrowserAppOptions`                                                                                                                                                                         |
+| `./rsc`          | Advanced server APIs: `createRSCHandler`, server-side request context, handle store, segment cache types                                                                                                                                          |
+| `./ssr`          | RSC payload to HTML bridge: `createSSRHandler`, nonce/form-state support                                                                                                                                                                          |
 | `./build`        | Manifest and route-type generators: `generateManifest`, `generateManifestFull`, `generateManifestCode`, `writePerModuleRouteTypes`, `generatePerModuleTypesSource`, `extractRoutesFromSource`, `buildRouteTrie`, `createScanFilter`, `hashParams` |
-| `./bin/rango.ts` | CLI: `rango generate` for static/runtime route-type extraction                                                                                                                                                                                    |
+| `./cache`        | Segment and response cache APIs: `SegmentCacheStore`, `MemorySegmentCacheStore`, `CFCacheStore`, document cache middleware, cache scope utilities                                                                                                 |
+| `./theme`        | Theming client API: `useTheme`, `ThemeProvider`, theme scripts and constants                                                                                                                                                                      |
+| `./host`         | Host-based multi-app routing: `createHostRouter`, `defineHosts`, host matching types                                                                                                                                                              |
+| `./host/testing` | Host router test helpers                                                                                                                                                                                                                          |
 
-### Extensions
+### Internal (not user-facing)
 
-| Export           | Description                                                                                                                                       |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `./cache`        | Segment and response cache APIs: `SegmentCacheStore`, `MemorySegmentCacheStore`, `CFCacheStore`, document cache middleware, cache scope utilities |
-| `./theme`        | Theming client API: `useTheme`, `ThemeProvider`, theme scripts and constants                                                                      |
-| `./host`         | Host-based multi-app routing: `createHostRouter`, `defineHosts`, host matching types                                                              |
-| `./host/testing` | Host router test helpers                                                                                                                          |
+These subpaths are consumed by the Vite plugin, RSC handler, or build tooling. They are not part of the public API and may change without notice.
 
-### Internal
+| Export                               | Description                                                   |
+| ------------------------------------ | ------------------------------------------------------------- |
+| `./server`                           | Manifest/build internals: plugin bridge, route-map management |
+| `./__internal`                       | Internal plumbing shared by build/runtime/Vite                |
+| `./internal/deps/browser`            | Browser runtime dependency bridge                             |
+| `./internal/deps/ssr`                | SSR runtime dependency bridge                                 |
+| `./internal/deps/rsc`                | RSC runtime dependency bridge                                 |
+| `./internal/deps/html-stream-client` | HTML stream client dependency bridge                          |
+| `./internal/deps/html-stream-server` | HTML stream server dependency bridge                          |
+| `./internal/rsc-handler`             | RSC handler internals                                         |
+| `./cache-runtime`                    | Cache runtime dependencies                                    |
+| `./types`                            | Shared type definitions                                       |
 
-| Export                   | Description                                                                       |
-| ------------------------ | --------------------------------------------------------------------------------- |
-| `./cache-runtime`        | Cache runtime dependencies                                                        |
-| `./types`                | Shared type definitions                                                           |
-| `./internal/*`           | Internal runtime deps (browser, ssr, rsc, html-stream-client, html-stream-server) |
-| `./internal/rsc-handler` | RSC handler internals                                                             |
+### CLI
+
+The CLI is exposed via the `bin` field in `package.json`, not as a subpath export:
+
+```
+"bin": { "rango": "dist/bin/rango.js" }
+```
+
+`rango generate` — static/runtime route-type extraction for CI and repo bootstrapping.
 
 ---
 
@@ -99,9 +104,16 @@ Related docs:
 
 ### Router Lifecycle
 
-- `createRouter()` with `.routes()`, `.use()`, `.reverse()`, `.fetch()`, `.match()`, `.matchPartial()`, `.matchError()`, `.previewMatch()`
-- `routeMap`, warmup handling, debug manifest flag, document wrapper, global not-found/error defaults
+Public API (`RSCRouter` interface):
+
+- `createRouter()` with `.routes()`, `.use()`, `.reverse()`, `.fetch()`
+- `routeMap`, warmup handling, document wrapper, global not-found/error defaults
 - Named cache profiles via `cacheProfiles`, nonce provider, version tracking
+
+Internal API (`RSCRouterInternal`, not exported):
+
+- `.match()`, `.matchPartial()`, `.matchError()`, `.previewMatch()`, `.matchForPrerender()`, `.renderStaticSegment()`
+- `allowDebugManifest`, `debugManifest()`
 
 ### URL Typing and Generation
 
@@ -175,11 +187,11 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
 
 ### Progressive Enhancement
 
-`handleProgressiveEnhancement()` for no-JS form submission, form-state encoding/decoding for `useActionState()`.
+Internal: `handleProgressiveEnhancement()` (in `src/rsc/progressive-enhancement.ts`, not re-exported from `./rsc`) handles no-JS form submission, form-state encoding/decoding for `useActionState()`.
 
 ### Cross-tab Invalidation
 
-`invalidateRangoState()` for state invalidation across browser tabs via page visibility events.
+Internal: `invalidateRangoState()` (in `src/browser/rango-state.ts`, not re-exported from `./browser`) triggers state invalidation across browser tabs via page visibility events.
 
 ### Theming
 

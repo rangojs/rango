@@ -33,10 +33,13 @@ that route tree.
 
 - [Consolidate generated route type files](./design/consolidate-gen-files.md)
 
-## Reference
+## Internal Reference
 
-- [Feature map](./internal/feature-map.md) - complete API inventory by
-  export path and capability
+These are internal implementation maps for contributors, not consumer-facing
+API docs. They cover both public and internal surfaces.
+
+- [Feature map](./internal/feature-map.md) - implementation inventory by
+  export path and capability (includes internal-only APIs)
 - [Feature-to-file map](./internal/feature-file-map.md) - which source
   files own each feature
 
