@@ -813,6 +813,49 @@ export const patterns = urls(buildRoutes);
     expect(after).toBe(existingContent);
   });
 
+  it("includes the same imported variable under multiple prefixes without false cycle detection", () => {
+    const sharedPath = join(tempDir, "shared-urls.ts");
+    writeFileSync(
+      sharedPath,
+      `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const sharedUrls = urls(({ path }) => [
+  path("/health", handler, { name: "health" }),
+  path("/:id", handler, { name: "detail" }),
+]);
+`,
+    );
+
+    const mainPath = join(tempDir, "urls.ts");
+    writeFileSync(
+      mainPath,
+      `import { urls } from "@rangojs/router";
+import { sharedUrls } from "./shared-urls.js";
+const handler = () => null;
+export const patterns = urls(({ path, include }) => [
+  path("/", handler, { name: "home" }),
+  include("/api", sharedUrls, { name: "api" }),
+  include("/v2", sharedUrls, { name: "v2" }),
+]);
+`,
+    );
+
+    writePerModuleRouteTypesForFile(mainPath);
+
+    const genPath = mainPath.replace(/\.ts$/, ".gen.ts");
+    const content = readFileSync(genPath, "utf-8");
+
+    // Both mounts should be present
+    expect(content).toContain('"api.health"');
+    expect(content).toContain('"/api/health"');
+    expect(content).toContain('"api.detail"');
+    expect(content).toContain('"/api/:id"');
+    expect(content).toContain('"v2.health"');
+    expect(content).toContain('"/v2/health"');
+    expect(content).toContain('"v2.detail"');
+    expect(content).toContain('"/v2/:id"');
+  });
+
   it("still skips gen file when no urls() variable and no routes found", () => {
     // File contains urls( in a comment but no actual urls() variable
     const filePath = join(tempDir, "urls.ts");

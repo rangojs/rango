@@ -200,6 +200,11 @@ function buildPrefixTreeNode(
     }
   }
 
+  // Remove from visited so sibling branches can reuse the same patterns
+  // without false circular-include detection. Only ancestors in the current
+  // recursion path should trigger the cycle guard.
+  visited.delete(patterns);
+
   return {
     staticPrefix: extractStaticPrefix(urlPrefix),
     fullPrefix: urlPrefix,
