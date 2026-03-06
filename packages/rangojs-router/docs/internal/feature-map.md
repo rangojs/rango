@@ -47,7 +47,7 @@ These subpaths are consumed by the Vite plugin, RSC handler, or build tooling. T
 | `./internal/deps/html-stream-server` | HTML stream server dependency bridge                          |
 | `./internal/rsc-handler`             | RSC handler internals                                         |
 | `./cache-runtime`                    | Cache runtime dependencies                                    |
-| `./types`                            | Shared type definitions                                       |
+| `./types`                            | Type declarations for the `@rangojs/router:version` virtual module |
 
 ### CLI
 
