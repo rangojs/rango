@@ -25,6 +25,7 @@ import { previewMatch as _previewMatch } from "./preview-match.js";
 import {
   runWithRouterLogContext,
   withRouterLogScope,
+  isRouterDebugEnabled,
   startRevalidationTrace,
   flushRevalidationTrace,
 } from "./logging.js";
@@ -231,14 +232,16 @@ export function createMatchHandlers<TEnv = any>(
             );
             if (!ctx) return null;
 
-            startRevalidationTrace({
-              method: request.method,
-              prevUrl: ctx.prevUrl.href,
-              nextUrl: ctx.url.href,
-              routeKey: ctx.routeKey,
-              isAction: !!actionContext,
-              stale: ctx.stale || undefined,
-            });
+            if (isRouterDebugEnabled()) {
+              startRevalidationTrace({
+                method: request.method,
+                prevUrl: ctx.prevUrl.href,
+                nextUrl: ctx.url.href,
+                routeKey: ctx.routeKey,
+                isAction: !!actionContext,
+                stale: ctx.stale || undefined,
+              });
+            }
 
             try {
               const state = createPipelineState();
