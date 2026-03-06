@@ -32,6 +32,40 @@ import {
   resolveWithErrorBoundary,
 } from "./helpers.js";
 import { getRouterContext } from "../router-context.js";
+import { resolveSink, safeEmit } from "../telemetry.js";
+
+// ---------------------------------------------------------------------------
+// Revalidation telemetry helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Emit revalidation.decision telemetry for a segment if a sink is configured.
+ * Called after evaluateRevalidation returns to capture the decision.
+ * Silently no-ops when called outside RouterContext (e.g. in unit tests).
+ */
+function emitRevalidationDecision(
+  segmentId: string,
+  pathname: string,
+  routeKey: string,
+  shouldRevalidate: boolean,
+): void {
+  let routerCtx;
+  try {
+    routerCtx = getRouterContext();
+  } catch {
+    return;
+  }
+  if (routerCtx?.telemetry) {
+    safeEmit(resolveSink(routerCtx.telemetry), {
+      type: "revalidation.decision",
+      timestamp: performance.now(),
+      segmentId,
+      pathname,
+      routeKey,
+      shouldRevalidate,
+    });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Revalidation path (partial match)
@@ -115,6 +149,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
           async () => true,
           () => false,
         );
+        emitRevalidationDecision(segmentId, ctx.pathname, routeKey, shouldRun);
         return { shouldRun, loaderEntry, loader, segmentId, index };
       },
     ),
@@ -319,6 +354,12 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
           stale,
         });
       })();
+      emitRevalidationDecision(
+        parallelId,
+        context.pathname,
+        routeKey,
+        shouldResolve,
+      );
 
       let component: ReactNode | undefined;
       if (shouldResolve) {
@@ -446,6 +487,12 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         actionContext,
         stale,
       });
+      emitRevalidationDecision(
+        entry.shortCode,
+        context.pathname,
+        routeKey,
+        shouldRevalidate,
+      );
       debugLog("segment.revalidate", "entry revalidation decision", {
         segmentId: entry.shortCode,
         shouldRevalidate,
@@ -466,10 +513,27 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       }
       if (!actionContext) {
         const result = handleHandlerResult(routeEntry.handler(context));
-        return {
-          content:
-            result instanceof Promise ? deps.trackHandler(result) : result,
-        };
+        if (result instanceof Promise) {
+          const tracked = deps.trackHandler(result);
+          const routerCtx = getRouterContext();
+          if (routerCtx?.telemetry) {
+            const sink = resolveSink(routerCtx.telemetry);
+            tracked.catch((err: unknown) => {
+              const errorObj =
+                err instanceof Error ? err : new Error(String(err));
+              safeEmit(sink, {
+                type: "handler.error",
+                timestamp: performance.now(),
+                segmentId: entry.shortCode,
+                segmentType: entry.type,
+                error: errorObj,
+                handledByBoundary: true,
+              });
+            });
+          }
+          return { content: tracked };
+        }
+        return { content: result };
       }
       debugLog("segment.action", "resolving action route with awaited value", {
         entryId: entry.id,
@@ -746,7 +810,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
       };
 
-      return await evaluateRevalidation({
+      const shouldRevalidate = await evaluateRevalidation({
         segment: dummySegment,
         prevParams,
         getPrevSegment: null,
@@ -762,6 +826,13 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         actionContext,
         stale,
       });
+      emitRevalidationDecision(
+        orphan.shortCode,
+        context.pathname,
+        routeKey,
+        shouldRevalidate,
+      );
+      return shouldRevalidate;
     },
     async () => resolveLayoutComponent(orphan, context),
     () => null,
@@ -853,6 +924,12 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
           stale,
         });
       })();
+      emitRevalidationDecision(
+        parallelId,
+        context.pathname,
+        routeKey,
+        shouldResolve,
+      );
 
       let component: ReactNode | undefined;
       if (shouldResolve) {

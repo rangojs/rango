@@ -23,6 +23,7 @@ import {
   resolveWithErrorBoundary,
 } from "./helpers.js";
 import { getRouterContext } from "../router-context.js";
+import { resolveSink, safeEmit } from "../telemetry.js";
 
 // ---------------------------------------------------------------------------
 // Fresh path (full match, no revalidation)
@@ -197,8 +198,31 @@ export async function resolveSegment<TEnv>(
     if (component === undefined) {
       if (entry.loading) {
         const result = handleHandlerResult(entry.handler(context));
-        component =
-          result instanceof Promise ? deps.trackHandler(result) : result;
+        if (result instanceof Promise) {
+          const tracked = deps.trackHandler(result);
+          // Observe streamed handler rejections for telemetry (fire-and-forget).
+          // React catches the actual error via its error boundary; this only
+          // emits the telemetry event.
+          const routerCtx = getRouterContext();
+          if (routerCtx?.telemetry) {
+            const sink = resolveSink(routerCtx.telemetry);
+            tracked.catch((err: unknown) => {
+              const errorObj =
+                err instanceof Error ? err : new Error(String(err));
+              safeEmit(sink, {
+                type: "handler.error",
+                timestamp: performance.now(),
+                segmentId: entry.shortCode,
+                segmentType: entry.type,
+                error: errorObj,
+                handledByBoundary: true,
+              });
+            });
+          }
+          component = tracked;
+        } else {
+          component = result;
+        }
       } else {
         component = handleHandlerResult(await entry.handler(context));
       }
