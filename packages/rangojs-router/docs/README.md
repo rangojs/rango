@@ -8,7 +8,7 @@ that route tree.
 
 ## Core Topics
 
-- `README.md` - package overview and quick start
+- [`README.md`](../README.md) - package overview and quick start
 - [Route definition rules](./route-definition-rules.md) - what the route DSL
   allows and rejects
 - [Manifests](./manifests.md) - generated route maps and runtime manifest data
