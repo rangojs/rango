@@ -278,10 +278,8 @@ async function runRuntimeDiscovery(args: string[], configFile?: string) {
     process.exit(1);
   }
 
-  // Use a single project root for all routers (find from the first entry)
-  const projectRoot = findProjectRoot(routerEntries[0]);
-
   for (const entry of routerEntries) {
+    const projectRoot = findProjectRoot(entry);
     const result = await discoverAndWriteRouteTypes({
       root: projectRoot,
       configFile,
