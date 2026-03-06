@@ -128,15 +128,22 @@ const perRouterPrecomputedEntriesMap: Map<
 > = new Map();
 
 /**
- * Clear all per-router cached data (manifest, trie, precomputed entries).
+ * Clear all cached route data (global and per-router).
  * Called during HMR when route definitions change so the handler rebuilds
  * the trie from the updated router.urlpatterns on the next request.
+ *
+ * The virtual module calls this before repopulating with fresh data,
+ * preventing stale entries from removed routes from accumulating.
  */
 export function clearAllRouterData(): void {
+  globalRouteMap = {};
+  cachedManifest = null;
+  cachedPrecomputedEntries = null;
+  cachedRouteTrie = null;
+  globalSearchSchemas.clear();
   perRouterManifestMap.clear();
   perRouterTrieMap.clear();
   perRouterPrecomputedEntriesMap.clear();
-  cachedRouteTrie = null;
 }
 
 export function setRouterManifest(
