@@ -26,7 +26,7 @@ export function writePerModuleRouteTypes(
  * Find all variable names assigned to urls() calls in source code.
  * e.g. `export const patterns = urls(...)` -> ["patterns"]
  */
-function findUrlsVariableNames(code: string): string[] {
+export function findUrlsVariableNames(code: string): string[] {
   const sourceFile = ts.createSourceFile(
     "input.tsx",
     code,
