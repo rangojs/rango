@@ -155,17 +155,19 @@ export function postprocessBundle(state: DiscoveryState): void {
         for (const [handlerId, { encoded, handles }] of Object.entries(
           state.staticCollectedData!,
         )) {
-          const contentHash = createHash("sha256")
-            .update(encoded)
-            .digest("hex")
-            .slice(0, 8);
-          const assetFileName = `__st-${contentHash}.js`;
-          const assetPath = resolve(assetsDir, assetFileName);
           // Store both the Flight payload and handle data
           const hasHandles = Object.keys(handles).length > 0;
           const exportValue = hasHandles
             ? JSON.stringify({ encoded, handles })
             : JSON.stringify(encoded);
+          // Hash the full payload that is written so distinct handle
+          // snapshots produce distinct asset filenames.
+          const contentHash = createHash("sha256")
+            .update(exportValue)
+            .digest("hex")
+            .slice(0, 8);
+          const assetFileName = `__st-${contentHash}.js`;
+          const assetPath = resolve(assetsDir, assetFileName);
           const assetCode = `export default ${exportValue};\n`;
           writeFileSync(assetPath, assetCode);
           totalBytes += Buffer.byteLength(assetCode);

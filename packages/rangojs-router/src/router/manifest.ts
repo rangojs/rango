@@ -194,8 +194,16 @@ export async function loadManifest(
             // Promise<() => Array>
             return (load as (h?: any) => any)(helpers);
           }
-          // Promise<Array> - direct array from async handler
-          return load;
+          // Reject unsupported async handler results. Supported shapes are:
+          //   Promise<{ default: fn }> — dynamic import
+          //   Promise<fn> — lazy function
+          // Direct Promise<Array> is not supported; use a function wrapper.
+          throw new Error(
+            `[@rangojs/router] Unsupported async handler result (${typeof load}). ` +
+              `Lazy route handlers must resolve to a function or { default: fn }, ` +
+              `not a direct array. Wrap your handler: () => import('./urls') or ` +
+              `() => Promise.resolve((h) => [...])`,
+          );
         }
 
         // Inline handler - routes were registered with correct parent inside layout

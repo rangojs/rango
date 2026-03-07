@@ -6,7 +6,12 @@
 
 import type { ResolvedSegment, HandlerContext } from "../types";
 import type { ActionContext } from "./types";
-import { debugLog } from "./logging.js";
+import {
+  debugLog,
+  pushRevalidationTraceEntry,
+  isTraceActive,
+} from "./logging.js";
+import type { RevalidationTraceEntry } from "./logging.js";
 
 function paramsEqual(
   a: Record<string, string>,
@@ -50,6 +55,8 @@ interface EvaluateRevalidationOptions<TEnv> {
   actionContext?: ActionContext;
   /** If true, this is a stale cache revalidation request */
   stale?: boolean;
+  /** Trace source hint for the revalidation trace */
+  traceSource?: RevalidationTraceEntry["source"];
 }
 
 /**
@@ -71,28 +78,54 @@ export async function evaluateRevalidation<TEnv>(
     context,
     actionContext,
     stale,
+    traceSource,
   } = options;
   const nextParams = segment.params || {};
   const paramsChanged = !paramsEqual(nextParams, prevParams);
 
+  // Trace helper: push a structured entry to the request-scoped trace buffer.
+  // Guarded by isTraceActive() so object construction is skipped in production.
+  function pushTrace(
+    defaultVal: boolean,
+    finalVal: boolean,
+    reason: string,
+  ): void {
+    if (!isTraceActive()) return;
+    pushRevalidationTraceEntry({
+      segmentId: segment.id,
+      segmentType: segment.type,
+      belongsToRoute: segment.belongsToRoute ?? false,
+      source: traceSource ?? "segment-resolution",
+      defaultShouldRevalidate: defaultVal,
+      finalShouldRevalidate: finalVal,
+      reason,
+      customRevalidators: revalidations.length || undefined,
+    });
+  }
+
   // Calculate default revalidation based on segment type and request method
   let defaultShouldRevalidate: boolean;
+  let defaultReason: string;
 
   if (request.method === "POST") {
     // Actions: revalidate segments that belong to the route, skip parent chain
     if (segment.type === "route") {
       // Route segment always revalidates on actions
       defaultShouldRevalidate = true;
+      defaultReason = "action:route-segment";
     } else if (segment.type === "loader") {
       // Loaders always revalidate on actions - they often contain action-sensitive data
       // (e.g., cart count after add-to-cart action)
       defaultShouldRevalidate = true;
+      defaultReason = "action:loader-segment";
     } else if (segment.belongsToRoute) {
       // Segment belongs to route (orphan layouts/parallels) - revalidate
       defaultShouldRevalidate = true;
+      defaultReason = "action:belongs-to-route";
     } else {
       // Parent chain segment (shared layouts/parallels) - don't revalidate
       defaultShouldRevalidate = false;
+      defaultReason = "action:parent-chain-skip";
     }
   } else {
     // Navigation (GET): Conservative defaults to minimize unnecessary revalidations
@@ -102,6 +135,9 @@ export async function evaluateRevalidation<TEnv>(
       // Route segments revalidate when params change
       // Routes are the primary param-dependent content and always need updates
       defaultShouldRevalidate = paramsChanged;
+      defaultReason = paramsChanged
+        ? "nav:params-changed"
+        : "nav:params-unchanged";
       if (paramsChanged) {
         debugLog("revalidation", "route params changed, revalidating", {
           segmentId: segment.id,
@@ -112,6 +148,7 @@ export async function evaluateRevalidation<TEnv>(
       // Cannot assume these segments depend on params without explicit declaration
       // Use custom revalidation functions to opt-in when needed
       defaultShouldRevalidate = false;
+      defaultReason = "nav:non-route-skip";
       debugLog("revalidation", "non-route segment skipped by default", {
         segmentId: segment.id,
         segmentType: segment.type,
@@ -132,6 +169,7 @@ export async function evaluateRevalidation<TEnv>(
         segmentId: segment.id,
       });
     }
+    pushTrace(defaultShouldRevalidate, defaultShouldRevalidate, defaultReason);
     return defaultShouldRevalidate;
   }
 
@@ -176,6 +214,7 @@ export async function evaluateRevalidation<TEnv>(
         revalidator: name,
         revalidate: result,
       });
+      pushTrace(defaultShouldRevalidate, result, `hard:${name}`);
       return result;
     } else if (
       result &&
@@ -206,5 +245,11 @@ export async function evaluateRevalidation<TEnv>(
     segmentId: segment.id,
     revalidate: currentSuggestion,
   });
+  const softNames = revalidations.map((r) => r.name).join(",");
+  pushTrace(
+    defaultShouldRevalidate,
+    currentSuggestion,
+    `soft-chain:${softNames}`,
+  );
   return currentSuggestion;
 }

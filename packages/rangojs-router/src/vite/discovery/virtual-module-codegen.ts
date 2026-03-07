@@ -42,7 +42,7 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
         const genPath = join(
           routerDir,
           `${routerBasename}.named-routes.gen.js`,
-        );
+        ).replaceAll("\\", "/");
         const varName = `_r${varIdx++}`;
         genFileImports.push(
           `import { NamedRoutes as ${varName} } from ${JSON.stringify(genPath)};`,
@@ -176,7 +176,10 @@ export function generatePerRouterModule(
       /\.(tsx?|jsx?)$/,
       "",
     );
-    const genPath = join(routerDir, `${routerBasename}.named-routes.gen.js`);
+    const genPath = join(
+      routerDir,
+      `${routerBasename}.named-routes.gen.js`,
+    ).replaceAll("\\", "/");
     lines.push(`import { NamedRoutes as _r } from ${JSON.stringify(genPath)};`);
     lines.push(
       `function __flat(r) { const o = {}; for (const [k, v] of Object.entries(r)) o[k] = typeof v === "string" ? v : v.path; return o; }`,

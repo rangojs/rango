@@ -41,6 +41,14 @@ export interface RouteEntry<TEnv = any> {
    * If not specified for a route, defaults to pattern-based detection
    */
   trailingSlash?: Record<string, TrailingSlashMode>;
+  /**
+   * Supported handler shapes:
+   *   - sync: () => Array<AllUseItems>
+   *   - lazy import: () => Promise<{ default: () => Array<AllUseItems> }>
+   *   - lazy function: () => Promise<() => Array<AllUseItems>>
+   *
+   * Direct Promise<Array> is NOT supported and rejected at runtime.
+   */
   handler: () =>
     | Array<AllUseItems>
     | Promise<{ default: () => Array<AllUseItems> }>
