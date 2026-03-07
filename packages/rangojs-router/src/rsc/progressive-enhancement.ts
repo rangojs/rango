@@ -63,6 +63,26 @@ export async function handleProgressiveEnhancement<TEnv>(
   try {
     formData = await request.clone().formData();
   } catch (error) {
+    // Attempt error boundary rendering so the user sees a meaningful page.
+    const errorHtml = await renderPeErrorBoundary(
+      ctx,
+      request,
+      env,
+      url,
+      error,
+      handleStore,
+      nonce,
+    );
+    if (errorHtml) {
+      ctx.callOnError(error, "action", {
+        request,
+        url,
+        env,
+        handledByBoundary: true,
+      });
+      return errorHtml;
+    }
+
     ctx.callOnError(error, "action", {
       request,
       url,
@@ -70,7 +90,7 @@ export async function handleProgressiveEnhancement<TEnv>(
       handledByBoundary: false,
     });
     console.error("[RSC] Progressive enhancement form parse error:", error);
-    return null;
+    return createResponseWithMergedHeaders(null, { status: 400 });
   }
 
   // Look for React's progressive enhancement hidden fields
