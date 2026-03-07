@@ -23,6 +23,8 @@ import type { ResolvedSegment, ErrorInfo, HandlerContext } from "../../types";
 import type { SegmentResolutionDeps } from "../types.js";
 import { debugLog } from "../logging.js";
 import { tryStaticLookup } from "./static-store.js";
+import type { TelemetrySink } from "../telemetry.js";
+import { resolveSink, safeEmit } from "../telemetry.js";
 
 // ---------------------------------------------------------------------------
 // Handler result processing
@@ -116,6 +118,7 @@ export interface ErrorReportContext {
   env?: any;
   isPartial?: boolean;
   requestStartTime?: number;
+  telemetry?: TelemetrySink;
 }
 
 /**
@@ -150,6 +153,21 @@ export function catchSegmentError<TEnv>(
       metadata,
       requestStartTime: report.requestStartTime,
     });
+    if (report.telemetry) {
+      const errorObj =
+        error instanceof Error ? error : new Error(String(error));
+      safeEmit(resolveSink(report.telemetry), {
+        type: "handler.error",
+        timestamp: performance.now(),
+        segmentId: entry.shortCode,
+        segmentType: entry.type,
+        error: errorObj,
+        handledByBoundary,
+        pathname,
+        routeKey: report.routeKey,
+        params,
+      });
+    }
   };
 
   const setResponseStatus = (status: number) => {

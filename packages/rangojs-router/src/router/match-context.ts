@@ -210,6 +210,9 @@ export interface MatchPipelineState {
   // Whether cache should be revalidated (SWR)
   shouldRevalidate?: boolean;
 
+  // Source of cache hit ("runtime" or "prerender")
+  cacheSource?: "runtime" | "prerender";
+
   // Resolved segments from pipeline
   segments: ResolvedSegment[];
   matchedIds: string[];

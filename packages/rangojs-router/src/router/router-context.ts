@@ -18,6 +18,7 @@ import type {
   ShouldRevalidateFn,
 } from "../types.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
+import type { TelemetrySink } from "./telemetry.js";
 
 /**
  * Revalidation context passed to segment resolution
@@ -247,6 +248,9 @@ export interface RouterContext<TEnv = any> {
   buildEntryRevalidateMap?: (
     entries: EntryData[],
   ) => Map<string, { revalidate: ShouldRevalidateFn[] }>;
+
+  // Telemetry sink (optional, no-op when undefined)
+  telemetry?: TelemetrySink;
 
   // Intercept loaders only (for cache hit + intercept scenarios)
   resolveInterceptLoadersOnly?: (

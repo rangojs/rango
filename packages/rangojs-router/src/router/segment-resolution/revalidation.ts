@@ -35,6 +35,81 @@ import {
   resolveLayoutComponent,
   resolveWithErrorBoundary,
 } from "./helpers.js";
+import { getRouterContext } from "../router-context.js";
+import { resolveSink, safeEmit } from "../telemetry.js";
+
+// ---------------------------------------------------------------------------
+// Telemetry helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Attach a fire-and-forget rejection observer to a streamed handler promise.
+ * Silently no-ops when called outside RouterContext (e.g. in unit tests).
+ */
+function observeStreamedHandler(
+  promise: Promise<ReactNode>,
+  segmentId: string,
+  segmentType: string,
+  pathname?: string,
+  routeKey?: string,
+  params?: Record<string, string>,
+): void {
+  let routerCtx;
+  try {
+    routerCtx = getRouterContext();
+  } catch {
+    return;
+  }
+  if (!routerCtx?.telemetry) return;
+  const sink = resolveSink(routerCtx.telemetry);
+  promise.catch((err: unknown) => {
+    const errorObj = err instanceof Error ? err : new Error(String(err));
+    safeEmit(sink, {
+      type: "handler.error",
+      timestamp: performance.now(),
+      segmentId,
+      segmentType,
+      error: errorObj,
+      handledByBoundary: true,
+      pathname,
+      routeKey,
+      params,
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Revalidation telemetry helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Emit revalidation.decision telemetry for a segment if a sink is configured.
+ * Called after evaluateRevalidation returns to capture the decision.
+ * Silently no-ops when called outside RouterContext (e.g. in unit tests).
+ */
+function emitRevalidationDecision(
+  segmentId: string,
+  pathname: string,
+  routeKey: string,
+  shouldRevalidate: boolean,
+): void {
+  let routerCtx;
+  try {
+    routerCtx = getRouterContext();
+  } catch {
+    return;
+  }
+  if (routerCtx?.telemetry) {
+    safeEmit(resolveSink(routerCtx.telemetry), {
+      type: "revalidation.decision",
+      timestamp: performance.now(),
+      segmentId,
+      pathname,
+      routeKey,
+      shouldRevalidate,
+    });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Revalidation path (partial match)
@@ -132,6 +207,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
           async () => true,
           () => false,
         );
+        emitRevalidationDecision(segmentId, ctx.pathname, routeKey, shouldRun);
         return { shouldRun, loaderEntry, loader, segmentId, index };
       },
     ),
@@ -363,6 +439,12 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
           traceSource: "parallel",
         });
       })();
+      emitRevalidationDecision(
+        parallelId,
+        context.pathname,
+        routeKey,
+        shouldResolve,
+      );
 
       let component: ReactNode | undefined;
       if (shouldResolve) {
@@ -377,14 +459,23 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         } else if (hasLoadingFallback) {
           const result =
             typeof handler === "function" ? handler(context) : handler;
-          component = (
-            result instanceof Promise
-              ? deps.trackHandler(result, {
-                  segmentId: parallelId,
-                  segmentType: "parallel",
-                })
-              : result
-          ) as ReactNode;
+          if (result instanceof Promise) {
+            const tracked = deps.trackHandler(result, {
+              segmentId: parallelId,
+              segmentType: "parallel",
+            });
+            observeStreamedHandler(
+              tracked,
+              parallelId,
+              "parallel",
+              context.pathname,
+              routeKey,
+              params,
+            );
+            component = tracked as ReactNode;
+          } else {
+            component = result as ReactNode;
+          }
         } else {
           component =
             typeof handler === "function" ? await handler(context) : handler;
@@ -514,6 +605,12 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         actionContext,
         stale,
       });
+      emitRevalidationDecision(
+        entry.shortCode,
+        context.pathname,
+        routeKey,
+        shouldRevalidate,
+      );
       debugLog("segment.revalidate", "entry revalidation decision", {
         segmentId: entry.shortCode,
         shouldRevalidate,
@@ -534,15 +631,22 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       }
       if (!actionContext) {
         const result = handleHandlerResult(routeEntry.handler(context));
-        return {
-          content:
-            result instanceof Promise
-              ? deps.trackHandler(result, {
-                  segmentId: entry.shortCode,
-                  segmentType: entry.type,
-                })
-              : result,
-        };
+        if (result instanceof Promise) {
+          const tracked = deps.trackHandler(result, {
+            segmentId: entry.shortCode,
+            segmentType: entry.type,
+          });
+          observeStreamedHandler(
+            tracked,
+            entry.shortCode,
+            entry.type,
+            context.pathname,
+            routeKey,
+            params,
+          );
+          return { content: tracked };
+        }
+        return { content: result };
       }
       debugLog("segment.action", "resolving action route with awaited value", {
         entryId: entry.id,
@@ -832,7 +936,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
       };
 
-      return await evaluateRevalidation({
+      const shouldRevalidate = await evaluateRevalidation({
         segment: dummySegment,
         prevParams,
         getPrevSegment: null,
@@ -849,6 +953,13 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         stale,
         traceSource: "orphan-layout",
       });
+      emitRevalidationDecision(
+        orphan.shortCode,
+        context.pathname,
+        routeKey,
+        shouldRevalidate,
+      );
+      return shouldRevalidate;
     },
     async () => resolveLayoutComponent(orphan, context),
     () => null,
@@ -954,6 +1065,12 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
           traceSource: "parallel",
         });
       })();
+      emitRevalidationDecision(
+        parallelId,
+        context.pathname,
+        routeKey,
+        shouldResolve,
+      );
 
       let component: ReactNode | undefined;
       if (shouldResolve) {
@@ -968,14 +1085,23 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         } else if (hasLoadingFallback) {
           const result =
             typeof handler === "function" ? handler(context) : handler;
-          component = (
-            result instanceof Promise
-              ? deps.trackHandler(result, {
-                  segmentId: parallelId,
-                  segmentType: "parallel",
-                })
-              : result
-          ) as ReactNode;
+          if (result instanceof Promise) {
+            const tracked = deps.trackHandler(result, {
+              segmentId: parallelId,
+              segmentType: "parallel",
+            });
+            observeStreamedHandler(
+              tracked,
+              parallelId,
+              "parallel",
+              context.pathname,
+              routeKey,
+              params,
+            );
+            component = tracked as ReactNode;
+          } else {
+            component = result as ReactNode;
+          }
         } else {
           component =
             typeof handler === "function" ? await handler(context) : handler;
@@ -1029,6 +1155,8 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
   const seenSegIds = new Set<string>();
   const seenMatchIds = new Set<string>();
 
+  const telemetry = getRouterContext()?.telemetry;
+
   for (const entry of entries) {
     if (entry.type === "route" && interceptResult) {
       debugLog(
@@ -1068,7 +1196,9 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
         ),
       (seg) => ({ segments: [seg], matchedIds: [seg.id] }),
       deps,
-      undefined,
+      telemetry
+        ? { request, url: context.url, routeKey, isPartial: true, telemetry }
+        : undefined,
       pathname,
     );
 

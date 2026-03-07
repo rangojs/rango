@@ -22,6 +22,49 @@ import {
   resolveLayoutComponent,
   resolveWithErrorBoundary,
 } from "./helpers.js";
+import { getRouterContext } from "../router-context.js";
+import { resolveSink, safeEmit } from "../telemetry.js";
+
+// ---------------------------------------------------------------------------
+// Streamed handler telemetry
+// ---------------------------------------------------------------------------
+
+/**
+ * Attach a fire-and-forget rejection observer to a streamed handler promise.
+ * React catches the actual error via its error boundary; this only emits
+ * the handler.error telemetry event.
+ */
+function observeStreamedHandler(
+  promise: Promise<ReactNode>,
+  segmentId: string,
+  segmentType: string,
+  pathname?: string,
+  routeKey?: string,
+  params?: Record<string, string>,
+): void {
+  let routerCtx;
+  try {
+    routerCtx = getRouterContext();
+  } catch {
+    return;
+  }
+  if (!routerCtx?.telemetry) return;
+  const sink = resolveSink(routerCtx.telemetry);
+  promise.catch((err: unknown) => {
+    const errorObj = err instanceof Error ? err : new Error(String(err));
+    safeEmit(sink, {
+      type: "handler.error",
+      timestamp: performance.now(),
+      segmentId,
+      segmentType,
+      error: errorObj,
+      handledByBoundary: true,
+      pathname,
+      routeKey,
+      params,
+    });
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Fresh path (full match, no revalidation)
@@ -158,6 +201,7 @@ export async function resolveSegment<TEnv>(
         entry.shortCode,
         deps,
         options,
+        routeKey,
       );
       segments.push(...parallelSegments);
     }
@@ -171,6 +215,7 @@ export async function resolveSegment<TEnv>(
         false,
         deps,
         options,
+        routeKey,
       );
       segments.push(...orphanSegments);
     }
@@ -196,13 +241,23 @@ export async function resolveSegment<TEnv>(
     if (component === undefined) {
       if (entry.loading) {
         const result = handleHandlerResult(entry.handler(context));
-        component =
-          result instanceof Promise
-            ? deps.trackHandler(result, {
-                segmentId: entry.shortCode,
-                segmentType: entry.type,
-              })
-            : result;
+        if (result instanceof Promise) {
+          const tracked = deps.trackHandler(result, {
+            segmentId: entry.shortCode,
+            segmentType: entry.type,
+          });
+          observeStreamedHandler(
+            tracked,
+            entry.shortCode,
+            entry.type,
+            context.pathname,
+            routeKey,
+            params,
+          );
+          component = tracked;
+        } else {
+          component = result;
+        }
       } else {
         component = handleHandlerResult(await entry.handler(context));
       }
@@ -217,6 +272,7 @@ export async function resolveSegment<TEnv>(
         true,
         deps,
         options,
+        routeKey,
       );
       segments.push(...orphanSegments);
     }
@@ -230,6 +286,7 @@ export async function resolveSegment<TEnv>(
         entry.shortCode,
         deps,
         options,
+        routeKey,
       );
       segments.push(...parallelSegments);
     }
@@ -264,6 +321,7 @@ export async function resolveOrphanLayout<TEnv>(
   belongsToRoute: boolean,
   deps: SegmentResolutionDeps<TEnv>,
   options?: ResolveSegmentOptions,
+  routeKey?: string,
 ): Promise<ResolvedSegment[]> {
   invariant(
     orphan.type === "layout" || orphan.type === "cache",
@@ -308,6 +366,7 @@ export async function resolveOrphanLayout<TEnv>(
       orphan.shortCode,
       deps,
       options,
+      routeKey,
     );
     segments.push(...parallelSegments);
   }
@@ -326,6 +385,7 @@ export async function resolveParallelEntry<TEnv>(
   parentShortCode: string,
   deps: SegmentResolutionDeps<TEnv>,
   options?: ResolveSegmentOptions,
+  routeKey?: string,
 ): Promise<ResolvedSegment[]> {
   invariant(
     parallelEntry.type === "parallel",
@@ -353,14 +413,23 @@ export async function resolveParallelEntry<TEnv>(
       if (hasLoadingFallback) {
         const result =
           typeof handler === "function" ? handler(context) : handler;
-        component = (
-          result instanceof Promise
-            ? deps.trackHandler(result, {
-                segmentId: `${parentShortCode}.${slot}`,
-                segmentType: "parallel",
-              })
-            : result
-        ) as ReactNode;
+        if (result instanceof Promise) {
+          const tracked = deps.trackHandler(result, {
+            segmentId: `${parentShortCode}.${slot}`,
+            segmentType: "parallel",
+          });
+          observeStreamedHandler(
+            tracked,
+            `${parentShortCode}.${slot}`,
+            "parallel",
+            context.pathname,
+            routeKey,
+            params,
+          );
+          component = tracked as ReactNode;
+        } else {
+          component = result as ReactNode;
+        }
       } else {
         component =
           typeof handler === "function" ? await handler(context) : handler;
@@ -421,6 +490,12 @@ export async function resolveAllSegments<TEnv>(
     safeRequest = context.request;
   } catch {}
 
+  // Get telemetry sink from RouterContext (may not exist during prerendering)
+  let telemetry;
+  try {
+    telemetry = getRouterContext()?.telemetry;
+  } catch {}
+
   for (const entry of entries) {
     const resolvedSegments = await resolveWithErrorBoundary(
       entry,
@@ -438,7 +513,7 @@ export async function resolveAllSegments<TEnv>(
         ),
       (seg) => [seg],
       deps,
-      { request: safeRequest, url: context.url, routeKey },
+      { request: safeRequest, url: context.url, routeKey, telemetry },
       context.pathname,
     );
     // Deduplicate by segment ID. include() scopes can produce entries that
