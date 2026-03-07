@@ -1,10 +1,45 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 
+// -- Revalidation trace types --
+
+export interface RevalidationTraceEntry {
+  segmentId: string;
+  segmentType: string;
+  belongsToRoute: boolean;
+  source:
+    | "segment-resolution"
+    | "cache-hit"
+    | "loader"
+    | "parallel"
+    | "orphan-layout";
+  defaultShouldRevalidate: boolean;
+  finalShouldRevalidate: boolean;
+  reason: string;
+  customRevalidators?: number;
+}
+
+export interface RevalidationTraceMeta {
+  method: string;
+  prevUrl: string;
+  nextUrl: string;
+  routeKey: string;
+  isAction: boolean;
+  stale?: boolean;
+}
+
+export interface RevalidationTrace {
+  meta: RevalidationTraceMeta;
+  entries: RevalidationTraceEntry[];
+}
+
+// -- Log context --
+
 interface RouterLogContext {
   requestId: string;
   transactionId: string;
   depth: number;
+  revalidationTrace?: RevalidationTrace;
 }
 
 interface RouterLogOptions {
@@ -148,4 +183,59 @@ export function debugWarn(
   }
 
   console.warn(`${prefix} ${message}`);
+}
+
+// -- Revalidation trace helpers --
+
+export function isTraceActive(): boolean {
+  if (!INTERNAL_RANGO_DEBUG) return false;
+  const ctx = routerLogContext.getStore();
+  return !!ctx?.revalidationTrace;
+}
+
+export function startRevalidationTrace(meta: RevalidationTraceMeta): void {
+  const ctx = routerLogContext.getStore();
+  if (!ctx || !INTERNAL_RANGO_DEBUG) return;
+  ctx.revalidationTrace = { meta, entries: [] };
+}
+
+export function pushRevalidationTraceEntry(
+  entry: RevalidationTraceEntry,
+): void {
+  const ctx = routerLogContext.getStore();
+  if (!ctx?.revalidationTrace) return;
+  ctx.revalidationTrace.entries.push(entry);
+}
+
+export function flushRevalidationTrace(): RevalidationTrace | null {
+  const ctx = routerLogContext.getStore();
+  if (!ctx?.revalidationTrace) return null;
+  const trace = ctx.revalidationTrace;
+  ctx.revalidationTrace = undefined;
+
+  if (trace.entries.length === 0) return trace;
+
+  const revalidated = trace.entries.filter((e) => e.finalShouldRevalidate);
+  const skipped = trace.entries.filter((e) => !e.finalShouldRevalidate);
+
+  debugLog("revalidation-trace", "flush", {
+    method: trace.meta.method,
+    routeKey: trace.meta.routeKey,
+    isAction: trace.meta.isAction,
+    stale: trace.meta.stale,
+    prevUrl: trace.meta.prevUrl,
+    nextUrl: trace.meta.nextUrl,
+    total: trace.entries.length,
+    revalidated: revalidated.length,
+    skipped: skipped.length,
+    entries: trace.entries.map((e) => ({
+      segmentId: e.segmentId,
+      type: e.segmentType,
+      source: e.source,
+      revalidate: e.finalShouldRevalidate,
+      reason: e.reason,
+    })),
+  });
+
+  return trace;
 }
