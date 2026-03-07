@@ -92,11 +92,15 @@ test.describe("cache-server-logs", () => {
     const afterFirstStdout = f.proc().stdout();
     const firstLogs = getCacheLogs(afterFirstStdout.substring(initialLength));
 
-    // Should have exactly one MISS for doc:/blog
-    expect(firstLogs.misses.some((log) => log.includes("/blog"))).toBe(true);
+    // Should have exactly one MISS for doc:{host}/blog
+    expect(firstLogs.misses.some((log) => /doc:\S+\/blog/.test(log))).toBe(
+      true,
+    );
 
     // Should have a Cached log after async write
-    expect(firstLogs.cached.some((log) => log.includes("/blog"))).toBe(true);
+    expect(firstLogs.cached.some((log) => /doc:\S+\/blog/.test(log))).toBe(
+      true,
+    );
 
     // Navigate away
     await page.goto(f.url("/"));
@@ -119,9 +123,11 @@ test.describe("cache-server-logs", () => {
       afterSecondStdout.substring(beforeSecondLength),
     );
 
-    // Should have a HIT for doc:/blog (not MISS)
-    expect(secondLogs.hits.some((log) => log.includes("/blog"))).toBe(true);
-    expect(secondLogs.misses.some((log) => log.includes("/blog"))).toBeFalsy();
+    // Should have a HIT for doc:{host}/blog (not MISS)
+    expect(secondLogs.hits.some((log) => /doc:\S+\/blog/.test(log))).toBe(true);
+    expect(
+      secondLogs.misses.some((log) => /doc:\S+\/blog/.test(log)),
+    ).toBeFalsy();
   });
 
   test("partial navigation should use different cache key", async ({
@@ -151,11 +157,15 @@ test.describe("cache-server-logs", () => {
     const afterNavStdout = f.proc().stdout();
     const navLogs = getCacheLogs(afterNavStdout.substring(beforeNavLength));
 
-    // Should have MISS for partial:/blog
-    expect(navLogs.misses.some((log) => log.includes("/blog"))).toBe(true);
+    // Should have MISS for partial:{host}/blog
+    expect(navLogs.misses.some((log) => /partial:\S+\/blog/.test(log))).toBe(
+      true,
+    );
 
-    // Should have Cached for partial:/blog
-    expect(navLogs.cached.some((log) => log.includes("/blog"))).toBe(true);
+    // Should have Cached for partial:{host}/blog
+    expect(navLogs.cached.some((log) => /partial:\S+\/blog/.test(log))).toBe(
+      true,
+    );
 
     // Navigate back to home
     await page.getByTestId("back-link").click();
@@ -177,7 +187,9 @@ test.describe("cache-server-logs", () => {
       afterSecondNav.substring(beforeSecondNavLen),
     );
 
-    expect(secondNavLogs.hits.some((log) => log.includes("/blog"))).toBe(true);
+    expect(
+      secondNavLogs.hits.some((log) => /partial:\S+\/blog/.test(log)),
+    ).toBe(true);
   });
 
   test("blog post with params should cache with params in key", async ({
@@ -202,10 +214,11 @@ test.describe("cache-server-logs", () => {
     const afterFirstStdout = f.proc().stdout();
     const firstLogs = getCacheLogs(afterFirstStdout.substring(initialLength));
 
-    // Should have MISS for doc:/blog/post-1 with params
+    // Should have MISS for doc:{host}/blog/post-1 with params
     expect(
       firstLogs.misses.some(
-        (log) => log.includes("/blog/post-1") || log.includes("postId=post-1"),
+        (log) =>
+          /doc:\S+\/blog\/post-1/.test(log) || log.includes("postId=post-1"),
       ),
     ).toBe(true);
 
@@ -226,7 +239,8 @@ test.describe("cache-server-logs", () => {
     // Should be a MISS (different cache key due to different param)
     expect(
       secondLogs.misses.some(
-        (log) => log.includes("/blog/post-2") || log.includes("postId=post-2"),
+        (log) =>
+          /doc:\S+\/blog\/post-2/.test(log) || log.includes("postId=post-2"),
       ),
     ).toBe(true);
 
@@ -242,7 +256,8 @@ test.describe("cache-server-logs", () => {
 
     expect(
       thirdLogs.hits.some(
-        (log) => log.includes("/blog/post-1") || log.includes("postId=post-1"),
+        (log) =>
+          /doc:\S+\/blog\/post-1/.test(log) || log.includes("postId=post-1"),
       ),
     ).toBe(true);
   });
