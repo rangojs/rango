@@ -521,6 +521,9 @@ export function createNavigationBridge(
             "[Browser] Page restored from bfcache, resetting navigation state",
           );
           eventController.abortNavigation();
+          // pagehide flips scrollRestoration to "auto" for bfcache compat;
+          // restore "manual" so the router controls scroll on SPA navigations.
+          window.history.scrollRestoration = "manual";
         }
       };
 
