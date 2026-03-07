@@ -205,6 +205,8 @@ describe("streamed handler telemetry (handler.error emission)", () => {
           false,
           "L0",
           deps,
+          undefined,
+          "blog",
         );
 
         const parallelSeg = segments.find((s) => s.type === "parallel");
@@ -222,6 +224,8 @@ describe("streamed handler telemetry (handler.error emission)", () => {
       expect(evt.error.message).toBe("sidebar boom");
       expect(evt.handledByBoundary).toBe(true);
       expect(evt.pathname).toBe("/blog");
+      expect(evt.routeKey).toBe("blog");
+      expect(evt.params).toEqual({ slug: "hello" });
     });
   });
 

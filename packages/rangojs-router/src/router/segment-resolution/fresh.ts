@@ -196,6 +196,7 @@ export async function resolveSegment<TEnv>(
         entry.shortCode,
         deps,
         options,
+        routeKey,
       );
       segments.push(...parallelSegments);
     }
@@ -209,6 +210,7 @@ export async function resolveSegment<TEnv>(
         false,
         deps,
         options,
+        routeKey,
       );
       segments.push(...orphanSegments);
     }
@@ -262,6 +264,7 @@ export async function resolveSegment<TEnv>(
         true,
         deps,
         options,
+        routeKey,
       );
       segments.push(...orphanSegments);
     }
@@ -275,6 +278,7 @@ export async function resolveSegment<TEnv>(
         entry.shortCode,
         deps,
         options,
+        routeKey,
       );
       segments.push(...parallelSegments);
     }
@@ -309,6 +313,7 @@ export async function resolveOrphanLayout<TEnv>(
   belongsToRoute: boolean,
   deps: SegmentResolutionDeps<TEnv>,
   options?: ResolveSegmentOptions,
+  routeKey?: string,
 ): Promise<ResolvedSegment[]> {
   invariant(
     orphan.type === "layout" || orphan.type === "cache",
@@ -353,6 +358,7 @@ export async function resolveOrphanLayout<TEnv>(
       orphan.shortCode,
       deps,
       options,
+      routeKey,
     );
     segments.push(...parallelSegments);
   }
@@ -371,6 +377,7 @@ export async function resolveParallelEntry<TEnv>(
   parentShortCode: string,
   deps: SegmentResolutionDeps<TEnv>,
   options?: ResolveSegmentOptions,
+  routeKey?: string,
 ): Promise<ResolvedSegment[]> {
   invariant(
     parallelEntry.type === "parallel",
@@ -404,7 +411,7 @@ export async function resolveParallelEntry<TEnv>(
             `${parentShortCode}.${slot}`,
             "parallel",
             context.pathname,
-            undefined,
+            routeKey,
             params,
           );
         }
