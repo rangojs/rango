@@ -47,6 +47,7 @@ import { manifestCacheTestPatterns } from "./urls/manifest-cache-test.js";
 import { authBoundaryPatterns } from "./urls/auth-boundary.js";
 import { contentOwnershipPatterns } from "./urls/content-ownership.js";
 import { cacheIsolationPatterns } from "./urls/cache-isolation.js";
+import { alsScopePatterns } from "./urls/als-scope.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -571,6 +572,9 @@ export const urlpatterns = urls(
       include("/cache-isolation", cacheIsolationPatterns, {
         name: "cacheIsolation",
       }),
+
+      // ALS scope propagation tests (request, render, intercept scopes)
+      include("/als-scope", alsScopePatterns, { name: "alsScope" }),
 
       // Revalidation contract fixture: consumer reruns without producer rerun,
       // so upstream ctx.set() data is missing on the action follow-up.
