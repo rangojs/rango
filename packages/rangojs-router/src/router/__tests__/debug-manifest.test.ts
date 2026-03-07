@@ -40,33 +40,25 @@ describe("buildDebugManifest async handler shapes", () => {
     expect(Object.keys(manifest.routes)).toContain("/b");
   });
 
-  it("handles genuinely async Promise<Array>", async () => {
-    // When h.route() is called during async resolution inside runWithStore,
-    // the ALS context is still active, so routes register as side effects.
-    const entry = makeEntry((async () => {
-      await Promise.resolve();
-      const { createRouteHelpers } = await import("../../route-definition.js");
-      const h: any = createRouteHelpers();
-      return [h.route("/async-array", handler)];
-    }) as unknown as RouteEntry["handler"]);
+  it("rejects Promise<Array> with clear error", async () => {
+    const entry = makeEntry((() =>
+      Promise.resolve([
+        { type: "route", name: "/c" },
+      ])) as unknown as RouteEntry["handler"]);
 
-    const manifest = await buildDebugManifest([entry]);
-    expect(Object.keys(manifest.routes)).toContain("/async-array");
+    await expect(buildDebugManifest([entry])).rejects.toThrow(
+      /Unsupported async handler result/,
+    );
   });
 
-  it("Promise<fn> was previously dropped (regression)", async () => {
-    // Before the fix, only Promise<{ default: fn }> was handled.
-    // Promise<fn> would silently produce an empty manifest.
+  it("rejects Promise<string> with clear error", async () => {
     const entry = makeEntry((() =>
-      Promise.resolve((h: any) => [
-        h.route("/x", handler),
-        h.route("/y", handler),
-      ])) as RouteEntry["handler"]);
+      Promise.resolve(
+        "not a valid handler",
+      )) as unknown as RouteEntry["handler"]);
 
-    const manifest = await buildDebugManifest([entry]);
-    expect(manifest.totalRoutes).toBe(2);
-    expect(Object.keys(manifest.routes)).toEqual(
-      expect.arrayContaining(["/x", "/y"]),
+    await expect(buildDebugManifest([entry])).rejects.toThrow(
+      /Unsupported async handler result/,
     );
   });
 });
