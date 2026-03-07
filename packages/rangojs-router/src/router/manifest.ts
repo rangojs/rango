@@ -187,7 +187,12 @@ export async function loadManifest(
             "default" in load
           ) {
             // Promise<{ default: () => Array }> - e.g., dynamic import
-            // Lazy-loaded handlers may need helpers (passed as optional arg)
+            if (typeof load.default !== "function") {
+              throw new Error(
+                `[@rangojs/router] Unsupported async handler: { default } must be a function, ` +
+                  `got ${typeof load.default}. Use () => import('./urls') for lazy loading.`,
+              );
+            }
             return (load.default as (h?: any) => any)(helpers);
           }
           if (typeof load === "function") {
