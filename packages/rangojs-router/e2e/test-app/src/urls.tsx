@@ -46,6 +46,7 @@ import { delayedBreadcrumbPatterns } from "./urls/delayed-breadcrumbs.js";
 import { manifestCacheTestPatterns } from "./urls/manifest-cache-test.js";
 import { authBoundaryPatterns } from "./urls/auth-boundary.js";
 import { contentOwnershipPatterns } from "./urls/content-ownership.js";
+import { cacheIsolationPatterns } from "./urls/cache-isolation.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -564,6 +565,11 @@ export const urlpatterns = urls(
       // Content ownership / negotiation edge cases
       include("/content-ownership", contentOwnershipPatterns, {
         name: "contentOwnership",
+      }),
+
+      // Cache isolation tests (query, auth, condition)
+      include("/cache-isolation", cacheIsolationPatterns, {
+        name: "cacheIsolation",
       }),
 
       // Revalidation contract fixture: consumer reruns without producer rerun,
