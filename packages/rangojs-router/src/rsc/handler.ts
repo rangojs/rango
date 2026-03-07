@@ -114,13 +114,11 @@ export function createRSCHandler<
     options.loadSSRModule ??
     (() => import.meta.viteRsc.loadModule("ssr", "index"));
 
-  // Track errors already reported to onError to prevent double-reporting
-  // when errors are caught by a phase-specific handler and re-thrown.
-  const reportedErrors = new WeakSet<object>();
-
   /**
-   * Wrapper for invokeOnError that binds the router's onError callback.
-   * Uses the shared utility from router/error-handling.ts for consistent behavior.
+   * Per-request error reporter that deduplicates via the ALS request context.
+   *
+   * Uses the same _reportedErrors WeakSet as the router layer so errors
+   * that propagate across layers are only reported once per request.
    */
   function callOnError(
     error: unknown,
@@ -128,6 +126,7 @@ export function createRSCHandler<
     context: Parameters<typeof invokeOnError<TEnv>>[3],
   ): void {
     if (error != null && typeof error === "object") {
+      const reportedErrors = requireRequestContext()._reportedErrors;
       if (reportedErrors.has(error)) return;
       reportedErrors.add(error);
     }
@@ -168,7 +167,8 @@ export function createRSCHandler<
     });
   }
 
-  // Bundle shared dependencies for extracted handler functions
+  // Bundle shared dependencies for extracted handler functions.
+  // callOnError reads from ALS so it's inherently per-request scoped.
   const handlerCtx: HandlerContext<TEnv> = {
     router,
     version,

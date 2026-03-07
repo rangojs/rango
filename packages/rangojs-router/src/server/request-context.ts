@@ -240,6 +240,9 @@ export interface RequestContext<
 
   /** @internal Route name from route matching, used for scoped reverse resolution */
   _routeName?: string;
+
+  /** @internal Per-request error dedup set for onError reporting */
+  _reportedErrors: WeakSet<object>;
 }
 
 /**
@@ -264,6 +267,7 @@ export type PublicRequestContext<
   | "_themeConfig"
   | "_locationState"
   | "_routeName"
+  | "_reportedErrors"
 >;
 
 // AsyncLocalStorage instance for request context
@@ -619,6 +623,8 @@ export function createRequestContext<TEnv>(
         : arr;
     },
     _locationState: undefined,
+
+    _reportedErrors: new WeakSet<object>(),
 
     reverse: createReverseFunction(getGlobalRouteMap(), undefined, {}),
   };

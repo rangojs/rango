@@ -205,14 +205,13 @@ export function createRouter<TEnv = any>(
     ? resolveThemeConfig(themeOption)
     : null;
 
-  // Track errors already reported to onError to prevent double-reporting
-  // when errors propagate through multiple catch blocks.
-  const reportedErrors = new WeakSet<object>();
-
   /**
    * Wrapper for invokeOnError that binds the router's onError callback.
    * Uses the shared utility from router/error-handling.ts for consistent behavior.
-   * Deduplicates via WeakSet to prevent double-reporting.
+   *
+   * Deduplicates via per-request WeakSet stored on the ALS request context.
+   * A closure-level WeakSet would silently swallow errors if the same object
+   * instance is thrown across separate requests (e.g. a singleton error).
    */
   function callOnError(
     error: unknown,
@@ -220,8 +219,11 @@ export function createRouter<TEnv = any>(
     context: Parameters<typeof invokeOnError<TEnv>>[3],
   ): void {
     if (error != null && typeof error === "object") {
-      if (reportedErrors.has(error)) return;
-      reportedErrors.add(error);
+      const reportedErrors = _getRequestContext()?._reportedErrors;
+      if (reportedErrors) {
+        if (reportedErrors.has(error)) return;
+        reportedErrors.add(error);
+      }
     }
     invokeOnError(onError, error, phase, context, "Router");
   }

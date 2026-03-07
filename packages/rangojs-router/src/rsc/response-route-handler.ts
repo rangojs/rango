@@ -289,7 +289,7 @@ export async function handleResponseRoute<TEnv>(
                 if (isCacheableStatus(fresh.status)) {
                   await store.putResponse!(
                     cacheKey,
-                    fresh,
+                    fresh.clone(),
                     cacheScope!.ttl,
                     cacheScope!.swr,
                   );

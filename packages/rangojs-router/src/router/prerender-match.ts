@@ -121,6 +121,7 @@ export async function matchForPrerender<TEnv = any>(
       _onResponseCallbacks: [],
       setLocationState() {},
       _locationState: undefined,
+      _reportedErrors: new WeakSet<object>(),
       reverse: createReverseFunction(
         deps.mergedRouteMap,
         matched.routeKey,
@@ -332,6 +333,7 @@ export async function renderStaticSegment<TEnv = any>(
     _onResponseCallbacks: [],
     setLocationState() {},
     _locationState: undefined,
+    _reportedErrors: new WeakSet<object>(),
     reverse: createReverseFunction(mergedRouteMap, routeName, {}),
   };
 
