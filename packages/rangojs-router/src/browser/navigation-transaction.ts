@@ -17,6 +17,15 @@ import { buildHistoryState } from "./history-state.js";
 // Re-export for consumers that import from navigation-transaction
 export { resolveNavigationState } from "./history-state.js";
 
+/** Check if a history state object contains location state keys. */
+function hasLocationState(state: unknown): boolean {
+  if (!state || typeof state !== "object") return false;
+  return (
+    "state" in state ||
+    Object.keys(state).some((k) => k.startsWith("__rsc_ls_"))
+  );
+}
+
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
   (Symbol as any).dispose = Symbol("Symbol.dispose");
@@ -173,6 +182,10 @@ export function createNavigationTransaction(
       serverState,
     );
 
+    // Snapshot old state before pushState/replaceState overwrites it.
+    // Used to detect when location state is being cleared.
+    const oldState = window.history.state;
+
     // Update browser URL
     if (replace) {
       window.history.replaceState(historyState, "", url);
@@ -182,11 +195,12 @@ export function createNavigationTransaction(
     // Ensure new history entry has a scroll restoration key
     ensureHistoryKey();
 
-    // Notify location state hooks that history.state changed.
-    // Needed for same-page navigations where components don't remount and
-    // useState initializers don't re-run. Dispatched unconditionally so hooks
-    // also clear stale values when navigating away from a state-carrying entry.
-    window.dispatchEvent(new Event("__rsc_locationstate"));
+    // Notify location state hooks when either old or new state carries
+    // location state. This covers both "set new state" and "clear old state"
+    // for same-page navigations where components don't remount.
+    if (hasLocationState(oldState) || hasLocationState(historyState)) {
+      window.dispatchEvent(new Event("__rsc_locationstate"));
+    }
 
     // Complete the navigation in event controller (sets idle state, updates location)
     handle.complete(parsedUrl);
