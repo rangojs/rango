@@ -467,7 +467,14 @@ export function createNavigationBridge(
           undefined,
           false,
           tx.handle.signal,
-          tx.with({ url, replace: true, scroll: false }),
+          tx.with({
+            url,
+            replace: true,
+            scroll: false,
+            intercept: isIntercept,
+            interceptSourceUrl,
+          }),
+          isIntercept ? { type: "navigate", interceptSourceUrl } : undefined,
         );
         // Restore scroll position after fetch completes
         handleNavigationEnd({ restore: true, isStreaming });
