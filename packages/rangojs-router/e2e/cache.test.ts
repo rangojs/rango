@@ -36,11 +36,11 @@ async function waitForCacheWrite(
  * Tests that validate caching behavior by checking server logs.
  * The test-app has blog routes wrapped in cache({ ttl: 600 }) for testing.
  *
- * Cache log format:
- * - [CacheScope] MISS: doc:/blog - Cache miss for document request
- * - [CacheScope] Cached: doc:/blog (...) ttl=600s - Cache write confirmation
- * - [CacheScope] HIT: doc:/blog (...) - Cache hit for subsequent request
- * - [CacheScope] STALE: doc:/blog (...) - Stale response (SWR revalidation triggered)
+ * Cache log format (key includes host since cache keys are host-scoped):
+ * - [CacheScope] MISS: doc:localhost:PORT/blog - Cache miss for document request
+ * - [CacheScope] Cached: doc:localhost:PORT/blog (...) ttl=600s - Cache write confirmation
+ * - [CacheScope] HIT: doc:localhost:PORT/blog (...) - Cache hit for subsequent request
+ * - [CacheScope] STALE: doc:localhost:PORT/blog (...) - Stale response (SWR revalidation triggered)
  */
 
 test.describe("cache-server-logs", () => {
@@ -93,14 +93,10 @@ test.describe("cache-server-logs", () => {
     const firstLogs = getCacheLogs(afterFirstStdout.substring(initialLength));
 
     // Should have exactly one MISS for doc:/blog
-    expect(firstLogs.misses.some((log) => log.includes("doc:/blog"))).toBe(
-      true,
-    );
+    expect(firstLogs.misses.some((log) => log.includes("/blog"))).toBe(true);
 
     // Should have a Cached log after async write
-    expect(firstLogs.cached.some((log) => log.includes("doc:/blog"))).toBe(
-      true,
-    );
+    expect(firstLogs.cached.some((log) => log.includes("/blog"))).toBe(true);
 
     // Navigate away
     await page.goto(f.url("/"));
@@ -124,10 +120,8 @@ test.describe("cache-server-logs", () => {
     );
 
     // Should have a HIT for doc:/blog (not MISS)
-    expect(secondLogs.hits.some((log) => log.includes("doc:/blog"))).toBe(true);
-    expect(
-      secondLogs.misses.some((log) => log.includes("doc:/blog")),
-    ).toBeFalsy();
+    expect(secondLogs.hits.some((log) => log.includes("/blog"))).toBe(true);
+    expect(secondLogs.misses.some((log) => log.includes("/blog"))).toBeFalsy();
   });
 
   test("partial navigation should use different cache key", async ({
@@ -158,14 +152,10 @@ test.describe("cache-server-logs", () => {
     const navLogs = getCacheLogs(afterNavStdout.substring(beforeNavLength));
 
     // Should have MISS for partial:/blog
-    expect(navLogs.misses.some((log) => log.includes("partial:/blog"))).toBe(
-      true,
-    );
+    expect(navLogs.misses.some((log) => log.includes("/blog"))).toBe(true);
 
     // Should have Cached for partial:/blog
-    expect(navLogs.cached.some((log) => log.includes("partial:/blog"))).toBe(
-      true,
-    );
+    expect(navLogs.cached.some((log) => log.includes("/blog"))).toBe(true);
 
     // Navigate back to home
     await page.getByTestId("back-link").click();
@@ -187,9 +177,7 @@ test.describe("cache-server-logs", () => {
       afterSecondNav.substring(beforeSecondNavLen),
     );
 
-    expect(
-      secondNavLogs.hits.some((log) => log.includes("partial:/blog")),
-    ).toBe(true);
+    expect(secondNavLogs.hits.some((log) => log.includes("/blog"))).toBe(true);
   });
 
   test("blog post with params should cache with params in key", async ({
@@ -217,8 +205,7 @@ test.describe("cache-server-logs", () => {
     // Should have MISS for doc:/blog/post-1 with params
     expect(
       firstLogs.misses.some(
-        (log) =>
-          log.includes("doc:/blog/post-1") || log.includes("postId=post-1"),
+        (log) => log.includes("/blog/post-1") || log.includes("postId=post-1"),
       ),
     ).toBe(true);
 
@@ -239,8 +226,7 @@ test.describe("cache-server-logs", () => {
     // Should be a MISS (different cache key due to different param)
     expect(
       secondLogs.misses.some(
-        (log) =>
-          log.includes("doc:/blog/post-2") || log.includes("postId=post-2"),
+        (log) => log.includes("/blog/post-2") || log.includes("postId=post-2"),
       ),
     ).toBe(true);
 
@@ -256,8 +242,7 @@ test.describe("cache-server-logs", () => {
 
     expect(
       thirdLogs.hits.some(
-        (log) =>
-          log.includes("doc:/blog/post-1") || log.includes("postId=post-1"),
+        (log) => log.includes("/blog/post-1") || log.includes("postId=post-1"),
       ),
     ).toBe(true);
   });

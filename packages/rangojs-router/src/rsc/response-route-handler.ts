@@ -227,12 +227,23 @@ export async function handleResponseRoute<TEnv>(
     }
 
     if (cacheScope?.enabled) {
+      // Evaluate condition — skip response cache when condition returns false
+      let conditionPassed = true;
+      if (cacheScope.config !== false && cacheScope.config.condition) {
+        try {
+          conditionPassed = !!cacheScope.config.condition(reqCtx);
+        } catch {
+          conditionPassed = false;
+        }
+      }
+
       const store = cacheScope.getStore() ?? reqCtx._cacheStore;
-      if (store?.getResponse && store?.putResponse) {
+      if (conditionPassed && store?.getResponse && store?.putResponse) {
         // Build cache key with response:{type}: prefix to avoid collision
         // with segment keys and differentiate between response types.
-        // Include url.search so query-driven responses cache separately.
-        let cacheKey = `response:${preview.responseType}:${url.pathname}${url.search}`;
+        // Include host and url.search so query-driven and multi-host
+        // responses cache separately.
+        let cacheKey = `response:${preview.responseType}:${url.host}${url.pathname}${url.search}`;
 
         // Priority 1: Route-level key function (full override)
         if (cacheScope.config !== false && cacheScope.config.key) {

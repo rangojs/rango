@@ -36,12 +36,14 @@ function debugCacheLog(message: string): void {
 // ============================================================================
 
 /**
- * Generate cache key base from pathname, route params, and search params.
+ * Generate cache key base from host, pathname, route params, and search params.
+ * Host is included to prevent cross-host cache collisions on shared stores.
  * Route params and search params are sorted alphabetically for deterministic keys.
  * Internal _rsc* and __* query params are excluded.
  * @internal
  */
 function getCacheKeyBase(
+  host: string,
   pathname: string,
   params?: Record<string, string>,
   searchParams?: URLSearchParams,
@@ -49,7 +51,7 @@ function getCacheKeyBase(
   const paramStr = sortedRouteParams(params);
   const searchStr = searchParams ? sortedSearchString(searchParams) : "";
 
-  let key = pathname;
+  let key = `${host}${pathname}`;
   if (paramStr) key += `:${paramStr}`;
   if (searchStr) key += `?${searchStr}`;
   return key;
@@ -73,11 +75,12 @@ function getDefaultRouteCacheKey(
   const ctx = getRequestContext();
   const isPartial = ctx?.url.searchParams.has("_rsc_partial") ?? false;
   const searchParams = ctx?.url.searchParams;
+  const host = ctx?.url.host ?? "localhost";
 
   // Intercept navigations get their own cache namespace
   const prefix = isIntercept ? "intercept" : isPartial ? "partial" : "doc";
 
-  return `${prefix}:${getCacheKeyBase(pathname, params, searchParams)}`;
+  return `${prefix}:${getCacheKeyBase(host, pathname, params, searchParams)}`;
 }
 
 // ============================================================================

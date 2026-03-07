@@ -65,3 +65,70 @@ transport behavior, or request/response ownership.
 - Prefer transport-paired tests when behavior differs between JS and PE.
 - If the change touches redirects/cookies/headers, test both success and
   redirect/error paths.
+
+## Phase 5 Regression Coverage
+
+The following e2e suites were added during Phase 5 security hardening. Each
+suite runs in both dev and production modes.
+
+### Auth Boundary (`e2e/auth-boundary.test.ts`)
+
+Proves which middleware layer guards which execution phase:
+
+- Route middleware rejects unauthenticated document requests (redirect).
+- Route middleware does NOT guard action execution (by design).
+- Global middleware guards both document requests and action execution.
+- Response routes with route middleware enforce auth independently.
+- PE action variant follows the same auth boundary rules.
+
+Bug found and fixed: middleware redirects on action requests caused `fetch()`
+to follow the 302 and re-execute the action at the redirect target URL because
+the `rsc-action` header was preserved. Fix: intercept 3xx redirects for
+`_rsc_action` requests (convert to 204 with `X-RSC-Redirect`).
+
+### Content Ownership (`e2e/content-ownership.test.ts`)
+
+Proves which pipeline (response route vs RSC document) owns a given request:
+
+- Accept header selects document vs JSON pipeline correctly.
+- `Vary: Accept` is set on all negotiated responses.
+- Partial requests to response routes return `X-RSC-Reload`, not handler data.
+- Response route errors stay as JSON errors, not document shells.
+- Guarded response routes reject without leaking protected payload.
+- Middleware redirects on response routes fire without returning handler body.
+
+### Cache Isolation (`e2e/cache-isolation.test.ts`)
+
+Proves cached responses do not leak across request boundaries:
+
+- Different query params produce separate cache entries.
+- Custom `key()` isolates authenticated vs anonymous responses.
+- Default cache key (no auth isolation) shares entries across auth states (by
+  design — proves the need for custom keys).
+- `condition()` skips cache for specific requests (e.g. authenticated users).
+- `onResponse` pre-handler callbacks produce fresh values per serve.
+
+Bug found and fixed: response route caching ignored `condition()` callbacks.
+The `condition()` check only existed in `CacheScope` (document cache), not in
+the response route cache path in `response-route-handler.ts`. Fix: added
+condition evaluation before entering the response cache read/write block.
+
+### Unit Coverage (`response-route-handler.test.ts`)
+
+Targeted unit tests for the `condition()` fix:
+
+- `condition() === false` skips cache read (store.getResponse not called).
+- `condition() === false` skips cache write (store.putResponse not called).
+- `condition() === true` uses cache normally (cache hit returned).
+
+### Host Isolation (`cache-key.test.ts`, `response-route-handler.test.ts`)
+
+Default cache keys now include `url.host` to prevent cross-host collisions on
+shared cache stores (e.g. multiple custom domains on the same CF worker):
+
+- Same path on different hosts produces different document cache keys.
+- Same host and path produces identical keys (deterministic).
+- Host is included across all request types (doc, partial, intercept).
+- Host with port differentiates localhost:3000 from localhost:4000.
+- Response route cache keys include host (separate test in
+  `response-route-handler.test.ts`).
