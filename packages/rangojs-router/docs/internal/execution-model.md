@@ -135,6 +135,57 @@ authorization or resource scoping (e.g., verifying the user owns the resource
 at the matched URL). Use `ctx.params` for general data fetching where
 client-provided params are acceptable.
 
+## Async Context Propagation
+
+The router uses `AsyncLocalStorage` to maintain request context across all
+execution phases. This context is established once per request and remains
+readable through async/streaming boundaries.
+
+### Request scope (`router.use(...)`)
+
+Bindings set by global middleware are request-scoped. They are visible to:
+
+- global middleware (subsequent `.use()` handlers)
+- route middleware
+- route handlers, layouts, orphan layouts, and parallel slots
+- loaders (via `getRequestContext()`)
+- server actions
+- intercept handlers
+- async server components, including after `await`
+- streamed components behind `loading()` boundaries
+
+### Render scope (`middleware(...)` in `urls()`)
+
+Bindings set by route middleware are render-scoped. They are visible to:
+
+- route handlers, layouts, orphan layouts, and parallel slots
+- loaders (via `getRequestContext()`)
+- async server components during the render pass
+- post-action revalidation renders (route middleware wraps revalidation)
+- PE full rerenders (route middleware wraps the rerender)
+
+Route middleware does **not** wrap action execution. Actions see only
+request-scoped bindings from `router.use(...)`. This is a hard contract
+boundary, not an accident.
+
+### Intercept scope
+
+Bindings set by intercept middleware are visible only to the intercept
+render path. Direct navigation to the same target route does not execute
+intercept middleware.
+
+### Async and streaming limits
+
+Async server components inherit the request ALS through render and streaming.
+`getRequestContext()` remains readable after `await` and inside streamed
+children behind `loading()` boundaries.
+
+However, late streaming may hit separate feature-specific mutation limits.
+Handle data (`ctx.use(handle)`) is accumulated into a `HandleStore` that
+settles independently. Read probes (reading context variables) are safe
+throughout streaming; mutation APIs (like handle pushes) have their own
+deadlines documented in `handle-store.ts`.
+
 ## Non-Guarantees
 
 - Route middleware is not an action guard.
