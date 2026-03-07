@@ -14,8 +14,12 @@
 import { getLoaderLazy } from "../server/loader-registry.js";
 import { executeLoaderMiddleware } from "../router/middleware.js";
 import { requireRequestContext } from "../server/request-context.js";
-import { createReverseFunction } from "../router/handler-context.js";
-import { getGlobalRouteMap } from "../route-map-builder.js";
+import {
+  createReverseFunction,
+  stripInternalParams,
+} from "../router/handler-context.js";
+import { getGlobalRouteMap, getSearchSchema } from "../route-map-builder.js";
+import { parseSearchParams } from "../search-params.js";
 import {
   createResponseWithMergedHeaders,
   finalizeResponse,
@@ -115,8 +119,21 @@ export async function handleLoaderFetch<TEnv>(
             ...resolvedRouteParams,
             ...loaderParams,
           };
+          // Strip _rsc_* transport params so loaders see the same
+          // url/searchParams as during SSR/navigation.
+          const cleanUrl = stripInternalParams(url);
+          const cleanSearchParams = cleanUrl.searchParams;
+          const searchSchema = reqCtx._routeName
+            ? getSearchSchema(reqCtx._routeName)
+            : undefined;
           const loaderCtx: any = {
             ...reqCtx,
+            url: cleanUrl,
+            pathname: cleanUrl.pathname,
+            searchParams: cleanSearchParams,
+            search: searchSchema
+              ? parseSearchParams(cleanSearchParams, searchSchema)
+              : {},
             params: mergedParams,
             routeParams: resolvedRouteParams,
             body: loaderBody,
