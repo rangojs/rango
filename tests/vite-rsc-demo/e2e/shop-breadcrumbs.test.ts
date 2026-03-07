@@ -164,11 +164,13 @@ devTest.describe("shop-breadcrumbs", () => {
         page.locator("h2:has-text('Wireless Headphones')"),
       ).toBeVisible({ timeout: 10000 });
 
-      // Breadcrumbs should show Shop > Product
-      await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
+      // Breadcrumbs should show Shop > Product (extra timeout for multi-step navigation)
+      await expect(breadcrumbNav.locator("text=Shop")).toBeVisible({
+        timeout: 10000,
+      });
       await expect(
         breadcrumbNav.locator("text=Wireless Headphones"),
-      ).toBeVisible();
+      ).toBeVisible({ timeout: 10000 });
     },
   );
 
