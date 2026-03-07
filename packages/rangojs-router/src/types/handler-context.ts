@@ -166,17 +166,11 @@ export type Handler<
  *
  * Provides type-safe access to:
  * - Route params (from URL pattern)
- * - Request data (request, searchParams, pathname, url)
+ * - Cleaned route URL (`url`, `searchParams`, `pathname` — no `_rsc*` params)
+ * - Original request (`request` — raw transport URL, headers, method, body)
  * - Platform bindings (env.DB, env.KV, env.SECRETS)
  * - Middleware variables (var.user, var.permissions)
  * - Getter/setter for variables (get('user'), set('user', ...))
- *
- * **URL contract:**
- * - `ctx.url` and `ctx.searchParams` are cleaned: system params (`_rsc*`) are
- *   stripped so userland code sees only application query params.
- * - `ctx.request` is the original transport request with all params intact.
- *   Use `ctx.url`/`ctx.searchParams` for application logic, and `ctx.request`
- *   only when you need raw transport details (e.g. headers, method, body).
  *
  * @example
  * ```typescript
