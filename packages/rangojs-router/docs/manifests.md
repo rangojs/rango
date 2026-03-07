@@ -155,6 +155,37 @@ Each `createRouter()` gets isolated data:
 Per-router virtual modules (`virtual:rsc-router/routes-manifest/<routerId>`) are loaded lazily
 via `registerRouterManifestLoader()` / `ensureRouterManifest()` on first request.
 
+## Static vs Runtime Generation Boundary
+
+The CLI (`rango generate`) has two modes for producing `.named-routes.gen.ts`:
+
+| Mode             | Flag        | Discovery                                                        | Coverage                                  |
+| ---------------- | ----------- | ---------------------------------------------------------------- | ----------------------------------------- |
+| Static (default) | (none)      | AST-only, no Vite server                                         | Named routes visible to the static parser |
+| Runtime          | `--runtime` | Spins up a temp Vite server, imports entry via RSC module runner | 100% of registered routes                 |
+
+**Design rule:** when the static parser encounters route tree structures it
+cannot reconstruct (factory function calls, dynamic expressions, conditional
+registrations), it must **fail fast with a clear diagnostic** pointing the
+user to `--runtime`. It must never silently emit incomplete or wrong output
+in default mode.
+
+Concretely:
+
+- `detectUnresolvableIncludes()` scans router files for `include()` calls
+  whose second argument is a function call or expression the parser cannot
+  resolve. These are classified as `"factory-call"` or `"unresolvable"`.
+- In default mode, any unresolvable include causes a hard error with the
+  list of unresolvable prefixes and the suggestion to use `--runtime`.
+- In `--static` mode, partial output is accepted with a warning.
+- In `--runtime` mode, the Vite server evaluates the actual module graph,
+  so factory functions execute and all routes are discovered.
+
+This is intentional: "hard runtime augmentation parity" is not a goal of
+the static parser. The static parser is a fast, dependency-free path for
+the common case. When the route tree is too dynamic for static analysis,
+the correct answer is `--runtime`, not a best-effort guess.
+
 ## Configuration
 
 ```typescript

@@ -9,7 +9,7 @@
 import { contextSet } from "../../context-var.js";
 import {
   encodePathParam,
-  escapeRegExp,
+  substituteRouteParams,
   runWithConcurrency,
   groupByConcurrency,
   notifyOnError,
@@ -44,19 +44,8 @@ export async function expandPrerenderRoutes(
   const getParamsReverse = (name: string, params?: Record<string, string>) => {
     const pattern = allRoutes[name];
     if (!pattern) throw new Error(`Unknown route: "${name}"`);
-    let result = pattern;
-    if (params) {
-      for (const [key, value] of Object.entries(params)) {
-        // Strip constraint syntax: :param(a|b) -> value
-        const escaped = escapeRegExp(key);
-        result = result.replace(
-          new RegExp(`:${escaped}(\\([^)]*\\))?`),
-          encodeURIComponent(value),
-        );
-        result = result.replace(`*${key}`, encodeURIComponent(value));
-      }
-    }
-    return result;
+    if (!params) return pattern;
+    return substituteRouteParams(pattern, params);
   };
 
   for (const { manifest } of allManifests) {
@@ -92,19 +81,11 @@ export async function expandPrerenderRoutes(
               Object.keys(buildVars).length > 0 ||
               Object.getOwnPropertySymbols(buildVars).length > 0;
             for (const params of paramsList) {
-              let url = pattern;
-              for (const [key, value] of Object.entries(
+              let url = substituteRouteParams(
+                pattern,
                 params as Record<string, string>,
-              )) {
-                const encoded = encodePathParam(value);
-                // Strip constraint syntax: :param(a|b) -> value
-                const escaped = escapeRegExp(key);
-                url = url.replace(
-                  new RegExp(`:${escaped}(\\([^)]*\\))?`),
-                  encoded,
-                );
-                url = url.replace(`*${key}`, encoded);
-              }
+                encodePathParam,
+              );
               // Anonymous wildcard fallback: use conventional keys if provided
               if (url.includes("*")) {
                 const wildcardValue =

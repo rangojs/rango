@@ -57,6 +57,7 @@ import {
 } from "./server-action.js";
 import { handleLoaderFetch } from "./loader-fetch.js";
 import { handleRscRendering } from "./rsc-rendering.js";
+import { warnActionWithRouteMiddleware } from "./runtime-warnings.js";
 
 /**
  * Create an RSC request handler.
@@ -421,6 +422,13 @@ export function createRSCHandler<
     // the revalidation pass (identical to a normal render).
     let actionContinuation: ActionContinuation | undefined;
     if (isAction && actionId) {
+      if (
+        process.env.NODE_ENV !== "production" &&
+        preview?.routeMiddleware &&
+        preview.routeMiddleware.length > 0
+      ) {
+        warnActionWithRouteMiddleware(actionId, preview.routeKey);
+      }
       try {
         const result = await executeServerAction(
           handlerCtx,

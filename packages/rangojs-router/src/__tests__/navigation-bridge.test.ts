@@ -147,4 +147,34 @@ describe("navigation-bridge redirect validation", () => {
     expect(location.href).toBe("http://localhost/current");
     expect(fetchPartialUpdateMock).not.toHaveBeenCalled();
   });
+
+  it("handles malformed URL without throwing", async () => {
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/current",
+        origin: "http://localhost",
+      },
+      history: {
+        state: {},
+      },
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const bridge = createNavigationBridge({
+      store: createStore() as any,
+      client: {} as any,
+      eventController: createEventController() as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+
+    // Malformed URL — new URL("http://[", base) throws without the guard
+    await expect(bridge.navigate("http://[")).resolves.toBeUndefined();
+
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining("malformed URL"),
+    );
+    expect(fetchPartialUpdateMock).not.toHaveBeenCalled();
+    expect(createNavigationTransactionMock).not.toHaveBeenCalled();
+  });
 });

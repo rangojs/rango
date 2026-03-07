@@ -304,13 +304,17 @@ export function createReverse<TRoutes extends Record<string, string>>(
     let result = pattern;
     if (params) {
       // Replace :param placeholders with actual values
-      result = result.replace(/:([^/]+)/g, (_: string, key: string) => {
-        const value = params[key];
-        if (value === undefined) {
-          throw new Error(`Missing param "${key}" for route "${name}"`);
-        }
-        return encodeURIComponent(value);
-      });
+      // Strip constraint syntax: :param(a|b) -> use "param" as key
+      result = result.replace(
+        /:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?\??/g,
+        (_, key) => {
+          const value = params[key];
+          if (value === undefined) {
+            throw new Error(`Missing param "${key}" for route "${name}"`);
+          }
+          return encodeURIComponent(value);
+        },
+      );
     }
 
     // Append search params as query string

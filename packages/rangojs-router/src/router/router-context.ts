@@ -181,6 +181,12 @@ export interface RouterContext<TEnv = any> {
     context: HandlerContext<any, TEnv>;
     actionContext?: any;
     stale?: boolean;
+    traceSource?:
+      | "segment-resolution"
+      | "cache-hit"
+      | "loader"
+      | "parallel"
+      | "orphan-layout";
   }) => Promise<boolean>;
 
   // Request context

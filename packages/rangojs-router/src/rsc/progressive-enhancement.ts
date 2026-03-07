@@ -16,6 +16,10 @@ import {
   buildRouteMiddlewareEntries,
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
+import {
+  extractRedirectResponse,
+  warnNonRedirectPeResponse,
+} from "./runtime-warnings.js";
 
 export interface PeRouteMiddlewareInfo {
   routeMiddleware?: Array<{
@@ -79,6 +83,9 @@ export async function handleProgressiveEnhancement<TEnv>(
       const boundAction = await ctx.decodeAction(formData);
       actionResult = await boundAction();
     } catch (error) {
+      // Handle thrown redirect (e.g., throw redirect('/path'))
+      const redirectResponse = extractRedirectResponse(error);
+      if (redirectResponse) return redirectResponse;
       ctx.callOnError(error, "action", {
         request,
         url,
@@ -101,6 +108,9 @@ export async function handleProgressiveEnhancement<TEnv>(
       const loadedAction = await ctx.loadServerAction(directActionId);
       actionResult = await loadedAction.apply(null, args);
     } catch (error) {
+      // Handle thrown redirect (e.g., throw redirect('/path'))
+      const redirectResponse = extractRedirectResponse(error);
+      if (redirectResponse) return redirectResponse;
       ctx.callOnError(error, "action", {
         request,
         url,
@@ -110,6 +120,20 @@ export async function handleProgressiveEnhancement<TEnv>(
       });
       console.error("[RSC] Progressive enhancement action error:", error);
     }
+  }
+
+  // Handle Response returned from action during PE.
+  // In the JS path, executeServerAction intercepts redirect Responses and
+  // short-circuits. The PE path must handle them too.
+  if (actionResult instanceof Response) {
+    const redirectResponse = extractRedirectResponse(actionResult);
+    if (redirectResponse) return redirectResponse;
+    // W3: Non-redirect Response — discard it so it doesn't flow into
+    // decodeFormState or the re-render payload.
+    if (process.env.NODE_ENV !== "production") {
+      warnNonRedirectPeResponse();
+    }
+    actionResult = undefined;
   }
 
   // Decode form state for useActionState progressive enhancement

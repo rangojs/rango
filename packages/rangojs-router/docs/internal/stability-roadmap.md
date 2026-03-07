@@ -277,7 +277,9 @@ Non-goal for this RFC:
 
 - Keep the new middleware/PE/parallel scope contract synced across docs.
 - Continue building semantic matrix tests like `mw-chain`.
-- Add targeted warnings around partial revalidation and upstream `ctx.get()` dependencies.
+- Keep producer/consumer partial revalidation rules explicit in docs and the
+  semantic matrix; only add a runtime warning if a hidden stale-read case is
+  concretely reproduced.
 - Expand debug output for segment revalidation decisions.
 - Write a reusable security checklist for actions, middleware, redirects, and cookies.
 

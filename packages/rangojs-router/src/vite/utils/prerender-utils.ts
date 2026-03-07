@@ -18,6 +18,27 @@ export function encodePathParam(value: unknown): string {
 }
 
 /**
+ * Substitute route params into a pattern, stripping constraint and optional
+ * syntax (:param(a|b)? -> value). Also handles wildcard params (*key).
+ */
+export function substituteRouteParams(
+  pattern: string,
+  params: Record<string, string>,
+  encode: (value: string) => string = encodeURIComponent,
+): string {
+  let result = pattern;
+  for (const [key, value] of Object.entries(params)) {
+    const escaped = escapeRegExp(key);
+    result = result.replace(
+      new RegExp(`:${escaped}(\\([^)]*\\))?\\??`),
+      encode(value),
+    );
+    result = result.replace(`*${key}`, encode(value));
+  }
+  return result;
+}
+
+/**
  * Run an async function over items with bounded concurrency.
  * Errors propagate immediately and abort remaining work.
  */

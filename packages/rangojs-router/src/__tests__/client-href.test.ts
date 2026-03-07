@@ -54,6 +54,14 @@ describe("href()", () => {
     it("handles empty string mount", () => {
       expect(href("/foo", "")).toBe("/foo");
     });
+
+    it("normalizes mount with trailing slash", () => {
+      expect(href("/foo", "/articles/")).toBe("/articles/foo");
+    });
+
+    it("normalizes mount with trailing slash for root path", () => {
+      expect(href("/", "/articles/")).toBe("/articles/");
+    });
   });
 
   describe("PatternToPath types", () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   resolveThemeConfig,
   THEME_DEFAULTS,
@@ -75,6 +75,64 @@ describe("Theme Configuration", () => {
       expect(THEME_COOKIE.path).toBe("/");
       expect(THEME_COOKIE.sameSite).toBe("lax");
     });
+  });
+});
+
+describe("theme cookie decode resilience", () => {
+  it("inline script contains guarded decodeURIComponent", () => {
+    const config: ResolvedThemeConfig = {
+      defaultTheme: "light",
+      themes: ["light", "dark"],
+      attribute: "class",
+      storageKey: "theme",
+      enableSystem: false,
+      enableColorScheme: false,
+      value: { light: "light", dark: "dark" },
+    };
+
+    const script = generateThemeScript(config);
+
+    // The generated script must wrap decodeURIComponent in try/catch
+    expect(script).toContain("try");
+    expect(script).toContain("catch");
+    expect(script).toContain("decodeURIComponent");
+  });
+
+  it("inline script falls back to default with malformed cookie", () => {
+    const config: ResolvedThemeConfig = {
+      defaultTheme: "light",
+      themes: ["light", "dark"],
+      attribute: "data-theme",
+      storageKey: "theme",
+      enableSystem: false,
+      enableColorScheme: false,
+      value: { light: "light", dark: "dark" },
+    };
+
+    const script = generateThemeScript(config);
+
+    // Evaluate the script with a malformed cookie — should not throw
+    // and should fall back to defaultTheme ("light")
+    const mockEl = {
+      setAttribute: vi.fn(),
+      classList: { remove: vi.fn(), add: vi.fn() },
+      style: {},
+    };
+
+    const fn = new Function("document", "window", "localStorage", script);
+    expect(() =>
+      fn(
+        {
+          cookie: "theme=%zz",
+          documentElement: mockEl,
+        },
+        { matchMedia: undefined },
+        { getItem: () => null },
+      ),
+    ).not.toThrow();
+
+    // Should have applied the default theme "light"
+    expect(mockEl.setAttribute).toHaveBeenCalledWith("data-theme", "light");
   });
 });
 

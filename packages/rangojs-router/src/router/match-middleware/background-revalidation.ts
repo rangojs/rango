@@ -30,23 +30,15 @@
  *         |
  *         v (async, doesn't block response)
  *   +---------------------------+
- *   | Create fresh handleStore |  Isolate from response stream
+ *   | Create fresh context     |  Fresh handleStore, handlerContext,
+ *   | (full isolation)         |  and loaderPromises map
  *   +---------------------------+
  *         |
  *         v
- *   +---------------------+
- *   | isFullMatch?        |
- *   +---------------------+
- *         |
- *   +-----+-----+
- *   |           |
- *  yes          no
- *   |           |
- *   v           v
- * resolveAll  resolveWithRevalidation
- * Segments    + resolveIntercepts
- *   |           |
- *   +-----------+
+ *   +---------------------------+
+ *   | resolveAllSegments()    |  Fresh resolution (no revalidation)
+ *   | + resolveIntercepts()   |  Ensures complete components
+ *   +---------------------------+
  *         |
  *         v
  *   +---------------------------+
@@ -90,27 +82,22 @@
  * ISOLATION FROM RESPONSE
  * =======================
  *
- * The background revalidation creates a fresh handleStore:
+ * Background revalidation creates fully isolated context:
+ *   - Fresh handleStore (prevents polluting the response stream)
+ *   - Fresh handlerContext + loaderPromises (prevents reusing memoized
+ *     loader results from the foreground pass)
+ *   - handleStore is saved/restored in try/finally
  *
- *   requestCtx._handleStore = createHandleStore();
- *
- * This prevents background handle.push() calls from:
- *   - Polluting the current response stream
- *   - Causing duplicate data in the client
- *   - Creating race conditions
+ * This matches the proactive caching pattern in cache-store.ts.
  *
  *
- * FULL VS PARTIAL REVALIDATION
- * ============================
+ * FRESH RESOLUTION (NO REVALIDATION)
+ * ===================================
  *
- * Full Match (document request):
- *   - Simple resolveAllSegments()
- *   - No need to compare with previous state
- *
- * Partial Match (navigation):
- *   - resolveAllSegmentsWithRevalidation()
- *   - Also resolves intercept segments if applicable
- *   - More complex but handles all scenarios
+ * Both full and partial requests use resolveAllSegments() (without
+ * revalidation logic) to ensure all segments have complete components.
+ * Using revalidation-aware resolution would produce null components
+ * for skipped segments, which would corrupt the cache entry.
  */
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
@@ -148,7 +135,8 @@ export function withBackgroundRevalidation<TEnv>(
     const {
       getRequestContext,
       createHandleStore,
-      resolveAllSegmentsWithRevalidation,
+      createHandlerContext,
+      setupLoaderAccess,
       resolveAllSegments,
       resolveInterceptEntry,
     } = getRouterContext<TEnv>();
@@ -161,72 +149,60 @@ export function withBackgroundRevalidation<TEnv>(
         pathname: ctx.pathname,
         fullMatch: ctx.isFullMatch,
       });
+
+      // Save and replace handleStore to avoid polluting the response stream.
+      // Restore in finally (same pattern as proactive caching in cache-store).
+      const originalHandleStore = requestCtx._handleStore;
+      requestCtx._handleStore = createHandleStore();
+
       try {
-        // Create a fresh handleStore for background revalidation
-        // to avoid polluting the current response's handle stream
-        if (requestCtx) {
-          requestCtx._handleStore = createHandleStore();
-        }
+        // Create fresh handler context and loader promises to avoid
+        // reusing memoized results from the foreground pass
+        const freshHandlerContext = createHandlerContext(
+          ctx.matched.params,
+          ctx.request,
+          ctx.url.searchParams,
+          ctx.pathname,
+          ctx.url,
+          ctx.env,
+          ctx.routeMap,
+          ctx.matched.routeKey,
+          ctx.matched.responseType,
+        );
+        const freshLoaderPromises = new Map<string, Promise<any>>();
+        setupLoaderAccess(freshHandlerContext, freshLoaderPromises);
 
-        let freshSegments: ResolvedSegment[];
-
-        if (ctx.isFullMatch) {
-          // Full match (document request) - simple resolution
-          freshSegments = await resolveAllSegments(
+        // Resolve all segments fresh (without revalidation logic)
+        // to ensure complete components for caching
+        const freshSegments = await ctx.Store.run(() =>
+          resolveAllSegments(
             ctx.entries,
             ctx.routeKey,
             ctx.matched.params,
-            ctx.handlerContext,
-            ctx.loaderPromises,
-          );
-        } else {
-          // Partial match (navigation) - resolution with revalidation
-          const freshResult = await resolveAllSegmentsWithRevalidation(
-            ctx.entries,
-            ctx.routeKey,
-            ctx.matched.params,
-            ctx.handlerContext,
-            ctx.clientSegmentSet,
-            ctx.prevParams,
-            ctx.request,
-            ctx.prevUrl,
-            ctx.url,
-            ctx.loaderPromises,
-            ctx.actionContext,
-            ctx.interceptResult,
-            ctx.localRouteName,
-            ctx.pathname,
-          );
+            freshHandlerContext,
+            freshLoaderPromises,
+          ),
+        );
 
-          freshSegments = freshResult.segments;
-
-          // For intercept revalidation, also resolve fresh intercept segments
-          if (ctx.interceptResult) {
-            const freshInterceptSegments = await resolveInterceptEntry(
-              ctx.interceptResult.intercept,
-              ctx.interceptResult.entry,
+        // Also resolve intercept segments fresh if applicable
+        let freshInterceptSegments: ResolvedSegment[] = [];
+        if (ctx.interceptResult) {
+          freshInterceptSegments = await ctx.Store.run(() =>
+            resolveInterceptEntry(
+              ctx.interceptResult!.intercept,
+              ctx.interceptResult!.entry,
               ctx.matched.params,
-              ctx.handlerContext,
+              freshHandlerContext,
               true,
-              {
-                clientSegmentIds: ctx.clientSegmentSet,
-                prevParams: ctx.prevParams,
-                request: ctx.request,
-                prevUrl: ctx.prevUrl,
-                nextUrl: ctx.url,
-                routeKey: ctx.routeKey,
-                actionContext: ctx.actionContext,
-                stale: false,
-              },
-            );
-            freshSegments = [...freshSegments, ...freshInterceptSegments];
-          }
+            ),
+          );
         }
 
+        const completeSegments = [...freshSegments, ...freshInterceptSegments];
         await cacheScope.cacheRoute(
           ctx.pathname,
           ctx.matched.params,
-          freshSegments,
+          completeSegments,
           ctx.isIntercept,
         );
         debugLog("backgroundRevalidation", "revalidation complete", {
@@ -237,6 +213,8 @@ export function withBackgroundRevalidation<TEnv>(
           pathname: ctx.pathname,
           error: String(error),
         });
+      } finally {
+        requestCtx._handleStore = originalHandleStore;
       }
     });
   };

@@ -174,6 +174,33 @@ const matrixRows: SemanticMatrixRow[] = [
     },
   },
   {
+    id: "R1",
+    contract:
+      "partial action revalidation does not preserve upstream ctx.set data when the producer segment does not rerun",
+    transport: "js",
+    execution: "action-followup",
+    scope: "in-scope-child",
+    url: "/revalidation-contract",
+    assert: async ({ page }) => {
+      await expect(testId(page, "revalidation-contract-upstream")).toHaveText(
+        "from-layout",
+      );
+      await expect(
+        testId(page, "revalidation-contract-action-cookie"),
+      ).toHaveText("none");
+
+      await testId(page, "revalidation-contract-action-btn").click();
+
+      await expect(
+        testId(page, "revalidation-contract-action-cookie"),
+      ).toHaveText("set", { timeout: 10000 });
+      await expect(testId(page, "revalidation-contract-upstream")).toHaveText(
+        "none",
+        { timeout: 10000 },
+      );
+    },
+  },
+  {
     id: "S4",
     contract:
       "PE action follow-up keeps in-scope child visibility to handler data",
