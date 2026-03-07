@@ -6,7 +6,10 @@
  * reference. We detect these and return HTML instead of RSC stream.
  */
 
-import { requireRequestContext } from "../server/request-context.js";
+import {
+  requireRequestContext,
+  setRequestContextParams,
+} from "../server/request-context.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
 import type { RscPayload, ReactFormState } from "./types.js";
@@ -53,8 +56,22 @@ export async function handleProgressiveEnhancement<TEnv>(
     return null;
   }
 
-  // Clone the request to read FormData without consuming it
-  const formData = await request.clone().formData();
+  // Clone the request to read FormData without consuming it.
+  // Wrap in try-catch so malformed POST bodies are reported as action
+  // errors, not routing errors from the outer catch in handler.ts.
+  let formData: FormData;
+  try {
+    formData = await request.clone().formData();
+  } catch (error) {
+    ctx.callOnError(error, "action", {
+      request,
+      url,
+      env,
+      handledByBoundary: false,
+    });
+    console.error("[RSC] Progressive enhancement form parse error:", error);
+    return null;
+  }
 
   // Look for React's progressive enhancement hidden fields
   let isDirectAction = false;
@@ -86,6 +103,19 @@ export async function handleProgressiveEnhancement<TEnv>(
       // Handle thrown redirect (e.g., throw redirect('/path'))
       const redirectResponse = extractRedirectResponse(error);
       if (redirectResponse) return redirectResponse;
+
+      // Attempt error boundary rendering for the PE path
+      const errorHtml = await renderPeErrorBoundary(
+        ctx,
+        request,
+        env,
+        url,
+        error,
+        handleStore,
+        nonce,
+      );
+      if (errorHtml) return errorHtml;
+
       ctx.callOnError(error, "action", {
         request,
         url,
@@ -111,6 +141,20 @@ export async function handleProgressiveEnhancement<TEnv>(
       // Handle thrown redirect (e.g., throw redirect('/path'))
       const redirectResponse = extractRedirectResponse(error);
       if (redirectResponse) return redirectResponse;
+
+      // Attempt error boundary rendering for the PE path
+      const errorHtml = await renderPeErrorBoundary(
+        ctx,
+        request,
+        env,
+        url,
+        error,
+        handleStore,
+        nonce,
+        directActionId,
+      );
+      if (errorHtml) return errorHtml;
+
       ctx.callOnError(error, "action", {
         request,
         url,
@@ -214,4 +258,72 @@ export async function handleProgressiveEnhancement<TEnv>(
   }
 
   return renderPage();
+}
+
+/**
+ * Attempt to render an error boundary as full HTML for the PE path.
+ * Returns null if no error boundary is found (caller falls through to
+ * normal page re-render).
+ */
+async function renderPeErrorBoundary<TEnv>(
+  ctx: HandlerContext<TEnv>,
+  request: Request,
+  env: TEnv,
+  url: URL,
+  error: unknown,
+  handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+  nonce: string | undefined,
+  actionId?: string | null,
+): Promise<Response | null> {
+  let errorResult;
+  try {
+    errorResult = await ctx.router.matchError(request, { env }, error, "route");
+  } catch (matchErr) {
+    ctx.callOnError(error, "action", {
+      request,
+      url,
+      env,
+      actionId: actionId ?? undefined,
+      handledByBoundary: false,
+    });
+    throw matchErr;
+  }
+
+  if (!errorResult) return null;
+
+  ctx.callOnError(error, "action", {
+    request,
+    url,
+    env,
+    actionId: actionId ?? undefined,
+    handledByBoundary: true,
+  });
+
+  setRequestContextParams(errorResult.params, errorResult.routeName);
+
+  const payload: RscPayload = {
+    metadata: {
+      pathname: url.pathname,
+      segments: errorResult.segments,
+      matched: errorResult.matched,
+      diff: errorResult.diff,
+      isPartial: false,
+      isError: true,
+      rootLayout: ctx.router.rootLayout,
+      handles: handleStore.stream(),
+      version: ctx.version,
+      themeConfig: ctx.router.themeConfig,
+      warmupEnabled: ctx.router.warmupEnabled,
+      initialTheme: requireRequestContext().theme,
+    },
+  };
+
+  const rscStream = ctx.renderToReadableStream<RscPayload>(payload);
+  const ssrModule = await ctx.loadSSRModule();
+  const htmlStream = await ssrModule.renderHTML(rscStream, { nonce });
+
+  return createResponseWithMergedHeaders(htmlStream, {
+    status: 500,
+    headers: { "content-type": "text/html;charset=utf-8" },
+  });
 }

@@ -18,6 +18,7 @@ import {
   createRequestContext,
   runWithRequestContext,
 } from "../server/request-context.js";
+import { createResponseWithMergedHeaders } from "../rsc/helpers.js";
 
 describe("middleware", () => {
   describe("parsePattern", () => {
@@ -482,6 +483,46 @@ describe("middleware", () => {
       const responseCookie = result.headers.get("Set-Cookie");
       expect(responseCookie).toContain("session=");
       expect(responseCookie).toContain("Max-Age=0");
+    });
+
+    it("should not duplicate Set-Cookie when cookies().set() is called before next()", async () => {
+      // Regression: M1 — createResponseWithMergedHeaders inside finalHandler
+      // already merges reqCtx.res Set-Cookie. executeMiddleware must not
+      // append them again, which would produce duplicate Set-Cookie headers.
+      const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
+        cookies().set("token", "abc123");
+        await next();
+      };
+
+      const request = new Request("http://localhost/test");
+      const reqCtx = createRequestContext({
+        env: {},
+        request,
+        url: new URL(request.url),
+        variables: {},
+      });
+
+      const result = await runWithRequestContext(reqCtx, () =>
+        executeMiddleware(
+          [createMockEntry(middleware)],
+          request,
+          {},
+          {},
+          // finalHandler uses createResponseWithMergedHeaders (production path)
+          async () =>
+            createResponseWithMergedHeaders("OK", {
+              status: 200,
+              headers: { "content-type": "text/plain" },
+            }),
+        ),
+      );
+
+      // Set-Cookie should appear exactly once, not twice
+      const allSetCookies = result.headers.getSetCookie();
+      const tokenCookies = allSetCookies.filter((c) =>
+        c.startsWith("token=abc123"),
+      );
+      expect(tokenCookies).toHaveLength(1);
     });
 
     it("should throw if middleware doesn't call next() or return", async () => {

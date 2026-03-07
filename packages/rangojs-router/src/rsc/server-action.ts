@@ -146,20 +146,46 @@ export async function executeServerAction<TEnv>(
         }
         return createSimpleRedirectResponse(redirectUrl);
       }
+
+      // Non-redirect Response thrown from action — this will be treated
+      // as a regular error and routed to the error boundary. Warn in dev
+      // since the intent is likely a redirect with a missing Location header.
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(
+          `[@rangojs/router] Server action "${actionId}" threw a Response ` +
+            `(status ${error.status}) that is not a redirect. ` +
+            `Non-redirect Responses are treated as errors. ` +
+            `Use \`throw redirect('/path')\` for redirects.`,
+        );
+      }
     }
 
     returnValue = { ok: false, data: error };
     actionStatus = 500;
 
-    // Try to render error boundary
-    const errorResult = await ctx.router.matchError(
-      request,
-      { env },
-      error,
-      "route",
-    );
+    // Try to render error boundary.
+    // Report the action error first so it is not lost if matchError throws.
+    let errorResult;
+    try {
+      errorResult = await ctx.router.matchError(
+        request,
+        { env },
+        error,
+        "route",
+      );
+    } catch (matchErr) {
+      // matchError failed — report the original action error as unhandled,
+      // then let the matchError failure propagate.
+      ctx.callOnError(error, "action", {
+        request,
+        url,
+        env,
+        actionId,
+        handledByBoundary: false,
+      });
+      throw matchErr;
+    }
 
-    // Report the action error (handledByBoundary indicates if error boundary will render)
     ctx.callOnError(error, "action", {
       request,
       url,

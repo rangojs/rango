@@ -39,7 +39,9 @@ export function createResponseWithMergedHeaders(
     return new Response(body, init);
   }
 
-  // Merge headers from stub response into the new response
+  // Merge headers from stub response into the new response.
+  // Delete Set-Cookie from the stub after consuming so that downstream
+  // merge points (e.g. executeMiddleware) do not duplicate them.
   const mergedHeaders = new Headers(init.headers);
   ctx.res.headers.forEach((value, name) => {
     if (name.toLowerCase() === "set-cookie") {
@@ -49,6 +51,7 @@ export function createResponseWithMergedHeaders(
       mergedHeaders.set(name, value);
     }
   });
+  ctx.res.headers.delete("set-cookie");
 
   // Use ctx.res.status if it was set (e.g., 404 for notFound, 500 for error)
   // Otherwise use the status from init
