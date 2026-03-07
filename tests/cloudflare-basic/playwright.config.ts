@@ -103,7 +103,7 @@ export default defineConfig({
           testMatch: ["**/hmr.test.ts"],
           use: { ...devices["Desktop Chrome"] },
           fullyParallel: false,
-          dependencies: process.env.CI ? [] : ["dev", "production"],
+          dependencies: ["dev", "production"],
         },
       ],
 });
