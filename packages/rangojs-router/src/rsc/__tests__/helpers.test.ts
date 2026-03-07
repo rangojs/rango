@@ -10,6 +10,7 @@ import {
   createResponseWithMergedHeaders,
   finalizeResponse,
   interceptRedirectForPartial,
+  carryOverRedirectHeaders,
 } from "../helpers.js";
 
 describe("createResponseWithMergedHeaders", () => {
@@ -483,5 +484,76 @@ describe("interceptRedirectForPartial", () => {
 
     expect(result).not.toBeNull();
     expect(result!.headers.get("X-RSC-Redirect")).toBe("/target");
+  });
+});
+
+describe("carryOverRedirectHeaders", () => {
+  it("copies Set-Cookie from source to target via append", () => {
+    const headers = new Headers();
+    headers.set("Location", "/login");
+    headers.append("Set-Cookie", "flash=1; Path=/");
+    headers.append("Set-Cookie", "session=abc; Path=/; HttpOnly");
+    const source = new Response(null, { status: 302, headers });
+    const target = new Response(null, { status: 204 });
+
+    carryOverRedirectHeaders(source, target);
+
+    const cookies = target.headers.getSetCookie();
+    expect(cookies).toContain("flash=1; Path=/");
+    expect(cookies).toContain("session=abc; Path=/; HttpOnly");
+  });
+
+  it("copies custom headers from source", () => {
+    const source = new Response(null, {
+      status: 302,
+      headers: {
+        Location: "/target",
+        "X-Request-Id": "req-42",
+        "X-Custom": "value",
+      },
+    });
+    const target = new Response(null, { status: 204 });
+
+    carryOverRedirectHeaders(source, target);
+
+    expect(target.headers.get("X-Request-Id")).toBe("req-42");
+    expect(target.headers.get("X-Custom")).toBe("value");
+  });
+
+  it("skips Location and X-RSC-Redirect", () => {
+    const source = new Response(null, {
+      status: 302,
+      headers: {
+        Location: "/original",
+        "X-RSC-Redirect": "soft",
+        "X-Keep": "yes",
+      },
+    });
+    const target = new Response(null, {
+      status: 204,
+      headers: { "X-RSC-Redirect": "/new-target" },
+    });
+
+    carryOverRedirectHeaders(source, target);
+
+    expect(target.headers.get("Location")).toBeNull();
+    expect(target.headers.get("X-RSC-Redirect")).toBe("/new-target");
+    expect(target.headers.get("X-Keep")).toBe("yes");
+  });
+
+  it("does not overwrite existing headers on target", () => {
+    const source = new Response(null, {
+      status: 302,
+      headers: { "content-type": "text/html", "X-Source": "original" },
+    });
+    const target = new Response(null, {
+      status: 204,
+      headers: { "content-type": "text/x-component" },
+    });
+
+    carryOverRedirectHeaders(source, target);
+
+    expect(target.headers.get("content-type")).toBe("text/x-component");
+    expect(target.headers.get("X-Source")).toBe("original");
   });
 });
