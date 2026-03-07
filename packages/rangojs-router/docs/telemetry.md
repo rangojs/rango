@@ -92,7 +92,7 @@ All events include a `timestamp` (from `performance.now()`) and an optional
 | `loader.start`          | Emitted when a loader begins execution               |
 | `loader.end`            | Emitted when a loader completes (success or failure) |
 | `loader.error`          | Emitted when a loader throws an error                |
-| `handler.error`         | Emitted when a route handler throws                  |
+| `handler.error`         | Emitted on handler or segment render failure         |
 | `cache.decision`        | Emitted when a cache lookup result is determined     |
 | `revalidation.decision` | Emitted when a segment revalidation decision is made |
 
@@ -163,13 +163,17 @@ All events include a `timestamp` (from `performance.now()`) and an optional
 }
 ```
 
-### Handler Error Events
+### Handler / Segment Error Events
+
+Emitted for route handler errors, streamed segment render failures,
+and parallel-slot errors. Covers any error caught by an error boundary
+during segment resolution.
 
 ```typescript
 {
   type: "handler.error",
   segmentId: "blog-page",       // optional
-  segmentType: "route",         // optional
+  segmentType: "route",         // "route" | "parallel" | etc. (optional)
   error: Error,
   handledByBoundary: true,
   pathname: "/blog/hello",      // optional
@@ -207,13 +211,13 @@ All events include a `timestamp` (from `performance.now()`) and an optional
 
 The `createOTelSink` adapter maps events to OpenTelemetry spans:
 
-| Span Name                     | Type     | Key Attributes                                                                             |
-| ----------------------------- | -------- | ------------------------------------------------------------------------------------------ |
-| `rango.request`               | Duration | `http.method`, `http.route`, `rango.transaction`, `rango.segment_count`, `rango.cache.hit` |
-| `rango.loader`                | Duration | `rango.segment_id`, `rango.loader_name`, `rango.duration_ms`, `rango.loader.ok`            |
-| `rango.handler.error`         | Instant  | `rango.segment_id`, `rango.segment_type`, `rango.route_key`, `rango.handled_by_boundary`   |
-| `rango.cache.decision`        | Instant  | `rango.cache.hit`, `rango.cache.should_revalidate`, `rango.cache.source`                   |
-| `rango.revalidation.decision` | Instant  | `rango.segment_id`, `rango.route_key`, `rango.revalidate`                                  |
+| Span Name                     | Type     | Key Attributes                                                                                                    |
+| ----------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
+| `rango.request`               | Duration | `http.method`, `http.route`, `rango.transaction`, `rango.segment_count`, `rango.cache.hit`                        |
+| `rango.loader`                | Duration | `rango.segment_id`, `rango.loader_name`, `rango.duration_ms`, `rango.loader.ok`                                   |
+| `rango.handler.error`         | Instant  | `rango.segment_id`, `rango.segment_type`, `rango.route_key`, `rango.handled_by_boundary` (handler/segment errors) |
+| `rango.cache.decision`        | Instant  | `rango.cache.hit`, `rango.cache.should_revalidate`, `rango.cache.source`                                          |
+| `rango.revalidation.decision` | Instant  | `rango.segment_id`, `rango.route_key`, `rango.revalidate`                                                         |
 
 Duration spans are started on `*.start` events and ended on `*.end` or `*.error`.
 Instant spans are created and ended immediately for point-in-time events.
