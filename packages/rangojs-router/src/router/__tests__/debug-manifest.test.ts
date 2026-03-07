@@ -51,6 +51,17 @@ describe("buildDebugManifest async handler shapes", () => {
     );
   });
 
+  it("rejects Promise<{ default: nonFunction }> with clear error", async () => {
+    const entry = makeEntry((() =>
+      Promise.resolve({
+        default: [{ type: "route" }],
+      })) as unknown as RouteEntry["handler"]);
+
+    await expect(buildDebugManifest([entry])).rejects.toThrow(
+      /\{ default \} must be a function/,
+    );
+  });
+
   it("rejects Promise<string> with clear error", async () => {
     const entry = makeEntry((() =>
       Promise.resolve(
