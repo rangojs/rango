@@ -89,14 +89,19 @@ cannot catch this statically, so a runtime guard is essential.
 
 ### Lazy includes vs async handlers
 
-All `include()` calls are lazy by default — patterns are evaluated on first
-matching request via `evaluateLazyEntry()`. This is the primary lazy-loading
-mechanism and is exercised by every included route in the e2e test suite.
+These are two distinct code paths in `loadManifest()`:
 
-The `Promise<{ default: fn }>` and `Promise<fn>` paths in `loadManifest()` are
-a separate internal mechanism for root-level handler laziness. They share the
-same validation policy: the resolved value must be a callable function (or
-`{ default: fn }`), never a raw array.
+1. **Lazy includes** (`entry.lazy && entry.lazyPatterns` branch): All `include()`
+   calls are lazy by default — patterns are evaluated on first matching request
+   via `evaluateLazyEntry()`. This is the primary user-facing lazy-loading
+   mechanism, exercised by every included route in the e2e test suite.
+
+2. **Async handler results** (the `result instanceof Promise` branch): Handles
+   `Promise<{ default: fn }>` and `Promise<fn>` shapes on `RouteEntry.handler`.
+   This is an **internal-only** mechanism — the public API (`urls()`, `include()`)
+   always produces sync handlers. Coverage is at the unit/integration level
+   (`router/__tests__/debug-manifest.test.ts`), not semantic e2e, because the
+   async handler branch is not reachable through the public API surface.
 
 ### Policy: lazy loading yes, async construction no
 
