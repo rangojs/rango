@@ -1,5 +1,5 @@
 import type { Plugin } from "vite";
-import { relative, posix } from "node:path";
+import { relative } from "node:path";
 import { createHash } from "node:crypto";
 
 // Dev-mode client-reference key prefixes emitted by @vitejs/plugin-rsc
@@ -33,11 +33,11 @@ export function computeProductionHash(
     const absPath = decodeURIComponent(
       refKey.slice(CLIENT_IN_SERVER_PKG_PROXY_PREFIX.length),
     );
-    toHash = posix.normalize(relative(projectRoot, absPath));
+    toHash = relative(projectRoot, absPath).replaceAll("\\", "/");
   } else if (refKey.startsWith(FS_PREFIX)) {
     // /@fs/abs/path.tsx -> hash(relative(root, "/abs/path.tsx"))
     const absPath = refKey.slice(FS_PREFIX.length - 1); // keep leading /
-    toHash = posix.normalize(relative(projectRoot, absPath));
+    toHash = relative(projectRoot, absPath).replaceAll("\\", "/");
   } else if (refKey.startsWith("/")) {
     // /src/Button.tsx -> hash("src/Button.tsx")
     toHash = refKey.slice(1);

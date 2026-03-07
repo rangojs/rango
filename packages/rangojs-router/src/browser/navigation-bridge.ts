@@ -96,7 +96,13 @@ export function createNavigationBridge(
 
       // Cross-origin URLs are not handled by SPA navigation.
       // Fall back to a full browser navigation for http/https only.
-      const targetUrl = new URL(url, window.location.origin);
+      let targetUrl: URL;
+      try {
+        targetUrl = new URL(url, window.location.origin);
+      } catch {
+        console.warn(`[rango] navigate() ignored: malformed URL "${url}"`);
+        return;
+      }
       if (targetUrl.origin !== window.location.origin) {
         if (targetUrl.protocol !== "http:" && targetUrl.protocol !== "https:") {
           console.error(

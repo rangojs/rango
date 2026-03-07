@@ -197,7 +197,12 @@ export async function resolveSegment<TEnv>(
       if (entry.loading) {
         const result = handleHandlerResult(entry.handler(context));
         component =
-          result instanceof Promise ? deps.trackHandler(result) : result;
+          result instanceof Promise
+            ? deps.trackHandler(result, {
+                segmentId: entry.shortCode,
+                segmentType: entry.type,
+              })
+            : result;
       } else {
         component = handleHandlerResult(await entry.handler(context));
       }
@@ -348,7 +353,14 @@ export async function resolveParallelEntry<TEnv>(
       if (hasLoadingFallback) {
         const result =
           typeof handler === "function" ? handler(context) : handler;
-        component = result as ReactNode;
+        component = (
+          result instanceof Promise
+            ? deps.trackHandler(result, {
+                segmentId: `${parentShortCode}.${slot}`,
+                segmentType: "parallel",
+              })
+            : result
+        ) as ReactNode;
       } else {
         component =
           typeof handler === "function" ? await handler(context) : handler;

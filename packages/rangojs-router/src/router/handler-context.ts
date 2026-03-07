@@ -109,10 +109,10 @@ export function createReverseFunction(
       ? { ...currentParams, ...hrefParams }
       : hrefParams;
 
-    // Substitute params (strip constraint syntax: :param(a|b) -> value)
+    // Substitute params (strip constraint and optional syntax: :param(a|b)? -> value)
     if (effectiveParams) {
       result = result.replace(
-        /:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?/g,
+        /:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?\??/g,
         (_, key) => {
           const value = effectiveParams[key];
           if (value === undefined) {

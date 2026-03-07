@@ -1,4 +1,4 @@
-import { urls, getRequestContext } from "@rangojs/router";
+import { urls, getRequestContext, redirect } from "@rangojs/router";
 import {
   MiddlewareIndexHandler,
   MiddlewareProtectedHandler,
@@ -10,6 +10,7 @@ import {
   MiddlewareRouteLevelHandler,
   MiddlewareRouteLevelWithParamsHandler,
   MiddlewareRouteShortcircuitHandler,
+  MiddlewareW5RedirectHandler,
 } from "./middleware.handlers.js";
 
 /**
@@ -65,6 +66,20 @@ export const middlewarePatterns = urls(({ path, middleware }) => [
       }),
       middleware(async () => {
         return new Response("blocked", { status: 403 });
+      }),
+    ],
+  ),
+
+  // W5 guardrail test: middleware calls ctx.set() then returns a redirect.
+  // Should trigger a dev-mode warning about lost context variables.
+  path(
+    "/w5-redirect",
+    MiddlewareW5RedirectHandler,
+    { name: "w5Redirect" },
+    () => [
+      middleware(async function w5SetThenRedirect(ctx) {
+        ctx.set("user", { id: "lost", name: "lost" });
+        return redirect("/middleware-test", 302);
       }),
     ],
   ),

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { createHostRouter } from "../router";
+import { parseCookies } from "../cookie-handler";
 
 describe("createHostRouter", () => {
   it("should create a router instance", () => {
@@ -282,6 +283,39 @@ describe("router.fallback", () => {
     await router.match(request);
 
     expect(fallbackHandler).toHaveBeenCalled();
+  });
+});
+
+describe("parseCookies", () => {
+  it("preserves = characters inside cookie values", () => {
+    const request = new Request("http://localhost/", {
+      headers: { cookie: "x-requested-host=admin=eu.prod" },
+    });
+    const cookies = parseCookies(request);
+    expect(cookies["x-requested-host"]).toBe("admin=eu.prod");
+  });
+
+  it("does not throw on malformed percent encoding", () => {
+    const request = new Request("http://localhost/", {
+      headers: { cookie: "x-requested-host=%zz" },
+    });
+    const cookies = parseCookies(request);
+    expect(cookies["x-requested-host"]).toBe("%zz");
+  });
+
+  it("parses multiple cookies with special values", () => {
+    const request = new Request("http://localhost/", {
+      headers: { cookie: "a=hello%20world; b=x=y=z; c=%zz" },
+    });
+    const cookies = parseCookies(request);
+    expect(cookies["a"]).toBe("hello world");
+    expect(cookies["b"]).toBe("x=y=z");
+    expect(cookies["c"]).toBe("%zz");
+  });
+
+  it("returns empty object for no cookie header", () => {
+    const request = new Request("http://localhost/");
+    expect(parseCookies(request)).toEqual({});
   });
 });
 

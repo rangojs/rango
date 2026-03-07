@@ -45,10 +45,20 @@ export async function buildDebugManifest<TEnv = any>(
         if (promiseResult !== null) {
           const load = await (promiseResult as Promise<any>);
           if (load && typeof load === "object" && "default" in load) {
+            // Promise<{ default: fn }> — e.g. dynamic import
             const useItems = load.default;
             if (typeof useItems === "function") {
               useItems(helpers);
             }
+          } else if (typeof load === "function") {
+            // Promise<fn>
+            load(helpers);
+          } else {
+            // Reject unsupported async handler results (same policy as manifest.ts)
+            throw new Error(
+              `[@rangojs/router] Unsupported async handler result (${typeof load}). ` +
+                `Lazy route handlers must resolve to a function or { default: fn }.`,
+            );
           }
         }
       },

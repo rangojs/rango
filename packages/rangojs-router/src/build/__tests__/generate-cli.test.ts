@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { readFileSync, existsSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
 import {
   writePerModuleRouteTypesForFile,
   writeCombinedRouteTypes,
@@ -307,18 +308,72 @@ describe("generate-cli e2e fixtures", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Shared-include fixture (app-with-shared-include)
+// ---------------------------------------------------------------------------
+
+describe("shared-include fixture", () => {
+  const sharedFixtureDir = join(
+    __dirname,
+    "__fixtures__",
+    "app-with-shared-include",
+  );
+  const sharedRouterGenPath = join(
+    sharedFixtureDir,
+    "router.named-routes.gen.ts",
+  );
+  const sharedUrlsGenPath = join(sharedFixtureDir, "urls.gen.ts");
+
+  afterEach(() => {
+    for (const f of [sharedRouterGenPath, sharedUrlsGenPath]) {
+      try {
+        if (existsSync(f)) unlinkSync(f);
+      } catch {}
+    }
+  });
+
+  it("writeCombinedRouteTypes includes both mounts of shared patterns", () => {
+    const routerFile = join(sharedFixtureDir, "router.tsx");
+    writeCombinedRouteTypes(sharedFixtureDir, [routerFile]);
+
+    expect(existsSync(sharedRouterGenPath)).toBe(true);
+    const content = readFileSync(sharedRouterGenPath, "utf-8");
+
+    // Both mounts should be present — the second is NOT a cycle
+    expect(content).toContain('"api.health"');
+    expect(content).toContain('"/api/health"');
+    expect(content).toContain('"api.detail"');
+    expect(content).toContain('"/api/:id"');
+    expect(content).toContain('"v2.health"');
+    expect(content).toContain('"/v2/health"');
+    expect(content).toContain('"v2.detail"');
+    expect(content).toContain('"/v2/:id"');
+  });
+
+  it("writePerModuleRouteTypesForFile includes both mounts of shared patterns", () => {
+    const urlsFile = join(sharedFixtureDir, "urls.tsx");
+    writePerModuleRouteTypesForFile(urlsFile);
+
+    expect(existsSync(sharedUrlsGenPath)).toBe(true);
+    const content = readFileSync(sharedUrlsGenPath, "utf-8");
+
+    expect(content).toContain('"api.health"');
+    expect(content).toContain('"v2.health"');
+    expect(content).toContain('"api.detail"');
+    expect(content).toContain('"v2.detail"');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Factory fixture (app-with-factory)
 // ---------------------------------------------------------------------------
 
 describe("factory fixture", () => {
-  const factoryFixtureDir = join(__dirname, "__fixtures__", "app-with-factory");
-
   afterEach(() => {
     // Clean up gen files in factory fixture
     const possibleGens = [
-      join(factoryFixtureDir, "router.named-routes.gen.ts"),
-      join(factoryFixtureDir, "urls.gen.ts"),
-      join(factoryFixtureDir, "api", "urls.gen.ts"),
+      factoryGenPath,
+      factoryUrlsGenPath,
+      factoryApiUrlsGenPath,
     ];
     for (const f of possibleGens) {
       try {
@@ -367,7 +422,8 @@ describe("factory fixture", () => {
     });
 
     expect(result.routerCount).toBe(1);
-    expect(result.routeCount).toBe(6);
+    // 7 user-named routes (unnamed "$path_..." routes are filtered from output)
+    expect(result.routeCount).toBe(7);
 
     const content = readFileSync(genPath, "utf-8");
     // Static routes present
@@ -378,5 +434,212 @@ describe("factory fixture", () => {
     // Factory routes also present (the key difference from static-only)
     expect(content).toContain("docs.index");
     expect(content).toContain("docs.page");
+    // User-defined name with "$" is preserved (not filtered as auto-generated)
+    expect(content).toContain('"docs.$admin"');
   }, 30_000);
+
+  it("runtime discovery excludes internal auto-generated $ names from gen file", async () => {
+    const packageRoot = resolve(__dirname, "..", "..", "..");
+    const srcDir = join(packageRoot, "src");
+    const genPath = join(factoryFixtureDir, "router.named-routes.gen.ts");
+    generatedFiles.push(genPath);
+
+    await discoverAndWriteRouteTypes({
+      root: packageRoot,
+      entry: join(factoryFixtureDir, "router.tsx"),
+      resolveAlias: {
+        "@rangojs/router/server": join(srcDir, "server.ts"),
+        "@rangojs/router/build": join(srcDir, "build", "index.ts"),
+        "@rangojs/router/cache": join(srcDir, "cache", "index.ts"),
+        "@rangojs/router/host": join(srcDir, "host", "index.ts"),
+        "@rangojs/router": join(srcDir, "index.rsc.ts"),
+      },
+    });
+
+    const content = readFileSync(genPath, "utf-8");
+    // The factory fixture has an unnamed route (path("/health", handler) with no name).
+    // Its auto-generated "$path_..." name must not appear in the gen file.
+    // The include prefix "docs" means the full name is "docs.$path__health".
+    expect(content).not.toMatch(/\$path_/);
+    // But user-named routes must still be present
+    expect(content).toContain("docs.index");
+    expect(content).toContain("docs.page");
+    // User-defined name with "$" (docs.$admin) must be preserved — only
+    // the "$path_" auto-generated prefix triggers filtering, not bare "$".
+    expect(content).toContain('"docs.$admin"');
+  }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// CLI command-level tests: spawn `rango generate` as a subprocess
+// ---------------------------------------------------------------------------
+
+const packageRoot = resolve(__dirname, "..", "..", "..");
+const rangoBin = join(packageRoot, "dist", "bin", "rango.js");
+const staticFixtureRouter = join(
+  __dirname,
+  "__fixtures__",
+  "app",
+  "router.tsx",
+);
+const factoryFixtureRouter = join(
+  __dirname,
+  "__fixtures__",
+  "app-with-factory",
+  "router.tsx",
+);
+const factoryFixtureDir = join(__dirname, "__fixtures__", "app-with-factory");
+const factoryFixtureUrls = join(factoryFixtureDir, "urls.tsx");
+const factoryGenPath = join(factoryFixtureDir, "router.named-routes.gen.ts");
+const factoryUrlsGenPath = join(factoryFixtureDir, "urls.gen.ts");
+const factoryApiUrlsGenPath = join(factoryFixtureDir, "api", "urls.gen.ts");
+const factoryFactoryGenPath = join(factoryFixtureDir, "factory.gen.ts");
+const staticGenPath = join(
+  __dirname,
+  "__fixtures__",
+  "app",
+  "router.named-routes.gen.ts",
+);
+
+function runRango(args: string) {
+  const result = spawnSync("node", [rangoBin, ...args.split(" ")], {
+    encoding: "utf-8",
+    cwd: packageRoot,
+    timeout: 30_000,
+  });
+  return {
+    ...result,
+    combined: `${result.stdout ?? ""}${result.stderr ?? ""}`,
+  };
+}
+
+describe("CLI command-level tests", () => {
+  afterEach(() => {
+    for (const f of [
+      factoryGenPath,
+      factoryUrlsGenPath,
+      factoryApiUrlsGenPath,
+      factoryFactoryGenPath,
+      staticGenPath,
+    ]) {
+      try {
+        if (existsSync(f)) unlinkSync(f);
+      } catch {}
+    }
+  });
+
+  // --- Happy paths ---
+
+  it("default mode succeeds for fully static router", () => {
+    const result = runRango(`generate ${staticFixtureRouter}`);
+    expect(result.status).toBe(0);
+    expect(existsSync(staticGenPath)).toBe(true);
+
+    const content = readFileSync(staticGenPath, "utf-8");
+    expect(content).toContain("home");
+    expect(content).toContain("about");
+    expect(content).toContain("api.health");
+  });
+
+  it("--runtime succeeds for factory router and includes factory routes", () => {
+    const result = runRango(`generate ${factoryFixtureRouter} --runtime`);
+    expect(result.status).toBe(0);
+    expect(existsSync(factoryGenPath)).toBe(true);
+
+    const content = readFileSync(factoryGenPath, "utf-8");
+    // Static routes
+    expect(content).toContain("home");
+    expect(content).toContain("about");
+    expect(content).toContain("api.health");
+    // Factory routes (invisible to static parser)
+    expect(content).toContain("docs.index");
+    expect(content).toContain("docs.page");
+    // No internal $ names
+    expect(content).not.toMatch(/\$path/);
+  }, 30_000);
+
+  // --- Non-happy paths ---
+
+  it("default mode hard-fails on unresolvable factory includes", () => {
+    const result = runRango(`generate ${factoryFixtureRouter}`);
+    expect(result.status).not.toBe(0);
+    // Error output should include the diagnostic and point to --runtime
+    expect(result.combined).toContain("Unresolvable includes detected");
+    expect(result.combined).toContain("docs.");
+    expect(result.combined).toContain("--runtime");
+    expect(result.combined).toContain("--static");
+  });
+
+  it("--static warns and emits partial output without factory routes", () => {
+    const result = runRango(`generate ${factoryFixtureRouter} --static`);
+    expect(result.status).toBe(0);
+    // Warning about partial output
+    expect(result.combined).toContain("partial output");
+    expect(result.combined).toContain("factory-call");
+
+    expect(existsSync(factoryGenPath)).toBe(true);
+    const content = readFileSync(factoryGenPath, "utf-8");
+    // Static routes present
+    expect(content).toContain("home");
+    expect(content).toContain("about");
+    expect(content).toContain("api.health");
+    // Factory routes absent
+    expect(content).not.toContain("docs.index");
+    expect(content).not.toContain("docs.page");
+  });
+
+  it("--config without --runtime is ignored with a warning", () => {
+    const result = runRango(
+      `generate ${staticFixtureRouter} --config some-config.ts`,
+    );
+    expect(result.status).toBe(0);
+    expect(result.combined).toContain(
+      "--config is only used with --runtime, ignoring",
+    );
+  });
+
+  // --- Atomicity (P20 / E11) ---
+
+  it("default mode directory generation is atomic: no partial gen files on failure", () => {
+    const result = runRango(`generate ${factoryFixtureDir}`);
+    expect(result.status).not.toBe(0);
+    expect(result.combined).toContain("Unresolvable includes detected");
+
+    // No gen files should have been written — the command failed before
+    // reaching the write phase.
+    expect(existsSync(factoryGenPath)).toBe(false);
+    expect(existsSync(factoryUrlsGenPath)).toBe(false);
+    expect(existsSync(factoryApiUrlsGenPath)).toBe(false);
+    expect(existsSync(factoryFactoryGenPath)).toBe(false);
+  });
+
+  // --- Standalone urls() fail-fast (P21 / E12) ---
+
+  it("default mode fails for standalone urls() with unresolvable factory include", () => {
+    const result = runRango(`generate ${factoryFixtureUrls}`);
+    expect(result.status).not.toBe(0);
+    expect(result.combined).toContain("Unresolvable includes detected");
+    expect(result.combined).toContain("factory-call");
+    expect(result.combined).toContain("--runtime");
+    expect(result.combined).toContain("--static");
+
+    // No gen file should have been written
+    expect(existsSync(factoryUrlsGenPath)).toBe(false);
+  });
+
+  it("--static mode succeeds for standalone urls() with partial output", () => {
+    const result = runRango(`generate ${factoryFixtureUrls} --static`);
+    expect(result.status).toBe(0);
+    expect(result.combined).toContain("partial output");
+
+    expect(existsSync(factoryUrlsGenPath)).toBe(true);
+    const content = readFileSync(factoryUrlsGenPath, "utf-8");
+    // Static routes present
+    expect(content).toContain("home");
+    expect(content).toContain("about");
+    expect(content).toContain('"api.health"');
+    // Factory routes absent (unresolvable)
+    expect(content).not.toContain("docs.index");
+    expect(content).not.toContain("docs.page");
+  });
 });

@@ -293,6 +293,102 @@ describe("segment cache key generation", () => {
     });
   });
 
+  describe("request type isolation", () => {
+    it("should produce different keys for doc vs partial requests to the same path", async () => {
+      const store = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn(),
+      };
+
+      // Document request (no _rsc_partial)
+      mockGetRequestContext.mockReturnValue(makeRequestContext(""));
+      const docScope = new CacheScope({ store } as any);
+      await docScope.lookupRoute("/products", {});
+      const docKey = store.get.mock.calls[0][0];
+
+      // Partial/navigation request
+      store.get.mockClear();
+      mockGetRequestContext.mockReturnValue(
+        makeRequestContext("?_rsc_partial=1"),
+      );
+      const partialScope = new CacheScope({ store } as any);
+      await partialScope.lookupRoute("/products", {});
+      const partialKey = store.get.mock.calls[0][0];
+
+      expect(docKey).not.toBe(partialKey);
+      expect(docKey).toMatch(/^doc:/);
+      expect(partialKey).toMatch(/^partial:/);
+    });
+
+    it("should produce different keys for doc vs intercept requests to the same path", async () => {
+      const store = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn(),
+      };
+
+      mockGetRequestContext.mockReturnValue(makeRequestContext(""));
+      const docScope = new CacheScope({ store } as any);
+      await docScope.lookupRoute("/products", {});
+      const docKey = store.get.mock.calls[0][0];
+
+      store.get.mockClear();
+      const interceptScope = new CacheScope({ store } as any);
+      await interceptScope.lookupRoute("/products", {}, true);
+      const interceptKey = store.get.mock.calls[0][0];
+
+      expect(docKey).not.toBe(interceptKey);
+      expect(docKey).toMatch(/^doc:/);
+      expect(interceptKey).toMatch(/^intercept:/);
+    });
+
+    it("should produce different keys for partial vs intercept requests to the same path", async () => {
+      const store = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn(),
+      };
+
+      mockGetRequestContext.mockReturnValue(
+        makeRequestContext("?_rsc_partial=1"),
+      );
+      const partialScope = new CacheScope({ store } as any);
+      await partialScope.lookupRoute("/products", {});
+      const partialKey = store.get.mock.calls[0][0];
+
+      store.get.mockClear();
+      mockGetRequestContext.mockReturnValue(makeRequestContext(""));
+      const interceptScope = new CacheScope({ store } as any);
+      await interceptScope.lookupRoute("/products", {}, true);
+      const interceptKey = store.get.mock.calls[0][0];
+
+      expect(partialKey).not.toBe(interceptKey);
+    });
+
+    it("should isolate keys when same path has different query params across request types", async () => {
+      const store = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn(),
+      };
+
+      mockGetRequestContext.mockReturnValue(makeRequestContext("?page=1"));
+      const scope1 = new CacheScope({ store } as any);
+      await scope1.lookupRoute("/products", {});
+      const key1 = store.get.mock.calls[0][0];
+
+      store.get.mockClear();
+      mockGetRequestContext.mockReturnValue(
+        makeRequestContext("?page=1&_rsc_partial=1"),
+      );
+      const scope2 = new CacheScope({ store } as any);
+      await scope2.lookupRoute("/products", {});
+      const key2 = store.get.mock.calls[0][0];
+
+      // Same user-facing query (?page=1) but different request types
+      expect(key1).not.toBe(key2);
+      expect(key1).toContain("page=1");
+      expect(key2).toContain("page=1");
+    });
+  });
+
   describe("hard-fail on key() error", () => {
     it("propagates route key() error through CacheScope.lookupRoute", async () => {
       const store = {

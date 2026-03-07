@@ -27,6 +27,8 @@ export {
   extractUrlsVariableFromRouter,
   buildCombinedRouteMapForRouterFile,
   detectUnresolvableIncludes,
+  detectUnresolvableIncludesForUrlsFile,
   findRouterFiles,
   writeCombinedRouteTypes,
 } from "./route-types/router-processing.js";
+export { findUrlsVariableNames } from "./route-types/per-module-writer.js";

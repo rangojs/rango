@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { expectNoPageError } from "./helper";
+import { expectNoPageError, waitForHydration, testId } from "./helper";
 
 /**
  * Progressive Enhancement Tests
@@ -140,6 +140,91 @@ test.describe("progressive-enhancement", () => {
   });
 });
 
+test.describe("pe-redirect", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test.describe("with JavaScript disabled", () => {
+    test.use({ javaScriptEnabled: false });
+
+    test("return redirect() follows redirect in PE mode", async ({ page }) => {
+      await page.goto(f.url("/pe-redirect"));
+      await expect(
+        page.locator('[data-testid="pe-redirect-title"]'),
+      ).toHaveText("PE Redirect Test");
+
+      await page.locator('[data-testid="pe-return-redirect-btn"]').click();
+      await page.waitForLoadState("domcontentloaded");
+
+      // Should have redirected to /progressive-enhancement
+      await expect(page).toHaveURL(/\/progressive-enhancement/);
+      await expect(page.locator('[data-testid="page-title"]')).toHaveText(
+        "Progressive Enhancement Test",
+      );
+    });
+
+    test("throw redirect() follows redirect in PE mode", async ({ page }) => {
+      await page.goto(f.url("/pe-redirect"));
+      await expect(
+        page.locator('[data-testid="pe-redirect-title"]'),
+      ).toHaveText("PE Redirect Test");
+
+      await page.locator('[data-testid="pe-throw-redirect-btn"]').click();
+      await page.waitForLoadState("domcontentloaded");
+
+      // Should have redirected to /progressive-enhancement
+      await expect(page).toHaveURL(/\/progressive-enhancement/);
+      await expect(page.locator('[data-testid="page-title"]')).toHaveText(
+        "Progressive Enhancement Test",
+      );
+    });
+  });
+});
+
+test.describe("pe-redirect (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.describe("with JavaScript disabled", () => {
+    test.use({ javaScriptEnabled: false });
+    test.setTimeout(120000);
+
+    test("return redirect() follows redirect in PE mode", async ({ page }) => {
+      await page.goto(f.url("/pe-redirect"));
+      await expect(
+        page.locator('[data-testid="pe-redirect-title"]'),
+      ).toHaveText("PE Redirect Test");
+
+      await page.locator('[data-testid="pe-return-redirect-btn"]').click();
+      await page.waitForLoadState("domcontentloaded");
+
+      await expect(page).toHaveURL(/\/progressive-enhancement/);
+      await expect(page.locator('[data-testid="page-title"]')).toHaveText(
+        "Progressive Enhancement Test",
+      );
+    });
+
+    test("throw redirect() follows redirect in PE mode", async ({ page }) => {
+      await page.goto(f.url("/pe-redirect"));
+      await expect(
+        page.locator('[data-testid="pe-redirect-title"]'),
+      ).toHaveText("PE Redirect Test");
+
+      await page.locator('[data-testid="pe-throw-redirect-btn"]').click();
+      await page.waitForLoadState("domcontentloaded");
+
+      await expect(page).toHaveURL(/\/progressive-enhancement/);
+      await expect(page.locator('[data-testid="page-title"]')).toHaveText(
+        "Progressive Enhancement Test",
+      );
+    });
+  });
+});
+
 test.describe("progressive-enhancement (production)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
@@ -235,5 +320,52 @@ test.describe("progressive-enhancement (production)", () => {
 
       await expect(page).toHaveURL(/\/progressive-enhancement/);
     });
+  });
+});
+
+/**
+ * W1 integration test: verify server emits warning when action fires on a
+ * route with route middleware. Uses isolated server to capture stdout/stderr.
+ */
+test.describe("W1: action with route middleware warning", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+    isolatedServer: true,
+  });
+
+  test("server warns when action executes on route with route middleware", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/mw-chain"));
+    await waitForHydration(page);
+
+    // Capture server output baseline
+    const baselineStdout = f.proc().stdout().length;
+    const baselineStderr = f.proc().stderr().length;
+
+    // Trigger action on mw-chain route (has route middleware)
+    await testId(page, "chain-action-btn").click();
+
+    // Wait for action to complete (handler-action-var updates after revalidation)
+    await expect(testId(page, "handler-action-var")).toHaveText("from-action", {
+      timeout: 10000,
+    });
+
+    // Check server output for W1 warning
+    await expect
+      .poll(
+        () => {
+          const newStdout = f.proc().stdout().substring(baselineStdout);
+          const newStderr = f.proc().stderr().substring(baselineStderr);
+          return (newStdout + newStderr).includes(
+            "Route middleware does not guard server actions",
+          );
+        },
+        { timeout: 5000 },
+      )
+      .toBeTruthy();
   });
 });

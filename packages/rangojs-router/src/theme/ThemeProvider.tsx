@@ -50,7 +50,12 @@ function readThemeFromCookie(storageKey: string): string | null {
   for (const cookie of cookies) {
     const [name, ...rest] = cookie.trim().split("=");
     if (name === storageKey) {
-      return decodeURIComponent(rest.join("="));
+      const raw = rest.join("=");
+      try {
+        return decodeURIComponent(raw);
+      } catch {
+        return raw;
+      }
     }
   }
   return null;

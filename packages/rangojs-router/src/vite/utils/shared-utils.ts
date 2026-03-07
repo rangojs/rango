@@ -89,9 +89,11 @@ export function createVirtualEntriesPlugin(
         }
         // Lazy RSC entry: routerPath may have been set by a config() hook
         if (virtualId === VIRTUAL_IDS.rsc && routerPathRef?.path) {
-          const absoluteRouterPath = routerPathRef.path.startsWith(".")
+          const raw = routerPathRef.path.startsWith(".")
             ? "/" + routerPathRef.path.slice(2) // ./src/router.tsx -> /src/router.tsx
             : routerPathRef.path;
+          // Normalize backslashes for Windows (path.join/slice preserve native separators)
+          const absoluteRouterPath = raw.replaceAll("\\", "/");
           return getVirtualEntryRSC(absoluteRouterPath);
         }
       }
