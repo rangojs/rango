@@ -341,3 +341,20 @@ export async function mwChainFormAction(_formData: FormData): Promise<void> {
   ctx.set("chainAction", "from-action");
   ctx.header("X-Chain-Action", "applied");
 }
+
+/**
+ * Auth boundary test action. Mutates state (sets a cookie) to prove the action
+ * executed. Route middleware does NOT guard this — only global middleware does.
+ */
+export async function authBoundaryAction(): Promise<void> {
+  cookies().set("auth-boundary-action-ran", "true", { path: "/", maxAge: 60 });
+}
+
+/**
+ * Form-based variant for progressive enhancement testing.
+ */
+export async function authBoundaryFormAction(
+  _formData: FormData,
+): Promise<void> {
+  cookies().set("auth-boundary-action-ran", "true", { path: "/", maxAge: 60 });
+}

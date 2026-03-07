@@ -8,6 +8,7 @@ import {
 } from "../../server/request-context.js";
 import {
   createResponseWithMergedHeaders,
+  createSimpleRedirectResponse,
   finalizeResponse,
   interceptRedirectForPartial,
   carryOverRedirectHeaders,
@@ -176,6 +177,442 @@ describe("createResponseWithMergedHeaders", () => {
     });
 
     expect(capturedStatus).toBe(308);
+  });
+});
+
+describe("redirect + cookie/header preservation", () => {
+  it("preserves ctx.setCookie in redirect response", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    ctx.setCookie("session", "tok-123", { path: "/", httpOnly: true });
+
+    const response = runWithRequestContext(ctx, () =>
+      createResponseWithMergedHeaders(null, {
+        status: 302,
+        headers: { Location: "/dashboard" },
+      }),
+    );
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("/dashboard");
+    const cookies = response.headers.getSetCookie();
+    expect(cookies.some((c) => c.includes("session=tok-123"))).toBe(true);
+    expect(cookies.some((c) => c.includes("HttpOnly"))).toBe(true);
+  });
+
+  it("preserves multiple ctx.setCookie calls in redirect response", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    ctx.setCookie("session", "s1", { path: "/" });
+    ctx.setCookie("theme", "dark", { path: "/" });
+
+    const response = runWithRequestContext(ctx, () =>
+      createResponseWithMergedHeaders(null, {
+        status: 302,
+        headers: { Location: "/home" },
+      }),
+    );
+
+    const cookies = response.headers.getSetCookie();
+    expect(cookies.some((c) => c.includes("session=s1"))).toBe(true);
+    expect(cookies.some((c) => c.includes("theme=dark"))).toBe(true);
+  });
+
+  it("preserves ctx.header in redirect response", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    ctx.header("X-Middleware-Applied", "auth");
+    ctx.header("X-Request-Id", "req-456");
+
+    const response = runWithRequestContext(ctx, () =>
+      createResponseWithMergedHeaders(null, {
+        status: 302,
+        headers: { Location: "/protected" },
+      }),
+    );
+
+    expect(response.headers.get("X-Middleware-Applied")).toBe("auth");
+    expect(response.headers.get("X-Request-Id")).toBe("req-456");
+  });
+
+  it("preserves both cookies and headers in redirect response", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    ctx.setCookie("auth", "token-abc", { path: "/", httpOnly: true });
+    ctx.header("X-Custom", "value");
+
+    const response = runWithRequestContext(ctx, () =>
+      createResponseWithMergedHeaders(null, {
+        status: 307,
+        headers: { Location: "/next" },
+      }),
+    );
+
+    expect(response.status).toBe(307);
+    const cookies = response.headers.getSetCookie();
+    expect(cookies.some((c) => c.includes("auth=token-abc"))).toBe(true);
+    expect(response.headers.get("X-Custom")).toBe("value");
+  });
+
+  it("createSimpleRedirectResponse preserves ctx-set cookies and headers", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    ctx.setCookie("session", "val", { path: "/" });
+    ctx.header("X-From-Middleware", "yes");
+
+    const response = runWithRequestContext(ctx, () =>
+      createSimpleRedirectResponse("/target"),
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("X-RSC-Redirect")).toBe("/target");
+    const cookies = response.headers.getSetCookie();
+    expect(cookies.some((c) => c.includes("session=val"))).toBe(true);
+    expect(response.headers.get("X-From-Middleware")).toBe("yes");
+  });
+
+  it("init headers take precedence over ctx headers for non-cookie values", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    ctx.header("X-Source", "middleware");
+
+    const response = runWithRequestContext(ctx, () =>
+      createResponseWithMergedHeaders(null, {
+        status: 200,
+        headers: { "X-Source": "handler" },
+      }),
+    );
+
+    expect(response.headers.get("X-Source")).toBe("handler");
+  });
+
+  it("onResponse callbacks fire on redirect responses and can modify them", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    ctx.setCookie("original", "keep", { path: "/" });
+    ctx.onResponse((res) => {
+      const headers = new Headers(res.headers);
+      headers.set("X-Added-By-Callback", "yes");
+      return new Response(res.body, { status: res.status, headers });
+    });
+
+    const response = runWithRequestContext(ctx, () =>
+      createResponseWithMergedHeaders(null, {
+        status: 302,
+        headers: { Location: "/redirected" },
+      }),
+    );
+
+    expect(response.headers.get("X-Added-By-Callback")).toBe("yes");
+    expect(response.headers.get("Location")).toBe("/redirected");
+    const cookies = response.headers.getSetCookie();
+    expect(cookies.some((c) => c.includes("original=keep"))).toBe(true);
+  });
+
+  it("ctx.deleteCookie is preserved through redirect response", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com", {
+        headers: { Cookie: "stale=old" },
+      }),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    ctx.deleteCookie("stale", { path: "/" });
+
+    const response = runWithRequestContext(ctx, () =>
+      createResponseWithMergedHeaders(null, {
+        status: 302,
+        headers: { Location: "/clean" },
+      }),
+    );
+
+    const cookies = response.headers.getSetCookie();
+    expect(
+      cookies.some((c) => c.includes("stale=") && c.includes("Max-Age=0")),
+    ).toBe(true);
+  });
+});
+
+describe("error boundary status + middleware header preservation", () => {
+  it("ctx.setStatus(500) overrides init status while preserving cookies", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    // Middleware sets a cookie before handler runs
+    ctx.setCookie("trace", "req-001", { path: "/" });
+    // Error boundary sets 500
+    ctx.setStatus(500);
+
+    const response = runWithRequestContext(ctx, () =>
+      createResponseWithMergedHeaders("error boundary content", {
+        status: 200,
+        headers: { "content-type": "text/x-component;charset=utf-8" },
+      }),
+    );
+
+    // Status from ctx.res overrides init when non-200
+    expect(response.status).toBe(500);
+    // Middleware cookies survive the error boundary status change
+    const cookies = response.headers.getSetCookie();
+    expect(cookies.some((c) => c.includes("trace=req-001"))).toBe(true);
+    expect(response.headers.get("content-type")).toBe(
+      "text/x-component;charset=utf-8",
+    );
+  });
+
+  it("ctx.setStatus(404) with cookies and onResponse callbacks all work together", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com/missing"),
+      url: new URL("https://example.com/missing"),
+      variables: {},
+    });
+
+    ctx.setCookie("session", "active", { path: "/" });
+    ctx.header("X-Trace", "t-404");
+    ctx.setStatus(404);
+
+    let callbackSawStatus: number | undefined;
+    ctx.onResponse((res) => {
+      callbackSawStatus = res.status;
+      return res;
+    });
+
+    const response = runWithRequestContext(ctx, () =>
+      createResponseWithMergedHeaders("not found content", {
+        status: 200,
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(callbackSawStatus).toBe(404);
+    const cookies = response.headers.getSetCookie();
+    expect(cookies.some((c) => c.includes("session=active"))).toBe(true);
+    expect(response.headers.get("X-Trace")).toBe("t-404");
+  });
+
+  it("ctx.setStatus does not override when status is 200 (default)", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    // Don't call setStatus — ctx.res.status remains 200
+    const response = runWithRequestContext(ctx, () =>
+      createResponseWithMergedHeaders(null, {
+        status: 302,
+        headers: { Location: "/other" },
+      }),
+    );
+
+    // init status wins when ctx.res.status is 200
+    expect(response.status).toBe(302);
+  });
+
+  it("middleware cookies survive when handler produces redirect and ctx has non-200 status", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    ctx.setCookie("auth", "jwt-xyz", { path: "/", httpOnly: true });
+    ctx.header("X-Request-Id", "r-789");
+    // Simulate a scenario where status was set to 401 before redirect
+    ctx.setStatus(401);
+
+    const response = runWithRequestContext(ctx, () =>
+      createResponseWithMergedHeaders(null, {
+        status: 200,
+        headers: { Location: "/login" },
+      }),
+    );
+
+    // Non-200 ctx status overrides
+    expect(response.status).toBe(401);
+    expect(response.headers.get("Location")).toBe("/login");
+    const cookies = response.headers.getSetCookie();
+    expect(cookies.some((c) => c.includes("auth=jwt-xyz"))).toBe(true);
+    expect(cookies.some((c) => c.includes("HttpOnly"))).toBe(true);
+    expect(response.headers.get("X-Request-Id")).toBe("r-789");
+  });
+});
+
+describe("content negotiation edge cases", () => {
+  it("interceptRedirectForPartial preserves cookies and headers from redirect response", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    const result = runWithRequestContext(ctx, () => {
+      const redirectResponse = new Response(null, {
+        status: 302,
+        headers: {
+          Location: "/dashboard",
+          "Set-Cookie": "session=renewed; Path=/; HttpOnly",
+          "X-Custom-Tracking": "track-123",
+        },
+      });
+
+      return interceptRedirectForPartial(
+        redirectResponse,
+        (url) =>
+          new Response(null, {
+            status: 204,
+            headers: { "X-RSC-Redirect": url },
+          }),
+      );
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.status).toBe(204);
+    expect(result!.headers.get("X-RSC-Redirect")).toBe("/dashboard");
+    const cookies = result!.headers.getSetCookie();
+    expect(cookies.some((c) => c.includes("session=renewed"))).toBe(true);
+    expect(result!.headers.get("X-Custom-Tracking")).toBe("track-123");
+  });
+
+  it("interceptRedirectForPartial with ctx-set cookies and redirect cookies are merged", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    ctx.setCookie("middleware-cookie", "mw-val", { path: "/" });
+
+    const result = runWithRequestContext(ctx, () => {
+      // Simulate a redirect response that itself sets cookies
+      const redirectResponse = new Response(null, {
+        status: 307,
+        headers: {
+          Location: "/next",
+          "Set-Cookie": "redirect-cookie=rd-val; Path=/",
+        },
+      });
+
+      return interceptRedirectForPartial(redirectResponse, (url) =>
+        // The createSimpleRedirectResponse path — uses merged headers
+        createSimpleRedirectResponse(url),
+      );
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.headers.get("X-RSC-Redirect")).toBe("/next");
+    const cookies = result!.headers.getSetCookie();
+    // Both ctx-set and redirect-set cookies should be present
+    expect(cookies.some((c) => c.includes("middleware-cookie=mw-val"))).toBe(
+      true,
+    );
+    expect(cookies.some((c) => c.includes("redirect-cookie=rd-val"))).toBe(
+      true,
+    );
+  });
+
+  it("finalizeResponse runs onResponse callbacks on middleware short-circuit response", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com/api/data"),
+      url: new URL("https://example.com/api/data"),
+      variables: {},
+    });
+
+    let callbackFired = false;
+    ctx.onResponse((res) => {
+      callbackFired = true;
+      const headers = new Headers(res.headers);
+      headers.set("X-Finalized", "true");
+      return new Response(res.body, { status: res.status, headers });
+    });
+
+    // Simulate middleware short-circuit returning a pre-built response
+    const shortCircuitResponse = new Response('{"data":"ok"}', {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+
+    const result = runWithRequestContext(ctx, () =>
+      finalizeResponse(shortCircuitResponse),
+    );
+
+    expect(callbackFired).toBe(true);
+    expect(result.headers.get("X-Finalized")).toBe("true");
+    expect(result.headers.get("content-type")).toBe("application/json");
+  });
+
+  it("createSimpleRedirectResponse always produces 204 with X-RSC-Redirect", () => {
+    // Without request context
+    const response = createSimpleRedirectResponse("/target-path");
+    expect(response.status).toBe(204);
+    expect(response.headers.get("X-RSC-Redirect")).toBe("/target-path");
+  });
+
+  it("non-200 ctx.setStatus overrides createSimpleRedirectResponse 204 status", () => {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com"),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    // createResponseWithMergedHeaders uses ctx.res.status when non-200,
+    // so setStatus(401) wins over the 204 passed by createSimpleRedirectResponse.
+    ctx.setStatus(401);
+
+    const response = runWithRequestContext(ctx, () =>
+      createSimpleRedirectResponse("/login"),
+    );
+
+    expect(response.headers.get("X-RSC-Redirect")).toBe("/login");
+    expect(response.status).toBe(401);
   });
 });
 

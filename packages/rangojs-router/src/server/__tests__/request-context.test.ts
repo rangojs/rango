@@ -8,6 +8,14 @@ import {
   getRequestContext,
 } from "../request-context.js";
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 describe("RequestContext", () => {
   describe("cookie parsing", () => {
     it("should parse normal cookies correctly", () => {
@@ -518,6 +526,147 @@ describe("RequestContext", () => {
       }
 
       expect(callbackCalled).toBe(true);
+    });
+  });
+
+  describe("request-context isolation", () => {
+    it("keeps vars, params, cookies, and headers isolated across concurrent async requests", async () => {
+      const ctxA = createRequestContext({
+        env: { tenant: "alpha" },
+        request: new Request("https://example.com/a", {
+          headers: { Cookie: "session=a" },
+        }),
+        url: new URL("https://example.com/a"),
+        variables: {},
+      });
+      const ctxB = createRequestContext({
+        env: { tenant: "beta" },
+        request: new Request("https://example.com/b", {
+          headers: { Cookie: "session=b" },
+        }),
+        url: new URL("https://example.com/b"),
+        variables: {},
+      });
+
+      const gateA = createDeferred<void>();
+      const gateB = createDeferred<void>();
+
+      const requestA = runWithRequestContext(ctxA, async () => {
+        const current = getRequestContext<typeof ctxA.env>();
+        current.params = { slug: "alpha" };
+        current.set("tenant", "alpha");
+        current.header("X-Request", "alpha");
+        current.setCookie("session", "alpha-updated", { path: "/" });
+        await gateA.promise;
+
+        const resumed = getRequestContext<typeof ctxA.env>();
+        return {
+          pathname: resumed.pathname,
+          params: resumed.params,
+          tenant: resumed.get("tenant"),
+          cookie: resumed.cookie("session"),
+          header: resumed.res.headers.get("X-Request"),
+          envTenant: resumed.env.tenant,
+        };
+      });
+
+      const requestB = runWithRequestContext(ctxB, async () => {
+        const current = getRequestContext<typeof ctxB.env>();
+        current.params = { slug: "beta" };
+        current.set("tenant", "beta");
+        current.header("X-Request", "beta");
+        current.setCookie("session", "beta-updated", { path: "/" });
+        await gateB.promise;
+
+        const resumed = getRequestContext<typeof ctxB.env>();
+        return {
+          pathname: resumed.pathname,
+          params: resumed.params,
+          tenant: resumed.get("tenant"),
+          cookie: resumed.cookie("session"),
+          header: resumed.res.headers.get("X-Request"),
+          envTenant: resumed.env.tenant,
+        };
+      });
+
+      gateB.resolve();
+      const resultB = await requestB;
+      gateA.resolve();
+      const resultA = await requestA;
+
+      expect(resultA).toEqual({
+        pathname: "/a",
+        params: { slug: "alpha" },
+        tenant: "alpha",
+        cookie: "alpha-updated",
+        header: "alpha",
+        envTenant: "alpha",
+      });
+      expect(resultB).toEqual({
+        pathname: "/b",
+        params: { slug: "beta" },
+        tenant: "beta",
+        cookie: "beta-updated",
+        header: "beta",
+        envTenant: "beta",
+      });
+
+      expect(ctxA.cookie("session")).toBe("alpha-updated");
+      expect(ctxB.cookie("session")).toBe("beta-updated");
+      expect(ctxA.res.headers.get("X-Request")).toBe("alpha");
+      expect(ctxB.res.headers.get("X-Request")).toBe("beta");
+      expect(ctxA.get("tenant")).toBe("alpha");
+      expect(ctxB.get("tenant")).toBe("beta");
+    });
+
+    it("keeps onResponse callbacks isolated across concurrent request contexts", async () => {
+      const ctxA = createRequestContext({
+        env: {},
+        request: new Request("https://example.com/a"),
+        url: new URL("https://example.com/a"),
+        variables: {},
+      });
+      const ctxB = createRequestContext({
+        env: {},
+        request: new Request("https://example.com/b"),
+        url: new URL("https://example.com/b"),
+        variables: {},
+      });
+
+      const gateA = createDeferred<void>();
+      const gateB = createDeferred<void>();
+
+      const requestA = runWithRequestContext(ctxA, async () => {
+        getRequestContext().onResponse((res) => {
+          const headers = new Headers(res.headers);
+          headers.set("X-Context", "alpha");
+          return new Response(res.body, { status: res.status, headers });
+        });
+        await gateA.promise;
+      });
+
+      const requestB = runWithRequestContext(ctxB, async () => {
+        getRequestContext().onResponse((res) => {
+          const headers = new Headers(res.headers);
+          headers.set("X-Context", "beta");
+          return new Response(res.body, { status: res.status, headers });
+        });
+        await gateB.promise;
+      });
+
+      gateB.resolve();
+      await requestB;
+      gateA.resolve();
+      await requestA;
+
+      expect(ctxA._onResponseCallbacks).toHaveLength(1);
+      expect(ctxB._onResponseCallbacks).toHaveLength(1);
+
+      const responseA = ctxA._onResponseCallbacks[0]!(new Response("A"));
+      const responseB = ctxB._onResponseCallbacks[0]!(new Response("B"));
+
+      expect(responseA.headers.get("X-Context")).toBe("alpha");
+      expect(responseB.headers.get("X-Context")).toBe("beta");
     });
   });
 });
