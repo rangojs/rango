@@ -398,9 +398,14 @@ export function createPartialUpdater(
       );
 
       // Track intercept context (only on navigation, not actions or stale revalidation)
+      // Use the authoritative source from mode/history state when restoring an
+      // intercept via popstate cache miss; fall back to the current URL for fresh
+      // intercept navigations.
+      const effectiveInterceptSource =
+        interceptSourceUrl || segmentState.currentUrl;
       if (mode.type !== "action" && mode.type !== "stale-revalidation") {
         if (isInterceptResponse) {
-          store.setInterceptSourceUrl(segmentState.currentUrl);
+          store.setInterceptSourceUrl(effectiveInterceptSource);
         } else {
           store.setInterceptSourceUrl(null);
         }
@@ -413,7 +418,7 @@ export function createPartialUpdater(
         ? {
             scroll: false,
             intercept: true,
-            interceptSourceUrl: segmentState.currentUrl,
+            interceptSourceUrl: effectiveInterceptSource,
             ...(serverLocationState && { serverState: serverLocationState }),
           }
         : serverLocationState
