@@ -3,7 +3,7 @@ import test, { type Page, type Locator, expect } from "@playwright/test";
 /**
  * Wait for React hydration to complete and verify no hydration errors
  */
-export async function waitForHydration(page: Page, locator: string = "body") {
+export async function waitForHydration(page: Page) {
   const hydrationErrors: string[] = [];
 
   const consoleHandler = (msg: import("@playwright/test").ConsoleMessage) => {
@@ -40,13 +40,7 @@ export async function waitForHydration(page: Page, locator: string = "body") {
   try {
     await page.waitForLoadState("domcontentloaded");
     await page.waitForFunction(
-      (selector) => {
-        const el = document.querySelector(selector);
-        return (
-          el && Object.keys(el).some((key) => key.startsWith("__reactFiber"))
-        );
-      },
-      locator,
+      () => document.documentElement.hasAttribute("data-hydrated"),
       { timeout: 20000 },
     );
     await page.waitForTimeout(100);
