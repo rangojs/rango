@@ -58,14 +58,15 @@ These rules should stay consistent across code, tests, docs, and warnings:
 - Prerendered handlers may be frozen while loaders remain live.
 - Intercepts follow the same segment/revalidation rules as normal routes.
 
-## Phase 1: Lock Down Semantics
+## Phase 1: Lock Down Semantics — Complete
 
-Priority: highest
+Priority: highest | Status: **done**
 
 Canonical Phase 1 artifacts:
 
 - [Execution model](./execution-model.md)
 - [Semantic change checklist](./semantic-change-checklist.md)
+- This roadmap itself as the status anchor for later phases
 
 Deliverables:
 
@@ -90,11 +91,17 @@ Success criteria:
 - A reviewer can explain request flow from docs without reading the entire codebase.
 - Tests and comments use the same terminology.
 
-## Phase 2: Expand Invariant Tests
+## Phase 2: Expand Invariant Tests — Complete
 
-Priority: highest
+Priority: highest | Status: **done**
 
 Build matrix-style tests around semantic boundaries, not just features.
+
+Canonical Phase 2 artifacts:
+
+- `e2e/semantic-matrix.test.ts`
+- `docs/internal/test-quality-baseline.md`
+- The completed A1-A7 test quality stabilization work tracked from that baseline
 
 Required coverage:
 
@@ -123,11 +130,26 @@ Success criteria:
 - Behavior changes fail fast in a small number of semantic tests.
 - New features are added by extending a matrix, not inventing one-off tests.
 
-## Phase 3: Add Runtime Guardrails
+## Phase 3: Add Runtime Guardrails — Partial
 
-Priority: high
+Priority: high | Status: **partial**
 
 Add warnings and invariants where user intent is commonly misunderstood.
+
+Canonical Phase 3 artifacts:
+
+- [Runtime guardrails design](./runtime-guardrails-design.md)
+- W1 shipped: route middleware used as if it guards actions
+- W3 shipped: PE response/redirect guardrails
+- W5 shipped: redirect after `ctx.set()` warning
+
+Current status:
+
+- W1, W3, and W5 are implemented.
+- W2 was intentionally reframed as a docs/tests semantic contract rather than a
+  runtime warning.
+- W4 and W6 remain deferred because the signal-to-noise ratio is better served
+  by Phase 4 observability than more speculative warnings.
 
 Candidates:
 
@@ -147,11 +169,18 @@ Success criteria:
 
 - Common misconfigurations become visible during development before they ship.
 
-## Phase 4: Build Better Debugging
+## Phase 4: Build Better Debugging — Complete
 
-Priority: high
+Priority: high | Status: **done**
 
 The router needs first-class observability because complexity is structural.
+
+Canonical Phase 4 artifacts:
+
+- [Telemetry guide](../telemetry.md)
+- Request/revalidation trace support
+- `onError` correctness audit and integration coverage
+- Internal telemetry sink and OTel adapter/export
 
 Recommended tooling:
 
