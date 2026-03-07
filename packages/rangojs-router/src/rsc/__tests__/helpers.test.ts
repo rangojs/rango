@@ -416,6 +416,7 @@ describe("error boundary status + middleware header preservation", () => {
     let callbackSawStatus: number | undefined;
     ctx.onResponse((res) => {
       callbackSawStatus = res.status;
+      return res;
     });
 
     const response = runWithRequestContext(ctx, () =>

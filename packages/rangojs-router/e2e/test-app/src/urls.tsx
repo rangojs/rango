@@ -44,6 +44,7 @@ import { hashNavigationPatterns } from "./urls/hash-navigation.js";
 import { linkBehaviorPatterns } from "./urls/link-behavior.js";
 import { delayedBreadcrumbPatterns } from "./urls/delayed-breadcrumbs.js";
 import { manifestCacheTestPatterns } from "./urls/manifest-cache-test.js";
+import { authBoundaryPatterns } from "./urls/auth-boundary.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -553,6 +554,11 @@ export const urlpatterns = urls(
 
       // Middleware chain integration test (global mw + action + route mw + layout + loader)
       include("/mw-chain", mwChainPatterns, { name: "mwChain" }),
+
+      // Auth boundary test (route mw vs global mw, actions, response routes)
+      include("/auth-boundary", authBoundaryPatterns, {
+        name: "authBoundary",
+      }),
 
       // Revalidation contract fixture: consumer reruns without producer rerun,
       // so upstream ctx.set() data is missing on the action follow-up.

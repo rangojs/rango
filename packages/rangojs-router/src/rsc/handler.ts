@@ -340,7 +340,10 @@ export function createRSCHandler<
           createReverseFunction(getRequiredRouteMap()),
         );
 
-        if (url.searchParams.has("_rsc_partial")) {
+        if (
+          url.searchParams.has("_rsc_partial") ||
+          url.searchParams.has("_rsc_action")
+        ) {
           const intercepted = interceptRedirectForPartial(
             mwResponse,
             createRedirectFlightResponse,
@@ -484,7 +487,10 @@ export function createRSCHandler<
         routeReverse,
       );
 
-      if (url.searchParams.has("_rsc_partial")) {
+      if (
+        url.searchParams.has("_rsc_partial") ||
+        url.searchParams.has("_rsc_action")
+      ) {
         const intercepted = interceptRedirectForPartial(
           mwResponse,
           createRedirectFlightResponse,

@@ -220,6 +220,19 @@ export const router = createRouter<AppEnv>({
     cookies().set("chain-global", "gv", { path: "/", maxAge: 86400 });
     await next();
   })
+  // Auth boundary test: global middleware guards BOTH actions and renders.
+  // Rejects unauthenticated requests with a redirect and a marker cookie.
+  .use("/auth-boundary/global-protected/*", async (ctx, next) => {
+    if (!cookies().get("auth-boundary-token")?.value) {
+      cookies().set("auth-boundary-rejected-by", "global-mw", {
+        path: "/",
+        maxAge: 60,
+      });
+      return redirect("/auth-boundary?rejected=global-mw", 302);
+    }
+    ctx.header("X-Auth-Global-MW", "passed");
+    await next();
+  })
   // Pre-handler onResponse callback for response cache callback tests.
   // Registers a callback via getRequestContext().onResponse() which lands
   // in savedCallbacks (before the cache block), so it runs on every serve.
