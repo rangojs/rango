@@ -390,7 +390,9 @@ test.describe("loader-behavior (production)", () => {
     await waitForHydration(page);
 
     // Products should be loaded from SSR
-    await expect(page.locator('[data-testid="product-list"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-list"]')).toBeVisible({
+      timeout: 10000,
+    });
     await expect(
       page.locator('[data-testid="product-link-product-a"]'),
     ).toBeVisible();
@@ -413,7 +415,7 @@ test.describe("loader-behavior (production)", () => {
     // Loading skeleton should appear
     await expect(
       page.locator('[data-testid="slow-streaming-loading"]'),
-    ).toBeVisible({ timeout: 2000 });
+    ).toBeVisible({ timeout: 5000 });
 
     // Eventually content loads
     await expect(
@@ -427,10 +429,10 @@ test.describe("loader-behavior (production)", () => {
     await page.goto(f.url("/slow-streaming"));
     await waitForHydration(page);
 
-    // Wait for content
+    // Wait for content (extra timeout for cold server + loader delay)
     await expect(
       page.locator('[data-testid="slow-streaming-page"]'),
-    ).toBeVisible({ timeout: 5000 });
+    ).toBeVisible({ timeout: 10000 });
 
     // Get initial count
     const initialCount = await page

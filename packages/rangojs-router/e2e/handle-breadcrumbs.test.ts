@@ -25,7 +25,8 @@ async function expectBreadcrumbOrder(
  */
 
 function breadcrumbTests(mode: "dev" | "build") {
-  test.describe(`handle-breadcrumbs (${mode})`, () => {
+  const label = mode === "build" ? "production" : mode;
+  test.describe(`handle-breadcrumbs (${label})`, () => {
     const f = useFixture({
       root: "./e2e/test-app",
       mode,

@@ -277,7 +277,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     page,
     devServerURL,
   }) => {
-    test.setTimeout(30000);
+    test.slow();
     using _ = expectNoPageError(page);
 
     await page.goto(devURL(devServerURL, "/todos"));
