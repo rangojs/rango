@@ -22,6 +22,11 @@ export function HrefTestClient({ isDetailPage }: HrefTestClientProps) {
     ? localHref(`/client-item`)
     : localHref(`/from-client`);
 
+  // Trailing-slash mount normalization: href() must strip trailing slash
+  // from mount before joining to avoid double-slash paths (I1 regression).
+  const trailingSlashRoot = href("/" as any, "/articles/");
+  const trailingSlashChild = href("/blog" as any, "/articles/");
+
   return (
     <div data-testid="client-href-test">
       <h3>Resolved URLs (href + useMount)</h3>
@@ -34,6 +39,12 @@ export function HrefTestClient({ isDetailPage }: HrefTestClientProps) {
         </li>
         <li data-testid="client-absolute-blog">
           Absolute blog.index: <code>{absoluteBlog}</code>
+        </li>
+        <li data-testid="client-trailing-slash-root">
+          Trailing slash root: <code>{trailingSlashRoot}</code>
+        </li>
+        <li data-testid="client-trailing-slash-child">
+          Trailing slash child: <code>{trailingSlashChild}</code>
         </li>
       </ul>
 
