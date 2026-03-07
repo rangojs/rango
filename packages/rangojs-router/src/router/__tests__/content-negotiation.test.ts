@@ -51,6 +51,12 @@ describe("parseAcceptTypes", () => {
     expect(result[1]!.mime).toBe("application/json");
   });
 
+  it("normalizes mixed-case MIME types to lowercase", () => {
+    const result = parseAcceptTypes("Application/JSON, Text/HTML;q=0.9");
+    expect(result[0]!.mime).toBe("application/json");
+    expect(result[1]!.mime).toBe("text/html");
+  });
+
   it("handles multiple parameters beyond q", () => {
     const result = parseAcceptTypes("text/html;charset=utf-8;q=0.8");
     expect(result[0]!.q).toBe(0.8);
@@ -110,6 +116,18 @@ describe("pickNegotiateVariant", () => {
       htmlCandidate,
       textCandidate,
     ]);
+    expect(result).toBe(htmlCandidate);
+  });
+
+  it("matches mixed-case Accept against lowercase candidates", () => {
+    const accept = parseAcceptTypes("Application/JSON");
+    const result = pickNegotiateVariant(accept, [htmlCandidate, jsonCandidate]);
+    expect(result).toBe(jsonCandidate);
+  });
+
+  it("matches mixed-case type wildcard", () => {
+    const accept = parseAcceptTypes("Text/*");
+    const result = pickNegotiateVariant(accept, [jsonCandidate, htmlCandidate]);
     expect(result).toBe(htmlCandidate);
   });
 
