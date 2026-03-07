@@ -2,6 +2,7 @@ import { urls, cookies, Meta } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { RootLayout } from "./components/layouts/index.js";
 import { blogPatterns } from "./urls/blog.js";
+import { createFactoryHmrPatterns } from "./urls/factory-hmr.js";
 import { slowPatternsWithoutDetail } from "./urls/slow.js";
 import { errorsPatterns } from "./urls/errors.js";
 import {
@@ -441,6 +442,11 @@ export const urlpatterns = urls(
 
       // Blog patterns
       include("/blog", blogPatterns, { name: "blog" }),
+
+      // Factory-generated patterns (static parser can't resolve the function call)
+      include("/factory-hmr", createFactoryHmrPatterns(), {
+        name: "factoryHmr",
+      }),
 
       // Slow/streaming patterns (without slowProduct.detail which is inline above)
       include("/", slowPatternsWithoutDetail),

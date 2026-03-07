@@ -41,6 +41,8 @@ export const NamedRoutes = {
   "errors.index": "/errors",
   "errors.serverError": "/errors/server-error",
   "errors.streamingError": "/errors/streaming-error",
+  "factoryHmr.alpha": "/factory-hmr/alpha",
+  "factoryHmr.beta": "/factory-hmr/beta",
   fetchLoader: "/fetch-loader",
   handlePassthrough: "/handle-passthrough",
   handlePassthroughAsync: "/handle-passthrough-async",
