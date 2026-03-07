@@ -65,6 +65,8 @@ export type UpdateMode =
       /** Cached handle data for the target URL. When server returns empty diff and we're
        * rendering from cache, this is passed to the UI to restore breadcrumbs etc. */
       targetCacheHandleData?: Record<string, Record<string, unknown[]>>;
+      /** Source URL for intercept restore (popstate cache miss) */
+      interceptSourceUrl?: string;
     }
   | { type: "leave-intercept" }
   | { type: "stale-revalidation"; interceptSourceUrl?: string }
@@ -127,7 +129,9 @@ export function createPartialUpdater(
 
     // Derive interceptSourceUrl from modes that carry it
     const interceptSourceUrl =
-      mode.type === "stale-revalidation" || mode.type === "action"
+      mode.type === "stale-revalidation" ||
+      mode.type === "action" ||
+      mode.type === "navigate"
         ? mode.interceptSourceUrl
         : undefined;
 
@@ -394,9 +398,14 @@ export function createPartialUpdater(
       );
 
       // Track intercept context (only on navigation, not actions or stale revalidation)
+      // Use the authoritative source from mode/history state when restoring an
+      // intercept via popstate cache miss; fall back to the current URL for fresh
+      // intercept navigations.
+      const effectiveInterceptSource =
+        interceptSourceUrl || segmentState.currentUrl;
       if (mode.type !== "action" && mode.type !== "stale-revalidation") {
         if (isInterceptResponse) {
-          store.setInterceptSourceUrl(segmentState.currentUrl);
+          store.setInterceptSourceUrl(effectiveInterceptSource);
         } else {
           store.setInterceptSourceUrl(null);
         }
@@ -409,7 +418,7 @@ export function createPartialUpdater(
         ? {
             scroll: false,
             intercept: true,
-            interceptSourceUrl: segmentState.currentUrl,
+            interceptSourceUrl: effectiveInterceptSource,
             ...(serverLocationState && { serverState: serverLocationState }),
           }
         : serverLocationState
