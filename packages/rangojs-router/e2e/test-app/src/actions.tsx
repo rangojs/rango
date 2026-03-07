@@ -343,6 +343,24 @@ export async function mwChainFormAction(_formData: FormData): Promise<void> {
 }
 
 /**
+ * ALS scope test action. Reads the scope chain from request context to prove
+ * that route middleware does NOT wrap action execution (scope should only
+ * contain "global", not "route").
+ */
+export async function alsScopeAction(): Promise<void> {
+  const ctx = getRequestContext();
+  const { AlsGlobalMark, AlsRouteMark, AlsInterceptMark } =
+    await import("./urls/als-scope.js");
+  // Build scope snapshot from action's perspective
+  const parts: string[] = [];
+  if (ctx.get(AlsGlobalMark)) parts.push("global");
+  if (ctx.get(AlsRouteMark)) parts.push("route");
+  if (ctx.get(AlsInterceptMark)) parts.push("intercept");
+  // Record what the action saw for the revalidation render to display
+  ctx.set("alsActionProbe", parts.length > 0 ? parts.join(",") : "none");
+}
+
+/**
  * Auth boundary test action. Mutates state (sets a cookie) to prove the action
  * executed. Route middleware does NOT guard this — only global middleware does.
  */

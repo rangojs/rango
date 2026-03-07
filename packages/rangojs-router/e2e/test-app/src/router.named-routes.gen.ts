@@ -2,6 +2,8 @@
 export const NamedRoutes = {
   "actionRedirectRevalidation.index": "/action-redirect-revalidation",
   "actionRedirectRevalidation.login": "/action-redirect-revalidation/login",
+  "alsScope.detail": "/als-scope/detail/:slug",
+  "alsScope.index": "/als-scope",
   "apiShop.cart": "/api/shop/cart",
   "apiShop.cartItem": "/api/shop/cart/:itemId",
   "apiShop.catalog": "/api/shop/catalog",

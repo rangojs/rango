@@ -58,6 +58,9 @@ export interface AppVariables {
   chainAction?: string;
   chainRouteReport?: string;
   chainIntercept?: string;
+  // ALS scope propagation test variables
+  alsRequestId?: string;
+  alsActionProbe?: string;
 }
 
 export type AppEnv = AppBindings;
@@ -218,6 +221,15 @@ export const router = createRouter<AppEnv>({
     ctx.set("chainGlobal", "from-global");
     ctx.header("X-Chain-Global", "applied");
     cookies().set("chain-global", "gv", { path: "/", maxAge: 86400 });
+    await next();
+  })
+  // ALS scope propagation test: global middleware sets request-scoped bindings.
+  // alsRequestId is a unique per-request identifier; AlsGlobalMark proves
+  // that request-scoped bindings are visible to all downstream code.
+  .use("/als-scope/*", async (ctx, next) => {
+    const { AlsGlobalMark } = await import("./urls/als-scope.js");
+    ctx.set("alsRequestId", crypto.randomUUID());
+    ctx.set(AlsGlobalMark, "applied");
     await next();
   })
   // Auth boundary test: global middleware guards BOTH actions and renders.
