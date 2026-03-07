@@ -80,7 +80,10 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
   };
 }
 
-async function waitForReady(url: string, timeoutMs = 30000) {
+async function waitForReady(
+  url: string,
+  timeoutMs = process.env.CI ? 60000 : 30000,
+) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
