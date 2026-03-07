@@ -152,6 +152,21 @@ test.describe("Scoped Reverse Resolution", () => {
       ).not.toContainText("//");
     });
 
+    test("should see correct mount path inside a mounted parallel slot", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/href"));
+      await waitForHydration(page);
+
+      // The @sidebar parallel slot is inside include("/href", ...), so
+      // useMount() should return "/href" and useHref()("/sub") should
+      // resolve to "/href/sub".
+      await expect(testId(page, "parallel-mount-path")).toHaveText("/href");
+      await expect(testId(page, "parallel-local-href")).toHaveText("/href/sub");
+    });
+
     test("should maintain mount context after navigation", async ({ page }) => {
       using _ = expectNoPageError(page);
 
@@ -317,6 +332,10 @@ test.describe("Scoped Reverse Resolution (production)", () => {
       "/href/from-client",
     );
     await expect(testId(page, "client-absolute-blog")).toContainText("/blog");
+
+    // Mounted parallel slot: useMount/useHref inside @sidebar
+    await expect(testId(page, "parallel-mount-path")).toHaveText("/href");
+    await expect(testId(page, "parallel-local-href")).toHaveText("/href/sub");
 
     // Trailing-slash mount normalization (I1 regression)
     await expect(testId(page, "client-trailing-slash-root")).toContainText(

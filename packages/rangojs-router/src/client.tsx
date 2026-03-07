@@ -21,6 +21,7 @@ import {
   LoaderBoundary,
 } from "./route-content-wrapper.js";
 import { OutletProvider } from "./outlet-provider.js";
+import { MountContextProvider } from "./browser/react/mount-context.js";
 
 /**
  * Outlet component - renders child content in layouts
@@ -87,6 +88,8 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
       content = segment.component ?? null;
     }
 
+    let result: ReactNode;
+
     // If segment has a layout, wrap appropriately
     if (segment.layout) {
       // Check if this segment has loaders that need streaming
@@ -106,25 +109,23 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
           </LoaderBoundary>
         );
 
-        return (
+        result = (
           <OutletProvider content={loaderAwareContent} segment={segment}>
             {segment.layout}
           </OutletProvider>
         );
+      } else {
+        // No loaders - wrap in OutletProvider so layout can use <Outlet />
+        result = (
+          <OutletProvider content={content} segment={segment}>
+            {segment.layout}
+          </OutletProvider>
+        );
       }
-
-      // No loaders - wrap in OutletProvider so layout can use <Outlet />
-      return (
-        <OutletProvider content={content} segment={segment}>
-          {segment.layout}
-        </OutletProvider>
-      );
-    }
-
-    // No layout but has loaders - wrap content with LoaderBoundary for useLoader context
-    // This is common for intercept routes that use useLoader without a custom layout
-    if (segment.loaderDataPromise && segment.loaderIds) {
-      return (
+    } else if (segment.loaderDataPromise && segment.loaderIds) {
+      // No layout but has loaders - wrap content with LoaderBoundary for useLoader context
+      // This is common for intercept routes that use useLoader without a custom layout
+      result = (
         <LoaderBoundary
           loaderDataPromise={segment.loaderDataPromise}
           loaderIds={segment.loaderIds}
@@ -136,9 +137,20 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
           {content}
         </LoaderBoundary>
       );
+    } else {
+      result = content;
     }
 
-    return content;
+    // Wrap with MountContextProvider for include() scoped parallel/intercept slots
+    if (segment.mountPath) {
+      return (
+        <MountContextProvider value={segment.mountPath}>
+          {result}
+        </MountContextProvider>
+      );
+    }
+
+    return result;
   }
 
   // Default: render child content
@@ -202,6 +214,8 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
     content = segment.component ?? null;
   }
 
+  let result: ReactNode;
+
   // If segment has a layout, wrap appropriately
   if (segment.layout) {
     // Check if this segment has loaders that need streaming
@@ -220,25 +234,23 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
         </LoaderBoundary>
       );
 
-      return (
+      result = (
         <OutletProvider content={loaderAwareContent} segment={segment}>
           {segment.layout}
         </OutletProvider>
       );
+    } else {
+      // No loaders - wrap in OutletProvider so layout can use <Outlet />
+      result = (
+        <OutletProvider content={content} segment={segment}>
+          {segment.layout}
+        </OutletProvider>
+      );
     }
-
-    // No loaders - wrap in OutletProvider so layout can use <Outlet />
-    return (
-      <OutletProvider content={content} segment={segment}>
-        {segment.layout}
-      </OutletProvider>
-    );
-  }
-
-  // No layout but has loaders - wrap content with LoaderBoundary for useLoader context
-  // This is common for intercept routes that use useLoader without a custom layout
-  if (segment.loaderDataPromise && segment.loaderIds) {
-    return (
+  } else if (segment.loaderDataPromise && segment.loaderIds) {
+    // No layout but has loaders - wrap content with LoaderBoundary for useLoader context
+    // This is common for intercept routes that use useLoader without a custom layout
+    result = (
       <LoaderBoundary
         loaderDataPromise={segment.loaderDataPromise}
         loaderIds={segment.loaderIds}
@@ -250,9 +262,20 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
         {content}
       </LoaderBoundary>
     );
+  } else {
+    result = content;
   }
 
-  return content;
+  // Wrap with MountContextProvider for include() scoped parallel/intercept slots
+  if (segment.mountPath) {
+    return (
+      <MountContextProvider value={segment.mountPath}>
+        {result}
+      </MountContextProvider>
+    );
+  }
+
+  return result;
 }
 
 // OutletProvider is defined in outlet-provider.tsx to break a circular
