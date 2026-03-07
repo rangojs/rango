@@ -265,8 +265,9 @@ jobs:
           - project: production
             shard: 2
             shardTotal: 2
-          # HMR tests run in single job
+          # HMR tests run in separate jobs
           - project: hmr
+          - project: hmr-client
 
     steps:
       - uses: actions/checkout@v4
