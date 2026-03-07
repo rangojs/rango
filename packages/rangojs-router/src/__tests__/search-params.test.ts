@@ -353,6 +353,8 @@ type TestRouteMap = {
   readonly blogPost: "/blog/:slug";
   readonly userProfile: "/user/:userId/profile";
   readonly userSettings: "/user/:userId/settings/:tab?";
+  readonly localized: "/:locale(en|gb)/blog";
+  readonly localizedOptional: "/:locale(en|gb)?/blog/:slug";
   readonly search: {
     readonly path: "/search";
     readonly search: { q: "string"; page: "number?" };
@@ -398,6 +400,23 @@ describe("RouteParams (explicit route map)", () => {
   it("should return empty object for unknown route name", () => {
     type Params = RouteParams<"nonexistent", TestRouteMap>;
     expectTypeOf<Params>().toEqualTypeOf<{}>();
+  });
+
+  it("should extract constrained param as literal union", () => {
+    type Params = RouteParams<"localized", TestRouteMap>;
+    expectTypeOf<Params>().toEqualTypeOf<{ locale: "en" | "gb" }>();
+  });
+
+  it("should extract optional constrained param as optional literal union", () => {
+    type Params = RouteParams<"localizedOptional", TestRouteMap>;
+    expectTypeOf<Params>().toMatchTypeOf<{
+      locale?: "en" | "gb";
+      slug: string;
+    }>();
+    expectTypeOf<{
+      locale?: "en" | "gb";
+      slug: string;
+    }>().toMatchTypeOf<Params>();
   });
 });
 
