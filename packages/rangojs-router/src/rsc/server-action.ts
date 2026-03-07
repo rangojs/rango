@@ -257,6 +257,12 @@ export async function executeServerAction<TEnv>(
  *
  * Matches affected segments, builds the RSC payload, and returns the
  * Flight response. Called inside route middleware (same as a normal render).
+ *
+ * Invariant: the response payload MUST have isPartial: true. The client
+ * (server-action-bridge) rejects non-partial payloads because partial
+ * reconciliation requires matched/diff semantics that full renders don't
+ * provide. Redirects are the only non-partial outcome and are handled via
+ * X-RSC-Redirect headers before Flight deserialization.
  */
 export async function revalidateAfterAction<TEnv>(
   ctx: HandlerContext<TEnv>,
@@ -276,7 +282,8 @@ export async function revalidateAfterAction<TEnv>(
   );
 
   if (!matchResult) {
-    // Fall back to full render
+    // matchPartial returns null when the route is a redirect or the request
+    // is missing required headers (previousUrl). Check for redirect first.
     const fullMatch = await ctx.router.match(request, { env });
     setRequestContextParams(fullMatch.params, fullMatch.routeName);
 
@@ -287,38 +294,15 @@ export async function revalidateAfterAction<TEnv>(
       return createSimpleRedirectResponse(fullMatch.redirect);
     }
 
-    const serverTiming = fullMatch.serverTiming;
-
-    const payload: RscPayload = {
-      metadata: {
-        pathname: url.pathname,
-        segments: fullMatch.segments,
-        matched: fullMatch.matched,
-        diff: fullMatch.diff,
-        rootLayout: ctx.router.rootLayout,
-        handles: handleStore.stream(),
-        version: ctx.version,
-      },
-      returnValue,
-    };
-
-    attachLocationState(payload);
-
-    const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
-      temporaryReferences,
-    });
-
-    const headers: Record<string, string> = {
-      "content-type": "text/x-component;charset=utf-8",
-    };
-    if (serverTiming) {
-      headers["Server-Timing"] = serverTiming;
-    }
-
-    return createResponseWithMergedHeaders(rscStream, {
-      status: actionStatus,
-      headers,
-    });
+    // Non-redirect: this branch is only reachable when the action request
+    // is missing the X-RSC-Router-Client-Path header (defensive). The
+    // client requires isPartial for action responses, so producing a full
+    // payload here would be rejected. Return 500 instead.
+    throw new Error(
+      `[RSC] matchPartial returned null for a non-redirect route ` +
+        `during action revalidation (${url.pathname}). This indicates ` +
+        `a malformed action request (missing X-RSC-Router-Client-Path header).`,
+    );
   }
 
   // Return updated segments
