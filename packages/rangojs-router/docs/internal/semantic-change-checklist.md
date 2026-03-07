@@ -48,6 +48,13 @@ revalidation, intercepts, prerender, or request context propagation.
 - Does passthrough runtime behavior still obey partial revalidation rules?
 - Are loader liveness/caching defaults unchanged or explicitly documented?
 
+## Handler Loading
+
+- Does this change affect supported handler shapes (`RouteEntry.handler`)?
+- Are `manifest.ts` and `debug-manifest.ts` still enforcing the same validation?
+- Is the type definition in `types/route-entry.ts` still accurate?
+- Are type-level and unit-level handler contract tests updated?
+
 ## Security
 
 - Could this change weaken action auth/authorization expectations?
