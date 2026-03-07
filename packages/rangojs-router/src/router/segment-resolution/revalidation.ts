@@ -35,6 +35,46 @@ import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
 
 // ---------------------------------------------------------------------------
+// Telemetry helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Attach a fire-and-forget rejection observer to a streamed handler promise.
+ * Silently no-ops when called outside RouterContext (e.g. in unit tests).
+ */
+function observeStreamedHandler(
+  promise: Promise<ReactNode>,
+  segmentId: string,
+  segmentType: string,
+  pathname?: string,
+  routeKey?: string,
+  params?: Record<string, string>,
+): void {
+  let routerCtx;
+  try {
+    routerCtx = getRouterContext();
+  } catch {
+    return;
+  }
+  if (!routerCtx?.telemetry) return;
+  const sink = resolveSink(routerCtx.telemetry);
+  promise.catch((err: unknown) => {
+    const errorObj = err instanceof Error ? err : new Error(String(err));
+    safeEmit(sink, {
+      type: "handler.error",
+      timestamp: performance.now(),
+      segmentId,
+      segmentType,
+      error: errorObj,
+      handledByBoundary: true,
+      pathname,
+      routeKey,
+      params,
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Revalidation telemetry helper
 // ---------------------------------------------------------------------------
 
@@ -372,9 +412,20 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         if (!shouldResolve) {
           component = null;
         } else if (hasLoadingFallback) {
-          component = (
+          const result = (
             typeof handler === "function" ? handler(context) : handler
           ) as ReactNode;
+          if (result instanceof Promise) {
+            observeStreamedHandler(
+              result,
+              parallelId,
+              "parallel",
+              context.pathname,
+              routeKey,
+              params,
+            );
+          }
+          component = result;
         } else {
           component =
             typeof handler === "function" ? await handler(context) : handler;
@@ -515,22 +566,14 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         const result = handleHandlerResult(routeEntry.handler(context));
         if (result instanceof Promise) {
           const tracked = deps.trackHandler(result);
-          const routerCtx = getRouterContext();
-          if (routerCtx?.telemetry) {
-            const sink = resolveSink(routerCtx.telemetry);
-            tracked.catch((err: unknown) => {
-              const errorObj =
-                err instanceof Error ? err : new Error(String(err));
-              safeEmit(sink, {
-                type: "handler.error",
-                timestamp: performance.now(),
-                segmentId: entry.shortCode,
-                segmentType: entry.type,
-                error: errorObj,
-                handledByBoundary: true,
-              });
-            });
-          }
+          observeStreamedHandler(
+            tracked,
+            entry.shortCode,
+            entry.type,
+            context.pathname,
+            routeKey,
+            params,
+          );
           return { content: tracked };
         }
         return { content: result };
@@ -942,9 +985,20 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         if (!shouldResolve) {
           component = null;
         } else if (hasLoadingFallback) {
-          component = (
+          const result = (
             typeof handler === "function" ? handler(context) : handler
           ) as ReactNode;
+          if (result instanceof Promise) {
+            observeStreamedHandler(
+              result,
+              parallelId,
+              "parallel",
+              context.pathname,
+              routeKey,
+              params,
+            );
+          }
+          component = result;
         } else {
           component =
             typeof handler === "function" ? await handler(context) : handler;

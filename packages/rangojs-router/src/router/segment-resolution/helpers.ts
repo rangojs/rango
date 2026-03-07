@@ -163,6 +163,9 @@ export function catchSegmentError<TEnv>(
         segmentType: entry.type,
         error: errorObj,
         handledByBoundary,
+        pathname,
+        routeKey: report.routeKey,
+        params,
       });
     }
   };

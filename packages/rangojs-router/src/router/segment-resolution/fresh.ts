@@ -26,6 +26,42 @@ import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
 
 // ---------------------------------------------------------------------------
+// Streamed handler telemetry
+// ---------------------------------------------------------------------------
+
+/**
+ * Attach a fire-and-forget rejection observer to a streamed handler promise.
+ * React catches the actual error via its error boundary; this only emits
+ * the handler.error telemetry event.
+ */
+function observeStreamedHandler(
+  promise: Promise<ReactNode>,
+  segmentId: string,
+  segmentType: string,
+  pathname?: string,
+  routeKey?: string,
+  params?: Record<string, string>,
+): void {
+  const routerCtx = getRouterContext();
+  if (!routerCtx?.telemetry) return;
+  const sink = resolveSink(routerCtx.telemetry);
+  promise.catch((err: unknown) => {
+    const errorObj = err instanceof Error ? err : new Error(String(err));
+    safeEmit(sink, {
+      type: "handler.error",
+      timestamp: performance.now(),
+      segmentId,
+      segmentType,
+      error: errorObj,
+      handledByBoundary: true,
+      pathname,
+      routeKey,
+      params,
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Fresh path (full match, no revalidation)
 // ---------------------------------------------------------------------------
 
@@ -200,25 +236,14 @@ export async function resolveSegment<TEnv>(
         const result = handleHandlerResult(entry.handler(context));
         if (result instanceof Promise) {
           const tracked = deps.trackHandler(result);
-          // Observe streamed handler rejections for telemetry (fire-and-forget).
-          // React catches the actual error via its error boundary; this only
-          // emits the telemetry event.
-          const routerCtx = getRouterContext();
-          if (routerCtx?.telemetry) {
-            const sink = resolveSink(routerCtx.telemetry);
-            tracked.catch((err: unknown) => {
-              const errorObj =
-                err instanceof Error ? err : new Error(String(err));
-              safeEmit(sink, {
-                type: "handler.error",
-                timestamp: performance.now(),
-                segmentId: entry.shortCode,
-                segmentType: entry.type,
-                error: errorObj,
-                handledByBoundary: true,
-              });
-            });
-          }
+          observeStreamedHandler(
+            tracked,
+            entry.shortCode,
+            entry.type,
+            context.pathname,
+            routeKey,
+            params,
+          );
           component = tracked;
         } else {
           component = result;
@@ -373,6 +398,16 @@ export async function resolveParallelEntry<TEnv>(
       if (hasLoadingFallback) {
         const result =
           typeof handler === "function" ? handler(context) : handler;
+        if (result instanceof Promise) {
+          observeStreamedHandler(
+            result,
+            `${parentShortCode}.${slot}`,
+            "parallel",
+            context.pathname,
+            undefined,
+            params,
+          );
+        }
         component = result as ReactNode;
       } else {
         component =

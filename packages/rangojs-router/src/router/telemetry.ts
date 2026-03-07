@@ -84,6 +84,9 @@ export interface HandlerErrorEvent extends BaseEvent {
   segmentType?: string;
   error: Error;
   handledByBoundary: boolean;
+  pathname?: string;
+  routeKey?: string;
+  params?: Record<string, string>;
 }
 
 export interface CacheDecisionEvent extends BaseEvent {
@@ -206,7 +209,7 @@ export function createConsoleSink(): TelemetrySink {
           break;
         case "handler.error":
           console.log(
-            `[telemetry] ${event.type} segment=${event.segmentId ?? "unknown"} boundary=${event.handledByBoundary}`,
+            `[telemetry] ${event.type} segment=${event.segmentId ?? "unknown"} boundary=${event.handledByBoundary}${event.pathname ? ` ${event.pathname}` : ""}`,
             event.error.message,
           );
           break;
