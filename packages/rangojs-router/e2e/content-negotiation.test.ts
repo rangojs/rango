@@ -178,4 +178,130 @@ test.describe("content-negotiation", () => {
       expect(json.headers()["vary"]).toContain("Accept");
     });
   });
+
+  test.describe("variant-specific middleware", () => {
+    test("Accept: application/json runs JSON variant middleware", async ({
+      request,
+    }) => {
+      const res = await request.get(f.url("/negotiate-mw-test"), {
+        headers: { Accept: "application/json" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("application/json");
+      const body = await res.json();
+      expect(body.data.source).toBe("json");
+      expect(res.headers()["x-variant-mw"]).toBe("json");
+    });
+
+    test("Accept: text/html runs RSC variant middleware", async ({
+      request,
+    }) => {
+      const res = await request.get(f.url("/negotiate-mw-test"), {
+        headers: { Accept: "text/html" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/html");
+      expect(res.headers()["x-variant-mw"]).toBe("html");
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Production mode
+// ---------------------------------------------------------------------------
+
+const fProd = useFixture({ root: "./e2e/test-app", mode: "build" });
+
+test.describe("content-negotiation (production)", () => {
+  test.describe("client order as tiebreaker (equal q-values)", () => {
+    test("Accept: text/markdown,text/html,*/* prefers markdown (listed first)", async ({
+      request,
+    }) => {
+      const res = await request.get(fProd.url("/negotiate-test"), {
+        headers: { Accept: "text/markdown, text/html, */*" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/markdown");
+      const body = await res.text();
+      expect(body).toContain("# Negotiate Test MD");
+    });
+
+    test("Accept: application/json,text/html prefers JSON (listed first)", async ({
+      request,
+    }) => {
+      const res = await request.get(fProd.url("/negotiate-test"), {
+        headers: { Accept: "application/json, text/html" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("application/json");
+      const body = await res.json();
+      expect(body.data.source).toBe("json");
+    });
+  });
+
+  test.describe("wildcard fallback follows definition order", () => {
+    test("Accept: */* returns RSC when RSC is defined first", async ({
+      request,
+    }) => {
+      const res = await request.get(fProd.url("/negotiate-test"), {
+        headers: { Accept: "*/*" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/x-component");
+    });
+
+    test("Accept: */* returns JSON when JSON is defined first", async ({
+      request,
+    }) => {
+      const res = await request.get(fProd.url("/negotiate-test-json-first"), {
+        headers: { Accept: "*/*" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("application/json");
+      const body = await res.json();
+      expect(body.data.source).toBe("json");
+    });
+  });
+
+  test.describe("Vary header", () => {
+    test("all negotiated responses include Vary: Accept", async ({
+      request,
+    }) => {
+      const html = await request.get(fProd.url("/negotiate-test"), {
+        headers: { Accept: "text/html" },
+      });
+      expect(html.headers()["vary"]).toContain("Accept");
+
+      const json = await request.get(fProd.url("/negotiate-test"), {
+        headers: { Accept: "application/json" },
+      });
+      expect(json.headers()["vary"]).toContain("Accept");
+    });
+  });
+
+  test.describe("variant-specific middleware", () => {
+    test("Accept: application/json runs JSON variant middleware", async ({
+      request,
+    }) => {
+      const res = await request.get(fProd.url("/negotiate-mw-test"), {
+        headers: { Accept: "application/json" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("application/json");
+      const body = await res.json();
+      expect(body.data.source).toBe("json");
+      expect(res.headers()["x-variant-mw"]).toBe("json");
+    });
+
+    test("Accept: text/html runs RSC variant middleware", async ({
+      request,
+    }) => {
+      const res = await request.get(fProd.url("/negotiate-mw-test"), {
+        headers: { Accept: "text/html" },
+      });
+      expect(res.status()).toBe(200);
+      expect(res.headers()["content-type"]).toContain("text/html");
+      expect(res.headers()["x-variant-mw"]).toBe("html");
+    });
+  });
 });
