@@ -127,6 +127,31 @@ test.describe("Scoped Reverse Resolution", () => {
       await expect(clientAbsoluteBlog).toContainText("/blog");
     });
 
+    test("should normalize trailing-slash mount without double slashes", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/href"));
+      await waitForHydration(page);
+
+      // href("/", "/articles/") should produce "/articles/" not "/articles//"
+      await expect(testId(page, "client-trailing-slash-root")).toContainText(
+        "/articles/",
+      );
+      await expect(
+        testId(page, "client-trailing-slash-root"),
+      ).not.toContainText("//");
+
+      // href("/blog", "/articles/") should produce "/articles/blog" not "/articles//blog"
+      await expect(testId(page, "client-trailing-slash-child")).toContainText(
+        "/articles/blog",
+      );
+      await expect(
+        testId(page, "client-trailing-slash-child"),
+      ).not.toContainText("//");
+    });
+
     test("should maintain mount context after navigation", async ({ page }) => {
       using _ = expectNoPageError(page);
 
@@ -292,6 +317,20 @@ test.describe("Scoped Reverse Resolution (production)", () => {
       "/href/from-client",
     );
     await expect(testId(page, "client-absolute-blog")).toContainText("/blog");
+
+    // Trailing-slash mount normalization (I1 regression)
+    await expect(testId(page, "client-trailing-slash-root")).toContainText(
+      "/articles/",
+    );
+    await expect(testId(page, "client-trailing-slash-root")).not.toContainText(
+      "//",
+    );
+    await expect(testId(page, "client-trailing-slash-child")).toContainText(
+      "/articles/blog",
+    );
+    await expect(testId(page, "client-trailing-slash-child")).not.toContainText(
+      "//",
+    );
   });
 
   test("should navigate correctly in production build", async ({ page }) => {
