@@ -5,7 +5,10 @@
  * W3: PE action redirect / Response handling.
  */
 
-import { createResponseWithMergedHeaders } from "./helpers.js";
+import {
+  createResponseWithMergedHeaders,
+  carryOverRedirectHeaders,
+} from "./helpers.js";
 
 // W1 -----------------------------------------------------------------------
 
@@ -45,10 +48,12 @@ export function extractRedirectResponse(value: unknown): Response | null {
   if (!(value instanceof Response)) return null;
   const location = value.headers.get("Location");
   if (value.status >= 300 && value.status < 400 && location) {
-    return createResponseWithMergedHeaders(null, {
+    const redirect = createResponseWithMergedHeaders(null, {
       status: value.status,
       headers: { Location: location },
     });
+    carryOverRedirectHeaders(value, redirect);
+    return redirect;
   }
   return null;
 }
