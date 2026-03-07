@@ -99,6 +99,9 @@ interface RSCRouterOptions<TEnv> {
   // Theme configuration
   theme?: ThemeConfig | true;
 
+  // Telemetry sink for structured lifecycle events
+  telemetry?: TelemetrySink;
+
   // Connection warmup (default: true)
   warmup?: boolean;
 
@@ -355,3 +358,46 @@ const router = createRouter({
 
 The warmup request is relative to the current page path, so it works correctly
 with subpath deployments (reverse proxy, base path).
+
+## Telemetry
+
+The router emits structured lifecycle events through a pluggable telemetry sink.
+Zero overhead when not configured.
+
+```typescript
+// Console sink for development
+import { createRouter, createConsoleSink } from "@rangojs/router";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  telemetry: createConsoleSink(),
+});
+```
+
+```typescript
+// OpenTelemetry for production
+import { createRouter, createOTelSink } from "@rangojs/router";
+import { trace } from "@opentelemetry/api";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  telemetry: createOTelSink(trace.getTracer("my-app")),
+});
+```
+
+```typescript
+// Custom sink
+const router = createRouter({
+  telemetry: {
+    emit(event) {
+      // Send to any observability backend
+      myTracer.record(event);
+    },
+  },
+});
+```
+
+Events emitted: `request.start/end/error`, `loader.start/end/error`,
+`handler.error`, `cache.decision`, `revalidation.decision`.

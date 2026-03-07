@@ -203,6 +203,15 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 - Pre-render manifest generation, intercept pre-render artifacts
 - Runtime prerender cache lookup flow
 
+### Telemetry and Observability
+
+- `telemetry` router option — pluggable `TelemetrySink` for structured lifecycle events
+- `createConsoleSink()` — development logger for all 9 event types
+- `createOTelSink(tracer)` — OpenTelemetry adapter mapping events to `rango.*` spans
+- Event types: `request.start/end/error`, `loader.start/end/error`, `handler.error`, `cache.decision`, `revalidation.decision`
+- Zero overhead when no sink is configured (no-op singleton)
+- Structurally typed OTel interfaces (`OTelTracer`, `OTelSpan`) — no `@opentelemetry/api` dependency
+
 ### Dev and HMR
 
 `rango()` plugin discovery, named-route generation, manifest virtual modules, parser/runtime route-type fallback, lazy loader id injection, duplicate plugin detection.
