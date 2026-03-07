@@ -171,8 +171,12 @@ export type Handler<
  * - Middleware variables (var.user, var.permissions)
  * - Getter/setter for variables (get('user'), set('user', ...))
  *
- * **Note:** System parameters (query params starting with `_rsc`) are automatically
- * filtered from `url`, `searchParams`, and `request.url` for cleaner access.
+ * **URL contract:**
+ * - `ctx.url` and `ctx.searchParams` are cleaned: system params (`_rsc*`) are
+ *   stripped so userland code sees only application query params.
+ * - `ctx.request` is the original transport request with all params intact.
+ *   Use `ctx.url`/`ctx.searchParams` for application logic, and `ctx.request`
+ *   only when you need raw transport details (e.g. headers, method, body).
  *
  * @example
  * ```typescript
@@ -184,6 +188,7 @@ export type Handler<
  *   ctx.set('user', {...}) // Setter
  *   ctx.url                // Clean URL (no _rsc* params)
  *   ctx.searchParams       // Clean params (no _rsc* params)
+ *   ctx.request            // Raw transport request (original URL intact)
  * }
  * ```
  */
@@ -207,8 +212,10 @@ export type HandlerContext<
    */
   build: boolean;
   /**
-   * The incoming Request object.
-   * System params (`_rsc*`) are filtered from the URL for cleaner access.
+   * The original incoming Request object (transport URL intact).
+   * Use `ctx.url` / `ctx.searchParams` for application logic — those have
+   * internal `_rsc*` params stripped. `ctx.request` preserves the raw URL
+   * for cases where you need original headers, method, or body.
    */
   request: Request;
   /**
@@ -420,8 +427,6 @@ export type InternalHandlerContext<
   TEnv = DefaultEnv,
   TSearch extends SearchSchema = {},
 > = HandlerContext<TParams, TEnv, TSearch> & {
-  /** Raw request with all system parameters intact. */
-  _originalRequest: Request;
   /** Current segment ID for handle data attribution. */
   _currentSegmentId?: string;
   /** Response type tag (json, text, html, etc.) for cache key differentiation. */

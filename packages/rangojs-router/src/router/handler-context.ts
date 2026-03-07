@@ -179,7 +179,6 @@ export function createHandlerContext<TEnv>(
     set: ((keyOrVar: any, value: any) => {
       contextSet(variables, keyOrVar, value);
     }) as HandlerContext<any, TEnv>["set"],
-    _originalRequest: request, // Raw request for advanced use
     res: stubResponse, // Stub response for setting headers
     headers: stubResponse.headers, // Shorthand for res.headers
     // Placeholder use() - will be replaced with actual implementation during request
@@ -251,9 +250,6 @@ export function createPrerenderContext<TEnv>(
     set: ((keyOrVar: any, value: any) => {
       contextSet(variables, keyOrVar, value);
     }) as any,
-    get _originalRequest(): Request {
-      return throwUnavailable("request");
-    },
     get res(): Response {
       return throwUnavailable("res");
     },
@@ -322,9 +318,6 @@ export function createStaticContext<TEnv>(
     set: ((keyOrVar: any, value: any) => {
       contextSet(variables, keyOrVar, value);
     }) as any,
-    get _originalRequest(): Request {
-      return throwUnavailable("request");
-    },
     get res(): Response {
       return throwUnavailable("res");
     },
