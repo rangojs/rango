@@ -53,10 +53,13 @@ export async function buildDebugManifest<TEnv = any>(
           } else if (typeof load === "function") {
             // Promise<fn>
             load(helpers);
+          } else {
+            // Reject unsupported async handler results (same policy as manifest.ts)
+            throw new Error(
+              `[@rangojs/router] Unsupported async handler result (${typeof load}). ` +
+                `Lazy route handlers must resolve to a function or { default: fn }.`,
+            );
           }
-          // Promise<Array> — h.route() calls during async execution register
-          // routes as side effects via the ALS context (runWithStore preserves
-          // the Store across awaits), so no explicit handling needed.
         }
       },
     );
