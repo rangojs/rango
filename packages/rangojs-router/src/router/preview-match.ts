@@ -122,9 +122,15 @@ export async function previewMatch<TEnv = any>(
               undefined,
               false,
             );
+            // Recompute middleware from the selected variant's entry tree
+            // since different variants can have different middleware chains.
+            const variantMiddleware = collectRouteMiddleware(
+              traverseBack(negotiateEntry),
+              matched.params,
+            );
             return {
               routeMiddleware:
-                routeMiddleware.length > 0 ? routeMiddleware : undefined,
+                variantMiddleware.length > 0 ? variantMiddleware : undefined,
               responseType: variant.responseType,
               handler:
                 negotiateEntry.type === "route"
