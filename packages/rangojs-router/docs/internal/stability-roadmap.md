@@ -183,6 +183,10 @@ Priority: high
 
 Security review has to track composition boundaries, not just endpoints.
 
+Canonical Phase 5 artifact:
+
+- [Security checklist](./security-checklist.md)
+
 Focus areas:
 
 - action authentication and authorization
@@ -199,6 +203,11 @@ Recommended practice:
 
 - Maintain a lightweight security checklist for every new execution feature.
 - Add regression tests for every fixed security bug.
+- Start with the highest-signal regressions first:
+  - request-context isolation across concurrent async requests
+  - redirect + cookie/header preservation
+  - auth boundary and middleware/handler interaction
+  - content-negotiation and response/document ownership edges
 
 Success criteria:
 
