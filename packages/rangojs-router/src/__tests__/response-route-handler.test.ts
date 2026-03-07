@@ -10,6 +10,7 @@ import {
   runWithRequestContext,
 } from "../server/request-context.js";
 import { handleResponseRoute } from "../rsc/response-route-handler.js";
+import { createCacheScope } from "../cache/cache-scope.js";
 import type { HandlerContext } from "../rsc/handler-context.js";
 import type { ResponseRouteMatch } from "../rsc/response-route-handler.js";
 
@@ -213,6 +214,163 @@ describe("response-route-handler", () => {
       expect(reloadUrl).not.toContain("_rsc_segments");
       // Handler should not have been called
       expect(preview.handler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("response cache condition()", () => {
+    function createMockStore() {
+      return {
+        get: vi.fn(),
+        set: vi.fn(),
+        getResponse: vi.fn(),
+        putResponse: vi.fn(),
+      };
+    }
+
+    function createMockCacheScope(
+      condition: ((ctx: any) => boolean) | undefined,
+      store: ReturnType<typeof createMockStore>,
+    ) {
+      return {
+        enabled: true,
+        config: {
+          ttl: 60,
+          condition,
+        },
+        ttl: 60,
+        swr: 0,
+        getStore: () => store,
+      };
+    }
+
+    it("condition() === false skips cache read", async () => {
+      const store = createMockStore();
+      store.getResponse.mockResolvedValue({
+        response: new Response(JSON.stringify({ data: "cached" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+        shouldRevalidate: false,
+      });
+
+      const scope = createMockCacheScope(() => false, store);
+      vi.mocked(createCacheScope).mockReturnValue(scope as any);
+
+      const handlerCtx = createMockHandlerCtx();
+      const url = new URL("https://example.com/api/data");
+      const request = new Request(url);
+      const ctx = createRequestContext({
+        env: {},
+        request,
+        url,
+        variables: {},
+      });
+
+      const handler = vi.fn(() => "fresh");
+      const preview: ResponseRouteMatch = {
+        responseType: "json",
+        handler,
+        params: {},
+        manifestEntry: { cache: { options: { ttl: 60 } }, parent: null } as any,
+      };
+
+      const response = await runWithRequestContext(ctx, () =>
+        handleResponseRoute(handlerCtx, preview, request, {}, url, {}),
+      );
+
+      // store.getResponse should NOT be called — condition skipped cache
+      expect(store.getResponse).not.toHaveBeenCalled();
+      // Handler should have been called directly
+      expect(handler).toHaveBeenCalled();
+      const body = await response.json();
+      expect(body.data).toBe("fresh");
+    });
+
+    it("condition() === false skips cache write", async () => {
+      const store = createMockStore();
+      const scope = createMockCacheScope(() => false, store);
+      vi.mocked(createCacheScope).mockReturnValue(scope as any);
+
+      const handlerCtx = createMockHandlerCtx();
+      const url = new URL("https://example.com/api/data");
+      const request = new Request(url);
+      const waitUntilFns: Array<() => Promise<void>> = [];
+      const ctx = createRequestContext({
+        env: {},
+        request,
+        url,
+        variables: {},
+      });
+      ctx.waitUntil = (fn) => {
+        waitUntilFns.push(fn as any);
+      };
+
+      const preview: ResponseRouteMatch = {
+        responseType: "json",
+        handler: () => ({ data: "no-cache" }),
+        params: {},
+        manifestEntry: { cache: { options: { ttl: 60 } }, parent: null } as any,
+      };
+
+      await runWithRequestContext(ctx, () =>
+        handleResponseRoute(handlerCtx, preview, request, {}, url, {}),
+      );
+
+      // Flush any waitUntil callbacks
+      for (const fn of waitUntilFns) {
+        await fn();
+      }
+
+      // store.putResponse should NOT be called — condition skipped cache
+      expect(store.putResponse).not.toHaveBeenCalled();
+    });
+
+    it("condition() === true uses cache normally", async () => {
+      const cachedResponse = new Response(
+        JSON.stringify({ data: "cached-value" }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json;charset=utf-8" },
+        },
+      );
+
+      const store = createMockStore();
+      store.getResponse.mockResolvedValue({
+        response: cachedResponse,
+        shouldRevalidate: false,
+      });
+
+      const scope = createMockCacheScope(() => true, store);
+      vi.mocked(createCacheScope).mockReturnValue(scope as any);
+
+      const handlerCtx = createMockHandlerCtx();
+      const url = new URL("https://example.com/api/data");
+      const request = new Request(url);
+      const ctx = createRequestContext({
+        env: {},
+        request,
+        url,
+        variables: {},
+      });
+
+      const handler = vi.fn(() => ({ data: "fresh" }));
+      const preview: ResponseRouteMatch = {
+        responseType: "json",
+        handler,
+        params: {},
+        manifestEntry: { cache: { options: { ttl: 60 } }, parent: null } as any,
+      };
+
+      const response = await runWithRequestContext(ctx, () =>
+        handleResponseRoute(handlerCtx, preview, request, {}, url, {}),
+      );
+
+      // store.getResponse SHOULD be called — condition passed
+      expect(store.getResponse).toHaveBeenCalled();
+      // Handler should NOT be called — cache hit
+      expect(handler).not.toHaveBeenCalled();
+      const body = await response.json();
+      expect(body.data).toBe("cached-value");
     });
   });
 });

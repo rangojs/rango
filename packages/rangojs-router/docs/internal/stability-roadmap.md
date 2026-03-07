@@ -177,37 +177,42 @@ Success criteria:
 
 - Complex request behavior can be explained from a debug trace without stepping through source.
 
-## Phase 5: Security Hardening
+## Phase 5: Security Hardening — Complete
 
-Priority: high
+Priority: high | Status: **done**
 
 Security review has to track composition boundaries, not just endpoints.
 
-Canonical Phase 5 artifact:
+Canonical Phase 5 artifacts:
 
-- [Security checklist](./security-checklist.md)
+- [Security checklist](./security-checklist.md) (updated with regression
+  coverage from all Phase 5 slices)
+- `e2e/auth-boundary.test.ts` — auth boundary correctness (PR #343)
+- `e2e/content-ownership.test.ts` — content negotiation edges (PR #344)
+- `e2e/cache-isolation.test.ts` — cache isolation (PR #345)
+- Unit tests in `response-route-handler.test.ts` for condition() (PR #345)
 
-Focus areas:
+Focus areas covered:
 
-- action authentication and authorization
-- global vs route middleware expectations
-- redirect validation
-- cookie/header propagation
-- request-context isolation across async boundaries
-- PE form handling parity with JS action flow
-- cache leakage across users or hosts
-- host routing boundaries
-- response route ownership and escape hatches
+- [x] action authentication and authorization
+- [x] global vs route middleware expectations
+- [x] redirect validation (action redirect re-execution bug found and fixed)
+- [x] cookie/header propagation
+- [x] request-context isolation across async boundaries
+- [x] PE form handling parity with JS action flow
+- [x] cache leakage across users and query variants
+- [x] response route ownership and escape hatches
+- [x] content-negotiation and response/document pipeline edges
+- [ ] host routing boundaries (deferred — no host-aware keying yet)
 
-Recommended practice:
+Bugs found and fixed:
 
-- Maintain a lightweight security checklist for every new execution feature.
-- Add regression tests for every fixed security bug.
-- Start with the highest-signal regressions first:
-  - request-context isolation across concurrent async requests
-  - redirect + cookie/header preservation
-  - auth boundary and middleware/handler interaction
-  - content-negotiation and response/document ownership edges
+1. **Action redirect re-execution** (PR #343): middleware redirects on action
+   requests caused `fetch()` to follow the 302 and re-execute the action at the
+   redirect target. Fixed by intercepting 3xx redirects for `_rsc_action`.
+2. **Response cache condition() ignored** (PR #345): `condition()` callbacks
+   were only checked in document/segment caching, not in the response route
+   cache path. Fixed by adding condition evaluation to `response-route-handler.ts`.
 
 Success criteria:
 
