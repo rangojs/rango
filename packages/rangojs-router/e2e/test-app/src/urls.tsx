@@ -45,6 +45,7 @@ import { linkBehaviorPatterns } from "./urls/link-behavior.js";
 import { delayedBreadcrumbPatterns } from "./urls/delayed-breadcrumbs.js";
 import { manifestCacheTestPatterns } from "./urls/manifest-cache-test.js";
 import { authBoundaryPatterns } from "./urls/auth-boundary.js";
+import { contentOwnershipPatterns } from "./urls/content-ownership.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -558,6 +559,11 @@ export const urlpatterns = urls(
       // Auth boundary test (route mw vs global mw, actions, response routes)
       include("/auth-boundary", authBoundaryPatterns, {
         name: "authBoundary",
+      }),
+
+      // Content ownership / negotiation edge cases
+      include("/content-ownership", contentOwnershipPatterns, {
+        name: "contentOwnership",
       }),
 
       // Revalidation contract fixture: consumer reruns without producer rerun,
