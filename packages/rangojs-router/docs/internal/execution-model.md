@@ -70,6 +70,56 @@ global middleware
 - Route-level `cache()` does not cache loader segments; loaders remain live.
 - Prerendered handlers can be frozen while loaders remain live.
 
+## Handler Loading Contract
+
+Route handlers support two loading strategies: **sync** (default) and **lazy**
+(deferred to first matching request).
+
+### Supported handler shapes on `RouteEntry`
+
+| Shape                            | When produced                  | Example                                 |
+| -------------------------------- | ------------------------------ | --------------------------------------- |
+| `() => Array`                    | `urls()` — sync DSL evaluation | `urls(({ path }) => [path("/", Page)])` |
+| `() => Promise<{ default: fn }>` | Dynamic import wrapper         | `{ handler: () => import('./urls') }`   |
+| `() => Promise<fn>`              | Lazy function wrapper          | `{ handler: () => loadUrls() }`         |
+
+**Unsupported**: `() => Promise<Array>` (async route-tree construction).
+Rejected at runtime with a diagnostic error. TypeScript structural compatibility
+cannot catch this statically, so a runtime guard is essential.
+
+### Lazy includes vs async handlers
+
+These are two distinct code paths in `loadManifest()`:
+
+1. **Lazy includes** (`entry.lazy && entry.lazyPatterns` branch): All `include()`
+   calls are lazy by default — patterns are evaluated on first matching request
+   via `evaluateLazyEntry()`. This is the primary user-facing lazy-loading
+   mechanism, exercised by every included route in the e2e test suite.
+
+2. **Async handler results** (the `result instanceof Promise` branch): Handles
+   `Promise<{ default: fn }>` and `Promise<fn>` shapes on `RouteEntry.handler`.
+   This is an **internal-only** mechanism — the public API (`urls()`, `include()`)
+   always produces sync handlers. Coverage is at the unit/integration level
+   (`router/__tests__/debug-manifest.test.ts`), not semantic e2e, because the
+   async handler branch is not reachable through the public API surface.
+
+### Policy: lazy loading yes, async construction no
+
+Lazy **module loading** is supported — defer evaluation until first request.
+Async **route-tree construction** is not — the DSL handler itself must be
+synchronous once resolved. The handler receives route helpers and must call
+them synchronously so that the ALS (AsyncLocalStorage) context captures all
+side effects in the correct store.
+
+### Contract change requirements
+
+Any change to handler loading shapes must update:
+
+1. Runtime enforcement in `manifest.ts` and `debug-manifest.ts`
+2. Type definition in `types/route-entry.ts`
+3. Type-level tests in `__tests__/route-entry-handler-types.check.ts`
+4. Unit tests in `router/__tests__/debug-manifest.test.ts`
+
 ## Loader Context: params vs routeParams
 
 Loaders receive two param fields:

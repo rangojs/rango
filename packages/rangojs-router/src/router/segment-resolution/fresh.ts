@@ -42,7 +42,12 @@ function observeStreamedHandler(
   routeKey?: string,
   params?: Record<string, string>,
 ): void {
-  const routerCtx = getRouterContext();
+  let routerCtx;
+  try {
+    routerCtx = getRouterContext();
+  } catch {
+    return;
+  }
   if (!routerCtx?.telemetry) return;
   const sink = resolveSink(routerCtx.telemetry);
   promise.catch((err: unknown) => {
@@ -237,7 +242,10 @@ export async function resolveSegment<TEnv>(
       if (entry.loading) {
         const result = handleHandlerResult(entry.handler(context));
         if (result instanceof Promise) {
-          const tracked = deps.trackHandler(result);
+          const tracked = deps.trackHandler(result, {
+            segmentId: entry.shortCode,
+            segmentType: entry.type,
+          });
           observeStreamedHandler(
             tracked,
             entry.shortCode,
@@ -406,16 +414,22 @@ export async function resolveParallelEntry<TEnv>(
         const result =
           typeof handler === "function" ? handler(context) : handler;
         if (result instanceof Promise) {
+          const tracked = deps.trackHandler(result, {
+            segmentId: `${parentShortCode}.${slot}`,
+            segmentType: "parallel",
+          });
           observeStreamedHandler(
-            result,
+            tracked,
             `${parentShortCode}.${slot}`,
             "parallel",
             context.pathname,
             routeKey,
             params,
           );
+          component = tracked as ReactNode;
+        } else {
+          component = result as ReactNode;
         }
-        component = result as ReactNode;
       } else {
         component =
           typeof handler === "function" ? await handler(context) : handler;

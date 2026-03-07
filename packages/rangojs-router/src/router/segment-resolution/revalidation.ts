@@ -22,7 +22,11 @@ import type {
   SegmentRevalidationResult,
   ActionContext,
 } from "../types.js";
-import { debugLog } from "../logging.js";
+import {
+  debugLog,
+  pushRevalidationTraceEntry,
+  isTraceActive,
+} from "../logging.js";
 import { resolveLoaderData } from "./loader-cache.js";
 import {
   handleHandlerResult,
@@ -156,7 +160,20 @@ export async function resolveLoadersWithRevalidation<TEnv>(
       }) => {
         const shouldRun = await revalidate(
           async () => {
-            if (!clientSegmentIds.has(segmentId)) return true;
+            if (!clientSegmentIds.has(segmentId)) {
+              if (isTraceActive()) {
+                pushRevalidationTraceEntry({
+                  segmentId,
+                  segmentType: "loader",
+                  belongsToRoute,
+                  source: "loader",
+                  defaultShouldRevalidate: true,
+                  finalShouldRevalidate: true,
+                  reason: "new-segment",
+                });
+              }
+              return true;
+            }
 
             const dummySegment: ResolvedSegment = {
               id: segmentId,
@@ -184,6 +201,7 @@ export async function resolveLoadersWithRevalidation<TEnv>(
               context: ctx,
               actionContext,
               stale,
+              traceSource: "loader",
             });
           },
           async () => true,
@@ -358,9 +376,35 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       }
 
       const shouldResolve = await (async () => {
-        if (isFullRefetch) return true;
-        if (!clientSegmentIds.has(parallelId))
-          return belongsToRoute || isNewParent;
+        if (isFullRefetch) {
+          if (isTraceActive()) {
+            pushRevalidationTraceEntry({
+              segmentId: parallelId,
+              segmentType: "parallel",
+              belongsToRoute,
+              source: "parallel",
+              defaultShouldRevalidate: true,
+              finalShouldRevalidate: true,
+              reason: "full-refetch",
+            });
+          }
+          return true;
+        }
+        if (!clientSegmentIds.has(parallelId)) {
+          const result = belongsToRoute || isNewParent;
+          if (isTraceActive()) {
+            pushRevalidationTraceEntry({
+              segmentId: parallelId,
+              segmentType: "parallel",
+              belongsToRoute,
+              source: "parallel",
+              defaultShouldRevalidate: result,
+              finalShouldRevalidate: result,
+              reason: result ? "new-segment" : "skip-parent-chain",
+            });
+          }
+          return result;
+        }
 
         const dummySegment: ResolvedSegment = {
           id: parallelId,
@@ -392,6 +436,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
           context,
           actionContext,
           stale,
+          traceSource: "parallel",
         });
       })();
       emitRevalidationDecision(
@@ -412,20 +457,25 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         if (!shouldResolve) {
           component = null;
         } else if (hasLoadingFallback) {
-          const result = (
-            typeof handler === "function" ? handler(context) : handler
-          ) as ReactNode;
+          const result =
+            typeof handler === "function" ? handler(context) : handler;
           if (result instanceof Promise) {
+            const tracked = deps.trackHandler(result, {
+              segmentId: parallelId,
+              segmentType: "parallel",
+            });
             observeStreamedHandler(
-              result,
+              tracked,
               parallelId,
               "parallel",
               context.pathname,
               routeKey,
               params,
             );
+            component = tracked as ReactNode;
+          } else {
+            component = result as ReactNode;
           }
-          component = result;
         } else {
           component =
             typeof handler === "function" ? await handler(context) : handler;
@@ -503,7 +553,24 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         clientHasSegment: hasSegment,
         belongsToRoute,
       });
-      if (!hasSegment) return true;
+      if (!hasSegment) {
+        if (isTraceActive()) {
+          const segType =
+            entry.type === "cache"
+              ? "layout"
+              : (entry.type as "layout" | "route");
+          pushRevalidationTraceEntry({
+            segmentId: entry.shortCode,
+            segmentType: segType,
+            belongsToRoute,
+            source: "segment-resolution",
+            defaultShouldRevalidate: true,
+            finalShouldRevalidate: true,
+            reason: "new-segment",
+          });
+        }
+        return true;
+      }
 
       const dummySegment: ResolvedSegment = {
         id: entry.shortCode,
@@ -565,7 +632,10 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       if (!actionContext) {
         const result = handleHandlerResult(routeEntry.handler(context));
         if (result instanceof Promise) {
-          const tracked = deps.trackHandler(result);
+          const tracked = deps.trackHandler(result, {
+            segmentId: entry.shortCode,
+            segmentType: entry.type,
+          });
           observeStreamedHandler(
             tracked,
             entry.shortCode,
@@ -839,7 +909,20 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
 
   const component = await revalidate(
     async () => {
-      if (!clientSegmentIds.has(orphan.shortCode)) return true;
+      if (!clientSegmentIds.has(orphan.shortCode)) {
+        if (isTraceActive()) {
+          pushRevalidationTraceEntry({
+            segmentId: orphan.shortCode,
+            segmentType: "layout",
+            belongsToRoute,
+            source: "orphan-layout",
+            defaultShouldRevalidate: true,
+            finalShouldRevalidate: true,
+            reason: "new-segment",
+          });
+        }
+        return true;
+      }
 
       const dummySegment: ResolvedSegment = {
         id: orphan.shortCode,
@@ -868,6 +951,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         context,
         actionContext,
         stale,
+        traceSource: "orphan-layout",
       });
       emitRevalidationDecision(
         orphan.shortCode,
@@ -933,7 +1017,20 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       matchedIds.push(parallelId);
 
       const shouldResolve = await (async () => {
-        if (!clientSegmentIds.has(parallelId)) return true;
+        if (!clientSegmentIds.has(parallelId)) {
+          if (isTraceActive()) {
+            pushRevalidationTraceEntry({
+              segmentId: parallelId,
+              segmentType: "parallel",
+              belongsToRoute,
+              source: "parallel",
+              defaultShouldRevalidate: true,
+              finalShouldRevalidate: true,
+              reason: "new-segment",
+            });
+          }
+          return true;
+        }
 
         const dummySegment: ResolvedSegment = {
           id: parallelId,
@@ -965,6 +1062,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
           context,
           actionContext,
           stale,
+          traceSource: "parallel",
         });
       })();
       emitRevalidationDecision(
@@ -985,20 +1083,25 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         if (!shouldResolve) {
           component = null;
         } else if (hasLoadingFallback) {
-          const result = (
-            typeof handler === "function" ? handler(context) : handler
-          ) as ReactNode;
+          const result =
+            typeof handler === "function" ? handler(context) : handler;
           if (result instanceof Promise) {
+            const tracked = deps.trackHandler(result, {
+              segmentId: parallelId,
+              segmentType: "parallel",
+            });
             observeStreamedHandler(
-              result,
+              tracked,
               parallelId,
               "parallel",
               context.pathname,
               routeKey,
               params,
             );
+            component = tracked as ReactNode;
+          } else {
+            component = result as ReactNode;
           }
-          component = result;
         } else {
           component =
             typeof handler === "function" ? await handler(context) : handler;

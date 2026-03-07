@@ -22,7 +22,13 @@ import {
   matchError as _matchError,
 } from "./match-api.js";
 import { previewMatch as _previewMatch } from "./preview-match.js";
-import { runWithRouterLogContext, withRouterLogScope } from "./logging.js";
+import {
+  runWithRouterLogContext,
+  withRouterLogScope,
+  isRouterDebugEnabled,
+  startRevalidationTrace,
+  flushRevalidationTrace,
+} from "./logging.js";
 import type { ErrorBoundaryHandler, NotFoundBoundaryHandler } from "../types";
 import type { MiddlewareFn } from "./middleware.js";
 import { type TelemetrySink, safeEmit, resolveSink } from "./telemetry.js";
@@ -318,6 +324,17 @@ export function createMatchHandlers<TEnv = any>(
               return null;
             }
 
+            if (isRouterDebugEnabled()) {
+              startRevalidationTrace({
+                method: request.method,
+                prevUrl: ctx.prevUrl.href,
+                nextUrl: ctx.url.href,
+                routeKey: ctx.routeKey,
+                isAction: !!actionContext,
+                stale: ctx.stale || undefined,
+              });
+            }
+
             try {
               const state = createPipelineState();
               const pipeline = createMatchPartialPipeline(ctx, state);
@@ -326,6 +343,7 @@ export function createMatchHandlers<TEnv = any>(
                 ctx,
                 state,
               );
+              flushRevalidationTrace();
               if (hasTelemetry) {
                 safeEmit(telemetry, {
                   type: "cache.decision",
@@ -349,6 +367,7 @@ export function createMatchHandlers<TEnv = any>(
               }
               return matchResult;
             } catch (error) {
+              flushRevalidationTrace();
               if (hasTelemetry) {
                 const errorObj =
                   error instanceof Error ? error : new Error(String(error));
