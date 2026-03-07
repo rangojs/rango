@@ -10,6 +10,7 @@ import {
   LoaderCompositionHandler,
   InlineActionHandler,
   ProgressiveEnhancementHandler,
+  PeRedirectHandler,
   UseRouterHandler,
   UseRouterTargetAHandler,
   UseRouterTargetBHandler,
@@ -48,6 +49,9 @@ export const hooksPatterns = urls(({ path, loader }) => [
   path("/inline-action", InlineActionHandler, { name: "inlineAction" }),
   path("/progressive-enhancement", ProgressiveEnhancementHandler, {
     name: "progressiveEnhancement",
+  }),
+  path("/pe-redirect", PeRedirectHandler, {
+    name: "peRedirect",
   }),
 
   // useRouter hook test routes

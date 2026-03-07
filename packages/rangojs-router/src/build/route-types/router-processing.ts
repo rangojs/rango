@@ -10,6 +10,7 @@ import {
   buildCombinedRouteMapWithSearch,
   type UnresolvableInclude,
 } from "./include-resolution.js";
+import { findUrlsVariableNames } from "./per-module-writer.js";
 
 // ---------------------------------------------------------------------------
 // Router file URL extraction
@@ -181,6 +182,33 @@ export function detectUnresolvableIncludes(
     new Set(),
     diagnostics,
   );
+  return diagnostics;
+}
+
+/**
+ * Walk the include tree for a standalone urls() module file and detect
+ * all unresolvable includes. Mirrors detectUnresolvableIncludes() but
+ * operates on urls() variable declarations instead of going through
+ * createRouter().
+ */
+export function detectUnresolvableIncludesForUrlsFile(
+  filePath: string,
+): UnresolvableInclude[] {
+  const realPath = resolve(filePath);
+  let source: string;
+  try {
+    source = readFileSync(realPath, "utf-8");
+  } catch {
+    return [];
+  }
+
+  const varNames = findUrlsVariableNames(source);
+  if (varNames.length === 0) return [];
+
+  const diagnostics: UnresolvableInclude[] = [];
+  for (const varName of varNames) {
+    buildCombinedRouteMapWithSearch(realPath, varName, new Set(), diagnostics);
+  }
   return diagnostics;
 }
 

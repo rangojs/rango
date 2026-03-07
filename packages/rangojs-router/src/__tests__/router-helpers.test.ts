@@ -479,6 +479,30 @@ describe("createReverse", () => {
       'Missing param "slug"',
     );
   });
+
+  it("substitutes constrained required param", () => {
+    const r = createReverse({
+      "i18n.blog": "/:locale(en|gb)/blog",
+    });
+    expect(r("i18n.blog" as any, { locale: "en" })).toBe("/en/blog");
+    expect(r("i18n.blog" as any, { locale: "gb" })).toBe("/gb/blog");
+  });
+
+  it("substitutes constrained optional param when provided", () => {
+    const r = createReverse({
+      "i18n.blog": "/:locale(en|gb)?/blog",
+    });
+    expect(r("i18n.blog" as any, { locale: "gb" })).toBe("/gb/blog");
+  });
+
+  it("throws with stripped key name for missing constrained param", () => {
+    const r = createReverse({
+      "checkout.step": "/:step(shipping|payment)/checkout",
+    });
+    expect(() => r("checkout.step" as any, {} as any)).toThrow(
+      'Missing param "step"',
+    );
+  });
 });
 
 // ========================================================================

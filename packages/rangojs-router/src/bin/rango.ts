@@ -5,6 +5,7 @@ import {
   writePerModuleRouteTypesForFile,
   writeCombinedRouteTypes,
   detectUnresolvableIncludes,
+  detectUnresolvableIncludesForUrlsFile,
   type UnresolvableInclude,
 } from "../build/generate-route-types.ts";
 
@@ -131,22 +132,18 @@ function runStaticGeneration(args: string[], mode: "default" | "static") {
     process.exit(0);
   }
 
+  // Phase 1: Classify files
   const routerFiles: string[] = [];
+  const urlsFiles: string[] = [];
 
   for (const filePath of files) {
     try {
       const source = readFileSync(filePath, "utf-8");
-
-      // Detect file type and generate accordingly
-      const isRouter = /\bcreateRouter\s*[<(]/.test(source);
-      const isUrls = source.includes("urls(");
-
-      if (isRouter) {
+      if (/\bcreateRouter\s*[<(]/.test(source)) {
         routerFiles.push(filePath);
       }
-
-      if (isUrls) {
-        writePerModuleRouteTypesForFile(filePath);
+      if (source.includes("urls(")) {
+        urlsFiles.push(filePath);
       }
     } catch (err) {
       console.warn(
@@ -155,9 +152,10 @@ function runStaticGeneration(args: string[], mode: "default" | "static") {
     }
   }
 
-  // Check for unresolvable includes across all router files
+  // Phase 2: Collect diagnostics from all files BEFORE writing anything
   const allDiagnostics: Array<UnresolvableInclude & { routerFile: string }> =
     [];
+
   for (const routerFile of routerFiles) {
     const diagnostics = detectUnresolvableIncludes(routerFile);
     for (const d of diagnostics) {
@@ -165,10 +163,29 @@ function runStaticGeneration(args: string[], mode: "default" | "static") {
     }
   }
 
-  if (allDiagnostics.length > 0 && mode === "default") {
-    // Hard error: unresolvable includes detected
+  // Also check standalone urls files not covered by router-level detection
+  const routerFileSet = new Set(routerFiles);
+  for (const urlsFile of urlsFiles) {
+    if (routerFileSet.has(urlsFile)) continue;
+    const diagnostics = detectUnresolvableIncludesForUrlsFile(urlsFile);
+    for (const d of diagnostics) {
+      allDiagnostics.push({ ...d, routerFile: urlsFile });
+    }
+  }
+
+  // Deduplicate diagnostics (router and urls detection may find the same issue)
+  const seen = new Set<string>();
+  const uniqueDiagnostics = allDiagnostics.filter((d) => {
+    const key = `${d.sourceFile}:${d.pathPrefix}:${d.reason}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  if (uniqueDiagnostics.length > 0 && mode === "default") {
+    // Hard error: no files written
     console.error("\n[rango] Unresolvable includes detected:\n");
-    formatDiagnostics(allDiagnostics);
+    formatDiagnostics(uniqueDiagnostics);
     console.error(
       "\nThe static parser cannot resolve these includes because they use " +
         "factory functions or dynamic expressions.\n\n" +
@@ -179,16 +196,20 @@ function runStaticGeneration(args: string[], mode: "default" | "static") {
     process.exit(1);
   }
 
-  if (allDiagnostics.length > 0 && mode === "static") {
+  if (uniqueDiagnostics.length > 0 && mode === "static") {
     // Warning: partial output accepted
     console.warn(
       "\n[rango] Warning: partial output (unresolvable includes):\n",
     );
-    formatDiagnostics(allDiagnostics);
+    formatDiagnostics(uniqueDiagnostics);
     console.warn("");
   }
 
-  // Generate named-routes for any detected router files
+  // Phase 3: Write all outputs (only reached if diagnostics pass or --static)
+  for (const urlsFile of urlsFiles) {
+    writePerModuleRouteTypesForFile(urlsFile);
+  }
+
   for (const routerFile of routerFiles) {
     const projectRoot = findProjectRoot(routerFile);
     writeCombinedRouteTypes(projectRoot, [routerFile]);
@@ -257,10 +278,8 @@ async function runRuntimeDiscovery(args: string[], configFile?: string) {
     process.exit(1);
   }
 
-  // Use a single project root for all routers (find from the first entry)
-  const projectRoot = findProjectRoot(routerEntries[0]);
-
   for (const entry of routerEntries) {
+    const projectRoot = findProjectRoot(entry);
     const result = await discoverAndWriteRouteTypes({
       root: projectRoot,
       configFile,

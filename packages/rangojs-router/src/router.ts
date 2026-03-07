@@ -200,15 +200,24 @@ export function createRouter<TEnv = any>(
     ? resolveThemeConfig(themeOption)
     : null;
 
+  // Track errors already reported to onError to prevent double-reporting
+  // when errors propagate through multiple catch blocks.
+  const reportedErrors = new WeakSet<object>();
+
   /**
    * Wrapper for invokeOnError that binds the router's onError callback.
    * Uses the shared utility from router/error-handling.ts for consistent behavior.
+   * Deduplicates via WeakSet to prevent double-reporting.
    */
   function callOnError(
     error: unknown,
     phase: ErrorPhase,
     context: Parameters<typeof invokeOnError<TEnv>>[3],
   ): void {
+    if (error != null && typeof error === "object") {
+      if (reportedErrors.has(error)) return;
+      reportedErrors.add(error);
+    }
     invokeOnError(onError, error, phase, context, "Router");
   }
 
@@ -344,10 +353,39 @@ export function createRouter<TEnv = any>(
     return _getRequestContext()?._handleStore;
   };
 
-  // Track a pending handler promise (non-blocking)
-  const trackHandler = <T>(promise: Promise<T>): Promise<T> => {
+  // Track a pending handler promise (non-blocking).
+  // Attaches a side-effect .catch() to report streaming handler errors to onError
+  // without altering the rejection chain (React's streaming error boundary still handles it).
+  const trackHandler = <T>(
+    promise: Promise<T>,
+    errorContext?: {
+      segmentId?: string;
+      segmentType?: string;
+    },
+  ): Promise<T> => {
     const store = getHandleStore();
-    return store ? store.track(promise) : promise;
+    const tracked = store ? store.track(promise) : promise;
+
+    // Report streaming handler errors to onError as a side-effect.
+    // The rejection still propagates to the RSC stream for client error boundaries.
+    // Captures request context eagerly (closure) so the catch handler has full context.
+    const reqCtx = _getRequestContext();
+    if (reqCtx && onError) {
+      tracked.catch((error) => {
+        callOnError(error, "handler", {
+          request: reqCtx.request,
+          url: reqCtx.url,
+          routeKey: reqCtx._routeName,
+          params: reqCtx.params as Record<string, string>,
+          env: reqCtx.env as TEnv,
+          segmentId: errorContext?.segmentId,
+          segmentType: errorContext?.segmentType as any,
+          handledByBoundary: true,
+        });
+      });
+    }
+
+    return tracked;
   };
 
   // Wrapper for wrapLoaderWithErrorHandling that uses router's error boundary finder

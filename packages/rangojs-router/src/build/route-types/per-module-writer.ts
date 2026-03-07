@@ -26,7 +26,7 @@ export function writePerModuleRouteTypes(
  * Find all variable names assigned to urls() calls in source code.
  * e.g. `export const patterns = urls(...)` -> ["patterns"]
  */
-function findUrlsVariableNames(code: string): string[] {
+export function findUrlsVariableNames(code: string): string[] {
   const sourceFile = ts.createSourceFile(
     "input.tsx",
     code,
@@ -97,9 +97,21 @@ export function writePerModuleRouteTypesForFile(filePath: string): void {
       routes = extractRoutesFromSource(source);
     }
 
-    if (routes.length === 0) return;
-
     const genPath = filePath.replace(/\.(tsx?)$/, ".gen.ts");
+
+    // When a urls() variable was found but static resolution yields zero
+    // routes, write an empty placeholder so generated imports stay
+    // resolvable until runtime discovery fills them in.
+    if (routes.length === 0) {
+      if (varNames.length > 0 && !existsSync(genPath)) {
+        writeFileSync(genPath, generatePerModuleTypesSource([]));
+        console.log(
+          `[rsc-router] Generated route types (placeholder) -> ${genPath}`,
+        );
+      }
+      return;
+    }
+
     const genSource = generatePerModuleTypesSource(routes);
     const existing = existsSync(genPath)
       ? readFileSync(genPath, "utf-8")

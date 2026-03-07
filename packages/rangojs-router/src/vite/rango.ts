@@ -222,9 +222,9 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
           const candidates = findRouterFiles(root, filter);
           if (candidates.length === 1) {
             const abs = candidates[0];
-            routerRef.path = abs.startsWith(root)
-              ? "./" + abs.slice(root.length + 1)
-              : abs;
+            routerRef.path = (
+              abs.startsWith(root) ? "./" + abs.slice(root.length + 1) : abs
+            ).replaceAll("\\", "/");
           } else if (candidates.length > 1) {
             const list = candidates
               .map(

@@ -37,6 +37,7 @@ import { prerenderLocalePatterns } from "./urls/prerender-locale.js";
 import { loaderReversePatterns } from "./urls/loader-reverse.js";
 import { loaderCookiePatterns } from "./urls/loader-cookie.js";
 import { mwChainPatterns } from "./urls/mw-chain.js";
+import { revalidationContractPatterns } from "./urls/revalidation-contract.js";
 import { ctxCleanPatterns } from "./urls/ctx-clean.js";
 import { actionRedirectRevalidationPatterns } from "./urls/action-redirect-revalidation.js";
 import { hashNavigationPatterns } from "./urls/hash-navigation.js";
@@ -552,6 +553,10 @@ export const urlpatterns = urls(
 
       // Middleware chain integration test (global mw + action + route mw + layout + loader)
       include("/mw-chain", mwChainPatterns, { name: "mwChain" }),
+
+      // Revalidation contract fixture: consumer reruns without producer rerun,
+      // so upstream ctx.set() data is missing on the action follow-up.
+      include("/revalidation-contract", revalidationContractPatterns),
 
       // Action redirect revalidation test patterns
       include(

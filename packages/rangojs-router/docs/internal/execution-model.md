@@ -120,6 +120,9 @@ Expected visibility pattern:
 - During partial action revalidation:
   - only revalidated segments recompute
   - non-revalidated ancestors do not rerun just to rebuild `ctx.set()` state
+  - downstream `ctx.get()` calls therefore see missing/`undefined` upstream
+    values unless the producer reruns; the router does not preserve a prior-pass
+    ancestor snapshot for you
 - If a child depends on data set by an outer segment:
   - revalidate that outer segment too, or
   - load/guard the data in the child independently.

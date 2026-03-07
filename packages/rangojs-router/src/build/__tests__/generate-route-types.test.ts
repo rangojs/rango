@@ -767,6 +767,110 @@ export const patterns = urls(({ path, include }) => [
     expect(content).toContain("api.users");
     expect(content).toContain("/api/users");
   });
+
+  it("emits empty placeholder when urls() variable exists but routes are unresolvable", () => {
+    // Dynamic/factory-generated routes that the static parser cannot resolve
+    const filePath = join(tempDir, "urls.ts");
+    writeFileSync(
+      filePath,
+      `import { urls } from "@rangojs/router";
+import { buildRoutes } from "./factory.js";
+export const patterns = urls(buildRoutes);
+`,
+    );
+
+    writePerModuleRouteTypesForFile(filePath);
+
+    const genPath = filePath.replace(/\.ts$/, ".gen.ts");
+    expect(existsSync(genPath)).toBe(true);
+
+    const content = readFileSync(genPath, "utf-8");
+    expect(content).toContain("export const routes = {");
+    expect(content).toContain("} as const;");
+  });
+
+  it("does not overwrite existing gen file when urls() variable resolves zero routes", () => {
+    const filePath = join(tempDir, "urls.ts");
+    writeFileSync(
+      filePath,
+      `import { urls } from "@rangojs/router";
+import { buildRoutes } from "./factory.js";
+export const patterns = urls(buildRoutes);
+`,
+    );
+
+    // Pre-seed a gen file (simulating runtime discovery)
+    const genPath = filePath.replace(/\.ts$/, ".gen.ts");
+    const existingContent = generatePerModuleTypesSource([
+      { name: "index", pattern: "/" },
+    ]);
+    writeFileSync(genPath, existingContent);
+
+    writePerModuleRouteTypesForFile(filePath);
+
+    // Should not overwrite the richer runtime-discovered content
+    const after = readFileSync(genPath, "utf-8");
+    expect(after).toBe(existingContent);
+  });
+
+  it("includes the same imported variable under multiple prefixes without false cycle detection", () => {
+    const sharedPath = join(tempDir, "shared-urls.ts");
+    writeFileSync(
+      sharedPath,
+      `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const sharedUrls = urls(({ path }) => [
+  path("/health", handler, { name: "health" }),
+  path("/:id", handler, { name: "detail" }),
+]);
+`,
+    );
+
+    const mainPath = join(tempDir, "urls.ts");
+    writeFileSync(
+      mainPath,
+      `import { urls } from "@rangojs/router";
+import { sharedUrls } from "./shared-urls.js";
+const handler = () => null;
+export const patterns = urls(({ path, include }) => [
+  path("/", handler, { name: "home" }),
+  include("/api", sharedUrls, { name: "api" }),
+  include("/v2", sharedUrls, { name: "v2" }),
+]);
+`,
+    );
+
+    writePerModuleRouteTypesForFile(mainPath);
+
+    const genPath = mainPath.replace(/\.ts$/, ".gen.ts");
+    const content = readFileSync(genPath, "utf-8");
+
+    // Both mounts should be present
+    expect(content).toContain('"api.health"');
+    expect(content).toContain('"/api/health"');
+    expect(content).toContain('"api.detail"');
+    expect(content).toContain('"/api/:id"');
+    expect(content).toContain('"v2.health"');
+    expect(content).toContain('"/v2/health"');
+    expect(content).toContain('"v2.detail"');
+    expect(content).toContain('"/v2/:id"');
+  });
+
+  it("still skips gen file when no urls() variable and no routes found", () => {
+    // File contains urls( in a comment but no actual urls() variable
+    const filePath = join(tempDir, "urls.ts");
+    writeFileSync(
+      filePath,
+      `// This file uses urls( pattern but has no named routes
+const x = 42;
+`,
+    );
+
+    writePerModuleRouteTypesForFile(filePath);
+
+    const genPath = filePath.replace(/\.ts$/, ".gen.ts");
+    expect(existsSync(genPath)).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
