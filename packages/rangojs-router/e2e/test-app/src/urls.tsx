@@ -840,6 +840,35 @@ export const urlpatterns = urls(
         ),
         { name: "negotiateJsonFirstRsc" },
       ),
+
+      // Content negotiation + variant-specific middleware test:
+      // Each variant has its own middleware that sets a distinct header.
+      path(
+        "/negotiate-mw-test",
+        () => (
+          <div data-testid="negotiate-mw-rsc-page">
+            <h1>Negotiate MW RSC</h1>
+          </div>
+        ),
+        { name: "negotiateMwRsc" },
+        () => [
+          middleware(async (ctx, next) => {
+            await next();
+            ctx.header("X-Variant-Mw", "html");
+          }),
+        ],
+      ),
+      path.json(
+        "/negotiate-mw-test",
+        () => ({ source: "json" }),
+        { name: "negotiateMwJson" },
+        () => [
+          middleware(async (ctx, next) => {
+            await next();
+            ctx.header("X-Variant-Mw", "json");
+          }),
+        ],
+      ),
     ]),
   ],
 );
