@@ -397,6 +397,28 @@ describe("constrained parameters", () => {
       expect(regex.test("/comment/edit")).toBe(true);
       expect(regex.test("/user/edit")).toBe(false);
     });
+
+    it("should escape regex metacharacters in constraint values", () => {
+      const { regex } = compilePattern("/:version(v1.0|v2.0)");
+      expect(regex.test("/v1.0")).toBe(true);
+      expect(regex.test("/v2.0")).toBe(true);
+      expect(regex.test("/v1x0")).toBe(false);
+      expect(regex.test("/v2X0")).toBe(false);
+    });
+
+    it("should escape plus and hash in constraint values", () => {
+      const { regex } = compilePattern("/:lang(c++|c#)");
+      expect(regex.test("/c++")).toBe(true);
+      expect(regex.test("/c#")).toBe(true);
+      expect(regex.test("/cxx")).toBe(false);
+    });
+
+    it("should escape metacharacters in optional constrained params", () => {
+      const { regex } = compilePattern("/:version(v1.0|v2.0)?/docs");
+      expect(regex.test("/v1.0/docs")).toBe(true);
+      expect(regex.test("/docs")).toBe(true);
+      expect(regex.test("/v1x0/docs")).toBe(false);
+    });
   });
 
   describe("findMatch param extraction", () => {

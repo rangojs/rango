@@ -140,7 +140,7 @@ export function compilePattern(pattern: string): CompiledPattern {
     } else if (segment.type === "param") {
       paramNames.push(segment.value);
       const valuePattern = segment.constraint
-        ? `(${segment.constraint.join("|")})`
+        ? `(${segment.constraint.map(escapeRegex).join("|")})`
         : "([^/]+)";
 
       if (segment.optional) {
