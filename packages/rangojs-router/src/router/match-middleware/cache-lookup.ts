@@ -531,6 +531,7 @@ export function withCacheLookup<TEnv>(
         safeEmit(tSink, {
           type: "revalidation.decision",
           timestamp: performance.now(),
+          requestId: routerCtx.requestId,
           segmentId: segment.id,
           pathname: ctx.pathname,
           routeKey: ctx.routeKey,

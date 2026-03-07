@@ -71,7 +71,7 @@ import {
   extractStaticPrefix,
   traverseBack,
 } from "./router/pattern-matching.js";
-import { resolveSink, safeEmit } from "./router/telemetry.js";
+import { resolveSink, safeEmit, getRequestId } from "./router/telemetry.js";
 import { evaluateRevalidation } from "./router/revalidation.js";
 import {
   type RouterContext,
@@ -411,11 +411,17 @@ export function createRouter<TEnv = any>(
     },
   ): Promise<LoaderDataResult<T>> {
     const loaderStart = telemetrySink ? performance.now() : 0;
+    const loaderRequestId = telemetrySink
+      ? errorContext?.request
+        ? getRequestId(errorContext.request)
+        : undefined
+      : undefined;
     if (telemetrySink) {
       const loaderName = segmentId.split(".").pop() || "unknown";
       safeEmit(telemetry, {
         type: "loader.start",
         timestamp: loaderStart,
+        requestId: loaderRequestId,
         segmentId,
         loaderName,
         pathname,
@@ -451,6 +457,7 @@ export function createRouter<TEnv = any>(
               safeEmit(telemetry, {
                 type: "loader.error",
                 timestamp: performance.now(),
+                requestId: loaderRequestId,
                 segmentId: ctx.segmentId,
                 loaderName: ctx.loaderName,
                 pathname,
@@ -469,6 +476,7 @@ export function createRouter<TEnv = any>(
         safeEmit(telemetry, {
           type: "loader.end",
           timestamp: performance.now(),
+          requestId: loaderRequestId,
           segmentId,
           loaderName,
           pathname,
