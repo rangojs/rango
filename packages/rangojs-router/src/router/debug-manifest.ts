@@ -54,7 +54,9 @@ export async function buildDebugManifest<TEnv = any>(
             // Promise<fn>
             load(helpers);
           }
-          // Promise<Array> — routes already registered by the handler call
+          // Promise<Array> — h.route() calls during async execution register
+          // routes as side effects via the ALS context (runWithStore preserves
+          // the Store across awaits), so no explicit handling needed.
         }
       },
     );
