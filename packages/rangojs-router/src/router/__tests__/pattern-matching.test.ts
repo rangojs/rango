@@ -446,6 +446,25 @@ describe("constrained parameters", () => {
       expect(result!.params).toEqual({ locale: "" });
       expect(result!.optionalParams.has("locale")).toBe(true);
     });
+
+    it("should match constraint with regex metacharacters literally", () => {
+      const entries = [
+        createRouteEntry("", { versioned: "/:version(v1.0|v2.0)/docs" }),
+      ];
+      expect(findMatch("/v1.0/docs", entries)).not.toBeNull();
+      expect(findMatch("/v2.0/docs", entries)).not.toBeNull();
+      expect(findMatch("/v1.0/docs", entries)!.params).toEqual({
+        version: "v1.0",
+      });
+    });
+
+    it("should reject values where dots would match as regex wildcards", () => {
+      const entries = [
+        createRouteEntry("", { versioned: "/:version(v1.0|v2.0)/docs" }),
+      ];
+      expect(findMatch("/v1x0/docs", entries)).toBeNull();
+      expect(findMatch("/v2X0/docs", entries)).toBeNull();
+    });
   });
 });
 
