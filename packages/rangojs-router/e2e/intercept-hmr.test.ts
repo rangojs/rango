@@ -41,7 +41,7 @@ test.describe.serial("intercept-hmr", () => {
     await page.goto(f.url("/"));
     await waitForHydration(page);
 
-    await page.getByTestId("product-link-1").click();
+    await page.getByTestId("product-link-product-a").click();
     await expect(page.getByTestId("product-modal")).toBeVisible();
     await expect(page.getByTestId("intercept-indicator")).toHaveText(
       "Intercepted",
@@ -74,7 +74,7 @@ test.describe.serial("intercept-hmr", () => {
     await page.goto(f.url("/"));
     await waitForHydration(page);
 
-    await page.getByTestId("product-link-1").click();
+    await page.getByTestId("product-link-product-a").click();
     await expect(page.getByTestId("product-modal")).toBeVisible();
     await expect(page.getByTestId("intercept-indicator")).toHaveText(
       "Intercepted",
