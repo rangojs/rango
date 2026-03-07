@@ -230,9 +230,10 @@ export const router = createRouter<AppEnv>({
   .use("/als-scope/*", async (ctx, next) => {
     const { AlsGlobalMark, customGlobalAls } =
       await import("./urls/als-scope.js");
-    ctx.set("alsRequestId", crypto.randomUUID());
+    const requestId = crypto.randomUUID();
+    ctx.set("alsRequestId", requestId);
     ctx.set(AlsGlobalMark, "applied");
-    return customGlobalAls.run("top-mw", () => next());
+    return customGlobalAls.run(`top-mw:${requestId}`, () => next());
   })
   // Auth boundary test: global middleware guards BOTH actions and renders.
   // Rejects unauthenticated requests with a redirect and a marker cookie.

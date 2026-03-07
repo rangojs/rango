@@ -108,7 +108,7 @@ export const alsScopePatterns = urls(
     // Wraps renders and revalidation but NOT action execution.
     middleware(async (ctx, next) => {
       ctx.set(AlsRouteMark, "applied");
-      return customRouteAls.run("dsl-mw", () => next());
+      return customRouteAls.run(`dsl-mw:${crypto.randomUUID()}`, () => next());
     }),
 
     layout(
@@ -179,6 +179,12 @@ export const alsScopePatterns = urls(
                     <span data-testid="als-handler-custom">{customAls}</span>
                     <span data-testid="als-handler-request-id">
                       {requestId ?? "none"}
+                    </span>
+                    <span data-testid="als-handler-custom-global-raw">
+                      {customGlobalAls.getStore() ?? "none"}
+                    </span>
+                    <span data-testid="als-handler-custom-route-raw">
+                      {customRouteAls.getStore() ?? "none"}
                     </span>
                     <span data-testid="als-action-probe">
                       {actionProbe ?? "none"}

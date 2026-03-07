@@ -437,6 +437,32 @@ function alsScopeTests(mode: "dev" | "build") {
       expect(id2).not.toBe("none");
       expect(id1).not.toBe(id2);
 
+      // Verify custom ALS stores are also isolated across requests
+      const customGlobal1 = await testId(
+        page1,
+        "als-handler-custom-global-raw",
+      ).textContent();
+      const customGlobal2 = await testId(
+        page2,
+        "als-handler-custom-global-raw",
+      ).textContent();
+      const customRoute1 = await testId(
+        page1,
+        "als-handler-custom-route-raw",
+      ).textContent();
+      const customRoute2 = await testId(
+        page2,
+        "als-handler-custom-route-raw",
+      ).textContent();
+
+      expect(customGlobal1).not.toBe("none");
+      expect(customGlobal2).not.toBe("none");
+      expect(customGlobal1).not.toBe(customGlobal2);
+
+      expect(customRoute1).not.toBe("none");
+      expect(customRoute2).not.toBe("none");
+      expect(customRoute1).not.toBe(customRoute2);
+
       await page1.close();
       await page2.close();
     });
