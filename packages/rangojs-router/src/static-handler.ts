@@ -82,6 +82,13 @@ export function Static<TParams extends Record<string, any>>(
     id = maybeId ?? "";
   }
 
+  if (!id) {
+    throw new Error(
+      "[rsc-router] Static: missing $$id. " +
+        "Ensure the exposeInternalIds Vite plugin is configured.",
+    );
+  }
+
   return {
     __brand: "staticHandler" as const,
     $$id: id,

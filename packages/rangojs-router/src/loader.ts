@@ -49,6 +49,14 @@ export function createLoader<T>(
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>> {
   const loaderId = __injectedId || "";
 
+  if (!loaderId && process.env.NODE_ENV === "development") {
+    throw new Error(
+      "[rsc-router] Loader is missing $$id. " +
+        "Make sure the exposeInternalIds Vite plugin is enabled and " +
+        "the loader is exported with: export const MyLoader = createLoader(...)",
+    );
+  }
+
   return {
     __brand: "loader",
     $$id: loaderId,
