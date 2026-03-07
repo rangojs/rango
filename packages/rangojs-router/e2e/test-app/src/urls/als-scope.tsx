@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Suspense } from "react";
 import { urls, createVar, getRequestContext } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
@@ -12,6 +13,14 @@ import { alsScopeAction } from "../actions.js";
 export const AlsGlobalMark = createVar<string>();
 export const AlsRouteMark = createVar<string>();
 export const AlsInterceptMark = createVar<string>();
+
+// Custom AsyncLocalStorage instances owned by the application (not the framework).
+// Top-level .use() middleware calls next() inside customGlobalAls.run().
+// DSL middleware() calls next() inside customRouteAls.run().
+// Probes read .getStore() directly to verify propagation through the
+// framework's render pipeline, async boundaries, and streaming.
+export const customGlobalAls = new AsyncLocalStorage<string>();
+export const customRouteAls = new AsyncLocalStorage<string>();
 
 /**
  * Async context (ALS) propagation test fixture.
@@ -40,6 +49,15 @@ function buildScopeSnapshot(ctx: { get: (v: any) => any }): string {
   return parts.length > 0 ? parts.join(",") : "none";
 }
 
+// Reads the custom ALS instances directly (not via ctx.get) to prove
+// user-owned AsyncLocalStorage survives through the framework pipeline.
+function buildCustomAlsSnapshot(): string {
+  const parts: string[] = [];
+  if (customGlobalAls.getStore()) parts.push("top-mw");
+  if (customRouteAls.getStore()) parts.push("dsl-mw");
+  return parts.length > 0 ? parts.join(",") : "none";
+}
+
 // Async server component — reads ALS after an await to prove propagation
 // through async boundaries. Uses read probes only, not handle/meta mutation
 // (which have separate late-stream limits).
@@ -47,11 +65,13 @@ async function AsyncProbe() {
   await new Promise((resolve) => setTimeout(resolve, 100));
   const ctx = getRequestContext();
   const scope = buildScopeSnapshot(ctx);
+  const customAls = buildCustomAlsSnapshot();
   const requestId = ctx.get("alsRequestId") as string | undefined;
   return (
     <div data-testid="als-async-probe">
       <span data-testid="als-async-scope">{scope}</span>
       <span data-testid="als-async-request-id">{requestId ?? "none"}</span>
+      <span data-testid="als-async-custom">{customAls}</span>
     </div>
   );
 }
@@ -62,11 +82,13 @@ async function StreamedProbe() {
   await new Promise((resolve) => setTimeout(resolve, 500));
   const ctx = getRequestContext();
   const scope = buildScopeSnapshot(ctx);
+  const customAls = buildCustomAlsSnapshot();
   const requestId = ctx.get("alsRequestId") as string | undefined;
   return (
     <div data-testid="als-streamed-probe">
       <span data-testid="als-streamed-scope">{scope}</span>
       <span data-testid="als-streamed-request-id">{requestId ?? "none"}</span>
+      <span data-testid="als-streamed-custom">{customAls}</span>
     </div>
   );
 }
@@ -82,16 +104,17 @@ export const alsScopePatterns = urls(
     when,
     revalidate,
   }) => [
-    // Route middleware: sets AlsRouteMark.
+    // Route middleware: sets AlsRouteMark and runs next() inside customRouteAls.
     // Wraps renders and revalidation but NOT action execution.
     middleware(async (ctx, next) => {
       ctx.set(AlsRouteMark, "applied");
-      await next();
+      return customRouteAls.run("dsl-mw", () => next());
     }),
 
     layout(
       async (ctx) => {
         const scope = buildScopeSnapshot(ctx);
+        const customAls = buildCustomAlsSnapshot();
         const requestId = ctx.get("alsRequestId") as string | undefined;
         const loaderData = (await ctx.use(
           AlsScopeLoader,
@@ -99,10 +122,12 @@ export const alsScopePatterns = urls(
         return (
           <div data-testid="als-layout">
             <span data-testid="als-layout-scope">{scope}</span>
+            <span data-testid="als-layout-custom">{customAls}</span>
             <span data-testid="als-layout-request-id">
               {requestId ?? "none"}
             </span>
             <span data-testid="als-loader-scope">{loaderData.scope}</span>
+            <span data-testid="als-loader-custom">{loaderData.customAls}</span>
             <span data-testid="als-loader-request-id">
               {loaderData.requestId}
             </span>
@@ -139,19 +164,27 @@ export const alsScopePatterns = urls(
               "/",
               async (ctx) => {
                 const scope = buildScopeSnapshot(ctx);
+                const customAls = buildCustomAlsSnapshot();
                 const requestId = ctx.get("alsRequestId") as string | undefined;
                 const actionProbe = ctx.get("alsActionProbe") as
+                  | string
+                  | undefined;
+                const actionCustomProbe = ctx.get("alsActionCustomProbe") as
                   | string
                   | undefined;
 
                 return (
                   <div data-testid="als-page">
                     <span data-testid="als-handler-scope">{scope}</span>
+                    <span data-testid="als-handler-custom">{customAls}</span>
                     <span data-testid="als-handler-request-id">
                       {requestId ?? "none"}
                     </span>
                     <span data-testid="als-action-probe">
                       {actionProbe ?? "none"}
+                    </span>
+                    <span data-testid="als-action-custom-probe">
+                      {actionCustomProbe ?? "none"}
                     </span>
 
                     <AsyncProbe />
@@ -210,10 +243,12 @@ export const alsScopePatterns = urls(
         parallel({
           "@panel": (ctx) => {
             const scope = buildScopeSnapshot(ctx);
+            const customAls = buildCustomAlsSnapshot();
             const requestId = ctx.get("alsRequestId") as string | undefined;
             return (
               <div data-testid="als-parallel">
                 <span data-testid="als-parallel-scope">{scope}</span>
+                <span data-testid="als-parallel-custom">{customAls}</span>
                 <span data-testid="als-parallel-request-id">
                   {requestId ?? "none"}
                 </span>
@@ -228,10 +263,12 @@ export const alsScopePatterns = urls(
           ".detail",
           (ctx) => {
             const scope = buildScopeSnapshot(ctx);
+            const customAls = buildCustomAlsSnapshot();
             const requestId = ctx.get("alsRequestId") as string | undefined;
             return (
               <div data-testid="als-modal">
                 <span data-testid="als-intercept-scope">{scope}</span>
+                <span data-testid="als-intercept-custom">{customAls}</span>
                 <span data-testid="als-intercept-request-id">
                   {requestId ?? "none"}
                 </span>

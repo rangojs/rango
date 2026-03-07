@@ -616,22 +616,33 @@ export const NullTestLoader = createLoader(async () => {
 
 export const AlsScopeLoader = createLoader(async () => {
   const { getRequestContext } = await import("@rangojs/router");
-  const { AlsGlobalMark, AlsRouteMark, AlsInterceptMark } =
-    await import("./urls/als-scope.js");
+  const {
+    AlsGlobalMark,
+    AlsRouteMark,
+    AlsInterceptMark,
+    customGlobalAls,
+    customRouteAls,
+  } = await import("./urls/als-scope.js");
   const ctx = getRequestContext();
   const parts: string[] = [];
   if (ctx.get(AlsGlobalMark)) parts.push("global");
   if (ctx.get(AlsRouteMark)) parts.push("route");
   if (ctx.get(AlsInterceptMark)) parts.push("intercept");
   const requestId = ctx.get("alsRequestId") as string | undefined;
+  // Read custom ALS instances directly
+  const customParts: string[] = [];
+  if (customGlobalAls.getStore()) customParts.push("top-mw");
+  if (customRouteAls.getStore()) customParts.push("dsl-mw");
   return {
     scope: parts.length > 0 ? parts.join(",") : "none",
+    customAls: customParts.length > 0 ? customParts.join(",") : "none",
     requestId: requestId ?? "none",
   };
 });
 
 export interface AlsScopeLoaderData {
   scope: string;
+  customAls: string;
   requestId: string;
 }
 

@@ -252,6 +252,20 @@ function alsScopeTests(mode: "dev" | "build") {
           "als-handler-scope",
         ).textContent({ timeout: 10000 });
         expect(handlerScope).toBe("global,route");
+
+        // Custom ALS: action sees only top-mw, not dsl-mw
+        const actionCustom = await testId(
+          page,
+          "als-action-custom-probe",
+        ).textContent({ timeout: 10000 });
+        expect(actionCustom).toBe("top-mw");
+
+        // Custom ALS: rerender handler sees both
+        const handlerCustom = await testId(
+          page,
+          "als-handler-custom",
+        ).textContent({ timeout: 10000 });
+        expect(handlerCustom).toBe("top-mw,dsl-mw");
       });
     });
 
@@ -288,6 +302,112 @@ function alsScopeTests(mode: "dev" | "build") {
       // Direct navigation — no intercept middleware runs
       await expect(testId(page, "als-detail-scope")).toHaveText("global,route");
       await expect(testId(page, "als-modal")).not.toBeVisible();
+    });
+
+    // ========================================================================
+    // Custom AsyncLocalStorage propagation: user-owned ALS via .run(() => next())
+    // ========================================================================
+
+    test("handler sees both custom ALS values [top-mw,dsl-mw]", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/als-scope"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "als-handler-custom")).toHaveText(
+        "top-mw,dsl-mw",
+      );
+    });
+
+    test("layout sees both custom ALS values [top-mw,dsl-mw]", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/als-scope"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "als-layout-custom")).toHaveText(
+        "top-mw,dsl-mw",
+      );
+    });
+
+    test("loader sees both custom ALS values via getStore()", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/als-scope"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "als-loader-custom")).toHaveText(
+        "top-mw,dsl-mw",
+      );
+    });
+
+    test("async server component reads custom ALS after await", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/als-scope"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "als-async-custom")).toHaveText(
+        "top-mw,dsl-mw",
+      );
+    });
+
+    test("streamed component reads custom ALS after delay", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/als-scope"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "als-streamed-custom")).toHaveText(
+        "top-mw,dsl-mw",
+        { timeout: 10000 },
+      );
+    });
+
+    test("parallel slot sees both custom ALS values", async ({ page }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/als-scope"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "als-parallel-custom")).toHaveText(
+        "top-mw,dsl-mw",
+      );
+    });
+
+    test("intercept sees both custom ALS values", async ({ page }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/als-scope"));
+      await waitForHydration(page);
+
+      await testId(page, "als-detail-link").click();
+      await expect(testId(page, "als-modal")).toBeVisible({ timeout: 10000 });
+
+      await expect(testId(page, "als-intercept-custom")).toHaveText(
+        "top-mw,dsl-mw",
+      );
+    });
+
+    test("JS action sees only top-level custom ALS [top-mw], not DSL [dsl-mw]", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/als-scope"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "als-action-custom-probe")).toHaveText("none");
+
+      await testId(page, "als-action-btn").click();
+
+      // Action runs inside .use() ALS but NOT inside DSL middleware() ALS
+      await expect(testId(page, "als-action-custom-probe")).toHaveText(
+        "top-mw",
+        { timeout: 10000 },
+      );
     });
 
     // ========================================================================
