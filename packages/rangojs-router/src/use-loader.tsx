@@ -132,7 +132,7 @@ function useLoaderInternal<T>(
       setError(null);
 
       try {
-        const url = new URL(window.location.pathname, window.location.origin);
+        const url = new URL(window.location.href);
         url.searchParams.set("_rsc_loader", loaderId);
 
         const method = loadOptions?.method ?? "GET";

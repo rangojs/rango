@@ -104,6 +104,16 @@ describe("stripInternalParams", () => {
     expect(clean.pathname).toBe("/path/to/page");
     expect(clean.searchParams.get("q")).toBe("test");
   });
+
+  it("should strip _rsc_loader transport params and preserve user search", () => {
+    const url = new URL(
+      "http://localhost/products?tab=pricing&_rsc_loader=myLoader&_rsc_loader_params=%7B%7D",
+    );
+    const clean = stripInternalParams(url);
+    expect(clean.searchParams.get("tab")).toBe("pricing");
+    expect(clean.searchParams.has("_rsc_loader")).toBe(false);
+    expect(clean.searchParams.has("_rsc_loader_params")).toBe(false);
+  });
 });
 
 describe("createReverseFunction", () => {
