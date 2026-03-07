@@ -80,8 +80,15 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
   };
 }
 
+function tailOutput(text: string, maxChars = 4000): string {
+  if (!text) return "(empty)";
+  if (text.length <= maxChars) return text;
+  return `...${text.slice(-maxChars)}`;
+}
+
 async function waitForReady(
   url: string,
+  getOutput?: () => { stdout: string; stderr: string },
   timeoutMs = process.env.CI ? 60000 : 30000,
 ) {
   const deadline = Date.now() + timeoutMs;
@@ -92,7 +99,11 @@ async function waitForReady(
     } catch {}
     await new Promise((r) => setTimeout(r, 100));
   }
-  throw new Error(`Server not ready after ${timeoutMs}ms: ${url}`);
+  const output = getOutput?.();
+  const details = output
+    ? `\nRecent stdout:\n${tailOutput(output.stdout)}\n\nRecent stderr:\n${tailOutput(output.stderr)}`
+    : "";
+  throw new Error(`Server not ready after ${timeoutMs}ms: ${url}${details}`);
 }
 
 export type Fixture = ReturnType<typeof useFixture>;
@@ -125,7 +136,10 @@ export function useFixture(options: {
         });
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
-        await waitForReady(baseURL);
+        await waitForReady(baseURL, () => ({
+          stdout: proc.stdout(),
+          stderr: proc.stderr(),
+        }));
         cleanup = async () => {
           proc.kill();
           await proc.done;
@@ -151,7 +165,10 @@ export function useFixture(options: {
       });
       const port = await proc.findPort();
       baseURL = `http://localhost:${port}`;
-      await waitForReady(baseURL);
+      await waitForReady(baseURL, () => ({
+        stdout: proc.stdout(),
+        stderr: proc.stderr(),
+      }));
       cleanup = async () => {
         proc.kill();
         await proc.done;
