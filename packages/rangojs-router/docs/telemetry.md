@@ -82,7 +82,8 @@ const router = createRouter({
 ## Event Types
 
 All events include a `timestamp` (from `performance.now()`) and an optional
-`requestId` (from the `x-request-id` header when present).
+`requestId` extracted from request headers. The router checks
+`x-rsc-router-request-id`, `x-request-id`, and `cf-ray` (in that order).
 
 | Event                   | Lifecycle                                            |
 | ----------------------- | ---------------------------------------------------- |
@@ -224,10 +225,11 @@ Instant spans are created and ended immediately for point-in-time events.
 
 ### Span Correlation
 
-The adapter correlates start/end events using a composite key of `requestId`,
-`pathname`, and `transaction` (for requests) or `segmentId` and `loaderName`
-(for loaders). When the `x-request-id` header is set, concurrent requests to
-the same path are correctly correlated even if they complete out of order.
+The adapter correlates start/end events using composite keys. Request spans
+use `requestId + pathname + transaction`. Loader spans use
+`requestId + segmentId + loaderName + pathname`. When a request ID header
+is present, concurrent requests to the same path are correctly correlated
+even if they complete out of order.
 
 ### Error Recording
 
