@@ -127,20 +127,32 @@ type ExtractRouteParamsFromMap<TRouteMap, TName> = TName extends keyof TRouteMap
       : {}
   : {};
 
+/** Parse "a|b|c" into "a" | "b" | "c" */
+type ParseConstraint<T extends string> =
+  T extends `${infer First}|${infer Rest}` ? First | ParseConstraint<Rest> : T;
+
 /** Minimal inline param extraction (avoids importing from types.ts to prevent circular deps). */
 type ExtractParamsFromPattern<T extends string> =
   T extends `${string}:${infer Param}/${infer Rest}`
-    ? Param extends `${infer Name}?`
-      ? { [K in Name]?: string } & ExtractParamsFromPattern<`/${Rest}`>
-      : Param extends `${infer Name}(${string})`
-        ? { [K in Name]: string } & ExtractParamsFromPattern<`/${Rest}`>
-        : { [K in Param]: string } & ExtractParamsFromPattern<`/${Rest}`>
+    ? Param extends `${infer Name}(${infer C})?`
+      ? {
+          [K in Name]?: ParseConstraint<C>;
+        } & ExtractParamsFromPattern<`/${Rest}`>
+      : Param extends `${infer Name}(${infer C})`
+        ? {
+            [K in Name]: ParseConstraint<C>;
+          } & ExtractParamsFromPattern<`/${Rest}`>
+        : Param extends `${infer Name}?`
+          ? { [K in Name]?: string } & ExtractParamsFromPattern<`/${Rest}`>
+          : { [K in Param]: string } & ExtractParamsFromPattern<`/${Rest}`>
     : T extends `${string}:${infer Param}`
-      ? Param extends `${infer Name}?`
-        ? { [K in Name]?: string }
-        : Param extends `${infer Name}(${string})`
-          ? { [K in Name]: string }
-          : { [K in Param]: string }
+      ? Param extends `${infer Name}(${infer C})?`
+        ? { [K in Name]?: ParseConstraint<C> }
+        : Param extends `${infer Name}(${infer C})`
+          ? { [K in Name]: ParseConstraint<C> }
+          : Param extends `${infer Name}?`
+            ? { [K in Name]?: string }
+            : { [K in Param]: string }
       : {};
 
 // ============================================================================
