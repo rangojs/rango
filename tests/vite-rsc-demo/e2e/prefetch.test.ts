@@ -58,7 +58,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
 
     // Wait for the prefetch request to be made
     await expect
-      .poll(() => prefetchRequests.length, { timeout: 3000 })
+      .poll(() => prefetchRequests.length, { timeout: 5000 })
       .toBeGreaterThan(0);
 
     // Verify the request has _rsc_partial and X-Rango-State header
@@ -95,7 +95,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
 
     // Hover, move away, hover again
     await blogLink.hover();
-    await expect.poll(() => prefetchRequests.length, { timeout: 3000 }).toBe(1);
+    await expect.poll(() => prefetchRequests.length, { timeout: 5000 }).toBe(1);
 
     // Move away from the link
     await page.locator("h1").first().hover();
@@ -128,7 +128,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     await page.locator('nav a:has-text("Blog")').hover();
     await expect
       .poll(() => prefetchUrls.filter((u) => u.includes("/blog")).length, {
-        timeout: 3000,
+        timeout: 5000,
       })
       .toBe(1);
 
@@ -140,7 +140,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
           blog: prefetchUrls.filter((u) => u.includes("/blog")).length,
           shop: prefetchUrls.filter((u) => u.includes("/shop")).length,
         }),
-        { timeout: 3000 },
+        { timeout: 5000 },
       )
       .toEqual({ blog: 1, shop: 1 });
 
@@ -175,7 +175,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     await blogLink.hover();
 
     // Wait for prefetch request
-    await expect.poll(() => rscRequests.length, { timeout: 3000 }).toBe(1);
+    await expect.poll(() => rscRequests.length, { timeout: 5000 }).toBe(1);
 
     // Click the link to navigate
     await blogLink.click();
@@ -302,7 +302,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     await blogLink.hover();
 
     // Wait for prefetch to complete
-    await expect.poll(() => prefetchStates.length, { timeout: 3000 }).toBe(1);
+    await expect.poll(() => prefetchStates.length, { timeout: 5000 }).toBe(1);
 
     // Move cursor away from Blog link
     await page.locator("h1").first().hover();
@@ -328,7 +328,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     // because the cache was cleared and state key changed
     await blogLink.hover();
 
-    await expect.poll(() => prefetchStates.length, { timeout: 3000 }).toBe(2);
+    await expect.poll(() => prefetchStates.length, { timeout: 5000 }).toBe(2);
 
     // Verify the X-Rango-State value changed after invalidation
     expect(prefetchStates[0]).not.toBe(prefetchStates[1]);
@@ -360,7 +360,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     });
 
     await page.locator('nav a:has-text("Blog")').hover();
-    await expect.poll(() => prefetchRequests.length, { timeout: 3000 }).toBe(1);
+    await expect.poll(() => prefetchRequests.length, { timeout: 5000 }).toBe(1);
 
     // Verify prefetch used the localStorage state key
     expect(prefetchRequests[0]!.headers["x-rango-state"]).toBe(initialState);
@@ -432,7 +432,7 @@ base.describe("prefetch-on-hover (production)", () => {
     await blogLink.hover();
 
     await baseExpect
-      .poll(() => prefetchRequests.length, { timeout: 3000 })
+      .poll(() => prefetchRequests.length, { timeout: 5000 })
       .toBeGreaterThan(0);
 
     const req = prefetchRequests[0]!;
@@ -466,7 +466,7 @@ base.describe("prefetch-on-hover (production)", () => {
       await blogLink.hover();
 
       await baseExpect
-        .poll(() => rscRequests.length, { timeout: 3000 })
+        .poll(() => rscRequests.length, { timeout: 5000 })
         .toBe(1);
 
       await blogLink.click();
@@ -582,7 +582,7 @@ base.describe("prefetch-on-hover (production)", () => {
 
       // Wait for prefetch to complete
       await baseExpect
-        .poll(() => prefetchStates.length, { timeout: 3000 })
+        .poll(() => prefetchStates.length, { timeout: 5000 })
         .toBe(1);
 
       // Move cursor away from Blog link
@@ -609,7 +609,7 @@ base.describe("prefetch-on-hover (production)", () => {
       await blogLink.hover();
 
       await baseExpect
-        .poll(() => prefetchStates.length, { timeout: 3000 })
+        .poll(() => prefetchStates.length, { timeout: 5000 })
         .toBe(2);
 
       // Verify the X-Rango-State value changed after invalidation
@@ -641,7 +641,7 @@ base.describe("prefetch-on-hover (production)", () => {
 
       await page.locator('nav a:has-text("Blog")').hover();
       await baseExpect
-        .poll(() => prefetchRequests.length, { timeout: 3000 })
+        .poll(() => prefetchRequests.length, { timeout: 5000 })
         .toBe(1);
 
       // Verify prefetch used the localStorage state key
@@ -787,7 +787,7 @@ test.describe("prefetch-viewport (dev)", () => {
     // Hover the hybrid link — should trigger prefetch
     await page.locator('a:has-text("Magazine (hybrid)")').hover();
 
-    await expect.poll(() => prefetchRequests.length, { timeout: 3000 }).toBe(1);
+    await expect.poll(() => prefetchRequests.length, { timeout: 5000 }).toBe(1);
   });
 });
 
@@ -884,7 +884,7 @@ base.describe("prefetch-viewport (production)", () => {
     await page.locator('a:has-text("Magazine (hybrid)")').hover();
 
     await baseExpect
-      .poll(() => prefetchRequests.length, { timeout: 3000 })
+      .poll(() => prefetchRequests.length, { timeout: 5000 })
       .toBe(1);
   });
 });

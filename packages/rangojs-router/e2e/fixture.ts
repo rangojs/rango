@@ -148,6 +148,7 @@ export function useFixture(options: {
       });
       const port = await proc.findPort();
       baseURL = `http://localhost:${port}`;
+      await waitForReady(baseURL);
       cleanup = async () => {
         proc.kill();
         await proc.done;

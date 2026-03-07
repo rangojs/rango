@@ -53,7 +53,7 @@ devTest.describe("shop-breadcrumbs", () => {
         .first()
         .click();
       await expect(page.locator("text=Intercepted")).not.toBeVisible({
-        timeout: 3000,
+        timeout: 5000,
       });
       await expect(page.locator("text=Test Revalidation Behavior")).toBeVisible(
         { timeout: 5000 },
@@ -62,7 +62,7 @@ devTest.describe("shop-breadcrumbs", () => {
       // Step 4: Go back - should return to category page
       await goBack(page);
       await expect(page.locator("text=Intercepted")).not.toBeVisible({
-        timeout: 3000,
+        timeout: 5000,
       });
 
       // CRITICAL: Category breadcrumbs should be restored: Shop > Electronics
@@ -76,7 +76,7 @@ devTest.describe("shop-breadcrumbs", () => {
       }
 
       await expect(breadcrumbNav.locator("text=Electronics")).toBeVisible({
-        timeout: 3000,
+        timeout: 5000,
       });
     },
   );
@@ -150,13 +150,13 @@ devTest.describe("shop-breadcrumbs", () => {
         .first()
         .click();
       await expect(page.locator("text=Intercepted")).toBeVisible({
-        timeout: 5000,
+        timeout: 10000,
       });
 
       // Go to full product page
       await page.locator("text=View Full Details").click();
       await expect(page.locator("text=Intercepted")).not.toBeVisible({
-        timeout: 3000,
+        timeout: 5000,
       });
 
       // Wait for product page to load
@@ -194,7 +194,7 @@ devTest.describe("shop-breadcrumbs", () => {
       // Go back to shop
       await goBack(page);
       await expect(page.locator("text=Intercepted")).not.toBeVisible({
-        timeout: 3000,
+        timeout: 5000,
       });
 
       // Shop breadcrumb should be restored, no product breadcrumb

@@ -16,6 +16,11 @@ test.describe("action location state (dev)", () => {
     await page.goto(f.url("/action-location-state"));
     await waitForHydration(page);
 
+    // Wait for any transient dev overlay to clear before interacting
+    await expect(page.locator("vite-error-overlay")).toHaveCount(0, {
+      timeout: 5000,
+    });
+
     // Before action: no flash state
     await expect(testId(page, "flash-message")).toHaveText("none");
 
