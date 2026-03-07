@@ -55,6 +55,28 @@ const STATUS_ERROR = 2;
 // Span correlation helpers
 // ---------------------------------------------------------------------------
 
+// Build correlation keys that include requestId when available.
+// Without requestId, concurrent requests to the same path use a shared
+// stack (LIFO) which can mis-correlate if completions are out of order.
+// Setting the x-request-id header ensures correct correlation.
+
+function requestKey(event: {
+  requestId?: string;
+  pathname: string;
+  transaction: string;
+}): string {
+  return `${event.requestId ?? ""}:${event.pathname}:${event.transaction}`;
+}
+
+function loaderKey(event: {
+  requestId?: string;
+  segmentId: string;
+  loaderName: string;
+  pathname: string;
+}): string {
+  return `${event.requestId ?? ""}:${event.segmentId}:${event.loaderName}:${event.pathname}`;
+}
+
 function pushSpan(
   map: Map<string, OTelSpan[]>,
   key: string,
@@ -116,19 +138,12 @@ export function createOTelSink(tracer: OTelTracer): TelemetrySink {
               "rango.is_partial": event.isPartial,
             },
           });
-          pushSpan(
-            requestSpans,
-            `${event.pathname}:${event.transaction}`,
-            span,
-          );
+          pushSpan(requestSpans, requestKey(event), span);
           break;
         }
 
         case "request.end": {
-          const span = popSpan(
-            requestSpans,
-            `${event.pathname}:${event.transaction}`,
-          );
+          const span = popSpan(requestSpans, requestKey(event));
           if (span) {
             span.setAttribute("rango.duration_ms", event.durationMs);
             span.setAttribute("rango.segment_count", event.segmentCount);
@@ -140,10 +155,7 @@ export function createOTelSink(tracer: OTelTracer): TelemetrySink {
         }
 
         case "request.error": {
-          const span = popSpan(
-            requestSpans,
-            `${event.pathname}:${event.transaction}`,
-          );
+          const span = popSpan(requestSpans, requestKey(event));
           if (span) {
             span.setAttribute("rango.duration_ms", event.durationMs);
             span.setAttribute("rango.phase", event.phase);
@@ -169,16 +181,12 @@ export function createOTelSink(tracer: OTelTracer): TelemetrySink {
               "http.route": event.pathname,
             },
           });
-          pushSpan(
-            loaderSpans,
-            `${event.segmentId}:${event.loaderName}:${event.pathname}`,
-            span,
-          );
+          pushSpan(loaderSpans, loaderKey(event), span);
           break;
         }
 
         case "loader.end": {
-          const key = `${event.segmentId}:${event.loaderName}:${event.pathname}`;
+          const key = loaderKey(event);
           const span = popSpan(loaderSpans, key);
           if (span) {
             span.setAttribute("rango.duration_ms", event.durationMs);
@@ -190,7 +198,7 @@ export function createOTelSink(tracer: OTelTracer): TelemetrySink {
         }
 
         case "loader.error": {
-          const key = `${event.segmentId}:${event.loaderName}:${event.pathname}`;
+          const key = loaderKey(event);
           const span = popSpan(loaderSpans, key);
           if (span) {
             span.setAttribute(

@@ -208,6 +208,121 @@ describe("createOTelSink", () => {
 
       expect(spans[0]!.ended).toBe(true);
     });
+
+    it("correlates concurrent same-path requests via requestId", () => {
+      const sink = createOTelSink(tracer);
+
+      // Two concurrent GET /blog requests with different requestIds
+      sink.emit({
+        type: "request.start",
+        timestamp: 0,
+        requestId: "req-1",
+        method: "GET",
+        pathname: "/blog",
+        transaction: "match",
+        isPartial: false,
+      });
+      sink.emit({
+        type: "request.start",
+        timestamp: 1,
+        requestId: "req-2",
+        method: "GET",
+        pathname: "/blog",
+        transaction: "match",
+        isPartial: false,
+      });
+
+      expect(spans).toHaveLength(2);
+
+      // End req-1 first (out of LIFO order — would fail without requestId keying)
+      sink.emit({
+        type: "request.end",
+        timestamp: 15,
+        requestId: "req-1",
+        method: "GET",
+        pathname: "/blog",
+        transaction: "match",
+        durationMs: 15,
+        segmentCount: 3,
+        cacheHit: false,
+      });
+
+      // req-1 span ended, req-2 still open
+      expect(spans[0]!.ended).toBe(true);
+      expect(spans[0]!.attributes["rango.segment_count"]).toBe(3);
+      expect(spans[1]!.ended).toBe(false);
+
+      // End req-2
+      sink.emit({
+        type: "request.end",
+        timestamp: 25,
+        requestId: "req-2",
+        method: "GET",
+        pathname: "/blog",
+        transaction: "match",
+        durationMs: 24,
+        segmentCount: 5,
+        cacheHit: true,
+      });
+
+      expect(spans[1]!.ended).toBe(true);
+      expect(spans[1]!.attributes["rango.segment_count"]).toBe(5);
+    });
+
+    it("correlates concurrent same-path loaders via requestId", () => {
+      const sink = createOTelSink(tracer);
+
+      // Two concurrent loaders with the same segment/path but different requestIds
+      sink.emit({
+        type: "loader.start",
+        timestamp: 0,
+        requestId: "req-1",
+        segmentId: "L0D0.productList",
+        loaderName: "productList",
+        pathname: "/products",
+      });
+      sink.emit({
+        type: "loader.start",
+        timestamp: 1,
+        requestId: "req-2",
+        segmentId: "L0D0.productList",
+        loaderName: "productList",
+        pathname: "/products",
+      });
+
+      expect(spans).toHaveLength(2);
+
+      // End req-1's loader first (out of LIFO order)
+      sink.emit({
+        type: "loader.end",
+        timestamp: 8,
+        requestId: "req-1",
+        segmentId: "L0D0.productList",
+        loaderName: "productList",
+        pathname: "/products",
+        durationMs: 8,
+        ok: true,
+      });
+
+      expect(spans[0]!.ended).toBe(true);
+      expect(spans[0]!.attributes["rango.duration_ms"]).toBe(8);
+      expect(spans[1]!.ended).toBe(false);
+
+      // End req-2's loader
+      sink.emit({
+        type: "loader.end",
+        timestamp: 12,
+        requestId: "req-2",
+        segmentId: "L0D0.productList",
+        loaderName: "productList",
+        pathname: "/products",
+        durationMs: 11,
+        ok: true,
+      });
+
+      expect(spans[1]!.ended).toBe(true);
+      expect(spans[1]!.attributes["rango.duration_ms"]).toBe(11);
+    });
   });
 
   describe("loader lifecycle", () => {
