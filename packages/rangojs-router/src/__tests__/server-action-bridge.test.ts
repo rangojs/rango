@@ -68,6 +68,61 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("server-action-bridge partial invariant", () => {
+  it("rejects non-partial action response", async () => {
+    stubWindow();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { callback } = setupBridge({
+      metadata: {
+        pathname: "/",
+        segments: [{ id: "R0", component: "div" }],
+        matched: ["R0"],
+        diff: ["R0"],
+        // isPartial is intentionally omitted
+      },
+      returnValue: { ok: true, data: "done" },
+    });
+
+    await expect(callback("hash#save", [])).rejects.toThrow(
+      /Action response missing isPartial/,
+    );
+  });
+
+  it("accepts partial action response", async () => {
+    stubWindow();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+
+    const { callback } = setupBridge({
+      metadata: {
+        pathname: "/",
+        segments: [{ id: "R0", component: "div" }],
+        matched: ["R0"],
+        diff: ["R0"],
+        isPartial: true,
+      },
+      returnValue: { ok: true, data: "result" },
+    });
+
+    // The partial payload passes the isPartial guard. It will fail later
+    // on store.getHistoryKey (not mocked), but the invariant error is
+    // distinct — verify we do NOT get the isPartial rejection.
+    await expect(callback("hash#save", [])).rejects.toThrow(
+      /getHistoryKey is not a function/,
+    );
+    await expect(callback("hash#save", [])).rejects.not.toThrow(
+      /Action response missing isPartial/,
+    );
+  });
+});
+
 describe("server-action-bridge redirect payload validation", () => {
   it("allows same-origin redirect payload", async () => {
     stubWindow();

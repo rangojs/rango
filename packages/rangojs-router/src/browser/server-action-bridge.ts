@@ -445,9 +445,13 @@ export function createServerActionBridge(
     }
 
     if (!isPartial) {
-      // Full update not supported for actions
+      // Protocol invariant: action revalidation responses MUST be partial.
+      // The server always sends isPartial: true for successful revalidation
+      // and isPartial: true + isError: true for error boundary responses.
+      // A non-partial payload here indicates a server-side bug.
       throw new Error(
-        `[Browser] Full update after action is not supported yet`,
+        `[Browser] Action response missing isPartial — the server must ` +
+          `always send partial payloads for action revalidation.`,
       );
     }
 
