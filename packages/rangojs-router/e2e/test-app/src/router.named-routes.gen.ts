@@ -133,6 +133,8 @@ export const NamedRoutes = {
   "mwChain.index": "/mw-chain",
   negotiateJsonFirst: "/negotiate-test-json-first",
   negotiateJsonFirstRsc: "/negotiate-test-json-first",
+  negotiateMwJson: "/negotiate-mw-test",
+  negotiateMwRsc: "/negotiate-mw-test",
   negotiateTest: "/negotiate-test",
   negotiateTestJson: "/negotiate-test",
   negotiateTestMd: "/negotiate-test",

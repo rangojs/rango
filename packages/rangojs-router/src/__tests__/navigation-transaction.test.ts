@@ -236,6 +236,91 @@ describe("createNavigationTransaction", () => {
     expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
+  it("dispatches __rsc_locationstate when clearing typed location state", () => {
+    const { store, eventController } = createTestContext();
+
+    // Simulate old history entry with typed location state
+    historyState = { __rsc_ls_product: { name: "Widget" }, key: "abc" };
+
+    const tx = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/other",
+    );
+
+    tx.commit({
+      url: "http://localhost/other",
+      segmentIds: ["root"],
+      segments: [],
+    });
+
+    // Event should fire because old state had __rsc_ls_ key
+    const dispatchCalls = (window.dispatchEvent as ReturnType<typeof vi.fn>)
+      .mock.calls;
+    const locationStateEvents = dispatchCalls.filter(
+      (args: unknown[]) => (args[0] as Event).type === "__rsc_locationstate",
+    );
+    expect(locationStateEvents).toHaveLength(1);
+
+    tx[Symbol.dispose]();
+  });
+
+  it("dispatches __rsc_locationstate when clearing plain state", () => {
+    const { store, eventController } = createTestContext();
+
+    // Simulate old history entry with plain state
+    historyState = { state: { from: "/dashboard" }, key: "abc" };
+
+    const tx = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/other",
+    );
+
+    tx.commit({
+      url: "http://localhost/other",
+      segmentIds: ["root"],
+      segments: [],
+    });
+
+    const dispatchCalls = (window.dispatchEvent as ReturnType<typeof vi.fn>)
+      .mock.calls;
+    const locationStateEvents = dispatchCalls.filter(
+      (args: unknown[]) => (args[0] as Event).type === "__rsc_locationstate",
+    );
+    expect(locationStateEvents).toHaveLength(1);
+
+    tx[Symbol.dispose]();
+  });
+
+  it("does not dispatch __rsc_locationstate when no location state on either side", () => {
+    const { store, eventController } = createTestContext();
+
+    // No location state in old history entry
+    historyState = { key: "abc" };
+
+    const tx = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/other",
+    );
+
+    tx.commit({
+      url: "http://localhost/other",
+      segmentIds: ["root"],
+      segments: [],
+    });
+
+    const dispatchCalls = (window.dispatchEvent as ReturnType<typeof vi.fn>)
+      .mock.calls;
+    const locationStateEvents = dispatchCalls.filter(
+      (args: unknown[]) => (args[0] as Event).type === "__rsc_locationstate",
+    );
+    expect(locationStateEvents).toHaveLength(0);
+
+    tx[Symbol.dispose]();
+  });
+
   it("cacheOnly commit completes the navigation handle", () => {
     const { store, eventController } = createTestContext();
 

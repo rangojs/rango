@@ -127,6 +127,11 @@ export type ServerActionFunction = ((...args: any[]) => Promise<any>) & {
  * const error = useAction(addToCart, state => state.error);
  * ```
  *
+ * @note The selector is expected to be stable for a given hook instance.
+ * This hook tracks one projection of one action. Changing selector semantics
+ * for the same action ID without a new action event is not a supported pattern;
+ * use separate useAction() subscriptions if you need different projections.
+ *
  * @note Actions passed as props from server components lose their metadata
  * during RSC serialization. Use a string action name or import directly.
  */
@@ -162,7 +167,10 @@ export function useAction<T>(
     T | TrackedActionState
   >(null!);
 
-  // Ref keeps the latest selector without re-subscribing on every render.
+  // Ref keeps the latest selector for subscription callbacks without
+  // re-subscribing on every render. Selector changes themselves are not
+  // treated as a reactive input; this hook expects a stable selector and
+  // represents one subscription/projection for one action.
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 
