@@ -89,6 +89,25 @@ describe("W3: PE action redirect handling", () => {
     expect(extractRedirectResponse(new Error("boom"))).toBeNull();
     expect(extractRedirectResponse({ status: 302 })).toBeNull();
   });
+
+  it("preserves Set-Cookie and custom headers from original redirect", () => {
+    const headers = new Headers();
+    headers.set("Location", "/login");
+    headers.append("Set-Cookie", "flash=done; Path=/");
+    headers.append("Set-Cookie", "token=xyz; Path=/; HttpOnly");
+    headers.set("X-Request-Id", "req-99");
+    const response = new Response(null, { status: 302, headers });
+
+    const result = extractRedirectResponse(response);
+    expect(result).toBeInstanceOf(Response);
+
+    const cookies = result!.headers.getSetCookie();
+    expect(cookies).toContain("flash=done; Path=/");
+    expect(cookies).toContain("token=xyz; Path=/; HttpOnly");
+    expect(result!.headers.get("X-Request-Id")).toBe("req-99");
+    // Location is on the wrapper, not carried over from source
+    expect(result!.headers.get("Location")).toBe("/login");
+  });
 });
 
 describe("W3: PE non-redirect Response warning", () => {

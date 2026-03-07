@@ -26,6 +26,7 @@ import {
   hasBodyContent,
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
+  carryOverRedirectHeaders,
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 
@@ -117,15 +118,17 @@ export async function executeServerAction<TEnv>(
       const isRedirect = data.status >= 300 && data.status < 400 && redirectUrl;
       if (isRedirect) {
         const locationState = getLocationState();
+        let redirect: Response;
         if (locationState) {
-          // Redirect with state: needs Flight payload to carry state
-          return ctx.createRedirectFlightResponse(
+          redirect = ctx.createRedirectFlightResponse(
             redirectUrl,
             resolveLocationStateEntries(locationState),
           );
+        } else {
+          redirect = createSimpleRedirectResponse(redirectUrl);
         }
-        // Simple redirect: short-circuit with a header, no RSC serialization
-        return createSimpleRedirectResponse(redirectUrl);
+        carryOverRedirectHeaders(data, redirect);
+        return redirect;
       }
     }
 
@@ -138,28 +141,58 @@ export async function executeServerAction<TEnv>(
         error.status >= 300 && error.status < 400 && redirectUrl;
       if (isRedirect) {
         const locationState = getLocationState();
+        let redirect: Response;
         if (locationState) {
-          return ctx.createRedirectFlightResponse(
+          redirect = ctx.createRedirectFlightResponse(
             redirectUrl,
             resolveLocationStateEntries(locationState),
           );
+        } else {
+          redirect = createSimpleRedirectResponse(redirectUrl);
         }
-        return createSimpleRedirectResponse(redirectUrl);
+        carryOverRedirectHeaders(error, redirect);
+        return redirect;
+      }
+
+      // Non-redirect Response thrown from action — this will be treated
+      // as a regular error and routed to the error boundary. Warn in dev
+      // since the intent is likely a redirect with a missing Location header.
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(
+          `[@rangojs/router] Server action "${actionId}" threw a Response ` +
+            `(status ${error.status}) that is not a redirect. ` +
+            `Non-redirect Responses are treated as errors. ` +
+            `Use \`throw redirect('/path')\` for redirects.`,
+        );
       }
     }
 
     returnValue = { ok: false, data: error };
     actionStatus = 500;
 
-    // Try to render error boundary
-    const errorResult = await ctx.router.matchError(
-      request,
-      { env },
-      error,
-      "route",
-    );
+    // Try to render error boundary.
+    // Report the action error first so it is not lost if matchError throws.
+    let errorResult;
+    try {
+      errorResult = await ctx.router.matchError(
+        request,
+        { env },
+        error,
+        "route",
+      );
+    } catch (matchErr) {
+      // matchError failed — report the original action error as unhandled,
+      // then let the matchError failure propagate.
+      ctx.callOnError(error, "action", {
+        request,
+        url,
+        env,
+        actionId,
+        handledByBoundary: false,
+      });
+      throw matchErr;
+    }
 
-    // Report the action error (handledByBoundary indicates if error boundary will render)
     ctx.callOnError(error, "action", {
       request,
       url,

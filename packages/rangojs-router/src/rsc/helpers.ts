@@ -39,7 +39,9 @@ export function createResponseWithMergedHeaders(
     return new Response(body, init);
   }
 
-  // Merge headers from stub response into the new response
+  // Merge headers from stub response into the new response.
+  // Delete Set-Cookie from the stub after consuming so that downstream
+  // merge points (e.g. executeMiddleware) do not duplicate them.
   const mergedHeaders = new Headers(init.headers);
   ctx.res.headers.forEach((value, name) => {
     if (name.toLowerCase() === "set-cookie") {
@@ -49,6 +51,7 @@ export function createResponseWithMergedHeaders(
       mergedHeaders.set(name, value);
     }
   });
+  ctx.res.headers.delete("set-cookie");
 
   // Use ctx.res.status if it was set (e.g., 404 for notFound, 500 for error)
   // Otherwise use the status from init
@@ -87,6 +90,26 @@ export function createSimpleRedirectResponse(redirectUrl: string): Response {
 }
 
 /**
+ * Carry over headers from a source redirect Response to a wrapper Response.
+ * Skips Location and X-RSC-Redirect (intentionally replaced by the wrapper)
+ * and appends Set-Cookie to avoid clobbering multiple cookie headers.
+ */
+export function carryOverRedirectHeaders(
+  source: Response,
+  target: Response,
+): void {
+  source.headers.forEach((value, name) => {
+    const lower = name.toLowerCase();
+    if (lower === "location" || lower === "x-rsc-redirect") return;
+    if (lower === "set-cookie") {
+      target.headers.append(name, value);
+    } else if (!target.headers.has(name)) {
+      target.headers.set(name, value);
+    }
+  });
+}
+
+/**
  * If a response is a 3xx redirect during a partial (client-side) request,
  * intercept it and return a Flight-compatible redirect instead.
  * fetch() auto-follows 3xx which would hit a URL that renders full HTML
@@ -114,21 +137,7 @@ export function interceptRedirectForPartial(
     intercepted = createSimpleRedirectResponse(redirectUrl);
   }
 
-  // Carry over headers from the original redirect response that are not
-  // already on the intercepted response. This preserves cookies and custom
-  // headers set by middleware before the redirect.
-  response.headers.forEach((value, name) => {
-    // Skip redirect-specific and already-handled headers.
-    // X-RSC-Redirect from the original 3xx carries "soft" which would
-    // collide with the intercepted response's redirect URL or Flight payload.
-    const lower = name.toLowerCase();
-    if (lower === "location" || lower === "x-rsc-redirect") return;
-    if (name.toLowerCase() === "set-cookie") {
-      intercepted.headers.append(name, value);
-    } else if (!intercepted.headers.has(name)) {
-      intercepted.headers.set(name, value);
-    }
-  });
+  carryOverRedirectHeaders(response, intercepted);
 
   return intercepted;
 }

@@ -288,8 +288,8 @@ export async function executeMiddleware<TEnv>(
       // End of chain - call actual RSC handler
       const response = await finalHandler();
 
-      // Merge headers set on stub into the real response
-      // Use append for Set-Cookie to preserve multiple cookies
+      // Merge headers set on stub into the real response.
+      // Use append for Set-Cookie to preserve multiple cookies.
       const mergedHeaders = new Headers(response.headers);
       stubResponse.headers.forEach((value, name) => {
         if (name.toLowerCase() === "set-cookie") {
@@ -298,7 +298,9 @@ export async function executeMiddleware<TEnv>(
           mergedHeaders.set(name, value);
         }
       });
-      // Also merge shared RequestContext stub (cookies written via cookies().set())
+      // Also merge shared RequestContext stub (cookies written via cookies().set()).
+      // Set-Cookie duplication is prevented by createResponseWithMergedHeaders
+      // draining Set-Cookie from ctx.res after merging (helpers.ts).
       const reqCtx = _getRequestContext();
       if (reqCtx) {
         reqCtx.res.headers.forEach((value, name) => {
@@ -330,10 +332,16 @@ export async function executeMiddleware<TEnv>(
       reverse,
     );
 
-    // Track if next() was called and capture its Promise
-    // This handles the case where middleware calls next() synchronously without await
+    // Track if next() was called and capture its Promise.
+    // Guard against double-calling: a second call would re-enter the
+    // downstream chain and overwrite responseHolder.response.
     let nextPromise: Promise<Response> | null = null;
     const wrappedNext = (): Promise<Response> => {
+      if (nextPromise) {
+        throw new Error(
+          `[@rangojs/router] Middleware called next() more than once.`,
+        );
+      }
       nextPromise = next();
       return nextPromise;
     };
@@ -406,6 +414,19 @@ export async function executeMiddleware<TEnv>(
     // If middleware called next(), await it and return the response
     if (nextPromise) {
       await nextPromise;
+
+      // W5: warn if ctx.set() was called but the downstream response is a redirect.
+      // The ctx.set() values will be lost because the redirect navigates away.
+      if (
+        process.env.NODE_ENV !== "production" &&
+        ctxSetCalled &&
+        responseHolder.response &&
+        responseHolder.response.status >= 300 &&
+        responseHolder.response.status < 400
+      ) {
+        warnCtxSetBeforeRedirect(entry.handler);
+      }
+
       return responseHolder.response!;
     }
 
@@ -484,7 +505,18 @@ export async function executeInterceptMiddleware<TEnv>(
       reverse,
     );
 
-    const result = await middleware(ctx, next);
+    let nextCalled = false;
+    const guardedNext = (): Promise<Response> => {
+      if (nextCalled) {
+        throw new Error(
+          `[@rangojs/router] Intercept middleware called next() more than once.`,
+        );
+      }
+      nextCalled = true;
+      return next();
+    };
+
+    const result = await middleware(ctx, guardedNext);
 
     if (result instanceof Response) {
       earlyResponse = result;
