@@ -29,6 +29,11 @@ that route tree.
 - [`"use cache"` API design](./use-cache-api-design.md) - function/component
   caching and cache profiles
 
+## Observability
+
+- [Telemetry](./telemetry.md) - structured lifecycle events, console sink,
+  OpenTelemetry adapter, custom sinks
+
 ## Design Notes
 
 - [Consolidate generated route type files](./design/consolidate-gen-files.md)

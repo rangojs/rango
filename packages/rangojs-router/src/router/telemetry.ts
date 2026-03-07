@@ -164,6 +164,25 @@ export function safeEmit(sink: TelemetrySink, event: TelemetryEvent): void {
 }
 
 // ---------------------------------------------------------------------------
+// Request ID extraction (for span correlation)
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract request ID from standard headers.
+ * Returns undefined when no ID header is present.
+ * Used by emit sites to populate the optional requestId field.
+ */
+export function getRequestId(request: Request): string | undefined {
+  const candidate =
+    request.headers.get("x-rsc-router-request-id") ??
+    request.headers.get("x-request-id") ??
+    request.headers.get("cf-ray");
+  if (!candidate) return undefined;
+  const trimmed = candidate.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+// ---------------------------------------------------------------------------
 // Console sink (built-in, replaces ad-hoc console.log debug traces)
 // ---------------------------------------------------------------------------
 

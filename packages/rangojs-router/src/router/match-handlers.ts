@@ -31,7 +31,12 @@ import {
 } from "./logging.js";
 import type { ErrorBoundaryHandler, NotFoundBoundaryHandler } from "../types";
 import type { MiddlewareFn } from "./middleware.js";
-import { type TelemetrySink, safeEmit, resolveSink } from "./telemetry.js";
+import {
+  type TelemetrySink,
+  safeEmit,
+  resolveSink,
+  getRequestId,
+} from "./telemetry.js";
 
 export interface MatchHandlerDeps<TEnv = any> {
   buildRouterContext: () => RouterContext<TEnv>;
@@ -150,8 +155,11 @@ export function createMatchHandlers<TEnv = any>(
    * - background-revalidation: SWR revalidation
    */
   async function match(request: Request, env: TEnv): Promise<MatchResult> {
-    return runWithRouterLogContext({ request, transaction: "match" }, () =>
-      runWithRouterContext(buildRouterContext(), async () =>
+    const requestId = hasTelemetry ? getRequestId(request) : undefined;
+    return runWithRouterLogContext({ request, transaction: "match" }, () => {
+      const routerCtx = buildRouterContext();
+      if (requestId) routerCtx.requestId = requestId;
+      return runWithRouterContext(routerCtx, async () =>
         withRouterLogScope("match", async () => {
           const matchStart = performance.now();
           const pathname = new URL(request.url).pathname;
@@ -159,6 +167,7 @@ export function createMatchHandlers<TEnv = any>(
             safeEmit(telemetry, {
               type: "request.start",
               timestamp: matchStart,
+              requestId,
               method: request.method,
               pathname,
               transaction: "match",
@@ -174,6 +183,7 @@ export function createMatchHandlers<TEnv = any>(
               safeEmit(telemetry, {
                 type: "request.end",
                 timestamp: performance.now(),
+                requestId,
                 method: request.method,
                 pathname,
                 transaction: "match",
@@ -201,6 +211,7 @@ export function createMatchHandlers<TEnv = any>(
               safeEmit(telemetry, {
                 type: "cache.decision",
                 timestamp: performance.now(),
+                requestId,
                 pathname,
                 routeKey: ctx.routeKey,
                 hit: state.cacheHit,
@@ -210,6 +221,7 @@ export function createMatchHandlers<TEnv = any>(
               safeEmit(telemetry, {
                 type: "request.end",
                 timestamp: performance.now(),
+                requestId,
                 method: request.method,
                 pathname,
                 transaction: "match",
@@ -226,6 +238,7 @@ export function createMatchHandlers<TEnv = any>(
               safeEmit(telemetry, {
                 type: "request.error",
                 timestamp: performance.now(),
+                requestId,
                 method: request.method,
                 pathname,
                 transaction: "match",
@@ -246,8 +259,8 @@ export function createMatchHandlers<TEnv = any>(
             throw sanitizeError(error);
           }
         }),
-      ),
-    );
+      );
+    });
   }
 
   async function matchError(
@@ -285,10 +298,13 @@ export function createMatchHandlers<TEnv = any>(
     context: TEnv,
     actionContext?: ActionContext,
   ): Promise<MatchResult | null> {
+    const partialRequestId = hasTelemetry ? getRequestId(request) : undefined;
     return runWithRouterLogContext(
       { request, transaction: "matchPartial" },
-      () =>
-        runWithRouterContext(buildRouterContext(), async () =>
+      () => {
+        const routerCtx = buildRouterContext();
+        if (partialRequestId) routerCtx.requestId = partialRequestId;
+        return runWithRouterContext(routerCtx, async () =>
           withRouterLogScope("matchPartial", async () => {
             const matchStart = performance.now();
             const pathname = new URL(request.url).pathname;
@@ -296,6 +312,7 @@ export function createMatchHandlers<TEnv = any>(
               safeEmit(telemetry, {
                 type: "request.start",
                 timestamp: matchStart,
+                requestId: partialRequestId,
                 method: request.method,
                 pathname,
                 transaction: "matchPartial",
@@ -313,6 +330,7 @@ export function createMatchHandlers<TEnv = any>(
                 safeEmit(telemetry, {
                   type: "request.end",
                   timestamp: performance.now(),
+                  requestId: partialRequestId,
                   method: request.method,
                   pathname,
                   transaction: "matchPartial",
@@ -348,6 +366,7 @@ export function createMatchHandlers<TEnv = any>(
                 safeEmit(telemetry, {
                   type: "cache.decision",
                   timestamp: performance.now(),
+                  requestId: partialRequestId,
                   pathname,
                   routeKey: ctx.routeKey,
                   hit: state.cacheHit,
@@ -357,6 +376,7 @@ export function createMatchHandlers<TEnv = any>(
                 safeEmit(telemetry, {
                   type: "request.end",
                   timestamp: performance.now(),
+                  requestId: partialRequestId,
                   method: request.method,
                   pathname,
                   transaction: "matchPartial",
@@ -375,6 +395,7 @@ export function createMatchHandlers<TEnv = any>(
                 safeEmit(telemetry, {
                   type: "request.error",
                   timestamp: performance.now(),
+                  requestId: partialRequestId,
                   method: request.method,
                   pathname,
                   transaction: "matchPartial",
@@ -396,7 +417,8 @@ export function createMatchHandlers<TEnv = any>(
               throw sanitizeError(error);
             }
           }),
-        ),
+        );
+      },
     );
   }
 

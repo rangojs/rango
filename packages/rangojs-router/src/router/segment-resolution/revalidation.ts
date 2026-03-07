@@ -62,11 +62,13 @@ function observeStreamedHandler(
   }
   if (!routerCtx?.telemetry) return;
   const sink = resolveSink(routerCtx.telemetry);
+  const reqId = routerCtx.requestId;
   promise.catch((err: unknown) => {
     const errorObj = err instanceof Error ? err : new Error(String(err));
     safeEmit(sink, {
       type: "handler.error",
       timestamp: performance.now(),
+      requestId: reqId,
       segmentId,
       segmentType,
       error: errorObj,
@@ -103,6 +105,7 @@ function emitRevalidationDecision(
     safeEmit(resolveSink(routerCtx.telemetry), {
       type: "revalidation.decision",
       timestamp: performance.now(),
+      requestId: routerCtx.requestId,
       segmentId,
       pathname,
       routeKey,

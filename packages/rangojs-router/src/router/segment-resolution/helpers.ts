@@ -24,7 +24,7 @@ import type { SegmentResolutionDeps } from "../types.js";
 import { debugLog } from "../logging.js";
 import { tryStaticLookup } from "./static-store.js";
 import type { TelemetrySink } from "../telemetry.js";
-import { resolveSink, safeEmit } from "../telemetry.js";
+import { resolveSink, safeEmit, getRequestId } from "../telemetry.js";
 
 // ---------------------------------------------------------------------------
 // Handler result processing
@@ -159,6 +159,7 @@ export function catchSegmentError<TEnv>(
       safeEmit(resolveSink(report.telemetry), {
         type: "handler.error",
         timestamp: performance.now(),
+        requestId: report.request ? getRequestId(report.request) : undefined,
         segmentId: entry.shortCode,
         segmentType: entry.type,
         error: errorObj,

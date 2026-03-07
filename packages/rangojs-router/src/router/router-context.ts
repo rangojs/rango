@@ -252,6 +252,9 @@ export interface RouterContext<TEnv = any> {
   // Telemetry sink (optional, no-op when undefined)
   telemetry?: TelemetrySink;
 
+  // Request ID for telemetry span correlation (set per-request in match handlers)
+  requestId?: string;
+
   // Intercept loaders only (for cache hit + intercept scenarios)
   resolveInterceptLoadersOnly?: (
     intercept: InterceptEntry,
