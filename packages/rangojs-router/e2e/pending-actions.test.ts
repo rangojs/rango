@@ -27,12 +27,14 @@ test.describe("pending-actions-navigation", () => {
     const productLink = page.locator('[data-testid="product-link-product-a"]');
     await productLink.click();
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(1);
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
 
     // 3. Start action - click quantity increment
     const incrementButton = page.locator(
       '[data-testid="modal-quantity-control"] button:has-text("+")',
     );
+    await expect(incrementButton).toHaveCount(1);
     await incrementButton.click();
 
     // 4. Immediately navigate to full detail page (same URL, non-intercept)
@@ -40,9 +42,7 @@ test.describe("pending-actions-navigation", () => {
     await expect(
       page.locator('[data-testid="segment-metadata"]'),
     ).toBeVisible();
-    await expect(
-      page.locator('[data-testid="product-modal"]'),
-    ).not.toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
 
     // 5. Wait for pending action responses
     await page.waitForTimeout(600);
@@ -70,6 +70,7 @@ test.describe("pending-actions-navigation", () => {
     const productLink = page.locator('[data-testid="product-link-product-a"]');
     await productLink.click();
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(1);
 
     // 3. Go to full detail page
     await page.locator('[data-testid="view-full-details"]').click();
@@ -86,6 +87,10 @@ test.describe("pending-actions-navigation", () => {
 
     // 6. Should be on intercept view
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="modal-product-name"]')).toHaveText(
+      "Product A",
+    );
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
 
     // 7. Wait for action to complete in background
@@ -93,6 +98,10 @@ test.describe("pending-actions-navigation", () => {
 
     // 8. Verify UI is still correct
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="modal-product-name"]')).toHaveText(
+      "Product A",
+    );
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
   });
 
@@ -109,11 +118,13 @@ test.describe("pending-actions-navigation", () => {
     const productLink = page.locator('[data-testid="product-link-product-a"]');
     await productLink.click();
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(1);
 
     // 3. Start action - click quantity increment
     const incrementButton = page.locator(
       '[data-testid="modal-quantity-control"] button:has-text("+")',
     );
+    await expect(incrementButton).toHaveCount(1);
     await incrementButton.click();
 
     // 4. Close modal by navigating back (not waiting for action)
@@ -122,18 +133,14 @@ test.describe("pending-actions-navigation", () => {
     // 5. Should be on index
     await expect(page).toHaveURL(/\/$/);
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
-    await expect(
-      page.locator('[data-testid="product-modal"]'),
-    ).not.toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
 
     // 6. Wait for action to complete
     await page.waitForTimeout(600);
 
     // 7. Index should still be intact
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
-    await expect(
-      page.locator('[data-testid="product-modal"]'),
-    ).not.toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
   });
 
   test("action on intercept, navigate to different product, back to index - should restore correctly", async ({
@@ -149,11 +156,13 @@ test.describe("pending-actions-navigation", () => {
     const productLink = page.locator('[data-testid="product-link-product-a"]');
     await productLink.click();
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(1);
 
     // 3. Start action - click quantity increment
     const incrementButton = page.locator(
       '[data-testid="modal-quantity-control"] button:has-text("+")',
     );
+    await expect(incrementButton).toHaveCount(1);
     await incrementButton.click();
 
     // 4. Close modal and navigate to different product
@@ -161,6 +170,13 @@ test.describe("pending-actions-navigation", () => {
     const productLink2 = page.locator('[data-testid="product-link-product-b"]');
     await productLink2.click();
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="modal-product-name"]')).toHaveText(
+      "Product B",
+    );
+    await expect(
+      page.locator('[data-testid="modal-product-name"]'),
+    ).not.toHaveText("Product A");
 
     // 5. Wait for action to complete
     await page.waitForTimeout(600);
@@ -170,9 +186,7 @@ test.describe("pending-actions-navigation", () => {
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
 
     // 7. Index should be intact
-    await expect(
-      page.locator('[data-testid="product-modal"]'),
-    ).not.toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
   });
 
   test("rapid open/close modal with actions - should not leak state", async ({
@@ -195,18 +209,22 @@ test.describe("pending-actions-navigation", () => {
       );
       await productLink.click();
       await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+      await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(
+        1,
+      );
 
       // Fire action (don't wait) - click quantity increment
       const incrementButton = page.locator(
         '[data-testid="modal-quantity-control"] button:has-text("+")',
       );
+      await expect(incrementButton).toHaveCount(1);
       await incrementButton.click();
 
       // Close immediately via back
       await goBack(page);
-      await expect(
-        page.locator('[data-testid="product-modal"]'),
-      ).not.toBeVisible();
+      await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(
+        0,
+      );
     }
 
     // 3. Wait for all actions to settle
@@ -214,14 +232,13 @@ test.describe("pending-actions-navigation", () => {
 
     // 4. Index should be in consistent state
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
-    await expect(
-      page.locator('[data-testid="product-modal"]'),
-    ).not.toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
 
     // 5. Open modal one more time - should work correctly
     const productLink = page.locator('[data-testid="product-link-product-a"]');
     await productLink.click();
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(1);
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
   });
 
