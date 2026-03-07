@@ -397,6 +397,28 @@ describe("constrained parameters", () => {
       expect(regex.test("/comment/edit")).toBe(true);
       expect(regex.test("/user/edit")).toBe(false);
     });
+
+    it("should escape regex metacharacters in constraint values", () => {
+      const { regex } = compilePattern("/:version(v1.0|v2.0)");
+      expect(regex.test("/v1.0")).toBe(true);
+      expect(regex.test("/v2.0")).toBe(true);
+      expect(regex.test("/v1x0")).toBe(false);
+      expect(regex.test("/v2X0")).toBe(false);
+    });
+
+    it("should escape plus and hash in constraint values", () => {
+      const { regex } = compilePattern("/:lang(c++|c#)");
+      expect(regex.test("/c++")).toBe(true);
+      expect(regex.test("/c#")).toBe(true);
+      expect(regex.test("/cxx")).toBe(false);
+    });
+
+    it("should escape metacharacters in optional constrained params", () => {
+      const { regex } = compilePattern("/:version(v1.0|v2.0)?/docs");
+      expect(regex.test("/v1.0/docs")).toBe(true);
+      expect(regex.test("/docs")).toBe(true);
+      expect(regex.test("/v1x0/docs")).toBe(false);
+    });
   });
 
   describe("findMatch param extraction", () => {
@@ -423,6 +445,25 @@ describe("constrained parameters", () => {
       expect(result).not.toBeNull();
       expect(result!.params).toEqual({ locale: "" });
       expect(result!.optionalParams.has("locale")).toBe(true);
+    });
+
+    it("should match constraint with regex metacharacters literally", () => {
+      const entries = [
+        createRouteEntry("", { versioned: "/:version(v1.0|v2.0)/docs" }),
+      ];
+      expect(findMatch("/v1.0/docs", entries)).not.toBeNull();
+      expect(findMatch("/v2.0/docs", entries)).not.toBeNull();
+      expect(findMatch("/v1.0/docs", entries)!.params).toEqual({
+        version: "v1.0",
+      });
+    });
+
+    it("should reject values where dots would match as regex wildcards", () => {
+      const entries = [
+        createRouteEntry("", { versioned: "/:version(v1.0|v2.0)/docs" }),
+      ];
+      expect(findMatch("/v1x0/docs", entries)).toBeNull();
+      expect(findMatch("/v2X0/docs", entries)).toBeNull();
     });
   });
 });
