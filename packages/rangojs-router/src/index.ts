@@ -285,6 +285,8 @@ export type { PathResponse } from "./href-client.js";
 
 // Telemetry sink
 export { createConsoleSink } from "./router/telemetry.js";
+export { createOTelSink } from "./router/telemetry-otel.js";
+export type { OTelTracer, OTelSpan } from "./router/telemetry-otel.js";
 export type {
   TelemetrySink,
   TelemetryEvent,
