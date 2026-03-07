@@ -87,7 +87,7 @@ describe("segment-resolution parallel loading", () => {
       context.url,
       context.url,
       "/blog",
-      {} as any,
+      { trackHandler: (p: any) => p } as any,
     );
 
     const quickResult = await Promise.race([
@@ -140,7 +140,7 @@ describe("segment-resolution parallel loading", () => {
       "/blog",
       new Map(),
       false,
-      {} as any,
+      { trackHandler: (p: any) => p } as any,
     );
 
     const quickResult = await Promise.race([
@@ -196,7 +196,7 @@ describe("segment-resolution parallel loading", () => {
       context.url,
       context.url,
       "/blog",
-      {} as any,
+      { trackHandler: (p: any) => p } as any,
     );
 
     const quickResult = await Promise.race([

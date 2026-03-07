@@ -330,8 +330,15 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         if (!shouldResolve) {
           component = null;
         } else if (hasLoadingFallback) {
+          const result =
+            typeof handler === "function" ? handler(context) : handler;
           component = (
-            typeof handler === "function" ? handler(context) : handler
+            result instanceof Promise
+              ? deps.trackHandler(result, {
+                  segmentId: parallelId,
+                  segmentType: "parallel",
+                })
+              : result
           ) as ReactNode;
         } else {
           component =
@@ -467,7 +474,12 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         const result = handleHandlerResult(routeEntry.handler(context));
         return {
           content:
-            result instanceof Promise ? deps.trackHandler(result) : result,
+            result instanceof Promise
+              ? deps.trackHandler(result, {
+                  segmentId: entry.shortCode,
+                  segmentType: entry.type,
+                })
+              : result,
         };
       }
       debugLog("segment.action", "resolving action route with awaited value", {
@@ -864,8 +876,15 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         if (!shouldResolve) {
           component = null;
         } else if (hasLoadingFallback) {
+          const result =
+            typeof handler === "function" ? handler(context) : handler;
           component = (
-            typeof handler === "function" ? handler(context) : handler
+            result instanceof Promise
+              ? deps.trackHandler(result, {
+                  segmentId: parallelId,
+                  segmentType: "parallel",
+                })
+              : result
           ) as ReactNode;
         } else {
           component =
