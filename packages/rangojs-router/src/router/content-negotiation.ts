@@ -52,7 +52,7 @@ export function parseAcceptTypes(accept: string): AcceptEntry[] {
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i]!;
     const segments = part.split(";");
-    const mime = segments[0]!.trim();
+    const mime = segments[0]!.trim().toLowerCase();
     if (!mime) continue;
     let q = 1.0;
     for (let j = 1; j < segments.length; j++) {
