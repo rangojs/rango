@@ -40,8 +40,8 @@ const { CacheScope } = await import("../cache-scope.js");
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeRequestContext(searchString: string) {
-  const url = new URL(`http://localhost/test${searchString}`);
+function makeRequestContext(searchString: string, host = "localhost") {
+  const url = new URL(`http://${host}/test${searchString}`);
   return {
     url,
     _cacheStore: null,
@@ -288,8 +288,8 @@ describe("segment cache key generation", () => {
       await scope.lookupRoute("/test", {});
       const key = store.get.mock.calls[0][0];
 
-      // Key should have partial prefix but no query part
-      expect(key).toMatch(/^partial:\/test$/);
+      // Key should have partial prefix with host but no query part
+      expect(key).toMatch(/^partial:localhost\/test$/);
     });
   });
 
@@ -386,6 +386,123 @@ describe("segment cache key generation", () => {
       expect(key1).not.toBe(key2);
       expect(key1).toContain("page=1");
       expect(key2).toContain("page=1");
+    });
+  });
+
+  describe("host isolation", () => {
+    it("same path on different hosts produces different cache keys", async () => {
+      const store = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn(),
+      };
+
+      mockGetRequestContext.mockReturnValue(
+        makeRequestContext("", "app.example.com"),
+      );
+      const scope1 = new CacheScope({ store } as any);
+      await scope1.lookupRoute("/products", {});
+      const key1 = store.get.mock.calls[0][0];
+
+      store.get.mockClear();
+      mockGetRequestContext.mockReturnValue(
+        makeRequestContext("", "staging.example.com"),
+      );
+      const scope2 = new CacheScope({ store } as any);
+      await scope2.lookupRoute("/products", {});
+      const key2 = store.get.mock.calls[0][0];
+
+      expect(key1).not.toBe(key2);
+      expect(key1).toContain("app.example.com");
+      expect(key2).toContain("staging.example.com");
+    });
+
+    it("same host and path produces same cache key", async () => {
+      const store = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn(),
+      };
+
+      mockGetRequestContext.mockReturnValue(
+        makeRequestContext("", "app.example.com"),
+      );
+      const scope1 = new CacheScope({ store } as any);
+      await scope1.lookupRoute("/products", {});
+      const key1 = store.get.mock.calls[0][0];
+
+      store.get.mockClear();
+      mockGetRequestContext.mockReturnValue(
+        makeRequestContext("", "app.example.com"),
+      );
+      const scope2 = new CacheScope({ store } as any);
+      await scope2.lookupRoute("/products", {});
+      const key2 = store.get.mock.calls[0][0];
+
+      expect(key1).toBe(key2);
+    });
+
+    it("includes host in cache key across all request types", async () => {
+      const store = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn(),
+      };
+      const host = "myapp.example.com";
+
+      // Document request
+      mockGetRequestContext.mockReturnValue(makeRequestContext("", host));
+      const docScope = new CacheScope({ store } as any);
+      await docScope.lookupRoute("/test", {});
+      const docKey = store.get.mock.calls[0][0] as string;
+
+      // Partial request
+      store.get.mockClear();
+      mockGetRequestContext.mockReturnValue(
+        makeRequestContext("?_rsc_partial=1", host),
+      );
+      const partialScope = new CacheScope({ store } as any);
+      await partialScope.lookupRoute("/test", {});
+      const partialKey = store.get.mock.calls[0][0] as string;
+
+      // Intercept request
+      store.get.mockClear();
+      mockGetRequestContext.mockReturnValue(makeRequestContext("", host));
+      const interceptScope = new CacheScope({ store } as any);
+      await interceptScope.lookupRoute("/test", {}, true);
+      const interceptKey = store.get.mock.calls[0][0] as string;
+
+      // All three should contain the host
+      expect(docKey).toContain(host);
+      expect(partialKey).toContain(host);
+      expect(interceptKey).toContain(host);
+
+      // But they should all be different (different prefixes)
+      expect(docKey).not.toBe(partialKey);
+      expect(docKey).not.toBe(interceptKey);
+    });
+
+    it("host with port is included in cache key", async () => {
+      const store = {
+        get: vi.fn().mockResolvedValue(null),
+        set: vi.fn(),
+      };
+
+      mockGetRequestContext.mockReturnValue(
+        makeRequestContext("", "localhost:3000"),
+      );
+      const scope1 = new CacheScope({ store } as any);
+      await scope1.lookupRoute("/test", {});
+      const key1 = store.get.mock.calls[0][0];
+
+      store.get.mockClear();
+      mockGetRequestContext.mockReturnValue(
+        makeRequestContext("", "localhost:4000"),
+      );
+      const scope2 = new CacheScope({ store } as any);
+      await scope2.lookupRoute("/test", {});
+      const key2 = store.get.mock.calls[0][0];
+
+      expect(key1).not.toBe(key2);
+      expect(key1).toContain("localhost:3000");
+      expect(key2).toContain("localhost:4000");
     });
   });
 

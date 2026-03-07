@@ -373,4 +373,95 @@ describe("response-route-handler", () => {
       expect(body.data).toBe("cached-value");
     });
   });
+
+  describe("response cache host isolation", () => {
+    it("same path on different hosts uses different cache keys", async () => {
+      const store = {
+        get: vi.fn(),
+        set: vi.fn(),
+        getResponse: vi.fn().mockResolvedValue(null),
+        putResponse: vi.fn(),
+      };
+
+      const scope = {
+        enabled: true,
+        config: { ttl: 60 },
+        ttl: 60,
+        swr: 0,
+        getStore: () => store,
+      };
+      vi.mocked(createCacheScope).mockReturnValue(scope as any);
+
+      const handlerCtx = createMockHandlerCtx();
+      const cacheKeys: string[] = [];
+      store.putResponse.mockImplementation((key: string) => {
+        cacheKeys.push(key);
+      });
+
+      // Request from host A
+      const urlA = new URL("https://app.example.com/api/data");
+      const requestA = new Request(urlA);
+      const ctxA = createRequestContext({
+        env: {},
+        request: requestA,
+        url: urlA,
+        variables: {},
+      });
+      ctxA.waitUntil = (fn) => (fn as any)();
+
+      await runWithRequestContext(ctxA, () =>
+        handleResponseRoute(
+          handlerCtx,
+          {
+            responseType: "json",
+            handler: () => ({ from: "hostA" }),
+            params: {},
+            manifestEntry: {
+              cache: { options: { ttl: 60 } },
+              parent: null,
+            } as any,
+          },
+          requestA,
+          {},
+          urlA,
+          {},
+        ),
+      );
+
+      // Request from host B
+      const urlB = new URL("https://staging.example.com/api/data");
+      const requestB = new Request(urlB);
+      const ctxB = createRequestContext({
+        env: {},
+        request: requestB,
+        url: urlB,
+        variables: {},
+      });
+      ctxB.waitUntil = (fn) => (fn as any)();
+
+      await runWithRequestContext(ctxB, () =>
+        handleResponseRoute(
+          handlerCtx,
+          {
+            responseType: "json",
+            handler: () => ({ from: "hostB" }),
+            params: {},
+            manifestEntry: {
+              cache: { options: { ttl: 60 } },
+              parent: null,
+            } as any,
+          },
+          requestB,
+          {},
+          urlB,
+          {},
+        ),
+      );
+
+      expect(cacheKeys.length).toBe(2);
+      expect(cacheKeys[0]).toContain("app.example.com");
+      expect(cacheKeys[1]).toContain("staging.example.com");
+      expect(cacheKeys[0]).not.toBe(cacheKeys[1]);
+    });
+  });
 });

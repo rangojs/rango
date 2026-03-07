@@ -203,7 +203,7 @@ Focus areas covered:
 - [x] cache leakage across users and query variants
 - [x] response route ownership and escape hatches
 - [x] content-negotiation and response/document pipeline edges
-- [ ] host routing boundaries (deferred — no host-aware keying yet)
+- [x] host routing boundaries (default cache key includes host)
 
 Bugs found and fixed:
 

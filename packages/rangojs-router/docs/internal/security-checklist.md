@@ -120,3 +120,15 @@ Targeted unit tests for the `condition()` fix:
 - `condition() === false` skips cache read (store.getResponse not called).
 - `condition() === false` skips cache write (store.putResponse not called).
 - `condition() === true` uses cache normally (cache hit returned).
+
+### Host Isolation (`cache-key.test.ts`, `response-route-handler.test.ts`)
+
+Default cache keys now include `url.host` to prevent cross-host collisions on
+shared cache stores (e.g. multiple custom domains on the same CF worker):
+
+- Same path on different hosts produces different document cache keys.
+- Same host and path produces identical keys (deterministic).
+- Host is included across all request types (doc, partial, intercept).
+- Host with port differentiates localhost:3000 from localhost:4000.
+- Response route cache keys include host (separate test in
+  `response-route-handler.test.ts`).
