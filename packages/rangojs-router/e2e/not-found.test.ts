@@ -11,7 +11,7 @@ import { waitForHydration, testId } from "./helper";
  * - Various unknown path shapes all produce 404
  * - Direct navigation away from 404 works
  * - Back navigation from 404 returns to previous page
- * - SPA navigation to unknown route shows 404 content
+ * - Popstate to unknown route shows 404 content
  */
 function notFoundTests(f: ReturnType<typeof useFixture>) {
   test.describe("direct-navigation-to-unknown-route", () => {
@@ -79,20 +79,18 @@ function notFoundTests(f: ReturnType<typeof useFixture>) {
     });
   });
 
-  test.describe("spa-navigation-to-unknown-route", () => {
-    test("SPA navigation to unknown route shows Not Found", async ({
-      page,
-    }) => {
+  test.describe("popstate-to-unknown-route", () => {
+    test("popstate to unknown route shows Not Found", async ({ page }) => {
       await page.goto(f.url("/"));
       await waitForHydration(page);
 
-      // Client-side navigate to an unknown route
+      // Simulate back/forward navigation to an unknown URL via popstate.
+      // This tests the router's popstate handler, not a Link-based navigation.
       await page.evaluate(() => {
         window.history.pushState({}, "", "/does-not-exist-spa");
         window.dispatchEvent(new PopStateEvent("popstate"));
       });
 
-      // The router should show the Not Found content
       await expect(
         page.getByRole("heading", { name: "Not Found" }),
       ).toBeVisible({ timeout: 5000 });

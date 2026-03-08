@@ -50,7 +50,7 @@ async function waitForOnError(
  * - Response route handler errors report phase="handler"
  * - Error message is propagated to the callback
  */
-function onErrorTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
+function onErrorTests(f: ReturnType<typeof useFixture>) {
   test("action error reports phase='action'", async ({ page }) => {
     await page.goto(f.url("/location-state"));
     await waitForHydration(page);
@@ -101,7 +101,7 @@ test.describe("onError", () => {
     mode: "dev",
   });
 
-  onErrorTests(f, true);
+  onErrorTests(f);
 });
 
 test.describe("onError (production)", () => {
@@ -112,5 +112,5 @@ test.describe("onError (production)", () => {
 
   test.setTimeout(120000);
 
-  onErrorTests(f, false);
+  onErrorTests(f);
 });
