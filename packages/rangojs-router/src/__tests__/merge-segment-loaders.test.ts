@@ -69,4 +69,31 @@ describe("merge-segment-loaders", () => {
 
     warnSpy.mockRestore();
   });
+
+  it("preserves server order when inserting multiple diff loaders for the same parent", () => {
+    const allSegments = [{ id: "M0L0" }, { id: "M0L0.route" }] as any[];
+    const diffIds = ["M0L0D0.loaderA", "M0L0D1.loaderB", "M0L0D2.loaderC"];
+    const matchedIdSet = new Set<string>(["M0L0", "M0L0.route"]);
+    const newSegmentMap = new Map<string, any>([
+      ["M0L0D0.loaderA", { id: "M0L0D0.loaderA" }],
+      ["M0L0D1.loaderB", { id: "M0L0D1.loaderB" }],
+      ["M0L0D2.loaderC", { id: "M0L0D2.loaderC" }],
+    ]);
+
+    insertMissingDiffSegments(
+      allSegments as any,
+      diffIds,
+      matchedIdSet,
+      newSegmentMap,
+    );
+
+    // Siblings must appear in the same order the server returned them
+    expect(allSegments.map((s) => s.id)).toEqual([
+      "M0L0",
+      "M0L0D0.loaderA",
+      "M0L0D1.loaderB",
+      "M0L0D2.loaderC",
+      "M0L0.route",
+    ]);
+  });
 });
