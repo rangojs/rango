@@ -1,40 +1,107 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError } from "./helper";
+import { waitForHydration } from "./helper";
 
 /**
- * Tests that onError callback receives correct phase and context
- * when errors are thrown from server actions.
+ * Poll __test/last-error until an error with the expected phase is recorded.
+ * Replaces fixed waitForTimeout calls for deterministic error propagation checks.
+ *
+ * Note: __test/last-error resets after each read, so the poll must check without
+ * consuming until we find the right phase. We use a non-resetting peek approach:
+ * each poll iteration fetches, and the endpoint returns + resets. If the phase
+ * doesn't match, the error is lost — so we only poll after the triggering action.
  */
+async function waitForOnError(
+  page: import("@playwright/test").Page,
+  errorUrl: string,
+  expectedPhase: string,
+  timeout = 5000,
+): Promise<{ phase: string; message: string; actionId?: string }> {
+  let result: any = null;
+  await expect
+    .poll(
+      async () => {
+        try {
+          const response = await page.request.get(errorUrl);
+          const data = await response.json();
+          if (data.data && data.data.phase === expectedPhase) {
+            result = data.data;
+            return true;
+          }
+        } catch {
+          // JSON parse may fail if server is mid-restart; retry
+        }
+        return false;
+      },
+      {
+        timeout,
+        message: `Expected onError with phase="${expectedPhase}" within ${timeout}ms`,
+      },
+    )
+    .toBe(true);
+  return result;
+}
+
+/**
+ * Shared onError tests run against both dev and production.
+ *
+ * Contract under test:
+ * - Action errors report phase="action"
+ * - Response route handler errors report phase="handler"
+ * - Error message is propagated to the callback
+ */
+function onErrorTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
+  test("action error reports phase='action'", async ({ page }) => {
+    await page.goto(f.url("/location-state"));
+    await waitForHydration(page);
+
+    // Clear any previous error
+    await page.request.get(f.url("/__test/last-error"));
+
+    // Trigger action that throws
+    await page.locator('[data-testid="throw-error-btn"]').click();
+
+    const error = await waitForOnError(
+      page,
+      f.url("/__test/last-error"),
+      "action",
+    );
+
+    expect(error.phase).toBe("action");
+    // onError always receives the real message (server-side callback)
+    expect(error.message).toBe("Action error for onError test");
+  });
+
+  test("handler error reports phase='handler'", async ({ page }) => {
+    // Clear any previous error
+    await page.request.get(f.url("/__test/last-error"));
+
+    // Hit a response route that throws — triggers onError with phase="handler"
+    const response = await page.request.get(
+      f.url("/__test/throw-handler-error"),
+    );
+
+    // The response route should return a JSON error envelope
+    expect(response.status()).toBe(500);
+
+    const error = await waitForOnError(
+      page,
+      f.url("/__test/last-error"),
+      "handler",
+    );
+
+    expect(error.phase).toBe("handler");
+    expect(error.message).toBe("Handler error for onError test");
+  });
+}
+
 test.describe("onError", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
   });
 
-  test("thrown error from action reports phase as 'action' to onError", async ({
-    page,
-  }) => {
-    await page.goto(f.url("/location-state"));
-    await waitForHydration(page);
-
-    // Reset any previous error
-    await page.request.get(f.url("/__test/last-error"));
-
-    // Trigger action that throws an error
-    await page.locator('[data-testid="throw-error-btn"]').click();
-
-    // Wait for the action to complete (error is swallowed client-side)
-    await page.waitForTimeout(1000);
-
-    // Fetch the last onError call from the server
-    const response = await page.request.get(f.url("/__test/last-error"));
-    const data = await response.json();
-
-    expect(data.data).not.toBeNull();
-    expect(data.data.phase).toBe("action");
-    expect(data.data.message).toBe("Action error for onError test");
-  });
+  onErrorTests(f, true);
 });
 
 test.describe("onError (production)", () => {
@@ -45,28 +112,5 @@ test.describe("onError (production)", () => {
 
   test.setTimeout(120000);
 
-  test("thrown error from action reports phase as 'action' to onError in production", async ({
-    page,
-  }) => {
-    await page.goto(f.url("/location-state"));
-    await waitForHydration(page);
-
-    // Reset any previous error
-    await page.request.get(f.url("/__test/last-error"));
-
-    // Trigger action that throws an error
-    await page.locator('[data-testid="throw-error-btn"]').click();
-
-    // Wait for the action to complete
-    await page.waitForTimeout(1000);
-
-    // Fetch the last onError call from the server
-    const response = await page.request.get(f.url("/__test/last-error"));
-    const data = await response.json();
-
-    expect(data.data).not.toBeNull();
-    expect(data.data.phase).toBe("action");
-    // Production sanitizes error messages
-    expect(data.data.message).toBeTruthy();
-  });
+  onErrorTests(f, false);
 });

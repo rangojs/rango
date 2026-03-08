@@ -188,6 +188,7 @@ export const NamedRoutes = {
   "static-shell": "/static-shell/:tag",
   testLastError: "/__test/last-error",
   testManifestCacheCounter: "/__test/manifest-cache-counter",
+  testThrowHandlerError: "/__test/throw-handler-error",
   "theme.index": "/theme",
   "theme.toggle": "/theme/toggle",
   "trailingSlash.always": "/ts-always",
