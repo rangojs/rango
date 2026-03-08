@@ -200,6 +200,7 @@ export function createHandlerContext<TEnv>(
     // Scoped reverse for URL generation (auto-fills current request params)
     reverse: createReverseFunction(routeMap, routeName, params),
     _responseType: responseType,
+    _routeName: routeName,
   };
   // Brand with taint symbol so "use cache" excludes ctx from cache keys
   (ctx as any)[NOCACHE_SYMBOL] = true;
@@ -266,6 +267,7 @@ export function createPrerenderContext<TEnv>(
       throwUnavailable("setLocationState");
     },
     reverse: createReverseFunction(routeMap, routeName, params),
+    _routeName: routeName,
   } as InternalHandlerContext<any, TEnv>;
 }
 
@@ -334,5 +336,6 @@ export function createStaticContext<TEnv>(
       throwUnavailable("setLocationState");
     },
     reverse: createReverseFunction(routeMap, routeName),
+    _routeName: routeName,
   } as InternalHandlerContext<any, TEnv>;
 }
