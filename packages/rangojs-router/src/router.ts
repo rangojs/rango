@@ -78,6 +78,7 @@ import {
   runWithRouterContext,
 } from "./router/router-context.js";
 import { resolveThemeConfig } from "./theme/constants.js";
+import { resolveTimeouts } from "./router/timeout.js";
 
 // Extracted content negotiation utilities
 import { flattenNamedRoutes } from "./router/content-negotiation.js";
@@ -151,6 +152,9 @@ export function createRouter<TEnv = any>(
     allowDebugManifest: allowDebugManifestOption = false,
     telemetry: telemetrySink,
     ssr: ssrOption,
+    timeout: timeoutShorthand,
+    timeouts: timeoutsOption,
+    onTimeout,
   } = options;
 
   // Resolve telemetry sink (no-op when not configured)
@@ -208,6 +212,9 @@ export function createRouter<TEnv = any>(
   const resolvedThemeConfig = themeOption
     ? resolveThemeConfig(themeOption)
     : null;
+
+  // Resolve timeout config (merge shorthand + structured)
+  const resolvedTimeouts = resolveTimeouts(timeoutShorthand, timeoutsOption);
 
   /**
    * Wrapper for invokeOnError that binds the router's onError callback.
@@ -858,6 +865,10 @@ export function createRouter<TEnv = any>(
 
     // Expose SSR configuration for handler
     ssr: ssrOption,
+
+    // Expose resolved timeouts for RSC handler
+    timeouts: resolvedTimeouts,
+    onTimeout,
 
     // Expose global middleware for RSC handler
     middleware: globalMiddleware,

@@ -107,6 +107,16 @@ export interface RevalidationDecisionEvent extends BaseEvent {
   shouldRevalidate: boolean;
 }
 
+export interface RequestTimeoutEvent extends BaseEvent {
+  type: "request.timeout";
+  phase: import("./timeout.js").TimeoutPhase;
+  pathname: string;
+  routeKey?: string;
+  actionId?: string;
+  durationMs: number;
+  customHandler: boolean;
+}
+
 export type TelemetryEvent =
   | RequestStartEvent
   | RequestEndEvent
@@ -116,7 +126,8 @@ export type TelemetryEvent =
   | LoaderErrorEvent
   | HandlerErrorEvent
   | CacheDecisionEvent
-  | RevalidationDecisionEvent;
+  | RevalidationDecisionEvent
+  | RequestTimeoutEvent;
 
 // ---------------------------------------------------------------------------
 // Sink interface
@@ -260,6 +271,11 @@ export function createConsoleSink(): TelemetrySink {
         case "revalidation.decision":
           console.log(
             `[telemetry] ${event.type} ${event.segmentId} revalidate=${event.shouldRevalidate}`,
+          );
+          break;
+        case "request.timeout":
+          console.log(
+            `[telemetry] ${event.type} phase=${event.phase} ${event.pathname} ${event.durationMs.toFixed(1)}ms custom=${event.customHandler}`,
           );
           break;
       }
