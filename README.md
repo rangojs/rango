@@ -116,7 +116,7 @@ This produces structured output for server-side and client-side router operation
 ## Built With
 
 - [React 19](https://react.dev/) - React Server Components
-- [Vite](https://vitejs.dev/) + [@anthropic-ai/vite-plugin-rsc](https://github.com/anthropics/vite-plugin-rsc)
+- [Vite](https://vitejs.dev/) + [@vitejs/plugin-rsc](https://github.com/vitejs/vite-plugin-rsc)
 - [TypeScript](https://www.typescriptlang.org/)
 
 ## License
