@@ -243,6 +243,14 @@ export interface RequestContext<
 
   /** @internal Per-request error dedup set for onError reporting */
   _reportedErrors: WeakSet<object>;
+
+  /**
+   * @internal Report a non-fatal background error through the router's
+   * onError callback. Wired by the RSC handler / router during request
+   * creation. Cache-runtime and other subsystems call this to surface
+   * errors without failing the response.
+   */
+  _reportBackgroundError?: (error: unknown, category: string) => void;
 }
 
 /**
@@ -268,6 +276,7 @@ export type PublicRequestContext<
   | "_locationState"
   | "_routeName"
   | "_reportedErrors"
+  | "_reportBackgroundError"
 >;
 
 // AsyncLocalStorage instance for request context
