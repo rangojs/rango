@@ -50,6 +50,7 @@ function setupBrowser({
       location: {
         origin: "http://localhost:4173",
         href: "http://localhost:4173/current",
+        pathname: "/current",
       },
       matchMedia: vi.fn(() => createMediaQueryList(reducedData)),
     },
@@ -138,5 +139,59 @@ describe("prefetch fetch reduced-data behavior", () => {
     expect(fetchMock.mock.calls[0]![0]).toContain(
       "/blog?_rsc_partial=true&_rsc_segments=segment.a&_rsc_v=v1",
     );
+  });
+});
+
+describe("prefetch dedup source-page context", () => {
+  afterEach(() => {
+    clearPrefetchCache();
+    resetPrefetchPolicy();
+    vi.unstubAllGlobals();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+    restoreGlobalProperty("navigator", originalNavigatorDescriptor);
+  });
+
+  it("same target from different source pages is not suppressed", () => {
+    setupBrowser();
+    const fetchMock = vi.fn((_url: string) =>
+      Promise.resolve({ ok: false, body: null } as unknown as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    // Prefetch /product/2 from /product/1
+    window.location.href = "http://localhost:4173/product/1";
+    (window.location as any).pathname = "/product/1";
+    prefetchDirect("/product/2", ["A0", "A0.route"]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Simulate navigation to /product/3
+    window.location.href = "http://localhost:4173/product/3";
+    (window.location as any).pathname = "/product/3";
+
+    // Prefetch /product/2 again — different source page, should NOT be deduped
+    prefetchDirect("/product/2", ["A0", "A0.route"]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("same target from same source page is deduped", () => {
+    setupBrowser();
+    const fetchMock = vi.fn((_url: string) =>
+      Promise.resolve({ ok: false, body: null } as unknown as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    // Prefetch /product/2 from /shop
+    window.location.href = "http://localhost:4173/shop";
+    (window.location as any).pathname = "/shop";
+    prefetchDirect("/product/2", ["A0", "A0.route"]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Prefetch /product/2 from /shop again — same source, should be deduped
+    prefetchDirect("/product/2", ["A0", "A0.route"]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

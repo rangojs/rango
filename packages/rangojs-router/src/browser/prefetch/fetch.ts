@@ -49,6 +49,18 @@ function buildPrefetchUrl(
 }
 
 /**
+ * Build the dedup key for prefetch tracking.
+ * Includes the source page pathname so the same target prefetched from
+ * different pages gets separate entries — the server response varies on
+ * X-RSC-Router-Client-Path (source page context).
+ */
+function buildPrefetchKey(targetUrl: URL): string {
+  return (
+    window.location.pathname + "\0" + targetUrl.pathname + targetUrl.search
+  );
+}
+
+/**
  * Core prefetch fetch logic. Returns a Promise and accepts an optional
  * AbortSignal for cancellation by the prefetch queue.
  */
@@ -99,7 +111,7 @@ export function prefetchDirect(
 
   const targetUrl = buildPrefetchUrl(url, segmentIds, version);
   if (!targetUrl) return;
-  const key = targetUrl.pathname + targetUrl.search;
+  const key = buildPrefetchKey(targetUrl);
   if (hasPrefetch(key)) return;
   executePrefetchFetch(key, targetUrl.toString());
 }
@@ -117,7 +129,7 @@ export function prefetchQueued(
   if (!shouldPrefetch()) return "";
   const targetUrl = buildPrefetchUrl(url, segmentIds, version);
   if (!targetUrl) return "";
-  const key = targetUrl.pathname + targetUrl.search;
+  const key = buildPrefetchKey(targetUrl);
   if (hasPrefetch(key)) return key;
   const fetchUrlStr = targetUrl.toString();
   enqueuePrefetch(key, (signal) =>

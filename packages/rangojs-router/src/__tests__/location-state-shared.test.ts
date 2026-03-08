@@ -21,9 +21,11 @@ function restoreWindow(): void {
 describe("location-state-shared", () => {
   afterEach(() => {
     restoreWindow();
+    vi.unstubAllEnvs();
   });
 
   it("throws in development when key is not injected", () => {
+    vi.stubEnv("NODE_ENV", "development");
     const ProductState = createLocationState<{ name: string }>();
     expect(() => ProductState({ name: "Widget" })).toThrow(
       "createLocationState key not set",

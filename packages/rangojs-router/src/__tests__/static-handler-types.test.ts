@@ -5,12 +5,13 @@
  * Uses compile-time type assertions (AssertTrue/AssertEqual) and expectTypeOf.
  */
 
-import { describe, it, expect, expectTypeOf, vi } from "vitest";
+import { describe, it, expect, expectTypeOf } from "vitest";
 import type { ReactNode } from "react";
 import type { StaticHandlerDefinition } from "../static-handler.js";
 import type { PrerenderHandlerDefinition } from "../prerender.js";
 import type { PathHelpers } from "../urls.js";
 import type { Handler, DefaultEnv } from "../types.js";
+import { Static } from "../static-handler.js";
 
 // Compile-time helpers
 type AssertTrue<T extends true> = T;
@@ -136,17 +137,17 @@ describe("Prerender type constraints", () => {
 // ============================================================================
 
 describe("Static runtime constraints", () => {
-  it("does not throw in dev when $$id is missing (inline usage supported)", async () => {
-    const originalEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = "development";
+  it("throws when $$id is missing", () => {
+    expect(() => Static(() => null as any)).toThrow("Static: missing $$id");
+  });
 
-    try {
-      const { Static } = await import("../static-handler.js");
-      const result = Static(() => null as any);
-      expect(result.__brand).toBe("staticHandler");
-      expect(result.$$id).toBe("");
-    } finally {
-      process.env.NODE_ENV = originalEnv;
-    }
+  it("succeeds when $$id is provided", () => {
+    const result = (Static as Function)(
+      () => null as any,
+      undefined,
+      "test#MyStatic",
+    );
+    expect(result.__brand).toBe("staticHandler");
+    expect(result.$$id).toBe("test#MyStatic");
   });
 });
