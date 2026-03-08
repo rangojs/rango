@@ -200,9 +200,10 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
               bgTaintedArgs.push(arg);
             }
           }
-          const bgRequestCtx = getRequestContext();
-          if (hasTaintedArgs && bgRequestCtx) {
-            (bgRequestCtx as any)[INSIDE_CACHE_EXEC] = true;
+          // Reuse closure-captured requestCtx (line 68) instead of calling
+          // getRequestContext() — ALS context may be gone inside waitUntil.
+          if (hasTaintedArgs && requestCtx) {
+            (requestCtx as any)[INSIDE_CACHE_EXEC] = true;
           }
 
           try {
@@ -224,8 +225,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             for (const arg of bgTaintedArgs) {
               delete (arg as any)[INSIDE_CACHE_EXEC];
             }
-            if (hasTaintedArgs && bgRequestCtx) {
-              delete (bgRequestCtx as any)[INSIDE_CACHE_EXEC];
+            if (hasTaintedArgs && requestCtx) {
+              delete (requestCtx as any)[INSIDE_CACHE_EXEC];
             }
           }
         });
