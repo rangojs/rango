@@ -57,10 +57,25 @@ export interface HandleStore {
   track<T>(promise: Promise<T>): Promise<T>;
 
   /**
-   * Promise that resolves when all tracked handlers have settled.
-   * Does not reject - uses Promise.allSettled internally.
+   * Signal that no more track() calls will be made.
+   * settled will not resolve until seal() is called AND all tracked
+   * promises have settled. Calling stream() or getData() auto-seals.
+   */
+  seal(): void;
+
+  /**
+   * Promise that resolves when the store is sealed AND all tracked
+   * handlers have settled.
    */
   readonly settled: Promise<void>;
+
+  /**
+   * Optional error callback for late streaming-handle failures.
+   * Called when push() throws LateHandlePushError (handle pushed after
+   * stream completion). Allows the router to surface these errors
+   * to onError and telemetry.
+   */
+  onError?: (error: Error) => void;
 
   /**
    * Push handle data for a specific handle and segment.
@@ -119,8 +134,30 @@ export interface HandleStore {
  * ```
  */
 export function createHandleStore(): HandleStore {
-  const pending: Promise<unknown>[] = [];
   const data: HandleData = {};
+
+  // Settlement barrier: resolved only when sealed AND inflight === 0.
+  // seal() signals "no more track() calls". Each track() increments
+  // inflightCount, each promise.finally() decrements. settled resolves
+  // once both conditions are met — even if tracks are added while
+  // earlier ones are still in flight.
+  let sealed = false;
+  let inflightCount = 0;
+  let drainWaiters: (() => void)[] = [];
+
+  function notifyDrain() {
+    if (sealed && inflightCount === 0 && drainWaiters.length > 0) {
+      const waiters = drainWaiters;
+      drainWaiters = [];
+      for (const resolve of waiters) resolve();
+    }
+  }
+
+  function sealInternal() {
+    if (sealed) return;
+    sealed = true;
+    notifyDrain();
+  }
 
   // Queue for pending emissions and resolver for waiting consumer
   let pendingEmissions: HandleData[] = [];
@@ -148,20 +185,36 @@ export function createHandleStore(): HandleStore {
 
   return {
     track<T>(promise: Promise<T>): Promise<T> {
-      pending.push(promise);
+      inflightCount++;
+      // Use .then(onSettle, onSettle) instead of .finally() to avoid
+      // creating an unhandled rejection branch when the tracked promise
+      // rejects (e.g. error route handlers). .finally() re-throws the
+      // rejection on a new branch that nobody catches, which can crash
+      // the server process.
+      const onSettle = () => {
+        inflightCount--;
+        notifyDrain();
+      };
+      promise.then(onSettle, onSettle);
       return promise;
     },
 
+    seal() {
+      sealInternal();
+    },
+
     get settled(): Promise<void> {
-      if (pending.length === 0) {
-        return Promise.resolve();
-      }
-      return Promise.allSettled(pending).then(() => {});
+      if (sealed && inflightCount === 0) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        drainWaiters.push(resolve);
+      });
     },
 
     push(handleName: string, segmentId: string, value: unknown): void {
       if (completed) {
-        throw createLateHandlePushError(handleName, segmentId);
+        const error = createLateHandlePushError(handleName, segmentId);
+        if (this.onError) this.onError(error);
+        throw error;
       }
 
       if (!data[handleName]) {
@@ -178,10 +231,14 @@ export function createHandleStore(): HandleStore {
     },
 
     getData(): Promise<HandleData> {
+      sealInternal();
       return this.settled.then(() => cloneHandleData(data));
     },
 
     async *stream(): AsyncGenerator<HandleData, void, unknown> {
+      // Auto-seal: stream() is called after all track() registrations.
+      sealInternal();
+
       // Set up completion handler
       this.settled.then(() => {
         completed = true;

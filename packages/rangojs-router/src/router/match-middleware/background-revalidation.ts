@@ -199,6 +199,7 @@ export function withBackgroundRevalidation<TEnv>(
         }
 
         const completeSegments = [...freshSegments, ...freshInterceptSegments];
+        requestCtx._handleStore.seal();
         await cacheScope.cacheRoute(
           ctx.pathname,
           ctx.matched.params,

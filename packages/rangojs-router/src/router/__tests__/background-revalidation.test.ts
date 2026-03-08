@@ -5,7 +5,7 @@ import type { MatchContext, MatchPipelineState } from "../match-context.js";
 // Capture the mock router context so tests can inspect/override it
 const mockRouterCtx = {
   getRequestContext: vi.fn(),
-  createHandleStore: vi.fn(() => ({ id: "fresh-handle-store" })),
+  createHandleStore: vi.fn(() => ({ id: "fresh-handle-store", seal: vi.fn() })),
   createHandlerContext: vi.fn(() => ({ id: "fresh-handler-context" }) as any),
   setupLoaderAccess: vi.fn(),
   resolveAllSegments: vi.fn(async () => [] as ResolvedSegment[]),
@@ -258,7 +258,7 @@ describe("withBackgroundRevalidation", () => {
       await drain(middleware(toAsyncGen([])));
       await waitUntilFns[0]();
 
-      expect(handleStoreDuringResolution).toEqual({
+      expect(handleStoreDuringResolution).toMatchObject({
         id: "fresh-handle-store",
       });
       // And restored after

@@ -248,6 +248,7 @@ export function withCacheStore<TEnv>(
               ...freshSegments,
               ...freshInterceptSegments,
             ];
+            requestCtx._handleStore.seal();
             await cacheScope.cacheRoute(
               ctx.pathname,
               ctx.matched.params,
