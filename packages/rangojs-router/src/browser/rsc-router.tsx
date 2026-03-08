@@ -22,6 +22,10 @@ import type {
 import type { EventController } from "./event-controller.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 import { initRangoState } from "./rango-state.js";
+import {
+  isInterceptSegment,
+  splitInterceptSegments,
+} from "./intercept-utils.js";
 
 // Vite HMR types are provided by vite/client
 
@@ -261,11 +265,14 @@ export async function initBrowserApp(
       });
       const streamingToken = handle.startStreaming();
 
+      const interceptSourceUrl = store.getInterceptSourceUrl();
+
       try {
         const { payload, streamComplete } = await client.fetchPartial({
           targetUrl: window.location.href,
           segmentIds: [],
           previousUrl: store.getSegmentState().currentUrl,
+          interceptSourceUrl: interceptSourceUrl || undefined,
           hmr: true,
         });
 
@@ -273,10 +280,22 @@ export async function initBrowserApp(
           const segments = payload.metadata.segments || [];
           const matched = payload.metadata.matched || [];
 
+          // Derive intercept state from the returned payload, not the
+          // pre-fetch store snapshot. If the HMR edit removed intercept
+          // behavior, the response won't contain intercept segments.
+          const responseIsIntercept = segments.some(isInterceptSegment);
+
+          // Sync store intercept state with what the server returned
+          if (!responseIsIntercept && interceptSourceUrl) {
+            store.setInterceptSourceUrl(null);
+          }
+
           store.setSegmentIds(matched);
           store.setCurrentUrl(window.location.href);
 
-          const historyKey = generateHistoryKey(window.location.href);
+          const historyKey = generateHistoryKey(window.location.href, {
+            intercept: responseIsIntercept,
+          });
           store.setHistoryKey(historyKey);
           const currentHandleData = eventController.getHandleState().data;
           store.cacheSegmentsForHistory(
@@ -285,8 +304,11 @@ export async function initBrowserApp(
             currentHandleData,
           );
 
+          const { main, intercept } = splitInterceptSegments(segments);
           store.emitUpdate({
-            root: renderSegments(segments),
+            root: renderSegments(main, {
+              interceptSegments: intercept.length > 0 ? intercept : undefined,
+            }),
             metadata: payload.metadata,
           });
         }

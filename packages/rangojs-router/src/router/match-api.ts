@@ -336,14 +336,15 @@ export async function createMatchContextForPartial<TEnv>(
     if (/D\d+\./.test(id)) return false;
     return true;
   });
+  const effectiveFromUrl = interceptSourceUrl ? interceptContextUrl : prevUrl;
   const interceptSelectorContext: InterceptSelectorContext = {
-    from: prevUrl,
+    from: effectiveFromUrl,
     to: cleanUrl,
     params: matched.params,
     request,
     env,
     segments: {
-      path: prevUrl.pathname.split("/").filter(Boolean),
+      path: effectiveFromUrl.pathname.split("/").filter(Boolean),
       ids: filteredSegmentIds,
     },
   };
