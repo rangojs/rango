@@ -350,4 +350,61 @@ describe("use cache stale revalidation handle preservation", () => {
     expect((taintedCtx as any)[INSIDE]).toBeUndefined();
     expect((requestCtxObj as any)[INSIDE]).toBeUndefined();
   });
+
+  it("stale background revalidation uses isolated handle store, not the live request store", async () => {
+    const waitUntilFns: Array<() => Promise<void>> = [];
+
+    const mockStore = {
+      getItem: vi.fn(),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const liveHandleStore = {
+      push: vi.fn(),
+      settled: Promise.resolve(),
+      getDataForSegment: vi.fn().mockReturnValue({}),
+    };
+
+    const taintedCtx = makeTaintedCtx();
+
+    const requestCtxObj = {
+      _cacheStore: mockStore,
+      _cacheProfiles: { default: { ttl: 60, swr: 120 } },
+      _handleStore: liveHandleStore,
+      waitUntil: (fn: () => Promise<void>) => {
+        waitUntilFns.push(fn);
+      },
+    };
+    mockGetRequestContext.mockReturnValue(requestCtxObj);
+
+    // Return stale cache entry
+    mockStore.getItem.mockResolvedValueOnce({
+      value: JSON.stringify("stale-result"),
+      handles: {},
+      shouldRevalidate: true,
+    });
+
+    // Track whether the handle store was swapped during background execution
+    let bgHandleStoreIsLive: boolean | undefined;
+    const fn = async (_ctx: any) => {
+      // Check if the request context's handle store is the live one
+      const bgReqCtx = mockGetRequestContext();
+      bgHandleStoreIsLive = bgReqCtx._handleStore === liveHandleStore;
+      return "fresh-result";
+    };
+
+    const cached = registerCachedFunction(fn, "test-fn-iso", "default");
+    await cached(taintedCtx);
+
+    // Run the background revalidation
+    expect(waitUntilFns).toHaveLength(1);
+    await waitUntilFns[0]();
+
+    // During background execution, the handle store must have been replaced
+    // with an isolated one (not the live request's store)
+    expect(bgHandleStoreIsLive).toBe(false);
+
+    // After background execution, the original store must be restored
+    expect(requestCtxObj._handleStore).toBe(liveHandleStore);
+  });
 });
