@@ -125,18 +125,37 @@ function transformFileLevelUseCache(
   isLayoutOrTemplate: boolean,
   transformWrapExport: (typeof import("@vitejs/plugin-rsc/transforms"))["transformWrapExport"],
 ) {
+  // Collect non-function exports to report after wrapping
+  const nonFunctionExports: string[] = [];
+
   const { exportNames, output } = transformWrapExport(code, ast, {
     runtime: (value: string, name: string) => {
       const funcId = isBuild ? hashId(filePath, name) : `${filePath}#${name}`;
       return `__rango_registerCachedFunction(${value}, ${JSON.stringify(funcId)}, "default")`;
     },
     rejectNonAsyncFunction: false,
-    filter: (name: string) => {
+    filter: (name: string, meta: { isFunction?: boolean }) => {
       // Skip default export of layout/template files (they receive children)
       if (name === "default" && isLayoutOrTemplate) return false;
+      // Non-function exports cannot be wrapped with registerCachedFunction
+      if (meta.isFunction === false) {
+        nonFunctionExports.push(name);
+        return false;
+      }
       return true;
     },
   });
+
+  if (nonFunctionExports.length > 0) {
+    throw new Error(
+      `[rango:use-cache] File-level "use cache" in ${sourceId} cannot wrap ` +
+        `non-function export${nonFunctionExports.length > 1 ? "s" : ""}: ` +
+        `${nonFunctionExports.map((n) => `"${n}"`).join(", ")}. ` +
+        `Only function exports can be cached. Either remove "use cache" from ` +
+        `the file level and add it inside individual functions, or move the ` +
+        `non-function exports to a separate module.`,
+    );
+  }
 
   if (exportNames.length === 0) {
     // Even if no exports were wrapped, strip the directive
