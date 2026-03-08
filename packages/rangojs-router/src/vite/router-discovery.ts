@@ -407,12 +407,17 @@ export function createRouterDiscoveryPlugin(
         }
 
         const wantIntercept = url.searchParams.get("intercept") === "1";
+        const wantRouteName = url.searchParams.get("routeName");
 
         for (const [, routerInstance] of registry) {
           if (!routerInstance.matchForPrerender) continue;
           try {
             const result = await routerInstance.matchForPrerender(pathname, {});
             if (!result) continue;
+            // When routeName is specified, only accept a match for that route.
+            // This prevents returning the wrong entry when multiple routers
+            // have prerenderable routes sharing the same pathname.
+            if (wantRouteName && result.routeName !== wantRouteName) continue;
             res.setHeader("content-type", "application/json");
             let payload: Record<string, unknown>;
             if (wantIntercept && result.interceptSegments?.length) {
