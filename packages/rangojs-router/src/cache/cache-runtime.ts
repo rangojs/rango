@@ -190,6 +190,21 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             bgStopCapture = c.stop;
           }
 
+          // Stamp tainted args and RequestContext so request-scoped
+          // reads (cookies, headers) and side effects (ctx.set, etc.)
+          // throw inside background revalidation, same as the miss path.
+          const bgTaintedArgs: unknown[] = [];
+          for (const arg of args) {
+            if (isTainted(arg)) {
+              (arg as any)[INSIDE_CACHE_EXEC] = true;
+              bgTaintedArgs.push(arg);
+            }
+          }
+          const bgRequestCtx = getRequestContext();
+          if (hasTaintedArgs && bgRequestCtx) {
+            (bgRequestCtx as any)[INSIDE_CACHE_EXEC] = true;
+          }
+
           try {
             const freshResult = await fn.apply(this, args);
             bgStopCapture?.();
@@ -205,6 +220,13 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           } catch {
             bgStopCapture?.();
             // Background revalidation failed silently
+          } finally {
+            for (const arg of bgTaintedArgs) {
+              delete (arg as any)[INSIDE_CACHE_EXEC];
+            }
+            if (hasTaintedArgs && bgRequestCtx) {
+              delete (bgRequestCtx as any)[INSIDE_CACHE_EXEC];
+            }
           }
         });
         return result;
