@@ -28,8 +28,9 @@ test.describe.serial("intercept-hmr", () => {
 
   test.afterEach(async () => {
     fs.writeFileSync(urlsPath, originalContent);
-    // Wait for HMR to process the restore
-    await new Promise((r) => setTimeout(r, 1000));
+    // Wait for HMR to process the restore. The module graph needs time
+    // to fully re-evaluate after the file write before the next test.
+    await new Promise((r) => setTimeout(r, 2000));
   });
 
   test("HMR preserves intercept modal instead of collapsing to full page", async ({
@@ -72,8 +73,11 @@ test.describe.serial("intercept-hmr", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    // Navigate to product index and open intercept modal
+    // Navigate to product index. After the previous test's HMR cycle
+    // the server's module runner may have stale state; reload to ensure
+    // the restored urls.tsx is fully re-evaluated.
     await page.goto(f.url("/"));
+    await page.reload();
     await waitForHydration(page);
 
     await page.getByTestId("product-link-product-a").click();

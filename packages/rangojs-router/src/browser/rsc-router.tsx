@@ -22,7 +22,10 @@ import type {
 import type { EventController } from "./event-controller.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 import { initRangoState } from "./rango-state.js";
-import { isInterceptSegment } from "./intercept-utils.js";
+import {
+  isInterceptSegment,
+  splitInterceptSegments,
+} from "./intercept-utils.js";
 
 // Vite HMR types are provided by vite/client
 
@@ -301,8 +304,11 @@ export async function initBrowserApp(
             currentHandleData,
           );
 
+          const { main, intercept } = splitInterceptSegments(segments);
           store.emitUpdate({
-            root: renderSegments(segments),
+            root: renderSegments(main, {
+              interceptSegments: intercept.length > 0 ? intercept : undefined,
+            }),
             metadata: payload.metadata,
           });
         }
