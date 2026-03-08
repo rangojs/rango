@@ -6,11 +6,10 @@ import { waitForHydration, testId, goBack } from "./helper";
  * Shared error boundary tests run against both dev and production.
  *
  * Contract under test:
- * - Client errors caught by RootErrorBoundary, fallback UI rendered
- * - Server errors caught during RSC render, fallback UI rendered
- * - Streaming errors show loading then fallback
- * - RootErrorBoundary replaces the entire segment tree (app shell is NOT preserved)
- * - Navigation away from error boundary recovers the app
+ * - Sync server errors: caught per-segment during RSC render, layout preserved
+ * - Streaming errors: caught client-side by RootErrorBoundary, layout replaced
+ * - Client errors: caught client-side by RootErrorBoundary, layout replaced
+ * - Navigation away from error boundary recovers the app (layout restored)
  * - Back navigation from error boundary recovers the app
  */
 function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
@@ -84,7 +83,7 @@ function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
       }
     });
 
-    test("should show error boundary on SPA navigation to server error", async ({
+    test("SPA navigation to server error preserves layout", async ({
       page,
     }) => {
       await page.goto(f.url("/errors"));
@@ -97,6 +96,9 @@ function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
       await expect(page.getByText("Internal Server Error")).toBeVisible({
         timeout: 5000,
       });
+
+      // Server errors are scoped to the errored segment — layout stays
+      await expect(testId(page, "nav")).toBeVisible();
     });
   });
 
@@ -127,7 +129,7 @@ function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
       }
     });
 
-    test("should handle SPA navigation to streaming error route", async ({
+    test("SPA navigation to streaming error replaces layout", async ({
       page,
     }) => {
       await page.goto(f.url("/errors"));
@@ -146,6 +148,11 @@ function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
       await expect(page.getByText("Internal Server Error")).toBeVisible({
         timeout: 5000,
       });
+
+      // Streaming errors throw mid-stream after the client starts processing
+      // the RSC payload, so RootErrorBoundary catches them client-side and
+      // replaces the entire tree (same as client errors, unlike sync server errors).
+      await expect(testId(page, "nav")).not.toBeVisible();
     });
   });
 
