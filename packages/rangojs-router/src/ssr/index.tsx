@@ -2,6 +2,7 @@ import React from "react";
 import { renderSegments } from "../segment-system.js";
 import { filterSegmentOrder } from "../browser/react/filter-segment-order.js";
 import { ThemeProvider } from "../theme/ThemeProvider.js";
+import { NonceContext } from "../browser/react/nonce-context.js";
 import { NavigationStoreContext } from "../browser/react/context.js";
 import type { NavigationStoreContextValue } from "../browser/react/context.js";
 import type { HandleData } from "../browser/types.js";
@@ -295,6 +296,15 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
             </ThemeProvider>
           );
         }
+
+        // Wrap with NonceContext so client components (e.g. MetaTags) can
+        // apply CSP nonces to inline scripts during SSR. Always present to
+        // match the browser-side NavigationProvider tree shape for hydration.
+        content = (
+          <NonceContext.Provider value={nonce}>
+            {content}
+          </NonceContext.Provider>
+        );
 
         // Wrap with NavigationStoreContext for useNavigation hook
         return (

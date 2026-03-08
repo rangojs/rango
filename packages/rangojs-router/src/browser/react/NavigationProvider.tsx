@@ -22,6 +22,7 @@ import type { EventController } from "../event-controller.js";
 import { RootErrorBoundary } from "../../root-error-boundary.js";
 import type { HandleData } from "../types.js";
 import { ThemeProvider } from "../../theme/ThemeProvider.js";
+import { NonceContext } from "./nonce-context.js";
 import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
 import { cancelAllPrefetches } from "../prefetch/queue.js";
 
@@ -369,6 +370,13 @@ export function NavigationProvider({
       </ThemeProvider>
     );
   }
+
+  // Match SSR tree shape: NonceContext.Provider is always present so
+  // hydration sees the same component tree. Value is undefined on the
+  // client — CSP nonces are a server-side HTML concern.
+  content = (
+    <NonceContext.Provider value={undefined}>{content}</NonceContext.Provider>
+  );
 
   return (
     <NavigationStoreContext.Provider value={contextValue}>
