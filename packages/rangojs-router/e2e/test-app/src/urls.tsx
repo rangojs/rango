@@ -672,6 +672,15 @@ export const urlpatterns = urls(
         { name: "testLastError" },
       ),
 
+      // Test utils: response route that throws to trigger onError with phase="handler"
+      path.json(
+        "/__test/throw-handler-error",
+        () => {
+          throw new Error("Handler error for onError test");
+        },
+        { name: "testThrowHandlerError" },
+      ),
+
       // Manifest cache test route (its DSL handler increments a counter)
       include("/manifest-cache-test", manifestCacheTestPatterns, {
         name: "manifestCacheTest",
