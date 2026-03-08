@@ -11,8 +11,8 @@ import { useFixture } from "./fixture";
  * - In "stream" mode: first chunk arrives quickly (shell flushed before delay).
  * - In "allReady" mode: first chunk waits for all Suspense boundaries (~500ms+).
  *
- * We use native fetch with manual chunk reading to measure time-to-first-byte,
- * since Playwright's request API buffers the full response.
+ * We use native fetch with chunk-level TTFB measurement instead of
+ * Playwright's request API (which buffers the full response).
  *
  * RSC (__rsc) requests are NOT affected by resolveStreaming.
  */
@@ -98,10 +98,11 @@ test.describe("ssr-stream-mode", () => {
   });
 });
 
-// Production tests
-const fProd = useFixture({ root: "./e2e/test-app", mode: "build" });
-
+// Production tests — fixture inside describe so its beforeAll only runs
+// when the production project picks up this file.
 test.describe("ssr-stream-mode (production)", () => {
+  const fProd = useFixture({ root: "./e2e/test-app", mode: "build" });
+
   test("stream mode flushes first chunk before allReady mode", async () => {
     const stream = await measureFirstChunk(
       fProd.url("/stream-mode-test"),
