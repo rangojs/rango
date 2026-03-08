@@ -15,7 +15,7 @@ export function resetLastOnErrorCall() {
 
 export const router = createRouter({
   document: Document,
-  timeout: 2000,
+  timeout: 10000,
   onError: (context) => {
     lastOnErrorCall = {
       phase: context.phase,

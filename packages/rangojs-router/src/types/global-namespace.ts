@@ -89,3 +89,12 @@ export type DefaultEnv = keyof RSCRouter.Env extends never
 export type DefaultVars = keyof RSCRouter.Vars extends never
   ? Record<string, any>
   : RSCRouter.Vars;
+
+/**
+ * Default route name type for public `routeName` on contexts.
+ * When GeneratedRouteMap is augmented, narrows to the known route names.
+ * Otherwise falls back to `string` for untyped usage.
+ */
+export type DefaultRouteName = keyof RSCRouter.GeneratedRouteMap extends never
+  ? string
+  : keyof RSCRouter.GeneratedRouteMap & string;

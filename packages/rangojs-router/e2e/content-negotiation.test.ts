@@ -1,9 +1,8 @@
 import test, { expect } from "@playwright/test";
 import { useFixture } from "./fixture";
 
-const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
-
 test.describe("content-negotiation", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
   // /negotiate-test has: RSC (first), then JSON, then MD
   test.describe("client order as tiebreaker (equal q-values)", () => {
     test("Accept: text/markdown,text/html,*/* prefers markdown (listed first)", async ({
@@ -214,9 +213,8 @@ test.describe("content-negotiation", () => {
 // Production mode
 // ---------------------------------------------------------------------------
 
-const fProd = useFixture({ root: "./e2e/test-app", mode: "build" });
-
 test.describe("content-negotiation (production)", () => {
+  const fProd = useFixture({ root: "./e2e/test-app", mode: "build" });
   test.describe("client order as tiebreaker (equal q-values)", () => {
     test("Accept: text/markdown,text/html,*/* prefers markdown (listed first)", async ({
       request,

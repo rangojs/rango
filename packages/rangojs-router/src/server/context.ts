@@ -11,6 +11,7 @@ import type {
   TransitionConfig,
 } from "../types";
 import { invariant } from "../errors";
+import type { DefaultRouteName } from "../types/global-namespace.js";
 
 // ============================================================================
 //  Performance Metrics Types
@@ -120,6 +121,8 @@ export type InterceptSelectorContext<TEnv = any> = {
   request: Request; // The HTTP request object
   env: TEnv; // Platform bindings (Cloudflare env, etc.)
   segments: InterceptSegmentsState; // Client's current segments (where navigating FROM)
+  fromRouteName?: DefaultRouteName; // Named route being navigated away from (undefined for unnamed routes)
+  toRouteName?: DefaultRouteName; // Named route being navigated to (undefined for unnamed routes)
 };
 
 /**

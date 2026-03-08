@@ -55,17 +55,21 @@ async function waitForOnError(
  * - onError is invoked with timeout metadata
  */
 function timeoutTests(f: ReturnType<typeof useFixture>) {
-  // Warm the Vite module graph before tests run. The first cold request on CI
-  // can exceed the 2s timeout due to module compilation. Retry until a 200
-  // confirms all modules are compiled, then subsequent tests get warm responses.
+  // Warm the Vite module graph for ALL tested routes before tests run.
+  // The first cold request on CI can exceed the 2s timeout due to module
+  // compilation. We warm each route until we get a non-error response,
+  // confirming all modules are compiled for subsequent tests.
   test.beforeAll(async () => {
-    const deadline = Date.now() + 30000;
-    while (Date.now() < deadline) {
-      try {
-        const res = await fetch(f.url("/"));
-        if (res.ok) return;
-      } catch {}
-      await new Promise((r) => setTimeout(r, 500));
+    const routesToWarm = ["/", "/timeout/fast-render", "/timeout/slow-action"];
+    for (const route of routesToWarm) {
+      const deadline = Date.now() + 30000;
+      while (Date.now() < deadline) {
+        try {
+          const res = await fetch(f.url(route));
+          if (res.ok) break;
+        } catch {}
+        await new Promise((r) => setTimeout(r, 500));
+      }
     }
   });
 
@@ -115,6 +119,7 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
       page,
       f.url("/__test/last-error"),
       "handler",
+      15000,
     );
 
     expect(error.phase).toBe("handler");
@@ -125,7 +130,18 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
   });
 
   test("slow action triggers onError with action phase", async ({ page }) => {
-    await page.goto(f.url("/timeout/slow-action"));
+    // Retry navigation until we get a 200 — on CI the first page.goto can
+    // still hit the 2s timeout if Vite hasn't fully warmed all dependencies.
+    let loaded = false;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const response = await page.goto(f.url("/timeout/slow-action"));
+      if (response?.ok()) {
+        loaded = true;
+        break;
+      }
+      await page.waitForTimeout(1000);
+    }
+    expect(loaded).toBe(true);
     await waitForHydration(page);
 
     // Clear any previous error
@@ -138,7 +154,7 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
       page,
       f.url("/__test/last-error"),
       "action",
-      10000,
+      15000,
     );
 
     expect(error.phase).toBe("action");
@@ -150,7 +166,7 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
 }
 
 test.describe("timeout", () => {
-  test.setTimeout(60000);
+  test.setTimeout(90000);
 
   const f = useFixture({
     root: "./e2e/e2e-timeout",

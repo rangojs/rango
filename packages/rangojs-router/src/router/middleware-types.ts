@@ -8,6 +8,7 @@
 import type { ContextVar } from "../context-var.js";
 import type {
   DefaultReverseRouteMap,
+  DefaultRouteName,
   DefaultVars,
 } from "../types/global-namespace.js";
 import type { ScopedReverseFunction } from "../reverse.js";
@@ -92,6 +93,12 @@ export interface MiddlewareContext<
    * Shorthand for `ctx.res.headers.set()`.
    */
   header(name: string, value: string): void;
+
+  /**
+   * The matched route name, if available and the route has an explicit name.
+   * Undefined for global middleware (runs before route matching) or unnamed routes.
+   */
+  routeName?: DefaultRouteName;
 
   /**
    * Generate URLs from route names.

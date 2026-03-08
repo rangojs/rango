@@ -10,6 +10,7 @@ import type {
   DefaultEnv,
   DefaultHandlerRouteMap,
   DefaultReverseRouteMap,
+  DefaultRouteName,
   DefaultVars,
 } from "./global-namespace.js";
 import type {
@@ -387,6 +388,20 @@ export type HandlerContext<
    */
   setLocationState(entries: LocationStateEntry | LocationStateEntry[]): void;
   /**
+   * The matched route name, if the route has an explicit name.
+   * Undefined for unnamed routes (those without a `name` option in path()).
+   * Includes the namespace prefix from include() (e.g., "blog.post").
+   *
+   * @example
+   * ```typescript
+   * route("product", (ctx) => {
+   *   ctx.routeName // "product"
+   *   return <ProductPage />;
+   * });
+   * ```
+   */
+  routeName?: DefaultRouteName;
+  /**
    * Generate URLs from route names.
    *
    * - `.name` -- local route, resolved within current include() scope
@@ -523,7 +538,11 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
   actionResult?: any; // Return value from action execution
   formData?: FormData; // FormData from action request
   method?: string; // Request method: 'GET' for navigation, 'POST' for actions
-  routeName?: string; // Route name where action was executed (e.g., "products.detail")
+  routeName?: DefaultRouteName; // Route name of the navigation target (alias for toRouteName)
+  // Named-route identity for both ends of a navigation transition.
+  // Undefined for unnamed internal routes (those without a `name` option).
+  fromRouteName?: DefaultRouteName; // Route name being navigated away from
+  toRouteName?: DefaultRouteName; // Route name being navigated to
   // Stale cache revalidation (SWR pattern):
   stale?: boolean; // True if this is a stale cache revalidation request
 }) => boolean | { defaultShouldRevalidate: boolean };

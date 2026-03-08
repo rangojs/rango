@@ -56,6 +56,7 @@ vi.mock("../../server/context", () => ({
 
 vi.mock("../../server/request-context.js", () => ({
   getRequestContext: vi.fn(),
+  setRequestContextPrevRouteKey: vi.fn(),
 }));
 
 vi.mock("../logging.js", () => ({
@@ -90,6 +91,7 @@ function routeKeyForPath(pathname: string): string {
   if (pathname === "/") return "index";
   if (pathname.startsWith("/product")) return "product.detail";
   if (pathname.startsWith("/shop")) return "shop.items";
+  if (pathname.startsWith("/health")) return "$path__health";
   return "unknown";
 }
 
@@ -199,5 +201,119 @@ describe("createMatchContextForPartial intercept source", () => {
     const selectorCtx = findInterceptSpy.mock.calls[0][2];
     expect(selectorCtx.from.pathname).toBe("/shop/items");
     expect(selectorCtx.segments.path).toEqual(["shop", "items"]);
+  });
+});
+
+describe("createMatchContextForPartial when() route names", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("sets fromRouteName and toRouteName for named routes", async () => {
+    const findInterceptSpy = vi.fn(() => null);
+    const deps = makeDeps();
+
+    // Navigate from /shop to /product/product-a (both named routes)
+    const request = new Request(
+      "http://localhost:5173/product/product-a?_rsc_segments=",
+      {
+        headers: {
+          "X-RSC-Router-Client-Path": "http://localhost:5173/shop",
+        },
+      },
+    );
+
+    const result = await createMatchContextForPartial(
+      request,
+      {},
+      deps,
+      findInterceptSpy,
+    );
+
+    expect(result).not.toBeNull();
+    const ctx = result!;
+    expect(ctx.interceptSelectorContext.toRouteName).toBe("product.detail");
+    expect(ctx.interceptSelectorContext.fromRouteName).toBe("shop.items");
+  });
+
+  it("sets fromRouteName to undefined for auto-generated source route", async () => {
+    const findInterceptSpy = vi.fn(() => null);
+    const deps = makeDeps();
+
+    // Navigate from /health ($path__health) to /product/product-a
+    const request = new Request(
+      "http://localhost:5173/product/product-a?_rsc_segments=",
+      {
+        headers: {
+          "X-RSC-Router-Client-Path": "http://localhost:5173/health",
+        },
+      },
+    );
+
+    const result = await createMatchContextForPartial(
+      request,
+      {},
+      deps,
+      findInterceptSpy,
+    );
+
+    expect(result).not.toBeNull();
+    const ctx = result!;
+    expect(ctx.interceptSelectorContext.toRouteName).toBe("product.detail");
+    expect(ctx.interceptSelectorContext.fromRouteName).toBeUndefined();
+  });
+
+  it("sets toRouteName to undefined for auto-generated target route", async () => {
+    const findInterceptSpy = vi.fn(() => null);
+    const deps = makeDeps();
+
+    // Navigate from /shop (named) to /health (auto-generated)
+    const request = new Request("http://localhost:5173/health?_rsc_segments=", {
+      headers: {
+        "X-RSC-Router-Client-Path": "http://localhost:5173/shop",
+      },
+    });
+
+    const result = await createMatchContextForPartial(
+      request,
+      {},
+      deps,
+      findInterceptSpy,
+    );
+
+    expect(result).not.toBeNull();
+    const ctx = result!;
+    expect(ctx.interceptSelectorContext.toRouteName).toBeUndefined();
+    expect(ctx.interceptSelectorContext.fromRouteName).toBe("shop.items");
+  });
+
+  it("uses intercept source for fromRouteName when header is present", async () => {
+    const findInterceptSpy = vi.fn(() => null);
+    const deps = makeDeps();
+
+    // HMR refetch: on /product/product-a, intercept source from /shop/items
+    const request = new Request(
+      "http://localhost:5173/product/product-a?_rsc_segments=",
+      {
+        headers: {
+          "X-RSC-Router-Client-Path": "http://localhost:5173/product/product-a",
+          "X-RSC-Router-Intercept-Source": "http://localhost:5173/shop/items",
+        },
+      },
+    );
+
+    const result = await createMatchContextForPartial(
+      request,
+      {},
+      deps,
+      findInterceptSpy,
+    );
+
+    expect(result).not.toBeNull();
+    const ctx = result!;
+    // fromRouteName should be derived from the intercept source (/shop/items),
+    // consistent with from.pathname which also uses the intercept source
+    expect(ctx.interceptSelectorContext.toRouteName).toBe("product.detail");
+    expect(ctx.interceptSelectorContext.fromRouteName).toBe("shop.items");
   });
 });

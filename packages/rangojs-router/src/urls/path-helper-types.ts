@@ -234,12 +234,19 @@ export type PathHelpers<TEnv> = {
    * Define an intercepting route for soft navigation
    * Note: routeName must match a named path() in this urlpatterns
    */
-  intercept: (
-    slotName: `@${string}`,
-    routeName: string,
-    handler: ReactNode | Handler<any, any, TEnv>,
-    use?: () => InterceptUseItem[],
-  ) => InterceptItem;
+  intercept: keyof RSCRouter.GeneratedRouteMap extends never
+    ? (
+        slotName: `@${string}`,
+        routeName: string,
+        handler: ReactNode | Handler<any, any, TEnv>,
+        use?: () => InterceptUseItem[],
+      ) => InterceptItem
+    : (
+        slotName: `@${string}`,
+        routeName: (keyof RSCRouter.GeneratedRouteMap & string) | `.${string}`,
+        handler: ReactNode | Handler<any, any, TEnv>,
+        use?: () => InterceptUseItem[],
+      ) => InterceptItem;
 
   /**
    * Attach middleware to the current route/layout

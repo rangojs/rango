@@ -191,10 +191,10 @@ Caching is active in development (backed by `MemorySegmentCacheStore`). This mat
 
 ## Interaction with Existing Caching
 
-| Mechanism                  | Granularity          | Side effects                     | When       |
-| -------------------------- | -------------------- | -------------------------------- | ---------- |
-| `cache()` DSL              | Route segment        | Captured via HandleStore         | Runtime    |
-| `Static()` / `Prerender()` | Route segment        | Captured via HandleStore         | Build-time |
+| Mechanism                  | Granularity          | Side effects                                                                | When       |
+| -------------------------- | -------------------- | --------------------------------------------------------------------------- | ---------- |
+| `cache()` DSL              | Route segment        | Captured via HandleStore                                                    | Runtime    |
+| `Static()` / `Prerender()` | Route segment        | Captured via HandleStore                                                    | Build-time |
 | `"use cache"`              | Function / component | Handle data captured/replayed; request-scoped reads and mutations forbidden | Runtime    |
 
 All three write to the same `SegmentCacheStore`.
