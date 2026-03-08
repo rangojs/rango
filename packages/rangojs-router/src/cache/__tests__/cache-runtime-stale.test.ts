@@ -279,4 +279,75 @@ describe("use cache stale revalidation handle preservation", () => {
     // handles should be an object (possibly empty if nothing was pushed)
     expect(setItemOptions.handles).toBeDefined();
   });
+
+  it("concurrent cache misses sharing the same ctx keep the guard until all finish", async () => {
+    const mockStore = {
+      getItem: vi.fn().mockResolvedValue(null), // Cache miss
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockHandleStore = {
+      push: vi.fn(),
+      settled: Promise.resolve(),
+      getDataForSegment: vi.fn().mockReturnValue({}),
+    };
+
+    const taintedCtx = makeTaintedCtx();
+
+    const requestCtxObj = {
+      _cacheStore: mockStore,
+      _cacheProfiles: { default: { ttl: 60 } },
+      _handleStore: mockHandleStore,
+      waitUntil: undefined,
+    };
+    mockGetRequestContext.mockReturnValue(requestCtxObj);
+
+    const INSIDE = Symbol.for("rango:inside-cache-exec");
+
+    // cachedA resolves fast, cachedB resolves slow.
+    // If stamp is boolean, cachedA's cleanup clears the guard for cachedB.
+    let resolveB: (v: string) => void;
+    const bPromise = new Promise<string>((r) => {
+      resolveB = r;
+    });
+
+    let guardActiveInB = false;
+
+    const cachedA = registerCachedFunction(
+      async (_ctx: any) => "resultA",
+      "fn-a",
+      "default",
+    );
+    const cachedB = registerCachedFunction(
+      async (ctx: any) => {
+        // Wait until cachedA has completed
+        await bPromise;
+        // At this point, with boolean stamp, the guard would be cleared.
+        // With ref counting, it should still be active.
+        guardActiveInB = !!(ctx as any)[INSIDE];
+        return "resultB";
+      },
+      "fn-b",
+      "default",
+    );
+
+    // Start both concurrently
+    const aPromise = cachedA(taintedCtx);
+    const bCallPromise = cachedB(taintedCtx);
+
+    // cachedA finishes first
+    await aPromise;
+
+    // Let cachedB continue
+    resolveB!("go");
+    await bCallPromise;
+
+    // The guard must still have been active inside cachedB even though
+    // cachedA finished first
+    expect(guardActiveInB).toBe(true);
+
+    // After both are done, the symbol should be fully cleaned up
+    expect((taintedCtx as any)[INSIDE]).toBeUndefined();
+    expect((requestCtxObj as any)[INSIDE]).toBeUndefined();
+  });
 });

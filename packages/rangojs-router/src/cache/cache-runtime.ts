@@ -25,12 +25,13 @@ import {
   isTainted,
   CACHED_FN_SYMBOL,
   isCachedFunction,
-  INSIDE_CACHE_EXEC,
+  stampCacheExec,
+  unstampCacheExec,
 } from "./taint.js";
 
 export { isCachedFunction };
 import { serializeResult, deserializeResult } from "./segment-codec.js";
-import type { HandleStore } from "../server/handle-store.js";
+import { createHandleStore } from "../server/handle-store.js";
 import { restoreHandles } from "./handle-snapshot.js";
 import { startHandleCapture, type HandleCapture } from "./handle-capture.js";
 import { sortedSearchString } from "./cache-key-utils.js";
@@ -177,8 +178,20 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             restoreHandles(cached.handles, handleStore);
           }
         }
-        // Background revalidation — must capture handles if tainted args present
+        // Background revalidation — must capture handles if tainted args present.
+        // Use an isolated handle store so background pushes don't pollute the
+        // live response or throw LateHandlePushError on the completed store.
+        // Same isolation pattern as route-level background-revalidation.ts.
         runBackground(requestCtx, async () => {
+          // Reuse closure-captured requestCtx instead of calling
+          // getRequestContext() — ALS context may be gone inside waitUntil.
+          let originalHandleStore:
+            | ReturnType<typeof createHandleStore>
+            | undefined;
+          if (hasTaintedArgs && requestCtx) {
+            originalHandleStore = requestCtx._handleStore;
+            requestCtx._handleStore = createHandleStore();
+          }
           const bgHandleStore = hasTaintedArgs
             ? requestCtx?._handleStore
             : undefined;
@@ -193,17 +206,17 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           // Stamp tainted args and RequestContext so request-scoped
           // reads (cookies, headers) and side effects (ctx.set, etc.)
           // throw inside background revalidation, same as the miss path.
+          // Uses ref-counted stamp/unstamp so overlapping executions
+          // sharing the same ctx don't clear each other's guards.
           const bgTaintedArgs: unknown[] = [];
           for (const arg of args) {
             if (isTainted(arg)) {
-              (arg as any)[INSIDE_CACHE_EXEC] = true;
+              stampCacheExec(arg as object);
               bgTaintedArgs.push(arg);
             }
           }
-          // Reuse closure-captured requestCtx (line 68) instead of calling
-          // getRequestContext() — ALS context may be gone inside waitUntil.
           if (hasTaintedArgs && requestCtx) {
-            (requestCtx as any)[INSIDE_CACHE_EXEC] = true;
+            stampCacheExec(requestCtx as object);
           }
 
           try {
@@ -223,10 +236,14 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             // Background revalidation failed silently
           } finally {
             for (const arg of bgTaintedArgs) {
-              delete (arg as any)[INSIDE_CACHE_EXEC];
+              unstampCacheExec(arg as object);
             }
             if (hasTaintedArgs && requestCtx) {
-              delete (requestCtx as any)[INSIDE_CACHE_EXEC];
+              unstampCacheExec(requestCtx as object);
+            }
+            // Restore original handle store
+            if (originalHandleStore && requestCtx) {
+              requestCtx._handleStore = originalHandleStore;
             }
           }
         });
@@ -251,27 +268,29 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // Also stamp the ALS RequestContext so cookies()/headers() guards fire
     // (they read from getRequestContext(), which is a different object from
     // the HandlerContext/ResponseHandlerContext passed as args).
+    // Uses ref-counted stamp/unstamp so overlapping executions
+    // sharing the same ctx don't clear each other's guards.
     const taintedArgs: unknown[] = [];
     for (const arg of args) {
       if (isTainted(arg)) {
-        (arg as any)[INSIDE_CACHE_EXEC] = true;
+        stampCacheExec(arg as object);
         taintedArgs.push(arg);
       }
     }
     if (hasTaintedArgs && requestCtx) {
-      (requestCtx as any)[INSIDE_CACHE_EXEC] = true;
+      stampCacheExec(requestCtx as object);
     }
 
     let result: any;
     try {
       result = await fn.apply(this, args);
     } finally {
-      // Always remove the flag, even if the function throws
+      // Decrement ref count; symbol is deleted when it reaches zero
       for (const arg of taintedArgs) {
-        delete (arg as any)[INSIDE_CACHE_EXEC];
+        unstampCacheExec(arg as object);
       }
       if (hasTaintedArgs && requestCtx) {
-        delete (requestCtx as any)[INSIDE_CACHE_EXEC];
+        unstampCacheExec(requestCtx as object);
       }
       // Remove this capture token (order-independent, safe for concurrent use)
       stopCapture?.();
