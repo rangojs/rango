@@ -25,10 +25,36 @@ export function isTainted(value: unknown): boolean {
  * cookies(), headers(), ctx.set(), ctx.header(), etc. check this flag and
  * throw if present — reads would cache per-request data under a shared key,
  * and side effects would be lost on cache hit.
+ *
+ * The value is a numeric reference count, not a boolean. Multiple concurrent
+ * cached functions sharing the same ctx/requestCtx each increment on entry
+ * and decrement on exit. Guards fire when count > 0.
  */
 export const INSIDE_CACHE_EXEC: unique symbol = Symbol.for(
   "rango:inside-cache-exec",
 ) as any;
+
+/**
+ * Increment the INSIDE_CACHE_EXEC ref count on an object.
+ */
+export function stampCacheExec(obj: object): void {
+  const current = (obj as any)[INSIDE_CACHE_EXEC] ?? 0;
+  (obj as any)[INSIDE_CACHE_EXEC] = current + 1;
+}
+
+/**
+ * Decrement the INSIDE_CACHE_EXEC ref count on an object.
+ * Deletes the symbol when the count reaches zero so the `in` check
+ * used by guards no longer fires.
+ */
+export function unstampCacheExec(obj: object): void {
+  const current = (obj as any)[INSIDE_CACHE_EXEC] ?? 0;
+  if (current <= 1) {
+    delete (obj as any)[INSIDE_CACHE_EXEC];
+  } else {
+    (obj as any)[INSIDE_CACHE_EXEC] = current - 1;
+  }
+}
 
 /**
  * Throw if ctx is inside a "use cache" execution.
