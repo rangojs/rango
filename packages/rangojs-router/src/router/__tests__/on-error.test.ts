@@ -131,12 +131,13 @@ describe("OnError Types", () => {
         "rendering",
         "action",
         "revalidation",
+        "cache",
         "prerender",
         "static",
         "unknown",
       ];
 
-      expect(phases).toHaveLength(11);
+      expect(phases).toHaveLength(12);
       phases.forEach((phase) => {
         expect(typeof phase).toBe("string");
       });

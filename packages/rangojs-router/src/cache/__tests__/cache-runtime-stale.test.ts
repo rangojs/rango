@@ -407,4 +407,99 @@ describe("use cache stale revalidation handle preservation", () => {
     // After background execution, the original store must be restored
     expect(requestCtxObj._handleStore).toBe(liveHandleStore);
   });
+
+  it("reports stale background revalidation errors via _reportBackgroundError", async () => {
+    const waitUntilFns: Array<() => Promise<void>> = [];
+    const reportedErrors: Array<{ error: unknown; category: string }> = [];
+
+    const mockStore = {
+      getItem: vi.fn(),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockHandleStore = {
+      push: vi.fn(),
+      settled: Promise.resolve(),
+      getDataForSegment: vi.fn().mockReturnValue({}),
+    };
+
+    const taintedCtx = makeTaintedCtx();
+
+    mockGetRequestContext.mockReturnValue({
+      _cacheStore: mockStore,
+      _cacheProfiles: { default: { ttl: 60, swr: 120 } },
+      _handleStore: mockHandleStore,
+      waitUntil: (fn: () => Promise<void>) => {
+        waitUntilFns.push(fn);
+      },
+      _reportBackgroundError: (error: unknown, category: string) => {
+        reportedErrors.push({ error, category });
+      },
+    });
+
+    // Return stale cache entry
+    mockStore.getItem.mockResolvedValueOnce({
+      value: JSON.stringify("stale-result"),
+      handles: {},
+      shouldRevalidate: true,
+    });
+
+    const bgError = new Error("revalidation boom");
+    const fn = async (_ctx: any) => {
+      throw bgError;
+    };
+
+    const cached = registerCachedFunction(fn, "test-fn-err", "default");
+    const result = await cached(taintedCtx);
+    expect(result).toBe("stale-result");
+
+    // Run background revalidation (which will throw)
+    await waitUntilFns[0]();
+
+    // Error should have been reported, not swallowed
+    expect(reportedErrors).toHaveLength(1);
+    expect(reportedErrors[0].error).toBe(bgError);
+    expect(reportedErrors[0].category).toBe("stale-revalidation");
+  });
+
+  it("reports miss-path cache write errors via _reportBackgroundError", async () => {
+    const reportedErrors: Array<{ error: unknown; category: string }> = [];
+
+    const writeError = new Error("setItem failed");
+    const mockStore = {
+      getItem: vi.fn().mockResolvedValue(null),
+      setItem: vi.fn().mockRejectedValue(writeError),
+    };
+
+    const mockHandleStore = {
+      push: vi.fn(),
+      settled: Promise.resolve(),
+      getDataForSegment: vi.fn().mockReturnValue({}),
+    };
+
+    const taintedCtx = makeTaintedCtx();
+
+    mockGetRequestContext.mockReturnValue({
+      _cacheStore: mockStore,
+      _cacheProfiles: { default: { ttl: 60 } },
+      _handleStore: mockHandleStore,
+      waitUntil: undefined,
+      _reportBackgroundError: (error: unknown, category: string) => {
+        reportedErrors.push({ error, category });
+      },
+    });
+
+    const fn = async (_ctx: any) => "result";
+    const cached = registerCachedFunction(fn, "test-fn-write-err", "default");
+
+    const result = await cached(taintedCtx);
+    expect(result).toBe("result");
+
+    // Wait a tick for the inline cache write to complete
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(reportedErrors).toHaveLength(1);
+    expect(reportedErrors[0].error).toBe(writeError);
+    expect(reportedErrors[0].category).toBe("cache-write");
+  });
 });

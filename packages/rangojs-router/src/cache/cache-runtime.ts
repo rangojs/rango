@@ -231,9 +231,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
                 tags: profile.tags,
               });
             }
-          } catch {
+          } catch (bgError) {
             bgStopCapture?.();
-            // Background revalidation failed silently
+            requestCtx?._reportBackgroundError?.(bgError, "stale-revalidation");
           } finally {
             for (const arg of bgTaintedArgs) {
               unstampCacheExec(arg as object);
@@ -309,8 +309,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             tags: profile.tags,
           });
         }
-      } catch {
-        // Serialization or store write failed silently
+      } catch (writeError) {
+        requestCtx?._reportBackgroundError?.(writeError, "cache-write");
       }
     };
 

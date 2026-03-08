@@ -309,6 +309,19 @@ export function createRSCHandler<
       executionContext: executionCtx,
       themeConfig: router.themeConfig,
     });
+    // Wire background error reporting so "use cache" and other subsystems
+    // can surface non-fatal errors through the router's onError callback.
+    requestContext._reportBackgroundError = (
+      error: unknown,
+      category: string,
+    ) => {
+      callOnError(error, "cache", {
+        request,
+        url,
+        metadata: { category },
+      });
+    };
+
     const ctxCreateDur = performance.now() - ctxCreateStart;
 
     // Accumulate handler-level timing for Server-Timing header
