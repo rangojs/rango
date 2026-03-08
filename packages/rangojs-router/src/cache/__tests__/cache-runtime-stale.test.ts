@@ -617,4 +617,85 @@ describe("use cache stale revalidation handle preservation", () => {
     const keyB = mockStore.setItem.mock.calls[1][0] as string;
     expect(keyA).not.toBe(keyB);
   });
+
+  it("stamps RequestContext even when cached function has no tainted args", async () => {
+    const INSIDE_CACHE_EXEC = Symbol.for("rango:inside-cache-exec");
+    const waitUntilFns: Array<() => Promise<void>> = [];
+
+    const mockStore = {
+      getItem: vi.fn().mockResolvedValue(null),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const requestCtxObj: any = {
+      _cacheStore: mockStore,
+      _cacheProfiles: { default: { ttl: 60 } },
+      waitUntil: (fn: () => Promise<void>) => {
+        waitUntilFns.push(fn);
+      },
+    };
+    mockGetRequestContext.mockReturnValue(requestCtxObj);
+
+    // No tainted args — plain string argument only
+    let stampedDuringExec = false;
+    const fn = async (locale: string) => {
+      stampedDuringExec = INSIDE_CACHE_EXEC in requestCtxObj;
+      return `theme-${locale}`;
+    };
+
+    const cached = registerCachedFunction(fn, "no-taint-fn", "default");
+    await cached("en");
+
+    // The guard must have been active during execution
+    expect(stampedDuringExec).toBe(true);
+
+    // After execution completes, the stamp must be removed
+    expect(INSIDE_CACHE_EXEC in requestCtxObj).toBe(false);
+  });
+
+  it("stamps RequestContext during stale background revalidation without tainted args", async () => {
+    const INSIDE_CACHE_EXEC = Symbol.for("rango:inside-cache-exec");
+    const waitUntilFns: Array<() => Promise<void>> = [];
+
+    const mockStore = {
+      getItem: vi.fn(),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const requestCtxObj: any = {
+      _cacheStore: mockStore,
+      _cacheProfiles: { default: { ttl: 60, swr: 120 } },
+      waitUntil: (fn: () => Promise<void>) => {
+        waitUntilFns.push(fn);
+      },
+    };
+    mockGetRequestContext.mockReturnValue(requestCtxObj);
+
+    // Return stale cache entry
+    mockStore.getItem.mockResolvedValueOnce({
+      value: JSON.stringify("stale-theme"),
+      shouldRevalidate: true,
+    });
+
+    // No tainted args
+    let stampedDuringBgExec = false;
+    const fn = async (locale: string) => {
+      stampedDuringBgExec = INSIDE_CACHE_EXEC in requestCtxObj;
+      return `fresh-theme-${locale}`;
+    };
+
+    const cached = registerCachedFunction(fn, "no-taint-stale", "default");
+    const result = await cached("en");
+    expect(result).toBe("stale-theme");
+
+    // Run background revalidation
+    expect(waitUntilFns).toHaveLength(1);
+    await waitUntilFns[0]();
+
+    // The guard must have been active during background execution
+    expect(stampedDuringBgExec).toBe(true);
+
+    // After background execution, the stamp must be removed
+    expect(INSIDE_CACHE_EXEC in requestCtxObj).toBe(false);
+  });
 });
