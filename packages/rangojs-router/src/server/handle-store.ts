@@ -71,6 +71,14 @@ export interface HandleStore {
   readonly settled: Promise<void>;
 
   /**
+   * Optional error callback for late streaming-handle failures.
+   * Called when push() throws LateHandlePushError (handle pushed after
+   * stream completion). Allows the router to surface these errors
+   * to onError and telemetry.
+   */
+  onError?: (error: Error) => void;
+
+  /**
    * Push handle data for a specific handle and segment.
    * Multiple pushes to the same handle/segment accumulate in an array.
    * Each push triggers an emission on the stream.
@@ -199,7 +207,9 @@ export function createHandleStore(): HandleStore {
 
     push(handleName: string, segmentId: string, value: unknown): void {
       if (completed) {
-        throw createLateHandlePushError(handleName, segmentId);
+        const error = createLateHandlePushError(handleName, segmentId);
+        if (this.onError) this.onError(error);
+        throw error;
       }
 
       if (!data[handleName]) {

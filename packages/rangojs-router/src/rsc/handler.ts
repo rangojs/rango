@@ -38,6 +38,8 @@ import {
   createReverseFunction,
   stripInternalParams,
 } from "../router/handler-context.js";
+import { getRouterContext } from "../router/router-context.js";
+import { resolveSink, safeEmit } from "../router/telemetry.js";
 import { contextSet } from "../context-var.js";
 import {
   hasCachedManifest,
@@ -392,6 +394,38 @@ export function createRSCHandler<
 
     // Get handle store from request context
     const handleStore = requireRequestContext()._handleStore;
+
+    // Wire up error reporting for late streaming-handle failures
+    // (LateHandlePushError: handle pushed after stream completion).
+    // Without this, these errors are only caught by React's error boundary
+    // and never reach the router's onError callback or telemetry.
+    handleStore.onError = (error: Error) => {
+      const reqCtx = requireRequestContext();
+      callOnError(error, "handler", {
+        request,
+        url,
+        routeKey: reqCtx._routeName,
+        params: reqCtx.params as Record<string, string>,
+        handledByBoundary: true,
+      });
+      try {
+        const routerCtx = getRouterContext();
+        if (routerCtx?.telemetry) {
+          safeEmit(resolveSink(routerCtx.telemetry), {
+            type: "handler.error" as const,
+            timestamp: performance.now(),
+            requestId: routerCtx.requestId,
+            error,
+            handledByBoundary: true,
+            pathname: url.pathname,
+            routeKey: reqCtx._routeName,
+            params: reqCtx.params as Record<string, string>,
+          });
+        }
+      } catch {
+        // Router context may not be available (e.g. prerender path)
+      }
+    };
 
     // Set route params early so all execution paths can access ctx.params.
     if (preview?.params) {

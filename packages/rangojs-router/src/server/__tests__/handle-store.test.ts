@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createHandleStore } from "../handle-store";
 
 function delay(ms: number): Promise<void> {
@@ -174,6 +174,33 @@ describe("HandleStore settlement", () => {
     expect(() => store.push("meta", "seg1", "late")).toThrow(
       /pushed after handle collection completed/,
     );
+  });
+
+  it("onError callback fires before LateHandlePushError is thrown", async () => {
+    const store = createHandleStore();
+    const errors: Error[] = [];
+    store.onError = (error) => errors.push(error);
+
+    // Drain the stream to set completed = true
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _ of store.stream()) {
+      // no-op
+    }
+
+    expect(() => store.push("meta", "seg1", "late")).toThrow(
+      /pushed after handle collection completed/,
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0].name).toBe("LateHandlePushError");
+  });
+
+  it("onError is not called for normal push operations", () => {
+    const store = createHandleStore();
+    const onError = vi.fn();
+    store.onError = onError;
+
+    store.push("meta", "seg1", "value");
+    expect(onError).not.toHaveBeenCalled();
   });
 
   it("seal is idempotent", () => {
