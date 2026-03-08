@@ -129,9 +129,16 @@ export function withRouterLogScope<T>(
     try {
       const result = fn();
       if (result && typeof (result as Promise<T>).then === "function") {
-        return (result as Promise<T>).finally(() => {
-          debugLog(label, "end");
-        });
+        return (result as Promise<T>).then(
+          (value) => {
+            debugLog(label, "end");
+            return value;
+          },
+          (error) => {
+            debugLog(label, "error", { error: String(error) });
+            throw error;
+          },
+        );
       }
       debugLog(label, "end");
       return result;
