@@ -12,6 +12,56 @@ import type { NamedRouteEntry } from "./content-negotiation.js";
 import type { TelemetrySink } from "./telemetry.js";
 
 /**
+ * SSR stream mode returned by resolveStreaming.
+ *
+ * - `"stream"` — start flushing HTML as soon as the shell is ready
+ *   (default React SSR behavior via `renderToReadableStream`).
+ * - `"allReady"` — wait for every Suspense boundary to resolve before
+ *   sending any bytes (equivalent to awaiting `stream.allReady`).
+ */
+export type SSRStreamMode = "stream" | "allReady";
+
+/**
+ * Context passed to the resolveStreaming callback.
+ */
+export interface ResolveStreamingContext<TEnv = unknown> {
+  request: Request;
+  env: TEnv;
+  url: URL;
+}
+
+/**
+ * SSR configuration options.
+ */
+export interface SSROptions<TEnv = unknown> {
+  /**
+   * Determine whether an HTML response should stream progressively or
+   * wait for full readiness before flushing.
+   *
+   * Called once per HTML request, before the HTML response is produced.
+   * Does NOT apply to RSC responses (`__rsc`, partial navigation, prefetch).
+   *
+   * Return `"stream"` (default) for progressive streaming or `"allReady"`
+   * to buffer the complete HTML before sending.
+   *
+   * @example Bot detection
+   * ```ts
+   * createRouter({
+   *   ssr: {
+   *     resolveStreaming: async ({ request, env }) => {
+   *       const bot = await detectBot(request, env);
+   *       return bot.isBot && !bot.supportsStreaming ? "allReady" : "stream";
+   *     },
+   *   },
+   * });
+   * ```
+   */
+  resolveStreaming?: (
+    context: ResolveStreamingContext<TEnv>,
+  ) => SSRStreamMode | Promise<SSRStreamMode>;
+}
+
+/**
  * Props passed to the root layout component
  */
 export interface RootLayoutProps {
@@ -416,4 +466,21 @@ export interface RSCRouterOptions<TEnv = any> {
    * ```
    */
   telemetry?: TelemetrySink;
+
+  /**
+   * SSR configuration options.
+   *
+   * @example
+   * ```typescript
+   * createRouter({
+   *   ssr: {
+   *     resolveStreaming: async ({ request, env }) => {
+   *       const bot = await detectBot(request, env);
+   *       return bot.isBot ? "allReady" : "stream";
+   *     },
+   *   },
+   * });
+   * ```
+   */
+  ssr?: SSROptions<TEnv>;
 }

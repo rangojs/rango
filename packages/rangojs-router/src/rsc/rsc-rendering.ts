@@ -215,12 +215,18 @@ export async function handleRscRendering<TEnv>(
 
   // Delegate to SSR for HTML response
   const ssrModuleStart = performance.now();
-  const ssrModule = await ctx.loadSSRModule();
+  const [ssrModule, streamMode] = await Promise.all([
+    ctx.loadSSRModule(),
+    ctx.resolveStreamMode(request, env, url),
+  ]);
   const ssrModuleDur = performance.now() - ssrModuleStart;
   timingParts.push(`ssr-module-load;dur=${ssrModuleDur.toFixed(2)}`);
 
   const ssrRenderStart = performance.now();
-  const htmlStream = await ssrModule.renderHTML(rscStream, { nonce });
+  const htmlStream = await ssrModule.renderHTML(rscStream, {
+    nonce,
+    streamMode,
+  });
   const ssrRenderDur = performance.now() - ssrRenderStart;
   timingParts.push(`ssr-render-html;dur=${ssrRenderDur.toFixed(2)}`);
 

@@ -10,6 +10,7 @@ import type { RSCRouterInternal } from "../router/router-interfaces.js";
 import type { ErrorPhase } from "../types.js";
 import type { InvokeOnErrorContext } from "../router/error-handling.js";
 import type { RSCDependencies, LoadSSRModule } from "./types.js";
+import type { SSRStreamMode } from "../router/router-options.js";
 
 export interface HandlerContext<TEnv = unknown> {
   router: RSCRouterInternal<TEnv, any>;
@@ -31,4 +32,14 @@ export interface HandlerContext<TEnv = unknown> {
     redirectUrl: string,
     locationState?: Record<string, unknown>,
   ) => Response;
+
+  /**
+   * Resolve the SSR stream mode for a given request.
+   * Returns "stream" when no resolveStreaming callback is configured.
+   */
+  resolveStreamMode: (
+    request: Request,
+    env: TEnv,
+    url: URL,
+  ) => Promise<SSRStreamMode>;
 }

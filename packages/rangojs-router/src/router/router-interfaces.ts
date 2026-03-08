@@ -296,6 +296,12 @@ export interface RSCRouterInternal<
   readonly urlpatterns?: UrlPatterns<TEnv, any>;
 
   /**
+   * SSR configuration. resolveStreaming determines stream vs allReady
+   * per HTML request (undefined = always stream).
+   */
+  readonly ssr?: import("./router-options.js").SSROptions<TEnv>;
+
+  /**
    * Source file path where createRouter() was called.
    * Set via Error.stack parsing at construction time.
    * Used by the Vite plugin to write per-router named-routes.gen.ts files.

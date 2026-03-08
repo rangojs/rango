@@ -184,6 +184,11 @@ export function createRSCHandler<
     callOnError,
     getRequiredRouteMap,
     createRedirectFlightResponse,
+    resolveStreamMode: async (request, env, url) => {
+      const resolver = router.ssr?.resolveStreaming;
+      if (!resolver) return "stream";
+      return resolver({ request, env, url });
+    },
   };
 
   return async function handler(
@@ -770,8 +775,14 @@ export function createRSCHandler<
         }
 
         // Delegate to SSR for HTML response
-        const ssrModule = await loadSSRModule();
-        const htmlStream = await ssrModule.renderHTML(rscStream, { nonce });
+        const [ssrModule, streamMode] = await Promise.all([
+          loadSSRModule(),
+          handlerCtx.resolveStreamMode(request, env, url),
+        ]);
+        const htmlStream = await ssrModule.renderHTML(rscStream, {
+          nonce,
+          streamMode,
+        });
 
         return createResponseWithMergedHeaders(htmlStream, {
           status: 404,

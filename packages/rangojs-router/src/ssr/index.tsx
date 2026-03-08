@@ -34,6 +34,13 @@ interface RenderToReadableStreamOptions {
 }
 
 /**
+ * ReadableStream with the allReady promise added by react-dom/server.edge.
+ */
+interface ReactDOMReadableStream extends ReadableStream<Uint8Array> {
+  allReady: Promise<void>;
+}
+
+/**
  * Options for the renderHTML function
  */
 export interface SSRRenderOptions {
@@ -49,6 +56,14 @@ export interface SSRRenderOptions {
    * Nonce for Content Security Policy (CSP)
    */
   nonce?: string;
+
+  /**
+   * SSR stream mode.
+   *
+   * - `"stream"` (default) — start flushing HTML immediately.
+   * - `"allReady"` — await `stream.allReady` before returning.
+   */
+  streamMode?: import("../router/router-options.js").SSRStreamMode;
 }
 
 /**
@@ -68,7 +83,7 @@ export interface SSRDependencies<TEnv = unknown> {
   renderToReadableStream: (
     element: React.ReactNode,
     options?: RenderToReadableStreamOptions,
-  ) => Promise<ReadableStream<Uint8Array>>;
+  ) => Promise<ReactDOMReadableStream>;
 
   /**
    * injectRSCPayload from rsc-html-stream/server
@@ -230,7 +245,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
     rscStream: ReadableStream<Uint8Array>,
     options?: SSRRenderOptions,
   ): Promise<ReadableStream<Uint8Array>> {
-    const { nonce, formState } = options ?? {};
+    const { nonce, formState, streamMode } = options ?? {};
 
     try {
       // Tee the stream:
@@ -323,6 +338,13 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         formState,
         nonce,
       });
+
+      // Wait for all Suspense boundaries to resolve when streamMode is "allReady".
+      // This buffers the entire HTML before flushing — used for bots that
+      // cannot process streamed HTML.
+      if (streamMode === "allReady") {
+        await htmlStream.allReady;
+      }
 
       // Inject RSC payload into HTML as <script nonce="...">__FLIGHT_DATA__</script>
       return htmlStream.pipeThrough(injectRSCPayload(rscStream2, { nonce }));

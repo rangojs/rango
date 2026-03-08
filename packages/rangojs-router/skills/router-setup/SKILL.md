@@ -99,6 +99,9 @@ interface RSCRouterOptions<TEnv> {
   // Theme configuration
   theme?: ThemeConfig | true;
 
+  // SSR options (streaming policy)
+  ssr?: SSROptions<TEnv>;
+
   // Telemetry sink for structured lifecycle events
   telemetry?: TelemetrySink;
 
@@ -401,3 +404,31 @@ const router = createRouter({
 
 Events emitted: `request.start/end/error`, `loader.start/end/error`,
 `handler.error`, `cache.decision`, `revalidation.decision`.
+
+## SSR Streaming Policy
+
+Control whether HTML SSR responses stream progressively or wait for all content:
+
+```typescript
+import { createRouter, type SSRStreamMode } from "@rangojs/router";
+
+const router = createRouter({
+  ssr: {
+    resolveStreaming: ({ request }) => {
+      const ua = request.headers.get("user-agent") ?? "";
+      // Bots that can't process streamed HTML get a fully resolved page
+      if (/Googlebot|bingbot/i.test(ua)) return "allReady";
+      return "stream";
+    },
+  },
+});
+```
+
+`SSRStreamMode` is `"stream" | "allReady"`:
+
+- `"stream"` (default) — flush HTML as React renders. Suspense fallbacks appear first, then resolved content streams in. Best for real users (fastest TTFB).
+- `"allReady"` — await `stream.allReady` before flushing. The full page arrives in one shot. Use for bots that cannot execute JavaScript or process chunked HTML.
+
+The resolver receives `{ request, env, url }` and may be sync or async. It only runs on HTML SSR paths — RSC partials, `__rsc` requests, and response routes are unaffected.
+
+When `resolveStreaming` is not configured, the default is `"stream"`.

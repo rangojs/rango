@@ -36,6 +36,8 @@ that route tree.
 
 ## Design Notes
 
+- [SSR streaming policy](./design/ssr-streaming-policy.md) - controlling
+  stream vs allReady mode per request
 - [Consolidate generated route type files](./design/consolidate-gen-files.md)
 
 ## Internal Reference

@@ -72,7 +72,12 @@ export type {
 } from "./types.js";
 
 // Router options type (server-only, so import directly)
-export type { RSCRouterOptions } from "./router.js";
+export type {
+  RSCRouterOptions,
+  SSRStreamMode,
+  SSROptions,
+  ResolveStreamingContext,
+} from "./router.js";
 
 // Server-side createLoader and redirect
 export {

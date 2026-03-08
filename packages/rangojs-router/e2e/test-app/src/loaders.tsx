@@ -5,6 +5,12 @@ export const PrerenderTestLoader = createLoader(async () => {
   return { test: true, message: "prerender-loader-data" };
 });
 
+// 300ms delayed loader for SSR stream-mode tests
+export const StreamModeDelayedLoader = createLoader(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  return { message: "delayed-content-resolved" };
+});
+
 // Product data
 const products = [
   {

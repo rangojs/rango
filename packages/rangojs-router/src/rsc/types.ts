@@ -114,6 +114,14 @@ export interface SSRRenderOptions {
    * Nonce for Content Security Policy (CSP)
    */
   nonce?: string;
+
+  /**
+   * SSR stream mode.
+   *
+   * - `"stream"` (default) — start flushing HTML immediately.
+   * - `"allReady"` — await `stream.allReady` before returning.
+   */
+  streamMode?: import("../router/router-options.js").SSRStreamMode;
 }
 
 /**

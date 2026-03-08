@@ -115,6 +115,9 @@ export { RSC_ROUTER_BRAND, RouterRegistry } from "./router/router-registry.js";
 export type {
   RSCRouterOptions,
   RootLayoutProps,
+  SSRStreamMode,
+  SSROptions,
+  ResolveStreamingContext,
 } from "./router/router-options.js";
 export type {
   RSCRouter,
@@ -147,6 +150,7 @@ export function createRouter<TEnv = any>(
     warmup: warmupOption,
     allowDebugManifest: allowDebugManifestOption = false,
     telemetry: telemetrySink,
+    ssr: ssrOption,
   } = options;
 
   // Resolve telemetry sink (no-op when not configured)
@@ -851,6 +855,9 @@ export function createRouter<TEnv = any>(
 
     // Expose debug manifest flag for handler
     allowDebugManifest: allowDebugManifestOption,
+
+    // Expose SSR configuration for handler
+    ssr: ssrOption,
 
     // Expose global middleware for RSC handler
     middleware: globalMiddleware,

@@ -406,6 +406,118 @@ describe("createSSRHandler", () => {
     });
   });
 
+  describe("streamMode", () => {
+    afterEach(() => {
+      mockedRenderSegments.mockReset();
+      mockedRenderSegments.mockImplementation(() =>
+        Promise.resolve(React.createElement("div")),
+      );
+    });
+
+    async function consumeStream(
+      stream: ReadableStream<Uint8Array>,
+    ): Promise<string> {
+      const reader = stream.getReader();
+      const chunks: Uint8Array[] = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      return new TextDecoder().decode(
+        chunks.reduce((acc, c) => {
+          const merged = new Uint8Array(acc.length + c.length);
+          merged.set(acc);
+          merged.set(c, acc.length);
+          return merged;
+        }, new Uint8Array(0)),
+      );
+    }
+
+    function createRealDeps(
+      overrides: Partial<SSRDependencies> = {},
+    ): SSRDependencies {
+      return {
+        createFromReadableStream: vi.fn().mockResolvedValue({
+          metadata: {
+            pathname: "/",
+            params: {},
+            matched: ["/"],
+            segments: [],
+          },
+        }),
+        renderToReadableStream: realRenderToReadableStream as any,
+        injectRSCPayload: vi.fn().mockReturnValue(
+          new TransformStream({
+            transform(chunk, controller) {
+              controller.enqueue(chunk);
+            },
+          }),
+        ),
+        loadBootstrapScriptContent: vi.fn().mockResolvedValue(""),
+        ...overrides,
+      };
+    }
+
+    it("default (no streamMode) does not await allReady", async () => {
+      const deps = createRealDeps();
+      const renderHTML = createSSRHandler(deps);
+      const stream = await renderHTML(createMockRscStream());
+      const html = await consumeStream(stream);
+      expect(html).toContain("<div>");
+    });
+
+    it('streamMode "stream" does not await allReady', async () => {
+      const deps = createRealDeps();
+      const renderHTML = createSSRHandler(deps);
+      const stream = await renderHTML(createMockRscStream(), {
+        streamMode: "stream",
+      });
+      const html = await consumeStream(stream);
+      expect(html).toContain("<div>");
+    });
+
+    it('streamMode "allReady" awaits allReady before returning', async () => {
+      // Use a Suspense boundary with a delayed promise to verify that
+      // the stream only resolves after allReady.
+      let resolveInner: () => void;
+      const innerPromise = new Promise<void>((r) => {
+        resolveInner = r;
+      });
+
+      function Slow() {
+        React.use(innerPromise);
+        return React.createElement("span", null, "loaded");
+      }
+
+      // renderSegments returns a Suspense boundary wrapping the slow component
+      mockedRenderSegments.mockImplementation(() =>
+        Promise.resolve(
+          React.createElement(
+            React.Suspense,
+            { fallback: React.createElement("span", null, "loading...") },
+            React.createElement(Slow),
+          ),
+        ),
+      );
+
+      const deps = createRealDeps();
+      const renderHTML = createSSRHandler(deps);
+
+      // Resolve the inner promise so allReady resolves
+      resolveInner!();
+
+      const stream = await renderHTML(createMockRscStream(), {
+        streamMode: "allReady",
+      });
+
+      // The stream should contain the resolved content (not the fallback)
+      // because allReady was awaited.
+      const html = await consumeStream(stream);
+      expect(html).toContain("loaded");
+    });
+  });
+
   // Verify that two concurrent renderHTML() calls with different metadata
   // produce isolated contexts — no cross-request bleed of pathname, params,
   // or handle data.

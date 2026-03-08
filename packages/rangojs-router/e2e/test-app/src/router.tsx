@@ -181,6 +181,13 @@ export const router = createRouter<AppEnv>({
     enableSystem: true,
     enableColorScheme: true,
   },
+  ssr: {
+    resolveStreaming: ({ request }) => {
+      const ua = request.headers.get("user-agent") ?? "";
+      if (ua.includes("StreamBot")) return "allReady";
+      return "stream";
+    },
+  },
   onError: (context) => {
     lastOnErrorCall = {
       phase: context.phase,

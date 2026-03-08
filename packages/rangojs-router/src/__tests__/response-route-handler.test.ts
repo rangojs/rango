@@ -30,6 +30,7 @@ function createMockHandlerCtx(
     callOnError: vi.fn(),
     getRequiredRouteMap: () => routeMap,
     createRedirectFlightResponse: vi.fn() as any,
+    resolveStreamMode: async () => "stream" as const,
   };
 }
 

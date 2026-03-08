@@ -48,6 +48,7 @@ import { authBoundaryPatterns } from "./urls/auth-boundary.js";
 import { contentOwnershipPatterns } from "./urls/content-ownership.js";
 import { cacheIsolationPatterns } from "./urls/cache-isolation.js";
 import { alsScopePatterns } from "./urls/als-scope.js";
+import { streamModePatterns } from "./urls/stream-mode.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -882,6 +883,9 @@ export const urlpatterns = urls(
           }),
         ],
       ),
+
+      // SSR stream mode test route
+      include("/", streamModePatterns),
     ]),
   ],
 );

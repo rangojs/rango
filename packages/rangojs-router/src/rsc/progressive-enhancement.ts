@@ -250,10 +250,14 @@ export async function handleProgressiveEnhancement<TEnv>(
     };
 
     const rscStream = ctx.renderToReadableStream<RscPayload>(payload);
-    const ssrModule = await ctx.loadSSRModule();
+    const [ssrModule, streamMode] = await Promise.all([
+      ctx.loadSSRModule(),
+      ctx.resolveStreamMode(request, env, url),
+    ]);
     const htmlStream = await ssrModule.renderHTML(rscStream, {
       formState: reactFormState,
       nonce,
+      streamMode,
     });
 
     return createResponseWithMergedHeaders(htmlStream, {
@@ -339,8 +343,14 @@ async function renderPeErrorBoundary<TEnv>(
   };
 
   const rscStream = ctx.renderToReadableStream<RscPayload>(payload);
-  const ssrModule = await ctx.loadSSRModule();
-  const htmlStream = await ssrModule.renderHTML(rscStream, { nonce });
+  const [ssrModule, streamMode] = await Promise.all([
+    ctx.loadSSRModule(),
+    ctx.resolveStreamMode(request, env, url),
+  ]);
+  const htmlStream = await ssrModule.renderHTML(rscStream, {
+    nonce,
+    streamMode,
+  });
 
   return createResponseWithMergedHeaders(htmlStream, {
     status: 500,
