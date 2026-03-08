@@ -479,8 +479,8 @@ describe("createSSRHandler", () => {
 
     it('streamMode "allReady" awaits allReady before returning', async () => {
       // Use a Suspense boundary with a delayed promise to verify that
-      // the stream only resolves after allReady.
-      let resolveInner: () => void;
+      // renderHTML stays pending until the inner content resolves.
+      let resolveInner!: () => void;
       const innerPromise = new Promise<void>((r) => {
         resolveInner = r;
       });
@@ -490,7 +490,6 @@ describe("createSSRHandler", () => {
         return React.createElement("span", null, "loaded");
       }
 
-      // renderSegments returns a Suspense boundary wrapping the slow component
       mockedRenderSegments.mockImplementation(() =>
         Promise.resolve(
           React.createElement(
@@ -504,15 +503,61 @@ describe("createSSRHandler", () => {
       const deps = createRealDeps();
       const renderHTML = createSSRHandler(deps);
 
-      // Resolve the inner promise so allReady resolves
-      resolveInner!();
-
-      const stream = await renderHTML(createMockRscStream(), {
+      // Start renderHTML but do NOT resolve the inner promise yet.
+      const renderPromise = renderHTML(createMockRscStream(), {
         streamMode: "allReady",
       });
 
-      // The stream should contain the resolved content (not the fallback)
-      // because allReady was awaited.
+      // renderHTML should still be pending because allReady hasn't resolved.
+      let settled = false;
+      renderPromise.then(() => {
+        settled = true;
+      });
+      // Flush microtasks
+      await new Promise((r) => setTimeout(r, 50));
+      expect(settled).toBe(false);
+
+      // Now resolve the inner promise, which settles allReady.
+      resolveInner();
+
+      const stream = await renderPromise;
+      const html = await consumeStream(stream);
+      expect(html).toContain("loaded");
+    });
+
+    it('streamMode "stream" returns stream before Suspense resolves', async () => {
+      let resolveInner!: () => void;
+      const innerPromise = new Promise<void>((r) => {
+        resolveInner = r;
+      });
+
+      function Slow() {
+        React.use(innerPromise);
+        return React.createElement("span", null, "loaded");
+      }
+
+      mockedRenderSegments.mockImplementation(() =>
+        Promise.resolve(
+          React.createElement(
+            React.Suspense,
+            { fallback: React.createElement("span", null, "loading...") },
+            React.createElement(Slow),
+          ),
+        ),
+      );
+
+      const deps = createRealDeps();
+      const renderHTML = createSSRHandler(deps);
+
+      // In stream mode, renderHTML should return immediately (shell ready),
+      // even though the inner content is still pending.
+      const stream = await renderHTML(createMockRscStream(), {
+        streamMode: "stream",
+      });
+      expect(stream).toBeInstanceOf(ReadableStream);
+
+      // Resolve inner so the stream can complete for cleanup.
+      resolveInner();
       const html = await consumeStream(stream);
       expect(html).toContain("loaded");
     });
