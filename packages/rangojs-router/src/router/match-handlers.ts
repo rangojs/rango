@@ -158,7 +158,7 @@ export function createMatchHandlers<TEnv = any>(
     const requestId = hasTelemetry ? getRequestId(request) : undefined;
     return runWithRouterLogContext({ request, transaction: "match" }, () => {
       const routerCtx = buildRouterContext();
-      if (requestId) routerCtx.requestId = requestId;
+      routerCtx.requestId = requestId;
       return runWithRouterContext(routerCtx, async () =>
         withRouterLogScope("match", async () => {
           const matchStart = performance.now();
@@ -303,7 +303,7 @@ export function createMatchHandlers<TEnv = any>(
       { request, transaction: "matchPartial" },
       () => {
         const routerCtx = buildRouterContext();
-        if (partialRequestId) routerCtx.requestId = partialRequestId;
+        routerCtx.requestId = partialRequestId;
         return runWithRouterContext(routerCtx, async () =>
           withRouterLogScope("matchPartial", async () => {
             const matchStart = performance.now();

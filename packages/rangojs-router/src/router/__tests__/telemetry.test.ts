@@ -3,6 +3,7 @@ import {
   resolveSink,
   safeEmit,
   createConsoleSink,
+  getRequestId,
   type TelemetrySink,
   type TelemetryEvent,
 } from "../telemetry";
@@ -381,6 +382,42 @@ describe("telemetry sink", () => {
 
       expect(consoleSpy.mock.calls[0][0]).toContain("segment=unknown");
       consoleSpy.mockRestore();
+    });
+  });
+
+  describe("getRequestId", () => {
+    it("returns header value when x-request-id is set", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-request-id": "abc-123" },
+      });
+      expect(getRequestId(req)).toBe("abc-123");
+    });
+
+    it("prefers x-rsc-router-request-id over x-request-id", () => {
+      const req = new Request("http://localhost/", {
+        headers: {
+          "x-rsc-router-request-id": "rsc-1",
+          "x-request-id": "generic-1",
+        },
+      });
+      expect(getRequestId(req)).toBe("rsc-1");
+    });
+
+    it("generates an internal ID when no header is present", () => {
+      const req = new Request("http://localhost/");
+      const id = getRequestId(req);
+      expect(id).toMatch(/^t-[0-9a-z]+$/);
+    });
+
+    it("returns the same ID for the same Request object", () => {
+      const req = new Request("http://localhost/");
+      expect(getRequestId(req)).toBe(getRequestId(req));
+    });
+
+    it("returns different IDs for different Request objects", () => {
+      const req1 = new Request("http://localhost/");
+      const req2 = new Request("http://localhost/");
+      expect(getRequestId(req1)).not.toBe(getRequestId(req2));
     });
   });
 

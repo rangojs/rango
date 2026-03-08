@@ -167,19 +167,39 @@ export function safeEmit(sink: TelemetrySink, event: TelemetryEvent): void {
 // Request ID extraction (for span correlation)
 // ---------------------------------------------------------------------------
 
+// Per-request memoization so the same Request object always maps to the
+// same ID. WeakMap allows GC when the Request is no longer referenced.
+const requestIds = new WeakMap<Request, string>();
+let telemetryRequestCounter = 0;
+
 /**
- * Extract request ID from standard headers.
- * Returns undefined when no ID header is present.
- * Used by emit sites to populate the optional requestId field.
+ * Get or create a request ID for telemetry correlation.
+ * Checks standard headers first (x-rsc-router-request-id, x-request-id,
+ * cf-ray), then generates an internal ID when none is present.
+ * Generated IDs use format "t-{base36}" to distinguish from header values.
  */
-export function getRequestId(request: Request): string | undefined {
+export function getRequestId(request: Request): string {
+  const existing = requestIds.get(request);
+  if (existing) return existing;
+
   const candidate =
     request.headers.get("x-rsc-router-request-id") ??
     request.headers.get("x-request-id") ??
     request.headers.get("cf-ray");
-  if (!candidate) return undefined;
-  const trimmed = candidate.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
+
+  let id: string;
+  if (candidate) {
+    const trimmed = candidate.trim();
+    id =
+      trimmed.length > 0
+        ? trimmed
+        : `t-${(++telemetryRequestCounter).toString(36)}`;
+  } else {
+    id = `t-${(++telemetryRequestCounter).toString(36)}`;
+  }
+
+  requestIds.set(request, id);
+  return id;
 }
 
 // ---------------------------------------------------------------------------
