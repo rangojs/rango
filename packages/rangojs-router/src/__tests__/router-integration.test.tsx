@@ -30,9 +30,17 @@ const authMiddleware: MiddlewareFn = async (_ctx, next) => next();
 const logMiddleware: MiddlewareFn = async (_ctx, next) => next();
 const rateLimitMiddleware: MiddlewareFn = async (_ctx, next) => next();
 
-// Dummy loaders
-const PostLoader = createLoader(async () => ({ title: "Post" }));
-const UserLoader = createLoader(async () => ({ name: "User" }));
+// Dummy loaders (3rd arg = injected $$id, normally set by Vite plugin)
+const PostLoader = (createLoader as Function)(
+  async () => ({ title: "Post" }),
+  undefined,
+  "test#PostLoader",
+);
+const UserLoader = (createLoader as Function)(
+  async () => ({ name: "User" }),
+  undefined,
+  "test#UserLoader",
+);
 
 describe("route tree inspection", () => {
   // -------------------------------------------------------------------------
@@ -628,7 +636,11 @@ describe("route tree inspection", () => {
   it("parallel slots with loaders and loading", () => {
     const FeedContent = (<div>feed</div>) as React.ReactNode;
     const TrendingSidebar = (<div>trending</div>) as React.ReactNode;
-    const FeedLoader = createLoader(async () => ({ items: [] }));
+    const FeedLoader = (createLoader as Function)(
+      async () => ({ items: [] }),
+      undefined,
+      "test#FeedLoader",
+    );
 
     const tree = buildRouteTree(
       urls(({ path, layout, parallel, loader, loading }) => [
@@ -1145,8 +1157,16 @@ describe("route tree inspection", () => {
     const PanelA = (<div>panel-a</div>) as React.ReactNode;
     const PanelB = (<div>panel-b</div>) as React.ReactNode;
     const InnerLoading = (<div>inner-loading</div>) as React.ReactNode;
-    const ComplexLoader = createLoader(async () => ({ data: "complex" }));
-    const DeepLoader = createLoader(async () => ({ nested: true }));
+    const ComplexLoader = (createLoader as Function)(
+      async () => ({ data: "complex" }),
+      undefined,
+      "test#ComplexLoader",
+    );
+    const DeepLoader = (createLoader as Function)(
+      async () => ({ nested: true }),
+      undefined,
+      "test#DeepLoader",
+    );
 
     const tree = buildRouteTree(
       urls(({ path, layout, loader, loading, parallel, middleware }) => [
@@ -1226,8 +1246,16 @@ describe("route tree inspection", () => {
     const DetailPage = (<div>detail</div>) as React.ReactNode;
     const ModalView = (<div>modal</div>) as React.ReactNode;
     const SidebarNav = (<div>sidebar-nav</div>) as React.ReactNode;
-    const DetailLoader = createLoader(async () => ({ item: {} }));
-    const ListLoader = createLoader(async () => ({ items: [] }));
+    const DetailLoader = (createLoader as Function)(
+      async () => ({ item: {} }),
+      undefined,
+      "test#DetailLoader",
+    );
+    const ListLoader = (createLoader as Function)(
+      async () => ({ items: [] }),
+      undefined,
+      "test#ListLoader",
+    );
 
     const tree = buildRouteTree(
       urls(

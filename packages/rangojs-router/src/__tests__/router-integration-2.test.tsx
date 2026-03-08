@@ -29,8 +29,12 @@ const mw1: MiddlewareFn = async (_ctx, next) => next();
 const mw2: MiddlewareFn = async (_ctx, next) => next();
 const mw3: MiddlewareFn = async (_ctx, next) => next();
 
-// Dummy loaders
-const PostLoader = createLoader(async () => ({ title: "Post" }));
+// Dummy loaders (3rd arg = injected $$id, normally set by Vite plugin)
+const PostLoader = (createLoader as Function)(
+  async () => ({ title: "Post" }),
+  undefined,
+  "test#PostLoader",
+);
 
 describe("route definition edge cases", () => {
   // ---------------------------------------------------------------------------

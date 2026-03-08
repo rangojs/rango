@@ -95,7 +95,7 @@ export function createHandle<TData, TAccumulated = TData[]>(
 ): Handle<TData, TAccumulated> {
   const handleId = __injectedId ?? "";
 
-  if (!handleId && process.env.NODE_ENV !== "production") {
+  if (!handleId && process.env.NODE_ENV === "development") {
     throw new Error(
       "[rsc-router] Handle is missing $$id. " +
         "Make sure the exposeInternalIds Vite plugin is enabled and " +
