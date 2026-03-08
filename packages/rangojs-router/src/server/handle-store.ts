@@ -58,7 +58,7 @@ export interface HandleStore {
 
   /**
    * Promise that resolves when all tracked handlers have settled.
-   * Does not reject - uses Promise.allSettled internally.
+   * Uses a live inflight counter so late track() calls are included.
    */
   readonly settled: Promise<void>;
 
@@ -119,8 +119,22 @@ export interface HandleStore {
  * ```
  */
 export function createHandleStore(): HandleStore {
-  const pending: Promise<unknown>[] = [];
   const data: HandleData = {};
+
+  // Live inflight counter instead of a snapshot-based pending array.
+  // Each track() increments, each promise settlement decrements.
+  // settled resolves when count drains to 0, even if new tracks
+  // are added while earlier ones are still in flight.
+  let inflightCount = 0;
+  let drainWaiters: (() => void)[] = [];
+
+  function notifyDrain() {
+    if (inflightCount === 0 && drainWaiters.length > 0) {
+      const waiters = drainWaiters;
+      drainWaiters = [];
+      for (const resolve of waiters) resolve();
+    }
+  }
 
   // Queue for pending emissions and resolver for waiting consumer
   let pendingEmissions: HandleData[] = [];
@@ -148,15 +162,19 @@ export function createHandleStore(): HandleStore {
 
   return {
     track<T>(promise: Promise<T>): Promise<T> {
-      pending.push(promise);
+      inflightCount++;
+      promise.finally(() => {
+        inflightCount--;
+        notifyDrain();
+      });
       return promise;
     },
 
     get settled(): Promise<void> {
-      if (pending.length === 0) {
-        return Promise.resolve();
-      }
-      return Promise.allSettled(pending).then(() => {});
+      if (inflightCount === 0) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        drainWaiters.push(resolve);
+      });
     },
 
     push(handleName: string, segmentId: string, value: unknown): void {
