@@ -228,6 +228,26 @@ describe("serializeSegments / deserializeSegments", () => {
     });
   });
 
+  describe("mountPath round-trip", () => {
+    it("should preserve mountPath through serialize/deserialize", async () => {
+      const original = [makeSegment({ mountPath: "/admin", type: "layout" })];
+      const serialized = await serializeSegments(original);
+
+      expect(serialized[0].metadata.mountPath).toBe("/admin");
+
+      const deserialized = await deserializeSegments(serialized);
+      expect(deserialized[0].mountPath).toBe("/admin");
+    });
+
+    it("should preserve undefined mountPath (non-mounted segment)", async () => {
+      const original = [makeSegment({})];
+      const serialized = await serializeSegments(original);
+      const deserialized = await deserializeSegments(serialized);
+
+      expect(deserialized[0].mountPath).toBeUndefined();
+    });
+  });
+
   describe("sentinel handling must bypass rscDeserialize", () => {
     it('should NOT call createFromReadableStream when encodedLoading is "null"', async () => {
       const rscModule = await import("@vitejs/plugin-rsc/rsc");
