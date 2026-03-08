@@ -13,8 +13,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NOCACHE_SYMBOL } from "../taint.js";
 
 // Mock @vitejs/plugin-rsc/rsc (virtual module, not resolvable in vitest)
+// encodeReply serializes args so different inputs produce different cache keys.
 vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  encodeReply: vi.fn().mockResolvedValue("encoded-args"),
+  encodeReply: vi.fn((args: unknown[]) =>
+    Promise.resolve(JSON.stringify(args)),
+  ),
   createClientTemporaryReferenceSet: vi.fn().mockReturnValue(new Set()),
 }));
 
@@ -501,5 +504,117 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(reportedErrors).toHaveLength(1);
     expect(reportedErrors[0].error).toBe(writeError);
     expect(reportedErrors[0].category).toBe("cache-write");
+  });
+
+  it("produces separate cache entries for different hosts with same pathname/params", async () => {
+    const mockStore = {
+      getItem: vi.fn().mockResolvedValue(null),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockHandleStore = {
+      push: vi.fn(),
+      settled: Promise.resolve(),
+      getDataForSegment: vi.fn().mockReturnValue({}),
+    };
+
+    const waitUntilFns: Array<() => Promise<void>> = [];
+
+    mockGetRequestContext.mockReturnValue({
+      _cacheStore: mockStore,
+      _cacheProfiles: { default: { ttl: 60 } },
+      _handleStore: mockHandleStore,
+      waitUntil: (fn: () => Promise<void>) => {
+        waitUntilFns.push(fn);
+      },
+    });
+
+    const fn = async (_ctx: any) => "result";
+    const cached = registerCachedFunction(fn, "shared-fn", "default");
+
+    // Call with host-a
+    const ctxA = {
+      [NOCACHE_SYMBOL]: true,
+      params: { id: "1" },
+      pathname: "/products",
+      searchParams: new URLSearchParams(),
+      url: new URL("https://host-a.example.com/products"),
+    };
+    await cached(ctxA);
+    for (const f of waitUntilFns) await f();
+
+    // Call with host-b (same pathname/params)
+    const ctxB = {
+      [NOCACHE_SYMBOL]: true,
+      params: { id: "1" },
+      pathname: "/products",
+      searchParams: new URLSearchParams(),
+      url: new URL("https://host-b.example.com/products"),
+    };
+    await cached(ctxB);
+    for (const f of waitUntilFns.slice(1)) await f();
+
+    // Both calls should miss (separate keys), so setItem is called twice
+    expect(mockStore.setItem).toHaveBeenCalledTimes(2);
+    const keyA = mockStore.setItem.mock.calls[0][0] as string;
+    const keyB = mockStore.setItem.mock.calls[1][0] as string;
+    expect(keyA).not.toBe(keyB);
+  });
+
+  it("produces separate cache entries for different route names with same pathname/params", async () => {
+    const mockStore = {
+      getItem: vi.fn().mockResolvedValue(null),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockHandleStore = {
+      push: vi.fn(),
+      settled: Promise.resolve(),
+      getDataForSegment: vi.fn().mockReturnValue({}),
+    };
+
+    const waitUntilFns: Array<() => Promise<void>> = [];
+
+    mockGetRequestContext.mockReturnValue({
+      _cacheStore: mockStore,
+      _cacheProfiles: { default: { ttl: 60 } },
+      _handleStore: mockHandleStore,
+      waitUntil: (fn: () => Promise<void>) => {
+        waitUntilFns.push(fn);
+      },
+    });
+
+    const fn = async (_ctx: any) => "result";
+    const cached = registerCachedFunction(fn, "shared-fn", "default");
+
+    // Call with route name A
+    const ctxA = {
+      [NOCACHE_SYMBOL]: true,
+      params: { slug: "hello" },
+      pathname: "/articles/hello",
+      searchParams: new URLSearchParams(),
+      url: new URL("https://example.com/articles/hello"),
+      _routeName: "blog.article",
+    };
+    await cached(ctxA);
+    for (const f of waitUntilFns) await f();
+
+    // Call with route name B (same pathname/params, different route scope)
+    const ctxB = {
+      [NOCACHE_SYMBOL]: true,
+      params: { slug: "hello" },
+      pathname: "/articles/hello",
+      searchParams: new URLSearchParams(),
+      url: new URL("https://example.com/articles/hello"),
+      _routeName: "magazine.article",
+    };
+    await cached(ctxB);
+    for (const f of waitUntilFns.slice(1)) await f();
+
+    // Both calls should miss (separate keys), so setItem is called twice
+    expect(mockStore.setItem).toHaveBeenCalledTimes(2);
+    const keyA = mockStore.setItem.mock.calls[0][0] as string;
+    const keyB = mockStore.setItem.mock.calls[1][0] as string;
+    expect(keyA).not.toBe(keyB);
   });
 });

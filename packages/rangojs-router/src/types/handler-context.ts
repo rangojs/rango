@@ -425,6 +425,8 @@ export type InternalHandlerContext<
   _currentSegmentId?: string;
   /** Response type tag (json, text, html, etc.) for cache key differentiation. */
   _responseType?: string;
+  /** Route name for cache key scoping (prevents cross-route collisions). */
+  _routeName?: string;
 };
 
 /**

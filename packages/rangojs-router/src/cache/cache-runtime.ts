@@ -99,6 +99,17 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         hasTaintedArgs = true;
         const ctx = arg as any;
         if (ctx.params && typeof ctx.params === "object") {
+          // Include host to prevent cross-host cache collisions (same
+          // pattern as route-level cache-scope.ts key generation).
+          if (ctx.url?.host) {
+            keyArgs.push(ctx.url.host);
+          }
+          // Include route name to prevent collisions when the same cached
+          // function is reused across routes with identical pathname/params
+          // but different local reverse() scope.
+          if (ctx._routeName) {
+            keyArgs.push(ctx._routeName);
+          }
           keyArgs.push(ctx.pathname, ctx.params);
           if (ctx._responseType) {
             keyArgs.push(ctx._responseType);
