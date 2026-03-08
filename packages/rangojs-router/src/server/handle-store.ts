@@ -53,7 +53,6 @@ export interface HandleStore {
   /**
    * Track a handler promise (non-blocking).
    * Returns the promise unchanged - just registers it for tracking.
-   * Throws if called after seal().
    */
   track<T>(promise: Promise<T>): Promise<T>;
 
@@ -187,10 +186,16 @@ export function createHandleStore(): HandleStore {
   return {
     track<T>(promise: Promise<T>): Promise<T> {
       inflightCount++;
-      promise.finally(() => {
+      // Use .then(onSettle, onSettle) instead of .finally() to avoid
+      // creating an unhandled rejection branch when the tracked promise
+      // rejects (e.g. error route handlers). .finally() re-throws the
+      // rejection on a new branch that nobody catches, which can crash
+      // the server process.
+      const onSettle = () => {
         inflightCount--;
         notifyDrain();
-      });
+      };
+      promise.then(onSettle, onSettle);
       return promise;
     },
 
