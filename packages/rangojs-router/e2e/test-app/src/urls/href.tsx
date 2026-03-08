@@ -1,30 +1,48 @@
 import { urls } from "@rangojs/router";
-import { Link } from "@rangojs/router/client";
+import { Outlet, Link } from "@rangojs/router/client";
 import {
   HrefIndexHandler,
   HrefDetailHandler,
   HrefFilteredHandler,
 } from "./href.handlers.js";
+import { MountedParallelClient } from "../components/MountedParallelClient.js";
 
 /**
  * Href URL patterns for testing scoped href resolution
  * Tests ctx.reverse (server-side) and href()+useMount() (client-side)
+ *
+ * Wrapped in a layout so the @sidebar parallel slot can render alongside routes.
+ * The layout also tests that useMount/useHref inside a mounted parallel slot
+ * sees the correct include() mount path.
  */
-export const hrefPatterns = urls(({ path, include }) => [
-  path("/", HrefIndexHandler, { name: "index" }),
+export const hrefPatterns = urls(({ path, include, layout, parallel }) => [
+  layout(
+    () => (
+      <div data-testid="href-layout">
+        <Outlet />
+        <Outlet name="@sidebar" />
+      </div>
+    ),
+    () => [
+      path("/", HrefIndexHandler, { name: "index" }),
 
-  // Nested module to test nested include resolution
-  // IMPORTANT: Must come BEFORE /:id route, otherwise "nested" matches as an :id
-  include("/nested", nestedHrefPatterns, { name: "nested" }),
+      // Nested module to test nested include resolution
+      // IMPORTANT: Must come BEFORE /:id route, otherwise "nested" matches as an :id
+      include("/nested", nestedHrefPatterns, { name: "nested" }),
 
-  // Filtered route with params + search schema (for Handler<".name", routes> type test)
-  path("/filtered/:category", HrefFilteredHandler, {
-    name: "filtered",
-    search: { q: "string", page: "number?", active: "boolean?" },
-  }),
+      // Filtered route with params + search schema (for Handler<".name", routes> type test)
+      path("/filtered/:category", HrefFilteredHandler, {
+        name: "filtered",
+        search: { q: "string", page: "number?", active: "boolean?" },
+      }),
 
-  // Detail route with param (must be last since /:id matches anything)
-  path("/:id", HrefDetailHandler, { name: "detail" }),
+      // Detail route with param (must be last since /:id matches anything)
+      path("/:id", HrefDetailHandler, { name: "detail" }),
+
+      // Parallel slot to test useMount/useHref inside a mounted parallel
+      parallel({ "@sidebar": () => <MountedParallelClient /> }),
+    ],
+  ),
 ]);
 
 /**
