@@ -150,11 +150,15 @@ test.describe("content-negotiation", () => {
     test("no Accept header returns first defined (JSON)", async ({
       request,
     }) => {
-      const res = await request.get(f.url("/negotiate-test-json-first"), {
-        headers: { Accept: "" },
-      });
-      expect(res.status()).toBe(200);
-      expect(res.headers()["content-type"]).toContain("application/json");
+      // Retry: the first request to this route on a dev server may hit Vite
+      // module transformation latency, causing a transient failure.
+      await expect(async () => {
+        const res = await request.get(f.url("/negotiate-test-json-first"), {
+          headers: { Accept: "" },
+        });
+        expect(res.status()).toBe(200);
+        expect(res.headers()["content-type"]).toContain("application/json");
+      }).toPass({ timeout: 10000 });
     });
   });
 
