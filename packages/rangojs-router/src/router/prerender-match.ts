@@ -159,6 +159,7 @@ export async function matchForPrerender<TEnv = any>(
       const nonLoaderSegments = allSegments.filter((s) => s.type !== "loader");
 
       // 10. Wait for handles to settle
+      handleStore.seal();
       await handleStore.settled;
 
       // 11. Serialize segments using the cache serializer

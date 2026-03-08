@@ -111,6 +111,7 @@ export async function handleRscRendering<TEnv>(
       const nonLoaderSegments = match.segments.filter(
         (s) => s.type !== "loader",
       );
+      handleStore.seal();
       await handleStore.settled;
       const { serializeSegments } = await import("../cache/segment-codec.js");
       const serializedSegments = await serializeSegments(nonLoaderSegments);

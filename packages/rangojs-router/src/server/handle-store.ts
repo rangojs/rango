@@ -53,12 +53,20 @@ export interface HandleStore {
   /**
    * Track a handler promise (non-blocking).
    * Returns the promise unchanged - just registers it for tracking.
+   * Throws if called after seal().
    */
   track<T>(promise: Promise<T>): Promise<T>;
 
   /**
-   * Promise that resolves when all tracked handlers have settled.
-   * Uses a live inflight counter so late track() calls are included.
+   * Signal that no more track() calls will be made.
+   * settled will not resolve until seal() is called AND all tracked
+   * promises have settled. Calling stream() or getData() auto-seals.
+   */
+  seal(): void;
+
+  /**
+   * Promise that resolves when the store is sealed AND all tracked
+   * handlers have settled.
    */
   readonly settled: Promise<void>;
 
@@ -121,19 +129,27 @@ export interface HandleStore {
 export function createHandleStore(): HandleStore {
   const data: HandleData = {};
 
-  // Live inflight counter instead of a snapshot-based pending array.
-  // Each track() increments, each promise settlement decrements.
-  // settled resolves when count drains to 0, even if new tracks
-  // are added while earlier ones are still in flight.
+  // Settlement barrier: resolved only when sealed AND inflight === 0.
+  // seal() signals "no more track() calls". Each track() increments
+  // inflightCount, each promise.finally() decrements. settled resolves
+  // once both conditions are met — even if tracks are added while
+  // earlier ones are still in flight.
+  let sealed = false;
   let inflightCount = 0;
   let drainWaiters: (() => void)[] = [];
 
   function notifyDrain() {
-    if (inflightCount === 0 && drainWaiters.length > 0) {
+    if (sealed && inflightCount === 0 && drainWaiters.length > 0) {
       const waiters = drainWaiters;
       drainWaiters = [];
       for (const resolve of waiters) resolve();
     }
+  }
+
+  function sealInternal() {
+    if (sealed) return;
+    sealed = true;
+    notifyDrain();
   }
 
   // Queue for pending emissions and resolver for waiting consumer
@@ -170,8 +186,12 @@ export function createHandleStore(): HandleStore {
       return promise;
     },
 
+    seal() {
+      sealInternal();
+    },
+
     get settled(): Promise<void> {
-      if (inflightCount === 0) return Promise.resolve();
+      if (sealed && inflightCount === 0) return Promise.resolve();
       return new Promise<void>((resolve) => {
         drainWaiters.push(resolve);
       });
@@ -196,10 +216,14 @@ export function createHandleStore(): HandleStore {
     },
 
     getData(): Promise<HandleData> {
+      sealInternal();
       return this.settled.then(() => cloneHandleData(data));
     },
 
     async *stream(): AsyncGenerator<HandleData, void, unknown> {
+      // Auto-seal: stream() is called after all track() registrations.
+      sealInternal();
+
       // Set up completion handler
       this.settled.then(() => {
         completed = true;

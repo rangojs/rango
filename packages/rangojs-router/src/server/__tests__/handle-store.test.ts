@@ -6,12 +6,31 @@ function delay(ms: number): Promise<void> {
 }
 
 describe("HandleStore settlement", () => {
-  it("settled resolves immediately when nothing is tracked", async () => {
+  it("settled resolves immediately when sealed with nothing tracked", async () => {
     const store = createHandleStore();
+    store.seal();
     await store.settled; // should not hang
   });
 
-  it("settled waits for a single tracked promise", async () => {
+  it("settled waits for seal when nothing is tracked", async () => {
+    const store = createHandleStore();
+    let resolved = false;
+
+    store.settled.then(() => {
+      resolved = true;
+    });
+
+    // Give a microtick — settled should NOT resolve without seal
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    store.seal();
+    await Promise.resolve();
+    expect(resolved).toBe(true);
+  });
+
+  it("settled waits for seal + drain", async () => {
     const store = createHandleStore();
     let resolved = false;
 
@@ -20,6 +39,8 @@ describe("HandleStore settlement", () => {
         resolved = true;
       }),
     );
+
+    store.seal();
 
     expect(resolved).toBe(false);
     await store.settled;
@@ -34,7 +55,6 @@ describe("HandleStore settlement", () => {
     store.track(
       delay(10).then(() => {
         order.push("first");
-        // Late track: added after settled was already read
         store.track(
           delay(20).then(() => {
             order.push("second");
@@ -43,12 +63,12 @@ describe("HandleStore settlement", () => {
       }),
     );
 
-    // Read settled before the late track is registered
+    store.seal();
     await store.settled;
     expect(order).toEqual(["first", "second"]);
   });
 
-  it("multiple settled readers all wait for drain", async () => {
+  it("multiple settled readers all wait for seal + drain", async () => {
     const store = createHandleStore();
     let done = false;
 
@@ -57,6 +77,7 @@ describe("HandleStore settlement", () => {
         done = true;
       }),
     );
+    store.seal();
 
     const results = await Promise.all([store.settled, store.settled]);
 
@@ -64,20 +85,7 @@ describe("HandleStore settlement", () => {
     expect(done).toBe(true);
   });
 
-  it("getData waits for all tracked promises before returning", async () => {
-    const store = createHandleStore();
-
-    store.track(
-      delay(10).then(() => {
-        store.push("meta", "seg1", { title: "Hello" });
-      }),
-    );
-
-    const data = await store.getData();
-    expect(data).toEqual({ meta: { seg1: [{ title: "Hello" }] } });
-  });
-
-  it("stream completes only after all tracked promises settle", async () => {
+  it("stream does not complete before tracks settle", async () => {
     const store = createHandleStore();
 
     store.track(
@@ -99,6 +107,61 @@ describe("HandleStore settlement", () => {
     expect(last.breadcrumbs.seg1).toEqual(["crumb1"]);
   });
 
+  it("stream auto-seals: completes immediately when no tracks registered", async () => {
+    const store = createHandleStore();
+    const yields: unknown[] = [];
+
+    // stream() auto-seals. With no tracks, it completes immediately.
+    for await (const snapshot of store.stream()) {
+      yields.push(snapshot);
+    }
+
+    expect(yields).toEqual([]);
+  });
+
+  it("direct settled blocks until explicit seal (prevents reader-before-track race)", async () => {
+    const store = createHandleStore();
+    let settled = false;
+
+    // Read settled BEFORE any tracks or seal — should block
+    store.settled.then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    // Register a track
+    store.track(
+      delay(10).then(() => {
+        store.push("meta", "seg1", "value");
+      }),
+    );
+
+    // Still not settled — seal not called yet
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    // Seal, then wait for drain
+    store.seal();
+    await delay(20);
+    expect(settled).toBe(true);
+  });
+
+  it("getData auto-seals and waits for all tracked promises", async () => {
+    const store = createHandleStore();
+
+    store.track(
+      delay(10).then(() => {
+        store.push("meta", "seg1", { title: "Hello" });
+      }),
+    );
+
+    const data = await store.getData();
+    expect(data).toEqual({ meta: { seg1: [{ title: "Hello" }] } });
+  });
+
   it("push after completion throws LateHandlePushError", async () => {
     const store = createHandleStore();
 
@@ -111,5 +174,11 @@ describe("HandleStore settlement", () => {
     expect(() => store.push("meta", "seg1", "late")).toThrow(
       /pushed after handle collection completed/,
     );
+  });
+
+  it("seal is idempotent", () => {
+    const store = createHandleStore();
+    store.seal();
+    store.seal(); // should not throw
   });
 });
