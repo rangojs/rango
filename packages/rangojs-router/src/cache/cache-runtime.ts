@@ -226,7 +226,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
               bgTaintedArgs.push(arg);
             }
           }
-          if (hasTaintedArgs && requestCtx) {
+          if (requestCtx) {
             stampCacheExec(requestCtx as object);
           }
 
@@ -249,7 +249,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             for (const arg of bgTaintedArgs) {
               unstampCacheExec(arg as object);
             }
-            if (hasTaintedArgs && requestCtx) {
+            if (requestCtx) {
               unstampCacheExec(requestCtx as object);
             }
             // Restore original handle store
@@ -276,9 +276,6 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
 
     // Stamp tainted args so ctx.set(), ctx.header(), etc. throw if called
     // inside the cached function body (those side effects are lost on hit).
-    // Also stamp the ALS RequestContext so cookies()/headers() guards fire
-    // (they read from getRequestContext(), which is a different object from
-    // the HandlerContext/ResponseHandlerContext passed as args).
     // Uses ref-counted stamp/unstamp so overlapping executions
     // sharing the same ctx don't clear each other's guards.
     const taintedArgs: unknown[] = [];
@@ -288,7 +285,10 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         taintedArgs.push(arg);
       }
     }
-    if (hasTaintedArgs && requestCtx) {
+    // Always stamp the ALS RequestContext so cookies()/headers() guards fire
+    // even when the cached function receives no tainted args. The guard in
+    // cookie-store.ts checks RequestContext, not function args.
+    if (requestCtx) {
       stampCacheExec(requestCtx as object);
     }
 
@@ -300,7 +300,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       for (const arg of taintedArgs) {
         unstampCacheExec(arg as object);
       }
-      if (hasTaintedArgs && requestCtx) {
+      if (requestCtx) {
         unstampCacheExec(requestCtx as object);
       }
       // Remove this capture token (order-independent, safe for concurrent use)
