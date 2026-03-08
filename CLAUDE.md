@@ -2,6 +2,7 @@
 - When writing code comments, never use icons and emojis. Keep comments technical and focused on implementation details.
 - Before working on routing, run `/rango` to understand the API. Skills are in `node_modules/@rangojs/router/skills/`.
 - Run the full test suite with `pnpm test` from the repo root.
+- **CRITICAL**: Avoid burst-pushing multiple commits in quick succession to `main` or PR branches. Each push triggers a full CI run (~12 min, expensive). Squash related fixes into a single commit before pushing. If a review produces follow-up fixes, amend or squash them into one commit rather than pushing 2-3 separate fixups.
 - **CRITICAL**: Before EVERY push, ALWAYS run ALL of the following and fix any failures. No exceptions:
   1. `pnpm run typecheck` (typecheck)
   2. `pnpm run test:unit` (unit tests — from `packages/rangojs-router`)
