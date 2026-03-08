@@ -135,6 +135,66 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(setItemOptions.swr).toBe(120);
   });
 
+  it("stamps INSIDE_CACHE_EXEC on tainted args during stale background revalidation", async () => {
+    const waitUntilFns: Array<() => Promise<void>> = [];
+
+    const mockStore = {
+      getItem: vi.fn(),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockHandleStore = {
+      push: vi.fn(),
+      settled: Promise.resolve(),
+      getDataForSegment: vi.fn().mockReturnValue({}),
+    };
+
+    const taintedCtx = makeTaintedCtx();
+
+    const requestCtxObj = {
+      _cacheStore: mockStore,
+      _cacheProfiles: { default: { ttl: 60, swr: 120 } },
+      _handleStore: mockHandleStore,
+      waitUntil: (fn: () => Promise<void>) => {
+        waitUntilFns.push(fn);
+      },
+    };
+    mockGetRequestContext.mockReturnValue(requestCtxObj);
+
+    // Return stale cache entry
+    mockStore.getItem.mockResolvedValueOnce({
+      value: JSON.stringify("stale-result"),
+      handles: {},
+      shouldRevalidate: true,
+    });
+
+    // The function reads the taint flag during background execution
+    const INSIDE_CACHE_EXEC = Symbol.for("rango:inside-cache-exec");
+    let taintedDuringBgExec = false;
+    let requestCtxTaintedDuringBgExec = false;
+    const fn = async (ctx: any) => {
+      taintedDuringBgExec = !!(ctx as any)[INSIDE_CACHE_EXEC];
+      const bgReqCtx = mockGetRequestContext();
+      requestCtxTaintedDuringBgExec = !!(bgReqCtx as any)[INSIDE_CACHE_EXEC];
+      return "fresh-result";
+    };
+
+    const cached = registerCachedFunction(fn, "test-taint-bg", "default");
+    await cached(taintedCtx);
+
+    // Run background revalidation
+    expect(waitUntilFns).toHaveLength(1);
+    await waitUntilFns[0]();
+
+    // Both the tainted arg and the ALS RequestContext should have been stamped
+    expect(taintedDuringBgExec).toBe(true);
+    expect(requestCtxTaintedDuringBgExec).toBe(true);
+
+    // After background execution, the stamps should be cleaned up
+    expect((taintedCtx as any)[INSIDE_CACHE_EXEC]).toBeUndefined();
+    expect((requestCtxObj as any)[INSIDE_CACHE_EXEC]).toBeUndefined();
+  });
+
   it("fresh hit path does not trigger background revalidation", async () => {
     const waitUntilFns: Array<() => Promise<void>> = [];
 
