@@ -55,10 +55,10 @@ const STATUS_ERROR = 2;
 // Span correlation helpers
 // ---------------------------------------------------------------------------
 
-// Build correlation keys that include requestId when available.
-// Without requestId, concurrent requests to the same path use a shared
-// stack (LIFO) which can mis-correlate if completions are out of order.
-// Setting the x-request-id header ensures correct correlation.
+// Build correlation keys using requestId.
+// getRequestId() always returns a value (generated internally when no
+// header is present), so concurrent requests to the same path each get
+// their own correlation key and never mis-correlate.
 
 function requestKey(event: {
   requestId?: string;
