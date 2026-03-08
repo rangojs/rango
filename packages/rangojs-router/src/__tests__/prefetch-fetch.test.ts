@@ -175,6 +175,29 @@ describe("prefetch dedup source-page context", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("same target from source pages differing only in query string is not suppressed", () => {
+    setupBrowser();
+    const fetchMock = vi.fn((_url: string) =>
+      Promise.resolve({ ok: false, body: null } as unknown as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    // Prefetch /product/2 from /products?page=1
+    window.location.href = "http://localhost:4173/products?page=1";
+    (window.location as any).pathname = "/products";
+    prefetchDirect("/product/2", ["A0", "A0.route"]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Navigate to /products?page=2 (same pathname, different query)
+    window.location.href = "http://localhost:4173/products?page=2";
+
+    // Should NOT be deduped — server response varies on full href
+    prefetchDirect("/product/2", ["A0", "A0.route"]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("same target from same source page is deduped", () => {
     setupBrowser();
     const fetchMock = vi.fn((_url: string) =>

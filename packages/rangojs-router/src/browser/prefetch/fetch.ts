@@ -55,9 +55,7 @@ function buildPrefetchUrl(
  * X-RSC-Router-Client-Path (source page context).
  */
 function buildPrefetchKey(targetUrl: URL): string {
-  return (
-    window.location.pathname + "\0" + targetUrl.pathname + targetUrl.search
-  );
+  return window.location.href + "\0" + targetUrl.pathname + targetUrl.search;
 }
 
 /**
