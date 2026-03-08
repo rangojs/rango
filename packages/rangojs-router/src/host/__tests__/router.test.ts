@@ -153,6 +153,41 @@ describe("router.use - Global Middleware", () => {
   });
 });
 
+describe("double next() guard", () => {
+  it("should throw when middleware calls next() twice", async () => {
+    const router = createHostRouter();
+
+    router.use(async (_req, _ctx, next) => {
+      await next();
+      return next();
+    });
+
+    router.host(["."]).map(() => new Response("ok"));
+
+    const request = new Request("http://example.com/");
+    await expect(router.match(request)).rejects.toThrow(
+      "Middleware called next() more than once",
+    );
+  });
+
+  it("should throw on double next() in host-specific middleware", async () => {
+    const router = createHostRouter();
+
+    router
+      .host(["admin.*"])
+      .use(async (_req, _ctx, next) => {
+        await next();
+        return next();
+      })
+      .map(() => new Response("admin"));
+
+    const request = new Request("http://admin.example.com/");
+    await expect(router.match(request)).rejects.toThrow(
+      "Middleware called next() more than once",
+    );
+  });
+});
+
 describe("router.host().use - Host-specific Middleware", () => {
   it("should execute host-specific middleware", async () => {
     const router = createHostRouter();
