@@ -251,14 +251,23 @@ jobs:
           # Dev tests sharded across 3 jobs
           - project: dev
             shard: 1
+            shardTotal: 3
           - project: dev
             shard: 2
+            shardTotal: 3
           - project: dev
             shard: 3
-          # Production tests run in single job (build-once via setup project)
+            shardTotal: 3
+          # Production tests sharded across 2 jobs
           - project: production
-          # HMR tests run in single job
+            shard: 1
+            shardTotal: 2
+          - project: production
+            shard: 2
+            shardTotal: 2
+          # HMR tests run in separate jobs
           - project: hmr
+          - project: hmr-client
 
     steps:
       - uses: actions/checkout@v4
@@ -292,7 +301,7 @@ jobs:
       - name: Run rangojs-router e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
         run: |
           if [ -n "${{ matrix.shard }}" ]; then
-            pnpm --filter @rangojs/router test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/3
+            pnpm --filter @rangojs/router test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.shardTotal }}
           else
             pnpm --filter @rangojs/router test --project=${{ matrix.project }}
           fi
