@@ -10,6 +10,7 @@ import type { ExecutionContext } from "../server/request-context.js";
 import type { UrlPatterns } from "../urls.js";
 import type { NamedRouteEntry } from "./content-negotiation.js";
 import type { TelemetrySink } from "./telemetry.js";
+import type { RouterTimeouts, OnTimeoutCallback } from "./timeout.js";
 
 /**
  * SSR stream mode returned by resolveStreaming.
@@ -435,6 +436,57 @@ export interface RSCRouterOptions<TEnv = any> {
    * @default true
    */
   warmup?: boolean;
+
+  /**
+   * Shorthand timeout (ms) applied to both action execution and render start.
+   * Does NOT apply to streamIdleMs.
+   * Overridden by individual values in `timeouts`.
+   *
+   * @example
+   * ```typescript
+   * createRouter({ timeout: 10_000 });
+   * ```
+   */
+  timeout?: number;
+
+  /**
+   * Structured timeout configuration per phase.
+   * Values here override the `timeout` shorthand.
+   *
+   * @example
+   * ```typescript
+   * createRouter({
+   *   timeouts: {
+   *     actionMs: 10_000,
+   *     renderStartMs: 8_000,
+   *   },
+   * });
+   * ```
+   */
+  timeouts?: RouterTimeouts;
+
+  /**
+   * Custom handler invoked when a timeout occurs.
+   * Receives context about which phase timed out and must return a Response.
+   * If not provided, returns a plain 504 with "Request timed out" body
+   * and X-Rango-Timeout-Phase header.
+   *
+   * If the callback throws, the default 504 response is used as fallback.
+   *
+   * @example
+   * ```typescript
+   * createRouter({
+   *   timeout: 10_000,
+   *   onTimeout: (ctx) => {
+   *     return new Response(
+   *       JSON.stringify({ error: "timeout", phase: ctx.phase }),
+   *       { status: 504, headers: { "Content-Type": "application/json" } },
+   *     );
+   *   },
+   * });
+   * ```
+   */
+  onTimeout?: OnTimeoutCallback<TEnv>;
 
   /**
    * Telemetry sink for structured lifecycle events.

@@ -60,6 +60,12 @@ import {
 import { handleLoaderFetch } from "./loader-fetch.js";
 import { handleRscRendering } from "./rsc-rendering.js";
 import { warnActionWithRouteMiddleware } from "./runtime-warnings.js";
+import {
+  withTimeout,
+  RouterTimeoutError,
+  createDefaultTimeoutResponse,
+  type TimeoutPhase,
+} from "../router/timeout.js";
 
 /**
  * Create an RSC request handler.
@@ -143,6 +149,72 @@ export function createRSCHandler<
       );
     }
     return routeMap;
+  }
+
+  /**
+   * Handle a timeout by reporting the error, emitting telemetry,
+   * and returning either the custom onTimeout response or a default 504.
+   */
+  async function handleTimeoutResponse(
+    request: Request,
+    env: TEnv,
+    url: URL,
+    phase: TimeoutPhase,
+    durationMs: number,
+    routeKey?: string,
+    actionId?: string,
+  ): Promise<Response> {
+    const timeoutError = new RouterTimeoutError(phase, durationMs);
+
+    callOnError(timeoutError, phase === "action" ? "action" : "handler", {
+      request,
+      url,
+      env,
+      routeKey,
+      actionId,
+      handledByBoundary: false,
+      metadata: { timeout: true, phase, durationMs },
+    });
+
+    try {
+      const routerCtx = getRouterContext();
+      if (routerCtx?.telemetry) {
+        safeEmit(resolveSink(routerCtx.telemetry), {
+          type: "request.timeout" as const,
+          timestamp: performance.now(),
+          requestId: routerCtx.requestId,
+          phase,
+          pathname: url.pathname,
+          routeKey,
+          actionId,
+          durationMs,
+          customHandler: !!router.onTimeout,
+        });
+      }
+    } catch {
+      // Router context may not be available
+    }
+
+    if (router.onTimeout) {
+      try {
+        return await router.onTimeout({
+          phase,
+          request,
+          url,
+          env,
+          routeKey,
+          actionId,
+          durationMs,
+        });
+      } catch (e) {
+        if (process.env.NODE_ENV !== "production") {
+          console.error("[RSC] onTimeout callback error:", e);
+        }
+        return createDefaultTimeoutResponse(phase);
+      }
+    }
+
+    return createDefaultTimeoutResponse(phase);
   }
 
   /**
@@ -393,14 +465,29 @@ export function createRSCHandler<
     handlerTiming.push(`handler-preview-match;dur=${previewDur.toFixed(2)}`);
     // Response route short-circuit: skip entire RSC pipeline
     if (preview?.responseType && preview.handler) {
-      return handleResponseRoute(
-        handlerCtx,
-        preview as ResponseRouteMatch,
-        request,
-        env,
-        url,
-        variables,
+      const responseOutcome = await withTimeout(
+        handleResponseRoute(
+          handlerCtx,
+          preview as ResponseRouteMatch,
+          request,
+          env,
+          url,
+          variables,
+        ),
+        router.timeouts.renderStartMs,
+        "render-start",
       );
+      if (responseOutcome.timedOut) {
+        return handleTimeoutResponse(
+          request,
+          env,
+          url,
+          "render-start",
+          responseOutcome.durationMs,
+          preview?.routeKey,
+        );
+      }
+      return responseOutcome.result;
     }
 
     const routeReverse = createReverseFunction(getRequiredRouteMap());
@@ -485,14 +572,30 @@ export function createRSCHandler<
         warnActionWithRouteMiddleware(actionId, preview.routeKey);
       }
       try {
-        const result = await executeServerAction(
-          handlerCtx,
-          request,
-          env,
-          url,
-          actionId,
-          handleStore,
+        const actionOutcome = await withTimeout(
+          executeServerAction(
+            handlerCtx,
+            request,
+            env,
+            url,
+            actionId,
+            handleStore,
+          ),
+          router.timeouts.actionMs,
+          "action",
         );
+        if (actionOutcome.timedOut) {
+          return handleTimeoutResponse(
+            request,
+            env,
+            url,
+            "action",
+            actionOutcome.durationMs,
+            preview?.routeKey,
+            actionId,
+          );
+        }
+        const result = actionOutcome.result;
         // Response means redirect or error boundary — done.
         if (result instanceof Response) return result;
         actionContinuation = result;
@@ -529,32 +632,53 @@ export function createRSCHandler<
       return response;
     };
 
-    if (preview?.routeMiddleware && preview.routeMiddleware.length > 0) {
-      const mwResponse = await executeMiddleware(
-        buildRouteMiddlewareEntries<TEnv>(preview.routeMiddleware),
-        request,
-        env,
-        variables,
-        renderHandler,
-        routeReverse,
-      );
-
-      if (
-        url.searchParams.has("_rsc_partial") ||
-        url.searchParams.has("_rsc_action")
-      ) {
-        const intercepted = interceptRedirectForPartial(
-          mwResponse,
-          createRedirectFlightResponse,
+    // Wrap the render path (with or without route middleware) in a
+    // renderStartMs timeout so slow renders are caught before output.
+    const executeRender = async (): Promise<Response> => {
+      if (preview?.routeMiddleware && preview.routeMiddleware.length > 0) {
+        const mwResponse = await executeMiddleware(
+          buildRouteMiddlewareEntries<TEnv>(preview.routeMiddleware),
+          request,
+          env,
+          variables,
+          renderHandler,
+          routeReverse,
         );
-        if (intercepted) return intercepted;
+
+        if (
+          url.searchParams.has("_rsc_partial") ||
+          url.searchParams.has("_rsc_action")
+        ) {
+          const intercepted = interceptRedirectForPartial(
+            mwResponse,
+            createRedirectFlightResponse,
+          );
+          if (intercepted) return intercepted;
+        }
+
+        return finalizeResponse(mwResponse);
       }
 
-      return finalizeResponse(mwResponse);
-    }
+      // No route middleware, proceed directly
+      return renderHandler();
+    };
 
-    // No route middleware, proceed directly
-    return renderHandler();
+    const renderOutcome = await withTimeout(
+      executeRender(),
+      router.timeouts.renderStartMs,
+      "render-start",
+    );
+    if (renderOutcome.timedOut) {
+      return handleTimeoutResponse(
+        request,
+        env,
+        url,
+        "render-start",
+        renderOutcome.durationMs,
+        preview?.routeKey,
+      );
+    }
+    return renderOutcome.result;
   }
 
   // Inner request handler: rendering logic wrapped by route middleware.

@@ -246,6 +246,7 @@ export type {
   RequestStartEvent,
   RequestEndEvent,
   RequestErrorEvent,
+  RequestTimeoutEvent,
   LoaderStartEvent,
   LoaderEndEvent,
   LoaderErrorEvent,
@@ -253,3 +254,11 @@ export type {
   CacheDecisionEvent,
   RevalidationDecisionEvent,
 } from "./router/telemetry.js";
+
+// Timeout types and error class
+export { RouterTimeoutError } from "./router/timeout.js";
+export type {
+  RouterTimeouts,
+  TimeoutPhase,
+  TimeoutContext,
+} from "./router/timeout.js";

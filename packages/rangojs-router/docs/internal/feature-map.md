@@ -109,6 +109,7 @@ Public API (`RSCRouter` interface):
 - `createRouter()` with `.routes()`, `.use()`, `.reverse()`, `.fetch()`
 - `routeMap`, warmup handling, document wrapper, global not-found/error defaults
 - Named cache profiles via `cacheProfiles`, nonce provider, version tracking
+- Request timeouts via `timeout`/`timeouts`/`onTimeout` options
 
 Internal API (`RSCRouterInternal`, not exported):
 
@@ -203,12 +204,24 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 - Pre-render manifest generation, intercept pre-render artifacts
 - Runtime prerender cache lookup flow
 
+### Request Timeouts
+
+- `timeout` router option — shorthand number (ms), applies to `actionMs` + `renderStartMs`
+- `timeouts` router option — structured `{ actionMs?, renderStartMs?, streamIdleMs? }`, overrides shorthand
+- `onTimeout` router option — custom callback returning a `Response` for timed-out requests
+- `RouterTimeoutError` — custom error class with `phase` and `durationMs`
+- `withTimeout()` — `Promise.race` helper returning discriminated union
+- Default 504 response with `X-Rango-Timeout-Phase` header
+- `onError` receives timeout errors with `metadata: { timeout: true, phase, durationMs }`
+- Timeout phases: `"action"` (server action execution), `"render-start"` (RSC render / response routes)
+- `streamIdleMs` accepted but deferred (not enforced in PR 1)
+
 ### Telemetry and Observability
 
 - `telemetry` router option — pluggable `TelemetrySink` for structured lifecycle events
-- `createConsoleSink()` — development logger for all 9 event types
+- `createConsoleSink()` — development logger for all 10 event types
 - `createOTelSink(tracer)` — OpenTelemetry adapter mapping events to `rango.*` spans
-- Event types: `request.start/end/error`, `loader.start/end/error`, `handler.error`, `cache.decision`, `revalidation.decision`
+- Event types: `request.start/end/error`, `loader.start/end/error`, `handler.error`, `cache.decision`, `revalidation.decision`, `request.timeout`
 - Zero overhead when no sink is configured (no-op singleton)
 - Structurally typed OTel interfaces (`OTelTracer`, `OTelSpan`) — no `@opentelemetry/api` dependency
 

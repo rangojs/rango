@@ -14,6 +14,7 @@ import type { MiddlewareEntry, MiddlewareFn } from "./middleware.js";
 import { RSC_ROUTER_BRAND } from "./router-registry.js";
 import type { RSCRouterOptions, RootLayoutProps } from "./router-options.js";
 import type { DefaultVars } from "../types/global-namespace.js";
+import type { ResolvedTimeouts, OnTimeoutCallback } from "./timeout.js";
 
 /**
  * Options passed to router.fetch(), router.match(), and other request entrypoints.
@@ -273,6 +274,16 @@ export interface RSCRouterInternal<
    * Always enabled in development.
    */
   readonly allowDebugManifest: boolean;
+
+  /**
+   * Resolved timeout configuration (merged from shorthand + structured).
+   */
+  readonly timeouts: ResolvedTimeouts;
+
+  /**
+   * Custom timeout response handler.
+   */
+  readonly onTimeout?: OnTimeoutCallback<TEnv>;
 
   /**
    * App-level middleware entries
