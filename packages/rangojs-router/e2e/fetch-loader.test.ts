@@ -20,6 +20,18 @@ test.describe("useFetchLoader", () => {
 
   test.setTimeout(30000);
 
+  // Warm up the isolated dev server: the first page load triggers Vite's
+  // dependency optimizer, which can cause ERR_OUTDATED_OPTIMIZED_DEP and
+  // a transparent re-bundle. A reload after the initial load ensures the
+  // pre-bundle is ready before actual tests run.
+  test.beforeAll(async ({ browser }) => {
+    const page = await browser.newPage();
+    await page.goto(f.url("/fetch-loader"));
+    await page.reload();
+    await page.waitForLoadState("domcontentloaded");
+    await page.close();
+  });
+
   test("should render fetch loader page", async ({ page }) => {
     using _ = expectNoPageError(page);
 
@@ -46,9 +58,10 @@ test.describe("useFetchLoader", () => {
     // Click fetch button
     await testId(page, "fetch-loader-btn-default").click();
 
-    // Should show loading state
+    // Should show loading state (generous timeout: on cold dev server
+    // the fetch may take a moment to start)
     await expect(testId(page, "fetch-loader-loading")).toBeVisible({
-      timeout: 500,
+      timeout: 3000,
     });
 
     // Wait for data to appear

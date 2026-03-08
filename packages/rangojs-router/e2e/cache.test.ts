@@ -1348,6 +1348,15 @@ test.describe("cache-loader-null", () => {
     cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
+  // Warm up isolated dev server to avoid first-request optimizer churn
+  test.beforeAll(async ({ browser }) => {
+    const page = await browser.newPage();
+    await page.goto(f.url("/"));
+    await page.reload();
+    await page.waitForLoadState("domcontentloaded");
+    await page.close();
+  });
+
   test("cached null-value loader preserves null through cache round-trip", async ({
     page,
   }) => {
@@ -1361,19 +1370,21 @@ test.describe("cache-loader-null", () => {
     await expect(page.getByTestId("null-value")).toHaveText("null");
     const firstCount = await page.getByTestId("null-count").textContent();
 
-    // Navigate away (round-trip provides time for async loader cache write)
+    // Navigate away and back. The background cache write is async, so retry
+    // until the cache is populated and returns the same count (cache hit).
     await page.goto(f.url("/"));
     await waitForHydration(page);
 
-    // Second visit — cache hit, null preserved
-    await page.goto(f.url("/cache-test/null-cached"));
-    await waitForHydration(page);
+    await expect(async () => {
+      await page.goto(f.url("/cache-test/null-cached"));
+      await waitForHydration(page);
 
-    await expect(page.getByTestId("null-value")).toHaveText("null");
-    const secondCount = await page.getByTestId("null-count").textContent();
+      await expect(page.getByTestId("null-value")).toHaveText("null");
+      const secondCount = await page.getByTestId("null-count").textContent();
 
-    // Cached: same count (loader did NOT run again)
-    expect(secondCount).toBe(firstCount);
+      // Cached: same count (loader did NOT run again)
+      expect(secondCount).toBe(firstCount);
+    }).toPass({ timeout: 10000, intervals: [1000, 2000, 3000] });
   });
 
   test("non-cached null-value loader runs fresh on every request", async ({
