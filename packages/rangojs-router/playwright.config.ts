@@ -123,6 +123,10 @@ export default defineConfig({
           // Run production tests serially to avoid port conflicts.
           // Each test file spins up its own preview server.
           fullyParallel: false,
+          // CI startup flake has been isolated to preview-server readiness.
+          // Keep production worker count aligned with the existing CI shard
+          // throughput while the fixture improvements provide better diagnostics.
+          workers: process.env.CI ? 3 : undefined,
           dependencies: ["build"],
         },
         {
