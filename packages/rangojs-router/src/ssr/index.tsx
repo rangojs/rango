@@ -301,9 +301,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         // apply CSP nonces to inline scripts during SSR. Always present to
         // match the browser-side NavigationProvider tree shape for hydration.
         content = (
-          <NonceContext.Provider value={nonce}>
-            {content}
-          </NonceContext.Provider>
+          <NonceContext.Provider value={nonce}>{content}</NonceContext.Provider>
         );
 
         // Wrap with NavigationStoreContext for useNavigation hook
