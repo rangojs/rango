@@ -85,7 +85,19 @@ When `registerCachedFunction` detects a tainted argument:
 2. **Cache handle data alongside the return value** -- on miss, capture side effects (breadcrumbs, metadata) via a reentrant save/restore capture on `HandleStore.push`. Nested cached function calls capture/restore correctly in LIFO order.
 3. **Replay handle data on hit** -- restore via `restoreHandles()` into the current request's `HandleStore`.
 
-This means handlers that call `ctx.breadcrumb()`, `ctx.set()`, etc. work correctly with `"use cache"`. Side effects are captured and replayed, same as the existing `cache()` DSL and `Static()` handler.
+This means handle-style metadata side effects such as `ctx.breadcrumb()` work
+correctly with `"use cache"` and are captured/replayed on cache hit.
+
+Request-scoped reads and response/render mutations are different:
+
+- `cookies()` and `headers()` are forbidden inside `"use cache"` because their
+  values vary per request but are not reflected in the shared cache key.
+- `ctx.set()`, `ctx.header()`, `ctx.setStatus()`, `ctx.setTheme()`,
+  `ctx.setLocationState()`, and similar request/response mutations are
+  forbidden inside `"use cache"`.
+
+For caching full route behavior, including request-scoped rendering semantics,
+use the route-level `cache()` DSL instead.
 
 ```ts
 export const handle = createHandle(({ ctx }) => {
@@ -183,7 +195,7 @@ Caching is active in development (backed by `MemorySegmentCacheStore`). This mat
 | -------------------------- | -------------------- | -------------------------------- | ---------- |
 | `cache()` DSL              | Route segment        | Captured via HandleStore         | Runtime    |
 | `Static()` / `Prerender()` | Route segment        | Captured via HandleStore         | Build-time |
-| `"use cache"`              | Function / component | Captured if tainted ctx detected | Runtime    |
+| `"use cache"`              | Function / component | Handle data captured/replayed; request-scoped reads and mutations forbidden | Runtime    |
 
 All three write to the same `SegmentCacheStore`.
 
