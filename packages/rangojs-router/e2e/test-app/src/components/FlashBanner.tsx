@@ -1,5 +1,6 @@
 "use client";
 
+import { useActionState } from "react";
 import { useLocationState } from "@rangojs/router/client";
 import { FlashMessage, ServerInfo } from "../location-states.js";
 import {
@@ -8,6 +9,7 @@ import {
   throwRedirectWithState,
   throwSimpleRedirect,
   throwActionError,
+  throwFormActionError,
 } from "../actions.js";
 
 export function FlashBanner() {
@@ -72,6 +74,22 @@ export function ThrowErrorButton() {
     >
       Throw action error
     </button>
+  );
+}
+
+export function ThrowFormErrorButton() {
+  const [, formAction, isPending] = useActionState(throwFormActionError, null);
+
+  return (
+    <form action={formAction}>
+      <button
+        type="submit"
+        data-testid="throw-form-error-submit-btn"
+        disabled={isPending}
+      >
+        Throw form action error
+      </button>
+    </form>
   );
 }
 

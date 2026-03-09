@@ -13,6 +13,7 @@ import {
   ThrowRedirectButton,
   ThrowSimpleRedirectButton,
   ThrowErrorButton,
+  ThrowFormErrorButton,
 } from "../components/FlashBanner.js";
 import {
   TypedStateDisplay,
@@ -79,6 +80,7 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
         <ThrowRedirectButton />
         <ThrowSimpleRedirectButton />
         <ThrowErrorButton />
+        <ThrowFormErrorButton />
       </div>
     ),
     { name: "index" },
