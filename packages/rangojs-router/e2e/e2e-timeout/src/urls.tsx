@@ -15,11 +15,11 @@ export const urlpatterns = urls(({ path }) => [
     name: "timeout.fastResponse",
   }),
 
-  // Slow routes (should trigger timeout at 2000ms)
+  // Slow routes (should trigger timeout at 10000ms)
   path(
     "/timeout/slow-render",
     async () => {
-      await delay(5000);
+      await delay(20000);
       return <div data-testid="slow-render">Should not render</div>;
     },
     { name: "timeout.slowRender" },
@@ -27,7 +27,7 @@ export const urlpatterns = urls(({ path }) => [
   path.json(
     "/timeout/slow-response",
     async () => {
-      await delay(5000);
+      await delay(20000);
       return { shouldNotReturn: true };
     },
     { name: "timeout.slowResponse" },

@@ -12,6 +12,8 @@ vi.mock("../../route-map-builder.js", () => ({
 
 import {
   createHandlerContext,
+  createPrerenderContext,
+  createStaticContext,
   createReverseFunction,
   stripInternalParams,
 } from "../handler-context";
@@ -113,6 +115,122 @@ describe("stripInternalParams", () => {
     expect(clean.searchParams.get("tab")).toBe("pricing");
     expect(clean.searchParams.has("_rsc_loader")).toBe(false);
     expect(clean.searchParams.has("_rsc_loader_params")).toBe(false);
+  });
+});
+
+describe("createHandlerContext routeName", () => {
+  it("should set routeName for a named route", () => {
+    const url = new URL("http://localhost/blog/hello");
+    const ctx = createHandlerContext(
+      { slug: "hello" },
+      new Request(url.href),
+      url.searchParams,
+      "/blog/hello",
+      url,
+      {},
+      { "blog.post": "/blog/:slug" },
+      "blog.post",
+    );
+    expect(ctx.routeName).toBe("blog.post");
+  });
+
+  it("should set routeName to undefined for an unnamed route", () => {
+    const url = new URL("http://localhost/health");
+    const ctx = createHandlerContext(
+      {},
+      new Request(url.href),
+      url.searchParams,
+      "/health",
+      url,
+      {},
+      {},
+      "$path__health",
+    );
+    expect(ctx.routeName).toBeUndefined();
+  });
+
+  it("should set routeName to undefined for a namespaced unnamed route", () => {
+    const url = new URL("http://localhost/docs/faq");
+    const ctx = createHandlerContext(
+      {},
+      new Request(url.href),
+      url.searchParams,
+      "/docs/faq",
+      url,
+      {},
+      {},
+      "docs.$path__faq",
+    );
+    expect(ctx.routeName).toBeUndefined();
+  });
+
+  it("should set routeName to undefined when no routeName is provided", () => {
+    const url = new URL("http://localhost/test");
+    const ctx = createHandlerContext(
+      {},
+      new Request(url.href),
+      url.searchParams,
+      "/test",
+      url,
+    );
+    expect(ctx.routeName).toBeUndefined();
+  });
+
+  it("should include the full namespace prefix for named routes under include()", () => {
+    const url = new URL("http://localhost/magazine/article/1");
+    const ctx = createHandlerContext(
+      { id: "1" },
+      new Request(url.href),
+      url.searchParams,
+      "/magazine/article/1",
+      url,
+      {},
+      { "magazine.article": "/magazine/article/:id" },
+      "magazine.article",
+    );
+    expect(ctx.routeName).toBe("magazine.article");
+  });
+});
+
+describe("createPrerenderContext routeName", () => {
+  it("should set routeName for a named route", () => {
+    const ctx = createPrerenderContext(
+      { slug: "hello" },
+      "/blog/hello",
+      { "blog.post": "/blog/:slug" },
+      "blog.post",
+    );
+    expect(ctx.routeName).toBe("blog.post");
+  });
+
+  it("should set routeName to undefined for an unnamed route", () => {
+    const ctx = createPrerenderContext({}, "/health", {}, "$path__health");
+    expect(ctx.routeName).toBeUndefined();
+  });
+
+  it("should set routeName to undefined when no routeName is provided", () => {
+    const ctx = createPrerenderContext({}, "/test", {});
+    expect(ctx.routeName).toBeUndefined();
+  });
+});
+
+describe("createStaticContext routeName", () => {
+  it("should set routeName for a named route", () => {
+    const ctx = createStaticContext(
+      { "blog.post": "/blog/:slug" },
+      "blog.post",
+    );
+    expect(ctx.routeName).toBe("blog.post");
+  });
+
+  it("should set routeName to undefined for an unnamed route", () => {
+    const ctx = createStaticContext({}, "$path__health");
+    expect(ctx.routeName).toBeUndefined();
+  });
+
+  it("should set routeName to undefined when no routeName is provided", () => {
+    const ctx = createStaticContext({});
+    expect(ctx.routeName).toBeUndefined();
   });
 });
 
