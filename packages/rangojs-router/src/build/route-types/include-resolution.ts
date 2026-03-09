@@ -325,6 +325,13 @@ function buildRouteMapFromBlock(
       );
     }
 
+    // Includes without a name keep their child names private to the mounted
+    // module. They remain active at runtime via an internal scope prefix, but
+    // they are intentionally omitted from generated public route maps.
+    if (namePrefix === null) {
+      continue;
+    }
+
     // Apply prefixes
     for (const [name, pattern] of Object.entries(childResult.routes)) {
       const prefixedName = namePrefix ? `${namePrefix}.${name}` : name;

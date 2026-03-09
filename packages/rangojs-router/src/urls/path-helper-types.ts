@@ -47,6 +47,7 @@ import type {
 } from "./response-types.js";
 import type {
   UnnamedRoute,
+  LocalOnlyInclude,
   PathOptions,
   UrlPatterns,
   IncludeOptions,
@@ -149,7 +150,7 @@ export type TextResponsePathFn<TEnv> = <
 export type IncludeFn<TEnv> = <
   TRoutes extends Record<string, any>,
   const TUrlPrefix extends string,
-  const TNamePrefix extends string = never,
+  const TNamePrefix extends string = LocalOnlyInclude,
   TResponses extends Record<string, unknown> = Record<string, unknown>,
 >(
   prefix: TUrlPrefix,
@@ -208,11 +209,14 @@ export type PathHelpers<TEnv> = {
    * Include nested URL patterns with optional name prefix
    *
    * ```typescript
-   * // Without name - routes keep local names
+   * // Without name - routes stay local to the mounted module
    * include("/blog", blogPatterns)
    *
    * // With name - routes are prefixed (e.g., "index" -> "blog.index")
    * include("/blog", blogPatterns, { name: "blog" })
+   *
+   * // With empty name - child names are merged into the current namespace
+   * include("/blog", blogPatterns, { name: "" })
    * ```
    */
   include: IncludeFn<TEnv>;
@@ -325,4 +329,10 @@ export type PathHelpers<TEnv> = {
       ExtractResponses<TChildren>
     >;
   };
+
+  /**
+   * Convenience wrapper for development-only routes.
+   * This is runtime sugar over a dev-mode guard, not a special typegen primitive.
+   */
+  dev: (children: () => UseItems<AllUseItems>) => AllUseItems[];
 };

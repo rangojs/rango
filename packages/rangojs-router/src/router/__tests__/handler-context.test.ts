@@ -164,6 +164,21 @@ describe("createHandlerContext routeName", () => {
     expect(ctx.routeName).toBeUndefined();
   });
 
+  it("should set routeName to undefined for a route inside a hidden include scope", () => {
+    const url = new URL("http://localhost/admin/users");
+    const ctx = createHandlerContext(
+      {},
+      new Request(url.href),
+      url.searchParams,
+      "/admin/users",
+      url,
+      {},
+      {},
+      "$prefix_0.users",
+    );
+    expect(ctx.routeName).toBeUndefined();
+  });
+
   it("should set routeName to undefined when no routeName is provided", () => {
     const url = new URL("http://localhost/test");
     const ctx = createHandlerContext(

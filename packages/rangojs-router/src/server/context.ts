@@ -479,11 +479,14 @@ export function runWithPrefixes<T>(
   } else {
     combinedUrlPrefix = urlPrefix;
   }
-  const combinedNamePrefix = namePrefix
-    ? store.namePrefix
-      ? `${store.namePrefix}.${namePrefix}`
-      : namePrefix
-    : store.namePrefix;
+  const combinedNamePrefix =
+    namePrefix !== undefined
+      ? namePrefix === ""
+        ? store.namePrefix
+        : store.namePrefix
+          ? `${store.namePrefix}.${namePrefix}`
+          : namePrefix
+      : store.namePrefix;
 
   return RSCRouterContext.run(
     {

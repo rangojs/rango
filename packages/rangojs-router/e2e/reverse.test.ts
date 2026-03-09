@@ -87,6 +87,22 @@ test.describe("Scoped Reverse Resolution", () => {
       const parentDetail = testId(page, "nested-server-parent-detail");
       await expect(parentDetail).toContainText("/href/from-nested");
     });
+
+    test("should resolve dot-local names and hide global child names for unnamed include mounts", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/unnamed-reverse/from-e2e"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "unnamed-detail-local-index")).toContainText(
+        "/unnamed-reverse",
+      );
+      await expect(testId(page, "unnamed-detail-global-index")).toContainText(
+        'ERROR: Unknown route: "unnamedIncludeReverseIndex"',
+      );
+    });
   });
 
   test.describe("Client-side href + useMount", () => {
@@ -349,6 +365,22 @@ test.describe("Scoped Reverse Resolution (production)", () => {
     );
     await expect(testId(page, "client-trailing-slash-child")).not.toContainText(
       "//",
+    );
+  });
+
+  test("should resolve dot-local names and hide global child names for unnamed include (production)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/unnamed-reverse/from-e2e"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "unnamed-detail-local-index")).toContainText(
+      "/unnamed-reverse",
+    );
+    await expect(testId(page, "unnamed-detail-global-index")).toContainText(
+      'ERROR: Unknown route: "unnamedIncludeReverseIndex"',
     );
   });
 

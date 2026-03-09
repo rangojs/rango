@@ -6,7 +6,11 @@ import type {
   TypedCacheItem,
   TypedTransitionItem,
 } from "../route-types.js";
-import type { UnnamedRoute, UrlPatterns } from "./pattern-types.js";
+import type {
+  LocalOnlyInclude,
+  UnnamedRoute,
+  UrlPatterns,
+} from "./pattern-types.js";
 
 // ============================================================================
 // Route Type Extraction Utilities
@@ -156,13 +160,15 @@ type ExtractRoutesFromItem<T, D extends number = 40> = [D] extends [never]
           infer TNamePrefix,
           infer TUrlPrefix
         >
-      ? TNamePrefix extends string
-        ? TUrlPrefix extends string
-          ? PrefixRoutes<PrefixPatterns<TRoutes, TUrlPrefix>, TNamePrefix>
-          : PrefixRoutes<TRoutes, TNamePrefix>
-        : TUrlPrefix extends string
-          ? PrefixPatterns<TRoutes, TUrlPrefix>
-          : TRoutes
+      ? TNamePrefix extends LocalOnlyInclude
+        ? {}
+        : TNamePrefix extends string
+          ? TUrlPrefix extends string
+            ? PrefixRoutes<PrefixPatterns<TRoutes, TUrlPrefix>, TNamePrefix>
+            : PrefixRoutes<TRoutes, TNamePrefix>
+          : TUrlPrefix extends string
+            ? PrefixPatterns<TRoutes, TUrlPrefix>
+            : TRoutes
       : // TypedLayoutItem: extract child routes from phantom type
         T extends TypedLayoutItem<infer TChildRoutes>
         ? TChildRoutes
@@ -239,13 +245,15 @@ type ExtractResponsesFromItem<T, D extends number = 40> = [D] extends [never]
         : { [K in TName]: TData }
       : {}
     : T extends TypedIncludeItem<any, infer TNamePrefix, any, infer TResponses>
-      ? TNamePrefix extends string
-        ? TResponses extends Record<string, unknown>
-          ? PrefixKeys<TResponses, TNamePrefix>
-          : {}
-        : TResponses extends Record<string, unknown>
-          ? TResponses
-          : {}
+      ? TNamePrefix extends LocalOnlyInclude
+        ? {}
+        : TNamePrefix extends string
+          ? TResponses extends Record<string, unknown>
+            ? PrefixKeys<TResponses, TNamePrefix>
+            : {}
+          : TResponses extends Record<string, unknown>
+            ? TResponses
+            : {}
       : T extends TypedLayoutItem<any, infer TChildResponses>
         ? TChildResponses extends Record<string, unknown>
           ? TChildResponses

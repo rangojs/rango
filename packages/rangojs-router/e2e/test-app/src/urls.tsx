@@ -18,6 +18,7 @@ import { middlewarePatterns } from "./urls/middleware.js";
 import { cachePatterns } from "./urls/cache.js";
 import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
+import { unnamedIncludeReversePatterns } from "./urls/unnamed-include-reverse.js";
 import { searchPatterns } from "./urls/search.js";
 import { refTestPatterns } from "./urls/ref-test.js";
 import { prerenderPatterns } from "./urls/prerender.js";
@@ -49,6 +50,7 @@ import { contentOwnershipPatterns } from "./urls/content-ownership.js";
 import { cacheIsolationPatterns } from "./urls/cache-isolation.js";
 import { alsScopePatterns } from "./urls/als-scope.js";
 import { streamModePatterns } from "./urls/stream-mode.js";
+import { devDebugPatterns, devInfoHandler } from "./urls/dev-routes.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -454,10 +456,10 @@ export const urlpatterns = urls(
       }),
 
       // Slow/streaming patterns (without slowProduct.detail which is inline above)
-      include("/", slowPatternsWithoutDetail),
+      include("/", slowPatternsWithoutDetail, { name: "" }),
 
       // Error patterns - already has /errors prefix in paths
-      include("/", errorsPatterns),
+      include("/", errorsPatterns, { name: "" }),
 
       // Meta patterns - already have their prefixes in paths
       include("/meta-template", metaTemplatePatterns, { name: "metaTemplate" }),
@@ -465,15 +467,15 @@ export const urlpatterns = urls(
       include("/meta-merge", metaMergePatterns, { name: "metaMerge" }),
 
       // Handle passthrough and hydration patterns
-      include("/", handlePatterns),
-      include("/", hydrationPatterns),
-      include("/", delayedBreadcrumbPatterns),
+      include("/", handlePatterns, { name: "" }),
+      include("/", hydrationPatterns, { name: "" }),
+      include("/", delayedBreadcrumbPatterns, { name: "" }),
 
       // Trailing slash patterns
-      include("/", trailingSlashPatterns),
+      include("/", trailingSlashPatterns, { name: "" }),
 
       // Hook test patterns - already have their prefixes in paths
-      include("/", hooksPatterns),
+      include("/", hooksPatterns, { name: "" }),
 
       // Middleware test patterns
       include("/middleware-test", middlewarePatterns, {
@@ -481,13 +483,16 @@ export const urlpatterns = urls(
       }),
 
       // Cache test patterns (includes intercepts with layouts)
-      include("/", cachePatterns),
+      include("/", cachePatterns, { name: "" }),
 
       // Theme patterns
       include("/theme", themePatterns, { name: "theme" }),
 
       // Href test patterns
       include("/href", hrefPatterns, { name: "href" }),
+
+      // Unnamed include reverse behavior probe
+      include("/unnamed-reverse", unnamedIncludeReversePatterns),
 
       // Search params test patterns
       include("/search", searchPatterns, { name: "search" }),
@@ -496,7 +501,7 @@ export const urlpatterns = urls(
       include("/ref-test", refTestPatterns, { name: "refTest" }),
 
       // Pre-render handler test patterns
-      include("/", prerenderPatterns),
+      include("/", prerenderPatterns, { name: "" }),
 
       // Pre-render complex test patterns (layout + parallel + fresh loader)
       include("/prerender-complex", prerenderComplexPatterns, {
@@ -579,7 +584,9 @@ export const urlpatterns = urls(
 
       // Revalidation contract fixture: consumer reruns without producer rerun,
       // so upstream ctx.set() data is missing on the action follow-up.
-      include("/revalidation-contract", revalidationContractPatterns),
+      include("/revalidation-contract", revalidationContractPatterns, {
+        name: "",
+      }),
 
       // Action redirect revalidation test patterns
       include(
@@ -885,7 +892,14 @@ export const urlpatterns = urls(
       ),
 
       // SSR stream mode test route
-      include("/", streamModePatterns),
+      include("/", streamModePatterns, { name: "" }),
+
+      ...(import.meta.env.DEV
+        ? [
+            path("/__dev/info", devInfoHandler),
+            include("/__dev/debug", devDebugPatterns),
+          ]
+        : []),
     ]),
   ],
 );

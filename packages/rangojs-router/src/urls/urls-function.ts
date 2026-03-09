@@ -53,6 +53,14 @@ export function urls<
     // Create the include helper
     const includeHelper = createIncludeHelper<TEnv>();
 
+    // dev() is lightweight sugar over a Vite dev-mode guard.
+    const dev: PathHelpers<TEnv>["dev"] = (children) => {
+      if (!(import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) {
+        return [];
+      }
+      return children().flat(3) as any[];
+    };
+
     // Combine all helpers
     // Note: layout and cache are cast to their typed versions - phantom types don't affect runtime
     const helpers: PathHelpers<TEnv> = {
@@ -70,6 +78,7 @@ export function urls<
       when: baseHelpers.when,
       cache: baseHelpers.cache as PathHelpers<TEnv>["cache"],
       transition: baseHelpers.transition as PathHelpers<TEnv>["transition"],
+      dev,
     };
 
     // Execute builder directly - manifest.ts handles RootLayout wrapping

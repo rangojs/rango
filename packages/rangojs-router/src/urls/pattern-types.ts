@@ -16,6 +16,13 @@ import { RESPONSE_TYPE } from "./response-types.js";
 export type UnnamedRoute = "$unnamed";
 
 /**
+ * Sentinel type for include() mounts that stay local to the mounted module.
+ * This keeps child route names out of the parent/global type map while still
+ * allowing the mounted module to use its own local route names internally.
+ */
+export type LocalOnlyInclude = "$local_only_include";
+
+/**
  * Options for path() function
  */
 export interface PathOptions<

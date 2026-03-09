@@ -5,16 +5,32 @@ import {
   getUrlPrefix,
   getNamePrefix,
 } from "../server/context";
+import { INTERNAL_INCLUDE_SCOPE_PREFIX } from "../route-name.js";
 import type { UrlPatterns, IncludeOptions } from "./pattern-types.js";
 import type { IncludeFn } from "./path-helper-types.js";
+
+function hasExplicitNameOption(options: IncludeOptions | undefined): boolean {
+  return !!options && Object.prototype.hasOwnProperty.call(options, "name");
+}
+
+function allocateInternalIncludeScopeId(
+  counters: Record<string, number>,
+): string {
+  const key = "__include_scope__";
+  const index = counters[key] ?? 0;
+  counters[key] = index + 1;
+  return `${INTERNAL_INCLUDE_SCOPE_PREFIX}${index}`;
+}
 
 /**
  * Process an IncludeItem by executing its nested patterns with prefixes
  * This expands the include into actual route registrations
  */
 function processIncludeItem(item: IncludeItem): AllUseItems[] {
-  const { prefix, patterns, options } = item;
-  const namePrefix = options?.name;
+  const { prefix, patterns } = item;
+  const namePrefix =
+    (item as IncludeItem & { _lazyContext?: { namePrefix?: string } })
+      ._lazyContext?.namePrefix ?? item.options?.name;
 
   // Execute the nested patterns' handler with URL and name prefixes
   // The urlPrefix being set tells nested urls() to skip RootLayout wrapping
@@ -91,7 +107,8 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
     const ctx = store.getStore();
     if (!ctx) throw new Error("include() must be called inside urls()");
 
-    const namePrefix = options?.name;
+    const explicitName = options?.name;
+    const hasExplicitName = hasExplicitNameOption(options);
     const name = `$include_${prefix.replace(/[/:*?]/g, "_")}`;
 
     // Capture context for deferred evaluation
@@ -103,11 +120,16 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
         ? capturedUrlPrefix + prefix.slice(1)
         : capturedUrlPrefix + prefix
       : prefix;
-    const fullNamePrefix = namePrefix
-      ? capturedNamePrefix
-        ? `${capturedNamePrefix}.${namePrefix}`
-        : namePrefix
-      : capturedNamePrefix;
+    const internalScope = !hasExplicitName
+      ? allocateInternalIncludeScopeId(ctx.counters)
+      : undefined;
+    const nextSegment = hasExplicitName ? explicitName : internalScope;
+    const fullNamePrefix =
+      nextSegment !== undefined && nextSegment !== ""
+        ? capturedNamePrefix
+          ? `${capturedNamePrefix}.${nextSegment}`
+          : nextSegment
+        : capturedNamePrefix;
 
     // Track this include for build-time manifest generation
     if (ctx.trackedIncludes) {
