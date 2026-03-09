@@ -408,12 +408,19 @@ export function createRouterDiscoveryPlugin(
 
         const wantIntercept = url.searchParams.get("intercept") === "1";
         const wantRouteName = url.searchParams.get("routeName");
+        const wantPassthrough = url.searchParams.get("passthrough") === "1";
 
         for (const [, routerInstance] of registry) {
           if (!routerInstance.matchForPrerender) continue;
           try {
-            const result = await routerInstance.matchForPrerender(pathname, {});
+            const result = await routerInstance.matchForPrerender(
+              pathname,
+              {},
+              undefined,
+              wantPassthrough,
+            );
             if (!result) continue;
+            if (result.passthrough) continue;
             // When routeName is specified, only accept a match for that route.
             // This prevents returning the wrong entry when multiple routers
             // have prerenderable routes sharing the same pathname.

@@ -21,7 +21,7 @@ export interface PrerenderStore {
   get(
     routeName: string,
     paramHash: string,
-    meta?: { pathname: string },
+    meta?: { pathname: string; isPassthroughRoute?: boolean },
   ): PrerenderEntry | null | Promise<PrerenderEntry | null>;
 }
 
@@ -63,6 +63,7 @@ export function createDevPrerenderStore(devUrl: string): PrerenderStore {
       const isIntercept = paramHash.endsWith("/i");
       let url = `${devUrl}/__rsc_prerender?pathname=${encodeURIComponent(meta.pathname)}&routeName=${encodeURIComponent(routeName)}`;
       if (isIntercept) url += "&intercept=1";
+      if (meta.isPassthroughRoute) url += "&passthrough=1";
       try {
         const res = await fetch(url);
         if (!res.ok) return null;

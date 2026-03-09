@@ -329,6 +329,22 @@ export const urlpatterns = urls(
         include("/prerender-ctx", prerenderCtxPatterns, {
           name: "prerenderCtx",
         }),
+
+        // Prerender manifest introspection for e2e tests
+        path.json(
+          "/__test/prerender-manifest-entries",
+          async (ctx) => {
+            const routeName = ctx.searchParams.get("route");
+            if (!routeName) return { error: "missing route param" };
+            const manifest = globalThis.__PRERENDER_MANIFEST;
+            if (!manifest) return { available: false, count: 0 };
+            const keys = Object.keys(manifest).filter((k) =>
+              k.startsWith(routeName + "/"),
+            );
+            return { available: true, count: keys.length };
+          },
+          { name: "testPrerenderManifestEntries" },
+        ),
       ]),
     ]),
   ],

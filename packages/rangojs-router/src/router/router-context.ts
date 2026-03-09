@@ -80,6 +80,7 @@ export interface RouterContext<TEnv = any> {
     routeMap?: Record<string, string>,
     routeName?: string,
     responseType?: string,
+    isPassthroughRoute?: boolean,
   ) => HandlerContext<any, TEnv>;
 
   // Loader setup

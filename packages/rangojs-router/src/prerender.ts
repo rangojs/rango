@@ -148,6 +148,13 @@ export interface BuildContext<TParams> {
     params?: Record<string, string>,
     search?: Record<string, unknown>,
   ) => string;
+
+  /**
+   * Signal that this param set should not produce a local prerender artifact.
+   * At runtime the handler runs live instead. Only valid on routes declared
+   * with `{ passthrough: true }`.
+   */
+  passthrough: () => PrerenderPassthroughResult;
 }
 
 /**
@@ -216,7 +223,9 @@ export interface GetParamsContext {
 export type PrerenderPassthroughContext<
   TParams = {},
   TEnv = DefaultEnv,
-> = HandlerContext<TParams, TEnv>;
+> = HandlerContext<TParams, TEnv> & {
+  passthrough: () => PrerenderPassthroughResult;
+};
 
 export interface PrerenderHandlerDefinition<
   TParams extends Record<string, any> = any,
@@ -269,7 +278,10 @@ export function Prerender<
       ResolvePrerenderParams<T, TRouteMap>,
       TEnv
     >,
-  ) => ReactNode | Promise<ReactNode>,
+  ) =>
+    | ReactNode
+    | PrerenderPassthroughResult
+    | Promise<ReactNode | PrerenderPassthroughResult>,
   options: PrerenderOptions & { passthrough: true },
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
@@ -313,7 +325,10 @@ export function Prerender<
       ResolvePrerenderParams<T, TRouteMap>,
       TEnv
     >,
-  ) => ReactNode | Promise<ReactNode>,
+  ) =>
+    | ReactNode
+    | PrerenderPassthroughResult
+    | Promise<ReactNode | PrerenderPassthroughResult>,
   options: PrerenderOptions & { passthrough: true },
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
@@ -386,6 +401,35 @@ export function Prerender<TParams extends Record<string, any>>(
     ...(getParams ? { getParams } : {}),
     ...(options ? { options } : {}),
   };
+}
+
+// -- Passthrough sentinel ---------------------------------------------------
+
+/**
+ * Sentinel returned by `ctx.passthrough()` to signal that a specific param set
+ * should not produce a local prerender artifact. The build skips writing the
+ * entry; at runtime the handler runs live (requires `{ passthrough: true }`).
+ */
+export const PRERENDER_PASSTHROUGH: Readonly<{
+  __brand: "prerenderPassthrough";
+}> = Object.freeze({
+  __brand: "prerenderPassthrough" as const,
+});
+
+export type PrerenderPassthroughResult = typeof PRERENDER_PASSTHROUGH;
+
+/**
+ * Type guard to check if a value is the passthrough sentinel.
+ */
+export function isPrerenderPassthrough(
+  value: unknown,
+): value is PrerenderPassthroughResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "__brand" in value &&
+    (value as { __brand: unknown }).__brand === "prerenderPassthrough"
+  );
 }
 
 // -- Type guard -------------------------------------------------------------

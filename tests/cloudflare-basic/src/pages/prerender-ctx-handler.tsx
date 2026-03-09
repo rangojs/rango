@@ -5,12 +5,16 @@ const SharedFromGetParams = createVar<string>();
 const HandlerData = createVar<string>();
 
 // Prerender handler with getParams context and handler-first data flow.
+// "gamma" uses ctx.passthrough() to skip the build-time artifact and
+// defer to live rendering at runtime.
 export const PrerenderCtxTest = Prerender<{ slug: string }>(
   async (ctx) => {
     ctx.set(SharedFromGetParams, "fetched-at-build");
-    return [{ slug: "alpha" }, { slug: "beta" }];
+    return [{ slug: "alpha" }, { slug: "beta" }, { slug: "gamma" }];
   },
   async (ctx) => {
+    // gamma: skip prerender artifact, defer to live rendering
+    if (ctx.params.slug === "gamma" && ctx.build) return ctx.passthrough();
     ctx.set(HandlerData, `data-for-${ctx.params.slug}`);
     return (
       <div data-testid="prerender-ctx-page">

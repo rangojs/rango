@@ -18,6 +18,7 @@ route was pre-rendered.
 - **Runtime cache-lookup** - Prerender store checked before segment resolution
 - **Handler eviction** - Non-passthrough handlers stubbed in production bundles
 - **Passthrough mode** - Handler kept in bundle for unknown params (live fallback)
+- **ctx.passthrough()** - Handler can skip local artifact per param set, deferring to live fallback
 - **Sub-use semantics** - Child layouts, parallels inside path are pre-rendered
 - **Handle data** - `ctx.use()` data baked into Flight payloads
 - **Loader freshness** - Loaders always run at request time (never pre-rendered)
@@ -195,6 +196,52 @@ The entire original module and its imports are excluded from the RSC server
 bundle. With `passthrough: true`, handler code stays in the bundle.
 
 Client and SSR environments always receive stubs regardless of passthrough mode.
+
+---
+
+## Handler Passthrough Outcome
+
+A `Prerender` handler on a `{ passthrough: true }` route can return
+`ctx.passthrough()` to skip writing a local prerender artifact for that param
+set. At runtime, the missing entry falls through to the live handler.
+
+```typescript
+export const BlogPost = Prerender(
+  async () => [{ slug: "a" }, { slug: "b" }],
+  async (ctx) => {
+    const post = await getPost(ctx.params.slug);
+    if (!post) return ctx.passthrough();
+    return <article>{post.content}</article>;
+  },
+  { passthrough: true },
+);
+```
+
+### Semantics
+
+- JSX or `null` from the handler produces a normal prerender entry.
+- `ctx.passthrough()` returns a frozen sentinel (`PRERENDER_PASSTHROUGH`).
+  `matchForPrerender` detects it and returns `{ passthrough: true }` instead
+  of serialized segments. The build skips the manifest entry for that param set.
+- `ctx.passthrough()` on a non-passthrough route throws an invariant error.
+- `getParams()` still enumerates the param set; the handler decides per-param
+  whether to produce an artifact or defer to runtime.
+
+### Build-time flow
+
+1. `getParams()` returns param sets (including ones that may passthrough).
+2. For each param set, `matchForPrerender` creates a `BuildContext` with
+   `passthrough()` wired (when `isPassthroughRoute` is true).
+3. Handler returns `ctx.passthrough()` for a given param set.
+4. `matchForPrerender` detects the sentinel in resolved segments and returns
+   `{ passthrough: true }`.
+5. `expandPrerenderRoutes` logs `PASS` and skips `collectedData` insertion.
+
+### Runtime flow
+
+No stored entry exists for that param set. The runtime cache-lookup sees
+`pr + pt + miss` and falls through to the live handler, which runs with
+full `HandlerContext` (`ctx.build === false`).
 
 ---
 
