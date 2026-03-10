@@ -1,6 +1,17 @@
+import crypto from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
+
+// Mirrors the build-time hashId from expose-id-utils.ts so production loader
+// tests stay in sync with the build output without hardcoding hash values.
+function productionLoaderId(filePath: string, exportName: string): string {
+  const hash = crypto
+    .createHash("sha256")
+    .update(`${filePath}#${exportName}`)
+    .digest("hex");
+  return `${hash.slice(0, 8)}#${exportName}`;
+}
 
 /**
  * E2E tests for app-level middleware:
@@ -925,11 +936,112 @@ test.describe("app-middleware (production)", () => {
     );
   });
 
-  // Intercept middleware: intentionally dev-only.
-  // Intercept navigations require client-side SPA navigation context (previous URL,
-  // intercept source header) that is not meaningful for a direct production page load.
+  test.describe("intercept-middleware", () => {
+    test("intercept middleware should set header on modal navigation", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
 
-  // Loader middleware: intentionally dev-only.
-  // Loader fetch paths use internal _rsc_loader query params that are Vite dev server
-  // specific and not representative of the production loader resolution path.
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      const responsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/slow-product/") &&
+          response.status() === 200,
+      );
+
+      await page.click('[data-testid="slow-product-link"]');
+      const response = await responsePromise;
+
+      expect(response.headers()["x-intercept-middleware"]).toBe("applied");
+
+      await expect(
+        page.locator('[data-testid="slow-modal-product-name"]'),
+      ).toBeVisible({ timeout: 10000 });
+    });
+
+    test("intercept middleware should set cookie", async ({
+      page,
+      context,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      await page.click('[data-testid="slow-product-link"]');
+
+      await expect(
+        page.locator('[data-testid="slow-modal-product-name"]'),
+      ).toBeVisible({ timeout: 10000 });
+
+      const cookies = await context.cookies();
+      const interceptCookie = cookies.find(
+        (c) => c.name === "intercept-visited",
+      );
+      expect(interceptCookie).toBeDefined();
+      expect(interceptCookie?.value).toBe("true");
+    });
+  });
+
+  test.describe("loader-middleware", () => {
+    const protectedId = productionLoaderId(
+      "src/loaders.tsx",
+      "ProtectedLoader",
+    );
+
+    test("loader middleware should reject unauthorized requests", async ({
+      request,
+    }) => {
+      const response = await request.get(
+        f.url(`/fetch-loader?_rsc_loader=${encodeURIComponent(protectedId)}`),
+        {
+          headers: { Accept: "text/x-component" },
+        },
+      );
+
+      expect(response.status()).toBe(500);
+      const text = await response.text();
+      // Production sanitizes error messages; verify the error structure
+      expect(text).toContain("loaderError");
+    });
+
+    test("loader middleware should allow authorized requests", async ({
+      request,
+    }) => {
+      const response = await request.get(
+        f.url(
+          `/fetch-loader?_rsc_loader=${encodeURIComponent(protectedId)}&_rsc_loader_params=` +
+            encodeURIComponent(JSON.stringify({ authToken: "valid-token" })),
+        ),
+        {
+          headers: { Accept: "text/x-component" },
+        },
+      );
+
+      expect(response.status()).toBe(200);
+      const text = await response.text();
+      expect(text).toContain("protected");
+    });
+
+    test("loader middleware should reject invalid auth token", async ({
+      request,
+    }) => {
+      const response = await request.get(
+        f.url(
+          `/fetch-loader?_rsc_loader=${encodeURIComponent(protectedId)}&_rsc_loader_params=` +
+            encodeURIComponent(JSON.stringify({ authToken: "invalid-token" })),
+        ),
+        {
+          headers: { Accept: "text/x-component" },
+        },
+      );
+
+      expect(response.status()).toBe(500);
+      const text = await response.text();
+      // Production sanitizes error messages; verify the error structure
+      expect(text).toContain("loaderError");
+    });
+  });
 });

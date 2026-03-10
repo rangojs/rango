@@ -267,13 +267,13 @@ Success criteria:
 
 ## Near-Term Checklist
 
-Active execution plan:
+Completed execution plan:
 
-- [Stability next steps plan](./stability-next-steps-plan.md)
+- [Stability next steps plan](./stability-next-steps-plan.md) (all workstreams done)
 
 Near-term focus:
 
-- close the remaining high-signal production parity gaps
+- high-signal production parity gaps are closed (see execution plan for details)
 - keep middleware/PE/parallel scope docs synced with implementation
 - keep producer/consumer partial revalidation rules explicit in docs and the
   semantic matrix; only add a runtime warning if a hidden stale-read case is

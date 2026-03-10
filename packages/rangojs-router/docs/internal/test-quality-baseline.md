@@ -143,9 +143,8 @@ Partially covered — remaining dev-only subsections are documented:
   assertions, proactive caching log verification (behavioral surface covered by
   cloudflare-basic production tests)
 - `app-middleware.test.ts` — production covers core middleware, redirects,
-  short-circuit, W5 behavior, cookies, and auth. Remaining dev-only: intercept
-  middleware (requires SPA context), loader middleware (uses dev-specific query
-  params)
+  short-circuit, W5 behavior, cookies, auth, intercept middleware, and loader
+  middleware. Remaining dev-only: W5 warning test (dev-only log assertion)
 
 Production coverage gaps closed during the 2026-03-10 stabilization pass:
 
@@ -153,12 +152,13 @@ Production coverage gaps closed during the 2026-03-10 stabilization pass:
   scope)
 - `handle-meta.test.ts` — meta tags, SSR, templates, unset, merging,
   passthrough
-- `pending-actions.test.ts` — action robustness during navigation
+- `pending-actions.test.ts` — action robustness during navigation (sleeps
+  replaced with network-level signals: waitForResponse, requestfinished/failed)
 - `response-handler.test.ts` — auto-wrap, headers, cookies, middleware, layout
 - `route-resolution.test.ts` — trailing slash config, dynamic segments, SPA nav
 - `streaming-actions.test.ts` — streaming actions, form patterns
 - `cache.test.ts` (intercept behavioral, useLoader registration)
-- `app-middleware.test.ts` (cookie, auth middleware)
+- `app-middleware.test.ts` (cookie, auth, intercept, loader middleware)
 
 Production coverage gaps closed after the original snapshot (pre-2026-03-10):
 
@@ -252,8 +252,8 @@ Files covered:
 - `handler-first.test.ts` — production block added
 - `cache.test.ts` — intercept behavioral + useLoader production blocks added;
   log-based and proactive caching tests documented as intentionally dev-only
-- `app-middleware.test.ts` — cookie + auth middleware production blocks added;
-  intercept + loader middleware documented as intentionally dev-only
+- `app-middleware.test.ts` — cookie, auth, intercept, and loader middleware
+  production blocks added. Only remaining dev-only: W5 warning test
 - `response-handler.test.ts` — full production mirror
 - `handle-meta.test.ts` — high-signal production subset
 - `route-resolution.test.ts` — production block added

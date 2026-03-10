@@ -1,7 +1,7 @@
 # Stability Next Steps Plan
 
 Date: 2026-03-10
-Status: active
+Status: complete
 Owner: router maintainers
 
 This document turns the current stability backlog into an execution plan for the
@@ -48,10 +48,11 @@ handler-first test routes with dev + production coverage.
 
 Status: **complete**
 
-Added production coverage for cookie middleware (set/increment visit count) and
-auth middleware with cookie (authenticated access). Intercept and loader
-middleware documented as intentionally dev-only (intercept requires SPA context,
-loader uses dev-specific query params).
+Added production coverage for cookie middleware (set/increment visit count),
+auth middleware with cookie (authenticated access), intercept middleware
+(header setting and cookie on SPA modal navigation), and loader middleware
+(authorization reject/allow/reject-invalid via production hashed loader IDs).
+Only remaining dev-only section: W5 warning test (dev-only log assertion).
 
 ### 1C. Finish Build Parity For Behavioral Parts Of `cache.test.ts` — Done
 
@@ -85,22 +86,20 @@ Priority: high
 The docs need one authoritative "what is next" entry point and fewer stale
 claims.
 
-### 2A. Keep The Roadmap High-Level
+### 2A. Keep The Roadmap High-Level — Done
 
-Tasks:
+Status: **complete**
 
-- Update `docs/internal/stability-roadmap.md` so the near-term checklist points
-  at this execution plan.
-- Keep the roadmap directional; do not duplicate detailed task lists there.
+Roadmap near-term checklist updated to note production parity gaps are closed
+and to point at this execution plan. No detailed task lists duplicated there.
 
-### 2B. Keep The Test Baseline Accurate
+### 2B. Keep The Test Baseline Accurate — Done
 
-Tasks:
+Status: **complete**
 
-- Keep `docs/internal/test-quality-baseline.md` focused on measured inventory
-  and backlog state.
-- When production parity work lands, update only the affected sections instead
-  of rewriting the whole baseline.
+Baseline updated incrementally as each parity batch landed: production coverage
+gaps section reflects all 1A-1D work, sleep inventory notes pending-actions
+signal replacement, and app-middleware partial coverage description corrected.
 
 ### 2C. Make Dev-Only vs Build-Parity Intent Explicit — Done
 
@@ -110,8 +109,9 @@ Dev-only annotations added inline in test files during the 1A-1D parity work:
 
 - `cache.test.ts` — cache-intercept-routes and proactive-caching sections
   annotated with reasons (debug log assertions, cloudflare-basic coverage)
-- `app-middleware.test.ts` — intercept and loader middleware sections annotated
-  (SPA context requirement, dev-specific query params)
+- `app-middleware.test.ts` — W5 warning test annotated as dev-only (log
+  assertion). Intercept and loader middleware now have production tests
+  (original annotations were inaccurate and removed).
 - `handler-first.test.ts` — revalidate/cache mix section annotated as
   intentionally dev-only (isolated server state, runtime cache semantics)
 - `revalidation.test.ts` — file-level annotation explaining deferral rationale
@@ -123,33 +123,22 @@ Priority: high
 Contributor skills should reflect the current prerender model and maintenance
 expectations, not just the original implementation shape.
 
-### 3A. Refresh The `prerender` Skill
+### 3A. Refresh The `prerender` Skill — Done
 
-Tasks:
+Status: **complete**
 
-- Update `packages/rangojs-router/skills/prerender/SKILL.md` to reflect current
-  semantics:
-  - prerender is build-time cache, not asset output
-  - `ctx.passthrough()` is implemented
-  - loaders stay live by default
-  - partial revalidation does not implicitly rebuild upstream prerender-derived
-    context
-- Add a contributor checklist for prerender changes:
-  - docs to re-read before editing
-  - tests that should be considered
-  - when a behavior should remain dev-only vs build-parity
+The skill's semantic content was already accurate (build-time cache model,
+passthrough, ctx.passthrough(), live loaders, partial revalidation caveat).
+Added a "Contributor Checklist" section with docs to re-read, tests to run,
+and dev-only vs build-parity guidance.
 
-### 3B. Add A Maintenance Reference
+### 3B. Add A Maintenance Reference — Done
 
-Tasks:
+Status: **complete**
 
-- Point the skill at this plan and the test baseline so contributors see both
-  semantic rules and active cleanup work.
-
-Definition of done:
-
-- A contributor opening the skill gets both the semantic model and the current
-  maintenance expectations in one place.
+Added a "Maintenance References" section pointing at the stability next steps
+plan and test quality baseline. A contributor opening the skill now gets
+semantic rules, test commands, and the active cleanup context in one place.
 
 ## 4. Cleanup Pass
 
@@ -157,44 +146,46 @@ Priority: medium
 
 These are not new features. They are the cleanup work that reduces future drift.
 
-### 4A. Test Cleanup
+### 4A. Test Cleanup — Done
 
-Tasks:
+Status: **complete**
 
-- Continue removing fixed sleeps from `cache.test.ts`.
-- Remove easy low-value duplication where dev and build blocks assert the same
-  thing with unnecessary copy/paste.
-- Prefer helper extraction only when it reduces maintenance noise without
-  obscuring the contract under test.
+Fixed sleeps in `cache.test.ts` were already removed (A1 from the baseline).
+Fixed sleeps in `pending-actions.test.ts` production block replaced with
+network-level signals during the 1D fix pass. No remaining low-value
+duplication found in the parity blocks — each dev/production section tests
+mode-specific concerns (e.g., error message sanitization, hashed loader IDs).
 
-### 4B. Plan Cleanup
+### 4B. Plan Cleanup — Done
 
-Tasks:
+Status: **complete**
 
-- Mark older internal action plans as implemented, superseded, or still active.
-- Avoid leaving "implemented but still written like pending work" docs around.
-- Keep this plan as the active coordination doc until the current pass is done.
+Added status markers to all stale internal planning docs:
+
+- `prerender-passthrough-action-plan.md` — already marked "Implemented"
+- `test-quality-full-review-action-plan.md` — marked "Superseded" by this plan
+- `non-test-review-actions.md` — marked "Implemented" (F1-F3 addressed)
+- `prefetch-review-actions.md` — marked "Implemented" (origin validation done)
+- `scroll-location-review-actions.md` — marked "Implemented" (cleanup + quota)
+- `runtime-guardrails-design.md` — marked "Partial" (W1/W3/W5 shipped,
+  W2 reframed, W4/W6 deferred)
+- `cache-dsl-use-cache-remediation-plan.md` — marked "Implemented"
 
 ### 4C. Scope Cleanup
 
-Tasks:
+No new capability work was mixed into this pass. All changes stayed within
+the parity, docs, skill, and cleanup scope defined in sections 1-4.
 
-- Do not broaden this pass into new capability work.
-- If a candidate task is really a new feature, move it back to roadmap-level
-  discussion instead of mixing it into the cleanup queue.
+## Suggested Execution Order — Complete
 
-Definition of done:
+All items executed:
 
-- The active backlog is smaller, more accurate, and easier to trust.
-
-## Suggested Execution Order
-
-1. `handler-first.test.ts` build coverage
-2. `app-middleware.test.ts` remaining build parity
-3. `cache.test.ts` behavioral build parity
-4. docs sync after the first parity batch lands
-5. `prerender` skill refresh
-6. remaining backlog triage and cleanup sweep
+1. `handler-first.test.ts` build coverage — done (1A)
+2. `app-middleware.test.ts` remaining build parity — done (1B)
+3. `cache.test.ts` behavioral build parity — done (1C)
+4. docs sync after the first parity batch lands — done (2A-2C)
+5. `prerender` skill refresh — done (3A-3B)
+6. remaining backlog triage and cleanup sweep — done (4A-4B)
 
 ## Verification
 
@@ -203,13 +194,12 @@ Definition of done:
 - Re-run `e2e/semantic-matrix.test.ts` after any change that could affect core
   execution semantics.
 
-## Exit Criteria
+## Exit Criteria — Met
 
-This plan is complete when:
-
-- `handler-first.test.ts` is no longer dev-only.
+- `handler-first.test.ts` is no longer dev-only. **Done.**
 - `app-middleware.test.ts` and `cache.test.ts` have their remaining meaningful
-  production-parity gaps closed or explicitly documented as intentional.
+  production-parity gaps closed or explicitly documented as intentional. **Done.**
 - The roadmap, baseline, and prerender skill all point to the same current
-  maintenance story.
+  maintenance story. **Done.**
 - The active internal planning docs no longer overstate already-closed gaps.
+  **Done.**

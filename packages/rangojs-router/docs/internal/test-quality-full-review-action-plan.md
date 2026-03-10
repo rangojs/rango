@@ -2,7 +2,7 @@
 
 Date: 2026-03-05
 Owner: Router test quality initiative
-Status: Proposed
+Status: Superseded by `stability-next-steps-plan.md` (2026-03-10)
 
 Baseline execution reference: `docs/internal/test-quality-baseline.md`
 

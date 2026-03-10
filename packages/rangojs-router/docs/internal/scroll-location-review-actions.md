@@ -1,5 +1,8 @@
 # Scroll + Location State Review Actions (Non-Test Runtime)
 
+Status: Implemented (polling cleanup in scroll-restoration.ts; sessionStorage
+quota eviction in persistToSessionStorage)
+
 Scope reviewed:
 
 - `src/browser/scroll-restoration.ts`

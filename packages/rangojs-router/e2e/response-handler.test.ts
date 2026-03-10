@@ -1,9 +1,8 @@
 import test, { expect } from "@playwright/test";
 import { useFixture } from "./fixture";
 
-const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
-
 test.describe("response-handler", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
   test.describe("string auto-wrap", () => {
     test("path.md() auto-wraps string with text/markdown content-type", async ({
       request,
@@ -196,9 +195,8 @@ test.describe("response-handler", () => {
 // Production build
 // ============================================================================
 
-const fBuild = useFixture({ root: "./e2e/test-app", mode: "build" });
-
 test.describe("response-handler (production)", () => {
+  const fBuild = useFixture({ root: "./e2e/test-app", mode: "build" });
   test.describe("string auto-wrap", () => {
     test("path.md() auto-wraps string with text/markdown content-type", async ({
       request,

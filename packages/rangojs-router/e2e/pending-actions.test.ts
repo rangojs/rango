@@ -350,6 +350,11 @@ test.describe("pending-actions-navigation (production)", () => {
     await productLink.click();
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
+    // Listen for the action POST response before triggering it
+    const actionResponsePromise = page.waitForResponse(
+      (res) => res.request().method() === "POST" && res.status() === 200,
+    );
+
     const incrementButton = page.locator(
       '[data-testid="modal-quantity-control"] button:has-text("+")',
     );
@@ -362,7 +367,9 @@ test.describe("pending-actions-navigation (production)", () => {
     ).toBeVisible();
     await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
 
-    await page.waitForTimeout(600);
+    // Wait for the action response to be fully received instead of fixed sleep
+    const actionResponse = await actionResponsePromise;
+    await actionResponse.finished();
 
     await goBack(page);
     await expect(
@@ -383,6 +390,16 @@ test.describe("pending-actions-navigation (production)", () => {
     await productLink.click();
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
+    // Listen for the action request to settle (complete or abort) before triggering it
+    const actionSettledPromise = Promise.race([
+      page.waitForEvent("requestfinished", {
+        predicate: (req) => req.method() === "POST",
+      }),
+      page.waitForEvent("requestfailed", {
+        predicate: (req) => req.method() === "POST",
+      }),
+    ]);
+
     const incrementButton = page.locator(
       '[data-testid="modal-quantity-control"] button:has-text("+")',
     );
@@ -395,7 +412,8 @@ test.describe("pending-actions-navigation (production)", () => {
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
     await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
 
-    await page.waitForTimeout(600);
+    // Wait for the action request to settle (response received or aborted by navigation)
+    await actionSettledPromise;
 
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
     await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
@@ -413,6 +431,11 @@ test.describe("pending-actions-navigation (production)", () => {
       page.locator('[data-testid="segment-metadata"]'),
     ).toBeVisible();
 
+    // Listen for the streaming action POST response before triggering it
+    const actionResponsePromise = page.waitForResponse(
+      (res) => res.request().method() === "POST" && res.status() === 200,
+    );
+
     const streamingButton = page.locator('[data-testid="streaming-btn"]');
     await streamingButton.click();
     await expect(streamingButton).toBeDisabled();
@@ -422,7 +445,9 @@ test.describe("pending-actions-navigation (production)", () => {
 
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
 
-    await page.waitForTimeout(4000);
+    // Wait for the streaming action response to be fully received instead of fixed sleep
+    const actionResponse = await actionResponsePromise;
+    await actionResponse.finished();
 
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
     await expect(
