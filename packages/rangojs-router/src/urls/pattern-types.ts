@@ -19,8 +19,11 @@ export type UnnamedRoute = "$unnamed";
  * Sentinel type for include() mounts that stay local to the mounted module.
  * This keeps child route names out of the parent/global type map while still
  * allowing the mounted module to use its own local route names internally.
+ *
+ * Branded with a symbol key so it cannot be accidentally produced by user code.
  */
-export type LocalOnlyInclude = "$local_only_include";
+declare const LOCAL_ONLY_BRAND: unique symbol;
+export type LocalOnlyInclude = string & { [LOCAL_ONLY_BRAND]: void };
 
 /**
  * Options for path() function

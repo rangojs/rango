@@ -148,7 +148,8 @@ The `name` option determines child route visibility:
 - **`{ name: "blog" }`** — children are prefixed (`blog.index`, `blog.post`).
   Visible in generated route types, globally reversible.
 - **`{ name: "" }`** — children merge into the parent namespace with no prefix.
-  Equivalent to defining those routes inline.
+  Equivalent to defining those routes inline. Both global `reverse("child")` and
+  dot-local `reverse(".child")` work (routes are at root scope).
 - **Omitted** — children get a private `$prefix_N` scope. Hidden from the
   generated route map and global `reverse()`. Only dot-local reverse
   (`reverse(".child")`) works from handlers inside the mounted module.
