@@ -545,6 +545,15 @@ export interface RSCRouterOptions<TEnv = any> {
    * loaders, or PE submissions. Requests without Origin/Referer are
    * allowed (same-origin navigations, non-browser clients).
    *
+   * The built-in check compares Origin against the Host header and
+   * url.protocol. It does NOT trust X-Forwarded-Host/Proto headers
+   * (they are client-controllable without a trusted proxy). On standard
+   * deployments (Cloudflare Workers, Node behind nginx/caddy) the Host
+   * header is already set to the public-facing host by the platform or
+   * proxy. For non-standard proxy setups where Host differs from the
+   * public origin, use a custom function that reads the appropriate
+   * forwarded headers from your trusted proxy.
+   *
    * - `true` (default) -- enable built-in origin validation
    * - `false` -- disable (e.g., trusted cross-origin proxy setups)
    * - A function `(request, url) => boolean` -- custom validation;

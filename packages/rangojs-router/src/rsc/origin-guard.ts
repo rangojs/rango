@@ -43,16 +43,13 @@ export function validateRequestOrigin(
     return createForbiddenResponse(request);
   }
 
-  // 4. Determine expected host: prefer X-Forwarded-Host (proxy/CDN),
-  //    fall back to Host header, then url.host
-  const expectedHost =
-    request.headers.get("x-forwarded-host") ||
-    request.headers.get("host") ||
-    url.host;
-
-  // 5. Determine expected protocol: prefer X-Forwarded-Proto
-  const forwardedProto = request.headers.get("x-forwarded-proto");
-  const expectedProtocol = forwardedProto ? `${forwardedProto}:` : url.protocol;
+  // 4. Determine expected host from Host header or URL.
+  // X-Forwarded-Host/Proto are NOT used — they are client-controllable
+  // unless a trusted proxy strips them. On standard deployments (Cloudflare
+  // Workers, Node behind nginx/caddy) the Host header is already correct.
+  // For non-standard setups, use the custom function escape hatch.
+  const expectedHost = request.headers.get("host") || url.host;
+  const expectedProtocol = url.protocol;
 
   // 6. Build expected origin and compare (case-insensitive)
   const expectedOrigin = `${expectedProtocol}//${expectedHost}`;

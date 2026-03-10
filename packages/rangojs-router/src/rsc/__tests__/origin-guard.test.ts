@@ -55,23 +55,30 @@ describe("validateRequestOrigin", () => {
     expect(result!.status).toBe(403);
   });
 
-  it("respects X-Forwarded-Host", () => {
+  it("ignores X-Forwarded-Host (client-controllable)", () => {
+    // X-Forwarded-Host is not trusted by default — an attacker could spoof
+    // it to bypass the origin check on deployments without a trusted proxy.
     const { request, url } = makeRequest("https://internal.server/action", {
       Origin: "https://cdn.example.com",
       "X-Forwarded-Host": "cdn.example.com",
       "X-Forwarded-Proto": "https",
       Host: "internal.server",
     });
-    expect(validateRequestOrigin(request, url)).toBeNull();
+    const result = validateRequestOrigin(request, url);
+    expect(result).not.toBeNull();
+    expect(result!.status).toBe(403);
   });
 
-  it("respects X-Forwarded-Proto", () => {
+  it("ignores X-Forwarded-Proto (client-controllable)", () => {
     const { request, url } = makeRequest("http://localhost/action", {
       Origin: "https://example.com",
       "X-Forwarded-Proto": "https",
       Host: "example.com",
     });
-    expect(validateRequestOrigin(request, url)).toBeNull();
+    // Protocol mismatch: Origin says https but url.protocol is http
+    const result = validateRequestOrigin(request, url);
+    expect(result).not.toBeNull();
+    expect(result!.status).toBe(403);
   });
 
   it("rejects mismatched port", () => {
