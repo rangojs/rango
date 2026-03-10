@@ -417,6 +417,31 @@ export const SearchLoader = createLoader(async (ctx) => {
 }, true); // true = fetchable
 ```
 
+### Fetchable Loader with Middleware
+
+Pass an options object instead of `true` to attach per-loader middleware.
+This middleware runs only on `_rsc_loader` fetch requests (client-side
+`load()` / `useFetchLoader()` calls), not during SSR `ctx.use()` execution:
+
+```typescript
+import { createLoader } from "@rangojs/router";
+import { authMiddleware } from "../middleware/auth";
+import { rateLimitMiddleware } from "../middleware/rate-limit";
+
+export const ProtectedLoader = createLoader(
+  async (ctx) => {
+    "use server";
+
+    const user = ctx.get("user");
+    return { orders: await db.orders.list(user.id) };
+  },
+  { middleware: [authMiddleware, rateLimitMiddleware] },
+);
+```
+
+The middleware uses the same `MiddlewareFn` signature as route/app middleware,
+so you can reuse existing middleware functions directly.
+
 Fetchable loaders support both GET and POST (PUT, PATCH, DELETE) from the client.
 The `load()` function auto-detects the body type:
 
