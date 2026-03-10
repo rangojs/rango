@@ -855,4 +855,81 @@ test.describe("app-middleware (production)", () => {
       page.locator('[data-testid="middleware-test-title"]'),
     ).toBeVisible();
   });
+
+  test("cookie middleware should set and increment visit count in production", async ({
+    page,
+  }) => {
+    // First visit
+    const response1Promise = page.waitForResponse(
+      (response) =>
+        response.url().includes("/middleware-test/cookies") &&
+        response.status() === 200,
+    );
+
+    await page.goto(f.url("/middleware-test/cookies"));
+    const response1 = await response1Promise;
+
+    const allHeaders1 = await response1.allHeaders();
+    const setCookie1 = allHeaders1["set-cookie"];
+    expect(setCookie1).toBeDefined();
+    expect(setCookie1).toContain("visit-count=1");
+
+    await waitForHydration(page);
+    await expect(page.locator('[data-testid="visit-count"]')).toContainText(
+      "1",
+    );
+
+    // Second visit - cookie should be incremented
+    const response2Promise = page.waitForResponse(
+      (response) =>
+        response.url().includes("/middleware-test/cookies") &&
+        response.status() === 200,
+    );
+
+    await page.reload();
+    const response2 = await response2Promise;
+
+    const allHeaders2 = await response2.allHeaders();
+    const setCookie2 = allHeaders2["set-cookie"];
+    expect(setCookie2).toContain("visit-count=2");
+
+    await waitForHydration(page);
+    await expect(page.locator('[data-testid="visit-count"]')).toContainText(
+      "2",
+    );
+  });
+
+  test("auth middleware should allow access with cookie in production", async ({
+    page,
+    context,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await context.addCookies([
+      {
+        name: "auth-token",
+        value: "valid-token",
+        domain: "localhost",
+        path: "/",
+      },
+    ]);
+
+    await page.goto(f.url("/middleware-test/protected"));
+    await expect(page).toHaveURL(/\/middleware-test\/protected$/);
+
+    await waitForHydration(page);
+    await expect(page.locator('[data-testid="protected-title"]')).toBeVisible();
+    await expect(page.locator('[data-testid="user-id"]')).toContainText("123");
+    await expect(page.locator('[data-testid="user-name"]')).toContainText(
+      "TestUser",
+    );
+  });
+
+  // Intercept middleware: intentionally dev-only.
+  // Intercept navigations require client-side SPA navigation context (previous URL,
+  // intercept source header) that is not meaningful for a direct production page load.
+
+  // Loader middleware: intentionally dev-only.
+  // Loader fetch paths use internal _rsc_loader query params that are Vite dev server
+  // specific and not representative of the production loader resolution path.
 });
