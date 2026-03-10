@@ -472,6 +472,13 @@ export function createRouterDiscoveryPlugin(
         ): boolean => {
           if (!isGeneratedRouteFile(filePath)) return false;
           if (consumeSelfGenWrite(s, filePath)) return true;
+          // In Cloudflare dev (no module runner), perRouterManifests is never
+          // refreshed after HMR so regenerateGeneratedRouteFiles() would use
+          // stale data and revert user edits. Source files own route state;
+          // gen files are derived output. Skip regeneration and let the next
+          // source-file change rebuild them from the static parser.
+          const hasRunner = !!(server.environments as any)?.rsc?.runner;
+          if (!hasRunner) return true;
           regenerateGeneratedRouteFiles();
           return true;
         };
