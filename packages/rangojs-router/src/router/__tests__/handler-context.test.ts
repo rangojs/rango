@@ -1,4 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { getSearchSchemaMock, isRouteRootScopedMock } = vi.hoisted(() => ({
+  getSearchSchemaMock: vi.fn(() => undefined),
+  isRouteRootScopedMock: vi.fn((): boolean | undefined => undefined),
+}));
 
 // Mock dependencies before importing the module under test
 vi.mock("../../server/request-context.js", () => ({
@@ -7,7 +12,8 @@ vi.mock("../../server/request-context.js", () => ({
 }));
 
 vi.mock("../../route-map-builder.js", () => ({
-  getSearchSchema: () => undefined,
+  getSearchSchema: getSearchSchemaMock,
+  isRouteRootScoped: isRouteRootScopedMock,
 }));
 
 import {
@@ -17,6 +23,13 @@ import {
   createReverseFunction,
   stripInternalParams,
 } from "../handler-context";
+
+beforeEach(() => {
+  getSearchSchemaMock.mockReset();
+  getSearchSchemaMock.mockReturnValue(undefined);
+  isRouteRootScopedMock.mockReset();
+  isRouteRootScopedMock.mockReturnValue(undefined);
+});
 
 /**
  * Helper to build a minimal HandlerContext for testing search param behavior.
@@ -164,6 +177,21 @@ describe("createHandlerContext routeName", () => {
     expect(ctx.routeName).toBeUndefined();
   });
 
+  it("should set routeName to undefined for a route inside a hidden include scope", () => {
+    const url = new URL("http://localhost/admin/users");
+    const ctx = createHandlerContext(
+      {},
+      new Request(url.href),
+      url.searchParams,
+      "/admin/users",
+      url,
+      {},
+      {},
+      "$prefix_0.users",
+    );
+    expect(ctx.routeName).toBeUndefined();
+  });
+
   it("should set routeName to undefined when no routeName is provided", () => {
     const url = new URL("http://localhost/test");
     const ctx = createHandlerContext(
@@ -189,6 +217,51 @@ describe("createHandlerContext routeName", () => {
       "magazine.article",
     );
     expect(ctx.routeName).toBe("magazine.article");
+  });
+
+  it("captures rootScoped eagerly so same route names stay isolated across routers", () => {
+    const url = new URL("http://localhost/flat/sub/42");
+    const routeMap = {
+      flatIndex: "/flat",
+      "sub.detail": "/flat/sub/:id",
+      "sub.index": "/flat/sub",
+    };
+
+    // Simulate two routers reusing the same route name with different scope
+    // semantics. The first one is root-scoped (flattened mount), the second
+    // one is not (named mount boundary).
+    isRouteRootScopedMock.mockReturnValueOnce(true).mockReturnValueOnce(false);
+
+    const rootScopedCtx = createHandlerContext(
+      { id: "42" },
+      new Request(url.href),
+      url.searchParams,
+      "/flat/sub/42",
+      url,
+      {},
+      routeMap,
+      "sub.detail",
+    );
+    const namedScopedCtx = createHandlerContext(
+      { id: "42" },
+      new Request(url.href),
+      url.searchParams,
+      "/flat/sub/42",
+      url,
+      {},
+      routeMap,
+      "sub.detail",
+    );
+
+    expect(isRouteRootScopedMock).toHaveBeenCalledTimes(2);
+
+    // Changing the global registry afterward must not affect the already
+    // constructed reverse functions.
+    isRouteRootScopedMock.mockReturnValue(undefined);
+
+    expect(rootScopedCtx.reverse(".flatIndex")).toBe("/flat");
+    expect(() => namedScopedCtx.reverse(".flatIndex")).toThrow("Unknown route");
+    expect(isRouteRootScopedMock).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -326,6 +399,92 @@ describe("createReverseFunction", () => {
         tenantId: "hello world",
       });
       expect(reverse(".settings")).toBe("/tenant/hello%20world/settings");
+    });
+  });
+
+  describe('dot-local reverse with { name: "" } (root-scope fallback)', () => {
+    // Simulates include("/flat", patterns, { name: "" })
+    // Children are registered with bare names at root scope.
+    const flatRouteMap: Record<string, string> = {
+      flatIndex: "/flat",
+      flatDetail: "/flat/:id",
+      otherRoute: "/other",
+    };
+
+    it("should resolve dot-local name to root-scope sibling", () => {
+      const reverse = createReverseFunction(flatRouteMap, "flatIndex");
+      expect(reverse(".flatDetail", { id: "42" })).toBe("/flat/42");
+    });
+
+    it("should resolve dot-local back to index from sibling", () => {
+      const reverse = createReverseFunction(flatRouteMap, "flatDetail", {
+        id: "42",
+      });
+      expect(reverse(".flatIndex")).toBe("/flat");
+    });
+
+    it("should resolve dot-local to any root-scope route", () => {
+      const reverse = createReverseFunction(flatRouteMap, "flatIndex");
+      expect(reverse(".otherRoute")).toBe("/other");
+    });
+
+    it("should throw for unknown dot-local name at root scope", () => {
+      const reverse = createReverseFunction(flatRouteMap, "flatIndex");
+      expect(() => reverse(".nonExistent")).toThrow(
+        'Unknown route: ".nonExistent"',
+      );
+    });
+  });
+
+  describe('dot-local reverse with { name: "" } + nested { name: "sub" }', () => {
+    // Simulates include("/flat", patterns, { name: "" }) where patterns
+    // contain a nested include("/sub", subPatterns, { name: "sub" }).
+    // Routes from the nested include get dotted names (sub.detail, sub.index)
+    // but are still at root scope because the outer include is { name: "" }.
+    const flatWithNestedMap: Record<string, string> = {
+      flatIndex: "/flat",
+      "sub.detail": "/flat/sub/:id",
+      "sub.index": "/flat/sub",
+    };
+
+    it("should resolve dot-local from dotted route to bare sibling at root", () => {
+      // From sub.detail, .flatIndex should resolve — both are at root scope.
+      // rootScoped=true because the outer include is { name: "" }.
+      const reverse = createReverseFunction(
+        flatWithNestedMap,
+        "sub.detail",
+        {},
+        true,
+      );
+      expect(reverse(".flatIndex")).toBe("/flat");
+    });
+
+    it("should resolve dot-local from dotted route to dotted sibling", () => {
+      // From sub.detail, .index resolves via prefixed lookup (sub.index)
+      const reverse = createReverseFunction(flatWithNestedMap, "sub.detail");
+      expect(reverse(".index")).toBe("/flat/sub");
+    });
+
+    it("should resolve dot-local from bare route to dotted sibling", () => {
+      // From flatIndex, .sub.detail resolves via root fallback
+      const reverse = createReverseFunction(
+        flatWithNestedMap,
+        "flatIndex",
+        {},
+        true,
+      );
+      expect(reverse(".sub.detail", { id: "42" })).toBe("/flat/sub/42");
+    });
+
+    it("should NOT resolve cross-scope from a named mount", () => {
+      // Same route map, but rootScoped=false (simulates { name: "magazine" })
+      const reverse = createReverseFunction(
+        flatWithNestedMap,
+        "sub.detail",
+        {},
+        false,
+      );
+      expect(() => reverse(".flatIndex")).toThrow("Unknown route");
     });
   });
 });

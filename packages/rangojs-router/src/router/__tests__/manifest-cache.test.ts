@@ -3,6 +3,11 @@ import { createElement } from "react";
 import { getContext, RSCRouterContext } from "../../server/context.js";
 import { loadManifest, clearManifestCache } from "../manifest.js";
 import type { RouteEntry } from "../../types.js";
+import { urls } from "../../urls.js";
+import {
+  isRouteRootScoped,
+  clearAllRouterData,
+} from "../../route-map-builder.js";
 
 /**
  * Tests for the module-level manifest cache in loadManifest().
@@ -214,5 +219,101 @@ describe("manifest module-level cache", () => {
         expect(handlerSpy).toHaveBeenCalledTimes(2);
       },
     );
+  });
+});
+
+describe("loadManifest rootScoped propagation for lazy entries", () => {
+  beforeEach(() => {
+    clearManifestCache();
+    clearAllRouterData();
+  });
+
+  it("propagates rootScoped=true from lazyContext through runWithStore", async () => {
+    // Simulate { name: "" } + nested { name: "sub" }: lazyContext carries rootScoped=true
+    const lazyPatterns = urls(({ path }) => [
+      path("/", () => createElement("div"), { name: "index" }),
+      path("/:id", () => createElement("div"), { name: "detail" }),
+    ]);
+
+    const entry: RouteEntry = {
+      prefix: "/flat/sub",
+      staticPrefix: "/flat/sub",
+      routes: {} as any,
+      handler: lazyPatterns.handler,
+      mountIndex: 0,
+      lazy: true,
+      lazyPatterns,
+      lazyContext: {
+        urlPrefix: "",
+        namePrefix: "sub",
+        parent: null,
+        counters: {},
+        rootScoped: true,
+      },
+      lazyEvaluated: false,
+    } as unknown as RouteEntry;
+
+    await RSCRouterContext.run(
+      {
+        manifest: new Map(),
+        namespace: "",
+        parent: null,
+        counters: {},
+        patterns: new Map(),
+        patternsByPrefix: new Map(),
+        trailingSlash: new Map(),
+        searchSchemas: new Map(),
+      },
+      async () => {
+        await loadManifest(entry, "sub.index", "/flat/sub", undefined, false);
+      },
+    );
+
+    // Routes registered via path() inside the lazy handler should inherit rootScoped=true
+    expect(isRouteRootScoped("sub.index")).toBe(true);
+    expect(isRouteRootScoped("sub.detail")).toBe(true);
+  });
+
+  it("propagates rootScoped=false from lazyContext (named mount boundary)", async () => {
+    // Simulate direct { name: "ns" }: lazyContext carries rootScoped=false
+    const lazyPatterns = urls(({ path }) => [
+      path("/", () => createElement("div"), { name: "child" }),
+    ]);
+
+    const entry: RouteEntry = {
+      prefix: "/x",
+      staticPrefix: "/x",
+      routes: {} as any,
+      handler: lazyPatterns.handler,
+      mountIndex: 0,
+      lazy: true,
+      lazyPatterns,
+      lazyContext: {
+        urlPrefix: "",
+        namePrefix: "ns",
+        parent: null,
+        counters: {},
+        rootScoped: false,
+      },
+      lazyEvaluated: false,
+    } as unknown as RouteEntry;
+
+    await RSCRouterContext.run(
+      {
+        manifest: new Map(),
+        namespace: "",
+        parent: null,
+        counters: {},
+        patterns: new Map(),
+        patternsByPrefix: new Map(),
+        trailingSlash: new Map(),
+        searchSchemas: new Map(),
+      },
+      async () => {
+        await loadManifest(entry, "ns.child", "/x", undefined, false);
+      },
+    );
+
+    expect(isRouteRootScoped("ns.child")).toBe(false);
   });
 });

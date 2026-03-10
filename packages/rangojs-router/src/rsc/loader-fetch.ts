@@ -18,7 +18,11 @@ import {
   createReverseFunction,
   stripInternalParams,
 } from "../router/handler-context.js";
-import { getGlobalRouteMap, getSearchSchema } from "../route-map-builder.js";
+import {
+  getGlobalRouteMap,
+  getSearchSchema,
+  isRouteRootScoped,
+} from "../route-map-builder.js";
 import { parseSearchParams } from "../search-params.js";
 import {
   createResponseWithMergedHeaders,
@@ -142,6 +146,9 @@ export async function handleLoaderFetch<TEnv>(
               getGlobalRouteMap(),
               reqCtx._routeName,
               mergedParams,
+              reqCtx._routeName
+                ? isRouteRootScoped(reqCtx._routeName)
+                : undefined,
             ),
             ...(loaderFormData ? { formData: loaderFormData } : {}),
           };

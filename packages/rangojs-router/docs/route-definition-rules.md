@@ -141,6 +141,28 @@ Included patterns use the full `urls()` builder, so they support `layout()`,
 chains stack: parent layout middleware runs first, then middleware from within
 the included patterns.
 
+### Name scoping
+
+The `name` option determines child route visibility:
+
+- **`{ name: "blog" }`** — children are prefixed (`blog.index`, `blog.post`).
+  Visible in generated route types, globally reversible.
+- **`{ name: "" }`** — children merge into the parent namespace with no prefix.
+  Equivalent to defining those routes inline. Both global `reverse("child")` and
+  dot-local `reverse(".child")` work (routes are at root scope).
+- **Omitted** — children get a private `$prefix_N` scope. Hidden from the
+  generated route map and global `reverse()`. Only dot-local reverse
+  (`reverse(".child")`) works from handlers inside the mounted module.
+
+Without a name, `include()` is a composition mechanism for URL mounting
+without polluting the global route namespace. To make child names available
+globally, always pass an explicit `name` (even `""` for flat merging).
+
+**`{ name: "" }` is flattening, not isolation.** Flattened routes behave as if
+defined inline at the include site — dot-local reverse (`.name`) can reach any
+sibling route at root scope, including routes from other `{ name: "" }` mounts.
+If you need module-level isolation, omit the `name` option or use a namespace.
+
 ## TypeScript Coverage
 
 Some rules are enforced at the type level via branded union types (`RouteUseItem`,

@@ -136,6 +136,13 @@ export async function loadManifest(
       Store.cacheProfiles = entryProfiles;
     }
 
+    // Propagate rootScoped from lazyContext so that routes inside
+    // nested { name: "sub" } under { name: "" } keep inherited root scope
+    // when the manifest is rebuilt on each request.
+    if (lazyContext && (lazyContext as any).rootScoped !== undefined) {
+      Store.rootScoped = (lazyContext as any).rootScoped;
+    }
+
     const handlerExecStart = performance.now();
     const useItems = await getContext().runWithStore(
       Store,
