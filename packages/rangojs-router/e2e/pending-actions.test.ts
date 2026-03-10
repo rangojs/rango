@@ -327,3 +327,109 @@ test.describe("pending-actions-navigation", () => {
     ).not.toBeVisible();
   });
 });
+
+// ============================================================================
+// Production build
+// ============================================================================
+
+test.describe("pending-actions-navigation (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("action on intercept, navigate to detail, action completes - should not corrupt intercept cache", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
+    await productLink.click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+
+    const incrementButton = page.locator(
+      '[data-testid="modal-quantity-control"] button:has-text("+")',
+    );
+    await expect(incrementButton).toHaveCount(1);
+    await incrementButton.click();
+
+    await page.locator('[data-testid="view-full-details"]').click();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
+
+    await page.waitForTimeout(600);
+
+    await goBack(page);
+    await expect(
+      page.locator('[data-testid="view-full-details"]'),
+    ).toBeVisible();
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+  });
+
+  test("action on intercept, close modal (back), action completes - index should remain intact", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
+    await productLink.click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+
+    const incrementButton = page.locator(
+      '[data-testid="modal-quantity-control"] button:has-text("+")',
+    );
+    await expect(incrementButton).toHaveCount(1);
+    await incrementButton.click();
+
+    await goBack(page);
+
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
+
+    await page.waitForTimeout(600);
+
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
+  });
+
+  test("streaming action revalidation should be ignored after navigating away", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/product/product-a"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+
+    const streamingButton = page.locator('[data-testid="streaming-btn"]');
+    await streamingButton.click();
+    await expect(streamingButton).toBeDisabled();
+
+    const homeLink = page.locator('[data-testid="nav-home"]');
+    await homeLink.click();
+
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+
+    await page.waitForTimeout(4000);
+
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).not.toBeVisible();
+    await expect(
+      page.locator('[data-testid="streaming-btn-result"]'),
+    ).not.toBeVisible();
+  });
+});

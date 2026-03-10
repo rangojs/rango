@@ -309,3 +309,168 @@ test.describe("route-resolution", () => {
     });
   });
 });
+
+// ============================================================================
+// Production build
+// ============================================================================
+
+test.describe("route-resolution (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.describe("basic-routes", () => {
+    test("index route should resolve at /", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      await expect(page.locator('[data-testid="index-page"]')).toBeVisible();
+      await expect(page.locator('[data-testid="page-title"]')).toContainText(
+        "Products",
+      );
+    });
+
+    test("blog index should resolve at /blog", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/blog"));
+      await waitForHydration(page);
+
+      await expect(
+        page.locator('[data-testid="blog-index-page"]'),
+      ).toBeVisible();
+      await expect(page.locator('[data-testid="blog-title"]')).toContainText(
+        "Blog",
+      );
+    });
+  });
+
+  test.describe("trailing-slash", () => {
+    test("blog index should resolve at /blog/ (with trailing slash)", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/blog/"));
+      await waitForHydration(page);
+
+      await expect(
+        page.locator('[data-testid="blog-index-page"]'),
+      ).toBeVisible();
+    });
+
+    test("product detail should resolve with trailing slash", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/product/product-a/"));
+      await waitForHydration(page);
+
+      await expect(
+        page.locator('[data-testid="product-detail-page"]'),
+      ).toBeVisible();
+      await expect(page.locator('[data-testid="product-name"]')).toContainText(
+        "Product A",
+      );
+    });
+  });
+
+  test.describe("trailing-slash-config", () => {
+    test("trailingSlash: ignore - should match /ts-ignore and /ts-ignore/", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/ts-ignore"));
+      await waitForHydration(page);
+      await expect(
+        page.locator('[data-testid="ts-ignore-page"]'),
+      ).toBeVisible();
+
+      await page.goto(f.url("/ts-ignore/"));
+      await waitForHydration(page);
+      await expect(
+        page.locator('[data-testid="ts-ignore-page"]'),
+      ).toBeVisible();
+    });
+
+    test("trailingSlash: always - should redirect /ts-always to /ts-always/", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/ts-always"));
+      await waitForHydration(page);
+
+      expect(page.url()).toContain("/ts-always/");
+      await expect(
+        page.locator('[data-testid="ts-always-page"]'),
+      ).toBeVisible();
+    });
+
+    test("trailingSlash: never - should redirect /ts-never/ to /ts-never", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/ts-never/"));
+      await waitForHydration(page);
+
+      expect(page.url()).not.toContain("/ts-never/");
+      expect(page.url()).toContain("/ts-never");
+      await expect(page.locator('[data-testid="ts-never-page"]')).toBeVisible();
+    });
+  });
+
+  test.describe("dynamic-segments", () => {
+    test("product detail should resolve dynamic :productId", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/product/product-a"));
+      await waitForHydration(page);
+
+      await expect(
+        page.locator('[data-testid="product-detail-page"]'),
+      ).toBeVisible();
+      await expect(page.locator('[data-testid="product-name"]')).toContainText(
+        "Product A",
+      );
+    });
+
+    test("blog post should handle various postId values", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/blog/my-awesome-post"));
+      await waitForHydration(page);
+      await expect(
+        page.locator('[data-testid="blog-post-title"]'),
+      ).toContainText("Post: my-awesome-post");
+    });
+  });
+
+  test.describe("spa-navigation", () => {
+    test("SPA navigation should work from blog index to post", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/blog"));
+      await waitForHydration(page);
+
+      await page.locator('[data-testid="blog-post-link-1"]').click();
+
+      await expect(
+        page.locator('[data-testid="blog-post-page"]'),
+      ).toBeVisible();
+      await expect(
+        page.locator('[data-testid="blog-post-title"]'),
+      ).toContainText("Post: post-1");
+    });
+  });
+});
