@@ -1,7 +1,11 @@
 # Test Quality Baseline (Executed) and Action Backlog
 
-Date: 2026-03-05 (updated)
+Date: 2026-03-10 (updated)
 Status: Detailed inventory complete
+
+Note: this document started as a 2026-03-05 executed baseline. The production
+coverage section and backlog notes below were refreshed on 2026-03-10 after
+subsequent stabilization work landed.
 
 ## Purpose
 
@@ -100,31 +104,46 @@ Cross-suite (top 5):
 
 ## Production Coverage Gaps
 
-Router e2e files with dev-only coverage (no `mode: "build"` block):
+Router e2e files with no explicit production coverage (`mode: "build"` block or
+`(production)` suite):
 
-**28 files** lack production test coverage. Notable gaps:
+**24 files** currently lack explicit production coverage. Highest-signal
+remaining gaps:
 
-- `cache.test.ts` (1,401 lines, 18 sleeps)
-- `use-cache.test.ts` (1,301 lines)
-- `use-loader-hooks.test.ts` (995 lines)
-- `location-state.test.ts` (952 lines)
-- `mw-chain.test.ts` (936 lines)
-- `app-middleware.test.ts` (820 lines)
-- `handle-meta.test.ts` (817 lines)
-- `use-router.test.ts` (614 lines)
-- `streaming-actions.test.ts` (313 lines)
-- `pending-actions.test.ts` (312 lines)
-- `route-resolution.test.ts` (311 lines)
-- `content-negotiation.test.ts` (181 lines)
-- `error-boundary.test.ts` (205 lines)
-- `handler-first.test.ts` (151 lines)
-- `theme.test.ts` (381 lines)
-- `progressive-enhancement.test.ts` (239 lines)
-- `loader-cookie.test.ts` (420 lines)
-- `response-cache.test.ts` (398 lines)
-- - 10 smaller files
+- `handler-first.test.ts` (fully dev-only)
+- `handle-meta.test.ts`
+- `pending-actions.test.ts`
+- `response-handler.test.ts`
+- `revalidation.test.ts`
+- `route-resolution.test.ts`
+- `streaming-actions.test.ts`
+- `theme.test.ts`
+- `transform-cases.test.ts`
+- `include-middleware.test.ts`
+- `navigation-loading.test.ts`
+- `navigation-hooks.test.ts`
+- `handle-breadcrumbs.test.ts`
+- `cache-status.test.ts`
 
-Excluded from gap (dev-specific by design): HMR tests, bundle-analysis, hydration-detection.
+Partially covered but still missing full dev/build parity:
+
+- `cache.test.ts` — production covers loader/status/response-type cases, but
+  server-log assertions, intercept-cache behavior, `useLoader` registration,
+  and proactive caching remain dev-only
+- `app-middleware.test.ts` — production covers core middleware, redirects,
+  short-circuit, and W5 behavior, but cookie, intercept, and loader-middleware
+  scenarios remain dev-only
+
+Production coverage gaps that were closed after the original snapshot:
+
+- `use-cache.test.ts`
+- `mw-chain.test.ts`
+- `response-cache.test.ts`
+- `loader-cookie.test.ts`
+
+Excluded from the meaningful gap list because they are dev-specific by design:
+HMR tests, `bundle-analysis.test.ts`, `connection-warmup.test.ts`,
+`hydration-detection.test.ts`.
 
 Files with production-only coverage (inverted gap):
 
@@ -199,7 +218,27 @@ Files:
 - `tests/vite-rsc-demo/e2e/prefetch.test.ts` (17 sleeps)
 - `tests/vite-rsc-demo/e2e/revalidation.test.ts` (14 sleeps)
 
-## A3: Assertion Hardening in High-Risk Router Specs
+## A3: Finish Remaining Production Coverage Parity
+
+Objective: close the real production gaps left after the earlier stabilization
+pass instead of re-targeting files that already have build-mode coverage.
+
+Files:
+
+- `packages/rangojs-router/e2e/handler-first.test.ts`
+- `packages/rangojs-router/e2e/cache.test.ts` (remaining parity gaps only)
+- `packages/rangojs-router/e2e/app-middleware.test.ts` (remaining parity gaps only)
+- `packages/rangojs-router/e2e/response-handler.test.ts`
+- `packages/rangojs-router/e2e/revalidation.test.ts`
+
+Definition of done:
+
+- Each file has either explicit build-mode coverage or a documented reason it is
+  intentionally dev-only.
+- Dev/build parity is checked for the contract being asserted, not just happy-path
+  smoke coverage.
+
+## A4: Assertion Hardening in High-Risk Router Specs
 
 Objective: Reduce false positives by validating order/count/negative paths.
 
@@ -210,7 +249,7 @@ Files:
 - `packages/rangojs-router/e2e/handle-meta.test.ts`
 - `packages/rangojs-router/e2e/use-loader-hooks.test.ts`
 
-## A4: Security and Boundary Coverage Expansion
+## A5: Security and Boundary Coverage Expansion
 
 Targets:
 
@@ -221,11 +260,11 @@ Targets:
 
 Status: Partially done in PR #280 (cache key tests, routeParams test, URL parsing hardening).
 
-## A5: Helper Unification
+## A6: Helper Unification
 
 Targets: all `e2e/helper.ts` files
 
-## A6: Spec Decomposition for Maintainability
+## A7: Spec Decomposition for Maintainability
 
 Targets:
 
@@ -233,7 +272,7 @@ Targets:
 - `packages/rangojs-router/e2e/navigation.test.ts` (1,536 lines)
 - `packages/rangojs-router/e2e/use-cache.test.ts` (1,301 lines)
 
-## A7: CI Lane Optimization
+## A8: CI Lane Optimization
 
 Targets: Playwright project/lane strategy
 
@@ -246,3 +285,4 @@ Targets: Playwright project/lane strategy
 5. A5
 6. A6
 7. A7
+8. A8
