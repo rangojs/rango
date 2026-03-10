@@ -6,13 +6,10 @@
  */
 
 import type { LoaderFn } from "../types.js";
-import type { MiddlewareFn } from "../router/middleware.js";
-import { getFetchableLoader } from "./fetchable-loader-store.js";
-
-interface RegisteredLoader {
-  fn: LoaderFn<any, any, any>;
-  middleware: MiddlewareFn[];
-}
+import {
+  getFetchableLoader,
+  type LoaderRegistryEntry,
+} from "./fetchable-loader-store.js";
 
 // Server-side cache - maps loader $$id to function and middleware
 // This is a CACHE populated by getLoaderLazy() when loaders are first accessed.
@@ -21,7 +18,7 @@ interface RegisteredLoader {
 // 1. Avoid repeated lookups/imports for the same loader
 // 2. Support lazy loading in production (loaders imported on-demand)
 // 3. Provide a stable reference for the RSC handler
-const loaderRegistry = new Map<string, RegisteredLoader>();
+const loaderRegistry = new Map<string, LoaderRegistryEntry>();
 
 // Lazy import map - set by the loader manifest
 // Maps loader $$id to a function that imports the loader module
@@ -38,28 +35,6 @@ export function setLoaderImports(
 }
 
 /**
- * Register a fetchable loader by $$id
- * Called by createLoader when fetchable option is provided
- */
-export function registerLoader(
-  id: string,
-  fn: LoaderFn<any, any, any>,
-  middleware: MiddlewareFn[] = [],
-): void {
-  // Always update the registry entry. During HMR, the module is re-executed
-  // with the new loader function, so we must replace the stale reference.
-  loaderRegistry.set(id, { fn, middleware });
-}
-
-/**
- * Get a registered loader by $$id (synchronous)
- * Returns undefined if loader is not registered
- */
-export function getLoader(id: string): RegisteredLoader | undefined {
-  return loaderRegistry.get(id);
-}
-
-/**
  * Get a loader by $$id, loading it lazily if needed
  * This is the primary method for the RSC handler to get loaders
  *
@@ -68,7 +43,7 @@ export function getLoader(id: string): RegisteredLoader | undefined {
  */
 export async function getLoaderLazy(
   id: string,
-): Promise<RegisteredLoader | undefined> {
+): Promise<LoaderRegistryEntry | undefined> {
   // Check if already cached in main registry
   const existing = loaderRegistry.get(id);
   if (existing) {
@@ -129,20 +104,6 @@ export async function getLoaderLazy(
 }
 
 /**
- * Check if a loader is registered by $$id
- */
-export function hasLoader(id: string): boolean {
-  return loaderRegistry.has(id) || getFetchableLoader(id) !== undefined;
-}
-
-/**
- * Get all registered loader IDs (for debugging)
- */
-export function getRegisteredLoaderIds(): string[] {
-  return Array.from(loaderRegistry.keys());
-}
-
-/**
  * Register a loader by its $$id (injected by Vite plugin)
  * This is called during module loading to cache loaders
  */
@@ -163,6 +124,10 @@ export function registerLoaderById(loader: {
 
   // Fall back to using fn from the loader object (non-fetchable loaders)
   if (loader.fn) {
-    loaderRegistry.set(loader.$$id, { fn: loader.fn, middleware: [] });
+    loaderRegistry.set(loader.$$id, {
+      fn: loader.fn,
+      middleware: [],
+      fetchable: false,
+    });
   }
 }

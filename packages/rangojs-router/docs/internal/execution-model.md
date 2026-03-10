@@ -186,6 +186,34 @@ settles independently. Read probes (reading context variables) are safe
 throughout streaming; mutation APIs (like handle pushes) have their own
 deadlines documented in `handle-store.ts`.
 
+## Fetchable Loader Middleware
+
+Fetchable loaders accept per-loader middleware via the object form:
+
+```ts
+createLoader(fn, { middleware: [authMw, rateLimitMw] });
+```
+
+This middleware runs **only** on `_rsc_loader` fetch requests (client-initiated
+`load()` / `useFetchLoader()` calls). It does **not** run during:
+
+- SSR render-time `ctx.use(loader)` execution
+- Navigation-triggered loader resolution
+- Build-time pre-rendering
+
+The execution path is:
+
+```text
+_rsc_loader request
+  -> global middleware (router.use)
+  -> fetchable loader middleware (per-loader)
+    -> loader function
+```
+
+This is intentional: during SSR, the loader runs inside the route middleware
+scope and inherits its protections. The per-loader middleware exists to guard
+the standalone fetch endpoint, which bypasses route middleware entirely.
+
 ## Non-Guarantees
 
 - Route middleware is not an action guard.

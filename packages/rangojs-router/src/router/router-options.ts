@@ -535,4 +535,53 @@ export interface RSCRouterOptions<TEnv = any> {
    * ```
    */
   ssr?: SSROptions<TEnv>;
+
+  /**
+   * Cross-origin request protection for server actions, loader fetches,
+   * and progressive enhancement form submissions.
+   *
+   * When enabled, the router validates that the request's Origin header
+   * (or Referer fallback) matches the Host before executing actions,
+   * loaders, or PE submissions. Requests without Origin/Referer are
+   * allowed (same-origin navigations, non-browser clients).
+   *
+   * The built-in check compares Origin against the Host header and
+   * url.protocol. It does NOT trust X-Forwarded-Host/Proto headers
+   * (they are client-controllable without a trusted proxy). On standard
+   * deployments (Cloudflare Workers, Node behind nginx/caddy) the Host
+   * header is already set to the public-facing host by the platform or
+   * proxy. For non-standard proxy setups where Host differs from the
+   * public origin, use a custom function that reads the appropriate
+   * forwarded headers from your trusted proxy.
+   *
+   * - `true` (default) -- enable built-in origin validation
+   * - `false` -- disable
+   * - function -- full custom control with access to env, phase,
+   *   and the built-in check via `ctx.defaultCheck()`
+   *
+   * The callback receives `OriginCheckContext` with `request`, `url`,
+   * `env`, `routerId`, `phase` ("action" | "loader" | "pe-form"),
+   * and `defaultCheck()`. Return `true` to allow, `false` for default
+   * 403 rejection, or a `Response` for custom rejection.
+   *
+   * @default true
+   *
+   * @example Trusted proxy with X-Forwarded-Host
+   * ```ts
+   * createRouter({
+   *   originCheck({ request, url, env, defaultCheck }) {
+   *     if (env.TRUST_PROXY) {
+   *       const origin = request.headers.get("origin");
+   *       if (!origin) return true;
+   *       if (origin === "null") return false;
+   *       const host = request.headers.get("x-forwarded-host")
+   *         ?? request.headers.get("host") ?? url.host;
+   *       return origin.toLowerCase() === `${url.protocol}//${host}`.toLowerCase();
+   *     }
+   *     return defaultCheck();
+   *   },
+   * });
+   * ```
+   */
+  originCheck?: import("../rsc/origin-guard.js").OriginCheckConfig<TEnv>;
 }

@@ -58,6 +58,7 @@ import {
   type ActionContinuation,
 } from "./server-action.js";
 import { handleLoaderFetch } from "./loader-fetch.js";
+import { checkRequestOrigin, type OriginCheckPhase } from "./origin-guard.js";
 import { handleRscRendering } from "./rsc-rendering.js";
 import { warnActionWithRouteMiddleware } from "./runtime-warnings.js";
 import {
@@ -494,8 +495,68 @@ export function createRSCHandler<
 
     const isAction =
       request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
+    const isLoaderFetch = url.searchParams.has("_rsc_loader");
     const actionId =
       request.headers.get("rsc-action") || url.searchParams.get("_rsc_action");
+
+    // Origin guard: reject cross-origin actions, loader fetches, and
+    // PE form submissions before any execution. Regular page navigations
+    // (GET without _rsc_loader/_rsc_action) are not affected.
+    const originPhase: OriginCheckPhase | null = isAction
+      ? "action"
+      : isLoaderFetch
+        ? "loader"
+        : request.method === "POST"
+          ? "pe-form"
+          : null;
+    if (originPhase) {
+      const originResult = await checkRequestOrigin(
+        request,
+        url,
+        router.originCheck,
+        env,
+        router.id,
+        originPhase,
+      );
+      if (originResult) {
+        const originError = new Error(
+          `Origin check rejected: ${request.headers.get("origin") ?? "none"} vs ${request.headers.get("host") ?? "none"}`,
+        );
+        originError.name = "OriginCheckError";
+
+        callOnError(originError, "origin", {
+          request,
+          url,
+          env,
+          handledByBoundary: false,
+          metadata: {
+            phase: originPhase,
+            origin: request.headers.get("origin"),
+            host: request.headers.get("host"),
+          },
+        });
+
+        try {
+          const routerCtx = getRouterContext();
+          if (routerCtx?.telemetry) {
+            safeEmit(resolveSink(routerCtx.telemetry), {
+              type: "request.origin-rejected" as const,
+              timestamp: performance.now(),
+              requestId: routerCtx.requestId,
+              method: request.method,
+              pathname: url.pathname,
+              phase: originPhase,
+              origin: request.headers.get("origin"),
+              host: request.headers.get("host"),
+            });
+          }
+        } catch {
+          // Router context may not be available
+        }
+
+        return originResult;
+      }
+    }
 
     // Get handle store from request context
     const handleStore = requireRequestContext()._handleStore;

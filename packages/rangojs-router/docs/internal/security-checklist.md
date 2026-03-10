@@ -66,6 +66,22 @@ transport behavior, or request/response ownership.
 - If the change touches redirects/cookies/headers, test both success and
   redirect/error paths.
 
+## Origin Guard (CSRF Protection)
+
+The `originCheck` option (default: `true`) rejects cross-origin requests to
+server actions, loader fetches, and PE form submissions. The guard compares
+the `Origin` header (or `Referer` fallback) against `Host` /
+`X-Forwarded-Host`. Requests without either header are allowed (same-origin
+navigations, non-browser clients).
+
+Implementation: `src/rsc/origin-guard.ts`, integrated in `src/rsc/handler.ts`
+at the top of `coreRequestHandler()`.
+
+Covered by:
+
+- Unit: `src/rsc/__tests__/origin-guard.test.ts`
+- E2E: `e2e/origin-guard.test.ts` (dev + production)
+
 ## Phase 5 Regression Coverage
 
 The following e2e suites were added during Phase 5 security hardening. Each
