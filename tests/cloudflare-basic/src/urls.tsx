@@ -43,6 +43,7 @@ import { transformCasesPatterns } from "./pages/transform-cases.js";
 import { compositionPatterns } from "./pages/composition.js";
 import { buildSkipPatterns } from "./pages/build-skip.js";
 import { prerenderCtxPatterns } from "./pages/prerender-ctx.js";
+import { handlerFirstPatterns } from "./pages/handler-first.js";
 import { createDocsPatterns } from "@shared/docs";
 import { docsArticles } from "./docs-content.js";
 import {
@@ -328,6 +329,11 @@ export const urlpatterns = urls(
         include("/build-skip", buildSkipPatterns, { name: "buildSkip" }),
         include("/prerender-ctx", prerenderCtxPatterns, {
           name: "prerenderCtx",
+        }),
+
+        // Handler-first execution order test
+        include("/handler-first", handlerFirstPatterns, {
+          name: "handlerFirst",
         }),
 
         // Prerender manifest introspection for e2e tests

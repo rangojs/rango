@@ -267,13 +267,21 @@ Success criteria:
 
 ## Near-Term Checklist
 
-- Keep the new middleware/PE/parallel scope contract synced across docs.
-- Continue building semantic matrix tests like `mw-chain`.
-- Keep producer/consumer partial revalidation rules explicit in docs and the
+Completed execution plan:
+
+- [Stability next steps plan](./stability-next-steps-plan.md) (all workstreams done)
+
+Near-term focus:
+
+- high-signal production parity gaps are closed (see execution plan for details)
+- keep middleware/PE/parallel scope docs synced with implementation
+- keep producer/consumer partial revalidation rules explicit in docs and the
   semantic matrix; only add a runtime warning if a hidden stale-read case is
-  concretely reproduced.
-- Expand debug output for segment revalidation decisions.
-- Write a reusable security checklist for actions, middleware, redirects, and cookies.
+  concretely reproduced
+- expand debug output for segment revalidation decisions when it improves
+  concrete debugging value
+- keep security and cache review work attached to regression coverage, not only
+  prose checklists
 
 ## Longer-Term Opportunities
 

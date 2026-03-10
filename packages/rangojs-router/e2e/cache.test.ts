@@ -413,6 +413,10 @@ test.describe("cache-loader-behavior (production)", () => {
   });
 });
 
+// Intentionally dev-only: these tests verify cache key differentiation
+// (intercept: vs doc: prefix) and hit/miss behavior via debug log assertions
+// that require INTERNAL_RANGO_DEBUG. The behavioral subset (modal renders,
+// loader data visible) is covered in the production block below.
 test.describe("cache-intercept-routes", () => {
   const f = useFixture({
     root: "./e2e/test-app",
@@ -613,6 +617,59 @@ test.describe("cache-intercept-routes", () => {
   });
 });
 
+// ============================================================================
+// Intercept cache behavioral verification (production)
+// ============================================================================
+
+test.describe("cache-intercept-routes (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+    isolatedServer: true,
+  });
+
+  test("intercept navigation renders modal with loader data", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/intercept"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("cache-intercept-index")).toBeVisible();
+
+    // Click link — triggers intercept (modal opens)
+    await page.getByTestId("cache-intercept-link-a").click();
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("cache-test-modal")).toBeVisible();
+    await expect(page.getByTestId("cache-test-modal-indicator")).toHaveText(
+      "Cache Test Intercept",
+    );
+
+    // Loader data is rendered in the intercept segment
+    const count = await page
+      .getByTestId("cache-test-modal-count")
+      .textContent();
+    expect(count).toContain("Count:");
+  });
+
+  test("direct navigation shows full detail page (not modal)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/intercept/item-b"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("cache-intercept-detail")).toBeVisible();
+  });
+});
+
+// ============================================================================
+// useLoader with loader() registration (dev)
+// ============================================================================
+
 test.describe("useLoader-with-loader-registration", () => {
   const f = useFixture({
     root: "./e2e/test-app",
@@ -706,6 +763,98 @@ test.describe("useLoader-with-loader-registration", () => {
   });
 });
 
+// ============================================================================
+// useLoader with loader() registration (production)
+// ============================================================================
+
+test.describe("useLoader-with-loader-registration (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+    isolatedServer: true,
+  });
+
+  test("useLoader works on direct navigation to detail page (regular route)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/useloader/item-a"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("useloader-intercept-detail")).toBeVisible();
+
+    await expect(page.getByTestId("detail-useloader-data")).toBeVisible();
+    const count = await page
+      .getByTestId("detail-useloader-data-count")
+      .textContent();
+    expect(count).toContain("Count:");
+  });
+
+  test("useLoader gets fresh data on each direct navigation (non-cached route)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/useloader/item-a"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("detail-useloader-data")).toBeVisible();
+
+    const firstCount = await page
+      .getByTestId("detail-useloader-data-count")
+      .textContent();
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await page.goto(f.url("/cache-test/useloader/item-a"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("detail-useloader-data")).toBeVisible();
+
+    const secondCount = await page
+      .getByTestId("detail-useloader-data-count")
+      .textContent();
+
+    expect(secondCount).not.toBe(firstCount);
+  });
+
+  test("useLoader in client component works on intercept with loader() registration", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/useloader"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("useloader-intercept-index")).toBeVisible();
+
+    await page.getByTestId("useloader-link-a").click();
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("useloader-modal")).toBeVisible();
+    await expect(page.getByTestId("useloader-modal-indicator")).toHaveText(
+      "useLoader Modal",
+    );
+
+    const count = await page.getByTestId("useloader-modal-count").textContent();
+    expect(count).toContain("Count:");
+
+    const message = await page
+      .getByTestId("useloader-modal-message")
+      .textContent();
+    expect(message).toBe("Intercept cache test data");
+  });
+});
+
+// ============================================================================
+// Proactive caching behavior (dev)
+// ============================================================================
+
+// Intentionally dev-only: these tests verify proactive cache population
+// and hit/miss behavior via debug log assertions (INTERNAL_RANGO_DEBUG).
+// The behavioral surface (layout renders correctly, navigation works after
+// proactive caching) is covered by cloudflare-basic production tests in
+// tests/cloudflare-basic/e2e/cache.test.ts.
 test.describe("proactive-caching", () => {
   const f = useFixture({
     root: "./e2e/test-app",

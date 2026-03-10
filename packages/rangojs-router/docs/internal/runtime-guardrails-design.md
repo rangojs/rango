@@ -1,5 +1,8 @@
 # Runtime Guardrails: Warning Design
 
+Status: Partial (W1, W3, W5 shipped; W2 reframed as docs/tests contract;
+W4, W6 deferred — see stability-roadmap.md Phase 3)
+
 Design doc for Phase 3 of stability-roadmap.md (line 126).
 Goal: dev-mode warnings that surface likely misuse before it ships.
 

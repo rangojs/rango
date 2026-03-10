@@ -2,7 +2,9 @@ import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
 
-test.describe("handler-first execution order", () => {
+// -- Dev mode ----------------------------------------------------------------
+
+test.describe("handler-first execution order (dev)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
@@ -42,7 +44,69 @@ test.describe("handler-first execution order", () => {
   });
 });
 
-test.describe("revalidate and cache mix", () => {
+// -- Production build --------------------------------------------------------
+
+test.describe("handler-first execution order (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("route handler ctx.set() is visible to layout via ctx.get()", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/handler-first"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("handler-first-title")).toHaveText(
+      "Handler First",
+    );
+    await expect(page.getByTestId("layout-get-value")).toHaveText(
+      "Layout got: from-handler",
+    );
+  });
+
+  test("route handler ctx.set() is visible to parallel via ctx.get()", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/handler-first"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("sidebar-get-value")).toHaveText(
+      "Sidebar got: from-handler",
+    );
+  });
+
+  test("cache scope: handler ctx.set() visible to parallel via SSR", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/handler-first/cache-scope"));
+    await waitForHydration(page);
+
+    const handlerTs = await page
+      .getByTestId("cache-scope-handler-ts")
+      .textContent();
+    const sidebarTs = await page
+      .getByTestId("cache-scope-sidebar-ts")
+      .textContent();
+
+    expect(handlerTs).toBeTruthy();
+    expect(sidebarTs).toBe(handlerTs);
+  });
+});
+
+// -- Revalidation + cache mix (dev-only) ------------------------------------
+// These tests exercise client navigation cache behavior with revalidate(() => true)
+// and cache({ ttl }) mixing. Dev-only because they require isolated server state
+// and test runtime cache semantics that are not meaningful in static build output.
+
+test.describe("revalidate and cache mix (dev)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",

@@ -311,3 +311,128 @@ test.describe("action-form-patterns", () => {
     ).toBeVisible();
   });
 });
+
+// ============================================================================
+// Production build
+// ============================================================================
+
+test.describe("streaming-actions (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.setTimeout(30000);
+
+  test("streaming action should show loading then complete on document load", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/product/product-a"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+
+    const button = page.locator('[data-testid="streaming-btn"]');
+    await expect(button).toBeVisible();
+
+    await button.click();
+
+    await expect(
+      page.locator('[data-testid="streaming-btn-result"]'),
+    ).toContainText("Completed", { timeout: 10000 });
+
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+  });
+
+  test("streaming action should work after SPA navigation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
+    await productLink.click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+
+    await page.locator('[data-testid="view-full-details"]').click();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+
+    const button = page.locator('[data-testid="streaming-btn"]');
+    await button.click();
+
+    await expect(
+      page.locator('[data-testid="streaming-btn-result"]'),
+    ).toContainText("Completed", { timeout: 10000 });
+
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+  });
+});
+
+test.describe("action-form-patterns (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("add to cart action should work on document load", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/product/product-a"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+
+    const button = page.locator('[data-testid="add-to-cart-btn"]');
+    await button.click();
+
+    await expect(
+      page.locator('[data-testid="add-to-cart-btn-result"]'),
+    ).toBeVisible();
+
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+  });
+
+  test("add to cart action should work after SPA navigation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
+    await productLink.click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await page.locator('[data-testid="view-full-details"]').click();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+
+    const button = page.locator('[data-testid="add-to-cart-btn"]');
+    await button.click();
+
+    await expect(
+      page.locator('[data-testid="add-to-cart-btn-result"]'),
+    ).toBeVisible();
+
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+  });
+});

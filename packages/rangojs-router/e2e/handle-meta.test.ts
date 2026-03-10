@@ -849,3 +849,249 @@ test.describe("handle-meta", () => {
     });
   });
 });
+
+// ============================================================================
+// Production build
+// ============================================================================
+
+test.describe("handle-meta (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.describe("default meta tags", () => {
+    test("should include default charSet and viewport", async ({ page }) => {
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      const charSet = await page.locator('meta[charset="utf-8"]');
+      await expect(charSet).toHaveCount(1);
+
+      const viewport = await page.locator('meta[name="viewport"]');
+      await expect(viewport).toHaveCount(1);
+      await expect(viewport).toHaveAttribute(
+        "content",
+        "width=device-width, initial-scale=1",
+      );
+    });
+
+    test("should have default title on home page", async ({ page }) => {
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      await expect(page).toHaveTitle("RSC Router Test App");
+    });
+  });
+
+  test.describe("route-specific meta tags", () => {
+    test("should update title on blog page", async ({ page }) => {
+      await page.goto(f.url("/blog"));
+      await waitForHydration(page);
+
+      await expect(page).toHaveTitle("Blog - RSC Router Test App");
+    });
+
+    test("should update title on blog post page", async ({ page }) => {
+      await page.goto(f.url("/blog/post-1"));
+      await waitForHydration(page);
+
+      await expect(page).toHaveTitle(
+        "Post post-1 - Blog - RSC Router Test App",
+      );
+    });
+  });
+
+  test.describe("streaming metadata", () => {
+    test("should update title after awaiting product data", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/product/product-a"));
+      await waitForHydration(page);
+
+      await expect(page).toHaveTitle("Product A - RSC Router Test App", {
+        timeout: 5000,
+      });
+    });
+
+    test("should include og:title after awaiting product data", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/product/product-a"));
+      await waitForHydration(page);
+
+      const ogTitle = await page.locator('meta[property="og:title"]');
+      await expect(ogTitle).toHaveCount(1);
+      await expect(ogTitle).toHaveAttribute("content", "Product A", {
+        timeout: 5000,
+      });
+    });
+  });
+
+  test.describe("SSR meta tags (no JavaScript)", () => {
+    const htmlHeaders = {
+      Accept: "text/html,application/xhtml+xml",
+    };
+
+    test("should include charset and viewport in initial HTML", async ({
+      request,
+    }) => {
+      const response = await request.get(f.url("/"), { headers: htmlHeaders });
+      const html = await response.text();
+
+      expect(html).toContain('<meta charSet="utf-8"');
+      expect((html.match(/<meta charSet="utf-8"/g) || []).length).toBe(1);
+      expect(html).toContain('<meta name="viewport"');
+    });
+
+    test("should include route-specific title in initial HTML", async ({
+      request,
+    }) => {
+      const response = await request.get(f.url("/blog"), {
+        headers: htmlHeaders,
+      });
+      const html = await response.text();
+
+      expect(html).toContain("<title>Blog - RSC Router Test App</title>");
+    });
+
+    test("should include awaited async meta in initial HTML (product page)", async ({
+      request,
+    }) => {
+      const response = await request.get(f.url("/product/product-a"), {
+        headers: htmlHeaders,
+      });
+      const html = await response.text();
+
+      expect(html).toContain("<title>Product A - RSC Router Test App</title>");
+      expect(html).toContain("First test product");
+      expect(html).toContain('property="og:title"');
+    });
+
+    test("should include JSON-LD structured data in initial HTML", async ({
+      request,
+    }) => {
+      const response = await request.get(f.url("/product/product-a"), {
+        headers: htmlHeaders,
+      });
+      const html = await response.text();
+
+      expect(html).toContain('type="application/ld+json"');
+      expect(html).toContain("https://schema.org");
+      expect(html).toContain('"@type":"Product"');
+    });
+  });
+
+  test.describe("title templates", () => {
+    test("should use default title when no child title is set", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/meta-template"));
+      await waitForHydration(page);
+
+      await expect(page).toHaveTitle("Test Site");
+    });
+
+    test("should apply template to child route title", async ({ page }) => {
+      await page.goto(f.url("/meta-template/child"));
+      await waitForHydration(page);
+
+      await expect(page).toHaveTitle("Child Page | Test Site");
+    });
+
+    test("should bypass template with absolute title", async ({ page }) => {
+      await page.goto(f.url("/meta-template/absolute"));
+      await waitForHydration(page);
+
+      await expect(page).toHaveTitle("Custom Absolute Title");
+    });
+  });
+
+  test.describe("meta unset", () => {
+    test("should unset specific meta tags", async ({ page }) => {
+      await page.goto(f.url("/meta-unset/child"));
+      await waitForHydration(page);
+
+      await expect(page).toHaveTitle("Parent Title");
+
+      const robots = page.locator('meta[name="robots"]');
+      await expect(robots).toHaveCount(0);
+
+      const ogImage = page.locator('meta[property="og:image"]');
+      await expect(ogImage).toHaveCount(0);
+    });
+  });
+
+  test.describe("meta merging behavior", () => {
+    test("deeply nested routes should merge correctly", async ({ page }) => {
+      await page.goto(f.url("/meta-merge/deep/nested"));
+      await waitForHydration(page);
+
+      await expect(page).toHaveTitle("Deep Nested Page");
+
+      const keywords = page.locator('meta[name="keywords"]');
+      await expect(keywords).toHaveCount(1);
+      await expect(keywords).toHaveAttribute("content", "root, test");
+
+      const author = page.locator('meta[name="author"]');
+      await expect(author).toHaveCount(1);
+      await expect(author).toHaveAttribute("content", "Middle Author");
+
+      const ogTitle = page.locator('meta[property="og:title"]');
+      await expect(ogTitle).toHaveCount(1);
+      await expect(ogTitle).toHaveAttribute("content", "Deep OG Title");
+    });
+
+    test("merging should work with SSR", async ({ request }) => {
+      const response = await request.get(f.url("/meta-merge/deep/nested"), {
+        headers: { Accept: "text/html,application/xhtml+xml" },
+      });
+      const html = await response.text();
+
+      expect(html).toContain("<title>Deep Nested Page</title>");
+      expect(html).toContain("root, test");
+      expect(html).toContain("Middle Author");
+      expect(html).toContain("Deep OG Title");
+    });
+  });
+
+  test.describe("handle passthrough to child RSC", () => {
+    test("should set meta from child RSC component", async ({ page }) => {
+      await page.goto(f.url("/handle-passthrough"));
+      await waitForHydration(page);
+
+      await expect(page).toHaveTitle("Child Set Title - RSC Router");
+
+      const description = page.locator('meta[name="description"]');
+      await expect(description).toHaveCount(1);
+      await expect(description).toHaveAttribute(
+        "content",
+        "Meta set by child RSC component",
+      );
+    });
+  });
+
+  test.describe("meta updates on navigation", () => {
+    test("should update title on soft navigation to product", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      await expect(page).toHaveTitle("RSC Router Test App");
+
+      await testId(page, "product-link-product-a").click();
+      await expect(testId(page, "product-modal")).toBeVisible({
+        timeout: 5000,
+      });
+
+      await testId(page, "view-full-details").click();
+      await expect(testId(page, "product-detail-page")).toBeVisible({
+        timeout: 5000,
+      });
+      await expect(page).toHaveTitle("Product A - RSC Router Test App", {
+        timeout: 5000,
+      });
+    });
+  });
+});

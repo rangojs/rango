@@ -595,3 +595,49 @@ At runtime, the cache-lookup middleware uses these flags:
 - `pr + hit` -- serve pre-rendered Flight payload
 - `pr + pt + miss` -- fall through to live handler (handler kept in bundle)
 - `pr + miss` (no pt) -- fall through (handler stubbed, no live render)
+
+## Contributor Checklist
+
+Before changing prerender behavior, read these docs and run these tests.
+
+### Docs to re-read
+
+- [Prerender API design](../../docs/prerender-api-design.md) -- canonical
+  architecture: build-time flow, runtime flow, storage, passthrough, intercept
+- [Execution model](../../docs/internal/execution-model.md) -- handler-first
+  ordering, middleware scope, context visibility rules
+- [Semantic change checklist](../../docs/internal/semantic-change-checklist.md)
+  -- gate for any change to execution semantics
+
+### Tests to run
+
+```bash
+# Core prerender e2e (passthrough, eviction, loaders, sub-use, intercept)
+pnpm --filter @rangojs/router exec playwright test prerender
+
+# Prerender-specific unit test
+pnpm --filter @rangojs/router run test:unit -- prerender-passthrough
+
+# Semantic matrix (prerender rows cover intercept + ctx propagation)
+pnpm --filter @rangojs/router exec playwright test semantic-matrix
+
+# Handler-first (ctx.set/get visibility with prerender handlers)
+pnpm --filter @rangojs/router exec playwright test handler-first
+```
+
+### Dev-only vs build-parity
+
+- Prerender e2e tests run against a real production build by default (the
+  fixture builds the test app). Dev-mode prerender behavior is tested via
+  `/__rsc_prerender` endpoint tests and node.js dev-server fallback.
+- Log-based assertions (build output lines, debug cache logs) are inherently
+  dev/build-only and do not need a production counterpart.
+- Behavioral assertions (rendered content, loader freshness, passthrough
+  fallback, intercept variant selection) must work in the production build.
+
+## Maintenance References
+
+- [Stability next steps plan](../../docs/internal/stability-next-steps-plan.md)
+  -- completed parity and cleanup pass (reference for decisions made)
+- [Test quality baseline](../../docs/internal/test-quality-baseline.md) --
+  measured test inventory, sleep debt, production coverage gaps

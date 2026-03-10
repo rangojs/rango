@@ -1,5 +1,8 @@
 # Prefetch/Cache Review Actions (Non-Test Runtime)
 
+Status: Implemented (same-origin validation in fetch.ts; cache sanitization
+handled at the fetch layer)
+
 Scope reviewed:
 
 - `src/browser/prefetch/fetch.ts`

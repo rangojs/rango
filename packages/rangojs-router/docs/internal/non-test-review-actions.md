@@ -1,5 +1,8 @@
 # Non-Test Review Actions (Bridge Runtime)
 
+Status: Implemented (core findings F1-F3 addressed in navigation-bridge,
+server-action-bridge, and partial-update)
+
 Scope: non-test browser runtime files only.
 
 Reviewed files:

@@ -29,6 +29,7 @@ export const NamedRoutes = {
   fast: "/slow/fast",
   featuresDetail: "/features/:slug",
   "guides.detail": "/guides/:slug",
+  "handlerFirst.index": "/handler-first",
   home: "/",
   inlineDocs: "/inline/docs",
   inlineIndex: "/inline",

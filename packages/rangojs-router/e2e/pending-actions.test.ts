@@ -327,3 +327,134 @@ test.describe("pending-actions-navigation", () => {
     ).not.toBeVisible();
   });
 });
+
+// ============================================================================
+// Production build
+// ============================================================================
+
+test.describe("pending-actions-navigation (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("action on intercept, navigate to detail, action completes - should not corrupt intercept cache", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
+    await productLink.click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+
+    // Listen for the action POST response before triggering it
+    const actionResponsePromise = page.waitForResponse(
+      (res) => res.request().method() === "POST" && res.status() === 200,
+    );
+
+    const incrementButton = page.locator(
+      '[data-testid="modal-quantity-control"] button:has-text("+")',
+    );
+    await expect(incrementButton).toHaveCount(1);
+    await incrementButton.click();
+
+    await page.locator('[data-testid="view-full-details"]').click();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
+
+    // Wait for the action response to be fully received instead of fixed sleep
+    const actionResponse = await actionResponsePromise;
+    await actionResponse.finished();
+
+    await goBack(page);
+    await expect(
+      page.locator('[data-testid="view-full-details"]'),
+    ).toBeVisible();
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+  });
+
+  test("action on intercept, close modal (back), action completes - index should remain intact", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
+    await productLink.click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+
+    // Listen for the action request to settle (complete or abort) before triggering it
+    const actionSettledPromise = Promise.race([
+      page.waitForEvent("requestfinished", {
+        predicate: (req) => req.method() === "POST",
+      }),
+      page.waitForEvent("requestfailed", {
+        predicate: (req) => req.method() === "POST",
+      }),
+    ]);
+
+    const incrementButton = page.locator(
+      '[data-testid="modal-quantity-control"] button:has-text("+")',
+    );
+    await expect(incrementButton).toHaveCount(1);
+    await incrementButton.click();
+
+    await goBack(page);
+
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
+
+    // Wait for the action request to settle (response received or aborted by navigation)
+    await actionSettledPromise;
+
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
+  });
+
+  test("streaming action revalidation should be ignored after navigating away", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/product/product-a"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+
+    // Listen for the streaming action POST response before triggering it
+    const actionResponsePromise = page.waitForResponse(
+      (res) => res.request().method() === "POST" && res.status() === 200,
+    );
+
+    const streamingButton = page.locator('[data-testid="streaming-btn"]');
+    await streamingButton.click();
+    await expect(streamingButton).toBeDisabled();
+
+    const homeLink = page.locator('[data-testid="nav-home"]');
+    await homeLink.click();
+
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+
+    // Wait for the streaming action response to be fully received instead of fixed sleep
+    const actionResponse = await actionResponsePromise;
+    await actionResponse.finished();
+
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).not.toBeVisible();
+    await expect(
+      page.locator('[data-testid="streaming-btn-result"]'),
+    ).not.toBeVisible();
+  });
+});

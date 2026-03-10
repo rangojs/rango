@@ -1,6 +1,17 @@
+import crypto from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
+
+// Mirrors the build-time hashId from expose-id-utils.ts so production loader
+// tests stay in sync with the build output without hardcoding hash values.
+function productionLoaderId(filePath: string, exportName: string): string {
+  const hash = crypto
+    .createHash("sha256")
+    .update(`${filePath}#${exportName}`)
+    .digest("hex");
+  return `${hash.slice(0, 8)}#${exportName}`;
+}
 
 /**
  * E2E tests for app-level middleware:
@@ -854,5 +865,183 @@ test.describe("app-middleware (production)", () => {
     await expect(
       page.locator('[data-testid="middleware-test-title"]'),
     ).toBeVisible();
+  });
+
+  test("cookie middleware should set and increment visit count in production", async ({
+    page,
+  }) => {
+    // First visit
+    const response1Promise = page.waitForResponse(
+      (response) =>
+        response.url().includes("/middleware-test/cookies") &&
+        response.status() === 200,
+    );
+
+    await page.goto(f.url("/middleware-test/cookies"));
+    const response1 = await response1Promise;
+
+    const allHeaders1 = await response1.allHeaders();
+    const setCookie1 = allHeaders1["set-cookie"];
+    expect(setCookie1).toBeDefined();
+    expect(setCookie1).toContain("visit-count=1");
+
+    await waitForHydration(page);
+    await expect(page.locator('[data-testid="visit-count"]')).toContainText(
+      "1",
+    );
+
+    // Second visit - cookie should be incremented
+    const response2Promise = page.waitForResponse(
+      (response) =>
+        response.url().includes("/middleware-test/cookies") &&
+        response.status() === 200,
+    );
+
+    await page.reload();
+    const response2 = await response2Promise;
+
+    const allHeaders2 = await response2.allHeaders();
+    const setCookie2 = allHeaders2["set-cookie"];
+    expect(setCookie2).toContain("visit-count=2");
+
+    await waitForHydration(page);
+    await expect(page.locator('[data-testid="visit-count"]')).toContainText(
+      "2",
+    );
+  });
+
+  test("auth middleware should allow access with cookie in production", async ({
+    page,
+    context,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await context.addCookies([
+      {
+        name: "auth-token",
+        value: "valid-token",
+        domain: "localhost",
+        path: "/",
+      },
+    ]);
+
+    await page.goto(f.url("/middleware-test/protected"));
+    await expect(page).toHaveURL(/\/middleware-test\/protected$/);
+
+    await waitForHydration(page);
+    await expect(page.locator('[data-testid="protected-title"]')).toBeVisible();
+    await expect(page.locator('[data-testid="user-id"]')).toContainText("123");
+    await expect(page.locator('[data-testid="user-name"]')).toContainText(
+      "TestUser",
+    );
+  });
+
+  test.describe("intercept-middleware", () => {
+    test("intercept middleware should set header on modal navigation", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      const responsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/slow-product/") &&
+          response.status() === 200,
+      );
+
+      await page.click('[data-testid="slow-product-link"]');
+      const response = await responsePromise;
+
+      expect(response.headers()["x-intercept-middleware"]).toBe("applied");
+
+      await expect(
+        page.locator('[data-testid="slow-modal-product-name"]'),
+      ).toBeVisible({ timeout: 10000 });
+    });
+
+    test("intercept middleware should set cookie", async ({
+      page,
+      context,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      await page.click('[data-testid="slow-product-link"]');
+
+      await expect(
+        page.locator('[data-testid="slow-modal-product-name"]'),
+      ).toBeVisible({ timeout: 10000 });
+
+      const cookies = await context.cookies();
+      const interceptCookie = cookies.find(
+        (c) => c.name === "intercept-visited",
+      );
+      expect(interceptCookie).toBeDefined();
+      expect(interceptCookie?.value).toBe("true");
+    });
+  });
+
+  test.describe("loader-middleware", () => {
+    const protectedId = productionLoaderId(
+      "src/loaders.tsx",
+      "ProtectedLoader",
+    );
+
+    test("loader middleware should reject unauthorized requests", async ({
+      request,
+    }) => {
+      const response = await request.get(
+        f.url(`/fetch-loader?_rsc_loader=${encodeURIComponent(protectedId)}`),
+        {
+          headers: { Accept: "text/x-component" },
+        },
+      );
+
+      expect(response.status()).toBe(500);
+      const text = await response.text();
+      // Production sanitizes error messages; verify the error structure
+      expect(text).toContain("loaderError");
+    });
+
+    test("loader middleware should allow authorized requests", async ({
+      request,
+    }) => {
+      const response = await request.get(
+        f.url(
+          `/fetch-loader?_rsc_loader=${encodeURIComponent(protectedId)}&_rsc_loader_params=` +
+            encodeURIComponent(JSON.stringify({ authToken: "valid-token" })),
+        ),
+        {
+          headers: { Accept: "text/x-component" },
+        },
+      );
+
+      expect(response.status()).toBe(200);
+      const text = await response.text();
+      expect(text).toContain("protected");
+    });
+
+    test("loader middleware should reject invalid auth token", async ({
+      request,
+    }) => {
+      const response = await request.get(
+        f.url(
+          `/fetch-loader?_rsc_loader=${encodeURIComponent(protectedId)}&_rsc_loader_params=` +
+            encodeURIComponent(JSON.stringify({ authToken: "invalid-token" })),
+        ),
+        {
+          headers: { Accept: "text/x-component" },
+        },
+      );
+
+      expect(response.status()).toBe(500);
+      const text = await response.text();
+      // Production sanitizes error messages; verify the error structure
+      expect(text).toContain("loaderError");
+    });
   });
 });
