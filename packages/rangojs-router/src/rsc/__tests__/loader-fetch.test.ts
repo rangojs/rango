@@ -51,6 +51,7 @@ vi.mock("../../route-map-builder.js", () => ({
     }
     return undefined;
   },
+  isRouteRootScoped: () => undefined,
 }));
 
 vi.mock("../../router/handler-context.js", async (importOriginal) => {
