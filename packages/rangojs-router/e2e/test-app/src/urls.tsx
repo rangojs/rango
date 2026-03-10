@@ -695,6 +695,22 @@ export const urlpatterns = urls(
         { name: "testThrowHandlerError" },
       ),
 
+      // Test utils: expose loader $$id values for e2e fetchable guard tests.
+      // Production builds hash IDs, so tests need to discover them at runtime.
+      path.json(
+        "/__test/loader-ids",
+        async () => {
+          const { FetchableTestLoader, ProductsLoader, ProtectedLoader } =
+            await import("./loaders.js");
+          return {
+            fetchable: (FetchableTestLoader as any).$$id,
+            nonFetchable: (ProductsLoader as any).$$id,
+            withMiddleware: (ProtectedLoader as any).$$id,
+          };
+        },
+        { name: "testLoaderIds" },
+      ),
+
       // Manifest cache test route (its DSL handler increments a counter)
       include("/manifest-cache-test", manifestCacheTestPatterns, {
         name: "manifestCacheTest",

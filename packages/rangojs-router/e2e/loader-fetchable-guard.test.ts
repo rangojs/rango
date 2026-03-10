@@ -80,7 +80,7 @@ test.describe("loader fetchable guard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Production — browser-based + direct HTTP
+// Production — direct HTTP with runtime-discovered hashed IDs
 // ---------------------------------------------------------------------------
 test.describe("loader fetchable guard (production)", () => {
   const f = useFixture({
@@ -88,24 +88,68 @@ test.describe("loader fetchable guard (production)", () => {
     mode: "build",
   });
 
-  test("fetchable loader works via browser in production", async ({ page }) => {
-    using _ = expectNoPageError(page);
+  // Discover production hashed loader IDs at test time via a test helper route
+  let loaderIds: {
+    fetchable: string;
+    nonFetchable: string;
+    withMiddleware: string;
+  };
 
-    await page.goto(f.url("/fetch-loader"));
-    await waitForHydration(page);
-
-    // Trigger a client-side fetch — exercises the _rsc_loader endpoint
-    // with the production hashed ID
-    await testId(page, "fetch-loader-btn-default").click();
-    await expect(testId(page, "fetch-loader-data")).toBeVisible({
-      timeout: 5000,
+  test.beforeAll(async ({ request }) => {
+    const res = await request.get(f.url("/__test/loader-ids"), {
+      headers: { Accept: "application/json" },
     });
-    await expect(testId(page, "fetch-loader-message")).toContainText(
-      "Fetched via GET",
-    );
+    expect(res.status()).toBe(200);
+    loaderIds = await res.json();
   });
 
-  test("non-fetchable loader still works through SSR in production", async ({
+  test("fetchable loader is accessible via _rsc_loader endpoint", async ({
+    request,
+  }) => {
+    const response = await request.get(
+      f.url(
+        `/fetch-loader?_rsc_loader=${encodeURIComponent(loaderIds.fetchable)}`,
+      ),
+      { headers: { Accept: "text/x-component" } },
+    );
+
+    expect(response.status()).toBe(200);
+    const text = await response.text();
+    expect(text).toContain("Fetched via GET");
+  });
+
+  test("non-fetchable loader is rejected with 403 via _rsc_loader endpoint", async ({
+    request,
+  }) => {
+    const response = await request.get(
+      f.url(
+        `/fetch-loader?_rsc_loader=${encodeURIComponent(loaderIds.nonFetchable)}`,
+      ),
+      { headers: { Accept: "text/x-component" } },
+    );
+
+    expect(response.status()).toBe(403);
+    const text = await response.text();
+    expect(text).toContain("is not fetchable");
+  });
+
+  test("fetchable loader with middleware object form is accessible", async ({
+    request,
+  }) => {
+    const response = await request.get(
+      f.url(
+        `/fetch-loader?_rsc_loader=${encodeURIComponent(loaderIds.withMiddleware)}&_rsc_loader_params=` +
+          encodeURIComponent(JSON.stringify({ authToken: "valid-token" })),
+      ),
+      { headers: { Accept: "text/x-component" } },
+    );
+
+    expect(response.status()).toBe(200);
+    const text = await response.text();
+    expect(text).toContain("protected");
+  });
+
+  test("non-fetchable loader still works through SSR ctx.use()", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -117,7 +161,7 @@ test.describe("loader fetchable guard (production)", () => {
     await expect(testId(page, "index-page")).toBeVisible();
   });
 
-  test("unknown loader ID returns 404 in production", async ({ request }) => {
+  test("unknown loader ID returns 404", async ({ request }) => {
     // A fabricated ID that doesn't exist in the production manifest
     const response = await request.get(
       f.url("/fetch-loader?_rsc_loader=nonexistent_loader_id"),
