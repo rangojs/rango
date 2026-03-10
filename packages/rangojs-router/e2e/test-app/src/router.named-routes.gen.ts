@@ -190,6 +190,7 @@ export const NamedRoutes = {
   "static-shell": "/static-shell/:tag",
   streamModeTest: "/stream-mode-test",
   testLastError: "/__test/last-error",
+  testLoaderIds: "/__test/loader-ids",
   testManifestCacheCounter: "/__test/manifest-cache-counter",
   testPrerenderManifestEntries: "/__test/prerender-manifest-entries",
   testThrowHandlerError: "/__test/throw-handler-error",
