@@ -55,6 +55,15 @@ export async function handleLoaderFetch<TEnv>(
     );
   }
 
+  // Non-fetchable loaders are registered for SSR ctx.use() only.
+  // They must not be callable through the standalone _rsc_loader endpoint.
+  if (!registeredLoader.fetchable) {
+    return createResponseWithMergedHeaders(
+      `Loader "${loaderId}" is not fetchable`,
+      { status: 403 },
+    );
+  }
+
   // Parse params, body, and formData based on request method and content type
   let loaderParams: Record<string, string> = {};
   let loaderBody: unknown = undefined;

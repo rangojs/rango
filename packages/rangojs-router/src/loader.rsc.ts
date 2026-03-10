@@ -60,11 +60,11 @@ export function createLoader<T>(
     );
   }
 
-  // If not fetchable, store fn in registry and return a plain object.
-  // Server-side code looks up fn via getFetchableLoader($$id).
+  // If not fetchable, store fn in registry (for SSR ctx.use() resolution)
+  // but mark fetchable=false so the _rsc_loader endpoint rejects it.
   if (fetchable === undefined) {
     if (fn && loaderId) {
-      registerFetchableLoader(loaderId, fn, []);
+      registerFetchableLoader(loaderId, fn, [], false);
     }
     return {
       __brand: "loader",
@@ -79,7 +79,7 @@ export function createLoader<T>(
   // Register the function in the internal registry by $$id (server-side only)
   // The loader fetch handler looks it up by $$id when load() is called from the client.
   if (fn && loaderId) {
-    registerFetchableLoader(loaderId, fn, middleware);
+    registerFetchableLoader(loaderId, fn, middleware, true);
   }
 
   return {

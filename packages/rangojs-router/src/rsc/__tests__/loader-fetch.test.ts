@@ -10,6 +10,7 @@ vi.mock("../../server/loader-registry.js", () => ({
       return { greeting: "hello" };
     },
     middleware: [],
+    fetchable: true,
   })),
 }));
 

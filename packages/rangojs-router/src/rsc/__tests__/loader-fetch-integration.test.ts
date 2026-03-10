@@ -101,6 +101,7 @@ describe("handleLoaderFetch middleware integration", () => {
     vi.mocked(getLoaderLazy).mockResolvedValue({
       fn: testLoaderFn,
       middleware: testMiddleware,
+      fetchable: true,
     });
 
     const url = new URL("http://localhost/test?_rsc_loader=testLoader");
@@ -135,6 +136,7 @@ describe("handleLoaderFetch middleware integration", () => {
     vi.mocked(getLoaderLazy).mockResolvedValue({
       fn: testLoaderFn,
       middleware: [guardMiddleware],
+      fetchable: true,
     });
 
     const url = new URL("http://localhost/test?_rsc_loader=protectedLoader");
@@ -174,6 +176,7 @@ describe("handleLoaderFetch middleware integration", () => {
     vi.mocked(getLoaderLazy).mockResolvedValue({
       fn: testLoaderFn,
       middleware: [mw1, mw2],
+      fetchable: true,
     });
 
     const url = new URL("http://localhost/test?_rsc_loader=varLoader");
@@ -196,6 +199,7 @@ describe("handleLoaderFetch middleware integration", () => {
     vi.mocked(getLoaderLazy).mockResolvedValue({
       fn: testLoaderFn,
       middleware: [],
+      fetchable: true,
     });
 
     const url = new URL("http://localhost/test?_rsc_loader=noMwLoader");
@@ -213,5 +217,32 @@ describe("handleLoaderFetch middleware integration", () => {
 
     expect(response.status).toBe(200);
     expect(executionOrder).toEqual(["loader"]);
+  });
+
+  it("rejects non-fetchable loaders with 403", async () => {
+    vi.mocked(getLoaderLazy).mockResolvedValue({
+      fn: testLoaderFn,
+      middleware: [],
+      fetchable: false,
+    });
+
+    const url = new URL("http://localhost/test?_rsc_loader=nonFetchableLoader");
+    const request = new Request(url.href, {
+      headers: { Accept: "text/x-component" },
+    });
+
+    const response = await handleLoaderFetch(
+      createMockHandlerCtx(),
+      request,
+      {},
+      url,
+      {},
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toContain("is not fetchable");
+    // Loader never ran
+    expect(executionOrder).toEqual([]);
+    expect(capturedCtx).toBeNull();
   });
 });
