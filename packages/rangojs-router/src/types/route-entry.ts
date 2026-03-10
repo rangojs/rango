@@ -61,6 +61,12 @@ export interface RouteEntry<TEnv = any> {
    */
   prerenderRouteKeys?: Set<string>;
 
+  /**
+   * Route keys in this entry that use `{ passthrough: true }`.
+   * Used by the non-trie match path to set the `pt` flag.
+   */
+  passthroughRouteKeys?: Set<string>;
+
   // === Lazy evaluation fields ===
 
   /**

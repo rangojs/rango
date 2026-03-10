@@ -34,9 +34,35 @@ import type {
 } from "./types.js";
 import type { Handle } from "./handle.js";
 import type { ContextVar } from "./context-var.js";
+import type { ReverseFunction } from "./reverse.js";
+import type { DefaultReverseRouteMap } from "./types/global-namespace.js";
 import { isCachedFunction } from "./cache/taint.js";
 
 // -- Named route resolution types -------------------------------------------
+
+/**
+ * Reverse function for build contexts (BuildContext, StaticBuildContext, GetParamsContext).
+ * Global names get full autocomplete and param validation from the generated route map.
+ * Local `.name` calls are accepted but not validated (the include() scope is unknown
+ * at the type level).
+ */
+type BuildReverseFunction = [DefaultReverseRouteMap] extends [
+  Record<string, string>,
+]
+  ? // No generated route map — permissive fallback
+    (
+      name: string,
+      params?: Record<string, string>,
+      search?: Record<string, unknown>,
+    ) => string
+  : // Generated route map available — typed globals + permissive locals
+    ReverseFunction<DefaultReverseRouteMap> & {
+      (
+        name: `.${string}`,
+        params?: Record<string, string>,
+        search?: Record<string, unknown>,
+      ): string;
+    };
 
 /**
  * Default route map for Prerender named route resolution.
@@ -143,11 +169,14 @@ export interface BuildContext<TParams> {
   search: {};
 
   /** URL generation by route name. */
-  reverse: (
-    name: string,
-    params?: Record<string, string>,
-    search?: Record<string, unknown>,
-  ) => string;
+  reverse: BuildReverseFunction;
+
+  /**
+   * Signal that this param set should not produce a local prerender artifact.
+   * At runtime the handler runs live instead. Only valid on routes declared
+   * with `{ passthrough: true }`.
+   */
+  passthrough: () => PrerenderPassthroughResult;
 }
 
 /**
@@ -174,11 +203,7 @@ export interface StaticBuildContext {
   use: <T>(handle: Handle<T>) => (data: T) => void;
 
   /** URL generation by route name. */
-  reverse: (
-    name: string,
-    params?: Record<string, string>,
-    search?: Record<string, unknown>,
-  ) => string;
+  reverse: BuildReverseFunction;
 }
 
 /**
@@ -196,11 +221,7 @@ export interface GetParamsContext {
   };
 
   /** URL generation by route name. */
-  reverse: (
-    name: string,
-    params?: Record<string, string>,
-    search?: Record<string, unknown>,
-  ) => string;
+  reverse: BuildReverseFunction;
 }
 
 /**
@@ -216,7 +237,9 @@ export interface GetParamsContext {
 export type PrerenderPassthroughContext<
   TParams = {},
   TEnv = DefaultEnv,
-> = HandlerContext<TParams, TEnv>;
+> = HandlerContext<TParams, TEnv> & {
+  passthrough: () => PrerenderPassthroughResult;
+};
 
 export interface PrerenderHandlerDefinition<
   TParams extends Record<string, any> = any,
@@ -269,7 +292,10 @@ export function Prerender<
       ResolvePrerenderParams<T, TRouteMap>,
       TEnv
     >,
-  ) => ReactNode | Promise<ReactNode>,
+  ) =>
+    | ReactNode
+    | PrerenderPassthroughResult
+    | Promise<ReactNode | PrerenderPassthroughResult>,
   options: PrerenderOptions & { passthrough: true },
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
@@ -313,7 +339,10 @@ export function Prerender<
       ResolvePrerenderParams<T, TRouteMap>,
       TEnv
     >,
-  ) => ReactNode | Promise<ReactNode>,
+  ) =>
+    | ReactNode
+    | PrerenderPassthroughResult
+    | Promise<ReactNode | PrerenderPassthroughResult>,
   options: PrerenderOptions & { passthrough: true },
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
@@ -386,6 +415,35 @@ export function Prerender<TParams extends Record<string, any>>(
     ...(getParams ? { getParams } : {}),
     ...(options ? { options } : {}),
   };
+}
+
+// -- Passthrough sentinel ---------------------------------------------------
+
+/**
+ * Sentinel returned by `ctx.passthrough()` to signal that a specific param set
+ * should not produce a local prerender artifact. The build skips writing the
+ * entry; at runtime the handler runs live (requires `{ passthrough: true }`).
+ */
+export const PRERENDER_PASSTHROUGH: Readonly<{
+  __brand: "prerenderPassthrough";
+}> = Object.freeze({
+  __brand: "prerenderPassthrough" as const,
+});
+
+export type PrerenderPassthroughResult = typeof PRERENDER_PASSTHROUGH;
+
+/**
+ * Type guard to check if a value is the passthrough sentinel.
+ */
+export function isPrerenderPassthrough(
+  value: unknown,
+): value is PrerenderPassthroughResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "__brand" in value &&
+    (value as { __brand: unknown }).__brand === "prerenderPassthrough"
+  );
 }
 
 // -- Type guard -------------------------------------------------------------

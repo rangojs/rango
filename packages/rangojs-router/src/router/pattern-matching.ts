@@ -388,6 +388,9 @@ export function findMatch<TEnv>(
       const prFlag = entry.prerenderRouteKeys?.has(routeKey)
         ? { pr: true as const }
         : {};
+      const ptFlag = entry.passthroughRouteKeys?.has(routeKey)
+        ? { pt: true as const }
+        : {};
 
       // Try exact match first
       const match = regex.exec(pathname);
@@ -419,6 +422,7 @@ export function findMatch<TEnv>(
             optionalParams,
             redirectTo: pathname + "/",
             ...prFlag,
+            ...ptFlag,
           };
         } else if (trailingSlashMode === "never" && pathnameHasTrailingSlash) {
           // Mode says never have trailing slash, but pathname has it
@@ -429,10 +433,18 @@ export function findMatch<TEnv>(
             optionalParams,
             redirectTo: pathname.slice(0, -1),
             ...prFlag,
+            ...ptFlag,
           };
         }
 
-        return { entry, routeKey, params, optionalParams, ...prFlag };
+        return {
+          entry,
+          routeKey,
+          params,
+          optionalParams,
+          ...prFlag,
+          ...ptFlag,
+        };
       }
 
       // Try alternate pathname (opposite trailing slash)
@@ -446,7 +458,14 @@ export function findMatch<TEnv>(
         // Determine redirect behavior based on mode
         if (trailingSlashMode === "ignore") {
           // Match without redirect
-          return { entry, routeKey, params, optionalParams, ...prFlag };
+          return {
+            entry,
+            routeKey,
+            params,
+            optionalParams,
+            ...prFlag,
+            ...ptFlag,
+          };
         } else if (trailingSlashMode === "never") {
           // Redirect to no trailing slash
           if (pathnameHasTrailingSlash) {
@@ -457,9 +476,17 @@ export function findMatch<TEnv>(
               optionalParams,
               redirectTo: alternatePathname,
               ...prFlag,
+              ...ptFlag,
             };
           }
-          return { entry, routeKey, params, optionalParams, ...prFlag };
+          return {
+            entry,
+            routeKey,
+            params,
+            optionalParams,
+            ...prFlag,
+            ...ptFlag,
+          };
         } else if (trailingSlashMode === "always") {
           // Redirect to with trailing slash
           if (!pathnameHasTrailingSlash) {
@@ -470,9 +497,17 @@ export function findMatch<TEnv>(
               optionalParams,
               redirectTo: alternatePathname,
               ...prFlag,
+              ...ptFlag,
             };
           }
-          return { entry, routeKey, params, optionalParams, ...prFlag };
+          return {
+            entry,
+            routeKey,
+            params,
+            optionalParams,
+            ...prFlag,
+            ...ptFlag,
+          };
         } else {
           // No explicit mode - use pattern-based detection
           // Redirect to canonical form (what the pattern defines)
@@ -486,6 +521,7 @@ export function findMatch<TEnv>(
             optionalParams,
             redirectTo: canonicalPath,
             ...prFlag,
+            ...ptFlag,
           };
         }
       }

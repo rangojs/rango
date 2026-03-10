@@ -595,8 +595,15 @@ export function createRouter<TEnv = any>(
     pathname: string,
     params: Record<string, string>,
     buildVars?: Record<string, any>,
+    isPassthroughRoute?: boolean,
   ) {
-    return _matchForPrerender(pathname, params, prerenderDeps, buildVars);
+    return _matchForPrerender(
+      pathname,
+      params,
+      prerenderDeps,
+      buildVars,
+      isPassthroughRoute,
+    );
   }
 
   async function renderStaticSegment(
@@ -696,10 +703,15 @@ export function createRouter<TEnv = any>(
 
       // Collect route keys that have prerender handlers (for non-trie match path)
       let prerenderRouteKeys: Set<string> | undefined;
+      let passthroughRouteKeys: Set<string> | undefined;
       for (const [name, entry] of manifest.entries()) {
         if (entry.type === "route" && entry.isPrerender) {
           if (!prerenderRouteKeys) prerenderRouteKeys = new Set();
           prerenderRouteKeys.add(name);
+          if (entry.prerenderDef?.options?.passthrough === true) {
+            if (!passthroughRouteKeys) passthroughRouteKeys = new Set();
+            passthroughRouteKeys.add(name);
+          }
         }
       }
 
@@ -724,6 +736,7 @@ export function createRouter<TEnv = any>(
             mountIndex: currentMountIndex,
             cacheProfiles: resolvedCacheProfiles,
             ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
+            ...(passthroughRouteKeys ? { passthroughRouteKeys } : {}),
           });
         }
       } else {
@@ -742,6 +755,7 @@ export function createRouter<TEnv = any>(
           mountIndex: currentMountIndex,
           cacheProfiles: resolvedCacheProfiles,
           ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
+          ...(passthroughRouteKeys ? { passthroughRouteKeys } : {}),
         });
       }
 

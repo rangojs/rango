@@ -11,6 +11,7 @@ import {
   createStaticContext,
   createReverseFunction,
 } from "./handler-context.js";
+import { isPrerenderPassthrough } from "../prerender.js";
 import { isRouteRootScoped } from "../route-map-builder.js";
 import { setupBuildUse } from "./loader-resolution.js";
 import { loadManifest } from "./manifest.js";
@@ -52,6 +53,7 @@ export async function matchForPrerender<TEnv = any>(
   params: Record<string, string>,
   deps: PrerenderMatchDeps<TEnv>,
   buildVars?: Record<string, any>,
+  isPassthroughRoute?: boolean,
 ): Promise<{
   segments: SerializedSegmentData[];
   handles: Record<string, SegmentHandleData>;
@@ -59,6 +61,7 @@ export async function matchForPrerender<TEnv = any>(
   params: Record<string, string>;
   interceptSegments?: SerializedSegmentData[];
   interceptHandles?: Record<string, SegmentHandleData>;
+  passthrough?: true;
 } | null> {
   // 1. Find the matching route entry
   const matched = deps.findMatch(pathname);
@@ -66,6 +69,7 @@ export async function matchForPrerender<TEnv = any>(
 
   // Use params from trie match if available, fall back to provided params
   const matchedParams = matched.params ?? params;
+  const matchedPassthroughRoute = isPassthroughRoute ?? matched.pt === true;
 
   // Build RouterContext for loadManifest/traverseBack
   const routerCtx = deps.buildRouterContext();
@@ -141,6 +145,7 @@ export async function matchForPrerender<TEnv = any>(
         deps.mergedRouteMap,
         matched.routeKey,
         variables,
+        matchedPassthroughRoute,
       );
 
       // 7. Wire use() for handles only (loaders throw)
@@ -157,18 +162,31 @@ export async function matchForPrerender<TEnv = any>(
         { skipLoaders: true },
       );
 
-      // 9. Filter out any loader segments (belt-and-suspenders)
+      // 9. Detect passthrough sentinel: handler returned ctx.passthrough()
+      for (const seg of allSegments) {
+        if (isPrerenderPassthrough(seg.component)) {
+          return {
+            segments: [],
+            handles: {},
+            routeName: matched.routeKey,
+            params: matchedParams,
+            passthrough: true as const,
+          };
+        }
+      }
+
+      // 10. Filter out any loader segments (belt-and-suspenders)
       const nonLoaderSegments = allSegments.filter((s) => s.type !== "loader");
 
-      // 10. Wait for handles to settle
+      // 11. Wait for handles to settle
       handleStore.seal();
       await handleStore.settled;
 
-      // 11. Serialize segments using the cache serializer
+      // 12. Serialize segments using the cache serializer
       const { serializeSegments } = await import("../cache/segment-codec.js");
       const serializedSegments = await serializeSegments(nonLoaderSegments);
 
-      // 12. Collect handle data per segment (skip segments with no handle data)
+      // 13. Collect handle data per segment (skip segments with no handle data)
       const handles: Record<string, SegmentHandleData> = {};
       for (const seg of nonLoaderSegments) {
         const segHandles = handleStore.getDataForSegment(seg.id);
@@ -180,7 +198,7 @@ export async function matchForPrerender<TEnv = any>(
       // Use the trie-level route key (e.g., "docs", "docs.article")
       const routeName = matched.routeKey;
 
-      // 13. Resolve intercept segments for this route (if any ancestor defines
+      // 14. Resolve intercept segments for this route (if any ancestor defines
       //     an intercept targeting this route). At build time we skip when()
       //     evaluation -- we pre-render all intercepts unconditionally and let
       //     runtime matching decide which to serve.

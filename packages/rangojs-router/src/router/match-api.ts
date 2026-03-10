@@ -91,6 +91,13 @@ export async function createMatchContextForFull<TEnv>(
     });
   }
 
+  if (
+    manifestEntry.type === "route" &&
+    manifestEntry.prerenderDef?.options?.passthrough === true
+  ) {
+    matched.pt = true;
+  }
+
   const routeMiddleware = collectRouteMiddleware(
     traverseBack(manifestEntry),
     matched.params,
@@ -109,6 +116,7 @@ export async function createMatchContextForFull<TEnv>(
     deps.getRouteMap(),
     matched.routeKey,
     matched.responseType,
+    matched.pt === true,
   );
 
   const loaderPromises = new Map<string, Promise<any>>();
@@ -238,10 +246,6 @@ export async function createMatchContextForPartial<TEnv>(
     ? deps.findMatch(interceptContextUrl.pathname)
     : prevMatch;
 
-  // Store previous route key on the request context for revalidation
-  // and intercept evaluation (fromRouteName/toRouteName).
-  setRequestContextPrevRouteKey(prevMatch?.routeKey);
-
   const matched = deps.findMatch(pathname, metricsStore);
 
   if (metricsStore) {
@@ -285,6 +289,13 @@ export async function createMatchContextForPartial<TEnv>(
     });
   }
 
+  if (
+    manifestEntry.type === "route" &&
+    manifestEntry.prerenderDef?.options?.passthrough === true
+  ) {
+    matched.pt = true;
+  }
+
   const routeMiddleware = collectRouteMiddleware(
     traverseBack(manifestEntry),
     matched.params,
@@ -303,6 +314,7 @@ export async function createMatchContextForPartial<TEnv>(
     deps.getRouteMap(),
     matched.routeKey,
     matched.responseType,
+    matched.pt === true,
   );
 
   const clientSegmentSet = new Set(clientSegmentIds);
@@ -352,6 +364,12 @@ export async function createMatchContextForPartial<TEnv>(
   const effectiveFromMatch = interceptSourceUrl
     ? interceptContextMatch
     : prevMatch;
+
+  // Store previous route key on the request context for revalidation
+  // fromRouteName. Uses effectiveFromMatch so intercept-source navigations
+  // see the intercept origin route, not the plain previous URL route.
+  setRequestContextPrevRouteKey(effectiveFromMatch?.routeKey);
+
   const interceptSelectorContext: InterceptSelectorContext = {
     from: effectiveFromUrl,
     to: cleanUrl,

@@ -55,3 +55,6 @@ API docs. They cover both public and internal surfaces.
 Internal notes and review plans live under [`docs/internal`](./internal).
 They are useful when changing router semantics, tests, or implementation
 details, but they are not the first stop for learning the public API.
+
+- [Prerender passthrough action plan](./internal/prerender-passthrough-action-plan.md)
+  - implementation plan for explicit `ctx.passthrough()` prerender behavior

@@ -4,12 +4,16 @@ import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 // Prerender handler with getParams context and handler-first data flow.
 // getParams sets shared data via ctx.set(), handler sets per-slug data,
 // child layout and parallel read via ctx.get().
+// "gamma" uses ctx.passthrough() to skip the build-time artifact and
+// defer to live rendering at runtime.
 export const PrerenderCtxTest = Prerender<{ slug: string }>(
   async (ctx) => {
     ctx.set("sharedFromGetParams", "fetched-at-build");
-    return [{ slug: "alpha" }, { slug: "beta" }];
+    return [{ slug: "alpha" }, { slug: "beta" }, { slug: "gamma" }];
   },
   async (ctx) => {
+    // gamma: skip prerender artifact, defer to live rendering
+    if (ctx.params.slug === "gamma" && ctx.build) return ctx.passthrough();
     ctx.set("handlerData", `data-for-${ctx.params.slug}`);
     return (
       <div data-testid="prerender-ctx-page">

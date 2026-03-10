@@ -408,12 +408,19 @@ export function createRouterDiscoveryPlugin(
 
         const wantIntercept = url.searchParams.get("intercept") === "1";
         const wantRouteName = url.searchParams.get("routeName");
+        const wantPassthrough = url.searchParams.get("passthrough") === "1";
 
         for (const [, routerInstance] of registry) {
           if (!routerInstance.matchForPrerender) continue;
           try {
-            const result = await routerInstance.matchForPrerender(pathname, {});
+            const result = await routerInstance.matchForPrerender(
+              pathname,
+              {},
+              undefined,
+              wantPassthrough,
+            );
             if (!result) continue;
+            if (result.passthrough) continue;
             // When routeName is specified, only accept a match for that route.
             // This prevents returning the wrong entry when multiple routers
             // have prerenderable routes sharing the same pathname.
@@ -465,6 +472,13 @@ export function createRouterDiscoveryPlugin(
         ): boolean => {
           if (!isGeneratedRouteFile(filePath)) return false;
           if (consumeSelfGenWrite(s, filePath)) return true;
+          // In Cloudflare dev (no module runner), perRouterManifests is never
+          // refreshed after HMR so regenerateGeneratedRouteFiles() would use
+          // stale data and revert user edits. Source files own route state;
+          // gen files are derived output. Skip regeneration and let the next
+          // source-file change rebuild them from the static parser.
+          const hasRunner = !!(server.environments as any)?.rsc?.runner;
+          if (!hasRunner) return true;
           regenerateGeneratedRouteFiles();
           return true;
         };
@@ -560,8 +574,12 @@ export function createRouterDiscoveryPlugin(
         server.watcher.on("change", handleRouteFileChange);
 
         // Regenerate gen files when they are deleted (e.g. manual cleanup).
+        // Same no-runner guard as change/add: stale perRouterManifests would
+        // reintroduce reverted content.
         server.watcher.on("unlink", (filePath) => {
           if (!isGeneratedRouteFile(filePath)) return;
+          const hasRunner = !!(server.environments as any)?.rsc?.runner;
+          if (!hasRunner) return;
           regenerateGeneratedRouteFiles();
         });
       }

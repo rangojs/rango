@@ -33,6 +33,7 @@ export async function expandPrerenderRoutes(
     routeName: string;
     concurrency: number;
     buildVars?: Record<string, any>;
+    isPassthroughRoute?: boolean;
   };
   const entries: PrerenderEntry[] = [];
 
@@ -54,6 +55,8 @@ export async function expandPrerenderRoutes(
     for (const routeName of manifest.prerenderRoutes) {
       const pattern = manifest.routeManifest[routeName];
       if (!pattern) continue;
+      const def = defs[routeName];
+      const isPassthroughRoute = !!def?.options?.passthrough;
       const hasDynamic = pattern.includes(":") || pattern.includes("*");
       if (!hasDynamic) {
         // Static route: use pattern directly (strip trailing slash for URL)
@@ -61,10 +64,10 @@ export async function expandPrerenderRoutes(
           urlPath: pattern.replace(/\/$/, "") || "/",
           routeName,
           concurrency: 1,
+          isPassthroughRoute,
         });
       } else {
         // Dynamic route: call getParams() to enumerate param combinations
-        const def = defs[routeName];
         if (def?.getParams) {
           try {
             const buildVars: Record<string, any> = {};
@@ -100,6 +103,7 @@ export async function expandPrerenderRoutes(
                 routeName,
                 concurrency,
                 ...(hasBuildVars ? { buildVars } : {}),
+                isPassthroughRoute,
               });
             }
           } catch (err: any) {
@@ -168,8 +172,20 @@ export async function expandPrerenderRoutes(
               entry.urlPath,
               {},
               entry.buildVars,
+              entry.isPassthroughRoute,
             );
             if (!result) continue;
+
+            // Handler returned ctx.passthrough() — skip manifest entry
+            if (result.passthrough) {
+              const elapsed = (performance.now() - startUrl).toFixed(0);
+              console.log(
+                `[rsc-router]   PASS ${entry.urlPath.padEnd(40)} (${elapsed}ms) - live fallback`,
+              );
+              doneCount++;
+              break;
+            }
+
             const paramHash = hashParams(result.params || {});
             collectedData[`${result.routeName}/${paramHash}`] = {
               segments: result.segments,
