@@ -82,13 +82,13 @@ Router e2e (top 10):
 | File                     | Lines |
 | ------------------------ | ----- |
 | navigation.test.ts       | 1,536 |
-| cache.test.ts            | 1,401 |
+| cache.test.ts            | 1,624 |
 | use-cache.test.ts        | 1,301 |
 | use-loader-hooks.test.ts | 995   |
 | location-state.test.ts   | 952   |
 | mw-chain.test.ts         | 936   |
 | app-middleware.test.ts   | 820   |
-| handle-meta.test.ts      | 817   |
+| handle-meta.test.ts      | 1,097 |
 | prerender.test.ts        | 630   |
 | use-router.test.ts       | 614   |
 
@@ -107,16 +107,9 @@ Cross-suite (top 5):
 Router e2e files with no explicit production coverage (`mode: "build"` block or
 `(production)` suite):
 
-**24 files** currently lack explicit production coverage. Highest-signal
-remaining gaps:
+**18 files** currently lack explicit production coverage. Most are lower-signal
+or intentionally dev-focused:
 
-- `handler-first.test.ts` (fully dev-only)
-- `handle-meta.test.ts`
-- `pending-actions.test.ts`
-- `response-handler.test.ts`
-- `revalidation.test.ts`
-- `route-resolution.test.ts`
-- `streaming-actions.test.ts`
 - `theme.test.ts`
 - `transform-cases.test.ts`
 - `include-middleware.test.ts`
@@ -124,26 +117,55 @@ remaining gaps:
 - `navigation-hooks.test.ts`
 - `handle-breadcrumbs.test.ts`
 - `cache-status.test.ts`
+- `als-scope.test.ts`
+- `api-client.test.ts`
+- `reverse-fallback.test.ts`
 
-Partially covered but still missing full dev/build parity:
+Explicitly deferred (production parity not planned):
 
-- `cache.test.ts` — production covers loader/status/response-type cases, but
-  server-log assertions, intercept-cache behavior, `useLoader` registration,
-  and proactive caching remain dev-only
+- `revalidation.test.ts` — tests RSC wire protocol internals (request headers,
+  segment IDs); behavioral surface covered by navigation/caching/pending-actions
+  production tests
+
+Intentionally dev-only by design:
+
+- HMR tests (`client-component-hmr.test.ts`, `intercept-hmr.test.ts`,
+  `loader-hmr.test.ts`, `route-types-hmr.test.ts`)
+- `bundle-analysis.test.ts`
+- `connection-warmup.test.ts`
+- `hydration-detection.test.ts`
+- `semantic-matrix.test.ts`
+
+Partially covered — remaining dev-only subsections are documented:
+
+- `cache.test.ts` — production covers loader/status/response-type/intercept
+  behavioral/useLoader cases. Remaining dev-only: cache key differentiation log
+  assertions, proactive caching log verification (behavioral surface covered by
+  cloudflare-basic production tests)
 - `app-middleware.test.ts` — production covers core middleware, redirects,
-  short-circuit, and W5 behavior, but cookie, intercept, and loader-middleware
-  scenarios remain dev-only
+  short-circuit, W5 behavior, cookies, and auth. Remaining dev-only: intercept
+  middleware (requires SPA context), loader middleware (uses dev-specific query
+  params)
 
-Production coverage gaps that were closed after the original snapshot:
+Production coverage gaps closed during the 2026-03-10 stabilization pass:
+
+- `handler-first.test.ts` — handler-first execution order (ctx.set/get, cache
+  scope)
+- `handle-meta.test.ts` — meta tags, SSR, templates, unset, merging,
+  passthrough
+- `pending-actions.test.ts` — action robustness during navigation
+- `response-handler.test.ts` — auto-wrap, headers, cookies, middleware, layout
+- `route-resolution.test.ts` — trailing slash config, dynamic segments, SPA nav
+- `streaming-actions.test.ts` — streaming actions, form patterns
+- `cache.test.ts` (intercept behavioral, useLoader registration)
+- `app-middleware.test.ts` (cookie, auth middleware)
+
+Production coverage gaps closed after the original snapshot (pre-2026-03-10):
 
 - `use-cache.test.ts`
 - `mw-chain.test.ts`
 - `response-cache.test.ts`
 - `loader-cookie.test.ts`
-
-Excluded from the meaningful gap list because they are dev-specific by design:
-HMR tests, `bundle-analysis.test.ts`, `connection-warmup.test.ts`,
-`hydration-detection.test.ts`.
 
 Files with production-only coverage (inverted gap):
 
@@ -218,25 +240,26 @@ Files:
 - `tests/vite-rsc-demo/e2e/prefetch.test.ts` (17 sleeps)
 - `tests/vite-rsc-demo/e2e/revalidation.test.ts` (14 sleeps)
 
-## A3: Finish Remaining Production Coverage Parity
+## A3: Finish Remaining Production Coverage Parity — Done
 
-Objective: close the real production gaps left after the earlier stabilization
-pass instead of re-targeting files that already have build-mode coverage.
+Status: **complete** (2026-03-10)
 
-Files:
+All high-signal production parity gaps have been closed or explicitly triaged.
+See the stability-next-steps-plan.md items 1A-1D for the full execution log.
 
-- `packages/rangojs-router/e2e/handler-first.test.ts`
-- `packages/rangojs-router/e2e/cache.test.ts` (remaining parity gaps only)
-- `packages/rangojs-router/e2e/app-middleware.test.ts` (remaining parity gaps only)
-- `packages/rangojs-router/e2e/response-handler.test.ts`
-- `packages/rangojs-router/e2e/revalidation.test.ts`
+Files covered:
 
-Definition of done:
-
-- Each file has either explicit build-mode coverage or a documented reason it is
-  intentionally dev-only.
-- Dev/build parity is checked for the contract being asserted, not just happy-path
-  smoke coverage.
+- `handler-first.test.ts` — production block added
+- `cache.test.ts` — intercept behavioral + useLoader production blocks added;
+  log-based and proactive caching tests documented as intentionally dev-only
+- `app-middleware.test.ts` — cookie + auth middleware production blocks added;
+  intercept + loader middleware documented as intentionally dev-only
+- `response-handler.test.ts` — full production mirror
+- `handle-meta.test.ts` — high-signal production subset
+- `route-resolution.test.ts` — production block added
+- `streaming-actions.test.ts` — production block added
+- `pending-actions.test.ts` — production block added
+- `revalidation.test.ts` — explicitly deferred (wire protocol internals)
 
 ## A4: Assertion Hardening in High-Risk Router Specs
 
