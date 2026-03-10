@@ -128,7 +128,8 @@ test.describe("origin guard (production)", () => {
       headers: { Accept: "application/json" },
     });
     expect(res.status()).toBe(200);
-    loaderIds = await res.json();
+    const json = await res.json();
+    loaderIds = json.data;
   });
 
   test("cross-origin loader fetch is rejected with 403", async ({

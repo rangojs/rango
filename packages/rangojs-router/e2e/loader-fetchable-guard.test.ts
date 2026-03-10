@@ -100,7 +100,8 @@ test.describe("loader fetchable guard (production)", () => {
       headers: { Accept: "application/json" },
     });
     expect(res.status()).toBe(200);
-    loaderIds = await res.json();
+    const json = await res.json();
+    loaderIds = json.data;
   });
 
   test("fetchable loader is accessible via _rsc_loader endpoint", async ({
