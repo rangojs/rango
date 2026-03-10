@@ -1,4 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { getSearchSchemaMock, isRouteRootScopedMock } = vi.hoisted(() => ({
+  getSearchSchemaMock: vi.fn(() => undefined),
+  isRouteRootScopedMock: vi.fn(() => undefined),
+}));
 
 // Mock dependencies before importing the module under test
 vi.mock("../../server/request-context.js", () => ({
@@ -7,8 +12,8 @@ vi.mock("../../server/request-context.js", () => ({
 }));
 
 vi.mock("../../route-map-builder.js", () => ({
-  getSearchSchema: () => undefined,
-  isRouteRootScoped: () => undefined,
+  getSearchSchema: getSearchSchemaMock,
+  isRouteRootScoped: isRouteRootScopedMock,
 }));
 
 import {
@@ -18,6 +23,13 @@ import {
   createReverseFunction,
   stripInternalParams,
 } from "../handler-context";
+
+beforeEach(() => {
+  getSearchSchemaMock.mockReset();
+  getSearchSchemaMock.mockReturnValue(undefined);
+  isRouteRootScopedMock.mockReset();
+  isRouteRootScopedMock.mockReturnValue(undefined);
+});
 
 /**
  * Helper to build a minimal HandlerContext for testing search param behavior.
@@ -205,6 +217,51 @@ describe("createHandlerContext routeName", () => {
       "magazine.article",
     );
     expect(ctx.routeName).toBe("magazine.article");
+  });
+
+  it("captures rootScoped eagerly so same route names stay isolated across routers", () => {
+    const url = new URL("http://localhost/flat/sub/42");
+    const routeMap = {
+      flatIndex: "/flat",
+      "sub.detail": "/flat/sub/:id",
+      "sub.index": "/flat/sub",
+    };
+
+    // Simulate two routers reusing the same route name with different scope
+    // semantics. The first one is root-scoped (flattened mount), the second
+    // one is not (named mount boundary).
+    isRouteRootScopedMock.mockReturnValueOnce(true).mockReturnValueOnce(false);
+
+    const rootScopedCtx = createHandlerContext(
+      { id: "42" },
+      new Request(url.href),
+      url.searchParams,
+      "/flat/sub/42",
+      url,
+      {},
+      routeMap,
+      "sub.detail",
+    );
+    const namedScopedCtx = createHandlerContext(
+      { id: "42" },
+      new Request(url.href),
+      url.searchParams,
+      "/flat/sub/42",
+      url,
+      {},
+      routeMap,
+      "sub.detail",
+    );
+
+    expect(isRouteRootScopedMock).toHaveBeenCalledTimes(2);
+
+    // Changing the global registry afterward must not affect the already
+    // constructed reverse functions.
+    isRouteRootScopedMock.mockReturnValue(undefined);
+
+    expect(rootScopedCtx.reverse(".flatIndex")).toBe("/flat");
+    expect(() => namedScopedCtx.reverse(".flatIndex")).toThrow("Unknown route");
+    expect(isRouteRootScopedMock).toHaveBeenCalledTimes(2);
   });
 });
 
