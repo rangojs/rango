@@ -6,7 +6,10 @@ import {
   getNamePrefix,
   getRootScoped,
 } from "../server/context";
-import { INTERNAL_INCLUDE_SCOPE_PREFIX } from "../route-name.js";
+import {
+  INTERNAL_INCLUDE_SCOPE_PREFIX,
+  validateUserRouteName,
+} from "../route-name.js";
 import type { UrlPatterns, IncludeOptions } from "./pattern-types.js";
 import type { IncludeFn } from "./path-helper-types.js";
 
@@ -110,6 +113,9 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
 
     const explicitName = options?.name;
     const hasExplicitName = hasExplicitNameOption(options);
+    if (hasExplicitName && explicitName) {
+      validateUserRouteName(explicitName);
+    }
     const name = `$include_${prefix.replace(/[/:*?]/g, "_")}`;
 
     // Capture context for deferred evaluation

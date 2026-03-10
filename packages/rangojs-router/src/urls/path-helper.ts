@@ -13,6 +13,7 @@ import {
   getRootScoped,
 } from "../server/context";
 import { invariant } from "../errors";
+import { validateUserRouteName } from "../route-name.js";
 import {
   isPrerenderHandler,
   type PrerenderHandlerDefinition,
@@ -151,6 +152,9 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
     // Generate route name - use provided name or generate from pattern
     const localName =
       options?.name || `$path_${pattern.replace(/[/:*?]/g, "_")}`;
+    if (options?.name) {
+      validateUserRouteName(options.name);
+    }
     // Apply name prefix if set (from include())
     const routeName = applyNamePrefix(namePrefix, localName);
 
