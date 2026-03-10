@@ -46,6 +46,7 @@ test.describe("prerender passthrough (production)", () => {
 
     await expect(testId(page, "guide-detail")).toBeVisible();
     await expect(testId(page, "guide-title")).toHaveText("Routing Guide");
+    await expect(testId(page, "guide-build")).toHaveText("Build: true");
     await expect(testId(page, "guide-slug")).toHaveText("Slug: routing");
     await expect(testId(page, "guide-rendered-at")).toBeVisible();
   });
@@ -58,6 +59,7 @@ test.describe("prerender passthrough (production)", () => {
 
     await expect(testId(page, "guide-detail")).toBeVisible();
     await expect(testId(page, "guide-title")).toHaveText("Caching Guide");
+    await expect(testId(page, "guide-build")).toHaveText("Build: true");
     await expect(testId(page, "guide-slug")).toHaveText("Slug: caching");
   });
 
@@ -71,6 +73,7 @@ test.describe("prerender passthrough (production)", () => {
 
     await expect(testId(page, "guide-detail")).toBeVisible();
     await expect(testId(page, "guide-title")).toHaveText("Guide: unknown-slug");
+    await expect(testId(page, "guide-build")).toHaveText("Build: false");
     await expect(testId(page, "guide-slug")).toHaveText("Slug: unknown-slug");
     await expect(testId(page, "guide-rendered-at")).toBeVisible();
   });
@@ -85,6 +88,7 @@ test.describe("prerender passthrough (production)", () => {
     await expect(testId(page, "guide-title")).toHaveText(
       "Guide: any-arbitrary-slug",
     );
+    await expect(testId(page, "guide-build")).toHaveText("Build: false");
   });
 
   // -- Client-side navigation tests --
@@ -135,6 +139,7 @@ test.describe("prerender passthrough (production)", () => {
     await testId(page, "guide-link-dynamic").click();
     await expect(testId(page, "guide-detail")).toBeVisible();
     await expect(testId(page, "guide-title")).toHaveText("Guide: dynamic-test");
+    await expect(testId(page, "guide-build")).toHaveText("Build: false");
     await expect(testId(page, "guide-slug")).toHaveText("Slug: dynamic-test");
   });
 
@@ -386,6 +391,7 @@ test.describe("prerender passthrough (dev)", () => {
 
     await expect(testId(page, "guide-detail")).toBeVisible();
     await expect(testId(page, "guide-title")).toHaveText("Routing Guide");
+    await expect(testId(page, "guide-build")).toHaveText("Build: true");
     await expect(testId(page, "guide-slug")).toHaveText("Slug: routing");
     await expect(testId(page, "guide-rendered-at")).toBeVisible();
   });
@@ -398,6 +404,7 @@ test.describe("prerender passthrough (dev)", () => {
 
     await expect(testId(page, "guide-detail")).toBeVisible();
     await expect(testId(page, "guide-title")).toHaveText("Caching Guide");
+    await expect(testId(page, "guide-build")).toHaveText("Build: true");
   });
 
   test("unknown slug renders live in dev mode", async ({ page }) => {
@@ -408,6 +415,7 @@ test.describe("prerender passthrough (dev)", () => {
 
     await expect(testId(page, "guide-detail")).toBeVisible();
     await expect(testId(page, "guide-title")).toHaveText("Guide: unknown-slug");
+    await expect(testId(page, "guide-build")).toHaveText("Build: false");
     await expect(testId(page, "guide-slug")).toHaveText("Slug: unknown-slug");
   });
 
@@ -421,6 +429,7 @@ test.describe("prerender passthrough (dev)", () => {
 
     await testId(page, "guide-link-dynamic").click();
     await expect(testId(page, "guide-title")).toHaveText("Guide: dynamic-test");
+    await expect(testId(page, "guide-build")).toHaveText("Build: false");
   });
 
   test("client navigation between guides in dev mode", async ({ page }) => {

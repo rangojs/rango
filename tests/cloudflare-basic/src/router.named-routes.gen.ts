@@ -71,6 +71,7 @@ export const NamedRoutes = {
   testNegotiateWildJson: "/test/negotiate-wild/*",
   testNegotiateXml: "/test/negotiate-xml",
   testNegotiateXmlApi: "/test/negotiate-xml",
+  testPrerenderManifestEntries: "/__test/prerender-manifest-entries",
   testUncachedJson: "/test/uncached-json",
   theme: "/theme",
   "transformCases.index": "/transform-cases",

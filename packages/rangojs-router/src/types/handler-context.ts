@@ -202,8 +202,8 @@ export type HandlerContext<
   readonly _paramCheck?: (params: TParams) => TParams;
   /**
    * True during build-time pre-rendering, false at runtime.
-   * In dev mode, Prerender handlers run live so build is false.
-   * In production passthrough (live fallback), build is also false.
+   * Build-time collection and dev on-demand prerender use `true`.
+   * Live request rendering, including passthrough fallback, uses `false`.
    */
   build: boolean;
   /**
@@ -436,6 +436,8 @@ export type InternalHandlerContext<
   TEnv = DefaultEnv,
   TSearch extends SearchSchema = {},
 > = HandlerContext<TParams, TEnv, TSearch> & {
+  /** Prerender-only control flow helper, attached when the runtime context supports it. */
+  passthrough?: () => unknown;
   /** Current segment ID for handle data attribution. */
   _currentSegmentId?: string;
   /** Response type tag (json, text, html, etc.) for cache key differentiation. */

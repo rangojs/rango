@@ -189,6 +189,7 @@ export const NamedRoutes = {
   streamModeTest: "/stream-mode-test",
   testLastError: "/__test/last-error",
   testManifestCacheCounter: "/__test/manifest-cache-counter",
+  testPrerenderManifestEntries: "/__test/prerender-manifest-entries",
   testThrowHandlerError: "/__test/throw-handler-error",
   "theme.index": "/theme",
   "theme.toggle": "/theme/toggle",

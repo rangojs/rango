@@ -75,6 +75,28 @@ describe("createHandlerContext", () => {
       expect(ctx.url.searchParams.get("page")).toBe("1");
     });
   });
+
+  describe("passthrough()", () => {
+    it("throws at runtime even for passthrough prerender routes", () => {
+      const url = new URL("http://localhost/guides/routing");
+      const ctx = createHandlerContext(
+        { slug: "routing" },
+        new Request(url.href),
+        url.searchParams,
+        "/guides/routing",
+        url,
+        {},
+        { "guides.detail": "/guides/:slug" },
+        "guides.detail",
+        undefined,
+        true,
+      );
+
+      expect(() => (ctx as any).passthrough()).toThrow(
+        "ctx.passthrough() can only be called during build-time prerendering.",
+      );
+    });
+  });
 });
 
 describe("stripInternalParams", () => {

@@ -309,13 +309,21 @@ export function withCacheLookup<TEnv>(
       await ensurePrerenderDeps();
       if (prerenderStoreInstance) {
         const paramHash = _hashParams!(ctx.matched.params);
+        const isPassthroughPrerenderRoute = ctx.entries.some(
+          (entry) =>
+            entry.type === "route" &&
+            entry.prerenderDef?.options?.passthrough === true,
+        );
 
         if (ctx.isIntercept) {
           // Intercept navigation: try intercept-specific prerender entry
           const entry = await prerenderStoreInstance.get(
             ctx.matched.routeKey,
             paramHash + "/i",
-            { pathname: ctx.pathname },
+            {
+              pathname: ctx.pathname,
+              isPassthroughRoute: isPassthroughPrerenderRoute,
+            },
           );
           if (entry) {
             yield* yieldFromStore(
@@ -334,7 +342,10 @@ export function withCacheLookup<TEnv>(
           const entry = await prerenderStoreInstance.get(
             ctx.matched.routeKey,
             paramHash,
-            { pathname: ctx.pathname },
+            {
+              pathname: ctx.pathname,
+              isPassthroughRoute: isPassthroughPrerenderRoute,
+            },
           );
           if (entry) {
             yield* yieldFromStore(
@@ -370,12 +381,20 @@ export function withCacheLookup<TEnv>(
         await ensurePrerenderDeps();
         if (prerenderStoreInstance) {
           const paramHash = _hashParams!(ctx.matched.params);
+          const isPassthroughPrerenderRoute = ctx.entries.some(
+            (entry) =>
+              entry.type === "route" &&
+              entry.prerenderDef?.options?.passthrough === true,
+          );
 
           if (ctx.isIntercept) {
             const entry = await prerenderStoreInstance.get(
               ctx.matched.routeKey,
               paramHash + "/i",
-              { pathname: ctx.pathname },
+              {
+                pathname: ctx.pathname,
+                isPassthroughRoute: isPassthroughPrerenderRoute,
+              },
             );
             if (entry) {
               yield* yieldFromStore(
@@ -392,7 +411,10 @@ export function withCacheLookup<TEnv>(
             const entry = await prerenderStoreInstance.get(
               ctx.matched.routeKey,
               paramHash,
-              { pathname: ctx.pathname },
+              {
+                pathname: ctx.pathname,
+                isPassthroughRoute: isPassthroughPrerenderRoute,
+              },
             );
             if (entry) {
               yield* yieldFromStore(

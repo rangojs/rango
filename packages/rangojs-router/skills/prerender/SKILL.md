@@ -72,13 +72,14 @@ export const ProductPage = Prerender(
 
 Controls whether the handler stays in the RSC server bundle after build:
 
-|                | `passthrough: false` (default)          | `passthrough: true`                     |
-| -------------- | --------------------------------------- | --------------------------------------- |
-| Known params   | Served from pre-rendered Flight payload | Served from pre-rendered Flight payload |
-| Unknown params | Handler evicted, no live fallback       | Handler runs live at request time       |
-| Bundle size    | Handler code + imports removed          | Handler code kept in RSC bundle         |
-| `revalidate()` | Not allowed (handler gone)              | Allowed (handler can re-render)         |
-| `loading()`    | Ignored (segments fully resolved)       | Works for live fallback renders         |
+|                     | `passthrough: false` (default)          | `passthrough: true`                     |
+| ------------------- | --------------------------------------- | --------------------------------------- |
+| Known params        | Served from pre-rendered Flight payload | Served from pre-rendered Flight payload |
+| Unknown params      | Handler evicted, no live fallback       | Handler runs live at request time       |
+| `ctx.passthrough()` | Throws (not allowed)                    | Skips artifact, defers to live fallback |
+| Bundle size         | Handler code + imports removed          | Handler code kept in RSC bundle         |
+| `revalidate()`      | Not allowed (handler gone)              | Allowed (handler can re-render)         |
+| `loading()`         | Ignored (segments fully resolved)       | Works for live fallback renders         |
 
 ### When to use passthrough
 
@@ -101,6 +102,7 @@ Handlers receive `BuildContext` at build time, a subset of the runtime `HandlerC
 ```typescript
 interface BuildContext<TParams> {
   params: TParams; // From getParams
+  build: true; // Always true at build time
   use: <T>(handle: Handle<T>) => (data: T) => void; // Push handle data
   url: URL; // Synthetic URL from pattern + params
   pathname: string; // Pathname from synthetic URL
@@ -108,6 +110,12 @@ interface BuildContext<TParams> {
   set<T>(contextVar: ContextVar<T>, value: T): void; // Set typed context variable
   get(key: string): any; // Read context variable (string key)
   get<T>(contextVar: ContextVar<T>): T | undefined; // Read typed context variable
+  reverse(
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ): string; // URL generation
+  passthrough(): PrerenderPassthroughResult; // Skip local artifact (passthrough routes only)
   // NOT available: req, headers, cookies, env (throws descriptive errors)
 }
 ```
@@ -237,9 +245,19 @@ implicitly re-run outer prerender-derived handlers/layouts.
 
 ## Dev Mode
 
-In dev mode, `Prerender` is a normal handler. Routes render live
-on every request. No stubbing, no build-time pre-rendering. The handler runs
-with full runtime context (not BuildContext).
+In dev mode there is no production-style prerender build pass and no handler
+stubbing.
+
+**Node.js dev server** — `Prerender` acts as a normal handler. Routes render
+live on every request with full runtime context (`ctx.build === false`).
+
+**Non-Node runtimes (Cloudflare workerd, Deno workers)** — Handlers that
+depend on Node APIs (e.g. `node:fs`) cannot run in-process. The Vite plugin
+can intercept these requests and resolve them via the `/__rsc_prerender`
+endpoint, which runs `matchForPrerender` in a Node.js temp server. In this
+path the handler receives `BuildContext` (`ctx.build === true`) and segments
+are resolved identically to production prerendering, then served on-demand.
+This only applies when `__PRERENDER_DEV_URL` is set by the plugin.
 
 ## Storage Layout
 
@@ -305,8 +323,10 @@ export const TocSidebar = Static(() => {
 
 ### Error behavior at build time
 
-| Throw type                  | Effect                                                |
+| Handler outcome             | Effect                                                |
 | --------------------------- | ----------------------------------------------------- |
+| JSX / `null`                | Normal prerender entry, log OK                        |
+| `return ctx.passthrough()`  | Skip entry, log PASS, continue (passthrough routes)   |
 | `throw new Skip("reason")`  | Skip entry, log SKIP, continue with remaining entries |
 | `throw new Error("reason")` | Log FAIL, stop ALL pre-rendering, fail the build      |
 
@@ -320,21 +340,108 @@ The build produces per-URL timing logs:
 ```
 [rsc-router] Pre-rendering 12 URL(s) (concurrency: 4)...
 [rsc-router]   OK   /articles/hello            (42ms)
+[rsc-router]   PASS /articles/remote-only      (5ms) - live fallback
 [rsc-router]   SKIP /articles/draft-post       (3ms) - Article is a draft
-[rsc-router]   FAIL /articles/broken           (15ms) - DB connection refused
-[rsc-router] Pre-render complete: 10 ok, 1 skipped, 1 failed (1204ms total)
+[rsc-router] Pre-render complete: 11 done, 1 skipped (1204ms total)
 
 [rsc-router] Rendering 3 static handler(s)...
 [rsc-router]   OK   DocsLayout                 (28ms)
 [rsc-router]   SKIP TocSidebar                 (1ms) - Not ready
-[rsc-router] Static render complete: 2 ok, 1 skipped (120ms total)
+[rsc-router] Static render complete: 2 done, 1 skipped (120ms total)
 ```
+
+A `FAIL` line is logged per-URL when a handler throws a non-Skip error. The
+error is re-thrown immediately, so no summary line is printed — the build
+stops at the first failure.
 
 ### Dev mode behavior
 
-In dev mode, `Skip` is a regular Error. Throwing it in a handler will surface
-as a runtime error (no build-time skip logic exists in dev). This matches the
-general dev-mode principle where Prerender handlers run live per request.
+**Node.js dev server** — `Skip` behaves like a regular runtime error because
+the handler runs live with `ctx.build === false`.
+
+**Non-Node runtimes using `/__rsc_prerender`** — `Skip` participates in the
+on-demand prerender path, so build-style skip logic does run for that request.
+The dev prerender endpoint treats it like a prerender miss and the request
+falls back according to normal dev/runtime behavior.
+
+## Per-Param Passthrough with ctx.passthrough()
+
+On `{ passthrough: true }` routes, a handler can return `ctx.passthrough()`
+to skip writing a local prerender artifact for a specific param set. At
+runtime, the missing entry falls through to the live handler.
+
+```typescript
+export const BlogPost = Prerender(
+  async () => [{ slug: "a" }, { slug: "b" }, { slug: "c" }],
+  async (ctx) => {
+    const post = await getPost(ctx.params.slug);
+    if (!post) return ctx.passthrough();
+    return <article>{post.content}</article>;
+  },
+  { passthrough: true },
+);
+```
+
+### Semantics
+
+- JSX or `null` from the handler produces a normal prerender entry.
+- `ctx.passthrough()` returns a sentinel that signals "no local artifact".
+  The build skips the manifest entry for that param set.
+- `ctx.passthrough()` on a non-passthrough route throws an invariant error.
+- `ctx.passthrough()` at runtime (`ctx.build === false`) also throws.
+  It is a build-time-only control flow.
+- `getParams()` still enumerates the param set; the handler decides per-param
+  whether to produce an artifact or defer to runtime.
+
+### Difference from Skip
+
+| Mechanism           | Effect on build        | Runtime behavior                                     |
+| ------------------- | ---------------------- | ---------------------------------------------------- |
+| `throw new Skip()`  | Skips entry, logs SKIP | No artifact, no live fallback unless passthrough     |
+| `ctx.passthrough()` | Skips entry, logs PASS | Always defers to live handler (requires passthrough) |
+
+Use `ctx.passthrough()` when you want the handler to run live at request time
+for specific params. Use `Skip` when you want to exclude params entirely.
+
+### Use case: Remote storage
+
+`ctx.passthrough()` enables a pattern where build-time data is stored in a
+remote KV store instead of the local prerender manifest. The handler
+pre-computes data during `getParams`, pushes it to KV, then calls
+`ctx.passthrough()` so the local build skips the artifact. At runtime,
+the live handler reads from KV:
+
+```typescript
+export const Product = Prerender(
+  async () => {
+    const products = await db.getFeaturedProducts();
+    // Pre-compute and store in remote KV during build
+    for (const p of products) {
+      await kv.put(`product:${p.id}`, await renderProduct(p));
+    }
+    return products.map(p => ({ id: p.id }));
+  },
+  async (ctx) => {
+    // At build time: skip local artifact, data is in KV
+    if (ctx.build) return ctx.passthrough();
+    // At runtime: read from KV
+    const cached = await kv.get(`product:${ctx.params.id}`);
+    if (cached) return cached;
+    return <Product data={await db.getProduct(ctx.params.id)} />;
+  },
+  { passthrough: true },
+);
+```
+
+### Build logs
+
+Passthrough entries are logged distinctly:
+
+```
+[rsc-router]   OK   /blog/a                          (42ms)
+[rsc-router]   PASS /blog/b                          (3ms) - live fallback
+[rsc-router]   OK   /blog/c                          (38ms)
+```
 
 ## Edge Cases and Constraints
 

@@ -701,6 +701,23 @@ export const ProductPage = Prerender(
 
 With `passthrough: true`, known params are served from the build-time cache and unknown params fall through to live rendering.
 
+Handlers can also skip individual param sets with `ctx.passthrough()`, deferring them to the live handler at runtime:
+
+```tsx
+export const ProductPage = Prerender(
+  async () => {
+    const all = await db.getAllProducts();
+    return all.map((p) => ({ id: p.id }));
+  },
+  async (ctx) => {
+    const product = await db.getProduct(ctx.params.id);
+    if (!product.published) return ctx.passthrough();
+    return <Product data={product} />;
+  },
+  { passthrough: true },
+);
+```
+
 ## Theme
 
 ### Router Configuration

@@ -333,6 +333,7 @@ export interface RSCRouterInternal<
     pathname: string,
     params: Record<string, string>,
     buildVars?: Record<string, any>,
+    isPassthroughRoute?: boolean,
   ): Promise<{
     segments: SerializedSegmentData[];
     handles: Record<string, SegmentHandleData>;
@@ -340,6 +341,7 @@ export interface RSCRouterInternal<
     params: Record<string, string>;
     interceptSegments?: SerializedSegmentData[];
     interceptHandles?: Record<string, SegmentHandleData>;
+    passthrough?: true;
   } | null>;
 
   /**

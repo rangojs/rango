@@ -168,6 +168,7 @@ export function withBackgroundRevalidation<TEnv>(
           ctx.routeMap,
           ctx.matched.routeKey,
           ctx.matched.responseType,
+          ctx.matched.pt === true,
         );
         const freshLoaderPromises = new Map<string, Promise<any>>();
         setupLoaderAccess(freshHandlerContext, freshLoaderPromises);

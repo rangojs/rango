@@ -217,3 +217,158 @@ test.describe("prerender ctx passthrough (production)", () => {
     );
   });
 });
+
+// -- ctx.passthrough() per-param skip (dev) -----------------------------------
+// gamma is in getParams but calls ctx.passthrough() during build. In dev mode
+// the route still renders live via on-demand prerender fallback.
+
+test.describe("prerender ctx.passthrough() (dev)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "dev",
+  });
+
+  test("gamma renders live in dev despite ctx.passthrough()", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/prerender-ctx/gamma"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "prerender-ctx-title")).toContainText("gamma");
+  });
+
+  test("gamma ctx.build is false (passthrough fell through to live)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/prerender-ctx/gamma"));
+    await waitForHydration(page);
+
+    // On-demand prerender returned passthrough, so handler reruns live
+    await expect(testId(page, "prerender-ctx-build")).toContainText("false");
+  });
+
+  test("gamma layout has correct handler data in dev", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/prerender-ctx/gamma"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "prerender-ctx-layout-data")).toContainText(
+      "data-for-gamma",
+    );
+  });
+
+  test("gamma parallel has correct handler data in dev", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/prerender-ctx/gamma"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "prerender-ctx-sidebar-data")).toContainText(
+      "data-for-gamma",
+    );
+  });
+});
+
+// -- ctx.passthrough() per-param skip (production) ----------------------------
+// gamma is in getParams but calls ctx.passthrough() during build, so no
+// prerender artifact is written. At runtime it renders live like an unknown
+// slug, but it was explicitly listed in getParams.
+
+test.describe("prerender ctx.passthrough() (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test("gamma renders live via ctx.passthrough() skip", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/prerender-ctx/gamma"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "prerender-ctx-title")).toContainText("gamma");
+  });
+
+  test("gamma has ctx.build === false (live render, not cached)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/prerender-ctx/gamma"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "prerender-ctx-build")).toContainText("false");
+  });
+
+  test("gamma timestamp changes across reloads (not prerendered)", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/prerender-ctx/gamma"));
+    await waitForHydration(page);
+
+    const ts1 = await testId(page, "prerender-ctx-timestamp").textContent();
+
+    await page.reload();
+    await waitForHydration(page);
+
+    const ts2 = await testId(page, "prerender-ctx-timestamp").textContent();
+
+    // Live render: timestamp should change (unlike pre-rendered alpha/beta)
+    expect(ts1).not.toBe(ts2);
+  });
+
+  test("gamma layout has correct handler data", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/prerender-ctx/gamma"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "prerender-ctx-layout-data")).toContainText(
+      "data-for-gamma",
+    );
+  });
+
+  test("gamma parallel has correct handler data", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/prerender-ctx/gamma"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "prerender-ctx-sidebar-data")).toContainText(
+      "data-for-gamma",
+    );
+  });
+
+  test("manifest has alpha and beta but not gamma", async ({ page }) => {
+    const res = await page.request.get(
+      f.url("/__test/prerender-manifest-entries?route=prerenderCtx.detail"),
+    );
+    const json = await res.json();
+    // path.json() wraps in { data: ... } envelope
+    const data = json.data;
+    // getParams returns [alpha, beta, gamma], but gamma called ctx.passthrough()
+    // so only alpha + beta should have prerender manifest entries.
+    expect(data.available).toBe(true);
+    expect(data.count).toBe(2);
+  });
+
+  test("alpha is still prerendered (stable timestamp)", async ({ page }) => {
+    await page.goto(f.url("/prerender-ctx/alpha"));
+    await waitForHydration(page);
+
+    const ts1 = await testId(page, "prerender-ctx-timestamp").textContent();
+
+    await page.reload();
+    await waitForHydration(page);
+
+    const ts2 = await testId(page, "prerender-ctx-timestamp").textContent();
+
+    // Pre-rendered: identical timestamp across reloads
+    expect(ts1).toBe(ts2);
+  });
+});

@@ -91,7 +91,10 @@ export function postprocessBundle(state: DiscoveryState): void {
   // and inject a manifest import into the RSC entry.
   if (hasPrerenderData && existsSync(rscEntryPath)) {
     const rscCode = readFileSync(rscEntryPath, "utf-8");
-    if (!rscCode.includes("__PRERENDER_MANIFEST")) {
+    // Check for the specific injection marker, not just the variable name.
+    // The runtime code (prerender store) also references __PRERENDER_MANIFEST,
+    // so a broad string check would false-positive and skip injection.
+    if (!rscCode.includes("__prerender-manifest.js")) {
       try {
         const assetsDir = resolve(state.projectRoot, "dist/rsc/assets");
         mkdirSync(assetsDir, { recursive: true });

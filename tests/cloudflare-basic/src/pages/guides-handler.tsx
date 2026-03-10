@@ -11,12 +11,17 @@ const knownGuides: Record<string, string> = {
 export const GuidesDetail = Prerender<{ slug: string }>(
   async () => Object.keys(knownGuides).map((slug) => ({ slug })),
   async (ctx) => {
+    if (ctx.build && !(ctx.params.slug in knownGuides)) {
+      return ctx.passthrough();
+    }
+
     const title = knownGuides[ctx.params.slug] ?? `Guide: ${ctx.params.slug}`;
     const renderedAt = new Date().toISOString();
 
     return (
       <div data-testid="guide-detail">
         <h1 data-testid="guide-title">{title}</h1>
+        <p data-testid="guide-build">Build: {String(ctx.build)}</p>
         <p data-testid="guide-rendered-at">Rendered at: {renderedAt}</p>
         <p data-testid="guide-slug">Slug: {ctx.params.slug}</p>
         <nav style={{ marginTop: "1rem" }}>

@@ -85,6 +85,7 @@ vi.mock("../../errors", () => ({
 }));
 
 import { createMatchContextForPartial } from "../match-api.js";
+import { setRequestContextPrevRouteKey } from "../../server/request-context.js";
 import type { MatchApiDeps } from "../types.js";
 
 function routeKeyForPath(pathname: string): string {
@@ -315,5 +316,54 @@ describe("createMatchContextForPartial when() route names", () => {
     // consistent with from.pathname which also uses the intercept source
     expect(ctx.interceptSelectorContext.toRouteName).toBe("product.detail");
     expect(ctx.interceptSelectorContext.fromRouteName).toBe("shop.items");
+  });
+});
+
+describe("createMatchContextForPartial revalidation _prevRouteKey with intercept source", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("stores intercept source route key for revalidation fromRouteName", async () => {
+    const findInterceptSpy = vi.fn(() => null);
+    const deps = makeDeps();
+
+    // On /product/product-a, intercept source from /shop/items
+    const request = new Request(
+      "http://localhost:5173/product/product-a?_rsc_segments=",
+      {
+        headers: {
+          "X-RSC-Router-Client-Path": "http://localhost:5173/product/product-a",
+          "X-RSC-Router-Intercept-Source": "http://localhost:5173/shop/items",
+        },
+      },
+    );
+
+    await createMatchContextForPartial(request, {}, deps, findInterceptSpy);
+
+    // _prevRouteKey should be the intercept source route (shop.items),
+    // not the plain previous URL route (product.detail), so revalidation
+    // callbacks see the same fromRouteName as the intercept selector context.
+    expect(setRequestContextPrevRouteKey).toHaveBeenCalledWith("shop.items");
+  });
+
+  it("stores prevMatch route key when no intercept source", async () => {
+    const findInterceptSpy = vi.fn(() => null);
+    const deps = makeDeps();
+
+    // Normal navigation from /shop to /product/product-a
+    const request = new Request(
+      "http://localhost:5173/product/product-a?_rsc_segments=",
+      {
+        headers: {
+          "X-RSC-Router-Client-Path": "http://localhost:5173/shop",
+        },
+      },
+    );
+
+    await createMatchContextForPartial(request, {}, deps, findInterceptSpy);
+
+    // Without intercept source, _prevRouteKey should be from the previous URL
+    expect(setRequestContextPrevRouteKey).toHaveBeenCalledWith("shop.items");
   });
 });

@@ -713,6 +713,23 @@ export const urlpatterns = urls(
         { name: "testManifestCacheCounter" },
       ),
 
+      // Prerender manifest introspection: returns entry count for a given
+      // route name so e2e tests can verify which params were prerendered.
+      path.json(
+        "/__test/prerender-manifest-entries",
+        async (ctx) => {
+          const routeName = ctx.searchParams.get("route");
+          if (!routeName) return { error: "missing route param" };
+          const manifest = globalThis.__PRERENDER_MANIFEST;
+          if (!manifest) return { available: false, count: 0 };
+          const keys = Object.keys(manifest).filter((k) =>
+            k.startsWith(routeName + "/"),
+          );
+          return { available: true, count: keys.length };
+        },
+        { name: "testPrerenderManifestEntries" },
+      ),
+
       // Content negotiation test: RSC + JSON + MD on same URL
       path(
         "/negotiate-test",
