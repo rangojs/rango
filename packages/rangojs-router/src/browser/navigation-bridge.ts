@@ -189,7 +189,7 @@ export function createNavigationBridge(
         !isLeavingIntercept &&
         !options?._skipCache;
 
-      using tx = createNavigationTransaction(store, eventController, url, {
+      const tx = createNavigationTransaction(store, eventController, url, {
         ...options,
         state: resolvedState,
         skipLoadingState: hasUsableCache,
@@ -224,7 +224,7 @@ export function createNavigationBridge(
         );
       } catch (error) {
         // Server-side redirect with location state: the current transaction's
-        // `using` cleanup resets loading state. Re-navigate to the redirect
+        // cleanup resets loading state. Re-navigate to the redirect
         // target carrying the server-set state into history.pushState.
         if (error instanceof ServerRedirect) {
           const redirectUrl = validateRedirectOrigin(
@@ -260,6 +260,8 @@ export function createNavigationBridge(
         }
 
         throw error;
+      } finally {
+        tx[Symbol.dispose]();
       }
     },
 
@@ -269,7 +271,7 @@ export function createNavigationBridge(
     async refresh(): Promise<void> {
       eventController.abortNavigation();
 
-      using tx = createNavigationTransaction(
+      const tx = createNavigationTransaction(
         store,
         eventController,
         window.location.href,
@@ -299,6 +301,8 @@ export function createNavigationBridge(
           return;
         }
         throw error;
+      } finally {
+        tx[Symbol.dispose]();
       }
     },
 
@@ -457,7 +461,7 @@ export function createNavigationBridge(
       }
 
       // Fetch if not cached
-      using tx = createNavigationTransaction(store, eventController, url, {
+      const tx = createNavigationTransaction(store, eventController, url, {
         replace: true,
       });
 
@@ -498,6 +502,8 @@ export function createNavigationBridge(
         }
 
         throw error;
+      } finally {
+        tx[Symbol.dispose]();
       }
     },
 
