@@ -158,6 +158,11 @@ Without a name, `include()` is a composition mechanism for URL mounting
 without polluting the global route namespace. To make child names available
 globally, always pass an explicit `name` (even `""` for flat merging).
 
+**`{ name: "" }` is flattening, not isolation.** Flattened routes behave as if
+defined inline at the include site — dot-local reverse (`.name`) can reach any
+sibling route at root scope, including routes from other `{ name: "" }` mounts.
+If you need module-level isolation, omit the `name` option or use a namespace.
+
 ## TypeScript Coverage
 
 Some rules are enforced at the type level via branded union types (`RouteUseItem`,
