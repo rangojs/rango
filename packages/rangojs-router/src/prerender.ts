@@ -34,9 +34,35 @@ import type {
 } from "./types.js";
 import type { Handle } from "./handle.js";
 import type { ContextVar } from "./context-var.js";
+import type { ReverseFunction } from "./reverse.js";
+import type { DefaultReverseRouteMap } from "./types/global-namespace.js";
 import { isCachedFunction } from "./cache/taint.js";
 
 // -- Named route resolution types -------------------------------------------
+
+/**
+ * Reverse function for build contexts (BuildContext, StaticBuildContext, GetParamsContext).
+ * Global names get full autocomplete and param validation from the generated route map.
+ * Local `.name` calls are accepted but not validated (the include() scope is unknown
+ * at the type level).
+ */
+type BuildReverseFunction = [DefaultReverseRouteMap] extends [
+  Record<string, string>,
+]
+  ? // No generated route map — permissive fallback
+    (
+      name: string,
+      params?: Record<string, string>,
+      search?: Record<string, unknown>,
+    ) => string
+  : // Generated route map available — typed globals + permissive locals
+    ReverseFunction<DefaultReverseRouteMap> & {
+      (
+        name: `.${string}`,
+        params?: Record<string, string>,
+        search?: Record<string, unknown>,
+      ): string;
+    };
 
 /**
  * Default route map for Prerender named route resolution.
@@ -143,11 +169,7 @@ export interface BuildContext<TParams> {
   search: {};
 
   /** URL generation by route name. */
-  reverse: (
-    name: string,
-    params?: Record<string, string>,
-    search?: Record<string, unknown>,
-  ) => string;
+  reverse: BuildReverseFunction;
 
   /**
    * Signal that this param set should not produce a local prerender artifact.
@@ -181,11 +203,7 @@ export interface StaticBuildContext {
   use: <T>(handle: Handle<T>) => (data: T) => void;
 
   /** URL generation by route name. */
-  reverse: (
-    name: string,
-    params?: Record<string, string>,
-    search?: Record<string, unknown>,
-  ) => string;
+  reverse: BuildReverseFunction;
 }
 
 /**
@@ -203,11 +221,7 @@ export interface GetParamsContext {
   };
 
   /** URL generation by route name. */
-  reverse: (
-    name: string,
-    params?: Record<string, string>,
-    search?: Record<string, unknown>,
-  ) => string;
+  reverse: BuildReverseFunction;
 }
 
 /**
