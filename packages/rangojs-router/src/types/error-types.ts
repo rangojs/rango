@@ -10,6 +10,7 @@
  * - "rendering": Invoked during SSR rendering errors (ssr/index.tsx, separate callback)
  * - "action": Invoked when server action execution fails (rsc/handler.ts, router.ts)
  * - "revalidation": Invoked when revalidation fails (router.ts, conditional with action)
+ * - "origin": Invoked when cross-origin request validation rejects a request (rsc/handler.ts)
  * - "unknown": Fallback for unclassified errors (not currently invoked)
  */
 export type ErrorPhase =
@@ -24,6 +25,7 @@ export type ErrorPhase =
   | "cache" // During "use cache" background operations (stale revalidation, async cache writes)
   | "prerender" // During build-time pre-rendering (Vite closeBundle)
   | "static" // During build-time static handler rendering (Vite closeBundle)
+  | "origin" // During cross-origin request validation (CSRF protection)
   | "unknown"; // Fallback for unclassified errors
 
 /**

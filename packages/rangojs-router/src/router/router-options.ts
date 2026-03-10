@@ -555,11 +555,33 @@ export interface RSCRouterOptions<TEnv = any> {
    * forwarded headers from your trusted proxy.
    *
    * - `true` (default) -- enable built-in origin validation
-   * - `false` -- disable (e.g., trusted cross-origin proxy setups)
-   * - A function `(request, url) => boolean` -- custom validation;
-   *   return true to allow, false to reject with 403
+   * - `false` -- disable
+   * - function -- full custom control with access to env, phase,
+   *   and the built-in check via `ctx.defaultCheck()`
+   *
+   * The callback receives `OriginCheckContext` with `request`, `url`,
+   * `env`, `routerId`, `phase` ("action" | "loader" | "pe-form"),
+   * and `defaultCheck()`. Return `true` to allow, `false` for default
+   * 403 rejection, or a `Response` for custom rejection.
    *
    * @default true
+   *
+   * @example Trusted proxy with X-Forwarded-Host
+   * ```ts
+   * createRouter({
+   *   originCheck({ request, url, env, defaultCheck }) {
+   *     if (env.TRUST_PROXY) {
+   *       const origin = request.headers.get("origin");
+   *       if (!origin) return true;
+   *       if (origin === "null") return false;
+   *       const host = request.headers.get("x-forwarded-host")
+   *         ?? request.headers.get("host") ?? url.host;
+   *       return origin.toLowerCase() === `${url.protocol}//${host}`.toLowerCase();
+   *     }
+   *     return defaultCheck();
+   *   },
+   * });
+   * ```
    */
-  originCheck?: import("../rsc/origin-guard.js").OriginCheckConfig;
+  originCheck?: import("../rsc/origin-guard.js").OriginCheckConfig<TEnv>;
 }

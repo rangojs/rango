@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { validateRequestOrigin, checkRequestOrigin } from "../origin-guard.js";
+import {
+  defaultOriginCheck,
+  checkRequestOrigin,
+  type OriginCheckPhase,
+} from "../origin-guard.js";
 
 function makeRequest(
   urlStr: string,
@@ -11,13 +15,18 @@ function makeRequest(
   return { request, url };
 }
 
-describe("validateRequestOrigin", () => {
+// Shared defaults for checkRequestOrigin calls
+const defaultEnv = {};
+const defaultRouterId = "test-router";
+const defaultPhase: OriginCheckPhase = "action";
+
+describe("defaultOriginCheck", () => {
   it("allows same-origin request (Origin matches Host)", () => {
     const { request, url } = makeRequest("https://example.com/action", {
       Origin: "https://example.com",
       Host: "example.com",
     });
-    expect(validateRequestOrigin(request, url)).toBeNull();
+    expect(defaultOriginCheck(request, url)).toBe(true);
   });
 
   it("rejects cross-origin request", () => {
@@ -25,16 +34,14 @@ describe("validateRequestOrigin", () => {
       Origin: "https://evil.com",
       Host: "example.com",
     });
-    const result = validateRequestOrigin(request, url);
-    expect(result).not.toBeNull();
-    expect(result!.status).toBe(403);
+    expect(defaultOriginCheck(request, url)).toBe(false);
   });
 
   it("allows when no Origin and no Referer (non-browser client)", () => {
     const { request, url } = makeRequest("https://example.com/action", {
       Host: "example.com",
     });
-    expect(validateRequestOrigin(request, url)).toBeNull();
+    expect(defaultOriginCheck(request, url)).toBe(true);
   });
 
   it("falls back to Referer when Origin is absent", () => {
@@ -42,7 +49,7 @@ describe("validateRequestOrigin", () => {
       Referer: "https://example.com/page",
       Host: "example.com",
     });
-    expect(validateRequestOrigin(request, url)).toBeNull();
+    expect(defaultOriginCheck(request, url)).toBe(true);
   });
 
   it("rejects cross-origin Referer when Origin is absent", () => {
@@ -50,23 +57,17 @@ describe("validateRequestOrigin", () => {
       Referer: "https://evil.com/page",
       Host: "example.com",
     });
-    const result = validateRequestOrigin(request, url);
-    expect(result).not.toBeNull();
-    expect(result!.status).toBe(403);
+    expect(defaultOriginCheck(request, url)).toBe(false);
   });
 
   it("ignores X-Forwarded-Host (client-controllable)", () => {
-    // X-Forwarded-Host is not trusted by default — an attacker could spoof
-    // it to bypass the origin check on deployments without a trusted proxy.
     const { request, url } = makeRequest("https://internal.server/action", {
       Origin: "https://cdn.example.com",
       "X-Forwarded-Host": "cdn.example.com",
       "X-Forwarded-Proto": "https",
       Host: "internal.server",
     });
-    const result = validateRequestOrigin(request, url);
-    expect(result).not.toBeNull();
-    expect(result!.status).toBe(403);
+    expect(defaultOriginCheck(request, url)).toBe(false);
   });
 
   it("ignores X-Forwarded-Proto (client-controllable)", () => {
@@ -76,9 +77,7 @@ describe("validateRequestOrigin", () => {
       Host: "example.com",
     });
     // Protocol mismatch: Origin says https but url.protocol is http
-    const result = validateRequestOrigin(request, url);
-    expect(result).not.toBeNull();
-    expect(result!.status).toBe(403);
+    expect(defaultOriginCheck(request, url)).toBe(false);
   });
 
   it("rejects mismatched port", () => {
@@ -86,9 +85,7 @@ describe("validateRequestOrigin", () => {
       Origin: "https://example.com:8080",
       Host: "example.com",
     });
-    const result = validateRequestOrigin(request, url);
-    expect(result).not.toBeNull();
-    expect(result!.status).toBe(403);
+    expect(defaultOriginCheck(request, url)).toBe(false);
   });
 
   it("case-insensitive host comparison", () => {
@@ -96,7 +93,7 @@ describe("validateRequestOrigin", () => {
       Origin: "https://EXAMPLE.COM",
       Host: "example.com",
     });
-    expect(validateRequestOrigin(request, url)).toBeNull();
+    expect(defaultOriginCheck(request, url)).toBe(true);
   });
 
   it("allows malformed Referer (treats as absent)", () => {
@@ -104,7 +101,7 @@ describe("validateRequestOrigin", () => {
       Referer: "not-a-url",
       Host: "example.com",
     });
-    expect(validateRequestOrigin(request, url)).toBeNull();
+    expect(defaultOriginCheck(request, url)).toBe(true);
   });
 
   it("rejects Origin: null (privacy-sensitive context)", () => {
@@ -112,18 +109,7 @@ describe("validateRequestOrigin", () => {
       Origin: "null",
       Host: "example.com",
     });
-    const result = validateRequestOrigin(request, url);
-    expect(result).not.toBeNull();
-    expect(result!.status).toBe(403);
-  });
-
-  it("includes diagnostic header on rejection", () => {
-    const { request, url } = makeRequest("https://example.com/action", {
-      Origin: "https://evil.com",
-      Host: "example.com",
-    });
-    const result = validateRequestOrigin(request, url)!;
-    expect(result.headers.get("X-Rango-Origin-Check")).toBe("failed");
+    expect(defaultOriginCheck(request, url)).toBe(false);
   });
 });
 
@@ -133,7 +119,15 @@ describe("checkRequestOrigin", () => {
       Origin: "https://evil.com",
       Host: "example.com",
     });
-    expect(await checkRequestOrigin(request, url, false)).toBeNull();
+    const result = await checkRequestOrigin(
+      request,
+      url,
+      false,
+      defaultEnv,
+      defaultRouterId,
+      defaultPhase,
+    );
+    expect(result).toBeNull();
   });
 
   it("uses built-in validation when config is true", async () => {
@@ -141,9 +135,17 @@ describe("checkRequestOrigin", () => {
       Origin: "https://evil.com",
       Host: "example.com",
     });
-    const result = await checkRequestOrigin(request, url, true);
+    const result = await checkRequestOrigin(
+      request,
+      url,
+      true,
+      defaultEnv,
+      defaultRouterId,
+      defaultPhase,
+    );
     expect(result).not.toBeNull();
     expect(result!.status).toBe(403);
+    expect(result!.headers.get("X-Rango-Origin-Check")).toBe("failed");
   });
 
   it("uses built-in validation when config is undefined", async () => {
@@ -151,36 +153,166 @@ describe("checkRequestOrigin", () => {
       Origin: "https://evil.com",
       Host: "example.com",
     });
-    const result = await checkRequestOrigin(request, url, undefined);
+    const result = await checkRequestOrigin(
+      request,
+      url,
+      undefined,
+      defaultEnv,
+      defaultRouterId,
+      defaultPhase,
+    );
     expect(result).not.toBeNull();
     expect(result!.status).toBe(403);
   });
 
-  it("calls custom function and allows on true", async () => {
+  it("callback receives env", async () => {
     const { request, url } = makeRequest("https://example.com/action", {
-      Origin: "https://trusted-partner.com",
+      Origin: "https://example.com",
       Host: "example.com",
     });
-    const result = await checkRequestOrigin(request, url, () => true);
+    let receivedEnv: any;
+    await checkRequestOrigin(
+      request,
+      url,
+      (ctx) => {
+        receivedEnv = ctx.env;
+        return true;
+      },
+      { TRUST_PROXY: true },
+      defaultRouterId,
+      defaultPhase,
+    );
+    expect(receivedEnv).toEqual({ TRUST_PROXY: true });
+  });
+
+  it("callback receives correct phase", async () => {
+    const { request, url } = makeRequest("https://example.com/action", {
+      Origin: "https://example.com",
+      Host: "example.com",
+    });
+
+    const phases: OriginCheckPhase[] = [];
+    const check = (ctx: any) => {
+      phases.push(ctx.phase);
+      return true;
+    };
+
+    await checkRequestOrigin(request, url, check, defaultEnv, "r", "action");
+    await checkRequestOrigin(request, url, check, defaultEnv, "r", "loader");
+    await checkRequestOrigin(request, url, check, defaultEnv, "r", "pe-form");
+
+    expect(phases).toEqual(["action", "loader", "pe-form"]);
+  });
+
+  it("callback receives routerId", async () => {
+    const { request, url } = makeRequest("https://example.com/action", {
+      Origin: "https://example.com",
+      Host: "example.com",
+    });
+    let receivedId: string | undefined;
+    await checkRequestOrigin(
+      request,
+      url,
+      (ctx) => {
+        receivedId = ctx.routerId;
+        return true;
+      },
+      defaultEnv,
+      "my-router",
+      defaultPhase,
+    );
+    expect(receivedId).toBe("my-router");
+  });
+
+  it("defaultCheck() matches built-in behavior", async () => {
+    const { request, url } = makeRequest("https://example.com/action", {
+      Origin: "https://evil.com",
+      Host: "example.com",
+    });
+    let checkResult: boolean | undefined;
+    await checkRequestOrigin(
+      request,
+      url,
+      (ctx) => {
+        checkResult = ctx.defaultCheck();
+        return true; // allow anyway for this test
+      },
+      defaultEnv,
+      defaultRouterId,
+      defaultPhase,
+    );
+    expect(checkResult).toBe(false);
+  });
+
+  it("callback returning true allows request", async () => {
+    const { request, url } = makeRequest("https://example.com/action", {
+      Origin: "https://evil.com",
+      Host: "example.com",
+    });
+    const result = await checkRequestOrigin(
+      request,
+      url,
+      () => true,
+      defaultEnv,
+      defaultRouterId,
+      defaultPhase,
+    );
     expect(result).toBeNull();
   });
 
-  it("calls custom function and rejects on false", async () => {
+  it("callback returning false rejects with default 403", async () => {
     const { request, url } = makeRequest("https://example.com/action", {
       Origin: "https://example.com",
       Host: "example.com",
     });
-    const result = await checkRequestOrigin(request, url, () => false);
+    const result = await checkRequestOrigin(
+      request,
+      url,
+      () => false,
+      defaultEnv,
+      defaultRouterId,
+      defaultPhase,
+    );
     expect(result).not.toBeNull();
     expect(result!.status).toBe(403);
+    expect(result!.headers.get("X-Rango-Origin-Check")).toBe("failed");
   });
 
-  it("supports async custom function", async () => {
+  it("callback returning Response is used verbatim", async () => {
+    const { request, url } = makeRequest("https://example.com/action", {
+      Origin: "https://evil.com",
+      Host: "example.com",
+    });
+    const customResponse = new Response("Custom rejection", {
+      status: 401,
+      headers: { "X-Custom": "auth-required" },
+    });
+    const result = await checkRequestOrigin(
+      request,
+      url,
+      () => customResponse,
+      defaultEnv,
+      defaultRouterId,
+      defaultPhase,
+    );
+    expect(result).toBe(customResponse);
+    expect(result!.status).toBe(401);
+    expect(result!.headers.get("X-Custom")).toBe("auth-required");
+  });
+
+  it("supports async callback", async () => {
     const { request, url } = makeRequest("https://example.com/action", {
       Origin: "https://example.com",
       Host: "example.com",
     });
-    const result = await checkRequestOrigin(request, url, async () => true);
+    const result = await checkRequestOrigin(
+      request,
+      url,
+      async () => true,
+      defaultEnv,
+      defaultRouterId,
+      defaultPhase,
+    );
     expect(result).toBeNull();
   });
 });

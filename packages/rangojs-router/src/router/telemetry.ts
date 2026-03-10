@@ -7,6 +7,7 @@
  * Emit points:
  *   - request.start / request.end   (match-handlers.ts)
  *   - request.error                  (match-handlers.ts catch blocks)
+ *   - request.origin-rejected        (rsc/handler.ts origin guard)
  *   - loader.start / loader.end / loader.error  (loader-resolution.ts)
  *   - handler.error                  (trackHandler catch, segment-resolution/helpers.ts)
  *   - cache.decision                 (cache-lookup middleware)
@@ -117,6 +118,15 @@ export interface RequestTimeoutEvent extends BaseEvent {
   customHandler: boolean;
 }
 
+export interface OriginCheckRejectedEvent extends BaseEvent {
+  type: "request.origin-rejected";
+  method: string;
+  pathname: string;
+  phase: import("../rsc/origin-guard.js").OriginCheckPhase;
+  origin: string | null;
+  host: string | null;
+}
+
 export type TelemetryEvent =
   | RequestStartEvent
   | RequestEndEvent
@@ -127,7 +137,8 @@ export type TelemetryEvent =
   | HandlerErrorEvent
   | CacheDecisionEvent
   | RevalidationDecisionEvent
-  | RequestTimeoutEvent;
+  | RequestTimeoutEvent
+  | OriginCheckRejectedEvent;
 
 // ---------------------------------------------------------------------------
 // Sink interface
@@ -276,6 +287,11 @@ export function createConsoleSink(): TelemetrySink {
         case "request.timeout":
           console.log(
             `[telemetry] ${event.type} phase=${event.phase} ${event.pathname} ${event.durationMs.toFixed(1)}ms custom=${event.customHandler}`,
+          );
+          break;
+        case "request.origin-rejected":
+          console.log(
+            `[telemetry] ${event.type} ${event.method} ${event.pathname} phase=${event.phase} origin=${event.origin ?? "none"} host=${event.host ?? "none"}`,
           );
           break;
       }

@@ -10,14 +10,45 @@
  */
 
 /**
- * Validate that the request origin matches the server host.
- * Returns null when the origin is valid (or absent), or a 403 Response
- * when a cross-origin mismatch is detected.
+ * Request phase that triggered the origin check.
  */
-export function validateRequestOrigin(
-  request: Request,
-  url: URL,
-): Response | null {
+export type OriginCheckPhase = "action" | "loader" | "pe-form";
+
+/**
+ * Context passed to the originCheck callback.
+ */
+export interface OriginCheckContext<TEnv = any> {
+  request: Request;
+  url: URL;
+  env: TEnv;
+  routerId: string;
+  phase: OriginCheckPhase;
+  /** Run the built-in conservative check (Origin/Referer vs Host + url.protocol). */
+  defaultCheck: () => boolean;
+}
+
+/**
+ * Configuration for the origin check.
+ *
+ * - `true` (default) — built-in conservative check
+ * - `false` — disabled
+ * - function — custom control; return true to allow, false to reject with
+ *   default 403, or a Response for custom rejection
+ */
+export type OriginCheckConfig<TEnv = any> =
+  | boolean
+  | ((
+      ctx: OriginCheckContext<TEnv>,
+    ) => boolean | Response | Promise<boolean | Response>);
+
+/**
+ * Built-in conservative origin check.
+ * Compares Origin (or Referer fallback) against Host + url.protocol.
+ * Does NOT trust X-Forwarded-Host/Proto headers.
+ *
+ * Returns true to allow, false to reject.
+ */
+export function defaultOriginCheck(request: Request, url: URL): boolean {
   // 1. Read Origin header (present on all cross-origin requests and
   //    same-origin POST/PUT/PATCH/DELETE in modern browsers)
   let requestOrigin = request.headers.get("origin");
@@ -35,13 +66,11 @@ export function validateRequestOrigin(
   }
 
   // 3. No Origin or Referer — allow (can't be browser-initiated CSRF)
-  if (!requestOrigin) return null;
+  if (!requestOrigin) return true;
 
   // "null" origin comes from privacy-sensitive contexts (data: URLs,
   // sandboxed iframes, cross-origin redirects). Reject it.
-  if (requestOrigin === "null") {
-    return createForbiddenResponse(request);
-  }
+  if (requestOrigin === "null") return false;
 
   // 4. Determine expected host from Host header or URL.
   // X-Forwarded-Host/Proto are NOT used — they are client-controllable
@@ -51,14 +80,10 @@ export function validateRequestOrigin(
   const expectedHost = request.headers.get("host") || url.host;
   const expectedProtocol = url.protocol;
 
-  // 6. Build expected origin and compare (case-insensitive)
+  // 5. Build expected origin and compare (case-insensitive)
   const expectedOrigin = `${expectedProtocol}//${expectedHost}`;
 
-  if (requestOrigin.toLowerCase() !== expectedOrigin.toLowerCase()) {
-    return createForbiddenResponse(request);
-  }
-
-  return null;
+  return requestOrigin.toLowerCase() === expectedOrigin.toLowerCase();
 }
 
 function createForbiddenResponse(request: Request): Response {
@@ -78,30 +103,39 @@ function createForbiddenResponse(request: Request): Response {
 
 /**
  * Configuration-aware origin check dispatcher.
- *
- * - `false` — disabled (always allows)
- * - `true` or `undefined` — built-in validation (default, secure-by-default)
- * - function — custom validation returning true to allow, false to reject
+ * Builds the OriginCheckContext and delegates to the configured check.
  */
-export type OriginCheckConfig =
-  | boolean
-  | ((request: Request, url: URL) => boolean | Promise<boolean>);
-
-export async function checkRequestOrigin(
+export async function checkRequestOrigin<TEnv = any>(
   request: Request,
   url: URL,
-  config: OriginCheckConfig | undefined,
+  config: OriginCheckConfig<TEnv> | undefined,
+  env: TEnv,
+  routerId: string,
+  phase: OriginCheckPhase,
 ): Promise<Response | null> {
   // Disabled by explicit opt-out
   if (config === false) return null;
 
-  // Custom function
-  if (typeof config === "function") {
-    const allowed = await config(request, url);
+  // Default: built-in validation (config === true or undefined)
+  if (config === true || config === undefined) {
+    const allowed = defaultOriginCheck(request, url);
     if (allowed) return null;
-    return new Response("Forbidden", { status: 403 });
+    return createForbiddenResponse(request);
   }
 
-  // Default: built-in validation (config === true or undefined)
-  return validateRequestOrigin(request, url);
+  // Custom function — build context and call
+  const ctx: OriginCheckContext<TEnv> = {
+    request,
+    url,
+    env,
+    routerId,
+    phase,
+    defaultCheck: () => defaultOriginCheck(request, url),
+  };
+
+  const result = await config(ctx);
+
+  if (result instanceof Response) return result;
+  if (result === true) return null;
+  return createForbiddenResponse(request);
 }

@@ -316,7 +316,7 @@ export interface RSCRouterInternal<
    * Cross-origin request protection configuration.
    * Default: true (enabled).
    */
-  readonly originCheck: import("../rsc/origin-guard.js").OriginCheckConfig;
+  readonly originCheck: import("../rsc/origin-guard.js").OriginCheckConfig<TEnv>;
 
   /**
    * Source file path where createRouter() was called.
