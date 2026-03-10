@@ -246,10 +246,6 @@ export async function createMatchContextForPartial<TEnv>(
     ? deps.findMatch(interceptContextUrl.pathname)
     : prevMatch;
 
-  // Store previous route key on the request context for revalidation
-  // and intercept evaluation (fromRouteName/toRouteName).
-  setRequestContextPrevRouteKey(prevMatch?.routeKey);
-
   const matched = deps.findMatch(pathname, metricsStore);
 
   if (metricsStore) {
@@ -368,6 +364,12 @@ export async function createMatchContextForPartial<TEnv>(
   const effectiveFromMatch = interceptSourceUrl
     ? interceptContextMatch
     : prevMatch;
+
+  // Store previous route key on the request context for revalidation
+  // fromRouteName. Uses effectiveFromMatch so intercept-source navigations
+  // see the intercept origin route, not the plain previous URL route.
+  setRequestContextPrevRouteKey(effectiveFromMatch?.routeKey);
+
   const interceptSelectorContext: InterceptSelectorContext = {
     from: effectiveFromUrl,
     to: cleanUrl,

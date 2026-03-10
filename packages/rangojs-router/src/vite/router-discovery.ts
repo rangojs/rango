@@ -574,8 +574,12 @@ export function createRouterDiscoveryPlugin(
         server.watcher.on("change", handleRouteFileChange);
 
         // Regenerate gen files when they are deleted (e.g. manual cleanup).
+        // Same no-runner guard as change/add: stale perRouterManifests would
+        // reintroduce reverted content.
         server.watcher.on("unlink", (filePath) => {
           if (!isGeneratedRouteFile(filePath)) return;
+          const hasRunner = !!(server.environments as any)?.rsc?.runner;
+          if (!hasRunner) return;
           regenerateGeneratedRouteFiles();
         });
       }
