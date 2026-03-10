@@ -58,6 +58,7 @@ import {
   type ActionContinuation,
 } from "./server-action.js";
 import { handleLoaderFetch } from "./loader-fetch.js";
+import { checkRequestOrigin } from "./origin-guard.js";
 import { handleRscRendering } from "./rsc-rendering.js";
 import { warnActionWithRouteMiddleware } from "./runtime-warnings.js";
 import {
@@ -494,8 +495,21 @@ export function createRSCHandler<
 
     const isAction =
       request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
+    const isLoaderFetch = url.searchParams.has("_rsc_loader");
     const actionId =
       request.headers.get("rsc-action") || url.searchParams.get("_rsc_action");
+
+    // Origin guard: reject cross-origin actions, loader fetches, and
+    // PE form submissions before any execution. Regular page navigations
+    // (GET without _rsc_loader/_rsc_action) are not affected.
+    if (isAction || isLoaderFetch || request.method === "POST") {
+      const originResult = await checkRequestOrigin(
+        request,
+        url,
+        router.originCheck,
+      );
+      if (originResult) return originResult;
+    }
 
     // Get handle store from request context
     const handleStore = requireRequestContext()._handleStore;

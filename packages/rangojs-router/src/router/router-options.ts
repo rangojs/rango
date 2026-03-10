@@ -535,4 +535,22 @@ export interface RSCRouterOptions<TEnv = any> {
    * ```
    */
   ssr?: SSROptions<TEnv>;
+
+  /**
+   * Cross-origin request protection for server actions, loader fetches,
+   * and progressive enhancement form submissions.
+   *
+   * When enabled, the router validates that the request's Origin header
+   * (or Referer fallback) matches the Host before executing actions,
+   * loaders, or PE submissions. Requests without Origin/Referer are
+   * allowed (same-origin navigations, non-browser clients).
+   *
+   * - `true` (default) -- enable built-in origin validation
+   * - `false` -- disable (e.g., trusted cross-origin proxy setups)
+   * - A function `(request, url) => boolean` -- custom validation;
+   *   return true to allow, false to reject with 403
+   *
+   * @default true
+   */
+  originCheck?: import("../rsc/origin-guard.js").OriginCheckConfig;
 }

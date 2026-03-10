@@ -313,6 +313,12 @@ export interface RSCRouterInternal<
   readonly ssr?: import("./router-options.js").SSROptions<TEnv>;
 
   /**
+   * Cross-origin request protection configuration.
+   * Default: true (enabled).
+   */
+  readonly originCheck: import("../rsc/origin-guard.js").OriginCheckConfig;
+
+  /**
    * Source file path where createRouter() was called.
    * Set via Error.stack parsing at construction time.
    * Used by the Vite plugin to write per-router named-routes.gen.ts files.

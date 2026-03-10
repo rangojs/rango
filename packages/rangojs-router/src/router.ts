@@ -155,6 +155,7 @@ export function createRouter<TEnv = any>(
     timeout: timeoutShorthand,
     timeouts: timeoutsOption,
     onTimeout,
+    originCheck: originCheckOption,
   } = options;
 
   // Resolve telemetry sink (no-op when not configured)
@@ -876,6 +877,9 @@ export function createRouter<TEnv = any>(
 
     // Expose debug manifest flag for handler
     allowDebugManifest: allowDebugManifestOption,
+
+    // Expose origin check configuration for handler (default: enabled)
+    originCheck: originCheckOption ?? true,
 
     // Expose SSR configuration for handler
     ssr: ssrOption,
