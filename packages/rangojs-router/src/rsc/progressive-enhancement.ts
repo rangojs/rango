@@ -116,8 +116,13 @@ export async function handleProgressiveEnhancement<TEnv>(
   let reactFormState: ReactFormState | null = null;
 
   if (isUseActionState) {
+    // Decode and extract action identity before execution so error
+    // handlers can report actionId even when the action throws.
+    let useActionStateId: string | undefined;
     try {
       const boundAction = await ctx.decodeAction(formData);
+      // React's custom .bind() preserves $$id on server references.
+      useActionStateId = (boundAction as { $$id?: string }).$$id ?? undefined;
       actionResult = await boundAction();
     } catch (error) {
       // Handle thrown redirect (e.g., throw redirect('/path'))
@@ -133,6 +138,7 @@ export async function handleProgressiveEnhancement<TEnv>(
         error,
         handleStore,
         nonce,
+        useActionStateId,
       );
       if (errorHtml) return errorHtml;
 
@@ -140,6 +146,7 @@ export async function handleProgressiveEnhancement<TEnv>(
         request,
         url,
         env,
+        actionId: useActionStateId,
         handledByBoundary: false,
       });
       console.error("[RSC] Progressive enhancement action error:", error);

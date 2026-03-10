@@ -232,6 +232,18 @@ export async function throwActionError(): Promise<void> {
 }
 
 /**
+ * useActionState-compatible action that throws.
+ * Used to prove PE form actions report phase="action" but do not currently
+ * surface a stable actionId through the router boundary.
+ */
+export async function throwFormActionError(
+  _prevState: unknown,
+  _formData: FormData,
+): Promise<never> {
+  throw new Error("Form action error for onError test");
+}
+
+/**
  * Test action for "use cache" interleaving.
  * Returns the input and a timestamp so tests can verify
  * the action was actually invoked (different ts each call).

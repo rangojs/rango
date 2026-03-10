@@ -114,3 +114,51 @@ test.describe("onError (production)", () => {
 
   onErrorTests(f);
 });
+
+function onErrorProgressiveEnhancementTests(f: ReturnType<typeof useFixture>) {
+  test.use({ javaScriptEnabled: false });
+
+  test("useActionState PE form error reports phase='action' with stable actionId", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/location-state"));
+
+    // Clear any previous error
+    await page.request.get(f.url("/__test/last-error"));
+
+    await Promise.all([
+      page.waitForLoadState("domcontentloaded"),
+      page.locator('[data-testid="throw-form-error-submit-btn"]').click(),
+    ]);
+
+    const error = await waitForOnError(
+      page,
+      f.url("/__test/last-error"),
+      "action",
+    );
+
+    expect(error.phase).toBe("action");
+    expect(error.message).toBe("Form action error for onError test");
+    expect(error.actionId).toMatch(/#throwFormActionError$/);
+  });
+}
+
+test.describe("onError progressive enhancement", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  onErrorProgressiveEnhancementTests(f);
+});
+
+test.describe("onError progressive enhancement (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  onErrorProgressiveEnhancementTests(f);
+});
