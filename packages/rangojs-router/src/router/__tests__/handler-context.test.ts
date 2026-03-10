@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { getSearchSchemaMock, isRouteRootScopedMock } = vi.hoisted(() => ({
   getSearchSchemaMock: vi.fn(() => undefined),
-  isRouteRootScopedMock: vi.fn(() => undefined),
+  isRouteRootScopedMock: vi.fn((): boolean | undefined => undefined),
 }));
 
 // Mock dependencies before importing the module under test
