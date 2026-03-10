@@ -28,6 +28,7 @@ export function findLazyIncludes<TEnv = any>(
     urlPrefix: string;
     namePrefix: string | undefined;
     parent: unknown;
+    rootScoped?: boolean;
   };
 }> {
   const lazyItems: Array<{
@@ -37,6 +38,7 @@ export function findLazyIncludes<TEnv = any>(
       urlPrefix: string;
       namePrefix: string | undefined;
       parent: unknown;
+      rootScoped?: boolean;
     };
   }> = [];
 
@@ -138,6 +140,7 @@ export function evaluateLazyEntry<TEnv = any>(
       parent: (lazyContext?.parent as EntryData | null) ?? null,
       counters: lazyCounters,
       cacheProfiles: (lazyContext as any)?.cacheProfiles,
+      rootScoped: (lazyContext as any)?.rootScoped,
     },
     () => {
       // Run the lazy patterns handler with the original context prefixes

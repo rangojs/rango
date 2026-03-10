@@ -574,6 +574,19 @@ describe("resolveRouteName (via createHandlerContext.reverse)", () => {
     expect(() => reverse(".index" as any)).toThrow("Unknown route");
   });
 
+  it("should resolve dot-local names through the hidden scope of an unnamed include", async () => {
+    const reverse = await makeReverse(
+      {
+        "$prefix_0.index": "/admin",
+        "$prefix_0.users": "/admin/users",
+      },
+      "$prefix_0.users",
+    );
+
+    expect(reverse(".index" as any)).toBe("/admin");
+    expect(() => reverse("index" as any)).toThrow("Unknown route");
+  });
+
   // Unprefixed = global resolution (named-routes definition)
   it("should resolve unprefixed names globally", async () => {
     const reverse = await makeReverse(routeMap, "magazine.author");

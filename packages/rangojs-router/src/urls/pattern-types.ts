@@ -16,6 +16,16 @@ import { RESPONSE_TYPE } from "./response-types.js";
 export type UnnamedRoute = "$unnamed";
 
 /**
+ * Sentinel type for include() mounts that stay local to the mounted module.
+ * This keeps child route names out of the parent/global type map while still
+ * allowing the mounted module to use its own local route names internally.
+ *
+ * Branded with a symbol key so it cannot be accidentally produced by user code.
+ */
+declare const LOCAL_ONLY_BRAND: unique symbol;
+export type LocalOnlyInclude = string & { [LOCAL_ONLY_BRAND]: void };
+
+/**
  * Options for path() function
  */
 export interface PathOptions<
@@ -70,6 +80,16 @@ export interface UrlPatterns<
  * Options for include()
  */
 export interface IncludeOptions<TNamePrefix extends string = string> {
-  /** Name prefix for all routes in this pattern set */
+  /**
+   * Name prefix for all routes in this pattern set.
+   *
+   * - `{ name: "blog" }` — children become `blog.index`, `blog.detail`, etc.
+   *   Visible in generated route types and resolvable globally via `reverse("blog.index")`.
+   * - `{ name: "" }` — children merge into the parent namespace with no prefix.
+   *   Equivalent to defining the routes inline at the include site.
+   * - Omitted — children live in a private local scope, hidden from the
+   *   generated route map and global reverse resolution. Only dot-local
+   *   reverse (e.g. `reverse(".child")`) works from inside the module.
+   */
   name?: TNamePrefix;
 }

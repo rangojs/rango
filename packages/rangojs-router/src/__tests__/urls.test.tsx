@@ -5,6 +5,7 @@ import {
   runWithPrefixes,
   type EntryData,
 } from "../server/context.js";
+import { isRouteRootScoped } from "../route-map-builder.js";
 
 /**
  * Helper to simulate lazy include evaluation.
@@ -13,7 +14,11 @@ import {
  */
 function evaluateLazyInclude(
   includeItem: IncludeItem & {
-    _lazyContext?: { urlPrefix: string; namePrefix: string | undefined };
+    _lazyContext?: {
+      urlPrefix: string;
+      namePrefix: string | undefined;
+      rootScoped?: boolean;
+    };
   },
   manifest: Map<string, EntryData>,
   patterns: Map<string, string>,
@@ -32,6 +37,7 @@ function evaluateLazyInclude(
       namespace: "test",
       parent: null,
       counters: {},
+      rootScoped: includeItem._lazyContext?.rootScoped,
     },
     () => {
       items = runWithPrefixes(urlPrefix, namePrefix, () => {
@@ -437,7 +443,7 @@ describe("urls()", () => {
       expect(patterns.get("shop.product")).toBe("/shop/product/:id");
     });
 
-    it("should work without name prefix (routes keep local names) when evaluated", () => {
+    it("should keep child route names under an internal scope when parent include has no name", () => {
       const adminPatterns = urls(({ path }) => [
         path("/", () => <div>Admin</div>, { name: "index" }),
         path("/users", () => <div>Users</div>, { name: "users" }),
@@ -458,7 +464,7 @@ describe("urls()", () => {
         },
         () => {
           const urlPatterns = urls(({ include }) => [
-            // No name option - routes keep their local names
+            // No name option - routes stay local to the included module
             include("/admin", adminPatterns),
           ]);
 
@@ -470,11 +476,53 @@ describe("urls()", () => {
       // Simulate router evaluating the lazy include
       evaluateLazyInclude(capturedInclude!, manifest, patterns);
 
-      // Routes should keep local names (no prefix)
-      expect(manifest.has("index")).toBe(true);
-      expect(manifest.has("users")).toBe(true);
+      // Without an include name, child routes live under a hidden runtime scope.
+      expect(manifest.has("$prefix_0.index")).toBe(true);
+      expect(manifest.has("$prefix_0.users")).toBe(true);
+      expect(manifest.has("index")).toBe(false);
+      expect(manifest.has("users")).toBe(false);
+      expect(manifest.has("admin.index")).toBe(false);
+      expect(manifest.has("admin.users")).toBe(false);
 
       // But URL patterns should still be prefixed
+      expect(patterns.get("$prefix_0.index")).toBe("/admin");
+      expect(patterns.get("$prefix_0.users")).toBe("/admin/users");
+    });
+
+    it('should flatten child route names when include() uses { name: "" }', () => {
+      const adminPatterns = urls(({ path }) => [
+        path("/", () => <div>Admin</div>, { name: "index" }),
+        path("/users", () => <div>Users</div>, { name: "users" }),
+      ]);
+
+      const manifest = new Map<string, EntryData>();
+      const patterns = new Map<string, string>();
+
+      let capturedInclude: IncludeItem | undefined;
+
+      RSCRouterContext.run(
+        {
+          manifest,
+          patterns,
+          namespace: "test",
+          parent: null,
+          counters: {},
+        },
+        () => {
+          const urlPatterns = urls(({ include }) => [
+            include("/admin", adminPatterns, { name: "" }),
+          ]);
+
+          const items = urlPatterns.handler();
+          capturedInclude = items[0] as IncludeItem;
+        },
+      );
+
+      evaluateLazyInclude(capturedInclude!, manifest, patterns);
+
+      expect(manifest.has("index")).toBe(true);
+      expect(manifest.has("users")).toBe(true);
+      expect(manifest.has("$prefix_0.index")).toBe(false);
       expect(patterns.get("index")).toBe("/admin");
       expect(patterns.get("users")).toBe("/admin/users");
     });
@@ -588,6 +636,249 @@ describe("urls()", () => {
       expect(patterns.get("news.index")).toBe("/news");
       expect(patterns.get("blog.detail")).toBe("/blog/:slug");
       expect(patterns.get("news.detail")).toBe("/news/:slug");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Include scoping contract
+  // -----------------------------------------------------------------------
+
+  describe("include scoping contract", () => {
+    it("include() without name creates local-only scope — children not exported globally", () => {
+      const childPatterns = urls(({ path }) => [
+        path("/", () => <div>Child Index</div>, { name: "child" }),
+        path("/detail", () => <div>Child Detail</div>, { name: "detail" }),
+      ]);
+
+      const manifest = new Map<string, EntryData>();
+      const patterns = new Map<string, string>();
+      let captured: IncludeItem | undefined;
+
+      RSCRouterContext.run(
+        { manifest, patterns, namespace: "test", parent: null, counters: {} },
+        () => {
+          const p = urls(({ include }) => [include("/x", childPatterns)]);
+          captured = p.handler()[0] as IncludeItem;
+        },
+      );
+
+      evaluateLazyInclude(captured!, manifest, patterns);
+
+      // Children live under hidden $prefix_N scope
+      expect(manifest.has("$prefix_0.child")).toBe(true);
+      expect(manifest.has("$prefix_0.detail")).toBe(true);
+      // NOT exported with flat names
+      expect(manifest.has("child")).toBe(false);
+      expect(manifest.has("detail")).toBe(false);
+    });
+
+    it('include() with { name: "" } flattens children into parent scope', () => {
+      const childPatterns = urls(({ path }) => [
+        path("/", () => <div>Child</div>, { name: "child" }),
+        path("/detail", () => <div>Detail</div>, { name: "detail" }),
+      ]);
+
+      const manifest = new Map<string, EntryData>();
+      const patterns = new Map<string, string>();
+      let captured: IncludeItem | undefined;
+
+      RSCRouterContext.run(
+        { manifest, patterns, namespace: "test", parent: null, counters: {} },
+        () => {
+          const p = urls(({ include }) => [
+            include("/x", childPatterns, { name: "" }),
+          ]);
+          captured = p.handler()[0] as IncludeItem;
+        },
+      );
+
+      evaluateLazyInclude(captured!, manifest, patterns);
+
+      // Children are globally visible
+      expect(manifest.has("child")).toBe(true);
+      expect(manifest.has("detail")).toBe(true);
+      // Not under hidden scope
+      expect(manifest.has("$prefix_0.child")).toBe(false);
+      expect(patterns.get("child")).toBe("/x");
+      expect(patterns.get("detail")).toBe("/x/detail");
+    });
+
+    it('include() with { name: "foo" } prefixes children as foo.child', () => {
+      const childPatterns = urls(({ path }) => [
+        path("/", () => <div>Child</div>, { name: "child" }),
+        path("/detail", () => <div>Detail</div>, { name: "detail" }),
+      ]);
+
+      const manifest = new Map<string, EntryData>();
+      const patterns = new Map<string, string>();
+      let captured: IncludeItem | undefined;
+
+      RSCRouterContext.run(
+        { manifest, patterns, namespace: "test", parent: null, counters: {} },
+        () => {
+          const p = urls(({ include }) => [
+            include("/x", childPatterns, { name: "foo" }),
+          ]);
+          captured = p.handler()[0] as IncludeItem;
+        },
+      );
+
+      evaluateLazyInclude(captured!, manifest, patterns);
+
+      // Children prefixed with foo.
+      expect(manifest.has("foo.child")).toBe(true);
+      expect(manifest.has("foo.detail")).toBe(true);
+      // Not flat or hidden
+      expect(manifest.has("child")).toBe(false);
+      expect(manifest.has("$prefix_0.child")).toBe(false);
+      expect(patterns.get("foo.child")).toBe("/x");
+      expect(patterns.get("foo.detail")).toBe("/x/detail");
+    });
+
+    it('{ name: "" } + nested { name: "sub" } registers routes as root-scoped', () => {
+      const subPatterns = urls(({ path }) => [
+        path("/", () => <div>Sub Index</div>, { name: "index" }),
+        path("/:id", () => <div>Sub Detail</div>, { name: "detail" }),
+      ]);
+
+      const modulePatterns = urls(({ path, include }) => [
+        path("/", () => <div>Module Index</div>, { name: "modIndex" }),
+        include("/sub", subPatterns, { name: "sub" }),
+      ]);
+
+      const manifest = new Map<string, EntryData>();
+      const patterns = new Map<string, string>();
+      let captured: IncludeItem | undefined;
+
+      RSCRouterContext.run(
+        { manifest, patterns, namespace: "test", parent: null, counters: {} },
+        () => {
+          const p = urls(({ include }) => [
+            include("/flat", modulePatterns, { name: "" }),
+          ]);
+          captured = p.handler()[0] as IncludeItem;
+        },
+      );
+
+      const moduleItems = evaluateLazyInclude(captured!, manifest, patterns);
+
+      // Evaluate the nested sub include
+      const subInclude = moduleItems.find(
+        (item: any) => item?.type === "include",
+      ) as IncludeItem | undefined;
+      if (subInclude) {
+        evaluateLazyInclude(subInclude, manifest, patterns);
+      }
+
+      // Bare route from { name: "" } mount
+      expect(manifest.has("modIndex")).toBe(true);
+      expect(isRouteRootScoped("modIndex")).toBe(true);
+
+      // Dotted routes from nested { name: "sub" } inside { name: "" }
+      expect(manifest.has("sub.index")).toBe(true);
+      expect(manifest.has("sub.detail")).toBe(true);
+      expect(isRouteRootScoped("sub.index")).toBe(true);
+      expect(isRouteRootScoped("sub.detail")).toBe(true);
+    });
+
+    it('{ name: "ns" } registers routes as NOT root-scoped', () => {
+      const childPatterns = urls(({ path }) => [
+        path("/", () => <div>Child</div>, { name: "child" }),
+      ]);
+
+      const manifest = new Map<string, EntryData>();
+      const patterns = new Map<string, string>();
+      let captured: IncludeItem | undefined;
+
+      RSCRouterContext.run(
+        { manifest, patterns, namespace: "test", parent: null, counters: {} },
+        () => {
+          const p = urls(({ include }) => [
+            include("/x", childPatterns, { name: "ns" }),
+          ]);
+          captured = p.handler()[0] as IncludeItem;
+        },
+      );
+
+      evaluateLazyInclude(captured!, manifest, patterns);
+
+      expect(manifest.has("ns.child")).toBe(true);
+      expect(isRouteRootScoped("ns.child")).toBe(false);
+    });
+
+    it('{ name: "ns" } + nested { name: "sub" } stays NOT root-scoped', () => {
+      const subPatterns = urls(({ path }) => [
+        path("/", () => <div>Sub</div>, { name: "child" }),
+      ]);
+
+      const nsPatterns = urls(({ path, include }) => [
+        path("/", () => <div>NS</div>, { name: "index" }),
+        include("/sub", subPatterns, { name: "sub" }),
+      ]);
+
+      const manifest = new Map<string, EntryData>();
+      const patterns = new Map<string, string>();
+      let captured: IncludeItem | undefined;
+
+      RSCRouterContext.run(
+        { manifest, patterns, namespace: "test", parent: null, counters: {} },
+        () => {
+          const p = urls(({ include }) => [
+            include("/x", nsPatterns, { name: "ns" }),
+          ]);
+          captured = p.handler()[0] as IncludeItem;
+        },
+      );
+
+      const nsItems = evaluateLazyInclude(captured!, manifest, patterns);
+      const subInclude = nsItems.find(
+        (item: any) => item?.type === "include",
+      ) as IncludeItem | undefined;
+      if (subInclude) {
+        evaluateLazyInclude(subInclude, manifest, patterns);
+      }
+
+      expect(manifest.has("ns.index")).toBe(true);
+      expect(isRouteRootScoped("ns.index")).toBe(false);
+      expect(manifest.has("ns.sub.child")).toBe(true);
+      expect(isRouteRootScoped("ns.sub.child")).toBe(false);
+    });
+
+    it("multiple unnamed includes get distinct scopes", () => {
+      const aPatterns = urls(({ path }) => [
+        path("/", () => <div>A</div>, { name: "index" }),
+      ]);
+      const bPatterns = urls(({ path }) => [
+        path("/", () => <div>B</div>, { name: "index" }),
+      ]);
+
+      const manifest = new Map<string, EntryData>();
+      const patterns = new Map<string, string>();
+      const captured: IncludeItem[] = [];
+
+      RSCRouterContext.run(
+        { manifest, patterns, namespace: "test", parent: null, counters: {} },
+        () => {
+          const p = urls(({ include }) => [
+            include("/a", aPatterns),
+            include("/b", bPatterns),
+          ]);
+          const items = p.handler();
+          captured.push(...(items as IncludeItem[]));
+        },
+      );
+
+      for (const item of captured) {
+        evaluateLazyInclude(item, manifest, patterns);
+      }
+
+      // Each unnamed include gets its own $prefix_N scope
+      expect(manifest.has("$prefix_0.index")).toBe(true);
+      expect(manifest.has("$prefix_1.index")).toBe(true);
+      expect(patterns.get("$prefix_0.index")).toBe("/a");
+      expect(patterns.get("$prefix_1.index")).toBe("/b");
+      // No collisions
+      expect(manifest.has("index")).toBe(false);
     });
   });
 });

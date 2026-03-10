@@ -561,6 +561,20 @@ export const urlpatterns = urls(({ path, include }) => [
 
 Included route names are prefixed with the include name: `reverse("api.health")`, `reverse("api.products")`.
 
+### Include name scoping
+
+The `name` option controls how child route names appear globally:
+
+| Form                               | Child names         | Generated types        | Reverse resolution                                                   |
+| ---------------------------------- | ------------------- | ---------------------- | -------------------------------------------------------------------- |
+| `include("/x", p, { name: "ns" })` | `ns.child`          | Exported as `ns.child` | `reverse("ns.child")` globally, `reverse(".child")` inside           |
+| `include("/x", p, { name: "" })`   | `child` (flattened) | Exported as-is         | `reverse("child")` globally, `reverse(".child")` inside (root-scope) |
+| `include("/x", p)`                 | Private scope       | Not exported           | `reverse(".child")` inside only                                      |
+
+Without a `name`, included routes are local to the mounted module. They still match requests and render normally, but their names are hidden from the generated route map and cannot be reversed globally. Use `{ name: "" }` to merge children into the parent namespace without adding a prefix.
+
+**`{ name: "" }` is flattening, not isolation.** Flattened routes behave as if defined inline at the include site — dot-local reverse (`.name`) can reach any sibling route at root scope, including routes from other `{ name: "" }` mounts. If you need module-level isolation, omit the `name` option or use a namespace.
+
 ## Middleware
 
 ```tsx

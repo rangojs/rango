@@ -12,6 +12,7 @@ import {
   createReverseFunction,
 } from "./handler-context.js";
 import { isPrerenderPassthrough } from "../prerender.js";
+import { isRouteRootScoped } from "../route-map-builder.js";
 import { setupBuildUse } from "./loader-resolution.js";
 import { loadManifest } from "./manifest.js";
 import { traverseBack } from "./pattern-matching.js";
@@ -130,6 +131,7 @@ export async function matchForPrerender<TEnv = any>(
         deps.mergedRouteMap,
         matched.routeKey,
         matchedParams,
+        matched.routeKey ? isRouteRootScoped(matched.routeKey) : undefined,
       ),
     };
 
@@ -353,7 +355,12 @@ export async function renderStaticSegment<TEnv = any>(
     setLocationState() {},
     _locationState: undefined,
     _reportedErrors: new WeakSet<object>(),
-    reverse: createReverseFunction(mergedRouteMap, routeName, {}),
+    reverse: createReverseFunction(
+      mergedRouteMap,
+      routeName,
+      {},
+      routeName ? isRouteRootScoped(routeName) : undefined,
+    ),
   };
 
   return runWithRequestContext(minimalRequestContext, async () => {

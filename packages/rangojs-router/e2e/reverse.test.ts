@@ -87,6 +87,60 @@ test.describe("Scoped Reverse Resolution", () => {
       const parentDetail = testId(page, "nested-server-parent-detail");
       await expect(parentDetail).toContainText("/href/from-nested");
     });
+
+    test("should resolve dot-local names and hide global child names for unnamed include mounts", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/unnamed-reverse/from-e2e"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "unnamed-detail-local-index")).toContainText(
+        "/unnamed-reverse",
+      );
+      await expect(testId(page, "unnamed-detail-global-index")).toContainText(
+        'ERROR: Unknown route: "unnamedIncludeReverseIndex"',
+      );
+    });
+
+    test('include with { name: "" } makes children globally and dot-locally reversible', async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/flat-reverse"));
+      await waitForHydration(page);
+
+      // Global reverse works — child name "flatChild" is in the parent namespace
+      await expect(testId(page, "flat-global-child")).toContainText(
+        "/flat-reverse",
+      );
+      // Dot-local also works — falls back to root scope where flattened names live
+      await expect(testId(page, "flat-dot-local-child")).toContainText(
+        "/flat-reverse",
+      );
+    });
+
+    test('include with { name: "ns" } prefixes children and supports dot-local', async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/ns-reverse"));
+      await waitForHydration(page);
+
+      // Global reverse uses prefixed name
+      await expect(testId(page, "ns-global-prefixed")).toContainText(
+        "/ns-reverse",
+      );
+      // Dot-local works inside the module
+      await expect(testId(page, "ns-dot-local")).toContainText("/ns-reverse");
+      // Bare name without prefix fails globally
+      await expect(testId(page, "ns-global-bare")).toContainText(
+        'ERROR: Unknown route: "nsChild"',
+      );
+    });
   });
 
   test.describe("Client-side href + useMount", () => {
@@ -349,6 +403,55 @@ test.describe("Scoped Reverse Resolution (production)", () => {
     );
     await expect(testId(page, "client-trailing-slash-child")).not.toContainText(
       "//",
+    );
+  });
+
+  test("should resolve dot-local names and hide global child names for unnamed include (production)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/unnamed-reverse/from-e2e"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "unnamed-detail-local-index")).toContainText(
+      "/unnamed-reverse",
+    );
+    await expect(testId(page, "unnamed-detail-global-index")).toContainText(
+      'ERROR: Unknown route: "unnamedIncludeReverseIndex"',
+    );
+  });
+
+  test('include with { name: "" } makes children globally and dot-locally reversible (production)', async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/flat-reverse"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "flat-global-child")).toContainText(
+      "/flat-reverse",
+    );
+    await expect(testId(page, "flat-dot-local-child")).toContainText(
+      "/flat-reverse",
+    );
+  });
+
+  test('include with { name: "ns" } prefixes children and supports dot-local (production)', async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/ns-reverse"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "ns-global-prefixed")).toContainText(
+      "/ns-reverse",
+    );
+    await expect(testId(page, "ns-dot-local")).toContainText("/ns-reverse");
+    await expect(testId(page, "ns-global-bare")).toContainText(
+      'ERROR: Unknown route: "nsChild"',
     );
   });
 

@@ -133,6 +133,57 @@ describe("writeCombinedRouteTypes", () => {
     expect(after).toBe(largerContent);
   });
 
+  it("should ignore internal runtime-only routes when preserveIfLarger compares counts", () => {
+    const urlsPath = join(tempDir, "urls.ts");
+    const routerPath = join(tempDir, "router.ts");
+
+    writeFileSync(
+      urlsPath,
+      urlsSource([
+        { pattern: "/", name: "index" },
+        { pattern: "/about", name: "about" },
+      ]),
+    );
+    writeFileSync(routerPath, routerSource("./urls.js"));
+
+    const outPath = genPath(routerPath);
+    const dirtyRuntimeContent = generateRouteTypesSource({
+      "$prefix_0.index": "/private",
+      "$prefix_0.about": "/private/about",
+      index: "/",
+      about: "/about",
+    });
+    writeFileSync(outPath, dirtyRuntimeContent);
+
+    writeCombinedRouteTypes(tempDir, [routerPath], { preserveIfLarger: true });
+
+    const after = readFileSync(outPath, "utf-8");
+    expect(after).not.toContain("$prefix_0.index");
+    expect(after).toContain('index: "/"');
+    expect(after).toContain('about: "/about"');
+  });
+
+  it("should never emit internal route names in generated named-routes", () => {
+    const content = generateRouteTypesSource(
+      {
+        "$prefix_0.index": "/private",
+        $path__health: "/health",
+        index: "/",
+      },
+      {
+        "$prefix_0.index": { q: "string" },
+        $path__health: { probe: "boolean?" },
+        index: { page: "number?" },
+      },
+    );
+
+    expect(content).not.toContain("$prefix_0.index");
+    expect(content).not.toContain("$path__health");
+    expect(content).toContain(
+      'index: { path: "/", search: { page: "number?" } }',
+    );
+  });
+
   it("should allow growth when preserveIfLarger is set", () => {
     const urlsPath = join(tempDir, "urls.ts");
     const routerPath = join(tempDir, "router.ts");
@@ -579,6 +630,119 @@ export const patterns = urls(({ path, include }) => [
     expect(content).toContain("/api/users");
     expect(content).toContain("api.posts");
     expect(content).toContain("/api/posts");
+  });
+
+  it("does not export child route names from include() without a name", () => {
+    const adminPath = join(tempDir, "admin-urls.ts");
+    writeFileSync(
+      adminPath,
+      `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const adminUrls = urls(({ path }) => [
+  path("/", handler, { name: "index" }),
+  path("/users", handler, { name: "users" }),
+]);
+`,
+    );
+
+    const mainPath = join(tempDir, "urls.ts");
+    writeFileSync(
+      mainPath,
+      `import { urls } from "@rangojs/router";
+import { adminUrls } from "./admin-urls.js";
+const handler = () => null;
+export const patterns = urls(({ path, include }) => [
+  path("/", handler, { name: "home" }),
+  include("/admin", adminUrls),
+]);
+`,
+    );
+
+    writePerModuleRouteTypesForFile(mainPath);
+
+    const genPath = mainPath.replace(/\.ts$/, ".gen.ts");
+    const content = readFileSync(genPath, "utf-8");
+    expect(content).toContain('home: "/"');
+    expect(content).not.toContain('index: "/admin"');
+    expect(content).not.toContain('users: "/admin/users"');
+    expect(content).not.toContain("/admin/users");
+  });
+
+  it('exports flattened child names when include() uses { name: "" }', () => {
+    const adminPath = join(tempDir, "admin-urls.ts");
+    writeFileSync(
+      adminPath,
+      `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const adminUrls = urls(({ path }) => [
+  path("/", handler, { name: "dashboard" }),
+  path("/users", handler, { name: "users" }),
+]);
+`,
+    );
+
+    const mainPath = join(tempDir, "urls.ts");
+    writeFileSync(
+      mainPath,
+      `import { urls } from "@rangojs/router";
+import { adminUrls } from "./admin-urls.js";
+const handler = () => null;
+export const patterns = urls(({ path, include }) => [
+  path("/", handler, { name: "home" }),
+  include("/admin", adminUrls, { name: "" }),
+]);
+`,
+    );
+
+    writePerModuleRouteTypesForFile(mainPath);
+
+    const genPath = mainPath.replace(/\.ts$/, ".gen.ts");
+    const content = readFileSync(genPath, "utf-8");
+    expect(content).toContain('home: "/"');
+    // Flattened — no prefix
+    expect(content).toContain('dashboard: "/admin"');
+    expect(content).toContain('users: "/admin/users"');
+    // Not under any scope prefix
+    expect(content).not.toContain("$prefix_");
+  });
+
+  it('exports prefixed child names when include() uses { name: "foo" }', () => {
+    const childPath = join(tempDir, "child-urls.ts");
+    writeFileSync(
+      childPath,
+      `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const childUrls = urls(({ path }) => [
+  path("/", handler, { name: "child" }),
+  path("/detail", handler, { name: "detail" }),
+]);
+`,
+    );
+
+    const mainPath = join(tempDir, "urls.ts");
+    writeFileSync(
+      mainPath,
+      `import { urls } from "@rangojs/router";
+import { childUrls } from "./child-urls.js";
+const handler = () => null;
+export const patterns = urls(({ path, include }) => [
+  path("/", handler, { name: "home" }),
+  include("/x", childUrls, { name: "foo" }),
+]);
+`,
+    );
+
+    writePerModuleRouteTypesForFile(mainPath);
+
+    const genPath = mainPath.replace(/\.ts$/, ".gen.ts");
+    const content = readFileSync(genPath, "utf-8");
+    expect(content).toContain('home: "/"');
+    // Prefixed with foo.
+    expect(content).toContain('"foo.child": "/x"');
+    expect(content).toContain('"foo.detail": "/x/detail"');
+    // Not flat or hidden
+    expect(content).not.toContain('child: "/x"');
+    expect(content).not.toContain("$prefix_");
   });
 
   it("follows multi-level includes (A -> B -> C)", () => {

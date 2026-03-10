@@ -146,6 +146,7 @@ export function buildRouteTree(
         parent: (lazy.context.parent as EntryData | null) ?? null,
         counters: lazyCounters,
         mountIndex,
+        rootScoped: lazy.context.rootScoped,
       },
       () => {
         const fullPrefix = (lazy.context.urlPrefix || "") + lazy.prefix;
@@ -446,6 +447,7 @@ function findLazyIncludes(items: AllUseItems[]): Array<{
     namePrefix: string | undefined;
     parent: unknown;
     counters?: Record<string, number>;
+    rootScoped?: boolean;
   };
 }> {
   const result: Array<{
@@ -456,6 +458,7 @@ function findLazyIncludes(items: AllUseItems[]): Array<{
       namePrefix: string | undefined;
       parent: unknown;
       counters?: Record<string, number>;
+      rootScoped?: boolean;
     };
   }> = [];
 

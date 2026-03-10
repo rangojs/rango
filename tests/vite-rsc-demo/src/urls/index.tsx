@@ -46,5 +46,5 @@ export const urlpatterns = urls(({ path, include }) => [
 
   // Unhandled error route - outside of any error boundary
   // (uses urls() directly since it has its own full path)
-  include("", unhandledErrorPattern),
+  include("", unhandledErrorPattern, { name: "" }),
 ]);
