@@ -206,17 +206,24 @@ export type PathHelpers<TEnv> = {
   };
 
   /**
-   * Include nested URL patterns with optional name prefix
+   * Include nested URL patterns under a URL prefix.
+   *
+   * The `name` option controls how child route names appear in the
+   * global route map and generated types:
    *
    * ```typescript
-   * // Without name - routes stay local to the mounted module
-   * include("/blog", blogPatterns)
-   *
-   * // With name - routes are prefixed (e.g., "index" -> "blog.index")
+   * // Named — children become "blog.index", "blog.post", etc.
+   * // Visible in generated types and globally reversible.
    * include("/blog", blogPatterns, { name: "blog" })
    *
-   * // With empty name - child names are merged into the current namespace
+   * // Flattened — children merge into the parent namespace as-is.
+   * // Equivalent to defining those routes inline at the include site.
    * include("/blog", blogPatterns, { name: "" })
+   *
+   * // Local-only (default) — children are scoped privately.
+   * // Hidden from generated types and global reverse resolution.
+   * // Only dot-local reverse (reverse(".child")) works inside.
+   * include("/blog", blogPatterns)
    * ```
    */
   include: IncludeFn<TEnv>;
@@ -329,10 +336,4 @@ export type PathHelpers<TEnv> = {
       ExtractResponses<TChildren>
     >;
   };
-
-  /**
-   * Convenience wrapper for development-only routes.
-   * This is runtime sugar over a dev-mode guard, not a special typegen primitive.
-   */
-  dev: (children: () => UseItems<AllUseItems>) => AllUseItems[];
 };

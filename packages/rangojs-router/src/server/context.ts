@@ -257,6 +257,9 @@ interface HelperContext {
   urlPrefix?: string;
   /** Name prefix from include() - applied to all named routes */
   namePrefix?: string;
+  /** True when this scope is at root level (no named include boundary above).
+   *  Routes at root scope allow dot-local reverse to fall back to bare names. */
+  rootScoped?: boolean;
   /** Run helper for cleaner middleware code */
   run?: <T>(fn: () => T | Promise<T>) => T | Promise<T>;
   /** Tracked includes for build-time manifest generation */
@@ -407,6 +410,7 @@ export const getContext = (): {
           searchSchemas: store.searchSchemas,
           urlPrefix: store.urlPrefix,
           namePrefix: store.namePrefix,
+          rootScoped: store.rootScoped,
           trackedIncludes: store.trackedIncludes,
           cacheProfiles: store.cacheProfiles,
         },
@@ -445,6 +449,7 @@ export const getContext = (): {
           searchSchemas,
           urlPrefix: store?.urlPrefix,
           namePrefix: store?.namePrefix,
+          rootScoped: store?.rootScoped,
           trackedIncludes: store?.trackedIncludes,
           cacheProfiles: store?.cacheProfiles,
         },
@@ -488,11 +493,32 @@ export function runWithPrefixes<T>(
           : namePrefix
       : store.namePrefix;
 
+  // Track root scope for dot-local reverse resolution.
+  //
+  // The flag answers: "can this route reach bare names at root scope?"
+  // It propagates through the include chain:
+  //
+  //   { name: "" }    — transparent: inherit parent, default true
+  //   { name: "foo" } — inherit parent if already set, else create boundary (false)
+  //   no name          — inherit parent unchanged
+  //
+  // This means { name: "" } + nested { name: "sub" } keeps rootScoped=true
+  // (the outer transparent include establishes root access, and the inner
+  // named include inherits it). But a direct { name: "sub" } at root gets
+  // rootScoped=false (no prior root-access grant, so it creates a boundary).
+  const combinedRootScoped =
+    namePrefix === ""
+      ? (store.rootScoped ?? true)
+      : namePrefix !== undefined
+        ? (store.rootScoped ?? false)
+        : store.rootScoped;
+
   return RSCRouterContext.run(
     {
       ...store,
       urlPrefix: combinedUrlPrefix,
       namePrefix: combinedNamePrefix,
+      rootScoped: combinedRootScoped,
     },
     callback,
   );
@@ -512,6 +538,15 @@ export function getUrlPrefix(): string {
 export function getNamePrefix(): string | undefined {
   const store = RSCRouterContext.getStore();
   return store?.namePrefix;
+}
+
+/**
+ * Get whether the current scope is at root level (no named include boundary above).
+ * Returns true at root or inside { name: "" } includes, false inside named includes.
+ */
+export function getRootScoped(): boolean {
+  const store = RSCRouterContext.getStore();
+  return store?.rootScoped ?? true;
 }
 
 // Export HelperContext type for use in other modules

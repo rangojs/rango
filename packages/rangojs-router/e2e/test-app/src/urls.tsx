@@ -19,6 +19,10 @@ import { cachePatterns } from "./urls/cache.js";
 import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
 import { unnamedIncludeReversePatterns } from "./urls/unnamed-include-reverse.js";
+import {
+  flattenedIncludePatterns,
+  namedIncludePatterns,
+} from "./urls/include-scoping-reverse.js";
 import { searchPatterns } from "./urls/search.js";
 import { refTestPatterns } from "./urls/ref-test.js";
 import { prerenderPatterns } from "./urls/prerender.js";
@@ -491,8 +495,10 @@ export const urlpatterns = urls(
       // Href test patterns
       include("/href", hrefPatterns, { name: "href" }),
 
-      // Unnamed include reverse behavior probe
+      // Include scoping reverse behavior probes
       include("/unnamed-reverse", unnamedIncludeReversePatterns),
+      include("/flat-reverse", flattenedIncludePatterns, { name: "" }),
+      include("/ns-reverse", namedIncludePatterns, { name: "ns" }),
 
       // Search params test patterns
       include("/search", searchPatterns, { name: "search" }),

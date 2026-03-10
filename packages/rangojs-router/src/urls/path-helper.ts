@@ -6,7 +6,12 @@ import type {
   RouteUseItem,
   UseItems,
 } from "../route-types.js";
-import { getContext, getUrlPrefix, getNamePrefix } from "../server/context";
+import {
+  getContext,
+  getUrlPrefix,
+  getNamePrefix,
+  getRootScoped,
+} from "../server/context";
 import { invariant } from "../errors";
 import {
   isPrerenderHandler,
@@ -16,7 +21,10 @@ import {
   isStaticHandler,
   type StaticHandlerDefinition,
 } from "../static-handler.js";
-import { registerSearchSchema } from "../route-map-builder.js";
+import {
+  registerSearchSchema,
+  registerRouteRootScope,
+} from "../route-map-builder.js";
 import { RESPONSE_TYPE } from "./response-types.js";
 import type { PathOptions } from "./pattern-types.js";
 import type {
@@ -221,6 +229,9 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
 
     // Register route entry with prefixed name
     ctx.manifest.set(routeName, entry);
+
+    // Register root-scope flag for dot-local reverse resolution
+    registerRouteRootScope(routeName, getRootScoped());
 
     // Also store pattern in a separate map for URL generation
     if (ctx.patterns) {

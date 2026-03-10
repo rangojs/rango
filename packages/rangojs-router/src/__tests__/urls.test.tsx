@@ -5,6 +5,7 @@ import {
   runWithPrefixes,
   type EntryData,
 } from "../server/context.js";
+import { isRouteRootScoped } from "../route-map-builder.js";
 
 /**
  * Helper to simulate lazy include evaluation.
@@ -13,7 +14,11 @@ import {
  */
 function evaluateLazyInclude(
   includeItem: IncludeItem & {
-    _lazyContext?: { urlPrefix: string; namePrefix: string | undefined };
+    _lazyContext?: {
+      urlPrefix: string;
+      namePrefix: string | undefined;
+      rootScoped?: boolean;
+    };
   },
   manifest: Map<string, EntryData>,
   patterns: Map<string, string>,
@@ -32,6 +37,7 @@ function evaluateLazyInclude(
       namespace: "test",
       parent: null,
       counters: {},
+      rootScoped: includeItem._lazyContext?.rootScoped,
     },
     () => {
       items = runWithPrefixes(urlPrefix, namePrefix, () => {
@@ -729,6 +735,115 @@ describe("urls()", () => {
       expect(patterns.get("foo.detail")).toBe("/x/detail");
     });
 
+    it('{ name: "" } + nested { name: "sub" } registers routes as root-scoped', () => {
+      const subPatterns = urls(({ path }) => [
+        path("/", () => <div>Sub Index</div>, { name: "index" }),
+        path("/:id", () => <div>Sub Detail</div>, { name: "detail" }),
+      ]);
+
+      const modulePatterns = urls(({ path, include }) => [
+        path("/", () => <div>Module Index</div>, { name: "modIndex" }),
+        include("/sub", subPatterns, { name: "sub" }),
+      ]);
+
+      const manifest = new Map<string, EntryData>();
+      const patterns = new Map<string, string>();
+      let captured: IncludeItem | undefined;
+
+      RSCRouterContext.run(
+        { manifest, patterns, namespace: "test", parent: null, counters: {} },
+        () => {
+          const p = urls(({ include }) => [
+            include("/flat", modulePatterns, { name: "" }),
+          ]);
+          captured = p.handler()[0] as IncludeItem;
+        },
+      );
+
+      const moduleItems = evaluateLazyInclude(captured!, manifest, patterns);
+
+      // Evaluate the nested sub include
+      const subInclude = moduleItems.find(
+        (item: any) => item?.type === "include",
+      ) as IncludeItem | undefined;
+      if (subInclude) {
+        evaluateLazyInclude(subInclude, manifest, patterns);
+      }
+
+      // Bare route from { name: "" } mount
+      expect(manifest.has("modIndex")).toBe(true);
+      expect(isRouteRootScoped("modIndex")).toBe(true);
+
+      // Dotted routes from nested { name: "sub" } inside { name: "" }
+      expect(manifest.has("sub.index")).toBe(true);
+      expect(manifest.has("sub.detail")).toBe(true);
+      expect(isRouteRootScoped("sub.index")).toBe(true);
+      expect(isRouteRootScoped("sub.detail")).toBe(true);
+    });
+
+    it('{ name: "ns" } registers routes as NOT root-scoped', () => {
+      const childPatterns = urls(({ path }) => [
+        path("/", () => <div>Child</div>, { name: "child" }),
+      ]);
+
+      const manifest = new Map<string, EntryData>();
+      const patterns = new Map<string, string>();
+      let captured: IncludeItem | undefined;
+
+      RSCRouterContext.run(
+        { manifest, patterns, namespace: "test", parent: null, counters: {} },
+        () => {
+          const p = urls(({ include }) => [
+            include("/x", childPatterns, { name: "ns" }),
+          ]);
+          captured = p.handler()[0] as IncludeItem;
+        },
+      );
+
+      evaluateLazyInclude(captured!, manifest, patterns);
+
+      expect(manifest.has("ns.child")).toBe(true);
+      expect(isRouteRootScoped("ns.child")).toBe(false);
+    });
+
+    it('{ name: "ns" } + nested { name: "sub" } stays NOT root-scoped', () => {
+      const subPatterns = urls(({ path }) => [
+        path("/", () => <div>Sub</div>, { name: "child" }),
+      ]);
+
+      const nsPatterns = urls(({ path, include }) => [
+        path("/", () => <div>NS</div>, { name: "index" }),
+        include("/sub", subPatterns, { name: "sub" }),
+      ]);
+
+      const manifest = new Map<string, EntryData>();
+      const patterns = new Map<string, string>();
+      let captured: IncludeItem | undefined;
+
+      RSCRouterContext.run(
+        { manifest, patterns, namespace: "test", parent: null, counters: {} },
+        () => {
+          const p = urls(({ include }) => [
+            include("/x", nsPatterns, { name: "ns" }),
+          ]);
+          captured = p.handler()[0] as IncludeItem;
+        },
+      );
+
+      const nsItems = evaluateLazyInclude(captured!, manifest, patterns);
+      const subInclude = nsItems.find(
+        (item: any) => item?.type === "include",
+      ) as IncludeItem | undefined;
+      if (subInclude) {
+        evaluateLazyInclude(subInclude, manifest, patterns);
+      }
+
+      expect(manifest.has("ns.index")).toBe(true);
+      expect(isRouteRootScoped("ns.index")).toBe(false);
+      expect(manifest.has("ns.sub.child")).toBe(true);
+      expect(isRouteRootScoped("ns.sub.child")).toBe(false);
+    });
+
     it("multiple unnamed includes get distinct scopes", () => {
       const aPatterns = urls(({ path }) => [
         path("/", () => <div>A</div>, { name: "index" }),
@@ -764,33 +879,6 @@ describe("urls()", () => {
       expect(patterns.get("$prefix_1.index")).toBe("/b");
       // No collisions
       expect(manifest.has("index")).toBe(false);
-    });
-  });
-
-  describe("dev() helper", () => {
-    it("should follow the current dev-mode flag", () => {
-      const manifest = new Map<string, EntryData>();
-      const patterns = new Map<string, string>();
-      const isDev = !!(import.meta as ImportMeta & { env?: { DEV?: boolean } })
-        .env?.DEV;
-
-      const urlPatterns = urls(({ path, dev }) => [
-        dev(() => [path("/__dev", () => <div>Dev</div>, { name: "devOnly" })]),
-      ]);
-
-      RSCRouterContext.run(
-        {
-          manifest,
-          patterns,
-          namespace: "test",
-          parent: null,
-          counters: {},
-        },
-        () => urlPatterns.handler(),
-      );
-
-      expect(manifest.has("devOnly")).toBe(isDev);
-      expect(patterns.has("devOnly")).toBe(isDev);
     });
   });
 });

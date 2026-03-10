@@ -4,6 +4,7 @@ import {
   runWithPrefixes,
   getUrlPrefix,
   getNamePrefix,
+  getRootScoped,
 } from "../server/context";
 import { INTERNAL_INCLUDE_SCOPE_PREFIX } from "../route-name.js";
 import type { UrlPatterns, IncludeOptions } from "./pattern-types.js";
@@ -158,6 +159,16 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
       ctx.counters[layoutCounterKey]++;
     }
 
+    // Compute rootScoped at capture time, mirroring the logic in runWithPrefixes.
+    // This ensures lazy evaluation restores the correct scope state.
+    const parentRootScoped = ctx.rootScoped;
+    const capturedRootScoped =
+      nextSegment === ""
+        ? (parentRootScoped ?? true)
+        : nextSegment !== undefined
+          ? (parentRootScoped ?? false)
+          : parentRootScoped;
+
     // All includes are lazy - patterns are evaluated on first matching request
     // This improves cold start time significantly for large route sets
     return {
@@ -173,6 +184,7 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
         parent: capturedParent,
         counters: capturedCounters,
         cacheProfiles: ctx.cacheProfiles,
+        rootScoped: capturedRootScoped,
       },
     } as IncludeItem;
   };

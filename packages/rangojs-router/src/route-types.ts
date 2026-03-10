@@ -174,6 +174,8 @@ export type IncludeItem = {
       string,
       import("./cache/profile-registry.js").CacheProfile
     >;
+    /** Root scope flag for dot-local reverse resolution */
+    rootScoped?: boolean;
   };
   [IncludeBrand]: void;
 };

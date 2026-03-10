@@ -140,6 +140,7 @@ export function clearAllRouterData(): void {
   cachedManifest = null;
   cachedPrecomputedEntries = null;
   cachedRouteTrie = null;
+  rootScopeRoutes.clear();
   globalSearchSchemas.clear();
   perRouterManifestMap.clear();
   perRouterTrieMap.clear();
@@ -222,6 +223,34 @@ export function setManifestReadyPromise(promise: Promise<void>): void {
 
 export function waitForManifestReady(): Promise<void> | null {
   return manifestReadyPromise;
+}
+
+// ============================================================================
+// Route Scope Registry
+// ============================================================================
+
+// Tracks whether each route is at root scope (no named include boundary above).
+// Used by dot-local reverse resolution to decide whether bare-name fallback
+// is allowed after scoped lookups are exhausted.
+const rootScopeRoutes: Map<string, boolean> = new Map();
+
+/**
+ * Register whether a route is at root scope.
+ * Called by path() during route evaluation.
+ */
+export function registerRouteRootScope(
+  routeName: string,
+  rootScoped: boolean,
+): void {
+  rootScopeRoutes.set(routeName, rootScoped);
+}
+
+/**
+ * Check if a route is at root scope.
+ * Returns undefined if the route has not been registered (e.g. in unit tests).
+ */
+export function isRouteRootScoped(routeName: string): boolean | undefined {
+  return rootScopeRoutes.get(routeName);
 }
 
 // ============================================================================

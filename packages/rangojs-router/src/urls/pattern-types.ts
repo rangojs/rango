@@ -77,6 +77,16 @@ export interface UrlPatterns<
  * Options for include()
  */
 export interface IncludeOptions<TNamePrefix extends string = string> {
-  /** Name prefix for all routes in this pattern set */
+  /**
+   * Name prefix for all routes in this pattern set.
+   *
+   * - `{ name: "blog" }` — children become `blog.index`, `blog.detail`, etc.
+   *   Visible in generated route types and resolvable globally via `reverse("blog.index")`.
+   * - `{ name: "" }` — children merge into the parent namespace with no prefix.
+   *   Equivalent to defining the routes inline at the include site.
+   * - Omitted — children live in a private local scope, hidden from the
+   *   generated route map and global reverse resolution. Only dot-local
+   *   reverse (e.g. `reverse(".child")`) works from inside the module.
+   */
   name?: TNamePrefix;
 }
