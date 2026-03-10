@@ -60,7 +60,6 @@ import {
 import { handleLoaderFetch } from "./loader-fetch.js";
 import { checkRequestOrigin, type OriginCheckPhase } from "./origin-guard.js";
 import { handleRscRendering } from "./rsc-rendering.js";
-import { warnActionWithRouteMiddleware } from "./runtime-warnings.js";
 import {
   withTimeout,
   RouterTimeoutError,
@@ -625,13 +624,6 @@ export function createRSCHandler<
     // the revalidation pass (identical to a normal render).
     let actionContinuation: ActionContinuation | undefined;
     if (isAction && actionId) {
-      if (
-        process.env.NODE_ENV !== "production" &&
-        preview?.routeMiddleware &&
-        preview.routeMiddleware.length > 0
-      ) {
-        warnActionWithRouteMiddleware(actionId, preview.routeKey);
-      }
       try {
         const actionOutcome = await withTimeout(
           executeServerAction(

@@ -167,8 +167,8 @@ Added status markers to all stale internal planning docs:
 - `non-test-review-actions.md` — marked "Implemented" (F1-F3 addressed)
 - `prefetch-review-actions.md` — marked "Implemented" (origin validation done)
 - `scroll-location-review-actions.md` — marked "Implemented" (cleanup + quota)
-- `runtime-guardrails-design.md` — marked "Partial" (W1/W3/W5 shipped,
-  W2 reframed, W4/W6 deferred)
+- `runtime-guardrails-design.md` — marked "Partial" (W3/W5 shipped,
+  W1 removed as noise, W2 reframed, W4/W6 deferred)
 - `cache-dsl-use-cache-remediation-plan.md` — marked "Implemented"
 
 ### 4C. Scope Cleanup

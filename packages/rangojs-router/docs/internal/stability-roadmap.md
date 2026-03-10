@@ -139,13 +139,16 @@ Add warnings and invariants where user intent is commonly misunderstood.
 Canonical Phase 3 artifacts:
 
 - [Runtime guardrails design](./runtime-guardrails-design.md)
-- W1 shipped: route middleware used as if it guards actions
+- W1 removed: route middleware on action routes is normal behavior, not a misuse
 - W3 shipped: PE response/redirect guardrails
 - W5 shipped: redirect after `ctx.set()` warning
 
 Current status:
 
-- W1, W3, and W5 are implemented.
+- W3 and W5 are implemented.
+- W1 was removed — having route middleware on a route with actions is expected
+  (route middleware wraps render, global middleware guards actions). The warning
+  was noise for a valid pattern.
 - W2 was intentionally reframed as a docs/tests semantic contract rather than a
   runtime warning.
 - W4 and W6 remain deferred because the signal-to-noise ratio is better served

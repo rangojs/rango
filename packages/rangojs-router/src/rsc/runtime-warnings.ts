@@ -1,7 +1,6 @@
 /**
  * Runtime guardrail warnings (dev-only).
  *
- * W1: Route middleware is not an action guard.
  * W3: PE action redirect / Response handling.
  */
 
@@ -9,33 +8,6 @@ import {
   createResponseWithMergedHeaders,
   carryOverRedirectHeaders,
 } from "./helpers.js";
-
-// W1 -----------------------------------------------------------------------
-
-const warnedActionRoutes = new Set<string | undefined>();
-
-/**
- * Warn (once per route key) that route middleware does not guard actions.
- * Call site: handler.ts, inside the `isAction && actionId` branch.
- */
-export function warnActionWithRouteMiddleware(
-  actionId: string,
-  routeKey: string | undefined,
-): void {
-  if (warnedActionRoutes.has(routeKey)) return;
-  warnedActionRoutes.add(routeKey);
-  console.warn(
-    `[rango] Route middleware does not guard server actions. The action "${actionId}" ` +
-      `executed before route middleware ran. Route middleware only wraps the ` +
-      `render/revalidation pass. To guard actions, use global middleware or ` +
-      `validate inside the action itself.`,
-  );
-}
-
-/** Reset deduplication state (for tests only). */
-export function _resetW1Warnings(): void {
-  warnedActionRoutes.clear();
-}
 
 // W3 -----------------------------------------------------------------------
 

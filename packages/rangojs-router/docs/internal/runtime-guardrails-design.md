@@ -1,7 +1,7 @@
 # Runtime Guardrails: Warning Design
 
-Status: Partial (W1, W3, W5 shipped; W2 reframed as docs/tests contract;
-W4, W6 deferred — see stability-roadmap.md Phase 3)
+Status: Partial (W3, W5 shipped; W1 removed; W2 reframed as docs/tests
+contract; W4, W6 deferred — see stability-roadmap.md Phase 3)
 
 Design doc for Phase 3 of stability-roadmap.md (line 126).
 Goal: dev-mode warnings that surface likely misuse before it ships.
@@ -11,57 +11,15 @@ Principle: warn, never silently fix. Warnings fire only in dev mode
 
 ---
 
-## W1: Route middleware used as action guard
+## W1: Route middleware used as action guard — REMOVED
 
-### Trigger condition
-
-A route middleware calls `ctx.set()`, sets headers/cookies, or returns an
-early Response on a route that also defines server actions — and the user
-expects that middleware to run _before_ the action executes.
-
-Route middleware wraps the render pass only. Actions execute first, outside
-route middleware scope (`handler.ts:418-447`). The middleware then wraps the
-post-action revalidation render (`handler.ts:449-491`). For PE, the same
-pattern holds (`progressive-enhancement.ts:176-190`).
-
-### Where detection happens
-
-**Static analysis at route build time** (in Vite plugin or `match()` setup):
-when a route entry has both `middleware` and action-capable handlers, emit
-a one-time dev warning.
-
-Alternatively, **runtime detection in `handler.ts`**: when `isAction && actionId`
-is true and `preview.routeMiddleware.length > 0`, log a warning on the first
-occurrence per route.
-
-Preferred: runtime detection in `handler.ts`, gated behind dev mode. Simpler,
-no false positives from routes that have middleware but never receive actions.
-
-### Warning text
-
-```
-[rango] Route middleware does not guard server actions. The action at
-"<actionId>" executed before route middleware ran. Route middleware only
-wraps the render/revalidation pass. To guard actions, use global middleware
-or validate inside the action itself. See: execution-model.md#non-guarantees
-```
-
-### Confidence / false-positive risk
-
-**High confidence, low false-positive risk.** The warning only fires when an
-action actually executes on a route with middleware — a concrete event, not
-a static guess. The only "false positive" is a user who knowingly uses
-middleware for render-only concerns on an action route, which is valid but
-uncommon enough that a one-time warning is acceptable.
-
-Mitigation: fire once per route per process (deduplicate by route key).
-
-### Tests needed
-
-1. Unit test: action on route with middleware triggers warning (console spy).
-2. Unit test: action on route without middleware does not warn.
-3. Unit test: warning fires only once per route key (deduplication).
-4. E2e: semantic-matrix row confirming action executes before middleware.
+W1 was implemented and then removed. Having route middleware on a route
+that also has server actions is normal, expected behavior. Route middleware
+wraps the render/revalidation pass, and global middleware wraps the full
+request including actions. A route commonly needs both: global middleware
+for auth/action guards and route middleware for render-time concerns
+(context variables, headers, etc.). The warning treated a valid and common
+pattern as suspicious, producing noise rather than catching real mistakes.
 
 ---
 
@@ -336,12 +294,12 @@ has higher confidence).
 
 | #   | Guardrail                                 | Confidence | Complexity | Priority      |
 | --- | ----------------------------------------- | ---------- | ---------- | ------------- |
-| W1  | Middleware != action guard                | High       | Low        | **P0**        |
-| W3  | PE Response dropped                       | High       | Low        | **P0**        |
-| W5  | Redirect after ctx.set()                  | Medium     | Medium     | **P1**        |
+| W1  | ~~Middleware != action guard~~            | ~~High~~   | ~~Low~~    | **Removed**   |
+| W3  | PE Response dropped                       | High       | Low        | **Shipped**   |
+| W5  | Redirect after ctx.set()                  | Medium     | Medium     | **Shipped**   |
 | W2  | Upstream ctx.set contract docs/tests only | N/A        | Low        | **Docs/Test** |
 | W4  | Cache vs revalidation conflict            | Medium     | High       | **P2**        |
 | W6  | Action headers dropped                    | Low-Med    | High       | **P3**        |
 
-Start with W1 and W3 — highest confidence, lowest complexity, directly
-address the most common misunderstandings documented in execution-model.md.
+W1 was removed — route middleware on action routes is normal behavior, not
+a misuse. W3 and W5 remain as the shipped guardrails.
