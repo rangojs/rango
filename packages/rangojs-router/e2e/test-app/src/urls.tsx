@@ -75,6 +75,10 @@ import {
 import { AddToCartButton } from "./components/AddToCartButton.js";
 import { LinkPendingBadge } from "./components/LinkStatusDisplay.js";
 import { RevalidateButton } from "./components/RevalidateButton.js";
+import {
+  interceptIndicatorText,
+  shouldInterceptProduct,
+} from "./intercept-hmr-config.js";
 
 /**
  * Main URL patterns - Django-style routing API
@@ -357,7 +361,9 @@ export const urlpatterns = urls(
           return (
             <Modal testId="product-modal">
               <div data-testid="modal-header">
-                <span data-testid="intercept-indicator">Intercepted</span>
+                <span data-testid="intercept-indicator">
+                  {interceptIndicatorText}
+                </span>
                 <h2 data-testid="modal-product-name">{product.name}</h2>
               </div>
               <p data-testid="modal-product-price">${product.price}</p>
@@ -390,7 +396,7 @@ export const urlpatterns = urls(
           );
         },
         () => [
-          when(({ from }) => from.pathname === "/"),
+          when(({ from }) => shouldInterceptProduct(from.pathname)),
           loader(ProductDetailLoader),
           loader(CartQuantityLoader),
         ],

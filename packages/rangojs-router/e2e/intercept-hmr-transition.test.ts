@@ -8,14 +8,7 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 
-/**
- * HMR on an open intercept route:
- * 1. Should preserve intercept context when the route still matches.
- * 2. Should transition to full page when the intercept guard changes
- *    to no longer match (intercept -> non-intercept).
- */
-
-test.describe.serial("intercept-hmr", () => {
+test.describe.serial("intercept-hmr-transition", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
@@ -35,12 +28,11 @@ test.describe.serial("intercept-hmr", () => {
     fs.writeFileSync(configPath, originalContent);
   });
 
-  test("HMR preserves intercept modal instead of collapsing to full page", async ({
+  test("HMR transitions from intercept to full page when guard changes", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
 
-    // Navigate to product index and open intercept modal
     await page.goto(f.url("/"));
     await waitForHydration(page);
 
@@ -52,10 +44,9 @@ test.describe.serial("intercept-hmr", () => {
       "Intercepted",
     );
 
-    // Modify the intercept handler to trigger RSC HMR
     const modified = originalContent.replace(
-      'export const interceptIndicatorText = "Intercepted";',
-      'export const interceptIndicatorText = "Intercepted-HMR";',
+      'return fromPathname === "/";',
+      'return fromPathname === "/never-match";',
     );
     await writeFileAndAwaitHmr(page, configPath, modified, {
       totalTimeoutMs: 25000,
@@ -63,20 +54,13 @@ test.describe.serial("intercept-hmr", () => {
       getServerOutput: () => f.proc().stdout(),
       serverOutputPattern: configUpdatePattern,
       waitForApplied: async () => {
-        await expect(page.getByTestId("intercept-indicator")).toHaveText(
-          "Intercepted-HMR",
-          { timeout: 12000 },
-        );
+        await expect(page.getByTestId("product-detail-page")).toBeVisible({
+          timeout: 12000,
+        });
       },
     });
 
-    // After HMR, the modal should still render as intercept (not full page)
-    await expect(page.getByTestId("intercept-indicator")).toHaveText(
-      "Intercepted-HMR",
-    );
-    // The modal wrapper should still be visible (intercept tree preserved)
-    await expect(page.getByTestId("product-modal")).toBeVisible();
-    // The full page view should NOT appear
-    await expect(page.getByTestId("product-detail-page")).not.toBeVisible();
+    await expect(page.getByTestId("product-detail-page")).toBeVisible();
+    await expect(page.getByTestId("product-modal")).not.toBeVisible();
   });
 });
