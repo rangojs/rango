@@ -24,7 +24,8 @@ test.describe.serial("intercept-hmr", () => {
   test.setTimeout(60000);
 
   const urlsPath = path.resolve("./e2e/test-app/src/urls.tsx");
-  const urlsReloadPattern = /page reload .*src\/urls\.tsx/;
+  const urlsReloadPattern =
+    /RSC module changed, version updated|page reload .*src\/(?:urls\.tsx|router\.named-routes\.gen\.ts)/;
   let originalContent: string;
 
   test.beforeAll(async () => {
