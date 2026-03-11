@@ -16,7 +16,8 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "fake-context-lib": ["./__test_packages__/fake-context-lib/index.d.ts"]
     }
   },
   "include": ["src"]

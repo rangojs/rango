@@ -31,7 +31,7 @@
     "!src/**/*.test.tsx",
     "dist",
     "skills",
-    "CLAUDE.md",
+    "AGENTS.md",
     "README.md"
   ],
   "type": "module",
