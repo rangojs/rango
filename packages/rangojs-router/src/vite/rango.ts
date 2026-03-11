@@ -7,6 +7,7 @@ import {
   exposeRouterId,
 } from "./plugins/expose-internal-ids.js";
 import { useCacheTransform } from "./plugins/use-cache-transform.js";
+import { clientRefDedup } from "./plugins/client-ref-dedup.js";
 import { VIRTUAL_IDS } from "./plugins/virtual-entries.js";
 import {
   getExcludeDeps,
@@ -200,6 +201,11 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
         serverHandler: false,
       }) as PluginOption,
     );
+
+    // Deduplicate client references from third-party packages in dev mode.
+    // Prevents module duplication when server components import "use client"
+    // packages that are also imported directly by client components.
+    plugins.push(clientRefDedup());
   } else {
     // Node preset: full RSC plugin integration
     const nodeOptions = resolvedOptions as RangoNodeOptions;
@@ -393,6 +399,11 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
         }) as PluginOption,
       );
     }
+
+    // Deduplicate client references from third-party packages in dev mode.
+    // Prevents module duplication when server components import "use client"
+    // packages that are also imported directly by client components.
+    plugins.push(clientRefDedup());
   }
 
   // Fix HMR for "use client" components.

@@ -48,6 +48,7 @@ export const NamedRoutes = {
   "contentOwnership.negotiatedJson": "/content-ownership/negotiated",
   "contentOwnership.plainJson": "/content-ownership/plain-json",
   "contentOwnership.redirectGuarded": "/content-ownership/redirect-guarded",
+  "contextDedup.contextDedupIndex": "/context-dedup",
   "ctxClean.index": "/ctx-clean",
   "ctxClean.source": "/ctx-clean/source",
   delayedBreadcrumbs: "/delayed-breadcrumbs",

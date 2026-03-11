@@ -237,6 +237,9 @@ importers:
       '@rangojs/router':
         specifier: workspace:*
         version: link:../..
+      fake-context-lib:
+        specifier: file:__test_packages__/fake-context-lib
+        version: file:packages/rangojs-router/e2e/test-app/__test_packages__/fake-context-lib(react@19.2.4)
       react:
         specifier: ^19.2.1
         version: 19.2.4
@@ -1635,6 +1638,11 @@ packages:
     resolution: {integrity: sha512-knvyeauYhqjOYvQ66MznSMs83wmHrCycNEN6Ao+2AeYEfxUIkuiVxdEa1qlGEPK+We3n0THiDciYSsCcgW/DoA==}
     engines: {node: '>=12.0.0'}
 
+  fake-context-lib@file:packages/rangojs-router/e2e/test-app/__test_packages__/fake-context-lib:
+    resolution: {directory: packages/rangojs-router/e2e/test-app/__test_packages__/fake-context-lib, type: directory}
+    peerDependencies:
+      react: ^19.2.1
+
   fdir@6.5.0:
     resolution: {integrity: sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==}
     engines: {node: '>=12.0.0'}
@@ -2929,6 +2937,10 @@ snapshots:
       '@types/estree': 1.0.8
 
   expect-type@1.3.0: {}
+
+  fake-context-lib@file:packages/rangojs-router/e2e/test-app/__test_packages__/fake-context-lib(react@19.2.4):
+    dependencies:
+      react: 19.2.4
 
   fdir@6.5.0(picomatch@4.0.3):
     optionalDependencies:
