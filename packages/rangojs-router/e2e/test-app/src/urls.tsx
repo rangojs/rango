@@ -55,6 +55,7 @@ import { cacheIsolationPatterns } from "./urls/cache-isolation.js";
 import { alsScopePatterns } from "./urls/als-scope.js";
 import { streamModePatterns } from "./urls/stream-mode.js";
 import { devDebugPatterns, devInfoHandler } from "./urls/dev-routes.js";
+import { contextDedupPatterns } from "./urls/context-dedup.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -932,6 +933,11 @@ export const urlpatterns = urls(
 
       // SSR stream mode test route
       include("/", streamModePatterns, { name: "" }),
+
+      // Context dedup test (third-party package with "use client" + createContext)
+      include("/context-dedup", contextDedupPatterns, {
+        name: "contextDedup",
+      }),
 
       ...(import.meta.env.DEV
         ? [
