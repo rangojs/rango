@@ -385,6 +385,8 @@ export interface HmrEvent {
   timestamp: number;
 }
 
+let lastHmrWriteMtimeMs = 0;
+
 /**
  * Capture Vite HMR events from both console messages and WebSocket frames.
  * Returns a collector with typed event arrays and a dispose method.
@@ -399,49 +401,77 @@ export interface HmrEvent {
  * expect(hmr.updates.length).toBeLessThanOrEqual(2);
  */
 /**
- * Write a file and wait for Vite RSC HMR to deliver the update to the browser.
- * Retries the file write if the watcher doesn't detect the change (CI flake
- * on virtualized filesystems where inotify events can be missed).
+ * Write a file and wait for the dev server to log the expected HMR change.
+ * Uses atomic replace + monotonic mtimes so repeated writes stay visible on
+ * CI filesystems where watcher events can be flaky.
  */
 export async function writeFileAndAwaitHmr(
-  page: Page,
   filePath: string,
   content: string,
-  { totalTimeoutMs = 15000, retryIntervalMs = 3000 } = {},
+  {
+    totalTimeoutMs = 15000,
+    retryIntervalMs = 3000,
+    getServerOutput,
+    serverOutputPattern,
+  }: {
+    totalTimeoutMs?: number;
+    retryIntervalMs?: number;
+    getServerOutput: () => string;
+    serverOutputPattern: RegExp;
+  },
 ): Promise<void> {
-  let resolved = false;
-  let resolve: () => void;
-  const hmrDone = new Promise<void>((r) => {
-    resolve = () => {
-      resolved = true;
-      r();
-    };
-  });
+  const { renameSync, unlinkSync, utimesSync, writeFileSync } =
+    await import("node:fs");
+  const { basename, dirname, join } = await import("node:path");
 
-  const handler = (msg: ConsoleMessage) => {
-    if (msg.text().includes("[RSCRouter] HMR: RSC stream complete")) {
-      resolve();
+  const writeAttempt = (attempt: number) => {
+    const tempPath = join(
+      dirname(filePath),
+      `.${basename(filePath)}.hmr-${process.pid}-${attempt}.tmp`,
+    );
+    writeFileSync(tempPath, content);
+    try {
+      renameSync(tempPath, filePath);
+    } catch (error) {
+      unlinkSync(tempPath);
+      throw error;
     }
+
+    // Some CI filesystems coalesce rapid writes; force a monotonic mtime so
+    // the watcher sees each attempt as a fresh change.
+    const nextMtimeMs = Math.max(Date.now(), lastHmrWriteMtimeMs + 1100);
+    lastHmrWriteMtimeMs = nextMtimeMs;
+    const nextMtime = new Date(nextMtimeMs);
+    utimesSync(filePath, nextMtime, nextMtime);
   };
-  page.on("console", handler);
 
-  try {
-    const { writeFileSync } = await import("node:fs");
-    writeFileSync(filePath, content);
+  const deadline = Date.now() + totalTimeoutMs;
+  let attempt = 0;
+  let recentOutput = "";
 
-    const deadline = Date.now() + totalTimeoutMs;
-    while (!resolved && Date.now() < deadline) {
-      const raceResult = await Promise.race([
-        hmrDone.then(() => true as const),
-        new Promise<false>((r) => setTimeout(() => r(false), retryIntervalMs)),
-      ]);
-      if (raceResult) return;
-      // File watcher likely missed the event — re-write to retry
-      writeFileSync(filePath, content);
+  while (Date.now() < deadline) {
+    attempt += 1;
+    const outputOffset = getServerOutput().length;
+    writeAttempt(attempt);
+
+    const attemptDeadline = Date.now() + Math.max(
+      1,
+      Math.min(retryIntervalMs, deadline - Date.now()),
+    );
+
+    while (Date.now() < attemptDeadline) {
+      recentOutput = getServerOutput().slice(outputOffset);
+      if (serverOutputPattern.test(recentOutput)) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
-  } finally {
-    page.off("console", handler);
   }
+
+  throw new Error(
+    `Timed out waiting for HMR after writing ${filePath}. ` +
+      `Recent server output:\n${recentOutput || "(empty)"}`,
+  );
 }
 
 export async function captureHmrEvents(page: Page) {

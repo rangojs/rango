@@ -24,17 +24,27 @@ test.describe.serial("intercept-hmr", () => {
   test.setTimeout(30000);
 
   const urlsPath = path.resolve("./e2e/test-app/src/urls.tsx");
+  const urlsReloadPattern = /page reload .*src\/urls\.tsx/;
   let originalContent: string;
 
   test.beforeAll(async () => {
     originalContent = fs.readFileSync(urlsPath, "utf-8");
   });
 
-  test.afterEach(async () => {
-    fs.writeFileSync(urlsPath, originalContent);
-    // Wait for HMR to process the restore. The module graph needs time
-    // to fully re-evaluate after the file write before the next test.
-    await new Promise((r) => setTimeout(r, 2000));
+  test.afterEach(async ({ page }) => {
+    if (fs.readFileSync(urlsPath, "utf-8") === originalContent) {
+      return;
+    }
+
+    if (page.isClosed()) {
+      fs.writeFileSync(urlsPath, originalContent);
+      return;
+    }
+
+    await writeFileAndAwaitHmr(urlsPath, originalContent, {
+      getServerOutput: () => f.proc().stdout(),
+      serverOutputPattern: urlsReloadPattern,
+    });
   });
 
   test("HMR preserves intercept modal instead of collapsing to full page", async ({
@@ -59,7 +69,10 @@ test.describe.serial("intercept-hmr", () => {
       '<span data-testid="intercept-indicator">Intercepted</span>',
       '<span data-testid="intercept-indicator">Intercepted-HMR</span>',
     );
-    await writeFileAndAwaitHmr(page, urlsPath, modified);
+    await writeFileAndAwaitHmr(urlsPath, modified, {
+      getServerOutput: () => f.proc().stdout(),
+      serverOutputPattern: urlsReloadPattern,
+    });
 
     // After HMR, the modal should still render as intercept (not full page)
     await expect(page.getByTestId("intercept-indicator")).toHaveText(
@@ -97,7 +110,10 @@ test.describe.serial("intercept-hmr", () => {
       'when(({ from }) => from.pathname === "/")',
       'when(({ from }) => from.pathname === "/never-match")',
     );
-    await writeFileAndAwaitHmr(page, urlsPath, modified);
+    await writeFileAndAwaitHmr(urlsPath, modified, {
+      getServerOutput: () => f.proc().stdout(),
+      serverOutputPattern: urlsReloadPattern,
+    });
 
     // After HMR, the intercept guard no longer matches, so the server
     // resolves /product/1 as the full page route instead of the intercept tree.
