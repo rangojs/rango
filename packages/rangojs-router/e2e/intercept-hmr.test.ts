@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError } from "./helper";
+import {
+  waitForHydration,
+  expectNoPageError,
+  writeFileAndAwaitHmr,
+} from "./helper";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -55,12 +59,12 @@ test.describe.serial("intercept-hmr", () => {
       '<span data-testid="intercept-indicator">Intercepted</span>',
       '<span data-testid="intercept-indicator">Intercepted-HMR</span>',
     );
-    fs.writeFileSync(urlsPath, modified);
+    await writeFileAndAwaitHmr(page, urlsPath, modified);
 
     // After HMR, the modal should still render as intercept (not full page)
     await expect(page.getByTestId("intercept-indicator")).toHaveText(
       "Intercepted-HMR",
-      { timeout: 15000 },
+      { timeout: 5000 },
     );
     // The modal wrapper should still be visible (intercept tree preserved)
     await expect(page.getByTestId("product-modal")).toBeVisible();
@@ -93,12 +97,12 @@ test.describe.serial("intercept-hmr", () => {
       'when(({ from }) => from.pathname === "/")',
       'when(({ from }) => from.pathname === "/never-match")',
     );
-    fs.writeFileSync(urlsPath, modified);
+    await writeFileAndAwaitHmr(page, urlsPath, modified);
 
     // After HMR, the intercept guard no longer matches, so the server
     // resolves /product/1 as the full page route instead of the intercept tree.
     await expect(page.getByTestId("product-detail-page")).toBeVisible({
-      timeout: 15000,
+      timeout: 5000,
     });
     // The intercept modal should no longer be visible
     await expect(page.getByTestId("product-modal")).not.toBeVisible();

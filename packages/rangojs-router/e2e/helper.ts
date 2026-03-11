@@ -398,6 +398,52 @@ export interface HmrEvent {
  * expect(hmr.fullReloads).toHaveLength(0);
  * expect(hmr.updates.length).toBeLessThanOrEqual(2);
  */
+/**
+ * Write a file and wait for Vite RSC HMR to deliver the update to the browser.
+ * Retries the file write if the watcher doesn't detect the change (CI flake
+ * on virtualized filesystems where inotify events can be missed).
+ */
+export async function writeFileAndAwaitHmr(
+  page: Page,
+  filePath: string,
+  content: string,
+  { totalTimeoutMs = 15000, retryIntervalMs = 3000 } = {},
+): Promise<void> {
+  let resolved = false;
+  let resolve: () => void;
+  const hmrDone = new Promise<void>((r) => {
+    resolve = () => {
+      resolved = true;
+      r();
+    };
+  });
+
+  const handler = (msg: ConsoleMessage) => {
+    if (msg.text().includes("[RSCRouter] HMR: RSC stream complete")) {
+      resolve();
+    }
+  };
+  page.on("console", handler);
+
+  try {
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(filePath, content);
+
+    const deadline = Date.now() + totalTimeoutMs;
+    while (!resolved && Date.now() < deadline) {
+      const raceResult = await Promise.race([
+        hmrDone.then(() => true as const),
+        new Promise<false>((r) => setTimeout(() => r(false), retryIntervalMs)),
+      ]);
+      if (raceResult) return;
+      // File watcher likely missed the event — re-write to retry
+      writeFileSync(filePath, content);
+    }
+  } finally {
+    page.off("console", handler);
+  }
+}
+
 export async function captureHmrEvents(page: Page) {
   const events: HmrEvent[] = [];
   const updates: string[] = [];
