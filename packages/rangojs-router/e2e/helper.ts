@@ -406,6 +406,7 @@ let lastHmrWriteMtimeMs = 0;
  * CI filesystems where watcher events can be flaky.
  */
 export async function writeFileAndAwaitHmr(
+  page: Page,
   filePath: string,
   content: string,
   {
@@ -448,30 +449,56 @@ export async function writeFileAndAwaitHmr(
   const deadline = Date.now() + totalTimeoutMs;
   let attempt = 0;
   let recentOutput = "";
+  let sawServerSignal = false;
+  let sawBrowserStreamComplete = false;
 
-  while (Date.now() < deadline) {
-    attempt += 1;
-    const outputOffset = getServerOutput().length;
-    writeAttempt(attempt);
-
-    const attemptDeadline = Date.now() + Math.max(
-      1,
-      Math.min(retryIntervalMs, deadline - Date.now()),
-    );
-
-    while (Date.now() < attemptDeadline) {
-      recentOutput = getServerOutput().slice(outputOffset);
-      if (serverOutputPattern.test(recentOutput)) {
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
+  const consoleHandler = (msg: ConsoleMessage) => {
+    if (
+      sawServerSignal &&
+      msg.text().includes("[RSCRouter] HMR: RSC stream complete")
+    ) {
+      sawBrowserStreamComplete = true;
     }
-  }
+  };
 
-  throw new Error(
-    `Timed out waiting for HMR after writing ${filePath}. ` +
-      `Recent server output:\n${recentOutput || "(empty)"}`,
-  );
+  page.on("console", consoleHandler);
+
+  try {
+    while (Date.now() < deadline) {
+      attempt += 1;
+      const outputOffset = getServerOutput().length;
+      sawServerSignal = false;
+      sawBrowserStreamComplete = false;
+      writeAttempt(attempt);
+
+      const attemptDeadline = Date.now() + Math.max(
+        1,
+        Math.min(retryIntervalMs, deadline - Date.now()),
+      );
+
+      while (Date.now() < attemptDeadline) {
+        if (!sawServerSignal) {
+          recentOutput = getServerOutput().slice(outputOffset);
+          if (serverOutputPattern.test(recentOutput)) {
+            sawServerSignal = true;
+          }
+        }
+        if (sawServerSignal && sawBrowserStreamComplete) {
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+
+    throw new Error(
+      `Timed out waiting for HMR after writing ${filePath}. ` +
+        `sawServerSignal=${sawServerSignal} ` +
+        `sawBrowserStreamComplete=${sawBrowserStreamComplete} ` +
+        `Recent server output:\n${recentOutput || "(empty)"}`,
+    );
+  } finally {
+    page.off("console", consoleHandler);
+  }
 }
 
 export async function captureHmrEvents(page: Page) {

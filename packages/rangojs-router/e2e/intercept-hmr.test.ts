@@ -41,7 +41,7 @@ test.describe.serial("intercept-hmr", () => {
       return;
     }
 
-    await writeFileAndAwaitHmr(urlsPath, originalContent, {
+    await writeFileAndAwaitHmr(page, urlsPath, originalContent, {
       getServerOutput: () => f.proc().stdout(),
       serverOutputPattern: urlsReloadPattern,
     });
@@ -69,7 +69,7 @@ test.describe.serial("intercept-hmr", () => {
       '<span data-testid="intercept-indicator">Intercepted</span>',
       '<span data-testid="intercept-indicator">Intercepted-HMR</span>',
     );
-    await writeFileAndAwaitHmr(urlsPath, modified, {
+    await writeFileAndAwaitHmr(page, urlsPath, modified, {
       getServerOutput: () => f.proc().stdout(),
       serverOutputPattern: urlsReloadPattern,
     });
@@ -110,7 +110,7 @@ test.describe.serial("intercept-hmr", () => {
       'when(({ from }) => from.pathname === "/")',
       'when(({ from }) => from.pathname === "/never-match")',
     );
-    await writeFileAndAwaitHmr(urlsPath, modified, {
+    await writeFileAndAwaitHmr(page, urlsPath, modified, {
       getServerOutput: () => f.proc().stdout(),
       serverOutputPattern: urlsReloadPattern,
     });
