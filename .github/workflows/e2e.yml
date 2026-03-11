@@ -148,6 +148,10 @@ jobs:
         run: pnpm --filter @rangojs/router exec playwright install-deps chromium
 
       - name: Run rangojs-router e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
+        env:
+          # CI runners can miss inotify events on virtualized filesystems.
+          # Polling is acceptable here because this temporary matrix only runs HMR tests.
+          CHOKIDAR_USEPOLLING: "true"
         run: |
           WORKERS_FLAG=""
           if [ -n "${{ matrix.workers }}" ]; then
