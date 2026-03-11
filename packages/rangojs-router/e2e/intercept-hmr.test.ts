@@ -21,7 +21,7 @@ test.describe.serial("intercept-hmr", () => {
     mode: "dev",
   });
 
-  test.setTimeout(30000);
+  test.setTimeout(60000);
 
   const urlsPath = path.resolve("./e2e/test-app/src/urls.tsx");
   const urlsReloadPattern = /page reload .*src\/urls\.tsx/;
@@ -42,6 +42,8 @@ test.describe.serial("intercept-hmr", () => {
     }
 
     await writeFileAndAwaitHmr(page, urlsPath, originalContent, {
+      totalTimeoutMs: 10000,
+      retryIntervalMs: 5000,
       getServerOutput: () => f.proc().stdout(),
       serverOutputPattern: urlsReloadPattern,
     });
@@ -70,14 +72,21 @@ test.describe.serial("intercept-hmr", () => {
       '<span data-testid="intercept-indicator">Intercepted-HMR</span>',
     );
     await writeFileAndAwaitHmr(page, urlsPath, modified, {
+      totalTimeoutMs: 25000,
+      retryIntervalMs: 8000,
       getServerOutput: () => f.proc().stdout(),
       serverOutputPattern: urlsReloadPattern,
+      waitForApplied: async () => {
+        await expect(page.getByTestId("intercept-indicator")).toHaveText(
+          "Intercepted-HMR",
+          { timeout: 12000 },
+        );
+      },
     });
 
     // After HMR, the modal should still render as intercept (not full page)
     await expect(page.getByTestId("intercept-indicator")).toHaveText(
       "Intercepted-HMR",
-      { timeout: 5000 },
     );
     // The modal wrapper should still be visible (intercept tree preserved)
     await expect(page.getByTestId("product-modal")).toBeVisible();
@@ -111,15 +120,20 @@ test.describe.serial("intercept-hmr", () => {
       'when(({ from }) => from.pathname === "/never-match")',
     );
     await writeFileAndAwaitHmr(page, urlsPath, modified, {
+      totalTimeoutMs: 25000,
+      retryIntervalMs: 8000,
       getServerOutput: () => f.proc().stdout(),
       serverOutputPattern: urlsReloadPattern,
+      waitForApplied: async () => {
+        await expect(page.getByTestId("product-detail-page")).toBeVisible({
+          timeout: 12000,
+        });
+      },
     });
 
     // After HMR, the intercept guard no longer matches, so the server
     // resolves /product/1 as the full page route instead of the intercept tree.
-    await expect(page.getByTestId("product-detail-page")).toBeVisible({
-      timeout: 5000,
-    });
+    await expect(page.getByTestId("product-detail-page")).toBeVisible();
     // The intercept modal should no longer be visible
     await expect(page.getByTestId("product-modal")).not.toBeVisible();
   });

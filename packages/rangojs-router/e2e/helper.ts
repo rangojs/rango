@@ -414,11 +414,13 @@ export async function writeFileAndAwaitHmr(
     retryIntervalMs = 3000,
     getServerOutput,
     serverOutputPattern,
+    waitForApplied,
   }: {
     totalTimeoutMs?: number;
     retryIntervalMs?: number;
     getServerOutput: () => string;
     serverOutputPattern: RegExp;
+    waitForApplied?: (() => Promise<void>) | undefined;
   },
 ): Promise<void> {
   const { renameSync, unlinkSync, utimesSync, writeFileSync } =
@@ -449,6 +451,7 @@ export async function writeFileAndAwaitHmr(
   const deadline = Date.now() + totalTimeoutMs;
   let attempt = 0;
   let recentOutput = "";
+  let lastApplyError: unknown;
   let sawServerSignal = false;
   let sawBrowserStreamComplete = false;
 
@@ -483,10 +486,19 @@ export async function writeFileAndAwaitHmr(
             sawServerSignal = true;
           }
         }
-        if (sawServerSignal && sawBrowserStreamComplete) {
+        if (sawServerSignal && !waitForApplied && sawBrowserStreamComplete) {
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      if (sawServerSignal && waitForApplied) {
+        try {
+          await waitForApplied();
+          return;
+        } catch (error) {
+          lastApplyError = error;
+        }
       }
     }
 
@@ -494,7 +506,8 @@ export async function writeFileAndAwaitHmr(
       `Timed out waiting for HMR after writing ${filePath}. ` +
         `sawServerSignal=${sawServerSignal} ` +
         `sawBrowserStreamComplete=${sawBrowserStreamComplete} ` +
-        `Recent server output:\n${recentOutput || "(empty)"}`,
+        `Recent server output:\n${recentOutput || "(empty)"}\n` +
+        `Last apply error:\n${String(lastApplyError ?? "(none)")}`,
     );
   } finally {
     page.off("console", consoleHandler);
