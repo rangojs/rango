@@ -5,5 +5,8 @@ dist
 playwright-report
 test-results
 
+# Lefthook local overrides
+lefthook-local.yml
+
 # Temporary research docs
 MIDDLEWARE_RESEARCH.md

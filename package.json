@@ -21,9 +21,11 @@
     "test:clean-vite": "find . -name '.vite' -type d -prune -exec rm -rf {} +",
     "test:unit": "pnpm -r --if-present run test:unit",
     "test:e2e": "pnpm --filter @rangojs/router test && pnpm --filter vite-rsc-demo test:full && pnpm --filter cloudflare-basic test:e2e && pnpm --filter cloudflare-basic-nonce test:e2e && pnpm --filter react-experimental test:e2e",
-    "build-router": "pnpm --filter @rangojs/router build"
+    "build-router": "pnpm --filter @rangojs/router build",
+    "prepare": "lefthook install"
   },
   "devDependencies": {
+    "lefthook": "^2.1.3",
     "oxfmt": "^0.35.0",
     "oxlint": "^1.0.0",
     "turbo": "^2.6.0",
@@ -41,6 +43,7 @@
     },
     "onlyBuiltDependencies": [
       "esbuild",
+      "lefthook",
       "sharp",
       "workerd"
     ]
