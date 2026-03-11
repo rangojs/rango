@@ -11,6 +11,8 @@ import { createServer as createViteServer } from "vite";
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import {
+  formatNestedRouterConflictError,
+  findNestedRouterConflict,
   findRouterFiles,
   createScanFilter,
 } from "../build/generate-route-types.js";
@@ -559,6 +561,16 @@ export function createRouterDiscoveryPlugin(
             if (!hasUrls && !hasCreateRouter) return;
             // Invalidate cache when a router file changes (new router added/removed)
             if (hasCreateRouter) {
+              const nestedRouterConflict = findNestedRouterConflict([
+                ...(s.cachedRouterFiles ?? []),
+                resolve(filePath),
+              ]);
+              if (nestedRouterConflict) {
+                server.config.logger.error(
+                  formatNestedRouterConflictError(nestedRouterConflict),
+                );
+                return;
+              }
               s.cachedRouterFiles = undefined;
             }
             scheduleRouteRegeneration();

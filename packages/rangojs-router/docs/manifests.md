@@ -155,6 +155,12 @@ Each `createRouter()` gets isolated data:
 Per-router virtual modules (`virtual:rsc-router/routes-manifest/<routerId>`) are loaded lazily
 via `registerRouterManifestLoader()` / `ensureRouterManifest()` on first request.
 
+Router roots must be sibling app roots. Nested router roots are not supported:
+if a router source file lives under another router's directory, Vite runtime
+discovery and `rango generate` fail with an explicit error. This keeps static
+route-type generation scoped to the nearest router root and avoids deep
+redundant filesystem scans in large projects.
+
 ## Static vs Runtime Generation Boundary
 
 The CLI (`rango generate`) has two modes for producing `.named-routes.gen.ts`:

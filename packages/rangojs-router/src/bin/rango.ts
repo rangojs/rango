@@ -6,6 +6,8 @@ import {
   writeCombinedRouteTypes,
   detectUnresolvableIncludes,
   detectUnresolvableIncludesForUrlsFile,
+  findNestedRouterConflict,
+  formatNestedRouterConflictError,
   type UnresolvableInclude,
 } from "../build/generate-route-types.ts";
 
@@ -205,6 +207,14 @@ function runStaticGeneration(args: string[], mode: "default" | "static") {
     console.warn("");
   }
 
+  const nestedRouterConflict = findNestedRouterConflict(routerFiles);
+  if (nestedRouterConflict) {
+    console.error(
+      `\n${formatNestedRouterConflictError(nestedRouterConflict, "[rango]")}\n`,
+    );
+    process.exit(1);
+  }
+
   // Phase 3: Write all outputs (only reached if diagnostics pass or --static)
   for (const urlsFile of urlsFiles) {
     writePerModuleRouteTypesForFile(urlsFile);
@@ -256,6 +266,14 @@ async function runRuntimeDiscovery(args: string[], configFile?: string) {
 
   if (routerEntries.length === 0) {
     console.error("[rango] No router files found in the provided paths");
+    process.exit(1);
+  }
+
+  const nestedRouterConflict = findNestedRouterConflict(routerEntries);
+  if (nestedRouterConflict) {
+    console.error(
+      `\n${formatNestedRouterConflictError(nestedRouterConflict, "[rango]")}\n`,
+    );
     process.exit(1);
   }
 

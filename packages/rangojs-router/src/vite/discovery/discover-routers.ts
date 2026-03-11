@@ -6,7 +6,11 @@
  * router, and builds route tries for O(path_length) matching.
  */
 
-import { buildCombinedRouteMapForRouterFile } from "../../build/generate-route-types.js";
+import {
+  buildCombinedRouteMapForRouterFile,
+  formatNestedRouterConflictError,
+  findNestedRouterConflict,
+} from "../../build/generate-route-types.js";
 import {
   flattenLeafEntries,
   buildRouteToStaticPrefix,
@@ -99,6 +103,17 @@ export async function discoverRouters(
   // Import build utilities for manifest generation
   const buildMod = await rscEnv.runner.import("@rangojs/router/build");
   const generateManifestFull = buildMod.generateManifestFull;
+
+  const nestedRouterConflict = findNestedRouterConflict(
+    [...registry.values()]
+      .map((router) => router.__sourceFile)
+      .filter(
+        (sourceFile): sourceFile is string => typeof sourceFile === "string",
+      ),
+  );
+  if (nestedRouterConflict) {
+    throw new Error(formatNestedRouterConflictError(nestedRouterConflict));
+  }
 
   // Build into local variables first. Only commit to state after the
   // full pass succeeds, so a failed re-discovery preserves the last

@@ -1,9 +1,20 @@
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
-import { join, dirname, resolve, basename as pathBasename } from "node:path";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  unlinkSync,
+  readdirSync,
+} from "node:fs";
+import {
+  join,
+  dirname,
+  resolve,
+  sep,
+  basename as pathBasename,
+} from "node:path";
 import ts from "typescript";
 import { generateRouteTypesSource } from "./codegen.js";
 import type { ScanFilter } from "./scan-filter.js";
-import { findTsFiles } from "./scan-filter.js";
 import {
   resolveImportedVariable,
   resolveImportPath,
@@ -24,6 +35,111 @@ function countPublicRouteEntries(source: string): number {
     }
   }
   return count;
+}
+
+const ROUTER_CALL_PATTERN = /\bcreateRouter\s*[<(]/;
+
+function isRoutableSourceFile(name: string): boolean {
+  return (
+    (name.endsWith(".ts") ||
+      name.endsWith(".tsx") ||
+      name.endsWith(".js") ||
+      name.endsWith(".jsx")) &&
+    !name.includes(".gen.")
+  );
+}
+
+function findRouterFilesRecursive(
+  dir: string,
+  filter: ScanFilter | undefined,
+  results: string[],
+): void {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    console.warn(
+      `[rsc-router] Failed to scan directory ${dir}: ${(err as Error).message}`,
+    );
+    return;
+  }
+
+  const childDirs: string[] = [];
+  const routerFilesInDir: string[] = [];
+
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      childDirs.push(fullPath);
+      continue;
+    }
+
+    if (!isRoutableSourceFile(entry.name)) continue;
+    if (filter && !filter(fullPath)) continue;
+
+    try {
+      const source = readFileSync(fullPath, "utf-8");
+      if (ROUTER_CALL_PATTERN.test(source)) {
+        routerFilesInDir.push(fullPath);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  // A directory that contains a router file is treated as a router root.
+  // Once found, deeper directories are skipped to avoid redundant scans.
+  if (routerFilesInDir.length > 0) {
+    results.push(...routerFilesInDir);
+    return;
+  }
+
+  for (const childDir of childDirs) {
+    findRouterFilesRecursive(childDir, filter, results);
+  }
+}
+
+export function findNestedRouterConflict(
+  routerFiles: string[],
+): { ancestor: string; nested: string } | null {
+  const routerDirs = [
+    ...new Set(routerFiles.map((filePath) => dirname(resolve(filePath)))),
+  ].sort((a, b) => a.length - b.length);
+
+  for (let i = 0; i < routerDirs.length; i++) {
+    const ancestorDir = routerDirs[i];
+    const prefix = ancestorDir.endsWith(sep)
+      ? ancestorDir
+      : `${ancestorDir}${sep}`;
+    for (let j = i + 1; j < routerDirs.length; j++) {
+      const nestedDir = routerDirs[j];
+      if (!nestedDir.startsWith(prefix)) continue;
+      const ancestorFile = routerFiles.find(
+        (filePath) => dirname(resolve(filePath)) === ancestorDir,
+      );
+      const nestedFile = routerFiles.find(
+        (filePath) => dirname(resolve(filePath)) === nestedDir,
+      );
+      if (ancestorFile && nestedFile) {
+        return { ancestor: ancestorFile, nested: nestedFile };
+      }
+    }
+  }
+
+  return null;
+}
+
+export function formatNestedRouterConflictError(
+  conflict: { ancestor: string; nested: string },
+  prefix = "[rsc-router]",
+): string {
+  return (
+    `${prefix} Nested router roots are not supported.\n` +
+    `Router root: ${conflict.ancestor}\n` +
+    `Nested router: ${conflict.nested}\n` +
+    `Move the nested router into a sibling directory or configure it as a separate app root.`
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -235,19 +351,8 @@ export function detectUnresolvableIncludesForUrlsFile(
  * Call once at startup; the result can be reused on subsequent watcher triggers.
  */
 export function findRouterFiles(root: string, filter?: ScanFilter): string[] {
-  const files = findTsFiles(root, filter);
   const result: string[] = [];
-  for (const filePath of files) {
-    if (filePath.includes(".gen.")) continue;
-    try {
-      const source = readFileSync(filePath, "utf-8");
-      if (/\bcreateRouter\s*[<(]/.test(source)) {
-        result.push(filePath);
-      }
-    } catch {
-      continue;
-    }
-  }
+  findRouterFilesRecursive(root, filter, result);
   return result;
 }
 
@@ -275,6 +380,11 @@ export function writeCombinedRouteTypes(
 
   const routerFilePaths = knownRouterFiles ?? findRouterFiles(root);
   if (routerFilePaths.length === 0) return;
+
+  const nestedRouterConflict = findNestedRouterConflict(routerFilePaths);
+  if (nestedRouterConflict) {
+    throw new Error(formatNestedRouterConflictError(nestedRouterConflict));
+  }
 
   for (const routerFilePath of routerFilePaths) {
     let routerSource: string;

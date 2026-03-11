@@ -1,6 +1,8 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { readFileSync, existsSync, unlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import {
   writePerModuleRouteTypesForFile,
@@ -514,6 +516,8 @@ function runRango(args: string) {
 }
 
 describe("CLI command-level tests", () => {
+  let tempDir: string | undefined;
+
   afterEach(() => {
     for (const f of [
       factoryGenPath,
@@ -525,6 +529,10 @@ describe("CLI command-level tests", () => {
       try {
         if (existsSync(f)) unlinkSync(f);
       } catch {}
+    }
+    if (tempDir) {
+      rmSync(tempDir, { recursive: true, force: true });
+      tempDir = undefined;
     }
   });
 
@@ -641,5 +649,48 @@ describe("CLI command-level tests", () => {
     // Factory routes absent (unresolvable)
     expect(content).not.toContain("docs.index");
     expect(content).not.toContain("docs.page");
+  });
+
+  it("fails explicitly for nested router roots when generating a directory", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "rango-nested-router-"));
+    const appDir = join(tempDir, "src", "app");
+    const nestedDir = join(appDir, "nested");
+    mkdirSync(nestedDir, { recursive: true });
+
+    writeFileSync(
+      join(appDir, "urls.ts"),
+      `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const patterns = urls(({ path }) => [path("/", handler, { name: "index" })]);
+`,
+    );
+    writeFileSync(
+      join(nestedDir, "urls.ts"),
+      `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const patterns = urls(({ path }) => [path("/child", handler, { name: "child" })]);
+`,
+    );
+    writeFileSync(
+      join(appDir, "router.ts"),
+      `import { createRouter } from "@rangojs/router";
+import { patterns } from "./urls.js";
+export const router = createRouter().routes(patterns);
+`,
+    );
+    writeFileSync(
+      join(nestedDir, "router.ts"),
+      `import { createRouter } from "@rangojs/router";
+import { patterns } from "./urls.js";
+export const router = createRouter().routes(patterns);
+`,
+    );
+
+    const result = runRango(`generate ${tempDir}`);
+
+    expect(result.status).not.toBe(0);
+    expect(result.combined).toContain("Nested router roots are not supported");
+    expect(result.combined).toContain(join(appDir, "router.ts"));
+    expect(result.combined).toContain(join(nestedDir, "router.ts"));
   });
 });
