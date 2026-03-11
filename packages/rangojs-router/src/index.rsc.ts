@@ -179,9 +179,10 @@ export { Meta } from "./handles/meta.js";
 import { getRequestContext as _getRequestContextInternal } from "./server/request-context.js";
 export type { PublicRequestContext as RequestContext } from "./server/request-context.js";
 import type { PublicRequestContext } from "./server/request-context.js";
+import type { DefaultEnv } from "./types/global-namespace.js";
 
 export const getRequestContext: <
-  TEnv = unknown,
+  TEnv = DefaultEnv,
 >() => PublicRequestContext<TEnv> = _getRequestContextInternal;
 
 // Request-scoped shorthands
