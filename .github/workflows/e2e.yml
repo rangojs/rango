@@ -13,7 +13,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # On push to main, wait 2 minutes before starting CI. Combined with
+  # cancel-in-progress, a follow-up push within the window cancels this
+  # run so only the latest commit gets a full suite. Instant for PRs.
+  debounce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Wait for additional pushes
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: sleep 120
+
   lint:
+    needs: [debounce]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -35,6 +47,7 @@ jobs:
         run: pnpm lint
 
   format:
+    needs: [debounce]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -56,6 +69,7 @@ jobs:
         run: pnpm format
 
   install-playwright:
+    needs: [debounce]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -87,6 +101,7 @@ jobs:
         run: pnpm --filter @rangojs/router exec playwright install --with-deps chromium
 
   typecheck:
+    needs: [debounce]
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -112,6 +127,7 @@ jobs:
         run: pnpm typecheck
 
   unit-tests:
+    needs: [debounce]
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
