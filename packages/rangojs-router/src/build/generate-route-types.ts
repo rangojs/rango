@@ -28,6 +28,8 @@ export {
   buildCombinedRouteMapForRouterFile,
   detectUnresolvableIncludes,
   detectUnresolvableIncludesForUrlsFile,
+  findNestedRouterConflict,
+  formatNestedRouterConflictError,
   findRouterFiles,
   writeCombinedRouteTypes,
 } from "./route-types/router-processing.js";

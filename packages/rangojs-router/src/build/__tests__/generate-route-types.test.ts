@@ -21,6 +21,8 @@ import {
   extractIncludesWithDiagnostics,
   detectUnresolvableIncludes,
   extractUrlsVariableFromRouter,
+  findNestedRouterConflict,
+  findRouterFiles,
 } from "../generate-route-types";
 
 // Helper: create a minimal urls module that the static parser can extract routes from.
@@ -60,6 +62,87 @@ describe("writeCombinedRouteTypes", () => {
 
   afterEach(() => {
     rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("treats a directory with a router file as a router root", () => {
+    const appDir = join(tempDir, "src", "app");
+    const nestedDir = join(appDir, "nested");
+    const adminDir = join(tempDir, "src", "admin");
+
+    mkdirSync(nestedDir, { recursive: true });
+    mkdirSync(adminDir, { recursive: true });
+
+    const appRouter = join(appDir, "router.ts");
+    const nestedRouter = join(nestedDir, "router.ts");
+    const adminRouter = join(adminDir, "router.ts");
+
+    writeFileSync(appRouter, routerSource("./urls.js"));
+    writeFileSync(nestedRouter, routerSource("./urls.js"));
+    writeFileSync(adminRouter, routerSource("./urls.js"));
+
+    const discovered = findRouterFiles(tempDir).sort();
+
+    expect(discovered).toEqual([adminRouter, appRouter].sort());
+    expect(discovered).not.toContain(nestedRouter);
+  });
+
+  it("detects explicit nested router conflicts", () => {
+    const appRouter = join(tempDir, "src", "app", "router.ts");
+    const nestedRouter = join(tempDir, "src", "app", "nested", "router.ts");
+    const siblingRouter = join(tempDir, "src", "admin", "router.ts");
+
+    const conflict = findNestedRouterConflict([
+      appRouter,
+      nestedRouter,
+      siblingRouter,
+    ]);
+
+    expect(conflict).toEqual({
+      ancestor: appRouter,
+      nested: nestedRouter,
+    });
+  });
+
+  it("detects nested router conflicts regardless of input order", () => {
+    const appRouter = join(tempDir, "src", "app", "router.ts");
+    const nestedRouter = join(tempDir, "src", "app", "nested", "router.ts");
+
+    const conflict = findNestedRouterConflict([nestedRouter, appRouter]);
+
+    expect(conflict).toEqual({
+      ancestor: appRouter,
+      nested: nestedRouter,
+    });
+  });
+
+  it("does not report nested router conflicts for sibling roots", () => {
+    const appRouter = join(tempDir, "src", "app", "router.ts");
+    const adminRouter = join(tempDir, "src", "admin", "router.ts");
+
+    expect(findNestedRouterConflict([appRouter, adminRouter])).toBeNull();
+  });
+
+  it("throws when asked to generate combined route types for nested routers", () => {
+    const appDir = join(tempDir, "src", "app");
+    const nestedDir = join(appDir, "nested");
+    mkdirSync(nestedDir, { recursive: true });
+
+    const appUrls = join(appDir, "urls.ts");
+    const nestedUrls = join(nestedDir, "urls.ts");
+    const appRouter = join(appDir, "router.ts");
+    const nestedRouter = join(nestedDir, "router.ts");
+
+    writeFileSync(appUrls, urlsSource([{ pattern: "/", name: "index" }]));
+    writeFileSync(
+      nestedUrls,
+      urlsSource([{ pattern: "/detail", name: "detail" }]),
+    );
+    writeFileSync(appRouter, routerSource("./urls.js"));
+    writeFileSync(nestedRouter, routerSource("./urls.js"));
+
+    expect(() =>
+      writeCombinedRouteTypes(tempDir, [appRouter, nestedRouter]),
+    ).toThrow(/Nested router roots are not supported/);
   });
 
   it("should create .named-routes.gen.ts with correct routes", () => {
