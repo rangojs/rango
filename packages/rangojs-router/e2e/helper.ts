@@ -474,10 +474,9 @@ export async function writeFileAndAwaitHmr(
       sawBrowserStreamComplete = false;
       writeAttempt(attempt);
 
-      const attemptDeadline = Date.now() + Math.max(
-        1,
-        Math.min(retryIntervalMs, deadline - Date.now()),
-      );
+      const attemptDeadline =
+        Date.now() +
+        Math.max(1, Math.min(retryIntervalMs, deadline - Date.now()));
 
       while (Date.now() < attemptDeadline) {
         if (!sawServerSignal) {
