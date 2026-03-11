@@ -260,7 +260,7 @@ export async function initBrowserApp(
     import.meta.hot.on("rsc:update", async () => {
       console.log("[RSCRouter] HMR: Server update, refetching RSC");
 
-      using handle = eventController.startNavigation(window.location.href, {
+      const handle = eventController.startNavigation(window.location.href, {
         replace: true,
       });
       const streamingToken = handle.startStreaming();
@@ -318,6 +318,7 @@ export async function initBrowserApp(
         console.log("[RSCRouter] HMR: RSC stream complete");
       } finally {
         streamingToken.end();
+        handle[Symbol.dispose]();
       }
     });
   }

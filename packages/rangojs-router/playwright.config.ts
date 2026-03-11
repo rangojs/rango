@@ -6,6 +6,10 @@ const browserConfig = {
   deviceScaleFactor: undefined,
 };
 
+const webkitConfig = {
+  ...devices["Desktop Safari"],
+};
+
 const DEV_SERVER_PORT = 5188;
 
 const isUIMode = process.argv.includes("--ui");
@@ -82,6 +86,11 @@ export default defineConfig({
           use: browserConfig,
           fullyParallel: false,
         },
+        {
+          name: "webkit-smoke",
+          testMatch: "**/smoke.test.ts",
+          use: webkitConfig,
+        },
       ]
     : [
         {
@@ -157,6 +166,12 @@ export default defineConfig({
           dependencies: process.env.CI
             ? []
             : ["dev", "production", "hmr-client"],
+        },
+        {
+          name: "webkit-smoke",
+          testMatch: "**/smoke.test.ts",
+          use: webkitConfig,
+          dependencies: ["build"],
         },
       ],
   workers: process.env.CI ? 3 : 6,
