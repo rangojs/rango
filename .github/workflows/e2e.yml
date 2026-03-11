@@ -276,9 +276,11 @@ jobs:
           - project: production
             shard: 2
             shardTotal: 2
-          # HMR tests run in separate jobs
+          # HMR tests run serially (workers=1) to avoid filesystem interference
           - project: hmr
+            workers: 1
           - project: hmr-client
+            workers: 1
 
     steps:
       - uses: actions/checkout@v4
@@ -310,11 +312,17 @@ jobs:
         run: pnpm --filter @rangojs/router exec playwright install-deps chromium
 
       - name: Run rangojs-router e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
+        env:
+          CHOKIDAR_USEPOLLING: ${{ matrix.workers && 'true' || '' }}
         run: |
+          WORKERS_FLAG=""
+          if [ -n "${{ matrix.workers }}" ]; then
+            WORKERS_FLAG="--workers=${{ matrix.workers }}"
+          fi
           if [ -n "${{ matrix.shard }}" ]; then
-            pnpm --filter @rangojs/router test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.shardTotal }}
+            pnpm --filter @rangojs/router test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.shardTotal }} $WORKERS_FLAG
           else
-            pnpm --filter @rangojs/router test --project=${{ matrix.project }}
+            pnpm --filter @rangojs/router test --project=${{ matrix.project }} $WORKERS_FLAG
           fi
 
       - name: Upload test results
