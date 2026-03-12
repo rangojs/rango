@@ -196,6 +196,13 @@ export const router = createRouter<AppEnv>({
     };
   },
 })
+  // Bug-repro: cookies set AFTER await next() in the outermost middleware.
+  // Registered before globalMiddleware so no outer early-return merge can mask the bug.
+  .use("/middleware-test/cookies-after-next", async (_ctx, next) => {
+    await next();
+    cookies().set("session_id", "abc123", { path: "/", httpOnly: true });
+    cookies().set("post-next-marker", "applied", { path: "/" });
+  })
   // Global middleware - applied to ALL routes
   .use(globalMiddleware)
   .use(timingMiddleware)

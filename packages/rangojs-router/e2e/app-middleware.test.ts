@@ -1,7 +1,39 @@
 import crypto from "node:crypto";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
+
+/**
+ * Assert that a response contains exactly the expected Set-Cookie entries.
+ * Uses headersArray() to preserve individual entries (allHeaders flattens them,
+ * hiding duplicates). Each entry in `expected` is matched as a substring
+ * against exactly one Set-Cookie header — no duplicates allowed.
+ */
+async function expectSetCookies(
+  page: Page,
+  url: string,
+  expected: string[],
+): Promise<void> {
+  const responsePromise = page.waitForResponse(
+    (response) => response.url().includes(url) && response.status() === 200,
+  );
+
+  await page.goto(url);
+  const response = await responsePromise;
+
+  const headers = await response.headersArray();
+  const setCookies = headers
+    .filter((h) => h.name.toLowerCase() === "set-cookie")
+    .map((h) => h.value);
+
+  for (const fragment of expected) {
+    const matches = setCookies.filter((c) => c.includes(fragment));
+    expect(
+      matches,
+      `Expected exactly 1 Set-Cookie matching "${fragment}", got ${matches.length}: ${JSON.stringify(setCookies)}`,
+    ).toHaveLength(1);
+  }
+}
 
 // Mirrors the build-time hashId from expose-id-utils.ts so production loader
 // tests stay in sync with the build output without hardcoding hash values.
@@ -722,6 +754,33 @@ test.describe("app-middleware (dev)", () => {
   });
 });
 
+test.describe("cookies-after-next (dev)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test("top-level middleware: cookies set after await next() should appear in the response", async ({
+    page,
+  }) => {
+    await expectSetCookies(page, f.url("/middleware-test/cookies-after-next"), [
+      "session_id=abc123",
+      "HttpOnly",
+      "post-next-marker=applied",
+    ]);
+  });
+
+  test("route-level middleware: cookies set after await next() should appear in the response", async ({
+    page,
+  }) => {
+    await expectSetCookies(
+      page,
+      f.url("/middleware-test/route-cookies-after-next"),
+      ["route_session=xyz789", "HttpOnly", "route-post-next=applied"],
+    );
+  });
+});
+
 test.describe("W5: ctx.set() then redirect warning (dev)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
@@ -1043,5 +1102,25 @@ test.describe("app-middleware (production)", () => {
       // Production sanitizes error messages; verify the error structure
       expect(text).toContain("loaderError");
     });
+  });
+
+  test("top-level middleware: cookies set after await next() (production)", async ({
+    page,
+  }) => {
+    await expectSetCookies(page, f.url("/middleware-test/cookies-after-next"), [
+      "session_id=abc123",
+      "HttpOnly",
+      "post-next-marker=applied",
+    ]);
+  });
+
+  test("route-level middleware: cookies set after await next() (production)", async ({
+    page,
+  }) => {
+    await expectSetCookies(
+      page,
+      f.url("/middleware-test/route-cookies-after-next"),
+      ["route_session=xyz789", "HttpOnly", "route-post-next=applied"],
+    );
   });
 });

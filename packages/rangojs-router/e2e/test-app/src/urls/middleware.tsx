@@ -1,10 +1,12 @@
-import { urls, getRequestContext, redirect } from "@rangojs/router";
+import { urls, getRequestContext, redirect, cookies } from "@rangojs/router";
 import {
   MiddlewareIndexHandler,
   MiddlewareProtectedHandler,
   MiddlewareProtectedDashboardHandler,
   MiddlewareErrorHandlerHandler,
   MiddlewareCookiesHandler,
+  MiddlewareCookiesAfterNextHandler,
+  MiddlewareRouteCookiesAfterNextHandler,
   MiddlewareParamsHandler,
   MiddlewareSharedVarsHandler,
   MiddlewareRouteLevelHandler,
@@ -29,6 +31,26 @@ export const middlewarePatterns = urls(({ path, middleware }) => [
   path("/cookies", MiddlewareCookiesHandler, { name: "cookies" }),
   path("/params/:paramId", MiddlewareParamsHandler, { name: "params" }),
   path("/shared-vars", MiddlewareSharedVarsHandler, { name: "sharedVars" }),
+
+  // Test: cookies set after await next() in top-level (global) middleware —
+  // the middleware that sets the cookies is registered in router.tsx.
+  path("/cookies-after-next", MiddlewareCookiesAfterNextHandler, {
+    name: "cookiesAfterNext",
+  }),
+
+  // Test: cookies set after await next() in route-level middleware
+  path(
+    "/route-cookies-after-next",
+    MiddlewareRouteCookiesAfterNextHandler,
+    { name: "routeCookiesAfterNext" },
+    () => [
+      middleware(async (_ctx, next) => {
+        await next();
+        cookies().set("route_session", "xyz789", { path: "/", httpOnly: true });
+        cookies().set("route-post-next", "applied", { path: "/" });
+      }),
+    ],
+  ),
 
   path(
     "/route-level",
