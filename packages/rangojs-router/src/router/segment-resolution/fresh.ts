@@ -24,6 +24,7 @@ import {
 } from "./helpers.js";
 import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
+import { track } from "../../server/context.js";
 
 // ---------------------------------------------------------------------------
 // Streamed handler telemetry
@@ -178,7 +179,9 @@ export async function resolveSegment<TEnv>(
     (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
       entry.shortCode;
 
+    const doneLayoutHandler = track(`handler:${entry.id}`, 2);
     const component = await resolveLayoutComponent(entry, context);
+    doneLayoutHandler();
 
     segments.push({
       id: entry.shortCode,
@@ -241,9 +244,11 @@ export async function resolveSegment<TEnv>(
       entry.shortCode,
     );
     if (component === undefined) {
+      const doneRouteHandler = track(`handler:${entry.id}`, 2);
       if (entry.loading) {
         const result = handleHandlerResult(entry.handler(context));
         if (result instanceof Promise) {
+          result.finally(doneRouteHandler).catch(() => {});
           const tracked = deps.trackHandler(result, {
             segmentId: entry.shortCode,
             segmentType: entry.type,
@@ -258,10 +263,12 @@ export async function resolveSegment<TEnv>(
           );
           component = tracked;
         } else {
+          doneRouteHandler();
           component = result;
         }
       } else {
         component = handleHandlerResult(await entry.handler(context));
+        doneRouteHandler();
       }
     }
 
@@ -343,7 +350,9 @@ export async function resolveOrphanLayout<TEnv>(
 
   // Handler-first: orphan layout handler executes before its parallels
   // so that ctx.set() values are visible to parallel children.
+  const doneOrphanHandler = track(`handler:${orphan.id}`, 2);
   const component = await resolveLayoutComponent(orphan, context);
+  doneOrphanHandler();
 
   segments.push({
     id: orphan.shortCode,
@@ -410,12 +419,17 @@ export async function resolveParallelEntry<TEnv>(
     );
 
     if (component === undefined) {
+      const doneParallelHandler = track(
+        `handler:${parallelEntry.id}.${slot}`,
+        2,
+      );
       const hasLoadingFallback =
         parallelEntry.loading !== undefined && parallelEntry.loading !== false;
       if (hasLoadingFallback) {
         const result =
           typeof handler === "function" ? handler(context) : handler;
         if (result instanceof Promise) {
+          result.finally(doneParallelHandler).catch(() => {});
           const tracked = deps.trackHandler(result, {
             segmentId: `${parentShortCode}.${slot}`,
             segmentType: "parallel",
@@ -430,11 +444,13 @@ export async function resolveParallelEntry<TEnv>(
           );
           component = tracked as ReactNode;
         } else {
+          doneParallelHandler();
           component = result as ReactNode;
         }
       } else {
         component =
           typeof handler === "function" ? await handler(context) : handler;
+        doneParallelHandler();
       }
     }
 
@@ -499,6 +515,7 @@ export async function resolveAllSegments<TEnv>(
   } catch {}
 
   for (const entry of entries) {
+    const doneEntry = track(`segment:${entry.id}`, 1);
     const resolvedSegments = await resolveWithErrorBoundary(
       entry,
       params,
@@ -518,6 +535,7 @@ export async function resolveAllSegments<TEnv>(
       { request: safeRequest, url: context.url, routeKey, telemetry },
       context.pathname,
     );
+    doneEntry();
     // Deduplicate by segment ID. include() scopes can produce entries that
     // resolve the same shared layout/loader segment. Duplicates in the segment
     // array propagate to the client's matched[] and change the React tree depth.

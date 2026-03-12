@@ -227,6 +227,13 @@ export function createMiddlewareContext<TEnv>(
           `ctx.reverse() is not available - route map was not provided to middleware context`,
         );
       }),
+
+    debugPerformance(): void {
+      const reqCtx = _getRequestContext();
+      if (reqCtx) {
+        reqCtx._debugPerformance = true;
+      }
+    },
   };
 }
 

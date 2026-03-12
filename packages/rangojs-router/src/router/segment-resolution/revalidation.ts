@@ -37,6 +37,7 @@ import {
 } from "./helpers.js";
 import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
+import { track } from "../../server/context.js";
 
 // ---------------------------------------------------------------------------
 // Telemetry helpers
@@ -621,20 +622,29 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       return shouldRevalidate;
     },
     async () => {
+      const doneHandler = track(`handler:${entry.id}`, 2);
       (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
         entry.shortCode;
       if (entry.type === "layout" || entry.type === "cache") {
-        return resolveLayoutComponent(entry, context);
+        const layoutComponent = await resolveLayoutComponent(entry, context);
+        doneHandler();
+        return layoutComponent;
       }
       const staticComponent = await tryStaticHandler(entry, entry.shortCode);
-      if (staticComponent !== undefined) return staticComponent;
+      if (staticComponent !== undefined) {
+        doneHandler();
+        return staticComponent;
+      }
       const routeEntry = entry as Extract<EntryData, { type: "route" }>;
       if (!routeEntry.loading) {
-        return handleHandlerResult(await routeEntry.handler(context));
+        const result = handleHandlerResult(await routeEntry.handler(context));
+        doneHandler();
+        return result;
       }
       if (!actionContext) {
         const result = handleHandlerResult(routeEntry.handler(context));
         if (result instanceof Promise) {
+          result.finally(doneHandler).catch(() => {});
           const tracked = deps.trackHandler(result, {
             segmentId: entry.shortCode,
             segmentType: entry.type,
@@ -649,15 +659,18 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
           );
           return { content: tracked };
         }
+        doneHandler();
         return { content: result };
       }
       debugLog("segment.action", "resolving action route with awaited value", {
         entryId: entry.id,
       });
+      const actionResult = handleHandlerResult(
+        await routeEntry.handler(context),
+      );
+      doneHandler();
       return {
-        content: Promise.resolve(
-          handleHandlerResult(await routeEntry.handler(context)),
-        ),
+        content: Promise.resolve(actionResult),
       };
     },
     () => null,
@@ -1178,6 +1191,7 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
     }
 
     const nonParallelEntry = entry as Exclude<EntryData, { type: "parallel" }>;
+    const doneEntry = track(`segment:${entry.id}`, 1);
     const resolved = await resolveWithErrorBoundary(
       nonParallelEntry,
       params,
@@ -1204,6 +1218,7 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
         : undefined,
       pathname,
     );
+    doneEntry();
 
     // Deduplicate segments and matchedIds by ID, matching resolveAllSegments.
     // include() scopes can produce entries that resolve the same shared
