@@ -48,9 +48,8 @@ export async function discoverRouters(
     // No RSC routers found directly. Check for host routers with lazy handlers
     // that need to be resolved to trigger sub-app createRouter() calls.
     try {
-      const hostMod = await rscEnv.runner.import("@rangojs/router/host");
       const hostRegistry: Map<string, any> | undefined =
-        hostMod.HostRouterRegistry;
+        serverMod.HostRouterRegistry;
 
       if (hostRegistry && hostRegistry.size > 0) {
         console.log(
@@ -89,7 +88,7 @@ export async function discoverRouters(
         }
       }
     } catch {
-      // @rangojs/router/host not available or import failed, skip
+      // Host-router discovery is best-effort; skip if unavailable
     }
 
     // If still no routers after host router resolution, fail

@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { readFileSync, existsSync, unlinkSync } from "node:fs";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -502,6 +502,8 @@ const staticGenPath = join(
   "app",
   "router.named-routes.gen.ts",
 );
+const fixturesRoot = join(__dirname, "__fixtures__");
+let commandTempDir: string | undefined;
 
 function runRango(args: string) {
   const result = spawnSync("node", [rangoBin, ...args.split(" ")], {
@@ -515,46 +517,46 @@ function runRango(args: string) {
   };
 }
 
-describe("CLI command-level tests", () => {
-  let tempDir: string | undefined;
+function cloneFixtureDir(name: string): string {
+  commandTempDir = mkdtempSync(join(fixturesRoot, ".tmp-rango-cli-fixture-"));
+  const dest = join(commandTempDir, name);
+  cpSync(join(fixturesRoot, name), dest, { recursive: true });
+  return dest;
+}
 
+describe("CLI command-level tests", () => {
   afterEach(() => {
-    for (const f of [
-      factoryGenPath,
-      factoryUrlsGenPath,
-      factoryApiUrlsGenPath,
-      factoryFactoryGenPath,
-      staticGenPath,
-    ]) {
-      try {
-        if (existsSync(f)) unlinkSync(f);
-      } catch {}
-    }
-    if (tempDir) {
-      rmSync(tempDir, { recursive: true, force: true });
-      tempDir = undefined;
+    if (commandTempDir) {
+      rmSync(commandTempDir, { recursive: true, force: true });
+      commandTempDir = undefined;
     }
   });
 
   // --- Happy paths ---
 
   it("default mode succeeds for fully static router", () => {
-    const result = runRango(`generate ${staticFixtureRouter}`);
+    const fixtureDir = cloneFixtureDir("app");
+    const routerFile = join(fixtureDir, "router.tsx");
+    const genPath = join(fixtureDir, "router.named-routes.gen.ts");
+    const result = runRango(`generate ${routerFile}`);
     expect(result.status).toBe(0);
-    expect(existsSync(staticGenPath)).toBe(true);
+    expect(existsSync(genPath)).toBe(true);
 
-    const content = readFileSync(staticGenPath, "utf-8");
+    const content = readFileSync(genPath, "utf-8");
     expect(content).toContain("home");
     expect(content).toContain("about");
     expect(content).toContain("api.health");
   });
 
   it("--runtime succeeds for factory router and includes factory routes", () => {
-    const result = runRango(`generate ${factoryFixtureRouter} --runtime`);
+    const fixtureDir = cloneFixtureDir("app-with-factory");
+    const routerFile = join(fixtureDir, "router.tsx");
+    const genPath = join(fixtureDir, "router.named-routes.gen.ts");
+    const result = runRango(`generate ${routerFile} --runtime`);
     expect(result.status).toBe(0);
-    expect(existsSync(factoryGenPath)).toBe(true);
+    expect(existsSync(genPath)).toBe(true);
 
-    const content = readFileSync(factoryGenPath, "utf-8");
+    const content = readFileSync(genPath, "utf-8");
     // Static routes
     expect(content).toContain("home");
     expect(content).toContain("about");
@@ -569,7 +571,9 @@ describe("CLI command-level tests", () => {
   // --- Non-happy paths ---
 
   it("default mode hard-fails on unresolvable factory includes", () => {
-    const result = runRango(`generate ${factoryFixtureRouter}`);
+    const fixtureDir = cloneFixtureDir("app-with-factory");
+    const routerFile = join(fixtureDir, "router.tsx");
+    const result = runRango(`generate ${routerFile}`);
     expect(result.status).not.toBe(0);
     // Error output should include the diagnostic and point to --runtime
     expect(result.combined).toContain("Unresolvable includes detected");
@@ -579,14 +583,17 @@ describe("CLI command-level tests", () => {
   });
 
   it("--static warns and emits partial output without factory routes", () => {
-    const result = runRango(`generate ${factoryFixtureRouter} --static`);
+    const fixtureDir = cloneFixtureDir("app-with-factory");
+    const routerFile = join(fixtureDir, "router.tsx");
+    const genPath = join(fixtureDir, "router.named-routes.gen.ts");
+    const result = runRango(`generate ${routerFile} --static`);
     expect(result.status).toBe(0);
     // Warning about partial output
     expect(result.combined).toContain("partial output");
     expect(result.combined).toContain("factory-call");
 
-    expect(existsSync(factoryGenPath)).toBe(true);
-    const content = readFileSync(factoryGenPath, "utf-8");
+    expect(existsSync(genPath)).toBe(true);
+    const content = readFileSync(genPath, "utf-8");
     // Static routes present
     expect(content).toContain("home");
     expect(content).toContain("about");
@@ -597,9 +604,9 @@ describe("CLI command-level tests", () => {
   });
 
   it("--config without --runtime is ignored with a warning", () => {
-    const result = runRango(
-      `generate ${staticFixtureRouter} --config some-config.ts`,
-    );
+    const fixtureDir = cloneFixtureDir("app");
+    const routerFile = join(fixtureDir, "router.tsx");
+    const result = runRango(`generate ${routerFile} --config some-config.ts`);
     expect(result.status).toBe(0);
     expect(result.combined).toContain(
       "--config is only used with --runtime, ignoring",
@@ -609,22 +616,27 @@ describe("CLI command-level tests", () => {
   // --- Atomicity (P20 / E11) ---
 
   it("default mode directory generation is atomic: no partial gen files on failure", () => {
-    const result = runRango(`generate ${factoryFixtureDir}`);
+    const fixtureDir = cloneFixtureDir("app-with-factory");
+    const result = runRango(`generate ${fixtureDir}`);
     expect(result.status).not.toBe(0);
     expect(result.combined).toContain("Unresolvable includes detected");
 
     // No gen files should have been written — the command failed before
     // reaching the write phase.
-    expect(existsSync(factoryGenPath)).toBe(false);
-    expect(existsSync(factoryUrlsGenPath)).toBe(false);
-    expect(existsSync(factoryApiUrlsGenPath)).toBe(false);
-    expect(existsSync(factoryFactoryGenPath)).toBe(false);
+    expect(existsSync(join(fixtureDir, "router.named-routes.gen.ts"))).toBe(
+      false,
+    );
+    expect(existsSync(join(fixtureDir, "urls.gen.ts"))).toBe(false);
+    expect(existsSync(join(fixtureDir, "api", "urls.gen.ts"))).toBe(false);
+    expect(existsSync(join(fixtureDir, "factory.gen.ts"))).toBe(false);
   });
 
   // --- Standalone urls() fail-fast (P21 / E12) ---
 
   it("default mode fails for standalone urls() with unresolvable factory include", () => {
-    const result = runRango(`generate ${factoryFixtureUrls}`);
+    const fixtureDir = cloneFixtureDir("app-with-factory");
+    const urlsFile = join(fixtureDir, "urls.tsx");
+    const result = runRango(`generate ${urlsFile}`);
     expect(result.status).not.toBe(0);
     expect(result.combined).toContain("Unresolvable includes detected");
     expect(result.combined).toContain("factory-call");
@@ -632,16 +644,19 @@ describe("CLI command-level tests", () => {
     expect(result.combined).toContain("--static");
 
     // No gen file should have been written
-    expect(existsSync(factoryUrlsGenPath)).toBe(false);
+    expect(existsSync(join(fixtureDir, "urls.gen.ts"))).toBe(false);
   });
 
   it("--static mode succeeds for standalone urls() with partial output", () => {
-    const result = runRango(`generate ${factoryFixtureUrls} --static`);
+    const fixtureDir = cloneFixtureDir("app-with-factory");
+    const urlsFile = join(fixtureDir, "urls.tsx");
+    const genPath = join(fixtureDir, "urls.gen.ts");
+    const result = runRango(`generate ${urlsFile} --static`);
     expect(result.status).toBe(0);
     expect(result.combined).toContain("partial output");
 
-    expect(existsSync(factoryUrlsGenPath)).toBe(true);
-    const content = readFileSync(factoryUrlsGenPath, "utf-8");
+    expect(existsSync(genPath)).toBe(true);
+    const content = readFileSync(genPath, "utf-8");
     // Static routes present
     expect(content).toContain("home");
     expect(content).toContain("about");
@@ -652,8 +667,8 @@ describe("CLI command-level tests", () => {
   });
 
   it("fails explicitly for nested router roots when generating a directory", () => {
-    tempDir = mkdtempSync(join(tmpdir(), "rango-nested-router-"));
-    const appDir = join(tempDir, "src", "app");
+    commandTempDir = mkdtempSync(join(tmpdir(), "rango-nested-router-"));
+    const appDir = join(commandTempDir, "src", "app");
     const nestedDir = join(appDir, "nested");
     mkdirSync(nestedDir, { recursive: true });
 
@@ -686,7 +701,7 @@ export const router = createRouter().routes(patterns);
 `,
     );
 
-    const result = runRango(`generate ${tempDir}`);
+    const result = runRango(`generate ${commandTempDir}`);
 
     expect(result.status).not.toBe(0);
     expect(result.combined).toContain("Nested router roots are not supported");

@@ -38,7 +38,7 @@ These subpaths are consumed by the Vite plugin, RSC handler, or build tooling. T
 
 | Export                               | Description                                                        |
 | ------------------------------------ | ------------------------------------------------------------------ |
-| `./server`                           | Manifest/build internals: plugin bridge, route-map management      |
+| `./server`                           | Manifest/build internals: plugin bridge, route-map management, router discovery registries |
 | `./__internal`                       | Internal plumbing shared by build/runtime/Vite                     |
 | `./internal/deps/browser`            | Browser runtime dependency bridge                                  |
 | `./internal/deps/ssr`                | SSR runtime dependency bridge                                      |
