@@ -89,7 +89,7 @@ Configure a cache store in the router:
 
 ```typescript
 import { createRouter } from "@rangojs/router";
-import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 
 const store = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 300 },
@@ -112,7 +112,7 @@ const router = createRouter({
 For single-instance deployments:
 
 ```typescript
-import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 
 const store = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 300 },
@@ -125,7 +125,7 @@ const store = new MemorySegmentCacheStore({
 For distributed caching on Cloudflare Workers:
 
 ```typescript
-import { CFCacheStore } from "@rangojs/router/cache/cf";
+import { CFCacheStore } from "@rangojs/router/cache";
 
 const router = createRouter<AppBindings>({
   document: Document,
@@ -175,7 +175,7 @@ cache({ store: checkoutCache }, () => [
 
 ```typescript
 import { urls } from "@rangojs/router";
-import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 
 // Custom store for checkout (short TTL)
 const checkoutCache = new MemorySegmentCacheStore({

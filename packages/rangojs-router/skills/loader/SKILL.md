@@ -68,7 +68,7 @@ export const urlpatterns = urls(({ path, loader }) => [
 ### In Server Components
 
 ```typescript
-import { useLoader } from "@rangojs/router";
+import { useLoader } from "@rangojs/router/client";
 import { ProductLoader } from "./loaders/product";
 
 async function ProductPage() {
@@ -539,7 +539,7 @@ export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalid
 ]);
 
 // pages/product.tsx
-import { useLoader } from "@rangojs/router";
+import { useLoader } from "@rangojs/router/client";
 import { ProductLoader, CartLoader } from "./loaders/shop";
 
 async function ProductPage() {

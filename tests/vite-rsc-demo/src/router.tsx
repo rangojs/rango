@@ -1,5 +1,5 @@
 import { createRouter } from "@rangojs/router";
-import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { RootLayout } from "./layouts/RootLayout.js";
 
 // Create cache store with defaults (persists across HMR via globalThis)

@@ -45,6 +45,30 @@ For Cloudflare Workers:
 npm install @cloudflare/vite-plugin
 ```
 
+## Import Paths
+
+Use these import paths consistently:
+
+- `@rangojs/router` — server/RSC router APIs, route DSL, `createRouter`, `urls`, `redirect`, `Prerender`, `Static`, shared types
+- `@rangojs/router/client` — hooks and components such as `Link`, `Outlet`, `href`, `useNavigation`, `useLoader`, `useAction`, `useLocationState`
+- `@rangojs/router/cache` — public cache APIs such as `CFCacheStore`, `MemorySegmentCacheStore`, `createDocumentCacheMiddleware`
+- `@rangojs/router/host`, `@rangojs/router/theme`, `@rangojs/router/vite` — specialized public subpaths
+- `@rangojs/router/rsc`, `@rangojs/router/ssr` — advanced server-only integration subpaths for custom request/HTML pipelines
+
+Use only subpaths that are explicitly exported from the package. Avoid deep imports such as `@rangojs/router/cache/cf`.
+
+`@rangojs/router` is conditionally resolved. Server-only root APIs such as
+`createRouter()`, `urls()`, `redirect()`, `Prerender()`, and `cookies()` rely on
+the `react-server` export condition and are meant to run in router definitions,
+handlers, and other RSC/server modules. Outside that environment the root entry
+falls back to stub implementations that throw guidance errors.
+
+If you hit a root-entrypoint stub error:
+
+- hooks and components like `Link`, `Outlet`, `useLoader`, `useNavigation`, and `MetaTags` belong in `@rangojs/router/client`
+- cache APIs like `CFCacheStore` and `createDocumentCacheMiddleware` belong in `@rangojs/router/cache`
+- host-router APIs belong in `@rangojs/router/host`
+
 ## Quick Start
 
 ### Vite Config
@@ -61,6 +85,9 @@ export default defineConfig({
 ```
 
 ### Router
+
+This file is a server/RSC module and should import router construction APIs from
+`@rangojs/router`.
 
 ```tsx
 // src/router.tsx
@@ -842,16 +869,22 @@ module, use `scopedReverse<typeof localPatterns>(ctx.reverse)` or
 
 ## Subpath Exports
 
-| Export                   | Description                                                                       |
-| ------------------------ | --------------------------------------------------------------------------------- |
-| `@rangojs/router`        | Core: `createRouter`, `urls`, `createLoader`, `Handler`, `Prerender`, `Meta`      |
-| `@rangojs/router/client` | Client: `Link`, `Outlet`, `href`, `useNavigation`, `useLoader`, `MetaTags`        |
-| `@rangojs/router/cache`  | Cache: `CFCacheStore`, `MemorySegmentCacheStore`, `createDocumentCacheMiddleware` |
-| `@rangojs/router/theme`  | Theme: `useTheme`, `ThemeProvider`, `ThemeScript`                                 |
-| `@rangojs/router/host`   | Host routing: `createHostRouter`, `defineHosts`                                   |
-| `@rangojs/router/vite`   | Vite plugin: `rango()`                                                            |
-| `@rangojs/router/server` | Server utilities                                                                  |
-| `@rangojs/router/build`  | Build utilities                                                                   |
+| Export                   | Description                                                                                              |
+| ------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `@rangojs/router`        | Server/RSC core and shared types: `createRouter`, `urls`, `createLoader`, `Handler`, `Prerender`, `Meta` |
+| `@rangojs/router/client` | Client: `Link`, `Outlet`, `href`, `useNavigation`, `useLoader`, `MetaTags`                               |
+| `@rangojs/router/cache`  | Cache: `CFCacheStore`, `MemorySegmentCacheStore`, `createDocumentCacheMiddleware`                        |
+| `@rangojs/router/theme`  | Theme: `useTheme`, `ThemeProvider`, `ThemeScript`                                                        |
+| `@rangojs/router/host`   | Host routing: `createHostRouter`, `defineHosts`                                                          |
+| `@rangojs/router/vite`   | Vite plugin: `rango()`                                                                                   |
+| `@rangojs/router/rsc`    | Advanced server pipeline APIs: `createRSCHandler`, request-context access                                |
+| `@rangojs/router/ssr`    | Advanced SSR bridge APIs: `createSSRHandler`                                                             |
+| `@rangojs/router/server` | Internal build/runtime utilities for advanced integrations                                               |
+| `@rangojs/router/build`  | Build utilities                                                                                          |
+
+The root entrypoint is not a generic client/runtime barrel. If you need hooks
+or components, import from `@rangojs/router/client`; if you need cache or host
+APIs, use their dedicated subpaths.
 
 ## Examples
 

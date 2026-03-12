@@ -14,7 +14,7 @@ Configure document cache in router:
 
 ```typescript
 import { createRouter } from "@rangojs/router";
-import { CFCacheStore } from "@rangojs/router/cache/cf";
+import { CFCacheStore } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls";
 
 const router = createRouter<AppBindings>({
@@ -134,7 +134,7 @@ Segment hash ensures different cached responses for navigations from different s
 ```typescript
 // router.tsx
 import { createRouter } from "@rangojs/router";
-import { CFCacheStore } from "@rangojs/router/cache/cf";
+import { CFCacheStore } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls";
 
 const router = createRouter<AppBindings>({

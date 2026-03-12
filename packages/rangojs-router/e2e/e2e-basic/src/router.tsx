@@ -1,5 +1,5 @@
 import { createRouter } from "@rangojs/router";
-import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
 
 const cacheStore = new MemorySegmentCacheStore({

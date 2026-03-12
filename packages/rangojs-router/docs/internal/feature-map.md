@@ -18,36 +18,36 @@ Related docs:
 
 ### Public
 
-| Export           | Description                                                                                                                                                                                                                                       |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.`              | Universal router API: `createRouter`, `createLoader`, `redirect`, `cookies()`, `headers()`, route DSL, errors, helpers, URL/route utilities, reverse lookup, server-only runtime helpers                                                          |
-| `./client`       | Client-side components and hooks (see [Client API](#client-api) below)                                                                                                                                                                            |
-| `./vite`         | `rango()` plugin factory and plugin options                                                                                                                                                                                                       |
-| `./browser`      | Browser bootstrap: `initBrowserApp`, `RSCRouter`, `InitBrowserAppOptions`                                                                                                                                                                         |
-| `./rsc`          | Advanced server APIs: `createRSCHandler`, server-side request context, handle store, segment cache types                                                                                                                                          |
-| `./ssr`          | RSC payload to HTML bridge: `createSSRHandler`, nonce/form-state/streamMode support                                                                                                                                                               |
-| `./build`        | Manifest and route-type generators: `generateManifest`, `generateManifestFull`, `generateManifestCode`, `writePerModuleRouteTypes`, `generatePerModuleTypesSource`, `extractRoutesFromSource`, `buildRouteTrie`, `createScanFilter`, `hashParams` |
-| `./cache`        | Segment and response cache APIs: `SegmentCacheStore`, `MemorySegmentCacheStore`, `CFCacheStore`, document cache middleware, cache scope utilities                                                                                                 |
-| `./theme`        | Theming client API: `useTheme`, `ThemeProvider`, theme scripts and constants                                                                                                                                                                      |
-| `./host`         | Host-based multi-app routing: `createHostRouter`, `defineHosts`, host matching types                                                                                                                                                              |
-| `./host/testing` | Host router test helpers                                                                                                                                                                                                                          |
+| Export           | Description                                                                                                                                                                                                                                              |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.`              | Root entrypoint with shared types/utilities plus server/RSC APIs selected via the `react-server` export condition: `createRouter`, `createLoader`, `redirect`, `cookies()`, `headers()`, route DSL, errors, helpers, URL/route utilities, reverse lookup |
+| `./client`       | Client-side components and hooks (see [Client API](#client-api) below)                                                                                                                                                                                   |
+| `./vite`         | Public Vite plugin surface only: `rango()` and plugin option types                                                                                                                                                                                       |
+| `./browser`      | Browser bootstrap: `initBrowserApp`, `RSCRouter`, `InitBrowserAppOptions`                                                                                                                                                                                |
+| `./rsc`          | Advanced server request-pipeline APIs: `createRSCHandler`, request-context access, RSC handler types                                                                                                                                                     |
+| `./ssr`          | Advanced HTML rendering bridge: `createSSRHandler`, nonce/form-state/streamMode support                                                                                                                                                                  |
+| `./build`        | Manifest and route-type generators: `generateManifest`, `generateManifestFull`, `generateManifestCode`, `writePerModuleRouteTypes`, `generatePerModuleTypesSource`, `extractRoutesFromSource`, `buildRouteTrie`, `createScanFilter`, `hashParams`        |
+| `./cache`        | Segment and response cache APIs: `SegmentCacheStore`, `MemorySegmentCacheStore`, `CFCacheStore`, document cache middleware, cache scope utilities                                                                                                        |
+| `./theme`        | Theming public API: `useTheme`, `ThemeProvider`, `ThemeScript`, theme constants                                                                                                                                                                          |
+| `./host`         | Host-based multi-app routing: `createHostRouter`, `defineHosts`, host matching types                                                                                                                                                                     |
+| `./host/testing` | Host router test helpers                                                                                                                                                                                                                                 |
 
 ### Internal (not user-facing)
 
 These subpaths are consumed by the Vite plugin, RSC handler, or build tooling. They are not part of the public API and may change without notice.
 
-| Export                               | Description                                                        |
-| ------------------------------------ | ------------------------------------------------------------------ |
-| `./server`                           | Manifest/build internals: plugin bridge, route-map management      |
-| `./__internal`                       | Internal plumbing shared by build/runtime/Vite                     |
-| `./internal/deps/browser`            | Browser runtime dependency bridge                                  |
-| `./internal/deps/ssr`                | SSR runtime dependency bridge                                      |
-| `./internal/deps/rsc`                | RSC runtime dependency bridge                                      |
-| `./internal/deps/html-stream-client` | HTML stream client dependency bridge                               |
-| `./internal/deps/html-stream-server` | HTML stream server dependency bridge                               |
-| `./internal/rsc-handler`             | RSC handler internals                                              |
-| `./cache-runtime`                    | Cache runtime dependencies                                         |
-| `./types`                            | Type declarations for the `@rangojs/router:version` virtual module |
+| Export                               | Description                                                                                |
+| ------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `./server`                           | Manifest/build internals: plugin bridge, route-map management, router discovery registries |
+| `./__internal`                       | Internal plumbing shared by build/runtime/Vite                                             |
+| `./internal/deps/browser`            | Browser runtime dependency bridge                                                          |
+| `./internal/deps/ssr`                | SSR runtime dependency bridge                                                              |
+| `./internal/deps/rsc`                | RSC runtime dependency bridge                                                              |
+| `./internal/deps/html-stream-client` | HTML stream client dependency bridge                                                       |
+| `./internal/deps/html-stream-server` | HTML stream server dependency bridge                                                       |
+| `./internal/rsc-handler`             | RSC handler internals                                                                      |
+| `./cache-runtime`                    | Cache runtime dependencies                                                                 |
+| `./types`                            | Type declarations for the `@rangojs/router:version` virtual module                         |
 
 ### CLI
 

@@ -239,7 +239,7 @@ export interface RSCRouterOptions<TEnv = any> {
    *
    * @example Static config
    * ```typescript
-   * import { MemorySegmentCacheStore } from "rsc-router/rsc";
+   * import { MemorySegmentCacheStore } from "@rangojs/router/cache";
    *
    * const router = createRouter({
    *   cache: {

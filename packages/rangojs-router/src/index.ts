@@ -115,25 +115,32 @@ export type {
 // Middleware context types
 export type { MiddlewareContext, CookieOptions } from "./router/middleware.js";
 
+function serverOnlyStubError(name: string): Error {
+  return new Error(
+    `${name}() is only available from "@rangojs/router" in a react-server/RSC environment. ` +
+      `For client hooks and components, import from "@rangojs/router/client".`,
+  );
+}
+
 /**
  * Error-throwing stub for server-only `urls` function.
  */
 export function urls(): never {
-  throw new Error("urls() is server-only and requires RSC context.");
+  throw serverOnlyStubError("urls");
 }
 
 /**
  * Error-throwing stub for server-only `createRouter` function.
  */
 export function createRouter(): never {
-  throw new Error("createRouter() is server-only and requires RSC context.");
+  throw serverOnlyStubError("createRouter");
 }
 
 /**
  * Error-throwing stub for server-only `redirect` function.
  */
 export function redirect(): never {
-  throw new Error("redirect() is server-only and requires RSC context.");
+  throw serverOnlyStubError("redirect");
 }
 
 // Handle API (universal - works on both server and client)
@@ -149,102 +156,94 @@ export { nonce } from "./rsc/nonce.js";
  * Error-throwing stub for server-only `Prerender` function.
  */
 export function Prerender(): never {
-  throw new Error("Prerender() is server-only and requires RSC context.");
+  throw serverOnlyStubError("Prerender");
 }
 
 /**
  * Error-throwing stub for server-only `Static` function.
  */
 export function Static(): never {
-  throw new Error("Static() is server-only and requires RSC context.");
+  throw serverOnlyStubError("Static");
 }
 
 /**
  * Error-throwing stub for server-only `getRequestContext` function.
  */
 export function getRequestContext(): never {
-  throw new Error(
-    "getRequestContext() is server-only and requires RSC context.",
-  );
+  throw serverOnlyStubError("getRequestContext");
 }
 
 /**
  * Error-throwing stub for server-only `cookies` function.
  */
 export function cookies(): never {
-  throw new Error("cookies() is server-only and requires RSC context.");
+  throw serverOnlyStubError("cookies");
 }
 
 /**
  * Error-throwing stub for server-only `headers` function.
  */
 export function headers(): never {
-  throw new Error("headers() is server-only and requires RSC context.");
+  throw serverOnlyStubError("headers");
 }
 
 /**
  * Error-throwing stub for server-only `createReverse` function.
  */
 export function createReverse(): never {
-  throw new Error("createReverse() is server-only and requires RSC context.");
+  throw serverOnlyStubError("createReverse");
 }
 
 /**
  * Error-throwing stub for server-only `enableMatchDebug` function.
  */
 export function enableMatchDebug(): never {
-  throw new Error(
-    "enableMatchDebug() is server-only and requires RSC context.",
-  );
+  throw serverOnlyStubError("enableMatchDebug");
 }
 
 /**
  * Error-throwing stub for server-only `getMatchDebugStats` function.
  */
 export function getMatchDebugStats(): never {
-  throw new Error(
-    "getMatchDebugStats() is server-only and requires RSC context.",
-  );
+  throw serverOnlyStubError("getMatchDebugStats");
 }
 
 // Error-throwing stubs for server-only route helpers
 export function layout(): never {
-  throw new Error("layout() is server-only and requires RSC context.");
+  throw serverOnlyStubError("layout");
 }
 export function cache(): never {
-  throw new Error("cache() is server-only and requires RSC context.");
+  throw serverOnlyStubError("cache");
 }
 export function middleware(): never {
-  throw new Error("middleware() is server-only and requires RSC context.");
+  throw serverOnlyStubError("middleware");
 }
 export function revalidate(): never {
-  throw new Error("revalidate() is server-only and requires RSC context.");
+  throw serverOnlyStubError("revalidate");
 }
 export function loader(): never {
-  throw new Error("loader() is server-only and requires RSC context.");
+  throw serverOnlyStubError("loader");
 }
 export function loading(): never {
-  throw new Error("loading() is server-only and requires RSC context.");
+  throw serverOnlyStubError("loading");
 }
 export function parallel(): never {
-  throw new Error("parallel() is server-only and requires RSC context.");
+  throw serverOnlyStubError("parallel");
 }
 export function intercept(): never {
-  throw new Error("intercept() is server-only and requires RSC context.");
+  throw serverOnlyStubError("intercept");
 }
 export function when(): never {
-  throw new Error("when() is server-only and requires RSC context.");
+  throw serverOnlyStubError("when");
 }
 export function errorBoundary(): never {
-  throw new Error("errorBoundary() is server-only and requires RSC context.");
+  throw serverOnlyStubError("errorBoundary");
 }
 export function notFoundBoundary(): never {
-  throw new Error(
-    "notFoundBoundary() is server-only and requires RSC context.",
-  );
+  throw serverOnlyStubError("notFoundBoundary");
 }
 export function transition(): never {
-  throw new Error("transition() is server-only and requires RSC context.");
+  throw serverOnlyStubError("transition");
 }
 
 // Request context type (safe for client)

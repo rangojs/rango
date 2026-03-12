@@ -334,7 +334,7 @@ export const ProductLoader = createLoader(async (ctx) => {
 });
 
 // In server component - type is inferred
-import { useLoader } from "@rangojs/router";
+import { useLoader } from "@rangojs/router/client";
 
 async function ProductPage() {
   const product = await useLoader(ProductLoader);
