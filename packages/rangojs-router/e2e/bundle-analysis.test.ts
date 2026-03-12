@@ -423,11 +423,11 @@ test.describe("bundle-analysis", () => {
       expect(content).toMatch(/__brand.*prerenderHandler/);
     });
 
-    test("__PRERENDER_MANIFEST imported into RSC entry", async () => {
+    test("__loadPrerenderManifestModule injected into RSC entry", async () => {
       const rscIndex = getRscIndexContent();
 
       expect(rscIndex).toContain("__prerender-manifest.js");
-      expect(rscIndex).toContain("__PRERENDER_MANIFEST");
+      expect(rscIndex).toContain("__loadPrerenderManifestModule");
     });
 
     test("__prerender-manifest.js has correct shape", async () => {
@@ -439,16 +439,30 @@ test.describe("bundle-analysis", () => {
 
       const manifestCode = readFileSync(manifestPath, "utf-8");
 
+      // Should use JSON.parse for the manifest data
+      expect(manifestCode).toContain("JSON.parse");
+
+      // Parse the manifest to verify its contents
+      const jsonMatch = manifestCode.match(/JSON\.parse\('(.+)'\)/);
+      expect(jsonMatch).toBeTruthy();
+      const manifest = JSON.parse(jsonMatch![1]);
+
       // Should contain docs routes (static route uses "_" param hash)
-      expect(manifestCode).toContain('"docs/_"');
+      expect(manifest).toHaveProperty("docs/_");
 
       // Should contain docs.article routes (dynamic with param hash)
-      expect(manifestCode).toMatch(/"docs\.article\/[a-f0-9]+"/);
-
-      // Should contain dynamic import references to __pr-*.js asset files
-      expect(manifestCode).toMatch(
-        /import\("\.\/assets\/__pr-[a-f0-9]+\.js"\)/,
+      const articleKeys = Object.keys(manifest).filter((k) =>
+        k.startsWith("docs.article/"),
       );
+      expect(articleKeys.length).toBeGreaterThan(0);
+
+      // Values should be relative asset specifiers (not import thunks)
+      for (const value of Object.values(manifest)) {
+        expect(value).toMatch(/^\.\/assets\/__pr-[a-f0-9]+\.js$/);
+      }
+
+      // Manifest module should export loadPrerenderAsset
+      expect(manifestCode).toContain("loadPrerenderAsset");
     });
 
     test("__pr-*.js asset files have correct shape", async () => {

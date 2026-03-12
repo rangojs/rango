@@ -1,7 +1,7 @@
 - Do not add "Co-Authored-By" or "Generated with Claude Code" lines to commits or PRs.
 - When writing code comments, never use icons and emojis. Keep comments technical and focused on implementation details.
 - Before working on routing, run `/rango` to understand the API. Skills are in `node_modules/@rangojs/router/skills/`.
-- Run the full test suite with `pnpm test` from the repo root.
+- Run the full test suite with `pnpm test 2>&1 | tail -80` from the repo root. The output is massive; always pipe through `tail -80` to see the summary.
 - **CRITICAL**: Avoid burst-pushing multiple commits in quick succession to `main` or PR branches. Each push triggers a full CI run (~12 min, expensive). Squash related fixes into a single commit before pushing. If a review produces follow-up fixes, amend or squash them into one commit rather than pushing 2-3 separate fixups.
 - **CRITICAL**: Before EVERY push, ALWAYS run ALL of the following and fix any failures. No exceptions:
   1. `pnpm run typecheck` (typecheck)

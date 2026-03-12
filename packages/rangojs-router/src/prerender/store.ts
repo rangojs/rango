@@ -2,9 +2,10 @@
  * Prerender Store
  *
  * Reads pre-rendered segment data from the worker bundle at build time.
- * The data is stored as globalThis.__PRERENDER_MANIFEST, a map of
- * "<routeName>/<paramHash>" to dynamic import functions that resolve
- * individual prerender entry modules.
+ * The manifest module is lazily loaded via globalThis.__loadPrerenderManifestModule,
+ * a function injected into the RSC entry that returns the manifest module
+ * containing a key-to-specifier map and a `loadPrerenderAsset` function
+ * that anchors import() resolution relative to the manifest file.
  */
 
 import type {
@@ -34,11 +35,20 @@ export interface StaticStore {
   get(handlerId: string): Promise<StaticEntry | null>;
 }
 
+interface PrerenderManifestModule {
+  default: Record<string, string>;
+  loadPrerenderAsset: (
+    specifier: string,
+  ) => Promise<{ default: PrerenderEntry }>;
+}
+
 declare global {
-  // Injected by closeBundle post-processing: map of key -> () => import("./assets/__pr-*.js")
+  // Injected by closeBundle post-processing: lazy loader for the prerender
+  // manifest module. The module exports a key→specifier map and a
+  // loadPrerenderAsset function that anchors import() relative to the manifest.
   // eslint-disable-next-line no-var
-  var __PRERENDER_MANIFEST:
-    | Record<string, () => Promise<{ default: PrerenderEntry }>>
+  var __loadPrerenderManifestModule:
+    | (() => Promise<PrerenderManifestModule>)
     | undefined;
   // Injected by closeBundle post-processing: map of handlerId -> () => import("./assets/__st-*.js")
   // Asset default export is either a string (no handles) or { encoded, handles } object.
@@ -78,17 +88,28 @@ export function createDevPrerenderStore(devUrl: string): PrerenderStore {
 /**
  * Create a prerender store.
  * Dev mode: on-demand fetch from Vite dev server (node:fs works there).
- * Production: backed by globalThis.__PRERENDER_MANIFEST injected at build time.
+ * Production: backed by globalThis.__loadPrerenderManifestModule which lazily
+ * loads the manifest module on first access.
  * Returns null if no prerender data is available.
  */
 export function createPrerenderStore(): PrerenderStore | null {
   if (globalThis.__PRERENDER_DEV_URL) {
     return createDevPrerenderStore(globalThis.__PRERENDER_DEV_URL);
   }
-  const manifest = globalThis.__PRERENDER_MANIFEST;
-  if (!manifest || Object.keys(manifest).length === 0) return null;
+  if (!globalThis.__loadPrerenderManifestModule) return null;
 
   const cache = new Map<string, Promise<PrerenderEntry | null>>();
+  let manifestModulePromise: Promise<PrerenderManifestModule | null> | null =
+    null;
+
+  function loadManifestModule(): Promise<PrerenderManifestModule | null> {
+    if (!manifestModulePromise) {
+      manifestModulePromise = globalThis.__loadPrerenderManifestModule!().catch(
+        () => null,
+      );
+    }
+    return manifestModulePromise;
+  }
 
   return {
     get(routeName: string, paramHash: string): Promise<PrerenderEntry | null> {
@@ -96,16 +117,36 @@ export function createPrerenderStore(): PrerenderStore | null {
       const cached = cache.get(key);
       if (cached) return cached;
 
-      const loader = manifest[key];
-      if (!loader) return Promise.resolve(null);
-
-      const promise = loader()
-        .then((mod) => mod.default)
-        .catch(() => null);
+      const promise = loadManifestModule().then((mod) => {
+        if (!mod) return null;
+        const specifier = mod.default[key];
+        if (!specifier) return null;
+        return mod
+          .loadPrerenderAsset(specifier)
+          .then((asset) => asset.default)
+          .catch(() => null);
+      });
       cache.set(key, promise);
       return promise;
     },
   };
+}
+
+/**
+ * Load the prerender manifest index for test introspection.
+ * Returns the key→specifier map or null if unavailable.
+ */
+export async function loadPrerenderManifestIndex(): Promise<Record<
+  string,
+  string
+> | null> {
+  if (!globalThis.__loadPrerenderManifestModule) return null;
+  try {
+    const mod = await globalThis.__loadPrerenderManifestModule();
+    return mod.default;
+  } catch {
+    return null;
+  }
 }
 
 /**
