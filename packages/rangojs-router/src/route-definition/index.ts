@@ -1,6 +1,3 @@
-// Route definition
-export { route, type RouteDefinitionResult } from "./route-function.js";
-
 // Type definitions
 export type { RouteHelpers } from "./helpers-types.js";
 export type {

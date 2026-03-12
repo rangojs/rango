@@ -125,7 +125,7 @@ const store = new MemorySegmentCacheStore({
 For distributed caching on Cloudflare Workers:
 
 ```typescript
-import { CFCacheStore } from "@rangojs/router/cache/cf";
+import { CFCacheStore } from "@rangojs/router/cache";
 
 const router = createRouter<AppBindings>({
   document: Document,

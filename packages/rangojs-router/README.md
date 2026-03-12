@@ -45,6 +45,17 @@ For Cloudflare Workers:
 npm install @cloudflare/vite-plugin
 ```
 
+## Import Paths
+
+Use these import paths consistently:
+
+- `@rangojs/router` — server/RSC router APIs, route DSL, `createRouter`, `urls`, `redirect`, `Prerender`, `Static`, shared types
+- `@rangojs/router/client` — hooks and components such as `Link`, `Outlet`, `href`, `useNavigation`, `useLoader`, `useAction`, `useLocationState`
+- `@rangojs/router/cache` — public cache APIs such as `CFCacheStore`, `MemorySegmentCacheStore`, `createDocumentCacheMiddleware`
+- `@rangojs/router/host`, `@rangojs/router/theme`, `@rangojs/router/vite` — specialized public subpaths
+
+Use only subpaths that are explicitly exported from the package. Avoid deep imports such as `@rangojs/router/cache/cf`.
+
 ## Quick Start
 
 ### Vite Config
@@ -850,7 +861,7 @@ module, use `scopedReverse<typeof localPatterns>(ctx.reverse)` or
 | `@rangojs/router/theme`  | Theme: `useTheme`, `ThemeProvider`, `ThemeScript`                                 |
 | `@rangojs/router/host`   | Host routing: `createHostRouter`, `defineHosts`                                   |
 | `@rangojs/router/vite`   | Vite plugin: `rango()`                                                            |
-| `@rangojs/router/server` | Server utilities                                                                  |
+| `@rangojs/router/server` | Internal build/runtime utilities for advanced integrations                        |
 | `@rangojs/router/build`  | Build utilities                                                                   |
 
 ## Examples

@@ -297,10 +297,10 @@ export const shopPatterns = urls(({ path, layout }) => [
 ]);
 
 // src/urls.tsx
-import { urls, include } from "@rangojs/router";
+import { urls } from "@rangojs/router";
 import { shopPatterns } from "./urls/shop";
 
-export const urlpatterns = urls(({ path }) => [
+export const urlpatterns = urls(({ path, include }) => [
   path("/", HomePage, { name: "home" }),
   include("/shop", shopPatterns, { name: "shop" }),
 ]);

@@ -6,7 +6,8 @@ argument-hint: [hook-name]
 
 # Client-Side React Hooks
 
-All hooks are imported from `@rangojs/router` or `@rangojs/router/client`.
+Import the hooks and components in this skill from `@rangojs/router/client`.
+The root `@rangojs/router` entrypoint is for server/RSC APIs and shared types.
 
 ## Navigation Hooks
 
@@ -63,7 +64,7 @@ Access current URL path and matched route segments:
 
 ```tsx
 "use client";
-import { useSegments } from "@rangojs/router";
+import { useSegments } from "@rangojs/router/client";
 
 function Breadcrumbs() {
   const { path, segmentIds, location } = useSegments();
@@ -107,7 +108,7 @@ Access loader data (strict - data guaranteed):
 
 ```tsx
 "use client";
-import { useLoader } from "@rangojs/router";
+import { useLoader } from "@rangojs/router/client";
 import { ProductLoader } from "../loaders/product";
 
 function ProductPrice() {
@@ -143,7 +144,7 @@ Access loader with on-demand fetching (flexible):
 
 ```tsx
 "use client";
-import { useFetchLoader } from "@rangojs/router";
+import { useFetchLoader } from "@rangojs/router/client";
 import { SearchLoader } from "../loaders/search";
 
 function SearchResults() {
@@ -197,7 +198,7 @@ server, JSON bodies are available via `ctx.body` and FormData bodies via `ctx.fo
 
 ```tsx
 "use client";
-import { useFetchLoader } from "@rangojs/router";
+import { useFetchLoader } from "@rangojs/router/client";
 import { FileUploadLoader } from "../loaders/upload";
 
 function FileUploader() {
@@ -244,7 +245,7 @@ Get all loader data in current context:
 
 ```tsx
 "use client";
-import { useLoaderData } from "@rangojs/router";
+import { useLoaderData } from "@rangojs/router/client";
 
 function DebugPanel() {
   const allData = useLoaderData();
@@ -262,7 +263,7 @@ Access accumulated handle data from route segments:
 
 ```tsx
 "use client";
-import { useHandle } from "@rangojs/router";
+import { useHandle } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs";
 
 function BreadcrumbNav() {
@@ -324,7 +325,7 @@ Track state of server action invocations:
 
 ```tsx
 "use client";
-import { useAction } from "@rangojs/router";
+import { useAction } from "@rangojs/router/client";
 import { addToCart } from "../actions/cart";
 
 function AddToCartButton({ productId }: { productId: string }) {
@@ -359,7 +360,7 @@ Read type-safe state from history:
 
 ```tsx
 "use client";
-import { useLocationState, createLocationState } from "@rangojs/router";
+import { useLocationState, createLocationState } from "@rangojs/router/client";
 
 // Define typed state (all export patterns supported)
 // Keys are auto-injected by the Vite plugin -- no manual key needed.
@@ -509,7 +510,7 @@ Manually control client-side navigation cache:
 
 ```tsx
 "use client";
-import { useClientCache } from "@rangojs/router";
+import { useClientCache } from "@rangojs/router/client";
 
 function SaveButton() {
   const { clear } = useClientCache();
@@ -537,7 +538,7 @@ function SaveButton() {
 Render child content in layouts:
 
 ```tsx
-import { Outlet, ParallelOutlet } from "@rangojs/router";
+import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
 function DashboardLayout({ children }: { children?: React.ReactNode }) {
   return (
@@ -558,7 +559,7 @@ Access outlet content programmatically:
 
 ```tsx
 "use client";
-import { useOutlet } from "@rangojs/router";
+import { useOutlet } from "@rangojs/router/client";
 
 function ConditionalLayout() {
   const outlet = useOutlet();

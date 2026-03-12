@@ -521,10 +521,10 @@ export const guidesPatterns = urls(({ path }) => [
 ]);
 
 // urls.tsx
-import { urls, include } from "@rangojs/router";
+import { urls } from "@rangojs/router";
 import { guidesPatterns } from "./pages/guides.js";
 
-export const urlpatterns = urls(({ path }) => [
+export const urlpatterns = urls(({ path, include }) => [
   path("/", HomePage, { name: "home" }),
   include("/guides", guidesPatterns, { name: "guides" }),
 ]);
