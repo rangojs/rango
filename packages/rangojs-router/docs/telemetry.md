@@ -3,6 +3,11 @@
 The router emits structured lifecycle events through a pluggable telemetry sink.
 When no sink is configured, telemetry is completely disabled (zero overhead).
 
+`createRouter()` and the built-in telemetry sink factories are root
+server/RSC APIs. Use them from router definition files and other server/RSC
+modules, not from client components. Client hooks and components still come
+from `@rangojs/router/client`.
+
 ## Quick Start
 
 ### Console Sink (Development)
@@ -292,7 +297,8 @@ const router = createRouter({
 
 ## Exports
 
-All telemetry APIs are exported from the main `@rangojs/router` entrypoint:
+All telemetry APIs are exported from the root `@rangojs/router` server/RSC
+entrypoint:
 
 ```typescript
 // Sink factories

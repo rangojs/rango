@@ -1,6 +1,13 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { readFileSync, existsSync, unlinkSync } from "node:fs";
-import { cpSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
+import {
+  cpSync,
+  mkdtempSync,
+  mkdirSync,
+  symlinkSync,
+  writeFileSync,
+  rmSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -26,7 +33,7 @@ function namedRoutesGenPathFor(filePath: string): string {
 afterEach(() => {
   for (const f of generatedFiles) {
     try {
-      if (existsSync(f)) unlinkSync(f);
+      rmSync(f, { force: true });
     } catch {}
   }
   generatedFiles.length = 0;
@@ -328,7 +335,7 @@ describe("shared-include fixture", () => {
   afterEach(() => {
     for (const f of [sharedRouterGenPath, sharedUrlsGenPath]) {
       try {
-        if (existsSync(f)) unlinkSync(f);
+        rmSync(f, { force: true });
       } catch {}
     }
   });
@@ -379,7 +386,7 @@ describe("factory fixture", () => {
     ];
     for (const f of possibleGens) {
       try {
-        if (existsSync(f)) unlinkSync(f);
+        rmSync(f, { force: true });
       } catch {}
     }
   });
@@ -503,7 +510,7 @@ const staticGenPath = join(
   "router.named-routes.gen.ts",
 );
 const fixturesRoot = join(__dirname, "__fixtures__");
-let commandTempDir: string | undefined;
+const commandTempDirs: string[] = [];
 
 function runRango(args: string) {
   const result = spawnSync("node", [rangoBin, ...args.split(" ")], {
@@ -518,18 +525,24 @@ function runRango(args: string) {
 }
 
 function cloneFixtureDir(name: string): string {
-  commandTempDir = mkdtempSync(join(fixturesRoot, ".tmp-rango-cli-fixture-"));
-  const dest = join(commandTempDir, name);
+  const tempRoot = mkdtempSync(join(tmpdir(), "rango-cli-fixture-"));
+  commandTempDirs.push(tempRoot);
+
+  const packageLinkDir = join(tempRoot, "node_modules", "@rangojs");
+  mkdirSync(packageLinkDir, { recursive: true });
+  symlinkSync(packageRoot, join(packageLinkDir, "router"), "dir");
+
+  const dest = join(tempRoot, name);
   cpSync(join(fixturesRoot, name), dest, { recursive: true });
   return dest;
 }
 
 describe("CLI command-level tests", () => {
   afterEach(() => {
-    if (commandTempDir) {
-      rmSync(commandTempDir, { recursive: true, force: true });
-      commandTempDir = undefined;
+    for (const dir of commandTempDirs) {
+      rmSync(dir, { recursive: true, force: true });
     }
+    commandTempDirs.length = 0;
   });
 
   // --- Happy paths ---
@@ -667,8 +680,9 @@ describe("CLI command-level tests", () => {
   });
 
   it("fails explicitly for nested router roots when generating a directory", () => {
-    commandTempDir = mkdtempSync(join(tmpdir(), "rango-nested-router-"));
-    const appDir = join(commandTempDir, "src", "app");
+    const tempRoot = mkdtempSync(join(tmpdir(), "rango-nested-router-"));
+    commandTempDirs.push(tempRoot);
+    const appDir = join(tempRoot, "src", "app");
     const nestedDir = join(appDir, "nested");
     mkdirSync(nestedDir, { recursive: true });
 
@@ -701,7 +715,7 @@ export const router = createRouter().routes(patterns);
 `,
     );
 
-    const result = runRango(`generate ${commandTempDir}`);
+    const result = runRango(`generate ${tempRoot}`);
 
     expect(result.status).not.toBe(0);
     expect(result.combined).toContain("Nested router roots are not supported");

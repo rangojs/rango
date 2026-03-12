@@ -1,5 +1,5 @@
 import { urls } from "@rangojs/router";
-import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
 // Layouts

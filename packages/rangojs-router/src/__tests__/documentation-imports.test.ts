@@ -35,8 +35,11 @@ const markdownFiles = [
 
 const canonicalImportPaths: Record<string, string> = {
   CFCacheStore: "@rangojs/router/cache",
+  MemorySegmentCacheStore: "@rangojs/router/cache",
   Outlet: "@rangojs/router/client",
   ParallelOutlet: "@rangojs/router/client",
+  createRSCHandler: "@rangojs/router/rsc",
+  createSSRHandler: "@rangojs/router/ssr",
   useAction: "@rangojs/router/client",
   useClientCache: "@rangojs/router/client",
   useFetchLoader: "@rangojs/router/client",
@@ -46,6 +49,7 @@ const canonicalImportPaths: Record<string, string> = {
   useLocationState: "@rangojs/router/client",
   useOutlet: "@rangojs/router/client",
   useSegments: "@rangojs/router/client",
+  useTheme: "@rangojs/router/theme",
 };
 
 describe("documentation imports", () => {
