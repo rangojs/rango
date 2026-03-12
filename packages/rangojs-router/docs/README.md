@@ -45,6 +45,8 @@ that route tree.
 These are internal implementation maps for contributors, not consumer-facing
 API docs. They cover both public and internal surfaces.
 
+- [API boundary policy](./internal/api-boundary-policy.md) - where public
+  exports belong vs `./server` and `./__internal`
 - [Feature map](./internal/feature-map.md) - implementation inventory by
   export path and capability (includes internal-only APIs)
 - [Feature-to-file map](./internal/feature-file-map.md) - which source
