@@ -70,6 +70,42 @@ export function createMetricsStore(
 }
 
 /**
+ * Append a metric to the request store using an absolute start timestamp.
+ */
+export function appendMetric(
+  metricsStore: MetricsStore | undefined,
+  label: string,
+  start: number,
+  duration: number,
+  depth?: number,
+): void {
+  if (!metricsStore) return;
+  metricsStore.metrics.push({
+    label,
+    duration,
+    startTime: start - metricsStore.requestStart,
+    depth,
+  });
+}
+
+/**
+ * Log the current request metrics and return the corresponding Server-Timing value.
+ * Falls back to an existing header value when no metrics store is active.
+ */
+export function buildMetricsTiming(
+  method: string,
+  pathname: string,
+  metricsStore: MetricsStore | undefined,
+  fallback?: string,
+): string | undefined {
+  if (!metricsStore) {
+    return fallback;
+  }
+  logMetrics(method, pathname, metricsStore);
+  return generateServerTiming(metricsStore) || undefined;
+}
+
+/**
  * Log metrics to console in a formatted way.
  * Uses a shared-axis timeline so overlapping work stays visible.
  */

@@ -19,6 +19,22 @@ import {
   runWithRequestContext,
 } from "../server/request-context.js";
 import { createResponseWithMergedHeaders } from "../rsc/helpers.js";
+import type { MetricsStore } from "../server/context.js";
+
+function createMetrics(): MetricsStore {
+  return { enabled: true, requestStart: performance.now(), metrics: [] };
+}
+
+function runWithMetrics<T>(metrics: MetricsStore, fn: () => T): T {
+  const reqCtx = createRequestContext({
+    env: {},
+    request: new Request("http://localhost/"),
+    url: new URL("http://localhost/"),
+    variables: {},
+  });
+  reqCtx._metricsStore = metrics;
+  return runWithRequestContext(reqCtx, fn);
+}
 
 describe("middleware", () => {
   describe("parsePattern", () => {
@@ -281,6 +297,74 @@ describe("middleware", () => {
       );
 
       expect(order).toEqual([1, 2, 3, 4]);
+    });
+
+    it("should record middleware timing only until next() is called", async () => {
+      const metrics = createMetrics();
+      let releaseNext!: (response: Response) => void;
+
+      async function auth(ctx: any, next: any) {
+        const pending = next();
+        const recorded = metrics.metrics.find(
+          (m) => m.label === "middleware:auth@*",
+        );
+        expect(recorded).toBeDefined();
+        await pending;
+      }
+
+      const execution = runWithMetrics(metrics, () =>
+        executeMiddleware(
+          [createMockEntry(auth)],
+          new Request("http://localhost/test"),
+          {},
+          {},
+          () =>
+            new Promise<Response>((resolve) => {
+              releaseNext = resolve;
+            }),
+        ),
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const recorded = metrics.metrics.find(
+        (m) => m.label === "middleware:auth@*",
+      );
+      expect(recorded).toBeDefined();
+      expect(recorded!.depth).toBe(1);
+      expect(metrics.metrics).toHaveLength(1);
+
+      releaseNext(new Response("OK"));
+      await execution;
+
+      expect(
+        metrics.metrics.filter((m) => m.label === "middleware:auth@*"),
+      ).toHaveLength(1);
+    });
+
+    it("should record middleware timing for short-circuit responses before next()", async () => {
+      const metrics = createMetrics();
+
+      async function guard() {
+        return new Response("Blocked", { status: 403 });
+      }
+
+      await runWithMetrics(metrics, () =>
+        executeMiddleware(
+          [createMockEntry(guard)],
+          new Request("http://localhost/test"),
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
+      );
+
+      const recorded = metrics.metrics.find(
+        (m) => m.label === "middleware:guard@*",
+      );
+      expect(recorded).toBeDefined();
+      expect(recorded!.depth).toBe(1);
+      expect(recorded!.duration).toBeGreaterThanOrEqual(0);
     });
 
     it("should allow ctx.res access after next()", async () => {

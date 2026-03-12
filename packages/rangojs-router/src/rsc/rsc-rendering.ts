@@ -12,6 +12,7 @@ import {
   getLocationState,
 } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
+import { appendMetric, buildMetricsTiming } from "../router/metrics.js";
 import type { RscPayload } from "./types.js";
 import {
   createResponseWithMergedHeaders,
@@ -166,10 +167,20 @@ export async function handleRscRendering<TEnv>(
     }
   }
 
+  const metricsStore = reqCtx._metricsStore;
+  const renderStart = performance.now();
+
   // Serialize to RSC stream
   const rscSerializeStart = performance.now();
   const rscStream = ctx.renderToReadableStream<RscPayload>(payload);
   const rscSerializeDur = performance.now() - rscSerializeStart;
+  // This measures synchronous stream creation, not end-to-end stream consumption.
+  appendMetric(
+    metricsStore,
+    "rsc-serialize",
+    rscSerializeStart,
+    rscSerializeDur,
+  );
 
   // Determine if this is an RSC request or HTML request.
   // Partial requests (_rsc_partial) are always RSC -- they come from client-side
@@ -183,12 +194,19 @@ export async function handleRscRendering<TEnv>(
 
   // Build complete Server-Timing: handler phases + match/manifest + RSC serialize
   const timingParts: string[] = [...handlerTimingArr];
-  if (serverTiming) {
-    timingParts.push(serverTiming);
-  }
-  timingParts.push(`rsc-serialize;dur=${rscSerializeDur.toFixed(2)}`);
 
   if (isRscRequest) {
+    const renderDur = performance.now() - renderStart;
+    appendMetric(metricsStore, "render:total", renderStart, renderDur);
+    const metricsTiming = buildMetricsTiming(
+      request.method,
+      url.pathname,
+      metricsStore,
+      serverTiming,
+    );
+    if (metricsTiming) {
+      timingParts.push(metricsTiming);
+    }
     const fullTiming = timingParts.join(", ");
     const rscHeaders: Record<string, string> = {
       "content-type": "text/x-component;charset=utf-8",
@@ -220,7 +238,7 @@ export async function handleRscRendering<TEnv>(
     ctx.resolveStreamMode(request, env, url),
   ]);
   const ssrSetupDur = performance.now() - ssrSetupStart;
-  timingParts.push(`ssr-setup;dur=${ssrSetupDur.toFixed(2)}`);
+  appendMetric(metricsStore, "ssr-setup", ssrSetupStart, ssrSetupDur);
 
   const ssrRenderStart = performance.now();
   const htmlStream = await ssrModule.renderHTML(rscStream, {
@@ -228,12 +246,24 @@ export async function handleRscRendering<TEnv>(
     streamMode,
   });
   const ssrRenderDur = performance.now() - ssrRenderStart;
-  timingParts.push(`ssr-render-html;dur=${ssrRenderDur.toFixed(2)}`);
+  appendMetric(metricsStore, "ssr-render-html", ssrRenderStart, ssrRenderDur);
 
   // Add total handler duration
   if (handlerStart) {
     const totalHandler = performance.now() - handlerStart;
     timingParts.push(`handler-total;dur=${totalHandler.toFixed(2)}`);
+  }
+
+  const renderDur = performance.now() - renderStart;
+  appendMetric(metricsStore, "render:total", renderStart, renderDur);
+  const metricsTiming = buildMetricsTiming(
+    request.method,
+    url.pathname,
+    metricsStore,
+    serverTiming,
+  );
+  if (metricsTiming) {
+    timingParts.push(metricsTiming);
   }
 
   const fullTiming = timingParts.join(", ");

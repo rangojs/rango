@@ -108,7 +108,7 @@
  */
 import type { MatchResult, ResolvedSegment } from "../types.js";
 import type { MatchContext, MatchPipelineState } from "./match-context.js";
-import { generateServerTiming, logMetrics } from "./metrics.js";
+import { generateServerTiming } from "./metrics.js";
 import { debugLog } from "./logging.js";
 
 /**
@@ -189,7 +189,6 @@ export function buildMatchResult<TEnv>(
   // Output metrics if enabled
   let serverTiming: string | undefined;
   if (ctx.metricsStore) {
-    logMetrics(ctx.request.method, ctx.pathname, ctx.metricsStore);
     serverTiming = generateServerTiming(ctx.metricsStore);
   }
 

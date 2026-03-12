@@ -23,7 +23,7 @@ import type { Handle } from "../handle.js";
 import { type ContextVar, contextGet, contextSet } from "../context-var.js";
 import { createHandleStore, type HandleStore } from "./handle-store.js";
 import { isHandle } from "../handle.js";
-import { track } from "./context.js";
+import { track, type MetricsStore } from "./context.js";
 import { getFetchableLoader } from "./fetchable-loader-store.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
@@ -269,6 +269,9 @@ export interface RequestContext<
 
   /** @internal Per-request debug performance override (set via ctx.debugPerformance()) */
   _debugPerformance?: boolean;
+
+  /** @internal Request-scoped performance metrics store */
+  _metricsStore?: MetricsStore;
 }
 
 /**
@@ -297,6 +300,7 @@ export type PublicRequestContext<
   | "_reportedErrors"
   | "_reportBackgroundError"
   | "_debugPerformance"
+  | "_metricsStore"
 >;
 
 // AsyncLocalStorage instance for request context
@@ -681,6 +685,7 @@ export function createRequestContext<TEnv>(
     _locationState: undefined,
 
     _reportedErrors: new WeakSet<object>(),
+    _metricsStore: undefined,
 
     reverse: createReverseFunction(getGlobalRouteMap(), undefined, {}),
   };

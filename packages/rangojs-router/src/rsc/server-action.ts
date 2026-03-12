@@ -21,6 +21,7 @@ import {
   getLocationState,
 } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
+import { appendMetric, buildMetricsTiming } from "../router/metrics.js";
 import type { RscPayload } from "./types.js";
 import {
   hasBodyContent,
@@ -274,6 +275,8 @@ export async function revalidateAfterAction<TEnv>(
 ): Promise<Response> {
   const { returnValue, actionStatus, temporaryReferences, actionContext } =
     continuation;
+  const reqCtx = requireRequestContext();
+  const metricsStore = reqCtx._metricsStore;
 
   const matchResult = await ctx.router.matchPartial(
     request,
@@ -326,15 +329,31 @@ export async function revalidateAfterAction<TEnv>(
 
   attachLocationState(payload);
 
+  const renderStart = performance.now();
   const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
     temporaryReferences,
   });
+  const rscSerializeDur = performance.now() - renderStart;
+  // This measures synchronous stream creation, not end-to-end stream consumption.
+  appendMetric(metricsStore, "rsc-serialize", renderStart, rscSerializeDur);
+  appendMetric(
+    metricsStore,
+    "render:total",
+    renderStart,
+    performance.now() - renderStart,
+  );
 
   const actionHeaders: Record<string, string> = {
     "content-type": "text/x-component;charset=utf-8",
   };
-  if (serverTiming) {
-    actionHeaders["Server-Timing"] = serverTiming;
+  const metricsTiming = buildMetricsTiming(
+    request.method,
+    url.pathname,
+    metricsStore,
+    serverTiming,
+  );
+  if (metricsTiming) {
+    actionHeaders["Server-Timing"] = metricsTiming;
   }
 
   return createResponseWithMergedHeaders(rscStream, {
