@@ -869,18 +869,18 @@ module, use `scopedReverse<typeof localPatterns>(ctx.reverse)` or
 
 ## Subpath Exports
 
-| Export                   | Description                                                                       |
-| ------------------------ | --------------------------------------------------------------------------------- |
+| Export                   | Description                                                                                              |
+| ------------------------ | -------------------------------------------------------------------------------------------------------- |
 | `@rangojs/router`        | Server/RSC core and shared types: `createRouter`, `urls`, `createLoader`, `Handler`, `Prerender`, `Meta` |
-| `@rangojs/router/client` | Client: `Link`, `Outlet`, `href`, `useNavigation`, `useLoader`, `MetaTags`        |
-| `@rangojs/router/cache`  | Cache: `CFCacheStore`, `MemorySegmentCacheStore`, `createDocumentCacheMiddleware` |
-| `@rangojs/router/theme`  | Theme: `useTheme`, `ThemeProvider`, `ThemeScript`                                 |
-| `@rangojs/router/host`   | Host routing: `createHostRouter`, `defineHosts`                                   |
-| `@rangojs/router/vite`   | Vite plugin: `rango()`                                                            |
-| `@rangojs/router/rsc`    | Advanced server pipeline APIs: `createRSCHandler`, request-context access         |
-| `@rangojs/router/ssr`    | Advanced SSR bridge APIs: `createSSRHandler`                                      |
-| `@rangojs/router/server` | Internal build/runtime utilities for advanced integrations                        |
-| `@rangojs/router/build`  | Build utilities                                                                   |
+| `@rangojs/router/client` | Client: `Link`, `Outlet`, `href`, `useNavigation`, `useLoader`, `MetaTags`                               |
+| `@rangojs/router/cache`  | Cache: `CFCacheStore`, `MemorySegmentCacheStore`, `createDocumentCacheMiddleware`                        |
+| `@rangojs/router/theme`  | Theme: `useTheme`, `ThemeProvider`, `ThemeScript`                                                        |
+| `@rangojs/router/host`   | Host routing: `createHostRouter`, `defineHosts`                                                          |
+| `@rangojs/router/vite`   | Vite plugin: `rango()`                                                                                   |
+| `@rangojs/router/rsc`    | Advanced server pipeline APIs: `createRSCHandler`, request-context access                                |
+| `@rangojs/router/ssr`    | Advanced SSR bridge APIs: `createSSRHandler`                                                             |
+| `@rangojs/router/server` | Internal build/runtime utilities for advanced integrations                                               |
+| `@rangojs/router/build`  | Build utilities                                                                                          |
 
 The root entrypoint is not a generic client/runtime barrel. If you need hooks
 or components, import from `@rangojs/router/client`; if you need cache or host

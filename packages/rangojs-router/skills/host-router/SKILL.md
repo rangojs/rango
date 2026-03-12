@@ -37,20 +37,20 @@ Each `.map()` receives either a direct handler `(request, input) => Response` or
 
 ## Pattern Syntax
 
-| Pattern            | Matches                                        |
-| ------------------ | ---------------------------------------------- |
-| `.` or `*`         | Any apex domain (`example.com`)                |
-| `**`               | Any domain (apex + all subdomains)             |
-| `*.`               | Any single-level subdomain (`www.example.com`) |
-| `**. `             | Any multi-level subdomain (`a.b.example.com`)  |
-| `example.com`      | Exact domain                                   |
-| `*.com`            | Any apex `.com` domain                         |
-| `*.example.com`    | Single subdomain of `example.com`              |
-| `**.example.com`   | Any depth subdomain of `example.com`           |
-| `admin.*`          | `admin` subdomain of any apex domain           |
-| `admin.**`         | `admin` subdomain of any domain                |
-| `admin.`           | `admin` subdomain of any apex (no wildcard)    |
-| `example.com/api`  | Domain + path prefix (prefix match)            |
+| Pattern           | Matches                                        |
+| ----------------- | ---------------------------------------------- |
+| `.` or `*`        | Any apex domain (`example.com`)                |
+| `**`              | Any domain (apex + all subdomains)             |
+| `*.`              | Any single-level subdomain (`www.example.com`) |
+| `**. `            | Any multi-level subdomain (`a.b.example.com`)  |
+| `example.com`     | Exact domain                                   |
+| `*.com`           | Any apex `.com` domain                         |
+| `*.example.com`   | Single subdomain of `example.com`              |
+| `**.example.com`  | Any depth subdomain of `example.com`           |
+| `admin.*`         | `admin` subdomain of any apex domain           |
+| `admin.**`        | `admin` subdomain of any domain                |
+| `admin.`          | `admin` subdomain of any apex (no wildcard)    |
+| `example.com/api` | Domain + path prefix (prefix match)            |
 
 Patterns are tested in registration order. First match wins.
 
@@ -147,6 +147,7 @@ const router = createHostRouter({
 ```
 
 When a request arrives:
+
 1. If no cookie → use actual hostname
 2. If cookie present and host is in `allowedHosts` → use cookie value as hostname
 3. If cookie present but host not allowed → throw `HostOverrideNotAllowedError`
@@ -185,14 +186,14 @@ router.test("admin.example.com"); // { pattern, handler } | null
 
 All errors extend `HostRouterError`:
 
-| Error                        | When                                        |
-| ---------------------------- | ------------------------------------------- |
-| `InvalidPatternError`        | Pattern is empty, non-string, or has spaces |
-| `HostOverrideNotAllowedError`| Cookie override from disallowed host        |
-| `InvalidHostnameError`       | Cookie value isn't a valid hostname         |
-| `HostValidationError`        | Custom `validate` function threw            |
-| `NoRouteMatchError`          | No host pattern matched the request         |
-| `InvalidHandlerError`        | Handler is not a function                   |
+| Error                         | When                                        |
+| ----------------------------- | ------------------------------------------- |
+| `InvalidPatternError`         | Pattern is empty, non-string, or has spaces |
+| `HostOverrideNotAllowedError` | Cookie override from disallowed host        |
+| `InvalidHostnameError`        | Cookie value isn't a valid hostname         |
+| `HostValidationError`         | Custom `validate` function threw            |
+| `NoRouteMatchError`           | No host pattern matched the request         |
+| `InvalidHandlerError`         | Handler is not a function                   |
 
 See the fallback section above for a `NoRouteMatchError` catch example.
 
