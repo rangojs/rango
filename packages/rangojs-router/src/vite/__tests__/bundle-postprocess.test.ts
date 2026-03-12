@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { postprocessBundle } from "../discovery/bundle-postprocess.js";
 import type { DiscoveryState } from "../discovery/state.js";
+import { stageBuildAssetModule } from "../utils/prerender-utils.js";
 
 function createMinimalState(
   projectRoot: string,
@@ -25,8 +26,8 @@ function createMinimalState(
     perRouterTrieMap: new Map(),
     perRouterPrecomputedMap: new Map(),
     perRouterManifestDataMap: new Map(),
-    prerenderCollectedData: null,
-    staticCollectedData: null,
+    prerenderManifestEntries: null,
+    staticManifestEntries: null,
     handlerChunkInfo: null,
     staticHandlerChunkInfo: null,
     rscEntryFileName: "index.js",
@@ -58,15 +59,23 @@ describe("postprocessBundle - static asset hashing", () => {
   it("produces distinct assets for same encoded but different handles", () => {
     const sharedPayload = "0:D{}\n";
     const state = createMinimalState(tmpDir, {
-      staticCollectedData: {
-        "handler-a": {
-          encoded: sharedPayload,
-          handles: { "route.index": [{ title: "Home" }] },
-        },
-        "handler-b": {
-          encoded: sharedPayload,
-          handles: { "route.index": [{ title: "About" }] },
-        },
+      staticManifestEntries: {
+        "handler-a": stageBuildAssetModule(
+          tmpDir,
+          "__st",
+          JSON.stringify({
+            encoded: sharedPayload,
+            handles: { "route.index": [{ title: "Home" }] },
+          }),
+        ),
+        "handler-b": stageBuildAssetModule(
+          tmpDir,
+          "__st",
+          JSON.stringify({
+            encoded: sharedPayload,
+            handles: { "route.index": [{ title: "About" }] },
+          }),
+        ),
       },
     });
 
@@ -80,15 +89,23 @@ describe("postprocessBundle - static asset hashing", () => {
 
   it("reuses asset when encoded and handles are identical", () => {
     const state = createMinimalState(tmpDir, {
-      staticCollectedData: {
-        "handler-a": {
-          encoded: "0:D{}\n",
-          handles: { "route.index": [{ title: "Same" }] },
-        },
-        "handler-b": {
-          encoded: "0:D{}\n",
-          handles: { "route.index": [{ title: "Same" }] },
-        },
+      staticManifestEntries: {
+        "handler-a": stageBuildAssetModule(
+          tmpDir,
+          "__st",
+          JSON.stringify({
+            encoded: "0:D{}\n",
+            handles: { "route.index": [{ title: "Same" }] },
+          }),
+        ),
+        "handler-b": stageBuildAssetModule(
+          tmpDir,
+          "__st",
+          JSON.stringify({
+            encoded: "0:D{}\n",
+            handles: { "route.index": [{ title: "Same" }] },
+          }),
+        ),
       },
     });
 
@@ -102,15 +119,20 @@ describe("postprocessBundle - static asset hashing", () => {
 
   it("produces distinct assets when only handles differ (no-handles vs handles)", () => {
     const state = createMinimalState(tmpDir, {
-      staticCollectedData: {
-        "handler-a": {
-          encoded: "0:D{}\n",
-          handles: {},
-        },
-        "handler-b": {
-          encoded: "0:D{}\n",
-          handles: { "route.index": [{ nav: true }] },
-        },
+      staticManifestEntries: {
+        "handler-a": stageBuildAssetModule(
+          tmpDir,
+          "__st",
+          JSON.stringify("0:D{}\n"),
+        ),
+        "handler-b": stageBuildAssetModule(
+          tmpDir,
+          "__st",
+          JSON.stringify({
+            encoded: "0:D{}\n",
+            handles: { "route.index": [{ nav: true }] },
+          }),
+        ),
       },
     });
 

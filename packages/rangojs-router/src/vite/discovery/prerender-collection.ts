@@ -13,12 +13,14 @@ import {
   runWithConcurrency,
   groupByConcurrency,
   notifyOnError,
+  stageBuildAssetModule,
 } from "../utils/prerender-utils.js";
 import type { DiscoveryState } from "./state.js";
 
 /**
  * Expand prerender routes into concrete URLs and render them via the
- * RSC runner. Stores collected data in state.prerenderCollectedData.
+ * RSC runner. Stages asset modules and stores key-to-file entries in
+ * state.prerenderManifestEntries.
  */
 export async function expandPrerenderRoutes(
   state: DiscoveryState,
@@ -150,7 +152,7 @@ export async function expandPrerenderRoutes(
 
   const { hashParams } = await rscEnv.runner.import("@rangojs/router/build");
 
-  const collectedData: Record<string, any> = {};
+  const manifestEntries: Record<string, string> = {};
   let doneCount = 0;
   let skipCount = 0;
   const startTotal = performance.now();
@@ -187,18 +189,30 @@ export async function expandPrerenderRoutes(
             }
 
             const paramHash = hashParams(result.params || {});
-            collectedData[`${result.routeName}/${paramHash}`] = {
+            const mainKey = `${result.routeName}/${paramHash}`;
+            const mainValue = JSON.stringify({
               segments: result.segments,
               handles: result.handles,
-            };
+            });
+            manifestEntries[mainKey] = stageBuildAssetModule(
+              state.projectRoot,
+              "__pr",
+              mainValue,
+            );
             if (result.interceptSegments?.length) {
-              collectedData[`${result.routeName}/${paramHash}/i`] = {
+              const interceptKey = `${result.routeName}/${paramHash}/i`;
+              const interceptValue = JSON.stringify({
                 segments: [...result.segments, ...result.interceptSegments],
                 handles: {
                   ...result.handles,
                   ...(result.interceptHandles || {}),
                 },
-              };
+              });
+              manifestEntries[interceptKey] = stageBuildAssetModule(
+                state.projectRoot,
+                "__pr",
+                interceptValue,
+              );
             }
             const elapsed = (performance.now() - startUrl).toFixed(0);
             console.log(
@@ -244,7 +258,7 @@ export async function expandPrerenderRoutes(
 
   const totalElapsed = (performance.now() - startTotal).toFixed(0);
   if (doneCount > 0) {
-    state.prerenderCollectedData = collectedData;
+    state.prerenderManifestEntries = manifestEntries;
   }
   const parts = [`${doneCount} done`];
   if (skipCount > 0) parts.push(`${skipCount} skipped`);
@@ -256,7 +270,8 @@ export async function expandPrerenderRoutes(
 /**
  * Render Static handlers at build time. Each Static handler is called
  * with a synthetic BuildContext and its output is RSC-serialized.
- * Stores collected data in state.staticCollectedData.
+ * Stages asset modules and stores handlerId-to-file entries in
+ * state.staticManifestEntries.
  */
 export async function renderStaticHandlers(
   state: DiscoveryState,
@@ -270,10 +285,7 @@ export async function renderStaticHandlers(
   )
     return;
 
-  const collected: Record<
-    string,
-    { encoded: string; handles: Record<string, unknown[]> }
-  > = {};
+  const manifestEntries: Record<string, string> = {};
   let staticDone = 0;
   let staticSkip = 0;
   let totalStaticCount = 0;
@@ -316,7 +328,15 @@ export async function renderStaticHandlers(
             (def as any).$$routePrefix,
           );
           if (result) {
-            collected[def.$$id] = result;
+            const hasHandles = Object.keys(result.handles).length > 0;
+            const exportValue = hasHandles
+              ? JSON.stringify(result)
+              : JSON.stringify(result.encoded);
+            manifestEntries[def.$$id] = stageBuildAssetModule(
+              state.projectRoot,
+              "__st",
+              exportValue,
+            );
             const elapsed = (performance.now() - startHandler).toFixed(0);
             console.log(
               `[rsc-router]   OK   ${name.padEnd(40)} (${elapsed}ms)`,
@@ -355,7 +375,7 @@ export async function renderStaticHandlers(
 
   const totalStaticElapsed = (performance.now() - startStatic).toFixed(0);
   if (staticDone > 0) {
-    state.staticCollectedData = collected;
+    state.staticManifestEntries = manifestEntries;
   }
   const staticParts = [`${staticDone} done`];
   if (staticSkip > 0) staticParts.push(`${staticSkip} skipped`);

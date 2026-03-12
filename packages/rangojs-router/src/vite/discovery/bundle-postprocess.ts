@@ -6,9 +6,9 @@
  */
 
 import { resolve } from "node:path";
-import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { evictHandlerCode } from "../utils/bundle-analysis.js";
+import { copyStagedBuildAssets } from "../utils/prerender-utils.js";
 import type { DiscoveryState } from "./state.js";
 
 /**
@@ -17,11 +17,11 @@ import type { DiscoveryState } from "./state.js";
  */
 export function postprocessBundle(state: DiscoveryState): void {
   const hasPrerenderData =
-    state.prerenderCollectedData &&
-    Object.keys(state.prerenderCollectedData).length > 0;
+    state.prerenderManifestEntries &&
+    Object.keys(state.prerenderManifestEntries).length > 0;
   const hasStaticData =
-    state.staticCollectedData &&
-    Object.keys(state.staticCollectedData).length > 0;
+    state.staticManifestEntries &&
+    Object.keys(state.staticManifestEntries).length > 0;
   if (!hasPrerenderData && !hasStaticData) return;
 
   // Find RSC entry (recorded in generateBundle, fallback to dist/rsc/index.js)
@@ -96,25 +96,15 @@ export function postprocessBundle(state: DiscoveryState): void {
     // so a broad string check would false-positive and skip injection.
     if (!rscCode.includes("__prerender-manifest.js")) {
       try {
-        const assetsDir = resolve(state.projectRoot, "dist/rsc/assets");
-        mkdirSync(assetsDir, { recursive: true });
-
         const manifestEntries: string[] = [];
-        let totalBytes = 0;
+        let totalBytes = copyStagedBuildAssets(
+          state.projectRoot,
+          Object.values(state.prerenderManifestEntries!),
+        );
 
-        for (const [key, entry] of Object.entries(
-          state.prerenderCollectedData!,
+        for (const [key, assetFileName] of Object.entries(
+          state.prerenderManifestEntries!,
         )) {
-          const entryJson = JSON.stringify(entry);
-          const contentHash = createHash("sha256")
-            .update(entryJson)
-            .digest("hex")
-            .slice(0, 8);
-          const assetFileName = `__pr-${contentHash}.js`;
-          const assetPath = resolve(assetsDir, assetFileName);
-          const assetCode = `export default ${entryJson};\n`;
-          writeFileSync(assetPath, assetCode);
-          totalBytes += Buffer.byteLength(assetCode);
           manifestEntries.push(
             `${JSON.stringify(key)}:()=>import("./assets/${assetFileName}")`,
           );
@@ -133,7 +123,7 @@ export function postprocessBundle(state: DiscoveryState): void {
 
         const totalKB = (totalBytes / 1024).toFixed(1);
         console.log(
-          `[rsc-router] Wrote prerender assets (${totalKB} KB total, ${Object.keys(state.prerenderCollectedData!).length} entries)`,
+          `[rsc-router] Wrote prerender assets (${totalKB} KB total, ${Object.keys(state.prerenderManifestEntries!).length} entries)`,
         );
       } catch (err: any) {
         throw new Error(
@@ -149,31 +139,15 @@ export function postprocessBundle(state: DiscoveryState): void {
     const rscCode = readFileSync(rscEntryPath, "utf-8");
     if (!rscCode.includes("__STATIC_MANIFEST")) {
       try {
-        const assetsDir = resolve(state.projectRoot, "dist/rsc/assets");
-        mkdirSync(assetsDir, { recursive: true });
-
         const manifestEntries: string[] = [];
-        let totalBytes = 0;
+        let totalBytes = copyStagedBuildAssets(
+          state.projectRoot,
+          Object.values(state.staticManifestEntries!),
+        );
 
-        for (const [handlerId, { encoded, handles }] of Object.entries(
-          state.staticCollectedData!,
+        for (const [handlerId, assetFileName] of Object.entries(
+          state.staticManifestEntries!,
         )) {
-          // Store both the Flight payload and handle data
-          const hasHandles = Object.keys(handles).length > 0;
-          const exportValue = hasHandles
-            ? JSON.stringify({ encoded, handles })
-            : JSON.stringify(encoded);
-          // Hash the full payload that is written so distinct handle
-          // snapshots produce distinct asset filenames.
-          const contentHash = createHash("sha256")
-            .update(exportValue)
-            .digest("hex")
-            .slice(0, 8);
-          const assetFileName = `__st-${contentHash}.js`;
-          const assetPath = resolve(assetsDir, assetFileName);
-          const assetCode = `export default ${exportValue};\n`;
-          writeFileSync(assetPath, assetCode);
-          totalBytes += Buffer.byteLength(assetCode);
           manifestEntries.push(
             `${JSON.stringify(handlerId)}:()=>import("./assets/${assetFileName}")`,
           );
@@ -197,7 +171,7 @@ export function postprocessBundle(state: DiscoveryState): void {
 
         const totalKB = (totalBytes / 1024).toFixed(1);
         console.log(
-          `[rsc-router] Wrote static assets (${totalKB} KB total, ${Object.keys(state.staticCollectedData!).length} entries)`,
+          `[rsc-router] Wrote static assets (${totalKB} KB total, ${Object.keys(state.staticManifestEntries!).length} entries)`,
         );
       } catch (err: any) {
         throw new Error(
