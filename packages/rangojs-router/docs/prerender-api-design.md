@@ -14,7 +14,7 @@ route was pre-rendered.
 
 - **Prerender handler** - `Prerender(getParams, handler, opts)` API
 - **Build-time segment resolution** - `matchForPrerender()` resolves segments with BuildContext
-- **Flight payload storage** - Serialized segments stored in `__PRERENDER_MANIFEST`
+- **Flight payload storage** - Serialized segments stored in lazily-loaded prerender manifest
 - **Runtime cache-lookup** - Prerender store checked before segment resolution
 - **Handler eviction** - Non-passthrough handlers stubbed in production bundles
 - **Passthrough mode** - Handler kept in bundle for unknown params (live fallback)
@@ -48,9 +48,9 @@ route was pre-rendered.
        c. Serialize segments via RSC Flight protocol
        d. Walk manifest for intercepts targeting this route
        e. If found: resolve intercept handler, serialize intercept segments
-       f. Store entries in __PRERENDER_MANIFEST:
-          - "routeName/paramHash"     -> main segments + handles
-          - "routeName/paramHash/i"   -> main + intercept segments + handles  (if intercepts exist)
+       f. Store entries in prerender manifest (lazy-loaded module):
+          - "routeName/paramHash"     -> asset specifier (main segments + handles)
+          - "routeName/paramHash/i"   -> asset specifier (main + intercept segments + handles)
 ```
 
 ### Runtime
@@ -120,19 +120,29 @@ IS caching, just at build time instead of runtime.
 
 ## Prerender Store
 
-### Production (`__PRERENDER_MANIFEST`)
+### Production (`__loadPrerenderManifestModule`)
 
-Injected by the Vite `closeBundle` hook. Map of string keys to dynamic imports:
+Injected by the Vite `closeBundle` hook. The RSC entry sets a lazy loader:
 
-```typescript
-globalThis.__PRERENDER_MANIFEST = {
-  "blog.post/a1b2c3": () => import("./assets/__pr-blog.post-a1b2c3.js"),
-  "blog.post/a1b2c3/i": () => import("./assets/__pr-blog.post-a1b2c3-i.js"),
-  "about/_": () => import("./assets/__pr-about-_.js"),
-};
+```javascript
+globalThis.__loadPrerenderManifestModule = () =>
+  import("./__prerender-manifest.js");
 ```
 
-Each module default-exports a `PrerenderEntry`:
+The manifest module (`__prerender-manifest.js`) exports:
+
+```javascript
+// Key→specifier map, parsed from JSON for fast startup
+const m = JSON.parse('{"blog.post/a1b2c3":"./assets/__pr-a1b2c3.js",...}');
+// Asset loader anchored at manifest file location for correct relative resolution
+export function loadPrerenderAsset(s) {
+  return import(s);
+}
+export default m;
+```
+
+The manifest is loaded lazily on first prerender store `get()`. Each asset
+module default-exports a `PrerenderEntry`:
 
 ```typescript
 interface PrerenderEntry {

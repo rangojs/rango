@@ -88,29 +88,30 @@ export function postprocessBundle(state: DiscoveryState): void {
   state.staticHandlerChunkInfo = null;
 
   // 2. Write prerender data as separate importable asset modules
-  // and inject a manifest import into the RSC entry.
+  // and inject a lazy manifest loader into the RSC entry.
   if (hasPrerenderData && existsSync(rscEntryPath)) {
     const rscCode = readFileSync(rscEntryPath, "utf-8");
-    // Check for the specific injection marker, not just the variable name.
-    // The runtime code (prerender store) also references __PRERENDER_MANIFEST,
-    // so a broad string check would false-positive and skip injection.
+    // Check for the specific injection marker to avoid double-injection.
     if (!rscCode.includes("__prerender-manifest.js")) {
       try {
-        const manifestEntries: string[] = [];
         let totalBytes = copyStagedBuildAssets(
           state.projectRoot,
           Object.values(state.prerenderManifestEntries!),
         );
 
+        const manifestMap: Record<string, string> = {};
         for (const [key, assetFileName] of Object.entries(
           state.prerenderManifestEntries!,
         )) {
-          manifestEntries.push(
-            `${JSON.stringify(key)}:()=>import("./assets/${assetFileName}")`,
-          );
+          manifestMap[key] = `./assets/${assetFileName}`;
         }
 
-        const manifestCode = `const m={${manifestEntries.join(",")}};export default m;\n`;
+        const manifestCode = [
+          `const m=JSON.parse('${JSON.stringify(manifestMap).replace(/'/g, "\\'")}');`,
+          `export function loadPrerenderAsset(s){return import(s)}`,
+          `export default m;`,
+          "",
+        ].join("\n");
         const manifestPath = resolve(
           state.projectRoot,
           "dist/rsc/__prerender-manifest.js",
@@ -118,7 +119,7 @@ export function postprocessBundle(state: DiscoveryState): void {
         writeFileSync(manifestPath, manifestCode);
         totalBytes += Buffer.byteLength(manifestCode);
 
-        const injection = `import __pm from "./__prerender-manifest.js";\nglobalThis.__PRERENDER_MANIFEST = __pm;\n`;
+        const injection = `globalThis.__loadPrerenderManifestModule = () => import("./__prerender-manifest.js");\n`;
         writeFileSync(rscEntryPath, injection + rscCode);
 
         const totalKB = (totalBytes / 1024).toFixed(1);

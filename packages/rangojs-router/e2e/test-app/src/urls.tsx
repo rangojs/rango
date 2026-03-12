@@ -743,9 +743,10 @@ export const urlpatterns = urls(
         async (ctx) => {
           const routeName = ctx.searchParams.get("route");
           if (!routeName) return { error: "missing route param" };
-          const manifest = globalThis.__PRERENDER_MANIFEST;
-          if (!manifest) return { available: false, count: 0 };
-          const keys = Object.keys(manifest).filter((k) =>
+          if (!globalThis.__loadPrerenderManifestModule)
+            return { available: false, count: 0 };
+          const mod = await globalThis.__loadPrerenderManifestModule();
+          const keys = Object.keys(mod.default).filter((k) =>
             k.startsWith(routeName + "/"),
           );
           return { available: true, count: keys.length };

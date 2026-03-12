@@ -337,11 +337,14 @@ test.describe("prerender passthrough assets (production)", () => {
       path.join(RSC_DIR, "__prerender-manifest.js"),
       "utf-8",
     );
+    const jsonMatch = manifestCode.match(/JSON\.parse\('(.+)'\)/);
+    expect(jsonMatch).toBeTruthy();
+    const manifest: Record<string, string> = JSON.parse(jsonMatch![1]);
     // 2 known slugs: routing, caching — each has a param hash key
-    expect(manifestCode).toMatch(/"guides\.detail\/[a-f0-9]+"/);
-    // Count the number of guides.detail entries
-    const matches = manifestCode.match(/"guides\.detail\/[a-f0-9]+"/g);
-    expect(matches).toHaveLength(2);
+    const guidesKeys = Object.keys(manifest).filter((k) =>
+      k.startsWith("guides.detail/"),
+    );
+    expect(guidesKeys).toHaveLength(2);
   });
 
   test("prerender asset files for guides have valid segments and handles", () => {
@@ -349,17 +352,21 @@ test.describe("prerender passthrough assets (production)", () => {
       path.join(RSC_DIR, "__prerender-manifest.js"),
       "utf-8",
     );
-    // Extract __pr-*.js filenames referenced by guides.detail entries
-    const guidesImports = manifestCode.match(
-      /"guides\.detail\/[a-f0-9]+":\(\)=>import\("\.\/assets\/(__pr-[a-f0-9]+\.js)"\)/g,
-    );
-    expect(guidesImports).toHaveLength(2);
+    const jsonMatch = manifestCode.match(/JSON\.parse\('(.+)'\)/);
+    expect(jsonMatch).toBeTruthy();
+    const manifest: Record<string, string> = JSON.parse(jsonMatch![1]);
 
-    for (const imp of guidesImports!) {
-      const fileMatch = imp.match(/__pr-[a-f0-9]+\.js/);
-      expect(fileMatch).toBeTruthy();
+    // Get asset specifiers for guides.detail entries
+    const guidesSpecifiers = Object.entries(manifest)
+      .filter(([k]) => k.startsWith("guides.detail/"))
+      .map(([, v]) => v);
+    expect(guidesSpecifiers).toHaveLength(2);
+
+    for (const specifier of guidesSpecifiers) {
+      // Specifiers are like "./assets/__pr-abcd1234.js"
+      const fileName = specifier.replace("./assets/", "");
       const content = fs.readFileSync(
-        path.join(RSC_ASSETS_DIR, fileMatch![0]),
+        path.join(RSC_ASSETS_DIR, fileName),
         "utf-8",
       );
       const dataMatch = content.match(/export default\s+({[\s\S]*});\s*$/);
