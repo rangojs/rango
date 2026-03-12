@@ -367,6 +367,53 @@ describe("middleware", () => {
       expect(recorded!.duration).toBeGreaterThanOrEqual(0);
     });
 
+    it("should create metrics during middleware debugPerformance() and record the current span", async () => {
+      let releaseNext!: (response: Response) => void;
+      let reqCtx!: ReturnType<typeof createRequestContext>;
+
+      async function auth(ctx: any, next: any) {
+        ctx.debugPerformance();
+        expect(reqCtx._metricsStore).toBeDefined();
+        const pending = next();
+        const recorded = reqCtx._metricsStore?.metrics.find(
+          (m) => m.label === "middleware:auth@*",
+        );
+        expect(recorded).toBeDefined();
+        await pending;
+      }
+
+      reqCtx = createRequestContext({
+        env: {},
+        request: new Request("http://localhost/test"),
+        url: new URL("http://localhost/test"),
+        variables: {},
+      });
+
+      const execution = runWithRequestContext(reqCtx, () =>
+        executeMiddleware(
+          [createMockEntry(auth)],
+          new Request("http://localhost/test"),
+          {},
+          {},
+          () =>
+            new Promise<Response>((resolve) => {
+              releaseNext = resolve;
+            }),
+        ),
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(
+        reqCtx._metricsStore?.metrics.some(
+          (m) => m.label === "middleware:auth@*",
+        ),
+      ).toBe(true);
+
+      releaseNext(new Response("OK"));
+      await execution;
+    });
+
     it("should allow ctx.res access after next()", async () => {
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         await next();

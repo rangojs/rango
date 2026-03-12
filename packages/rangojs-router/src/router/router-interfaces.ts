@@ -270,6 +270,12 @@ export interface RSCRouterInternal<
   readonly warmupEnabled: boolean;
 
   /**
+   * Whether router-wide performance debugging is enabled.
+   * Used by the request handler to create metrics before middleware runs.
+   */
+  readonly debugPerformance?: boolean;
+
+  /**
    * Whether ?__debug_manifest is allowed in production.
    * Always enabled in development.
    */

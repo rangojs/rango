@@ -885,6 +885,9 @@ export function createRouter<TEnv = any>(
     // Expose warmup enabled flag for handler and client
     warmupEnabled,
 
+    // Expose router-wide performance debugging for request-level metrics setup
+    debugPerformance,
+
     // Expose debug manifest flag for handler
     allowDebugManifest: allowDebugManifestOption,
 

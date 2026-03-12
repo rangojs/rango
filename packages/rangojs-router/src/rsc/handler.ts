@@ -66,6 +66,7 @@ import {
   createDefaultTimeoutResponse,
   type TimeoutPhase,
 } from "../router/timeout.js";
+import { createMetricsStore } from "../router/metrics.js";
 
 /**
  * Create an RSC request handler.
@@ -381,6 +382,10 @@ export function createRSCHandler<
       executionContext: executionCtx,
       themeConfig: router.themeConfig,
     });
+    if (router.debugPerformance) {
+      requestContext._debugPerformance = true;
+      requestContext._metricsStore ??= createMetricsStore(true);
+    }
     // Wire background error reporting so "use cache" and other subsystems
     // can surface non-fatal errors through the router's onError callback.
     requestContext._reportBackgroundError = (
