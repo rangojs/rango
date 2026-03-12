@@ -56,11 +56,8 @@ export interface DiscoveryState {
   perRouterPrecomputedMap: Map<string, PrecomputedEntry[]>;
   perRouterManifestDataMap: Map<string, Record<string, string>>;
 
-  prerenderCollectedData: Record<string, any> | null;
-  staticCollectedData: Record<
-    string,
-    { encoded: string; handles: Record<string, unknown[]> }
-  > | null;
+  prerenderManifestEntries: Record<string, string> | null;
+  staticManifestEntries: Record<string, string> | null;
   handlerChunkInfo: ChunkInfo | null;
   staticHandlerChunkInfo: ChunkInfo | null;
   rscEntryFileName: string | null;
@@ -96,8 +93,8 @@ export function createDiscoveryState(
     perRouterPrecomputedMap: new Map(),
     perRouterManifestDataMap: new Map(),
 
-    prerenderCollectedData: null,
-    staticCollectedData: null,
+    prerenderManifestEntries: null,
+    staticManifestEntries: null,
     handlerChunkInfo: null,
     staticHandlerChunkInfo: null,
     rscEntryFileName: null,

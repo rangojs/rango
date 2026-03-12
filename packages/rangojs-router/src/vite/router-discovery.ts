@@ -42,6 +42,7 @@ import {
   generatePerRouterModule,
 } from "./discovery/virtual-module-codegen.js";
 import { postprocessBundle } from "./discovery/bundle-postprocess.js";
+import { resetStagedBuildAssets } from "./utils/prerender-utils.js";
 
 export { VIRTUAL_ROUTES_MANIFEST_ID };
 
@@ -604,6 +605,9 @@ export function createRouterDiscoveryPlugin(
       if (!s.isBuildMode) return;
       // Only run once across environment builds
       if (s.mergedRouteManifest !== null) return;
+      resetStagedBuildAssets(s.projectRoot);
+      s.prerenderManifestEntries = null;
+      s.staticManifestEntries = null;
 
       let tempServer: any = null;
       // Signal to user-space code (e.g. reverse.ts) that build-time discovery
