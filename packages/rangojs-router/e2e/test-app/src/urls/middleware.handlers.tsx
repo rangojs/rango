@@ -200,6 +200,32 @@ export const MiddlewareW5RedirectHandler: Handler<
   </div>
 );
 
+export const MiddlewareCookiesAfterNextHandler: Handler<
+  "middlewareTest.cookiesAfterNext"
+> = () => (
+  <div data-testid="middleware-test-cookies-after-next">
+    <h1 data-testid="cookies-after-next-title">Cookies After Next() Test</h1>
+    <p>
+      This route tests that cookies set after await next() appear in the
+      response.
+    </p>
+  </div>
+);
+
+export const MiddlewareRouteCookiesAfterNextHandler: Handler<
+  "middlewareTest.routeCookiesAfterNext"
+> = () => (
+  <div data-testid="middleware-test-route-cookies-after-next">
+    <h1 data-testid="route-cookies-after-next-title">
+      Route-Level Cookies After Next() Test
+    </h1>
+    <p>
+      This route tests that cookies set after await next() in route-level
+      middleware appear in the response.
+    </p>
+  </div>
+);
+
 export const MiddlewareRouteLevelWithParamsHandler: Handler<
   "middlewareTest.routeLevelWithParams"
 > = (ctx) => {
