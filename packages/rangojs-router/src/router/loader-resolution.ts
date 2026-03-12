@@ -262,7 +262,7 @@ function createLoaderExecutor<TEnv>(
       reverse: ctx.reverse as LoaderContext["reverse"],
     };
 
-    const doneLoader = track(`loader:${loader.$$id}`);
+    const doneLoader = track(`loader:${loader.$$id}`, 2);
     const promise = Promise.resolve(
       loaderFn(loaderCtx as LoaderContext<any, TEnv>),
     ).finally(() => {

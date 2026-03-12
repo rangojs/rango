@@ -266,6 +266,9 @@ export interface RequestContext<
    * errors without failing the response.
    */
   _reportBackgroundError?: (error: unknown, category: string) => void;
+
+  /** @internal Per-request debug performance override (set via ctx.debugPerformance()) */
+  _debugPerformance?: boolean;
 }
 
 /**
@@ -293,6 +296,7 @@ export type PublicRequestContext<
   | "_prevRouteKey"
   | "_reportedErrors"
   | "_reportBackgroundError"
+  | "_debugPerformance"
 >;
 
 // AsyncLocalStorage instance for request context
@@ -882,7 +886,7 @@ export function createUseFunction<TEnv>(
     };
 
     // Start loader execution with tracking
-    const doneLoader = track(`loader:${loader.$$id}`);
+    const doneLoader = track(`loader:${loader.$$id}`, 2);
     const promise = Promise.resolve(loaderFn(loaderCtx)).finally(() => {
       doneLoader();
     });

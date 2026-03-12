@@ -101,6 +101,18 @@ export interface MiddlewareContext<
   routeName?: DefaultRouteName;
 
   /**
+   * Enable performance metrics for this request.
+   * When called, granular timing breakdown is logged to console and
+   * included in the Server-Timing response header, regardless of the
+   * router-level `debugPerformance` option.
+   *
+   * Must be called **before** `await next()` — the metrics store is
+   * created at the start of route matching inside `next()`, so calling
+   * this after `next()` returns has no effect.
+   */
+  debugPerformance(): void;
+
+  /**
    * Generate URLs from route names.
    * - `name` — global route, from the named-routes definition
    */

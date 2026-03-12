@@ -26,6 +26,7 @@ export interface PerformanceMetric {
   label: string; // e.g., "route-matching", "loader:UserLoader"
   duration: number; // milliseconds
   startTime: number; // relative to request start
+  depth?: number; // nesting level for hierarchical display (0 = top-level)
 }
 
 /**
@@ -567,7 +568,7 @@ export type { HelperContext };
  * done(); // Records duration
  * ```
  */
-export function track(label: string): () => void {
+export function track(label: string, depth?: number): () => void {
   const store = RSCRouterContext.getStore();
 
   // No-op if context unavailable or metrics not enabled
@@ -580,6 +581,11 @@ export function track(label: string): () => void {
   return () => {
     const duration =
       performance.now() - store.metrics!.requestStart - startTime;
-    store.metrics!.metrics.push({ label, duration, startTime });
+    store.metrics!.metrics.push({
+      label,
+      duration,
+      startTime,
+      ...(depth != null ? { depth } : {}),
+    });
   };
 }

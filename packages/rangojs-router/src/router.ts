@@ -357,8 +357,12 @@ export function createRouter<TEnv = any>(
     return precomputedByPrefix;
   }
 
-  // Wrapper to pass debugPerformance to external createMetricsStore
-  const getMetricsStore = () => createMetricsStore(debugPerformance);
+  // Wrapper to pass debugPerformance to external createMetricsStore.
+  // Also checks per-request flag set by ctx.debugPerformance() in middleware.
+  const getMetricsStore = () =>
+    createMetricsStore(
+      debugPerformance || !!_getRequestContext()?._debugPerformance,
+    );
 
   // Wrapper to pass defaults to error/notFound boundary finders
   const findNearestErrorBoundary = (entry: EntryData | null) =>
