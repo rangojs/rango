@@ -18,7 +18,12 @@ import {
 } from "../server/request-context.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
-import type { RscPayload, CreateRSCHandlerOptions } from "./types.js";
+import type {
+  RscPayload,
+  CreateRSCHandlerOptions,
+  LoadSSRModule,
+  SSRModule,
+} from "./types.js";
 import {
   createResponseWithMergedHeaders,
   finalizeResponse,
@@ -67,6 +72,12 @@ import {
   type TimeoutPhase,
 } from "../router/timeout.js";
 import { createMetricsStore } from "../router/metrics.js";
+import {
+  startSSRSetup,
+  getSSRSetup,
+  mayNeedSSR,
+  SSR_SETUP_VAR,
+} from "./ssr-setup.js";
 
 /**
  * Create an RSC request handler.
@@ -118,10 +129,18 @@ export function createRSCHandler<
     decodeFormState,
   } = deps;
 
-  // Use provided loadSSRModule or default to vite RSC module loader
-  const loadSSRModule =
+  // Use provided loadSSRModule or default to vite RSC module loader.
+  // In production the SSR module is stable across requests, so memoize
+  // the dynamic import to avoid repeated module resolution overhead.
+  // In dev mode Vite may hot-reload the module, so skip memoization.
+  const rawLoadSSRModule: LoadSSRModule =
     options.loadSSRModule ??
     (() => import.meta.viteRsc.loadModule("ssr", "index"));
+  let _ssrModulePromise: Promise<SSRModule> | undefined;
+  const loadSSRModule: LoadSSRModule =
+    process.env.NODE_ENV === "production"
+      ? () => (_ssrModulePromise ??= rawLoadSSRModule())
+      : rawLoadSSRModule;
 
   /**
    * Per-request error reporter that deduplicates via the ALS request context.
@@ -493,6 +512,19 @@ export function createRSCHandler<
         );
       }
       return responseOutcome.result;
+    }
+
+    // Kick off SSR module loading + stream mode resolution in parallel with
+    // segment resolution. Placed after the response-route short-circuit so
+    // response/mime routes never pay for SSR work.
+    if (mayNeedSSR(request, url)) {
+      variables[SSR_SETUP_VAR] = startSSRSetup(
+        handlerCtx,
+        request,
+        env,
+        url,
+        () => requireRequestContext()._metricsStore,
+      );
     }
 
     const routeReverse = createReverseFunction(getRequiredRouteMap());
@@ -969,11 +1001,14 @@ export function createRSCHandler<
           });
         }
 
-        // Delegate to SSR for HTML response
-        const [ssrModule, streamMode] = await Promise.all([
-          loadSSRModule(),
-          handlerCtx.resolveStreamMode(request, env, url),
-        ]);
+        // Delegate to SSR for HTML response (reuse early setup if available)
+        const [ssrModule, streamMode] = await getSSRSetup(
+          handlerCtx,
+          request,
+          env,
+          url,
+          requireRequestContext()._metricsStore,
+        );
         const htmlStream = await ssrModule.renderHTML(rscStream, {
           nonce,
           streamMode,

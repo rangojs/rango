@@ -382,13 +382,14 @@ export async function executeMiddleware<TEnv>(
       reverse,
     );
     const metricStart = performance.now();
+    const metricLabel = getMiddlewareMetricLabel(entry, middlewareOrdinal);
     let middlewareFinished = false;
     const finishMiddleware = () => {
       if (!middlewareFinished) {
         middlewareFinished = true;
         appendMetric(
           _getRequestContext()?._metricsStore,
-          getMiddlewareMetricLabel(entry, middlewareOrdinal),
+          metricLabel,
           metricStart,
           performance.now() - metricStart,
           MIDDLEWARE_METRIC_DEPTH,
@@ -400,6 +401,7 @@ export async function executeMiddleware<TEnv>(
     // Guard against double-calling: a second call would re-enter the
     // downstream chain and overwrite responseHolder.response.
     let nextPromise: Promise<Response> | null = null;
+    let nextResolvedAt: number | undefined;
     const wrappedNext = (): Promise<Response> => {
       if (nextPromise) {
         throw new Error(
@@ -407,7 +409,17 @@ export async function executeMiddleware<TEnv>(
         );
       }
       finishMiddleware();
-      nextPromise = next();
+      const downstream = next();
+      nextPromise = downstream.then(
+        (res) => {
+          nextResolvedAt = performance.now();
+          return res;
+        },
+        (err) => {
+          nextResolvedAt = performance.now();
+          throw err;
+        },
+      );
       return nextPromise;
     };
 
@@ -429,6 +441,21 @@ export async function executeMiddleware<TEnv>(
       throw error;
     }
     finishMiddleware();
+
+    // Record post-next() processing time when middleware did work after
+    // the downstream chain resolved (e.g. adding headers, logging).
+    if (nextResolvedAt !== undefined) {
+      const postDur = performance.now() - nextResolvedAt;
+      if (postDur > 0.01) {
+        appendMetric(
+          _getRequestContext()?._metricsStore,
+          `${metricLabel}:post`,
+          nextResolvedAt,
+          postDur,
+          MIDDLEWARE_METRIC_DEPTH,
+        );
+      }
+    }
 
     // Explicit return takes precedence (middleware short-circuit).
     // Merge stub headers (from ctx.header before this point) and

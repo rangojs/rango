@@ -11,7 +11,7 @@ const DEPTH_INDENT = 2;
 const TIMELINE_WIDTH = 40;
 
 function formatMs(value: number): string {
-  return `${value.toFixed(1)}ms`;
+  return `${value.toFixed(2)}ms`;
 }
 
 function sortMetrics(metrics: PerformanceMetric[]): PerformanceMetric[] {
@@ -140,7 +140,7 @@ export function logMetrics(
     startWidth + 2 + durationWidth + 2 + spanWidth + 2,
   );
 
-  console.log(`[RSC Perf] ${method} ${pathname} (${total.toFixed(1)}ms)`);
+  console.log(`[RSC Perf] ${method} ${pathname} (${total.toFixed(2)}ms)`);
   console.log(
     `${"start".padStart(startWidth)}  ${"dur".padStart(durationWidth)}  ${"span".padEnd(spanWidth)}  timeline`,
   );

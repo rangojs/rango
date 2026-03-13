@@ -414,6 +414,62 @@ describe("middleware", () => {
       await execution;
     });
 
+    it("should record post-phase timing for work after next() resolves", async () => {
+      const metrics = createMetrics();
+
+      async function logger(ctx: any, next: any) {
+        await next();
+        // Simulate non-trivial post-processing.
+        // Use 1ms busy wait for a wide margin over the 0.01ms threshold,
+        // avoiding flakiness on slower or lower-resolution environments.
+        const start = performance.now();
+        while (performance.now() - start < 1) {
+          /* busy wait */
+        }
+      }
+
+      await runWithMetrics(metrics, () =>
+        executeMiddleware(
+          [createMockEntry(logger)],
+          new Request("http://localhost/test"),
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
+      );
+
+      const pre = metrics.metrics.find(
+        (m) => m.label === "middleware:logger@*",
+      );
+      const post = metrics.metrics.find(
+        (m) => m.label === "middleware:logger@*:post",
+      );
+      expect(pre).toBeDefined();
+      expect(post).toBeDefined();
+      expect(post!.duration).toBeGreaterThan(0);
+    });
+
+    it("should not record post-phase for short-circuit middleware", async () => {
+      const metrics = createMetrics();
+
+      async function guard() {
+        return new Response("Blocked", { status: 403 });
+      }
+
+      await runWithMetrics(metrics, () =>
+        executeMiddleware(
+          [createMockEntry(guard)],
+          new Request("http://localhost/test"),
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
+      );
+
+      const post = metrics.metrics.find((m) => m.label.includes(":post"));
+      expect(post).toBeUndefined();
+    });
+
     it("should allow ctx.res access after next()", async () => {
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         await next();

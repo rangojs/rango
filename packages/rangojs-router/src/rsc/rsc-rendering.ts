@@ -13,6 +13,7 @@ import {
 } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import { appendMetric, buildMetricsTiming } from "../router/metrics.js";
+import { getSSRSetup } from "./ssr-setup.js";
 import type { RscPayload } from "./types.js";
 import {
   createResponseWithMergedHeaders,
@@ -231,14 +232,14 @@ export async function handleRscRendering<TEnv>(
     });
   }
 
-  // Delegate to SSR for HTML response
-  const ssrSetupStart = performance.now();
-  const [ssrModule, streamMode] = await Promise.all([
-    ctx.loadSSRModule(),
-    ctx.resolveStreamMode(request, env, url),
-  ]);
-  const ssrSetupDur = performance.now() - ssrSetupStart;
-  appendMetric(metricsStore, "ssr-setup", ssrSetupStart, ssrSetupDur);
+  // Delegate to SSR for HTML response (reuse early setup if available)
+  const [ssrModule, streamMode] = await getSSRSetup(
+    ctx,
+    request,
+    env,
+    url,
+    metricsStore,
+  );
 
   const ssrRenderStart = performance.now();
   const htmlStream = await ssrModule.renderHTML(rscStream, {

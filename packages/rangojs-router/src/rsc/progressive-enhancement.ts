@@ -10,6 +10,7 @@ import {
   requireRequestContext,
   setRequestContextParams,
 } from "../server/request-context.js";
+import { getSSRSetup } from "./ssr-setup.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
 import type { RscPayload, ReactFormState } from "./types.js";
@@ -257,10 +258,13 @@ export async function handleProgressiveEnhancement<TEnv>(
     };
 
     const rscStream = ctx.renderToReadableStream<RscPayload>(payload);
-    const [ssrModule, streamMode] = await Promise.all([
-      ctx.loadSSRModule(),
-      ctx.resolveStreamMode(request, env, url),
-    ]);
+    const [ssrModule, streamMode] = await getSSRSetup(
+      ctx,
+      request,
+      env,
+      url,
+      undefined,
+    );
     const htmlStream = await ssrModule.renderHTML(rscStream, {
       formState: reactFormState,
       nonce,
@@ -350,10 +354,13 @@ async function renderPeErrorBoundary<TEnv>(
   };
 
   const rscStream = ctx.renderToReadableStream<RscPayload>(payload);
-  const [ssrModule, streamMode] = await Promise.all([
-    ctx.loadSSRModule(),
-    ctx.resolveStreamMode(request, env, url),
-  ]);
+  const [ssrModule, streamMode] = await getSSRSetup(
+    ctx,
+    request,
+    env,
+    url,
+    undefined,
+  );
   const htmlStream = await ssrModule.renderHTML(rscStream, {
     nonce,
     streamMode,

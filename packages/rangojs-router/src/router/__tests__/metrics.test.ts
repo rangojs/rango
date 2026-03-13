@@ -117,7 +117,7 @@ describe("logMetrics", () => {
 
     expect(logs[1]).toContain("timeline");
     expect(logs[2]?.trimStart()).toBe(
-      "0ms                              100.0ms",
+      "0ms                             100.00ms",
     );
 
     const metricRows = logs.slice(3);
@@ -216,6 +216,36 @@ describe("generateServerTiming", () => {
 
     const timing = generateServerTiming(store);
     expect(timing).toBe("top-level;dur=10.00, no-depth;dur=5.00");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Formatter precision
+// ---------------------------------------------------------------------------
+
+describe("formatMs precision", () => {
+  it("displays sub-millisecond durations with two decimal places", () => {
+    vi.spyOn(performance, "now").mockReturnValue(100);
+
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: any[]) => {
+      logs.push(args.join(" "));
+    });
+
+    const store: MetricsStore = {
+      enabled: true,
+      requestStart: 0,
+      metrics: [{ label: "fast-op", duration: 0.04, startTime: 0.12 }],
+    };
+
+    logMetrics("GET", "/fast", store);
+
+    // Header should use two decimal places
+    expect(logs[0]).toContain("100.00ms");
+    // Metric row should show 0.04ms not 0.0ms
+    const metricRow = logs[3]!;
+    expect(metricRow).toContain("0.04ms");
+    expect(metricRow).toContain("0.12ms");
   });
 });
 
