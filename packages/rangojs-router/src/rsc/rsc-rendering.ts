@@ -12,7 +12,7 @@ import {
   getLocationState,
 } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
-import { appendMetric, buildMetricsTiming } from "../router/metrics.js";
+import { appendMetric } from "../router/metrics.js";
 import { getSSRSetup } from "./ssr-setup.js";
 import type { RscPayload } from "./types.js";
 import {
@@ -30,13 +30,9 @@ export async function handleRscRendering<TEnv>(
   handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
   nonce: string | undefined,
 ): Promise<Response> {
-  // Retrieve handler-level timing from variables
   const reqCtx = requireRequestContext();
-  const handlerTimingArr: string[] = reqCtx.var.__handlerTiming || [];
-  const handlerStart: number = reqCtx.var.__handlerStart || 0;
 
   let payload: RscPayload;
-  let serverTiming: string | undefined;
   let hasInterceptSlots = false;
 
   if (isPartial) {
@@ -55,8 +51,6 @@ export async function handleRscRendering<TEnv>(
         return createSimpleRedirectResponse(match.redirect);
       }
 
-      serverTiming = match.serverTiming;
-
       payload = {
         metadata: {
           pathname: url.pathname,
@@ -74,7 +68,7 @@ export async function handleRscRendering<TEnv>(
       };
     } else {
       setRequestContextParams(result.params, result.routeName);
-      serverTiming = result.serverTiming;
+
       hasInterceptSlots = !!result.slots;
 
       payload = {
@@ -134,8 +128,6 @@ export async function handleRscRendering<TEnv>(
         { headers: { "Content-Type": "application/json" } },
       );
     } else {
-      serverTiming = match.serverTiming;
-
       payload = {
         // Initial SSR can reconstruct the tree from segments + rootLayout,
         // so we omit root to avoid sending the same structure twice.
@@ -193,22 +185,9 @@ export async function handleRscRendering<TEnv>(
       !url.searchParams.has("__html")) ||
     url.searchParams.has("__rsc");
 
-  // Build complete Server-Timing: handler phases + match/manifest + RSC serialize
-  const timingParts: string[] = [...handlerTimingArr];
-
   if (isRscRequest) {
     const renderDur = performance.now() - renderStart;
     appendMetric(metricsStore, "render:total", renderStart, renderDur);
-    const metricsTiming = buildMetricsTiming(
-      request.method,
-      url.pathname,
-      metricsStore,
-      serverTiming,
-    );
-    if (metricsTiming) {
-      timingParts.push(metricsTiming);
-    }
-    const fullTiming = timingParts.join(", ");
     const rscHeaders: Record<string, string> = {
       "content-type": "text/x-component;charset=utf-8",
       vary: "accept, X-Rango-State, X-RSC-Router-Client-Path",
@@ -223,9 +202,6 @@ export async function handleRscRendering<TEnv>(
       if (cc) {
         rscHeaders["cache-control"] = cc;
       }
-    }
-    if (fullTiming) {
-      rscHeaders["Server-Timing"] = fullTiming;
     }
     return createResponseWithMergedHeaders(rscStream, {
       headers: rscHeaders,
@@ -249,33 +225,10 @@ export async function handleRscRendering<TEnv>(
   const ssrRenderDur = performance.now() - ssrRenderStart;
   appendMetric(metricsStore, "ssr-render-html", ssrRenderStart, ssrRenderDur);
 
-  // Add total handler duration
-  if (handlerStart) {
-    const totalHandler = performance.now() - handlerStart;
-    timingParts.push(`handler-total;dur=${totalHandler.toFixed(2)}`);
-  }
-
   const renderDur = performance.now() - renderStart;
   appendMetric(metricsStore, "render:total", renderStart, renderDur);
-  const metricsTiming = buildMetricsTiming(
-    request.method,
-    url.pathname,
-    metricsStore,
-    serverTiming,
-  );
-  if (metricsTiming) {
-    timingParts.push(metricsTiming);
-  }
-
-  const fullTiming = timingParts.join(", ");
-  const htmlHeaders: Record<string, string> = {
-    "content-type": "text/html;charset=utf-8",
-  };
-  if (fullTiming) {
-    htmlHeaders["Server-Timing"] = fullTiming;
-  }
 
   return createResponseWithMergedHeaders(htmlStream, {
-    headers: htmlHeaders,
+    headers: { "content-type": "text/html;charset=utf-8" },
   });
 }

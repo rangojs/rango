@@ -389,7 +389,7 @@ export async function executeMiddleware<TEnv>(
         middlewareFinished = true;
         appendMetric(
           _getRequestContext()?._metricsStore,
-          metricLabel,
+          `${metricLabel}:pre`,
           metricStart,
           performance.now() - metricStart,
           MIDDLEWARE_METRIC_DEPTH,

@@ -306,7 +306,7 @@ describe("middleware", () => {
       async function auth(ctx: any, next: any) {
         const pending = next();
         const recorded = metrics.metrics.find(
-          (m) => m.label === "middleware:auth@*",
+          (m) => m.label === "middleware:auth@*:pre",
         );
         expect(recorded).toBeDefined();
         await pending;
@@ -328,7 +328,7 @@ describe("middleware", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       const recorded = metrics.metrics.find(
-        (m) => m.label === "middleware:auth@*",
+        (m) => m.label === "middleware:auth@*:pre",
       );
       expect(recorded).toBeDefined();
       expect(recorded!.depth).toBe(1);
@@ -338,7 +338,7 @@ describe("middleware", () => {
       await execution;
 
       expect(
-        metrics.metrics.filter((m) => m.label === "middleware:auth@*"),
+        metrics.metrics.filter((m) => m.label === "middleware:auth@*:pre"),
       ).toHaveLength(1);
     });
 
@@ -360,7 +360,7 @@ describe("middleware", () => {
       );
 
       const recorded = metrics.metrics.find(
-        (m) => m.label === "middleware:guard@*",
+        (m) => m.label === "middleware:guard@*:pre",
       );
       expect(recorded).toBeDefined();
       expect(recorded!.depth).toBe(1);
@@ -376,7 +376,7 @@ describe("middleware", () => {
         expect(reqCtx._metricsStore).toBeDefined();
         const pending = next();
         const recorded = reqCtx._metricsStore?.metrics.find(
-          (m) => m.label === "middleware:auth@*",
+          (m) => m.label === "middleware:auth@*:pre",
         );
         expect(recorded).toBeDefined();
         await pending;
@@ -406,7 +406,7 @@ describe("middleware", () => {
 
       expect(
         reqCtx._metricsStore?.metrics.some(
-          (m) => m.label === "middleware:auth@*",
+          (m) => m.label === "middleware:auth@*:pre",
         ),
       ).toBe(true);
 
@@ -439,7 +439,7 @@ describe("middleware", () => {
       );
 
       const pre = metrics.metrics.find(
-        (m) => m.label === "middleware:logger@*",
+        (m) => m.label === "middleware:logger@*:pre",
       );
       const post = metrics.metrics.find(
         (m) => m.label === "middleware:logger@*:post",

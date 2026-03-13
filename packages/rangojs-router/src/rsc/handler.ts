@@ -71,7 +71,11 @@ import {
   createDefaultTimeoutResponse,
   type TimeoutPhase,
 } from "../router/timeout.js";
-import { createMetricsStore } from "../router/metrics.js";
+import {
+  createMetricsStore,
+  appendMetric,
+  buildMetricsTiming,
+} from "../router/metrics.js";
 import {
   startSSRSetup,
   getSSRSetup,
@@ -292,6 +296,11 @@ export function createRSCHandler<
     input: RouterRequestInput<TEnv> = {},
   ): Promise<Response> {
     const handlerStart = performance.now();
+    // Create the metrics store at handler start so handler:total has startTime=0
+    // and all metrics are relative to the request entry point.
+    const earlyMetricsStore = router.debugPerformance
+      ? createMetricsStore(true, handlerStart)
+      : undefined;
 
     const { env = {} as TEnv, vars: initialVars, ctx: executionCtx } = input;
 
@@ -405,9 +414,9 @@ export function createRSCHandler<
       executionContext: executionCtx,
       themeConfig: router.themeConfig,
     });
-    if (router.debugPerformance) {
+    if (earlyMetricsStore) {
       requestContext._debugPerformance = true;
-      requestContext._metricsStore ??= createMetricsStore(true);
+      requestContext._metricsStore = earlyMetricsStore;
     }
     // Wire background error reporting so "use cache" and other subsystems
     // can surface non-fatal errors through the router's onError callback.
@@ -450,6 +459,7 @@ export function createRSCHandler<
       };
 
       // Execute middleware chain if any, otherwise call core handler directly
+      let response: Response;
       if (matchedMiddleware.length > 0) {
         const mwResponse = await executeMiddleware(
           matchedMiddleware,
@@ -468,13 +478,52 @@ export function createRSCHandler<
             mwResponse,
             createRedirectFlightResponse,
           );
-          if (intercepted) return intercepted;
+          response = intercepted ?? finalizeResponse(mwResponse);
+        } else {
+          response = finalizeResponse(mwResponse);
         }
-
-        return finalizeResponse(mwResponse);
+      } else {
+        response = await coreHandler();
       }
 
-      return coreHandler();
+      // Finalize metrics after all middleware (including post-next work)
+      // has completed so :post spans are captured in the timeline.
+      // Handler timing parts are always emitted (even without debug metrics)
+      // so non-debug requests still get bootstrap Server-Timing entries.
+      const handlerTimingArr: string[] = variables.__handlerTiming || [];
+      // Preserve any existing Server-Timing set by response routes or middleware
+      const existingTiming = response.headers.get("Server-Timing");
+      const timingParts = existingTiming
+        ? [existingTiming, ...handlerTimingArr]
+        : [...handlerTimingArr];
+
+      const metricsStore = requestContext._metricsStore;
+      if (metricsStore) {
+        // When the store was created at handler start (earlyMetricsStore),
+        // handler:total covers the full request. When ctx.debugPerformance()
+        // created the store mid-request, use its requestStart to avoid a
+        // negative startTime offset.
+        const totalStart = earlyMetricsStore
+          ? handlerStart
+          : metricsStore.requestStart;
+        appendMetric(
+          metricsStore,
+          "handler:total",
+          totalStart,
+          performance.now() - totalStart,
+        );
+        const metricsTiming = buildMetricsTiming(
+          request.method,
+          url.pathname,
+          metricsStore,
+        );
+        if (metricsTiming) timingParts.push(metricsTiming);
+      }
+
+      const fullTiming = timingParts.join(", ");
+      if (fullTiming) response.headers.set("Server-Timing", fullTiming);
+
+      return response;
     });
   };
 
