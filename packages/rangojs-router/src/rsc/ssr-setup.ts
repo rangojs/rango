@@ -23,18 +23,25 @@ export const SSR_SETUP_VAR = "__ssrSetup";
 
 /**
  * Start loading the SSR module and resolving the stream mode in parallel.
- * Records individual `ssr:module-load` and `ssr:stream-mode` metrics when
- * each settles. The metrics store getter is called lazily so that stores
- * created after kickoff (e.g. via per-request `ctx.debugPerformance()`)
- * are still captured.
+ * When a `getMetricsStore` getter is provided, records individual
+ * `ssr:module-load` and `ssr:stream-mode` metrics (the getter is called
+ * lazily so stores created after kickoff are still captured). Without a
+ * getter the promises run bare — no `.then()` microtasks, no
+ * `performance.now()` calls — keeping the non-debug hot path lean.
  */
 export function startSSRSetup<TEnv>(
   ctx: HandlerContext<TEnv>,
   request: Request,
   env: TEnv,
   url: URL,
-  getMetricsStore: () => MetricsStore | undefined,
+  getMetricsStore?: () => MetricsStore | undefined,
 ): Promise<SSRSetup> {
+  if (!getMetricsStore) {
+    return Promise.all([
+      ctx.loadSSRModule(),
+      ctx.resolveStreamMode(request, env, url),
+    ]);
+  }
   const start = performance.now();
   return Promise.all([
     ctx.loadSSRModule().then((mod) => {
@@ -74,7 +81,13 @@ export function getSSRSetup<TEnv>(
     | Promise<SSRSetup>
     | undefined;
   if (early) return early;
-  return startSSRSetup(ctx, request, env, url, () => metricsStore);
+  return startSSRSetup(
+    ctx,
+    request,
+    env,
+    url,
+    metricsStore ? () => metricsStore : undefined,
+  );
 }
 
 /**

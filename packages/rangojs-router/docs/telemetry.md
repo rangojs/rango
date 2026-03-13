@@ -1,4 +1,178 @@
-# Router Telemetry
+# Router Observability
+
+The router has two complementary observability systems:
+
+- **Performance timeline** (`debugPerformance`) — a per-request waterfall of
+  every phase from handler entry to response, exposed as a console log and
+  `Server-Timing` header. Designed for local development and per-request
+  debugging.
+- **Structured telemetry** (`telemetry`) — lifecycle events emitted through a
+  pluggable sink (console, OpenTelemetry, custom). Designed for production
+  monitoring and distributed tracing.
+
+---
+
+## Performance Timeline
+
+Enable with `debugPerformance: true` on the router:
+
+```typescript
+import { createRouter } from "@rangojs/router";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  debugPerformance: true,
+});
+```
+
+Every HTML request prints a shared-axis waterfall to the console showing
+exactly where time is spent:
+
+```
+[RSC Perf] GET / (24.53ms)
+start      dur  span                    timeline
+                                        0ms                              24.53ms
+ 0.00ms  0.02ms    middleware:auth@*    |#.......................................|
+ 0.02ms  1.30ms    ssr:module-load     |##......................................|
+ 0.02ms  0.04ms    ssr:stream-mode     |#.......................................|
+ 0.08ms  3.20ms    route-matching      |#####...................................|
+ 3.28ms  0.12ms    rsc-serialize       |.....#..................................|
+ 3.40ms  8.70ms    ssr-render-html     |.....##############.....................|
+ 0.00ms 12.22ms    render:total        |##################......................|
+ 0.00ms 24.53ms    handler:total       |########################################|
+```
+
+Each row shows a phase's start offset, duration, label, and a visual `#` bar
+on a shared time axis. Phases that overlap (e.g. SSR module loading running in
+parallel with route matching) are immediately visible.
+
+### Middleware timeline
+
+Middleware records two phases: the time **before** calling `next()` (setup,
+auth checks) and the time **after** `next()` resolves (response post-processing).
+These appear as a single row with **disjoint timeline segments**:
+
+```
+ 0.00ms  1.42ms    middleware:auth@*   |##..............................####|
+```
+
+The first `#` region is the pre-phase (before `next()`), the gap is the
+downstream handler, and the second `#` region is the post-phase (after
+`next()` resolved). The displayed duration is the sum of both phases, so you
+can immediately tell how much wall time the middleware itself consumed vs how
+much it waited on downstream work.
+
+Post-phase timing below 0.01ms is suppressed as measurement noise.
+
+### Per-request opt-in
+
+Instead of enabling `debugPerformance` globally, you can enable it per-request
+from middleware. This is useful for targeted debugging in production — you get
+the full timeline for specific routes or conditions without paying for it on
+every request.
+
+```typescript
+// Query param toggle — append ?debug to any URL
+async function debugMiddleware(ctx, next) {
+  if (ctx.url.searchParams.has("debug")) {
+    ctx.debugPerformance();
+  }
+  await next();
+}
+```
+
+```typescript
+// Target a specific slow route
+async function checkoutPerfMiddleware(ctx, next) {
+  if (ctx.url.pathname.startsWith("/checkout")) {
+    ctx.debugPerformance();
+  }
+  await next();
+}
+```
+
+```typescript
+// Internal team debug cookie
+async function teamDebugMiddleware(ctx, next) {
+  if (ctx.req.headers.get("cookie")?.includes("__perf=1")) {
+    ctx.debugPerformance();
+  }
+  await next();
+}
+```
+
+The metrics store is created for that request only. The console timeline is
+printed and `Server-Timing` headers are emitted as if `debugPerformance`
+were enabled, without affecting other requests.
+
+Call `ctx.debugPerformance()` **before** `await next()` — the metrics
+store must exist when downstream phases (route matching, rendering, SSR)
+run so they can record their spans. Calling it after `next()` returns
+still emits `handler:total` but misses all upstream metrics.
+
+### Server-Timing header
+
+When metrics are enabled, the response includes a `Server-Timing` header
+with every phase encoded as a standard timing entry:
+
+```
+Server-Timing: handler-nonce;dur=0.01,
+  handler-mw-match;dur=0.03,
+  handler-ctx-create;dur=0.12,
+  handler-preview-match;dur=0.45,
+  d1-middleware-auth-pre;dur=0.02,
+  d1-middleware-auth-post;dur=1.40,
+  ssr-module-load;dur=1.30,
+  ssr-stream-mode;dur=0.04,
+  route-matching;dur=3.20,
+  rsc-serialize;dur=0.12,
+  ssr-render-html;dur=8.70,
+  render-total;dur=12.22,
+  handler-total;dur=24.53
+```
+
+Open Chrome DevTools > Network > click a request > Timing tab to see these
+as a waterfall. Nested metrics (like middleware) use a `d{depth}-` prefix.
+
+Bootstrap handler phases (`handler-nonce`, `handler-mw-match`,
+`handler-ctx-create`, `handler-preview-match`) are always emitted in the
+`Server-Timing` header, even without `debugPerformance`, to give a baseline
+view of handler overhead on every request.
+
+### Early SSR setup
+
+SSR module loading and stream mode resolution are kicked off in parallel with
+route matching. Requests that won't need SSR (RSC partials, actions, loaders,
+Accept-based RSC, prerender collection) skip this entirely. Response and mime
+routes also skip it — the setup runs after `previewMatch()` classifies the
+route type. In production, the SSR module is memoized across requests so
+repeated imports resolve instantly.
+
+### Metric reference
+
+| Metric                        | Phase      | Description                                          |
+| ----------------------------- | ---------- | ---------------------------------------------------- |
+| `handler:total`               | Handler    | Full request duration from handler entry to response |
+| `route-matching`              | Matching   | Trie lookup and segment resolution                   |
+| `manifest-loading`            | Matching   | Async manifest load (when not cached)                |
+| `ssr:module-load`             | SSR setup  | Dynamic import of the SSR module                     |
+| `ssr:stream-mode`             | SSR setup  | Stream mode resolution (sync or async)               |
+| `rsc-serialize`               | Rendering  | Synchronous RSC stream creation                      |
+| `ssr-render-html`             | Rendering  | SSR HTML rendering from RSC stream                   |
+| `render:total`                | Rendering  | End-to-end render (serialize + SSR)                  |
+| `middleware:{name}@{pattern}` | Middleware | Combined pre + post duration                         |
+
+### Zero overhead when disabled
+
+When `debugPerformance` is false (the default) and no middleware calls
+`ctx.debugPerformance()`, the timeline system adds no `.then()` callbacks,
+no `performance.now()` calls, and no metrics store allocations to the
+request path.
+
+---
+
+## Structured Telemetry
 
 The router emits structured lifecycle events through a pluggable telemetry sink.
 When no sink is configured, telemetry is completely disabled (zero overhead).

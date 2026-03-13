@@ -174,7 +174,7 @@ describe("handler metrics finalization", () => {
     expect(timing).toContain("handler-total");
   });
 
-  it("produces non-negative handler:total with late ctx.debugPerformance()", async () => {
+  it("ctx.debugPerformance() activates full timeline when router option is false", async () => {
     async function enablePerf(ctx: any, next: any) {
       ctx.debugPerformance();
       await next();
@@ -204,14 +204,54 @@ describe("handler metrics finalization", () => {
     const response = await handler(request, { env: {} });
 
     const timing = response.headers.get("Server-Timing") ?? "";
-    expect(timing).toContain("handler-total");
 
-    // handler:total row in the console timeline must not show a negative start
+    // handler:total and middleware :pre must appear in Server-Timing
+    expect(timing).toContain("handler-total");
+    expect(timing).toContain("-pre");
+
+    // Console timeline must be printed (header line + axis + at least 1 row)
+    expect(logs.some((l) => l.includes("[RSC Perf]"))).toBe(true);
+
+    // handler:total row must not show a negative start
     const handlerLine = logs.find((l) => l.includes("handler:total"));
     expect(handlerLine).toBeDefined();
     const match = handlerLine!.match(/^\s*(-?\d+\.\d+)ms/);
     expect(match).toBeDefined();
     expect(parseFloat(match![1])).toBeGreaterThanOrEqual(0);
+  });
+
+  it("ctx.debugPerformance() called after next() misses upstream metrics", async () => {
+    async function lateEnable(ctx: any, next: any) {
+      await next();
+      ctx.debugPerformance();
+    }
+
+    const router = createMockRouter({
+      debugPerformance: false,
+      middleware: [
+        {
+          pattern: null,
+          regex: null,
+          paramNames: [],
+          handler: lateEnable,
+          mountPrefix: null,
+        },
+      ],
+    });
+
+    const handler = createRSCHandler({ router });
+    const request = new Request("https://example.com/api/data");
+
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const response = await handler(request, { env: {} });
+
+    const timing = response.headers.get("Server-Timing") ?? "";
+    // handler:total is appended after middleware completes, so it's captured
+    expect(timing).toContain("handler-total");
+    // But the store didn't exist when middleware ran, so middleware :pre
+    // is NOT captured (match "d1-" prefix used for depth-1 middleware metrics)
+    expect(timing).not.toMatch(/d1-.*-pre/);
   });
 
   it("emits bootstrap Server-Timing entries without debugPerformance", async () => {

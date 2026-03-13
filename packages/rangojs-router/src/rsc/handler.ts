@@ -576,7 +576,9 @@ export function createRSCHandler<
         request,
         env,
         url,
-        () => requireRequestContext()._metricsStore,
+        router.debugPerformance
+          ? () => requireRequestContext()._metricsStore
+          : undefined,
       );
     }
 

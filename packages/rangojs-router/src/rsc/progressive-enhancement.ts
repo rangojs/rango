@@ -258,6 +258,9 @@ export async function handleProgressiveEnhancement<TEnv>(
     };
 
     const rscStream = ctx.renderToReadableStream<RscPayload>(payload);
+    // metricsStore=undefined is safe: the handler already stashed the early
+    // SSR setup promise on request variables, so getSSRSetup returns it
+    // without falling back to a fresh startSSRSetup.
     const [ssrModule, streamMode] = await getSSRSetup(
       ctx,
       request,
@@ -354,6 +357,9 @@ async function renderPeErrorBoundary<TEnv>(
   };
 
   const rscStream = ctx.renderToReadableStream<RscPayload>(payload);
+  // metricsStore=undefined is safe: the handler already stashed the early
+  // SSR setup promise on request variables, so getSSRSetup returns it
+  // without falling back to a fresh startSSRSetup.
   const [ssrModule, streamMode] = await getSSRSetup(
     ctx,
     request,

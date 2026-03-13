@@ -101,17 +101,13 @@ export function appendMetric(
 
 /**
  * Log the current request metrics and return the corresponding Server-Timing value.
- * Falls back to an existing header value when no metrics store is active.
  */
 export function buildMetricsTiming(
   method: string,
   pathname: string,
   metricsStore: MetricsStore | undefined,
-  fallback?: string,
 ): string | undefined {
-  if (!metricsStore) {
-    return fallback;
-  }
+  if (!metricsStore) return undefined;
   logMetrics(method, pathname, metricsStore);
   return generateServerTiming(metricsStore) || undefined;
 }

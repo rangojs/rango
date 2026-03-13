@@ -300,34 +300,6 @@ describe("match-result", () => {
     });
   });
 
-  describe("buildMatchResult() - metrics", () => {
-    it("should generate server timing when metricsStore is present", () => {
-      const ctx = createMockContext({
-        isFullMatch: true,
-        metricsStore: {} as any,
-      });
-      const state = createPipelineState();
-
-      const segments = [createSegment("page")];
-      const result = buildMatchResult(segments, ctx, state);
-
-      expect(result.serverTiming).toBe("metric1;dur=10");
-    });
-
-    it("should not include server timing without metricsStore", () => {
-      const ctx = createMockContext({
-        isFullMatch: true,
-        metricsStore: undefined,
-      });
-      const state = createPipelineState();
-
-      const segments = [createSegment("page")];
-      const result = buildMatchResult(segments, ctx, state);
-
-      expect(result.serverTiming).toBeUndefined();
-    });
-  });
-
   describe("collectMatchResult()", () => {
     it("should collect segments and build result", async () => {
       const ctx = createMockContext({ isFullMatch: true });

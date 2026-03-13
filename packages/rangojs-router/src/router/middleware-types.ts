@@ -106,9 +106,10 @@ export interface MiddlewareContext<
    * included in the Server-Timing response header, regardless of the
    * router-level `debugPerformance` option.
    *
-   * Must be called **before** `await next()` — the metrics store is
-   * created at the start of route matching inside `next()`, so calling
-   * this after `next()` returns has no effect.
+   * Call **before** `await next()` so the metrics store exists when
+   * downstream phases (route matching, rendering, SSR) record their
+   * spans. Calling after `next()` returns still emits `handler:total`
+   * but misses all upstream metrics.
    */
   debugPerformance(): void;
 

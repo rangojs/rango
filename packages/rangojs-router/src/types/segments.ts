@@ -125,11 +125,6 @@ export interface MatchResult {
    */
   routeName?: string;
   /**
-   * Server-Timing header value (only present when debugPerformance is enabled)
-   * Can be added to response headers for DevTools integration
-   */
-  serverTiming?: string;
-  /**
    * State of named slots for this route match
    * Key is slot name (e.g., "@modal"), value is slot state
    * Slots are used for intercepting routes during soft navigation

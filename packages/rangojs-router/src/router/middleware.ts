@@ -51,6 +51,8 @@ function warnCtxSetBeforeRedirect(handler: Function): void {
 }
 
 const MIDDLEWARE_METRIC_DEPTH = 1;
+/** Ignore post-next() durations below this threshold (measurement noise). */
+const POST_METRIC_MIN_DURATION_MS = 0.01;
 
 function getMiddlewareMetricBase<TEnv>(
   entry: MiddlewareEntry<TEnv>,
@@ -446,7 +448,7 @@ export async function executeMiddleware<TEnv>(
     // the downstream chain resolved (e.g. adding headers, logging).
     if (nextResolvedAt !== undefined) {
       const postDur = performance.now() - nextResolvedAt;
-      if (postDur > 0.01) {
+      if (postDur > POST_METRIC_MIN_DURATION_MS) {
         appendMetric(
           _getRequestContext()?._metricsStore,
           `${metricLabel}:post`,

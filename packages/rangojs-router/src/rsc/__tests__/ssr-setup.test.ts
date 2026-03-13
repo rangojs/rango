@@ -137,7 +137,7 @@ describe("startSSRSetup", () => {
     expect(metrics.metrics).toHaveLength(2);
   });
 
-  it("skips metrics when store is undefined", async () => {
+  it("skips metrics when store getter returns undefined", async () => {
     const ctx = createMockCtx();
     const [mod, mode] = await startSSRSetup(
       ctx,
@@ -147,6 +147,19 @@ describe("startSSRSetup", () => {
       () => undefined,
     );
     expect(mod).toBeDefined();
+    expect(mode).toBe("stream");
+  });
+
+  it("skips .then() wrappers when no getter is provided", async () => {
+    const ctx = createMockCtx();
+    const [mod, mode] = await startSSRSetup(
+      ctx,
+      new Request("http://localhost/"),
+      {},
+      new URL("http://localhost/"),
+    );
+    expect(mod).toBeDefined();
+    expect(mod.renderHTML).toBeDefined();
     expect(mode).toBe("stream");
   });
 });

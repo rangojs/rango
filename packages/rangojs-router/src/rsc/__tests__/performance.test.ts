@@ -35,7 +35,6 @@ function createMatchResult() {
     diff: ["home"],
     params: {},
     routeName: "home",
-    serverTiming: "route-matching;dur=1.00",
   };
 }
 
