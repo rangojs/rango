@@ -306,7 +306,7 @@ describe("middleware", () => {
       async function auth(ctx: any, next: any) {
         const pending = next();
         const recorded = metrics.metrics.find(
-          (m) => m.label === "middleware:auth@*",
+          (m) => m.label === "middleware:auth@*:pre",
         );
         expect(recorded).toBeDefined();
         await pending;
@@ -328,7 +328,7 @@ describe("middleware", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       const recorded = metrics.metrics.find(
-        (m) => m.label === "middleware:auth@*",
+        (m) => m.label === "middleware:auth@*:pre",
       );
       expect(recorded).toBeDefined();
       expect(recorded!.depth).toBe(1);
@@ -338,7 +338,7 @@ describe("middleware", () => {
       await execution;
 
       expect(
-        metrics.metrics.filter((m) => m.label === "middleware:auth@*"),
+        metrics.metrics.filter((m) => m.label === "middleware:auth@*:pre"),
       ).toHaveLength(1);
     });
 
@@ -360,7 +360,7 @@ describe("middleware", () => {
       );
 
       const recorded = metrics.metrics.find(
-        (m) => m.label === "middleware:guard@*",
+        (m) => m.label === "middleware:guard@*:pre",
       );
       expect(recorded).toBeDefined();
       expect(recorded!.depth).toBe(1);
@@ -376,7 +376,7 @@ describe("middleware", () => {
         expect(reqCtx._metricsStore).toBeDefined();
         const pending = next();
         const recorded = reqCtx._metricsStore?.metrics.find(
-          (m) => m.label === "middleware:auth@*",
+          (m) => m.label === "middleware:auth@*:pre",
         );
         expect(recorded).toBeDefined();
         await pending;
@@ -406,12 +406,68 @@ describe("middleware", () => {
 
       expect(
         reqCtx._metricsStore?.metrics.some(
-          (m) => m.label === "middleware:auth@*",
+          (m) => m.label === "middleware:auth@*:pre",
         ),
       ).toBe(true);
 
       releaseNext(new Response("OK"));
       await execution;
+    });
+
+    it("should record post-phase timing for work after next() resolves", async () => {
+      const metrics = createMetrics();
+
+      async function logger(ctx: any, next: any) {
+        await next();
+        // Simulate non-trivial post-processing.
+        // Use 1ms busy wait for a wide margin over the 0.01ms threshold,
+        // avoiding flakiness on slower or lower-resolution environments.
+        const start = performance.now();
+        while (performance.now() - start < 1) {
+          /* busy wait */
+        }
+      }
+
+      await runWithMetrics(metrics, () =>
+        executeMiddleware(
+          [createMockEntry(logger)],
+          new Request("http://localhost/test"),
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
+      );
+
+      const pre = metrics.metrics.find(
+        (m) => m.label === "middleware:logger@*:pre",
+      );
+      const post = metrics.metrics.find(
+        (m) => m.label === "middleware:logger@*:post",
+      );
+      expect(pre).toBeDefined();
+      expect(post).toBeDefined();
+      expect(post!.duration).toBeGreaterThan(0);
+    });
+
+    it("should not record post-phase for short-circuit middleware", async () => {
+      const metrics = createMetrics();
+
+      async function guard() {
+        return new Response("Blocked", { status: 403 });
+      }
+
+      await runWithMetrics(metrics, () =>
+        executeMiddleware(
+          [createMockEntry(guard)],
+          new Request("http://localhost/test"),
+          {},
+          {},
+          async () => new Response("OK"),
+        ),
+      );
+
+      const post = metrics.metrics.find((m) => m.label.includes(":post"));
+      expect(post).toBeUndefined();
     });
 
     it("should allow ctx.res access after next()", async () => {

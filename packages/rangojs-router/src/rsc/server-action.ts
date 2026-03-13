@@ -21,7 +21,7 @@ import {
   getLocationState,
 } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
-import { appendMetric, buildMetricsTiming } from "../router/metrics.js";
+import { appendMetric } from "../router/metrics.js";
 import type { RscPayload } from "./types.js";
 import {
   hasBodyContent,
@@ -311,8 +311,6 @@ export async function revalidateAfterAction<TEnv>(
   // Return updated segments
   setRequestContextParams(matchResult.params, matchResult.routeName);
 
-  const serverTiming = matchResult.serverTiming;
-
   const payload: RscPayload = {
     metadata: {
       pathname: url.pathname,
@@ -343,21 +341,8 @@ export async function revalidateAfterAction<TEnv>(
     performance.now() - renderStart,
   );
 
-  const actionHeaders: Record<string, string> = {
-    "content-type": "text/x-component;charset=utf-8",
-  };
-  const metricsTiming = buildMetricsTiming(
-    request.method,
-    url.pathname,
-    metricsStore,
-    serverTiming,
-  );
-  if (metricsTiming) {
-    actionHeaders["Server-Timing"] = metricsTiming;
-  }
-
   return createResponseWithMergedHeaders(rscStream, {
     status: actionStatus,
-    headers: actionHeaders,
+    headers: { "content-type": "text/x-component;charset=utf-8" },
   });
 }

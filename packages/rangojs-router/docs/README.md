@@ -31,8 +31,10 @@ that route tree.
 
 ## Observability
 
-- [Telemetry](./telemetry.md) - structured lifecycle events, console sink,
-  OpenTelemetry adapter, custom sinks
+- [Telemetry & Performance Timeline](./telemetry.md) - `debugPerformance`
+  waterfall, `Server-Timing` headers, middleware pre/post timeline,
+  structured lifecycle events, console sink, OpenTelemetry adapter, custom
+  sinks
 
 ## Design Notes
 

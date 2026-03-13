@@ -117,7 +117,7 @@ describe("logMetrics", () => {
 
     expect(logs[1]).toContain("timeline");
     expect(logs[2]?.trimStart()).toBe(
-      "0ms                              100.0ms",
+      "0ms                             100.00ms",
     );
 
     const metricRows = logs.slice(3);
@@ -220,6 +220,36 @@ describe("generateServerTiming", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Formatter precision
+// ---------------------------------------------------------------------------
+
+describe("formatMs precision", () => {
+  it("displays sub-millisecond durations with two decimal places", () => {
+    vi.spyOn(performance, "now").mockReturnValue(100);
+
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: any[]) => {
+      logs.push(args.join(" "));
+    });
+
+    const store: MetricsStore = {
+      enabled: true,
+      requestStart: 0,
+      metrics: [{ label: "fast-op", duration: 0.04, startTime: 0.12 }],
+    };
+
+    logMetrics("GET", "/fast", store);
+
+    // Header should use two decimal places
+    expect(logs[0]).toContain("100.00ms");
+    // Metric row should show 0.04ms not 0.0ms
+    const metricRow = logs[3]!;
+    expect(metricRow).toContain("0.04ms");
+    expect(metricRow).toContain("0.12ms");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // createMetricsStore
 // ---------------------------------------------------------------------------
 
@@ -234,5 +264,126 @@ describe("createMetricsStore", () => {
     expect(store!.enabled).toBe(true);
     expect(store!.metrics).toEqual([]);
     expect(typeof store!.requestStart).toBe("number");
+  });
+
+  it("uses custom requestStart when provided", () => {
+    const store = createMetricsStore(true, 42);
+    expect(store!.requestStart).toBe(42);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// logMetrics — :pre/:post merging
+// ---------------------------------------------------------------------------
+
+describe("logMetrics pre/post merge", () => {
+  it("merges :pre and :post into a single row with combined duration", () => {
+    vi.spyOn(performance, "now").mockReturnValue(100);
+
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: any[]) => {
+      logs.push(args.join(" "));
+    });
+
+    const store: MetricsStore = {
+      enabled: true,
+      requestStart: 0,
+      metrics: [
+        {
+          label: "middleware:auth@*:pre",
+          duration: 5,
+          startTime: 0,
+          depth: 1,
+        },
+        {
+          label: "middleware:auth@*:post",
+          duration: 10,
+          startTime: 80,
+          depth: 1,
+        },
+        { label: "route-matching", duration: 20, startTime: 10 },
+      ],
+    };
+
+    logMetrics("GET", "/", store);
+
+    const metricLines = logs.slice(3).map(extractMetricLabel);
+
+    // :pre/:post should merge into base label
+    expect(metricLines).toContain("middleware:auth@*");
+    expect(metricLines).not.toContain("middleware:auth@*:pre");
+    expect(metricLines).not.toContain("middleware:auth@*:post");
+
+    // Merged row shows combined duration (5 + 10 = 15)
+    const mergedRow = logs.slice(3).find((l) => l.includes("middleware:auth"));
+    expect(mergedRow).toContain("15.00ms");
+  });
+
+  it("renders disjoint timeline segments for merged pre/post", () => {
+    vi.spyOn(performance, "now").mockReturnValue(100);
+
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: any[]) => {
+      logs.push(args.join(" "));
+    });
+
+    const store: MetricsStore = {
+      enabled: true,
+      requestStart: 0,
+      metrics: [
+        {
+          label: "middleware:logger@*:pre",
+          duration: 10,
+          startTime: 0,
+          depth: 1,
+        },
+        {
+          label: "middleware:logger@*:post",
+          duration: 10,
+          startTime: 90,
+          depth: 1,
+        },
+      ],
+    };
+
+    logMetrics("GET", "/", store);
+
+    const row = logs[3]!;
+    const timeline = row.slice(row.indexOf("|"), row.lastIndexOf("|") + 1);
+    // Should have two separate # regions with dots between them
+    const firstHash = timeline.indexOf("#");
+    const firstDotAfter = timeline.indexOf(".", firstHash);
+    const secondHash = timeline.indexOf("#", firstDotAfter);
+    expect(firstHash).toBeGreaterThanOrEqual(0);
+    expect(firstDotAfter).toBeGreaterThan(firstHash);
+    expect(secondHash).toBeGreaterThan(firstDotAfter);
+  });
+
+  it("displays lone :pre without :post using base label", () => {
+    vi.spyOn(performance, "now").mockReturnValue(100);
+
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: any[]) => {
+      logs.push(args.join(" "));
+    });
+
+    const store: MetricsStore = {
+      enabled: true,
+      requestStart: 0,
+      metrics: [
+        {
+          label: "middleware:guard@*:pre",
+          duration: 5,
+          startTime: 0,
+          depth: 1,
+        },
+      ],
+    };
+
+    logMetrics("GET", "/", store);
+
+    const metricLines = logs.slice(3).map(extractMetricLabel);
+    expect(metricLines).toContain("middleware:guard@*");
+    expect(metricLines).not.toContain("middleware:guard@*:pre");
   });
 });

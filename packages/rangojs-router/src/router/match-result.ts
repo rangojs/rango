@@ -108,7 +108,6 @@
  */
 import type { MatchResult, ResolvedSegment } from "../types.js";
 import type { MatchContext, MatchPipelineState } from "./match-context.js";
-import { generateServerTiming } from "./metrics.js";
 import { debugLog } from "./logging.js";
 
 /**
@@ -186,19 +185,12 @@ export function buildMatchResult<TEnv>(
     segmentIds: segmentsToRender.map((s) => s.id),
   });
 
-  // Output metrics if enabled
-  let serverTiming: string | undefined;
-  if (ctx.metricsStore) {
-    serverTiming = generateServerTiming(ctx.metricsStore);
-  }
-
   return {
     segments: segmentsToRender,
     matched: allIds,
     diff: segmentsToRender.map((s) => s.id),
     params: ctx.matched.params,
     routeName: ctx.routeKey,
-    serverTiming,
     slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
     routeMiddleware:
       ctx.routeMiddleware.length > 0 ? ctx.routeMiddleware : undefined,

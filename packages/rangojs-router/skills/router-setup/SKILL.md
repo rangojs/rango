@@ -78,7 +78,7 @@ interface RSCRouterOptions<TEnv> {
   // Document component wrapping entire app
   document?: ComponentType<{ children: ReactNode }>;
 
-  // Enable performance metrics
+  // Enable per-request performance timeline (console waterfall + Server-Timing header)
   debugPerformance?: boolean;
 
   // Default error boundary

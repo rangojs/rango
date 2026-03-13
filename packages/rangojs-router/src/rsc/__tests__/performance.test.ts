@@ -35,7 +35,6 @@ function createMatchResult() {
     diff: ["home"],
     params: {},
     routeName: "home",
-    serverTiming: "route-matching;dur=1.00",
   };
 }
 
@@ -63,21 +62,16 @@ function createRequestState(request: Request, metricsStore: MetricsStore) {
   return reqCtx;
 }
 
-describe("RSC performance logging", () => {
-  it("logs late RSC render spans after partial rendering", async () => {
+describe("RSC performance metrics recording", () => {
+  it("records rsc-serialize and render:total metrics after partial rendering", async () => {
     const request = new Request("http://localhost/home?_rsc_partial=1", {
       headers: { Accept: "text/x-component" },
     });
     const metricsStore = createMetricsStore();
     const reqCtx = createRequestState(request, metricsStore);
     const handlerCtx = createHandlerContext();
-    const logs: string[] = [];
 
-    vi.spyOn(console, "log").mockImplementation((...args: any[]) => {
-      logs.push(args.join(" "));
-    });
-
-    const response = await runWithRequestContext(reqCtx, () =>
+    await runWithRequestContext(reqCtx, () =>
       handleRscRendering(
         handlerCtx,
         request,
@@ -89,15 +83,12 @@ describe("RSC performance logging", () => {
       ),
     );
 
-    expect(response.headers.get("Server-Timing")).toContain("rsc-serialize");
     expect(metricsStore.metrics.map((metric) => metric.label)).toEqual(
       expect.arrayContaining(["rsc-serialize", "render:total"]),
     );
-    expect(logs.some((line) => line.includes("rsc-serialize"))).toBe(true);
-    expect(logs.some((line) => line.includes("render:total"))).toBe(true);
   });
 
-  it("logs late RSC render spans during action revalidation", async () => {
+  it("records rsc-serialize and render:total metrics during action revalidation", async () => {
     const request = new Request("http://localhost/home?_rsc_action=save", {
       method: "POST",
       headers: { Accept: "text/x-component" },
@@ -105,7 +96,6 @@ describe("RSC performance logging", () => {
     const metricsStore = createMetricsStore();
     const reqCtx = createRequestState(request, metricsStore);
     const handlerCtx = createHandlerContext();
-    const logs: string[] = [];
     const continuation: ActionContinuation = {
       returnValue: { ok: true, data: { saved: true } },
       actionStatus: 200,
@@ -117,11 +107,7 @@ describe("RSC performance logging", () => {
       },
     };
 
-    vi.spyOn(console, "log").mockImplementation((...args: any[]) => {
-      logs.push(args.join(" "));
-    });
-
-    const response = await runWithRequestContext(reqCtx, () =>
+    await runWithRequestContext(reqCtx, () =>
       revalidateAfterAction(
         handlerCtx,
         request,
@@ -132,11 +118,8 @@ describe("RSC performance logging", () => {
       ),
     );
 
-    expect(response.headers.get("Server-Timing")).toContain("rsc-serialize");
     expect(metricsStore.metrics.map((metric) => metric.label)).toEqual(
       expect.arrayContaining(["rsc-serialize", "render:total"]),
     );
-    expect(logs.some((line) => line.includes("rsc-serialize"))).toBe(true);
-    expect(logs.some((line) => line.includes("render:total"))).toBe(true);
   });
 });
