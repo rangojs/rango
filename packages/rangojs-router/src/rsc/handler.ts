@@ -139,7 +139,11 @@ export function createRSCHandler<
   let _ssrModulePromise: Promise<SSRModule> | undefined;
   const loadSSRModule: LoadSSRModule =
     process.env.NODE_ENV === "production"
-      ? () => (_ssrModulePromise ??= rawLoadSSRModule())
+      ? () =>
+          (_ssrModulePromise ??= rawLoadSSRModule().catch((err) => {
+            _ssrModulePromise = undefined;
+            throw err;
+          }))
       : rawLoadSSRModule;
 
   /**
