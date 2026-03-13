@@ -281,7 +281,7 @@ import type { RouteSearchParams, RouteParams } from "@rangojs/router";
 
 // RouteSearchParams<"name"> resolves the search schema to a typed object
 type SP = RouteSearchParams<"search">;
-// { q: string; page?: number; sort?: string }
+// { q: string | undefined; page?: number; sort?: string }
 
 // RouteParams<"name"> resolves URL params from the route pattern
 type P = RouteParams<"blogPost">;

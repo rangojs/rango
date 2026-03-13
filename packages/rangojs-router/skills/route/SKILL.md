@@ -103,8 +103,8 @@ export const SearchPage: Handler<"search"> = (ctx) => {
 ```
 
 Supported types: `"string"`, `"number"`, `"boolean"`, with `?` suffix for optional.
-Required params default to zero values when missing (`""`, `0`, `false`).
-Optional params are omitted from the result when not in the query string.
+Missing params are `undefined` regardless of required/optional. The required/optional
+distinction is a consumer-facing contract (for `href()` and `reverse()` autocomplete).
 
 Use `RouteSearchParams<"name">` and `RouteParams<"name">` to extract types for props:
 
