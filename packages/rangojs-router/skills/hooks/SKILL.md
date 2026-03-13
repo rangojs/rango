@@ -239,22 +239,6 @@ export const FileUploadLoader = createLoader(async (ctx) => {
 }, true); // true = fetchable (can be called from the client via load())
 ```
 
-### useLoaderData()
-
-Get all loader data in current context:
-
-```tsx
-"use client";
-import { useLoaderData } from "@rangojs/router/client";
-
-function DebugPanel() {
-  const allData = useLoaderData();
-  // Record<string, any> - Map of loader ID to data
-
-  return <pre>{JSON.stringify(allData, null, 2)}</pre>;
-}
-```
-
 ## Handle Hooks
 
 ### useHandle()
@@ -696,7 +680,6 @@ See `/links` for full URL generation guide including server-side `ctx.reverse`.
 | `useLinkStatus()`    | Link pending state                | { pending }                                     |
 | `useLoader()`        | Loader data (strict)              | data, isLoading, error                          |
 | `useFetchLoader()`   | Loader with on-demand fetch       | data, load, isLoading                           |
-| `useLoaderData()`    | All loader data                   | Record<string, any>                             |
 | `useHandle()`        | Accumulated handle data           | T (handle type)                                 |
 | `useAction()`        | Server action state               | state, error, result                            |
 | `useLocationState()` | History state (persists or flash) | T \| undefined                                  |

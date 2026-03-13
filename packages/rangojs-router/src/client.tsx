@@ -314,52 +314,6 @@ export {
 } from "./use-loader.js";
 
 /**
- * Hook to access all loader data in the current context
- *
- * Returns a record of all loader data available in the current outlet context
- * and all parent contexts. Useful for debugging or when you need access to
- * multiple loaders.
- *
- * @returns Record of loader name to data, or empty object if no loaders
- *
- * @example
- * ```tsx
- * "use client";
- * import { useLoaderData } from "rsc-router/client";
- *
- * export function DebugPanel() {
- *   const loaderData = useLoaderData();
- *   return <pre>{JSON.stringify(loaderData, null, 2)}</pre>;
- * }
- * ```
- */
-export function useLoaderData(): Record<string, any> {
-  const context = useContext(OutletContext);
-
-  // Collect all loader data from the context chain
-  // Child loaders override parent loaders with the same name
-  const result: Record<string, any> = {};
-  const stack: OutletContextValue[] = [];
-
-  // Build stack from current to root
-  let current: OutletContextValue | null | undefined = context;
-  while (current) {
-    stack.push(current);
-    current = current.parent;
-  }
-
-  // Apply from root to current (so children override parents)
-  for (let i = stack.length - 1; i >= 0; i--) {
-    const ctx = stack[i];
-    if (ctx.loaderData) {
-      Object.assign(result, ctx.loaderData);
-    }
-  }
-
-  return result;
-}
-
-/**
  * Client-safe createLoader factory
  *
  * Creates a loader definition that can be used with useLoader().

@@ -37,7 +37,7 @@ import {
   unobserveForPrefetch,
 } from "../prefetch/observer.js";
 
-// Touch device detection for hybrid strategy.
+// Touch device detection for adaptive strategy.
 // Checked once at module load (Link.tsx is "use client", runs only in browser).
 const isTouchDevice =
   typeof window !== "undefined" && window.matchMedia("(hover: none)").matches;
@@ -47,14 +47,14 @@ const isTouchDevice =
  * - "hover": Prefetch on mouse enter (direct, no queue)
  * - "viewport": Prefetch when link enters viewport (queued, waits for idle)
  * - "render": Prefetch on component mount regardless of visibility (queued, waits for idle)
- * - "hybrid": Hover on pointer devices, viewport on touch devices
+ * - "adaptive": Hover on pointer devices, viewport on touch devices
  * - "none": No prefetching (default)
  */
 export type PrefetchStrategy =
   | "hover"
   | "viewport"
   | "render"
-  | "hybrid"
+  | "adaptive"
   | "none";
 
 /**
@@ -181,9 +181,9 @@ export const Link: ForwardRefExoticComponent<
   const ctx = useContext(NavigationStoreContext);
   const isExternal = isExternalUrl(to);
 
-  // Resolve hybrid: viewport on touch devices, hover on pointer devices
+  // Resolve adaptive: viewport on touch devices, hover on pointer devices
   const resolvedStrategy =
-    prefetch === "hybrid" ? (isTouchDevice ? "viewport" : "hover") : prefetch;
+    prefetch === "adaptive" ? (isTouchDevice ? "viewport" : "hover") : prefetch;
 
   // Internal ref for viewport observation; merge with forwarded ref
   const internalRef = useRef<HTMLAnchorElement | null>(null);

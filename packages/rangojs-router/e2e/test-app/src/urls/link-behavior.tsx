@@ -74,10 +74,10 @@ export const linkBehaviorPatterns = urls(({ path }) => [
             <li>
               <Link
                 to="/blog/post-4"
-                prefetch="hybrid"
-                data-testid="link-prefetch-hybrid"
+                prefetch="adaptive"
+                data-testid="link-prefetch-adaptive"
               >
-                Blog Post 4 (prefetch hybrid)
+                Blog Post 4 (prefetch adaptive)
               </Link>
             </li>
           </ul>

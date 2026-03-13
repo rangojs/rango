@@ -17,7 +17,6 @@ export {
   OutletProvider,
   useOutlet,
   useLoader,
-  useLoaderData,
   ErrorBoundary,
   type ErrorBoundaryProps,
 } from "./client.js";
