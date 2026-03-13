@@ -49,14 +49,17 @@ describe("parseSearchParams", () => {
     ).toEqual({ x: false });
   });
 
-  it("should use zero values for missing required params", () => {
+  it("should omit missing required params (undefined)", () => {
     const sp = new URLSearchParams("");
     const result = parseSearchParams(sp, {
       q: "string",
       page: "number",
       active: "boolean",
     });
-    expect(result).toEqual({ q: "", page: 0, active: false });
+    expect(result).toEqual({});
+    expect("q" in result).toBe(false);
+    expect("page" in result).toBe(false);
+    expect("active" in result).toBe(false);
   });
 
   it("should omit missing optional params", () => {
@@ -84,7 +87,7 @@ describe("parseSearchParams", () => {
   it("should handle NaN for number params", () => {
     const sp = new URLSearchParams("page=abc");
     const requiredResult = parseSearchParams(sp, { page: "number" });
-    expect(requiredResult).toEqual({ page: 0 });
+    expect("page" in requiredResult).toBe(false);
 
     const optionalResult = parseSearchParams(sp, { page: "number?" });
     expect("page" in optionalResult).toBe(false);
@@ -143,19 +146,19 @@ describe("serializeSearchParams", () => {
 // ============================================================================
 
 describe("ResolveSearchSchema", () => {
-  it("should resolve required string", () => {
+  it("should resolve required string as string | undefined", () => {
     type S = ResolveSearchSchema<{ q: "string" }>;
-    expectTypeOf<S>().toEqualTypeOf<{ q: string }>();
+    expectTypeOf<S>().toEqualTypeOf<{ q: string | undefined }>();
   });
 
-  it("should resolve required number", () => {
+  it("should resolve required number as number | undefined", () => {
     type S = ResolveSearchSchema<{ page: "number" }>;
-    expectTypeOf<S>().toEqualTypeOf<{ page: number }>();
+    expectTypeOf<S>().toEqualTypeOf<{ page: number | undefined }>();
   });
 
-  it("should resolve required boolean", () => {
+  it("should resolve required boolean as boolean | undefined", () => {
     type S = ResolveSearchSchema<{ active: "boolean" }>;
-    expectTypeOf<S>().toEqualTypeOf<{ active: boolean }>();
+    expectTypeOf<S>().toEqualTypeOf<{ active: boolean | undefined }>();
   });
 
   it("should resolve optional string", () => {
@@ -180,7 +183,7 @@ describe("ResolveSearchSchema", () => {
       sort: "string?";
     }>;
     expectTypeOf<S>().toEqualTypeOf<{
-      q: string;
+      q: string | undefined;
       page?: number;
       sort?: string;
     }>();
@@ -214,7 +217,10 @@ describe("HandlerContext.searchParams and search types", () => {
 
   it("search should be typed object when search schema is provided", () => {
     type Ctx = HandlerContext<{}, any, { q: "string"; page: "number?" }>;
-    expectTypeOf<Ctx["search"]>().toEqualTypeOf<{ q: string; page?: number }>();
+    expectTypeOf<Ctx["search"]>().toEqualTypeOf<{
+      q: string | undefined;
+      page?: number;
+    }>();
   });
 });
 
@@ -230,7 +236,10 @@ describe("path() search schema type inference", () => {
         // searchParams is always URLSearchParams
         expectTypeOf(ctx.searchParams).toEqualTypeOf<URLSearchParams>();
         // search is the typed parsed object
-        expectTypeOf(ctx.search).toEqualTypeOf<{ q: string; page?: number }>();
+        expectTypeOf(ctx.search).toEqualTypeOf<{
+          q: string | undefined;
+          page?: number;
+        }>();
         return null;
       },
       { name: "search", search: { q: "string", page: "number?" } },
@@ -437,7 +446,10 @@ describe("RouteSearchParams (explicit route map)", () => {
 
   it("should resolve search schema with required and optional params", () => {
     type Search = RouteSearchParams<"search", TestRouteMap>;
-    expectTypeOf<Search>().toEqualTypeOf<{ q: string; page?: number }>();
+    expectTypeOf<Search>().toEqualTypeOf<{
+      q: string | undefined;
+      page?: number;
+    }>();
   });
 
   it("should resolve search schema on route with path params", () => {
@@ -489,7 +501,7 @@ describe("RouteParams + RouteSearchParams from urls() patterns", () => {
   it("should resolve search params from urls()-defined route", () => {
     type Search = RouteSearchParams<"search", Routes>;
     expectTypeOf<Search>().toEqualTypeOf<{
-      q: string;
+      q: string | undefined;
       page?: number;
       sort?: string;
     }>();

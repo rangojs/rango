@@ -1275,7 +1275,7 @@ describe("RouteSearchParams with mixed RSC + response routes", () => {
   it("should resolve search schema for RSC route with search", () => {
     type Search = RouteSearchParams<"search", MixedMerged>;
     expectTypeOf<Search>().toEqualTypeOf<{
-      q: string;
+      q: string | undefined;
       page?: number;
       sort?: string;
     }>();
