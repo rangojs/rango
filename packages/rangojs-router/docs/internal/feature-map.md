@@ -73,7 +73,6 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 | ---------------------- | -------------------------------- |
 | `useLoader`            | Access loader data               |
 | `useFetchLoader`       | Client-side fetch loader         |
-| `useLoaderData`        | All loader data in context       |
 | `useNavigation`        | Navigation state                 |
 | `useRouter`            | Imperative navigation            |
 | `usePathname`          | Current pathname                 |
@@ -133,7 +132,7 @@ URL pattern matching, middleware execution, segment resolution, error matching, 
 
 ### Data Loading
 
-- `loader()` declarations, `createLoader()`, `useLoader()`, `useFetchLoader()`, `useLoaderData()`
+- `loader()` declarations, `createLoader()`, `useLoader()`, `useFetchLoader()`
 - `fetchable` loader mode for cacheable JSON/resource paths
 
 ### Request Context and Server Helpers

@@ -24,10 +24,10 @@ export function PrefetchTestPage() {
         </Link>
       </section>
 
-      <section data-testid="hybrid-links">
-        <h2>Hybrid Links</h2>
-        <Link to="/magazine" prefetch="hybrid">
-          Magazine (hybrid)
+      <section data-testid="adaptive-links">
+        <h2>Adaptive Links</h2>
+        <Link to="/magazine" prefetch="adaptive">
+          Magazine (adaptive)
         </Link>
       </section>
 

@@ -762,7 +762,7 @@ test.describe("prefetch-viewport (dev)", () => {
     await expect.poll(() => prefetchRequests.length, { timeout: 5000 }).toBe(1);
   });
 
-  test("should resolve hybrid to hover on desktop", async ({
+  test("should resolve adaptive to hover on desktop", async ({
     page,
     devServerURL,
   }) => {
@@ -779,13 +779,13 @@ test.describe("prefetch-viewport (dev)", () => {
     await page.goto(devURL(devServerURL, "/prefetch-test"));
     await waitForHydration(page);
 
-    // On desktop (pointer device), hybrid resolves to hover.
+    // On desktop (pointer device), adaptive resolves to hover.
     // No prefetch should happen without hovering.
     await expectCountToRemain(expect, () => prefetchRequests.length, 0);
     expect(prefetchRequests.length).toBe(0);
 
-    // Hover the hybrid link — should trigger prefetch
-    await page.locator('a:has-text("Magazine (hybrid)")').hover();
+    // Hover the adaptive link — should trigger prefetch
+    await page.locator('a:has-text("Magazine (adaptive)")').hover();
 
     await expect.poll(() => prefetchRequests.length, { timeout: 5000 }).toBe(1);
   });
@@ -866,7 +866,7 @@ base.describe("prefetch-viewport (production)", () => {
       .toBe(1);
   });
 
-  base("should resolve hybrid to hover on desktop", async ({ page }) => {
+  base("should resolve adaptive to hover on desktop", async ({ page }) => {
     const prefetchRequests: string[] = [];
     page.on("request", (request) => {
       const url = request.url();
@@ -881,7 +881,7 @@ base.describe("prefetch-viewport (production)", () => {
     await expectCountToRemain(baseExpect, () => prefetchRequests.length, 0);
     baseExpect(prefetchRequests.length).toBe(0);
 
-    await page.locator('a:has-text("Magazine (hybrid)")').hover();
+    await page.locator('a:has-text("Magazine (adaptive)")').hover();
 
     await baseExpect
       .poll(() => prefetchRequests.length, { timeout: 5000 })

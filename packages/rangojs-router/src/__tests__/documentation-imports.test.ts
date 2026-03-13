@@ -45,7 +45,6 @@ const canonicalImportPaths: Record<string, string> = {
   useFetchLoader: "@rangojs/router/client",
   useHandle: "@rangojs/router/client",
   useLoader: "@rangojs/router/client",
-  useLoaderData: "@rangojs/router/client",
   useLocationState: "@rangojs/router/client",
   useOutlet: "@rangojs/router/client",
   useSegments: "@rangojs/router/client",

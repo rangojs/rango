@@ -515,7 +515,7 @@ function Nav() {
   return (
     <nav>
       <Link to={href("/")}>Home</Link>
-      <Link to={href("/blog")} prefetch="hybrid">
+      <Link to={href("/blog")} prefetch="adaptive">
         Blog
       </Link>
       <Link to={href("/about")}>About</Link>

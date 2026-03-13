@@ -218,7 +218,7 @@ test.describe("link-behavior", () => {
     expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("1");
   });
 
-  test("Link prefetch='hybrid' uses hover on pointer device", async ({
+  test("Link prefetch='adaptive' uses hover on pointer device", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -226,7 +226,7 @@ test.describe("link-behavior", () => {
     await page.goto(f.url("/link-behavior"));
     await waitForHydration(page);
 
-    // On desktop (pointer device), hybrid resolves to hover.
+    // On desktop (pointer device), adaptive resolves to hover.
     // Prefetch should fire on mouse enter, not automatically.
     const prefetchPromise = page.waitForRequest(
       (req) =>
@@ -236,7 +236,7 @@ test.describe("link-behavior", () => {
       { timeout: 5000 },
     );
 
-    await page.locator('[data-testid="link-prefetch-hybrid"]').hover();
+    await page.locator('[data-testid="link-prefetch-adaptive"]').hover();
 
     const prefetchReq = await prefetchPromise;
     expect(prefetchReq.url()).toContain("_rsc_partial");
@@ -434,7 +434,7 @@ test.describe("link-behavior (production)", () => {
     expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("1");
   });
 
-  test("Link prefetch='hybrid' uses hover on pointer device", async ({
+  test("Link prefetch='adaptive' uses hover on pointer device", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -450,7 +450,7 @@ test.describe("link-behavior (production)", () => {
       { timeout: 5000 },
     );
 
-    await page.locator('[data-testid="link-prefetch-hybrid"]').hover();
+    await page.locator('[data-testid="link-prefetch-adaptive"]').hover();
 
     const prefetchReq = await prefetchPromise;
     expect(prefetchReq.url()).toContain("_rsc_partial");
