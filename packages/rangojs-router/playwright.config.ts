@@ -56,6 +56,7 @@ export default defineConfig({
             "**/route-types-hmr.test.ts",
             "**/client-component-hmr.test.ts",
             "**/intercept-hmr*.test.ts",
+            "**/refresh-cmd.test.ts",
             "**/*.setup.ts",
           ],
           use: {
@@ -82,6 +83,7 @@ export default defineConfig({
             "**/loader-hmr.test.ts",
             "**/route-types-hmr.test.ts",
             "**/intercept-hmr*.test.ts",
+            "**/refresh-cmd.test.ts",
           ],
           use: browserConfig,
           fullyParallel: false,
@@ -122,6 +124,7 @@ export default defineConfig({
             "**/route-types-hmr.test.ts",
             "**/client-component-hmr.test.ts",
             "**/intercept-hmr*.test.ts",
+            "**/refresh-cmd.test.ts",
             "**/*.setup.ts",
           ],
           use: {
@@ -159,6 +162,7 @@ export default defineConfig({
             "**/loader-hmr.test.ts",
             "**/route-types-hmr.test.ts",
             "**/intercept-hmr*.test.ts",
+            "**/refresh-cmd.test.ts",
           ],
           use: browserConfig,
           // HMR tests modify files, run serially to avoid conflicts

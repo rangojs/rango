@@ -1,12 +1,13 @@
 /**
  * Public API for @rangojs/router/vite
  *
- * Only the rango() plugin factory and its option types are part of the
- * public API. All other utilities are internal implementation details
- * consumed via direct imports within the package.
+ * Exports: rango() plugin factory, poke() dev utility plugin,
+ * and related option types. All other utilities are internal implementation
+ * details consumed via direct imports within the package.
  */
 
 export { rango } from "./rango.js";
+export { poke } from "./plugins/refresh-cmd.js";
 
 export type {
   RangoNodeOptions,

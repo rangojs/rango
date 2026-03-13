@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import path from "path";
 import react from "@vitejs/plugin-react";
-import { rango } from "@rangojs/router/vite";
+import { rango, poke } from "@rangojs/router/vite";
 import devtoolsJson from "vite-plugin-devtools-json";
 
 export default defineConfig({
@@ -12,6 +12,7 @@ export default defineConfig({
       // Using virtual entries (no explicit entries specified)
     }),
     devtoolsJson(),
+    poke(),
   ],
   esbuild: {
     target: "es2022",

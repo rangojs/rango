@@ -22,7 +22,7 @@ Related docs:
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `.`              | Root entrypoint with shared types/utilities plus server/RSC APIs selected via the `react-server` export condition: `createRouter`, `createLoader`, `redirect`, `cookies()`, `headers()`, route DSL, errors, helpers, URL/route utilities, reverse lookup |
 | `./client`       | Client-side components and hooks (see [Client API](#client-api) below)                                                                                                                                                                                   |
-| `./vite`         | Public Vite plugin surface only: `rango()` and plugin option types                                                                                                                                                                                       |
+| `./vite`         | Public Vite plugin surface: `rango()`, `poke()`, and plugin option types                                                                                                                                                                                 |
 | `./browser`      | Browser bootstrap: `initBrowserApp`, `RSCRouter`, `InitBrowserAppOptions`                                                                                                                                                                                |
 | `./rsc`          | Advanced server request-pipeline APIs: `createRSCHandler`, request-context access, RSC handler types                                                                                                                                                     |
 | `./ssr`          | Advanced HTML rendering bridge: `createSSRHandler`, nonce/form-state/streamMode support                                                                                                                                                                  |
@@ -229,7 +229,7 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 
 ### Dev and HMR
 
-`rango()` plugin discovery, named-route generation, manifest virtual modules, parser/runtime route-type fallback, lazy loader id injection, duplicate plugin detection.
+`rango()` plugin discovery, named-route generation, manifest virtual modules, parser/runtime route-type fallback, lazy loader id injection, duplicate plugin detection. `poke()` — dev-only Vite plugin that listens for Ctrl+R on terminal stdin and triggers a full browser reload via HMR.
 
 ---
 
