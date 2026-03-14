@@ -74,6 +74,21 @@ describe("ExtractParams", () => {
     type Params = ExtractParams<"/user/:id/settings/:tab?">;
     expectTypeOf<Params>().toEqualTypeOf<{ id: string; tab?: string }>();
   });
+
+  it("should extract param name without suffix (.html)", () => {
+    type Params = ExtractParams<"/shop/:productId.html">;
+    expectTypeOf<Params>().toEqualTypeOf<{ productId: string }>();
+  });
+
+  it("should extract param name without suffix (.json)", () => {
+    type Params = ExtractParams<"/api/:resource.json">;
+    expectTypeOf<Params>().toEqualTypeOf<{ resource: string }>();
+  });
+
+  it("should extract suffix param with following segments", () => {
+    type Params = ExtractParams<"/files/:name.txt/meta">;
+    expectTypeOf<Params>().toEqualTypeOf<{ name: string }>();
+  });
 });
 
 describe("ParamsFor", () => {
