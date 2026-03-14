@@ -145,8 +145,17 @@ export async function evaluateRevalidation<TEnv>(
           segmentId: segment.id,
         });
       }
+    } else if (segment.belongsToRoute && paramsChanged) {
+      // Children of the route path (loaders, orphan layouts/parallels)
+      // revalidate when params change — they likely depend on route params
+      defaultShouldRevalidate = true;
+      defaultReason = "nav:route-child-params-changed";
+      debugLog("revalidation", "route child revalidating (params changed)", {
+        segmentId: segment.id,
+        segmentType: segment.type,
+      });
     } else {
-      // Layouts and parallels default to no revalidation
+      // Parent layouts and parallels default to no revalidation
       // Cannot assume these segments depend on params without explicit declaration
       // Use custom revalidation functions to opt-in when needed
       defaultShouldRevalidate = false;
