@@ -56,6 +56,11 @@ export interface RscMetadata {
    */
   version?: string;
   /**
+   * TTL in milliseconds for the client-side in-memory prefetch cache.
+   * Sent on initial render so the browser can configure its cache duration.
+   */
+  prefetchCacheTTL?: number;
+  /**
    * Theme configuration from router.
    * Included when theme is enabled in router config.
    */

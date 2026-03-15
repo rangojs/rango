@@ -258,9 +258,16 @@ export interface RSCRouterInternal<
 
   /**
    * Cache-Control header value for prefetch responses.
-   * False means no browser caching of prefetch responses.
+   * False means no caching of prefetch responses.
+   * Derived from prefetchCacheTTL.
    */
   readonly prefetchCacheControl: string | false;
+
+  /**
+   * TTL in milliseconds for the client-side in-memory prefetch cache.
+   * 0 means caching is disabled.
+   */
+  readonly prefetchCacheTTL: number;
 
   /**
    * Whether connection warmup is enabled.

@@ -45,6 +45,7 @@ function createHandlerContext(matchResult = createMatchResult()) {
       rootLayout: null,
       themeConfig: null,
       prefetchCacheControl: "private, max-age=300",
+      prefetchCacheTTL: 300_000,
     },
     version: "test-version",
     renderToReadableStream: vi.fn(() => new ReadableStream()),

@@ -183,14 +183,21 @@ test.describe("prefetch-on-hover (router mode)", () => {
     // Verify navigation completed
     await page.waitForURL("**/blog", { timeout: 5000 });
 
-    // Navigation sends its own fetch with X-Rango-State and X-RSC-Router-Client-Path.
-    // Browser HTTP cache should serve the prefetch response (matching Vary headers).
-    // Both requests should share the same X-Rango-State and Client-Path values.
+    // With in-memory prefetch cache, navigation consumes the cached
+    // response without making a second network request. Both prefetch
+    // and navigation use matching X-Rango-State and X-RSC-Router-Client-Path.
     const prefetchState = rscRequests[0]!.headers["x-rango-state"];
     expect(prefetchState).toBeDefined();
+    expect(rscRequests[0]!.headers["x-rango-prefetch"]).toBe("1");
     const prefetchClientPath =
       rscRequests[0]!.headers["x-rsc-router-client-path"];
     expect(prefetchClientPath).toBeDefined();
+
+    // Navigation should use the in-memory cache (1 request = cache hit).
+    // If the response wasn't fully buffered in time, navigation falls
+    // back to a network fetch (2 requests = cache miss, still valid).
+    expect(rscRequests.length).toBeGreaterThanOrEqual(1);
+    expect(rscRequests.length).toBeLessThanOrEqual(2);
 
     // If navigation made a request (cache miss), verify same header values
     if (rscRequests.length > 1) {
@@ -225,7 +232,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     devServerURL,
   }) => {
     // Vary should include X-Rango-State and X-RSC-Router-Client-Path on ALL RSC responses,
-    // not just those with the headers — ensures consistent browser cache behavior.
+    // not just those with the headers — ensures consistent cache behavior.
     const url = new URL("/shop", devServerURL);
     url.searchParams.set("_rsc_partial", "true");
 
@@ -475,6 +482,14 @@ base.describe("prefetch-on-hover (production)", () => {
       // Both requests should share the same X-Rango-State value
       const prefetchState = rscRequests[0]!.headers["x-rango-state"];
       baseExpect(prefetchState).toBeDefined();
+      baseExpect(rscRequests[0]!.headers["x-rango-prefetch"]).toBe("1");
+
+      // Navigation should use the in-memory cache (1 request = cache hit).
+      // If the response wasn't fully buffered in time, navigation falls
+      // back to a network fetch (2 requests = cache miss, still valid).
+      baseExpect(rscRequests.length).toBeGreaterThanOrEqual(1);
+      baseExpect(rscRequests.length).toBeLessThanOrEqual(2);
+
       if (rscRequests.length > 1) {
         baseExpect(rscRequests[1]!.headers["x-rango-state"]).toBe(
           prefetchState,
