@@ -147,7 +147,7 @@ export function createRouter<TEnv = any>(
     $$sourceFile: injectedSourceFile,
     nonce,
     version,
-    prefetchCacheControl: prefetchCacheControlOption,
+    prefetchCacheTTL: prefetchCacheTTLOption,
     warmup: warmupOption,
     allowDebugManifest: allowDebugManifestOption = false,
     telemetry: telemetrySink,
@@ -200,11 +200,17 @@ export function createRouter<TEnv = any>(
   const routerId =
     userProvidedId ?? injectedId ?? `router_${nextRouterAutoId()}`;
 
-  // Resolve prefetch cache control (default: 'private, max-age=300')
-  const prefetchCacheControl =
-    prefetchCacheControlOption !== undefined
-      ? prefetchCacheControlOption
-      : "private, max-age=300";
+  // Resolve prefetch cache TTL (default: 300 seconds / 5 minutes)
+  // Clamp to a non-negative integer for valid Cache-Control max-age.
+  const rawTTL =
+    prefetchCacheTTLOption !== undefined ? prefetchCacheTTLOption : 300;
+  const prefetchCacheTTLSeconds =
+    rawTTL === false ? 0 : Math.max(0, Math.floor(rawTTL));
+  const prefetchCacheTTL = prefetchCacheTTLSeconds * 1000;
+  const prefetchCacheControl: string | false =
+    prefetchCacheTTLSeconds === 0
+      ? false
+      : `private, max-age=${prefetchCacheTTLSeconds}`;
 
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;
@@ -879,8 +885,9 @@ export function createRouter<TEnv = any>(
     // Expose resolved cache profiles for per-request resolution
     cacheProfiles: resolvedCacheProfiles,
 
-    // Expose prefetch cache control for RSC handler
+    // Expose prefetch cache settings
     prefetchCacheControl,
+    prefetchCacheTTL,
 
     // Expose warmup enabled flag for handler and client
     warmupEnabled,

@@ -415,16 +415,21 @@ export interface RSCRouterOptions<TEnv = any> {
   version?: string;
 
   /**
-   * Cache-Control header value for prefetch responses.
-   * Only applied to non-intercept partial responses that include the
-   * `X-Rango-Prefetch` header (sent by the Link component's prefetch fetch).
-   * Navigation responses are never cached by the browser.
+   * TTL (in seconds) for the in-memory prefetch cache and the
+   * Cache-Control header on prefetch responses.
    *
-   * Set to `false` to disable browser caching of prefetch responses entirely.
+   * Controls how long prefetch responses are kept in the client-side
+   * in-memory cache and sets `Cache-Control: private, max-age=<ttl>`
+   * on server responses for CDN/edge caching.
    *
-   * @default "private, max-age=300"
+   * The cache is automatically invalidated on server actions regardless
+   * of TTL, so this is primarily a staleness safety net.
+   *
+   * Set to `false` to disable prefetch caching entirely.
+   *
+   * @default 300 (5 minutes)
    */
-  prefetchCacheControl?: string | false;
+  prefetchCacheTTL?: number | false;
 
   /**
    * Enable connection warmup to keep TCP+TLS alive after idle periods.

@@ -32,6 +32,8 @@ export interface RscPayload {
     handles?: AsyncGenerator<HandleData, void, unknown>;
     /** RSC version string for cache invalidation */
     version?: string;
+    /** TTL in milliseconds for the client-side in-memory prefetch cache */
+    prefetchCacheTTL?: number;
     /** Theme configuration for FOUC prevention */
     themeConfig?: ResolvedThemeConfig | null;
     /** Initial theme from cookie (for SSR hydration) */

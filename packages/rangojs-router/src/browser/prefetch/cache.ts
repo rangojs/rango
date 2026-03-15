@@ -13,7 +13,19 @@
 import { cancelAllPrefetches } from "./queue.js";
 import { invalidateRangoState } from "../rango-state.js";
 
-const PREFETCH_CACHE_TTL = 30_000; // 30 seconds
+// Default TTL: 5 minutes. Overridden by initPrefetchCache() with
+// the server-configured prefetchCacheTTL from router options.
+// 0 disables the in-memory cache entirely.
+let cacheTTL = 300_000;
+
+/**
+ * Initialize the prefetch cache with the configured TTL.
+ * Called once at app startup with the value from server metadata.
+ * A TTL of 0 disables the in-memory cache.
+ */
+export function initPrefetchCache(ttlMs: number): void {
+  cacheTTL = ttlMs;
+}
 const MAX_PREFETCH_CACHE_SIZE = 50;
 
 interface PrefetchCacheEntry {
@@ -44,9 +56,10 @@ export function buildPrefetchKey(sourceHref: string, targetUrl: URL): string {
  */
 export function hasPrefetch(key: string): boolean {
   if (inflight.has(key)) return true;
+  if (cacheTTL <= 0) return false;
   const entry = cache.get(key);
   if (!entry) return false;
-  if (Date.now() - entry.timestamp > PREFETCH_CACHE_TTL) {
+  if (Date.now() - entry.timestamp > cacheTTL) {
     cache.delete(key);
     return false;
   }
@@ -56,11 +69,13 @@ export function hasPrefetch(key: string): boolean {
 /**
  * Consume a cached prefetch response. Returns null if not found or expired.
  * One-time consumption: the entry is deleted after retrieval.
+ * Returns null when caching is disabled (TTL <= 0).
  */
 export function consumePrefetch(key: string): Response | null {
+  if (cacheTTL <= 0) return null;
   const entry = cache.get(key);
   if (!entry) return null;
-  if (Date.now() - entry.timestamp > PREFETCH_CACHE_TTL) {
+  if (Date.now() - entry.timestamp > cacheTTL) {
     cache.delete(key);
     return null;
   }
@@ -81,12 +96,13 @@ export function storePrefetch(
   response: Response,
   fetchGeneration: number,
 ): void {
+  if (cacheTTL <= 0) return;
   if (fetchGeneration !== generation) return;
 
   // Evict expired entries
   const now = Date.now();
   for (const [k, entry] of cache) {
-    if (now - entry.timestamp > PREFETCH_CACHE_TTL) {
+    if (now - entry.timestamp > cacheTTL) {
       cache.delete(k);
     }
   }

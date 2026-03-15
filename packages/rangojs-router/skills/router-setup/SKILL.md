@@ -108,6 +108,11 @@ interface RSCRouterOptions<TEnv> {
   // Connection warmup (default: true)
   warmup?: boolean;
 
+  // Prefetch cache TTL in seconds (default: 300)
+  // Controls in-memory cache duration and Cache-Control max-age for prefetch responses.
+  // Set to false to disable prefetch caching.
+  prefetchCacheTTL?: number | false;
+
   // CSP nonce provider (for router.fetch)
   nonce?: (
     request: Request,

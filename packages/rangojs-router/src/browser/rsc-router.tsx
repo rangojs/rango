@@ -22,6 +22,7 @@ import type {
 import type { EventController } from "./event-controller.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 import { initRangoState } from "./rango-state.js";
+import { initPrefetchCache } from "./prefetch/cache.js";
 import {
   isInterceptSegment,
   splitInterceptSegments,
@@ -201,9 +202,16 @@ export async function initBrowserApp(
   const rootLayout = initialPayload.metadata?.rootLayout;
   const version = initialPayload.metadata?.version;
 
-  // Initialize the localStorage state key for browser HTTP cache invalidation.
+  // Initialize the localStorage state key for cache invalidation.
   // Uses the build version so a new deploy automatically busts all cached prefetches.
   initRangoState(version ?? "0");
+
+  // Initialize the in-memory prefetch cache TTL from server config.
+  // A value of 0 disables the cache; undefined falls back to the module default.
+  const prefetchCacheTTL = initialPayload.metadata?.prefetchCacheTTL;
+  if (prefetchCacheTTL !== undefined) {
+    initPrefetchCache(prefetchCacheTTL);
+  }
 
   // Create a bound renderSegments that includes rootLayout
   const renderSegments = (

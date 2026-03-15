@@ -84,9 +84,9 @@ describe("prefetch cache", () => {
     const response = new Response("test body");
     storePrefetch(key, response, gen);
 
-    // Fast-forward past TTL (30s)
+    // Fast-forward past TTL (5 minutes)
     vi.useFakeTimers();
-    vi.advanceTimersByTime(31_000);
+    vi.advanceTimersByTime(301_000);
 
     expect(consumePrefetch(key)).toBe(null);
     expect(hasPrefetch(key)).toBe(false);

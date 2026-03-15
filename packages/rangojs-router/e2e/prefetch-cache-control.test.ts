@@ -5,7 +5,7 @@ import { useFixture } from "./fixture";
  * Tests for prefetch Cache-Control and Vary headers.
  *
  * The test-app router is configured with:
- *   prefetchCacheControl: "private, max-age=60"
+ *   prefetchCacheTTL: 60
  *
  * Prefetch uses fetch() with X-Rango-State + X-Rango-Prefetch headers.
  * Server responds with Vary on custom headers so navigation fetch
