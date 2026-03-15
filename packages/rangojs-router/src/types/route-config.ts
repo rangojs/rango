@@ -24,17 +24,26 @@ type ParseConstraint<T extends string> =
  * - :param(a|b)? -> { name: "param", optional: true, type: "a" | "b" }
  */
 type ExtractParamInfo<T extends string> =
-  // Optional + constrained: :param(a|b)?
-  T extends `${infer Name}(${infer Constraint})?`
+  // Optional + constrained (with optional suffix): :param(a|b)?suffix
+  T extends `${infer Name}(${infer Constraint})?${string}`
     ? { name: Name; optional: true; type: ParseConstraint<Constraint> }
-    : // Constrained only: :param(a|b)
-      T extends `${infer Name}(${infer Constraint})`
+    : // Constrained (with optional suffix): :param(a|b)suffix
+      T extends `${infer Name}(${infer Constraint})${string}`
       ? { name: Name; optional: false; type: ParseConstraint<Constraint> }
-      : // Optional only: :param?
-        T extends `${infer Name}?`
+      : // Optional (with optional suffix): :param?suffix
+        T extends `${infer Name}?${string}`
         ? { name: Name; optional: true; type: string }
-        : // Required: :param
-          { name: T; optional: false; type: string };
+        : // Param with dot-suffix: :param.html
+          T extends `${infer Name}.${string}`
+          ? { name: Name; optional: false; type: string }
+          : // Param with dash-suffix: :param-slug
+            T extends `${infer Name}-${string}`
+            ? { name: Name; optional: false; type: string }
+            : // Param with tilde-suffix: :param~v2
+              T extends `${infer Name}~${string}`
+              ? { name: Name; optional: false; type: string }
+              : // Required: :param (no suffix)
+                { name: T; optional: false; type: string };
 
 /**
  * Build param object from info

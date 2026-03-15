@@ -16,6 +16,7 @@ export interface ParsedSegment {
   value: string; // static text, param name, or "*"
   optional: boolean;
   constraint?: string[]; // enum values like ["en", "gb"]
+  suffix?: string; // literal text after param in same segment (e.g., ".html")
 }
 
 /**
@@ -39,11 +40,21 @@ export function parsePattern(pattern: string): ParsedSegment[] {
   // - :param(a|b)?
   // - *
   const segmentRegex =
-    /\/(:([a-zA-Z_][a-zA-Z0-9_]*)(\(([^)]+)\))?(\?)?|(\*)|([^/]+))/g;
+    /\/(:([a-zA-Z_][a-zA-Z0-9_]*)(\(([^)]+)\))?(\?)?([^/]*)|(\*)|([^/]+))/g;
 
   let match;
   while ((match = segmentRegex.exec(pattern)) !== null) {
-    const [, , paramName, , constraint, optional, wildcard, staticText] = match;
+    const [
+      ,
+      ,
+      paramName,
+      ,
+      constraint,
+      optional,
+      suffix,
+      wildcard,
+      staticText,
+    ] = match;
 
     if (wildcard) {
       segments.push({ type: "wildcard", value: "*", optional: false });
@@ -53,6 +64,7 @@ export function parsePattern(pattern: string): ParsedSegment[] {
         value: paramName,
         optional: optional === "?",
         constraint: constraint ? constraint.split("|") : undefined,
+        suffix: suffix || undefined,
       });
     } else if (staticText) {
       segments.push({ type: "static", value: staticText, optional: false });
@@ -139,16 +151,19 @@ export function compilePattern(pattern: string): CompiledPattern {
       regexPattern += "/(.*)";
     } else if (segment.type === "param") {
       paramNames.push(segment.value);
+      const suffixPattern = segment.suffix ? escapeRegex(segment.suffix) : "";
       const valuePattern = segment.constraint
         ? `(${segment.constraint.map(escapeRegex).join("|")})`
-        : "([^/]+)";
+        : segment.suffix
+          ? "([^/]+?)"
+          : "([^/]+)";
 
       if (segment.optional) {
         optionalParams.add(segment.value);
         // Optional: make the whole /segment optional
-        regexPattern += `(?:/${valuePattern})?`;
+        regexPattern += `(?:/${valuePattern}${suffixPattern})?`;
       } else {
-        regexPattern += `/${valuePattern}`;
+        regexPattern += `/${valuePattern}${suffixPattern}`;
       }
     } else {
       // Static segment

@@ -84,6 +84,7 @@ export async function evaluateRevalidation<TEnv>(
   } = options;
   const nextParams = segment.params || {};
   const paramsChanged = !paramsEqual(nextParams, prevParams);
+  const searchChanged = prevUrl.search !== nextUrl.search;
 
   // Trace helper: push a structured entry to the request-scoped trace buffer.
   // Guarded by isTraceActive() so object construction is skipped in production.
@@ -134,19 +135,38 @@ export async function evaluateRevalidation<TEnv>(
     // Only the route segment revalidates by default - all others require explicit opt-in
 
     if (segment.type === "route") {
-      // Route segments revalidate when params change
-      // Routes are the primary param-dependent content and always need updates
-      defaultShouldRevalidate = paramsChanged;
+      // Route segments revalidate when path params OR search params change.
+      // Search params (e.g., ?page=2&sort=price) are server-parsed via ctx.search,
+      // so the handler must re-execute to produce updated content.
+      const routeChanged = paramsChanged || searchChanged;
+      defaultShouldRevalidate = routeChanged;
       defaultReason = paramsChanged
         ? "nav:params-changed"
-        : "nav:params-unchanged";
-      if (paramsChanged) {
-        debugLog("revalidation", "route params changed, revalidating", {
+        : searchChanged
+          ? "nav:search-changed"
+          : "nav:params-unchanged";
+      if (routeChanged) {
+        debugLog("revalidation", "route revalidating", {
           segmentId: segment.id,
+          paramsChanged,
+          searchChanged,
         });
       }
+    } else if (segment.belongsToRoute && (paramsChanged || searchChanged)) {
+      // Children of the route path (loaders, orphan layouts/parallels)
+      // revalidate when path params or search params change
+      defaultShouldRevalidate = true;
+      defaultReason = paramsChanged
+        ? "nav:route-child-params-changed"
+        : "nav:route-child-search-changed";
+      debugLog("revalidation", "route child revalidating", {
+        segmentId: segment.id,
+        segmentType: segment.type,
+        paramsChanged,
+        searchChanged,
+      });
     } else {
-      // Layouts and parallels default to no revalidation
+      // Parent layouts and parallels default to no revalidation
       // Cannot assume these segments depend on params without explicit declaration
       // Use custom revalidation functions to opt-in when needed
       defaultShouldRevalidate = false;

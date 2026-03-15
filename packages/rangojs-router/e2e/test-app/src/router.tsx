@@ -62,6 +62,8 @@ export interface AppVariables {
   alsRequestId?: string;
   alsActionProbe?: string;
   alsActionCustomProbe?: string;
+  // Middleware ctx parity test variable
+  mwVarTest?: string;
 }
 
 export type AppEnv = AppBindings;
@@ -172,7 +174,7 @@ export const router = createRouter<AppEnv>({
     short: { ttl: 10, swr: 20 },
     "swr-test": { ttl: 2, swr: 60 },
   },
-  prefetchCacheControl: "private, max-age=60",
+  prefetchCacheTTL: 60,
   theme: {
     defaultTheme: "light",
     themes: ["light", "dark", "system"],

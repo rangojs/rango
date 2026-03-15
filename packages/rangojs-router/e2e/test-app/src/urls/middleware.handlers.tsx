@@ -192,14 +192,6 @@ export const MiddlewareRouteLevelHandler: Handler<
   );
 };
 
-export const MiddlewareW5RedirectHandler: Handler<
-  "middlewareTest.w5Redirect"
-> = () => (
-  <div data-testid="middleware-test-w5-redirect">
-    <h1>This should never render (middleware redirects)</h1>
-  </div>
-);
-
 export const MiddlewareCookiesAfterNextHandler: Handler<
   "middlewareTest.cookiesAfterNext"
 > = () => (
@@ -225,6 +217,19 @@ export const MiddlewareRouteCookiesAfterNextHandler: Handler<
     </p>
   </div>
 );
+
+export const MiddlewareCtxParityHandler: Handler<"middlewareTest.ctxParity"> = (
+  ctx,
+) => {
+  const varValue = ctx.get("mwVarTest");
+  return (
+    <div data-testid="middleware-test-ctx-parity">
+      <h1 data-testid="ctx-parity-title">Middleware Context Parity Test</h1>
+      <div data-testid="ctx-parity-var-value">{varValue || "not set"}</div>
+      <div data-testid="ctx-parity-theme">{ctx.theme ?? "no-theme"}</div>
+    </div>
+  );
+};
 
 export const MiddlewareRouteLevelWithParamsHandler: Handler<
   "middlewareTest.routeLevelWithParams"

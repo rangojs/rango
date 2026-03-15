@@ -5,7 +5,7 @@ import { useFixture } from "./fixture";
  * Tests for prefetch Cache-Control and Vary headers.
  *
  * The test-app router is configured with:
- *   prefetchCacheControl: "private, max-age=60"
+ *   prefetchCacheTTL: 60
  *
  * Prefetch uses fetch() with X-Rango-State + X-Rango-Prefetch headers.
  * Server responds with Vary on custom headers so navigation fetch
@@ -50,6 +50,8 @@ test.describe("prefetch-cache-control (dev)", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBeNull();
+    // Navigation responses include X-RSC-Router-Client-Path in Vary
+    // (source-dependent diff), unlike prefetch which omits it
     expect(res.headers.get("vary")).toBe(
       "accept, X-Rango-State, X-RSC-Router-Client-Path",
     );

@@ -52,6 +52,10 @@ import {
   ProductReviewsPage,
   CatchAllPage,
 } from "./pages/trie-routing-test.js";
+import {
+  ShopProductPage,
+  ShopCategoryPage,
+} from "./pages/suffix-params-test.js";
 import { CookieOverlayPage } from "./pages/cookie-overlay.js";
 import { ActionLocationStatePage } from "./pages/action-location-state.js";
 
@@ -201,6 +205,10 @@ export const urlpatterns = urls(
       },
       { name: "testMimeAny" },
     ),
+    // Suffix param test routes (e.g. /shop/:productId.html)
+    path("/shop/:productId.html", ShopProductPage, { name: "shopProduct" }),
+    path("/shop/:categoryId", ShopCategoryPage, { name: "shopCategory" }),
+
     // Trie routing bug test routes (constraint fallback + param name collision)
     path("/:locale(en|fr)/info", LocaleInfoPage, { name: "localeInfo" }),
     path("/item/:itemId/detail", ItemDetailPage, { name: "itemDetail" }),
