@@ -1,6 +1,6 @@
 # Runtime Guardrails: Warning Design
 
-Status: Partial (W3, W5 shipped; W1 removed; W2 reframed as docs/tests
+Status: Partial (W3 shipped; W1 removed; W2 reframed as docs/tests
 contract; W4, W6 deferred — see stability-roadmap.md Phase 3)
 
 Design doc for Phase 3 of stability-roadmap.md (line 126).
@@ -179,55 +179,6 @@ This is lower priority due to complexity. Consider deferring to Phase 4
 
 ---
 
-## W5: Redirect after ctx.set() discards render-only state
-
-### Trigger condition
-
-A route middleware calls `ctx.set()` to provide data for the render pass,
-then returns a redirect (early Response with 3xx status). The redirect
-skips rendering entirely, so the context variables are never consumed.
-If the user intended the data to be available after redirect, it won't be —
-`ctx.set()` values are per-request and do not survive redirects.
-
-Note: `ctx.header()` and `ctx.cookie()` mutations are NOT affected.
-`executeMiddleware()` explicitly merges stub headers (including Set-Cookie)
-into middleware-returned Responses (`middleware.ts:322-352`). Only
-`ctx.set()` render-scoped state is lost.
-
-### Where detection happens
-
-**Runtime in `executeMiddleware()`**: after a middleware returns a Response
-(the short-circuit path at `middleware.ts:322`), check if the variables
-object gained new entries during this middleware pass. If the Response is a
-redirect (3xx) and variables were set, warn.
-
-Track this by snapshotting `Object.keys(variables).length` (plus symbol
-count) before executing the middleware chain. After short-circuit, compare.
-
-### Warning text
-
-```
-[rango] Route middleware on "<routeKey>" called ctx.set() then returned a
-redirect. Context variables are per-request and won't be available on the
-redirect target. Use cookies to persist state across redirects, or move
-ctx.set() to the target route's middleware.
-```
-
-### Confidence / false-positive risk
-
-**Medium confidence, low false-positive risk.** Setting render-scoped state
-then redirecting is almost always a mistake — the render never runs to
-consume it. The only edge case is middleware that sets variables
-"speculatively" before deciding to redirect, which is unusual but valid.
-
-Mitigations:
-
-- Only warn for `ctx.set()` + redirect, not for `ctx.header()`/`ctx.cookie()`.
-- Fire once per route key per process.
-
-### Tests needed
-
-1. Unit test: `ctx.set()` + redirect triggers warning.
 2. Unit test: `ctx.cookie()` + redirect does not warn.
 3. Unit test: `ctx.header()` + redirect does not warn.
 4. Unit test: redirect without `ctx.set()` does not warn.
@@ -296,10 +247,9 @@ has higher confidence).
 | --- | ----------------------------------------- | ---------- | ---------- | ------------- |
 | W1  | ~~Middleware != action guard~~            | ~~High~~   | ~~Low~~    | **Removed**   |
 | W3  | PE Response dropped                       | High       | Low        | **Shipped**   |
-| W5  | Redirect after ctx.set()                  | Medium     | Medium     | **Shipped**   |
 | W2  | Upstream ctx.set contract docs/tests only | N/A        | Low        | **Docs/Test** |
 | W4  | Cache vs revalidation conflict            | Medium     | High       | **P2**        |
 | W6  | Action headers dropped                    | Low-Med    | High       | **P3**        |
 
 W1 was removed — route middleware on action routes is normal behavior, not
-a misuse. W3 and W5 remain as the shipped guardrails.
+a misuse. W3 remains as the shipped guardrail.

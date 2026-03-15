@@ -12,6 +12,8 @@ import type {
   DefaultVars,
 } from "../types/global-namespace.js";
 import type { ScopedReverseFunction } from "../reverse.js";
+import type { Theme } from "../theme/types.js";
+import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
 
 /**
  * Get variable function type
@@ -79,11 +81,24 @@ export interface MiddlewareContext<
    */
   readonly res: Response;
 
+  /**
+   * Shorthand for ctx.res.headers — response headers.
+   * Before `next()`, returns headers from the shared response stub.
+   * After `next()`, returns headers from the downstream response.
+   */
+  readonly headers: Headers;
+
   /** Get a context variable (shared with route handlers) */
   get: GetVariableFn;
 
   /** Set a context variable (shared with route handlers) */
   set: SetVariableFn;
+
+  /**
+   * Middleware-injected variables.
+   * Same shared dictionary as `ctx.get()`/`ctx.set()`.
+   */
+  var: DefaultVars;
 
   /**
    * Set a response header - can be called before or after `next()`
@@ -112,6 +127,25 @@ export interface MiddlewareContext<
    * but misses all upstream metrics.
    */
   debugPerformance(): void;
+
+  /**
+   * Current theme (from cookie or default).
+   * Only available when theme is enabled in router config.
+   */
+  theme?: Theme;
+
+  /**
+   * Set the theme (only available when theme is enabled in router config).
+   * Sets a cookie with the new theme value.
+   */
+  setTheme?: (theme: Theme) => void;
+
+  /**
+   * Attach location state entries to this response.
+   * State is delivered to the client via history.pushState and accessible
+   * through the useLocationState() hook.
+   */
+  setLocationState(entries: LocationStateEntry | LocationStateEntry[]): void;
 
   /**
    * Generate URLs from route names.

@@ -143,8 +143,7 @@ Partially covered — remaining dev-only subsections are documented:
   assertions, proactive caching log verification (behavioral surface covered by
   cloudflare-basic production tests)
 - `app-middleware.test.ts` — production covers core middleware, redirects,
-  short-circuit, W5 behavior, cookies, auth, intercept middleware, and loader
-  middleware. Remaining dev-only: W5 warning test (dev-only log assertion)
+  short-circuit, cookies, auth, intercept middleware, and loader middleware.
 
 Production coverage gaps closed during the 2026-03-10 stabilization pass:
 
@@ -253,7 +252,7 @@ Files covered:
 - `cache.test.ts` — intercept behavioral + useLoader production blocks added;
   log-based and proactive caching tests documented as intentionally dev-only
 - `app-middleware.test.ts` — cookie, auth, intercept, and loader middleware
-  production blocks added. Only remaining dev-only: W5 warning test
+  production blocks added.
 - `response-handler.test.ts` — full production mirror
 - `handle-meta.test.ts` — high-signal production subset
 - `route-resolution.test.ts` — production block added

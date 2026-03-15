@@ -696,6 +696,62 @@ test.describe("app-middleware (dev)", () => {
     });
   });
 
+  test.describe("ctx-parity", () => {
+    test("ctx.headers sets headers before and after next()", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const responsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/middleware-test/ctx-parity") &&
+          response.status() === 200,
+      );
+      await page.goto(f.url("/middleware-test/ctx-parity"));
+      const response = await responsePromise;
+
+      expect(response.headers()["x-mw-headers-before"]).toBe("set-before-next");
+      expect(response.headers()["x-mw-headers-after"]).toBe("set-after-next");
+    });
+
+    test("ctx.var shares variables with handler", async ({ page }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/middleware-test/ctx-parity"));
+      await waitForHydration(page);
+
+      await expect(
+        page.locator('[data-testid="ctx-parity-var-value"]'),
+      ).toContainText("from-ctx-var");
+    });
+
+    test("ctx.theme and ctx.setTheme work in middleware", async ({ page }) => {
+      using _ = expectNoPageError(page);
+      const responsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/middleware-test/ctx-parity") &&
+          response.status() === 200,
+      );
+      await page.goto(f.url("/middleware-test/ctx-parity"));
+      const response = await responsePromise;
+
+      expect(response.headers()["x-mw-theme-before"]).toBe("light");
+      expect(response.headers()["x-mw-theme-after"]).toBe("dark");
+
+      await waitForHydration(page);
+      await expect(
+        page.locator('[data-testid="ctx-parity-theme"]'),
+      ).toContainText("dark");
+    });
+
+    test("ctx.setLocationState does not throw", async ({ page }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/middleware-test/ctx-parity"));
+      await waitForHydration(page);
+      await expect(
+        page.locator('[data-testid="ctx-parity-title"]'),
+      ).toBeVisible();
+    });
+  });
+
   test.describe("loader-middleware", () => {
     test("loader middleware should reject unauthorized requests", async ({
       request,
@@ -778,30 +834,6 @@ test.describe("cookies-after-next (dev)", () => {
       f.url("/middleware-test/route-cookies-after-next"),
       ["route_session=xyz789", "HttpOnly", "route-post-next=applied"],
     );
-  });
-});
-
-test.describe("W5: ctx.set() then redirect warning (dev)", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-    isolatedServer: true,
-  });
-
-  test("route middleware that calls ctx.set() then redirects should emit dev warning", async ({
-    page,
-  }) => {
-    const stderrBefore = f.proc().stderr();
-
-    await page.goto(f.url("/middleware-test/w5-redirect"));
-
-    // Middleware redirects to /middleware-test
-    await expect(page).toHaveURL(/\/middleware-test(?:\?|$)/);
-
-    const newStderr = f.proc().stderr().slice(stderrBefore.length);
-    expect(newStderr).toContain("ctx.set()");
-    expect(newStderr).toContain("redirect");
-    expect(newStderr).toContain("w5SetThenRedirect");
   });
 });
 
@@ -910,20 +942,6 @@ test.describe("app-middleware (production)", () => {
     // Global middleware headers should still be present
     expect(response.headers()["x-global-middleware"]).toBe("applied");
     expect(response.headers()["x-header-shorthand"]).toBe("works");
-  });
-
-  test("W5: ctx.set() then redirect should still redirect in production (no warning)", async ({
-    page,
-  }) => {
-    await page.goto(f.url("/middleware-test/w5-redirect"));
-
-    // Middleware redirects to /middleware-test
-    await expect(page).toHaveURL(/\/middleware-test(?:\?|$)/);
-
-    await waitForHydration(page);
-    await expect(
-      page.locator('[data-testid="middleware-test-title"]'),
-    ).toBeVisible();
   });
 
   test("cookie middleware should set and increment visit count in production", async ({
@@ -1122,5 +1140,67 @@ test.describe("app-middleware (production)", () => {
       f.url("/middleware-test/route-cookies-after-next"),
       ["route_session=xyz789", "HttpOnly", "route-post-next=applied"],
     );
+  });
+
+  test.describe("ctx-parity (production)", () => {
+    test("ctx.headers sets headers before and after next() in production", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const responsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/middleware-test/ctx-parity") &&
+          response.status() === 200,
+      );
+      await page.goto(f.url("/middleware-test/ctx-parity"));
+      const response = await responsePromise;
+
+      expect(response.headers()["x-mw-headers-before"]).toBe("set-before-next");
+      expect(response.headers()["x-mw-headers-after"]).toBe("set-after-next");
+    });
+
+    test("ctx.var shares variables with handler in production", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/middleware-test/ctx-parity"));
+      await waitForHydration(page);
+
+      await expect(
+        page.locator('[data-testid="ctx-parity-var-value"]'),
+      ).toContainText("from-ctx-var");
+    });
+
+    test("ctx.theme and ctx.setTheme work in middleware in production", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const responsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/middleware-test/ctx-parity") &&
+          response.status() === 200,
+      );
+      await page.goto(f.url("/middleware-test/ctx-parity"));
+      const response = await responsePromise;
+
+      expect(response.headers()["x-mw-theme-before"]).toBe("light");
+      expect(response.headers()["x-mw-theme-after"]).toBe("dark");
+
+      await waitForHydration(page);
+      await expect(
+        page.locator('[data-testid="ctx-parity-theme"]'),
+      ).toContainText("dark");
+    });
+
+    test("ctx.setLocationState does not throw in production", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/middleware-test/ctx-parity"));
+      await waitForHydration(page);
+      await expect(
+        page.locator('[data-testid="ctx-parity-title"]'),
+      ).toBeVisible();
+    });
   });
 });
