@@ -62,6 +62,8 @@ export interface AppVariables {
   alsRequestId?: string;
   alsActionProbe?: string;
   alsActionCustomProbe?: string;
+  // Middleware ctx parity test variable
+  mwVarTest?: string;
 }
 
 export type AppEnv = AppBindings;

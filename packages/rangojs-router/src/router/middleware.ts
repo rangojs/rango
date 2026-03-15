@@ -34,22 +34,6 @@ export type {
 } from "./middleware-types.js";
 export { parseCookies, serializeCookie } from "./middleware-cookies.js";
 
-// W5: Deduplicate by function reference so each distinct middleware warns once,
-// regardless of whether it is named or anonymous.
-let warnedRedirectMiddleware = new WeakSet<Function>();
-
-function warnCtxSetBeforeRedirect(handler: Function): void {
-  if (warnedRedirectMiddleware.has(handler)) return;
-  warnedRedirectMiddleware.add(handler);
-  const label = handler.name || "(anonymous)";
-  console.warn(
-    `[rango] Route middleware "${label}" called ctx.set() then returned a ` +
-      `redirect. Context variables are per-request and won't be available ` +
-      `on the redirect target. Use cookies to persist state across ` +
-      `redirects, or move ctx.set() to the target route's middleware.`,
-  );
-}
-
 const MIDDLEWARE_METRIC_DEPTH = 1;
 /** Ignore post-next() durations below this threshold (measurement noise). */
 const POST_METRIC_MIN_DURATION_MS = 0.01;
@@ -73,11 +57,6 @@ function getMiddlewareMetricLabel<TEnv>(
   ordinal: number,
 ): string {
   return `middleware:${getMiddlewareMetricBase(entry, ordinal)}`;
-}
-
-/** Reset W5 deduplication state (for tests only). */
-export function _resetW5Warnings(): void {
-  warnedRedirectMiddleware = new WeakSet();
 }
 
 /**
@@ -221,12 +200,18 @@ export function createMiddlewareContext<TEnv>(
       );
     },
 
+    get headers(): Headers {
+      return this.res.headers;
+    },
+
     get: ((keyOrVar: any) =>
       contextGet(variables, keyOrVar)) as MiddlewareContext<TEnv>["get"],
 
     set: ((keyOrVar: any, value: unknown) => {
       contextSet(variables, keyOrVar, value);
     }) as MiddlewareContext<TEnv>["set"],
+
+    var: variables as MiddlewareContext<TEnv>["var"],
 
     header(name: string, value: string): void {
       // Before next(): delegate to shared RequestContext stub
@@ -244,6 +229,24 @@ export function createMiddlewareContext<TEnv>(
         );
       }
       responseHolder.response.headers.set(name, value);
+    },
+
+    get theme(): MiddlewareContext<TEnv>["theme"] {
+      return _getRequestContext()?.theme;
+    },
+
+    get setTheme(): MiddlewareContext<TEnv>["setTheme"] {
+      return _getRequestContext()?.setTheme;
+    },
+
+    setLocationState(entries) {
+      const reqCtx = _getRequestContext();
+      if (!reqCtx) {
+        throw new Error(
+          "setLocationState() is not available outside a request context",
+        );
+      }
+      reqCtx.setLocationState(entries);
     },
 
     reverse:
@@ -425,16 +428,6 @@ export async function executeMiddleware<TEnv>(
       return nextPromise;
     };
 
-    // W5: track whether ctx.set() is called during this middleware
-    let ctxSetCalled = false;
-    if (process.env.NODE_ENV !== "production") {
-      const originalSet = ctx.set;
-      ctx.set = ((...args: any[]) => {
-        ctxSetCalled = true;
-        return (originalSet as Function).apply(ctx, args);
-      }) as typeof ctx.set;
-    }
-
     let result: Response | void;
     try {
       result = await entry.handler(ctx, wrappedNext);
@@ -464,16 +457,6 @@ export async function executeMiddleware<TEnv>(
     // RequestContext stub headers (from ctx.setCookie) into the
     // returned Response so they are not lost.
     if (result instanceof Response) {
-      // W5: warn if ctx.set() was called but middleware returned a redirect
-      if (
-        process.env.NODE_ENV !== "production" &&
-        ctxSetCalled &&
-        result.status >= 300 &&
-        result.status < 400
-      ) {
-        warnCtxSetBeforeRedirect(entry.handler);
-      }
-
       const mergedHeaders = new Headers(result.headers);
       stubResponse.headers.forEach((value, name) => {
         if (name.toLowerCase() === "set-cookie") {
@@ -524,19 +507,6 @@ export async function executeMiddleware<TEnv>(
     // If middleware called next(), await it and return the response
     if (nextPromise) {
       await nextPromise;
-
-      // W5: warn if ctx.set() was called but the downstream response is a redirect.
-      // The ctx.set() values will be lost because the redirect navigates away.
-      if (
-        process.env.NODE_ENV !== "production" &&
-        ctxSetCalled &&
-        responseHolder.response &&
-        responseHolder.response.status >= 300 &&
-        responseHolder.response.status < 400
-      ) {
-        warnCtxSetBeforeRedirect(entry.handler);
-      }
-
       return responseHolder.response!;
     }
 

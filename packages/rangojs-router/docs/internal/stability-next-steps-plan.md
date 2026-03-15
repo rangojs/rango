@@ -52,7 +52,7 @@ Added production coverage for cookie middleware (set/increment visit count),
 auth middleware with cookie (authenticated access), intercept middleware
 (header setting and cookie on SPA modal navigation), and loader middleware
 (authorization reject/allow/reject-invalid via production hashed loader IDs).
-Only remaining dev-only section: W5 warning test (dev-only log assertion).
+No remaining dev-only section in `app-middleware.test.ts`.
 
 ### 1C. Finish Build Parity For Behavioral Parts Of `cache.test.ts` — Done
 
@@ -109,9 +109,8 @@ Dev-only annotations added inline in test files during the 1A-1D parity work:
 
 - `cache.test.ts` — cache-intercept-routes and proactive-caching sections
   annotated with reasons (debug log assertions, cloudflare-basic coverage)
-- `app-middleware.test.ts` — W5 warning test annotated as dev-only (log
-  assertion). Intercept and loader middleware now have production tests
-  (original annotations were inaccurate and removed).
+- `app-middleware.test.ts` — intercept and loader middleware now have
+  production tests (original annotations were inaccurate and removed).
 - `handler-first.test.ts` — revalidate/cache mix section annotated as
   intentionally dev-only (isolated server state, runtime cache semantics)
 - `revalidation.test.ts` — file-level annotation explaining deferral rationale
@@ -167,7 +166,7 @@ Added status markers to all stale internal planning docs:
 - `non-test-review-actions.md` — marked "Implemented" (F1-F3 addressed)
 - `prefetch-review-actions.md` — marked "Implemented" (origin validation done)
 - `scroll-location-review-actions.md` — marked "Implemented" (cleanup + quota)
-- `runtime-guardrails-design.md` — marked "Partial" (W3/W5 shipped,
+- `runtime-guardrails-design.md` — marked "Partial" (W3 shipped,
   W1 removed as noise, W2 reframed, W4/W6 deferred)
 - `cache-dsl-use-cache-remediation-plan.md` — marked "Implemented"
 

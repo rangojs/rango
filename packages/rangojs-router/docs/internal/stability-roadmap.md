@@ -141,11 +141,10 @@ Canonical Phase 3 artifacts:
 - [Runtime guardrails design](./runtime-guardrails-design.md)
 - W1 removed: route middleware on action routes is normal behavior, not a misuse
 - W3 shipped: PE response/redirect guardrails
-- W5 shipped: redirect after `ctx.set()` warning
 
 Current status:
 
-- W3 and W5 are implemented.
+- W3 is implemented.
 - W1 was removed — having route middleware on a route with actions is expected
   (route middleware wraps render, global middleware guards actions). The warning
   was noise for a valid pattern.

@@ -1,4 +1,4 @@
-import { urls, getRequestContext, redirect, cookies } from "@rangojs/router";
+import { urls, getRequestContext, cookies } from "@rangojs/router";
 import {
   MiddlewareIndexHandler,
   MiddlewareProtectedHandler,
@@ -12,7 +12,7 @@ import {
   MiddlewareRouteLevelHandler,
   MiddlewareRouteLevelWithParamsHandler,
   MiddlewareRouteShortcircuitHandler,
-  MiddlewareW5RedirectHandler,
+  MiddlewareCtxParityHandler,
 } from "./middleware.handlers.js";
 
 /**
@@ -92,20 +92,6 @@ export const middlewarePatterns = urls(({ path, middleware }) => [
     ],
   ),
 
-  // W5 guardrail test: middleware calls ctx.set() then returns a redirect.
-  // Should trigger a dev-mode warning about lost context variables.
-  path(
-    "/w5-redirect",
-    MiddlewareW5RedirectHandler,
-    { name: "w5Redirect" },
-    () => [
-      middleware(async function w5SetThenRedirect(ctx) {
-        ctx.set("user", { id: "lost", name: "lost" });
-        return redirect("/middleware-test", 302);
-      }),
-    ],
-  ),
-
   path(
     "/route-level/:routeId",
     MiddlewareRouteLevelWithParamsHandler,
@@ -123,4 +109,32 @@ export const middlewarePatterns = urls(({ path, middleware }) => [
       }),
     ],
   ),
+
+  // Test: ctx parity — exercises ctx.headers, ctx.var, ctx.theme, ctx.setTheme,
+  // ctx.setLocationState to verify middleware has the same API surface as handlers.
+  path("/ctx-parity", MiddlewareCtxParityHandler, { name: "ctxParity" }, () => [
+    middleware(async (ctx, next) => {
+      // ctx.headers (before next)
+      ctx.headers.set("X-Mw-Headers-Before", "set-before-next");
+
+      // ctx.var
+      ctx.var.mwVarTest = "from-ctx-var";
+
+      // ctx.theme (read before mutation)
+      const themeBefore = ctx.theme;
+
+      // ctx.setTheme
+      ctx.setTheme?.("dark");
+
+      // ctx.setLocationState (just verify it doesn't throw)
+      ctx.setLocationState({ key: "mw-test", data: "hello" } as any);
+
+      await next();
+
+      // ctx.headers (after next)
+      ctx.headers.set("X-Mw-Headers-After", "set-after-next");
+      ctx.headers.set("X-Mw-Theme-Before", themeBefore ?? "undefined");
+      ctx.headers.set("X-Mw-Theme-After", ctx.theme ?? "undefined");
+    }),
+  ]),
 ]);
