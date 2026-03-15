@@ -183,22 +183,17 @@ test.describe("prefetch-on-hover (router mode)", () => {
     // Verify navigation completed
     await page.waitForURL("**/blog", { timeout: 5000 });
 
-    // Navigation sends its own fetch with X-Rango-State and X-RSC-Router-Client-Path.
-    // Browser HTTP cache should serve the prefetch response (matching Vary headers).
-    // Both requests should share the same X-Rango-State and Client-Path values.
+    // With in-memory prefetch cache, navigation should consume the cached
+    // prefetch response without making a second network request.
+    // The prefetch request should have X-Rango-State and X-Rango-Prefetch headers.
     const prefetchState = rscRequests[0]!.headers["x-rango-state"];
     expect(prefetchState).toBeDefined();
-    const prefetchClientPath =
-      rscRequests[0]!.headers["x-rsc-router-client-path"];
-    expect(prefetchClientPath).toBeDefined();
+    expect(rscRequests[0]!.headers["x-rango-prefetch"]).toBe("1");
 
-    // If navigation made a request (cache miss), verify same header values
-    if (rscRequests.length > 1) {
-      expect(rscRequests[1]!.headers["x-rango-state"]).toBe(prefetchState);
-      expect(rscRequests[1]!.headers["x-rsc-router-client-path"]).toBe(
-        prefetchClientPath,
-      );
-    }
+    // Navigation should NOT make a second request (in-memory cache hit)
+    // Give a small wait to ensure no delayed request fires.
+    await page.waitForTimeout(500);
+    expect(rscRequests.length).toBe(1);
   });
 
   test("should return RSC Flight for partial request with Accept: text/html", async ({
@@ -221,21 +216,30 @@ test.describe("prefetch-on-hover (router mode)", () => {
     expect(res.headers.get("content-type")).toContain("text/x-component");
   });
 
-  test("should always include Vary: X-Rango-State and X-RSC-Router-Client-Path on RSC responses", async ({
+  test("should include appropriate Vary headers on RSC responses", async ({
     devServerURL,
   }) => {
-    // Vary should include X-Rango-State and X-RSC-Router-Client-Path on ALL RSC responses,
-    // not just those with the headers — ensures consistent browser cache behavior.
     const url = new URL("/shop", devServerURL);
     url.searchParams.set("_rsc_partial", "true");
 
-    // Request WITHOUT X-Rango-State header
-    const res = await fetch(url);
+    // Navigation request (without X-Rango-Prefetch) includes X-RSC-Router-Client-Path
+    // in Vary because the response is source-page-dependent (diff-based)
+    const navRes = await fetch(url);
+    expect(navRes.status).toBe(200);
+    const navVary = navRes.headers.get("vary");
+    expect(navVary).toContain("X-Rango-State");
+    expect(navVary).toContain("X-RSC-Router-Client-Path");
 
-    expect(res.status).toBe(200);
-    const vary = res.headers.get("vary");
-    expect(vary).toContain("X-Rango-State");
-    expect(vary).toContain("X-RSC-Router-Client-Path");
+    // Prefetch request (with X-Rango-Prefetch) does NOT include
+    // X-RSC-Router-Client-Path in Vary because the response is
+    // source-independent (all matched segments)
+    const prefetchRes = await fetch(url, {
+      headers: { "X-Rango-Prefetch": "1" },
+    });
+    expect(prefetchRes.status).toBe(200);
+    const prefetchVary = prefetchRes.headers.get("vary");
+    expect(prefetchVary).toContain("X-Rango-State");
+    expect(prefetchVary).not.toContain("X-RSC-Router-Client-Path");
   });
 
   test("should include Cache-Control only on prefetch partial responses", async ({
@@ -472,14 +476,15 @@ base.describe("prefetch-on-hover (production)", () => {
       await blogLink.click();
       await page.waitForURL("**/blog", { timeout: 5000 });
 
-      // Both requests should share the same X-Rango-State value
+      // With in-memory prefetch cache, navigation should consume the cached
+      // prefetch response without making a second network request.
       const prefetchState = rscRequests[0]!.headers["x-rango-state"];
       baseExpect(prefetchState).toBeDefined();
-      if (rscRequests.length > 1) {
-        baseExpect(rscRequests[1]!.headers["x-rango-state"]).toBe(
-          prefetchState,
-        );
-      }
+      baseExpect(rscRequests[0]!.headers["x-rango-prefetch"]).toBe("1");
+
+      // Navigation should NOT make a second request (in-memory cache hit)
+      await page.waitForTimeout(500);
+      baseExpect(rscRequests.length).toBe(1);
     },
   );
 
@@ -501,21 +506,26 @@ base.describe("prefetch-on-hover (production)", () => {
     },
   );
 
-  base(
-    "should always include Vary: X-Rango-State and X-RSC-Router-Client-Path on RSC responses",
-    async () => {
-      const url = new URL("/shop", f.url("/"));
-      url.searchParams.set("_rsc_partial", "true");
+  base("should include appropriate Vary headers on RSC responses", async () => {
+    const url = new URL("/shop", f.url("/"));
+    url.searchParams.set("_rsc_partial", "true");
 
-      // Request WITHOUT X-Rango-State header
-      const res = await fetch(url);
+    // Navigation request includes X-RSC-Router-Client-Path in Vary
+    const navRes = await fetch(url);
+    baseExpect(navRes.status).toBe(200);
+    const navVary = navRes.headers.get("vary");
+    baseExpect(navVary).toContain("X-Rango-State");
+    baseExpect(navVary).toContain("X-RSC-Router-Client-Path");
 
-      baseExpect(res.status).toBe(200);
-      const vary = res.headers.get("vary");
-      baseExpect(vary).toContain("X-Rango-State");
-      baseExpect(vary).toContain("X-RSC-Router-Client-Path");
-    },
-  );
+    // Prefetch request does NOT include X-RSC-Router-Client-Path in Vary
+    const prefetchRes = await fetch(url, {
+      headers: { "X-Rango-Prefetch": "1" },
+    });
+    baseExpect(prefetchRes.status).toBe(200);
+    const prefetchVary = prefetchRes.headers.get("vary");
+    baseExpect(prefetchVary).toContain("X-Rango-State");
+    baseExpect(prefetchVary).not.toContain("X-RSC-Router-Client-Path");
+  });
 
   base(
     "should include Cache-Control only on prefetch partial responses",

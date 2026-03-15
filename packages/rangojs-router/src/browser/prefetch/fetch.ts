@@ -2,15 +2,17 @@
  * Prefetch Fetch
  *
  * Fetch-based prefetch logic used by Link (hover/viewport/render strategies)
- * and useRouter().prefetch(). Sends low-priority fetch requests with
- * X-Rango-State and X-Rango-Prefetch headers so the browser HTTP cache
- * can serve the response on subsequent navigation.
+ * and useRouter().prefetch(). Sends source-independent requests (no
+ * _rsc_segments, no X-RSC-Router-Client-Path) so the server returns all
+ * matched segments. The Response is stored in an in-memory cache for
+ * instant consumption on subsequent navigation.
  */
 
 import {
+  buildCacheKey,
   hasPrefetch,
   markPrefetchInflight,
-  markPrefetched,
+  storePrefetch,
   clearPrefetchInflight,
   currentGeneration,
 } from "./cache.js";
@@ -19,16 +21,16 @@ import { enqueuePrefetch } from "./queue.js";
 import { shouldPrefetch } from "./policy.js";
 
 /**
- * Build an RSC partial URL for prefetching.
+ * Build an RSC partial URL for prefetching plus the clean path for headers.
+ * Does NOT include _rsc_segments — the server will render all matched
+ * segments, making the response source-independent.
  * Includes _rsc_v for version mismatch detection when available.
- * Returns null for malformed or cross-origin URLs to prevent
- * leaking router headers to external origins.
+ * Returns null for malformed or cross-origin URLs.
  */
 function buildPrefetchUrl(
   url: string,
-  segmentIds: string[],
   version?: string,
-): URL | null {
+): { fetchUrl: URL; cleanPath: string } | null {
   let targetUrl: URL;
   try {
     targetUrl = new URL(url, window.location.origin);
@@ -38,55 +40,52 @@ function buildPrefetchUrl(
   if (targetUrl.origin !== window.location.origin) {
     return null;
   }
+  // Capture clean path before adding RSC params
+  const cleanPath = targetUrl.pathname + targetUrl.search;
   targetUrl.searchParams.set("_rsc_partial", "true");
-  if (segmentIds.length > 0) {
-    targetUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
-  }
   if (version) {
     targetUrl.searchParams.set("_rsc_v", version);
   }
-  return targetUrl;
+  return { fetchUrl: targetUrl, cleanPath };
 }
 
 /**
- * Build the dedup key for prefetch tracking.
- * Includes the source page pathname so the same target prefetched from
- * different pages gets separate entries — the server response varies on
- * X-RSC-Router-Client-Path (source page context).
- */
-function buildPrefetchKey(targetUrl: URL): string {
-  return window.location.href + "\0" + targetUrl.pathname + targetUrl.search;
-}
-
-/**
- * Core prefetch fetch logic. Returns a Promise and accepts an optional
- * AbortSignal for cancellation by the prefetch queue.
+ * Core prefetch fetch logic. Fetches the response, fully buffers the body,
+ * and stores it in the in-memory cache. Returns a Promise and accepts an
+ * optional AbortSignal for cancellation by the prefetch queue.
  */
 function executePrefetchFetch(
   key: string,
-  fetchUrl: string,
+  targetUrl: URL,
+  cleanPath: string,
   signal?: AbortSignal,
 ): Promise<void> {
   const gen = currentGeneration();
   markPrefetchInflight(key);
 
-  return fetch(fetchUrl, {
+  return fetch(targetUrl, {
     priority: "low" as RequestPriority,
     signal,
     headers: {
       "X-Rango-State": getRangoState(),
-      "X-RSC-Router-Client-Path": window.location.href,
+      // Send clean target path (without _rsc_* params) as
+      // X-RSC-Router-Client-Path so the server sees isSameRouteNavigation=true
+      // and skips intercept routing.
+      "X-RSC-Router-Client-Path": cleanPath,
       "X-Rango-Prefetch": "1",
     },
   })
-    .then((response) => {
-      // Drain body to ensure full download for browser HTTP cache.
-      // pipeTo avoids decoding the stream into a JS string (unlike .text()).
-      if (response.ok && response.body) {
-        return response.body
-          .pipeTo(new WritableStream())
-          .then(() => markPrefetched(key, gen));
-      }
+    .then(async (response) => {
+      if (!response.ok) return;
+      // Fully buffer the response body so the cached Response is
+      // self-contained and doesn't depend on the network connection.
+      const buffer = await response.arrayBuffer();
+      const cachedResponse = new Response(buffer, {
+        headers: response.headers,
+        status: response.status,
+        statusText: response.statusText,
+      });
+      storePrefetch(key, cachedResponse, gen);
     })
     .catch(() => {
       // Silently ignore prefetch failures (including abort)
@@ -97,41 +96,46 @@ function executePrefetchFetch(
 }
 
 /**
- * Prefetch (direct): fetch with low priority and store in browser HTTP cache.
+ * Prefetch (direct): fetch with low priority and store in in-memory cache.
  * Used by hover strategy -- fires immediately without queueing.
+ *
+ * The segmentIds parameter is accepted for API compatibility but not sent
+ * to the server — prefetch always requests all matched segments.
  */
 export function prefetchDirect(
   url: string,
-  segmentIds: string[],
+  _segmentIds: string[],
   version?: string,
 ): void {
   if (!shouldPrefetch()) return;
 
-  const targetUrl = buildPrefetchUrl(url, segmentIds, version);
-  if (!targetUrl) return;
-  const key = buildPrefetchKey(targetUrl);
+  const result = buildPrefetchUrl(url, version);
+  if (!result) return;
+  const key = buildCacheKey(url);
   if (hasPrefetch(key)) return;
-  executePrefetchFetch(key, targetUrl.toString());
+  executePrefetchFetch(key, result.fetchUrl, result.cleanPath);
 }
 
 /**
  * Prefetch (queued): goes through the concurrency-limited queue.
  * Used by viewport/render strategies to avoid flooding the server.
  * Returns the cache key for use in cleanup.
+ *
+ * The segmentIds parameter is accepted for API compatibility but not sent
+ * to the server — prefetch always requests all matched segments.
  */
 export function prefetchQueued(
   url: string,
-  segmentIds: string[],
+  _segmentIds: string[],
   version?: string,
 ): string {
   if (!shouldPrefetch()) return "";
-  const targetUrl = buildPrefetchUrl(url, segmentIds, version);
-  if (!targetUrl) return "";
-  const key = buildPrefetchKey(targetUrl);
+  const result = buildPrefetchUrl(url, version);
+  if (!result) return "";
+  const key = buildCacheKey(url);
   if (hasPrefetch(key)) return key;
-  const fetchUrlStr = targetUrl.toString();
   enqueuePrefetch(key, (signal) =>
-    executePrefetchFetch(key, fetchUrlStr, signal),
+    executePrefetchFetch(key, result.fetchUrl, result.cleanPath, signal),
   );
   return key;
 }
