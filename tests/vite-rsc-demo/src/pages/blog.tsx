@@ -251,14 +251,13 @@ export const blogLoggerMiddleware: Middleware[] = [
   },
 ];
 
-// Post revalidation
+// Post revalidation - only revalidate when slug changes, not on search param changes
 export const postRevalidation: Revalidate<{ slug: string }, RSCRouter.Env> = ({
   currentParams,
   nextParams,
-  defaultShouldRevalidate,
 }) => {
   console.log(
     `[Blog] Checking revalidation: ${currentParams.slug} → ${nextParams.slug}`,
   );
-  return defaultShouldRevalidate;
+  return currentParams.slug !== nextParams.slug;
 };

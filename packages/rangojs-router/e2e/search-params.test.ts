@@ -66,7 +66,7 @@ test.describe("Typed Search Params", () => {
       );
     });
 
-    test("should default required string to empty when missing", async ({
+    test("should resolve required string as undefined when missing", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
@@ -74,10 +74,11 @@ test.describe("Typed Search Params", () => {
       await page.goto(f.url("/search"));
       await waitForHydration(page);
 
-      // Required string defaults to "" when not in query string
+      // Required params resolve as undefined when missing — can't trust
+      // client-sent query strings, so consumers must check at runtime.
       await expect(testId(page, "search-q")).toContainText("q: ");
       await expect(testId(page, "search-q-type")).toContainText(
-        "q-type: string",
+        "q-type: undefined",
       );
     });
 
