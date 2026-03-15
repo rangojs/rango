@@ -2,12 +2,12 @@
  * Prefetch Cache
  *
  * In-memory cache storing prefetch Response objects for instant cache hits
- * on subsequent navigation. Source-independent: cache key is the target URL
- * only (not source page), because prefetch responses include all matched
- * segments regardless of where the user navigates from.
+ * on subsequent navigation. Cache key is source-dependent (includes the
+ * current page URL) because the server's diff-based response depends on
+ * where the user navigates from.
  *
  * Replaces the previous browser HTTP cache approach which was unreliable
- * due to Vary header complexity and response draining race conditions.
+ * due to response draining race conditions and browser inconsistencies.
  */
 
 import { cancelAllPrefetches } from "./queue.js";
@@ -30,12 +30,13 @@ const inflight = new Set<string>();
 let generation = 0;
 
 /**
- * Build a source-independent cache key from a URL.
- * Uses pathname + search only (no origin, no hash, no RSC internal params).
+ * Build a source-dependent cache key.
+ * Includes the source page href so the same target prefetched from
+ * different pages gets separate entries — the server response varies
+ * based on the source page context (diff-based rendering).
  */
-export function buildCacheKey(url: string | URL): string {
-  const parsed = typeof url === "string" ? new URL(url, "http://x") : url;
-  return parsed.pathname + parsed.search;
+export function buildPrefetchKey(sourceHref: string, targetUrl: URL): string {
+  return sourceHref + "\0" + targetUrl.pathname + targetUrl.search;
 }
 
 /**

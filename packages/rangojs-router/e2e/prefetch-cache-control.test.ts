@@ -32,7 +32,9 @@ test.describe("prefetch-cache-control (dev)", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("private, max-age=60");
-    expect(res.headers.get("vary")).toBe("accept, X-Rango-State");
+    expect(res.headers.get("vary")).toBe(
+      "accept, X-Rango-State, X-RSC-Router-Client-Path",
+    );
   });
 
   test("navigation request does not get Cache-Control", async () => {
@@ -105,7 +107,9 @@ test.describe("prefetch-cache-control (production)", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("private, max-age=60");
-    expect(res.headers.get("vary")).toBe("accept, X-Rango-State");
+    expect(res.headers.get("vary")).toBe(
+      "accept, X-Rango-State, X-RSC-Router-Client-Path",
+    );
   });
 
   test("navigation request does not get Cache-Control", async () => {

@@ -17,7 +17,7 @@ import {
   emptyResponse,
   teeWithCompletion,
 } from "./response-adapter.js";
-import { buildCacheKey, consumePrefetch } from "./prefetch/cache.js";
+import { buildPrefetchKey, consumePrefetch } from "./prefetch/cache.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -26,24 +26,11 @@ import { buildCacheKey, consumePrefetch } from "./prefetch/cache.js";
  * deserializing the response using the RSC runtime.
  *
  * Checks the in-memory prefetch cache before making a network request.
- * Prefetch responses are source-independent (contain all matched segments),
- * so they can serve navigation from any source page.
+ * The cache key is source-dependent (includes the previous URL) so
+ * prefetch responses match the exact diff the server would produce.
  *
  * @param deps - RSC browser dependencies (createFromFetch)
  * @returns NavigationClient instance
- *
- * @example
- * ```typescript
- * import { createFromFetch } from "@vitejs/plugin-rsc/browser";
- *
- * const client = createNavigationClient({ createFromFetch });
- *
- * const payload = await client.fetchPartial({
- *   targetUrl: "/shop/products",
- *   segmentIds: ["root", "shop"],
- *   previousUrl: "/",
- * });
- * ```
  */
 export function createNavigationClient(
   deps: Pick<RscBrowserDependencies, "createFromFetch">,
@@ -86,12 +73,24 @@ export function createNavigationClient(
         });
       }
 
+      // Build fetch URL with partial rendering params (used for both
+      // cache key lookup and actual fetch if cache misses)
+      const fetchUrl = new URL(targetUrl, window.location.origin);
+      fetchUrl.searchParams.set("_rsc_partial", "true");
+      fetchUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
+      if (staleRevalidation) {
+        fetchUrl.searchParams.set("_rsc_stale", "true");
+      }
+      if (version) {
+        fetchUrl.searchParams.set("_rsc_v", version);
+      }
+
       // Check in-memory prefetch cache before making a network request.
-      // Skip cache for:
-      // - stale revalidation (needs fresh data from server)
-      // - HMR (needs fresh modules)
-      // - intercept contexts (source-dependent responses)
-      const cacheKey = buildCacheKey(targetUrl);
+      // The cache key includes the source URL (previousUrl) because the
+      // server's diff response depends on the source page context.
+      // Skip cache for stale revalidation (needs fresh data), HMR (needs
+      // fresh modules), and intercept contexts (source-dependent responses).
+      const cacheKey = buildPrefetchKey(previousUrl, fetchUrl);
       const cachedResponse =
         !staleRevalidation && !hmr && !interceptSourceUrl
           ? consumePrefetch(cacheKey)
@@ -122,16 +121,6 @@ export function createNavigationClient(
           );
         });
       } else {
-        // Build fetch URL with partial rendering params
-        const fetchUrl = new URL(targetUrl, window.location.origin);
-        fetchUrl.searchParams.set("_rsc_partial", "true");
-        fetchUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
-        if (staleRevalidation) {
-          fetchUrl.searchParams.set("_rsc_stale", "true");
-        }
-        if (version) {
-          fetchUrl.searchParams.set("_rsc_v", version);
-        }
         if (tx) {
           browserDebugLog(tx, "fetching", {
             path: `${fetchUrl.pathname}${fetchUrl.search}`,
@@ -199,19 +188,6 @@ export function createNavigationClient(
       try {
         // Deserialize RSC payload
         const payload = await deps.createFromFetch<RscPayload>(responsePromise);
-
-        // Client-side diff: prefetch responses contain ALL matched segments,
-        // but we only need to update segments the client doesn't already have.
-        // Filter diff to exclude currently-mounted segment IDs so the
-        // reconciler preserves existing segments (layouts, shared loaders)
-        // and only applies new ones from the prefetch response.
-        if (cachedResponse && payload.metadata?.diff) {
-          const currentIds = new Set(segmentIds);
-          payload.metadata.diff = payload.metadata.diff.filter(
-            (id) => !currentIds.has(id),
-          );
-        }
-
         if (tx) {
           browserDebugLog(tx, "response received", {
             isPartial: payload.metadata?.isPartial,
@@ -223,14 +199,11 @@ export function createNavigationClient(
       } catch (error) {
         // Convert network-level errors to NetworkError for proper handling
         if (isNetworkError(error)) {
-          // Build the URL that was actually fetched for diagnostic purposes
-          const errorUrl = new URL(targetUrl, window.location.origin);
-          errorUrl.searchParams.set("_rsc_partial", "true");
           throw new NetworkError(
             "Unable to connect to server. Please check your connection.",
             {
               cause: error,
-              url: errorUrl.toString(),
+              url: fetchUrl.toString(),
               operation: staleRevalidation ? "revalidation" : "navigation",
             },
           );

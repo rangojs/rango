@@ -188,20 +188,15 @@ export async function handleRscRendering<TEnv>(
   if (isRscRequest) {
     const renderDur = performance.now() - renderStart;
     appendMetric(metricsStore, "render:total", renderStart, renderDur);
-    const isPrefetch = request.headers.has("X-Rango-Prefetch");
     const rscHeaders: Record<string, string> = {
       "content-type": "text/x-component;charset=utf-8",
-      // Prefetch responses are source-independent (all matched segments),
-      // so they don't vary by X-RSC-Router-Client-Path.
-      // Navigation responses are diff-based and depend on the source page.
-      vary: isPrefetch
-        ? "accept, X-Rango-State"
-        : "accept, X-Rango-State, X-RSC-Router-Client-Path",
+      vary: "accept, X-Rango-State, X-RSC-Router-Client-Path",
     };
-    // Enable edge/CDN caching for prefetch responses.
+    // Enable browser HTTP caching for prefetch responses only.
     // Requires X-Rango-Prefetch header (sent by Link prefetch fetch),
     // non-intercept context (intercept responses depend on source page),
     // and a configured cache-control value (false disables caching).
+    const isPrefetch = request.headers.has("X-Rango-Prefetch");
     if (isPrefetch && isPartial && !hasInterceptSlots) {
       const cc = ctx.router.prefetchCacheControl;
       if (cc) {

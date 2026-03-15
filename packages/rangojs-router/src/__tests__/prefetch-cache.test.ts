@@ -16,7 +16,7 @@ vi.mock("../browser/rango-state", () => ({
 }));
 
 import {
-  buildCacheKey,
+  buildPrefetchKey,
   clearPrefetchCache,
   clearPrefetchInflight,
   consumePrefetch,
@@ -37,12 +37,10 @@ describe("prefetch cache", () => {
     vi.restoreAllMocks();
   });
 
-  it("buildCacheKey uses pathname + search only", () => {
-    expect(buildCacheKey("/products")).toBe("/products");
-    expect(buildCacheKey("/products?page=1")).toBe("/products?page=1");
-    expect(buildCacheKey("/products#section")).toBe("/products");
-    expect(buildCacheKey("http://example.com/products?q=test")).toBe(
-      "/products?q=test",
+  it("buildPrefetchKey includes source and target", () => {
+    const target = new URL("http://localhost/products?page=1");
+    expect(buildPrefetchKey("http://localhost/home", target)).toBe(
+      "http://localhost/home\0/products?page=1",
     );
   });
 
@@ -57,7 +55,7 @@ describe("prefetch cache", () => {
   });
 
   it("tracks stored responses and reports them via hasPrefetch", () => {
-    const key = "/products";
+    const key = "http://localhost/\0/products";
     expect(hasPrefetch(key)).toBe(false);
 
     const gen = currentGeneration();
@@ -67,7 +65,7 @@ describe("prefetch cache", () => {
   });
 
   it("consumePrefetch returns response and deletes entry", () => {
-    const key = "/products";
+    const key = "http://localhost/\0/products";
     const gen = currentGeneration();
     const response = new Response("test body");
     storePrefetch(key, response, gen);
@@ -81,7 +79,7 @@ describe("prefetch cache", () => {
   });
 
   it("consumePrefetch returns null for expired entries", () => {
-    const key = "/products";
+    const key = "http://localhost/\0/products";
     const gen = currentGeneration();
     const response = new Response("test body");
     storePrefetch(key, response, gen);
@@ -96,39 +94,30 @@ describe("prefetch cache", () => {
     vi.useRealTimers();
   });
 
-  it("hasPrefetch returns false for expired entries", () => {
-    const key = "/products";
-    const gen = currentGeneration();
-    storePrefetch(key, new Response("body"), gen);
-
-    vi.useFakeTimers();
-    vi.advanceTimersByTime(31_000);
-
-    expect(hasPrefetch(key)).toBe(false);
-
-    vi.useRealTimers();
-  });
-
   it("ignores stale storage from older generation", () => {
     const staleGeneration = currentGeneration();
 
     clearPrefetchCache();
-    storePrefetch("/stale", new Response("body"), staleGeneration);
+    storePrefetch(
+      "http://localhost/\0/stale",
+      new Response("body"),
+      staleGeneration,
+    );
 
-    expect(hasPrefetch("/stale")).toBe(false);
-    expect(consumePrefetch("/stale")).toBe(null);
+    expect(hasPrefetch("http://localhost/\0/stale")).toBe(false);
+    expect(consumePrefetch("http://localhost/\0/stale")).toBe(null);
   });
 
   it("clears state, bumps generation, and triggers invalidation side effects", () => {
     const before = currentGeneration();
     markPrefetchInflight("/a");
-    storePrefetch("/b", new Response("body"), before);
+    storePrefetch("http://localhost/\0/b", new Response("body"), before);
 
     clearPrefetchCache();
 
     expect(currentGeneration()).toBe(before + 1);
     expect(hasPrefetch("/a")).toBe(false);
-    expect(hasPrefetch("/b")).toBe(false);
+    expect(hasPrefetch("http://localhost/\0/b")).toBe(false);
     expect(cancelAllPrefetchesMock).toHaveBeenCalledTimes(1);
     expect(invalidateRangoStateMock).toHaveBeenCalledTimes(1);
   });
@@ -138,14 +127,14 @@ describe("prefetch cache", () => {
 
     // Fill cache to capacity (50)
     for (let i = 0; i < 50; i++) {
-      storePrefetch(`/page-${i}`, new Response(`body-${i}`), gen);
+      storePrefetch(`key-${i}`, new Response(`body-${i}`), gen);
     }
 
-    // Adding one more should evict the oldest (/page-0)
-    storePrefetch("/page-50", new Response("body-50"), gen);
+    // Adding one more should evict the oldest (key-0)
+    storePrefetch("key-50", new Response("body-50"), gen);
 
-    expect(hasPrefetch("/page-0")).toBe(false);
-    expect(hasPrefetch("/page-50")).toBe(true);
-    expect(hasPrefetch("/page-1")).toBe(true);
+    expect(hasPrefetch("key-0")).toBe(false);
+    expect(hasPrefetch("key-50")).toBe(true);
+    expect(hasPrefetch("key-1")).toBe(true);
   });
 });

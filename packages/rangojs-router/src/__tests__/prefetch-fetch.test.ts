@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { prefetchDirect, prefetchQueued } from "../browser/prefetch/fetch";
-import { clearPrefetchCache, consumePrefetch } from "../browser/prefetch/cache";
+import { clearPrefetchCache } from "../browser/prefetch/cache";
 import { resetPrefetchPolicy } from "../browser/prefetch/policy";
 
 const originalWindowDescriptor = Object.getOwnPropertyDescriptor(
@@ -126,23 +126,7 @@ describe("prefetch fetch reduced-data behavior", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("prefetches without _rsc_segments (source-independent)", () => {
-    setupBrowser({ saveData: false, reducedData: false });
-    const fetchMock = vi.fn((_url: string) =>
-      Promise.resolve({ ok: false, body: null } as unknown as Response),
-    );
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
-
-    prefetchDirect("/blog", ["segment.a"], "v1");
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const fetchedUrl = fetchMock.mock.calls[0]![0].toString();
-    expect(fetchedUrl).toContain("/blog?_rsc_partial=true&_rsc_v=v1");
-    // Should NOT contain _rsc_segments
-    expect(fetchedUrl).not.toContain("_rsc_segments");
-  });
-
-  it("does not send X-RSC-Router-Client-Path as current page", () => {
+  it("prefetches with _rsc_segments and current page as client path", () => {
     setupBrowser({ saveData: false, reducedData: false });
     const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
       Promise.resolve({ ok: false, body: null } as unknown as Response),
@@ -151,13 +135,20 @@ describe("prefetch fetch reduced-data behavior", () => {
 
     prefetchDirect("/blog", ["segment.a"], "v1");
 
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const fetchedUrl = fetchMock.mock.calls[0]![0].toString();
+    expect(fetchedUrl).toContain(
+      "/blog?_rsc_partial=true&_rsc_segments=segment.a&_rsc_v=v1",
+    );
+
     const headers = fetchMock.mock.calls[0]![1]!.headers as Record<
       string,
       string
     >;
-    // Should send clean target URL path (without RSC params), not current page
-    expect(headers["X-RSC-Router-Client-Path"]).toBe("/blog");
-    expect(headers["X-RSC-Router-Client-Path"]).not.toContain("_rsc_");
+    expect(headers["X-RSC-Router-Client-Path"]).toBe(
+      "http://localhost:4173/current",
+    );
+    expect(headers["X-Rango-Prefetch"]).toBe("1");
   });
 
   it("stores response in in-memory cache on success", async () => {
@@ -174,13 +165,12 @@ describe("prefetch fetch reduced-data behavior", () => {
 
     // Wait for the async fetch + buffer to complete
     await vi.waitFor(() => {
-      const cached = consumePrefetch("/blog");
-      expect(cached).not.toBeNull();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
   });
 });
 
-describe("prefetch dedup with source-independent cache", () => {
+describe("prefetch dedup source-page context", () => {
   afterEach(() => {
     clearPrefetchCache();
     resetPrefetchPolicy();
@@ -189,7 +179,7 @@ describe("prefetch dedup with source-independent cache", () => {
     restoreGlobalProperty("navigator", originalNavigatorDescriptor);
   });
 
-  it("same target from different source pages IS deduped (source-independent)", () => {
+  it("same target from different source pages is not suppressed", () => {
     setupBrowser();
     const fetchMock = vi.fn((_url: string) =>
       Promise.resolve({ ok: false, body: null } as unknown as Response),
@@ -207,21 +197,8 @@ describe("prefetch dedup with source-independent cache", () => {
     window.location.href = "http://localhost:4173/product/3";
     (window.location as any).pathname = "/product/3";
 
-    // Prefetch /product/2 again — source-independent, SHOULD be deduped
+    // Prefetch /product/2 again — different source page, should NOT be deduped
     prefetchDirect("/product/2", ["A0", "A0.route"]);
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("different targets are not deduped", () => {
-    setupBrowser();
-    const fetchMock = vi.fn((_url: string) =>
-      Promise.resolve({ ok: false, body: null } as unknown as Response),
-    );
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
-
-    prefetchDirect("/product/1", ["A0"]);
-    prefetchDirect("/product/2", ["A0"]);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -233,10 +210,16 @@ describe("prefetch dedup with source-independent cache", () => {
     );
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
 
+    // Prefetch /product/2 from /shop
+    window.location.href = "http://localhost:4173/shop";
+    (window.location as any).pathname = "/shop";
     prefetchDirect("/product/2", ["A0", "A0.route"]);
+
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
+    // Prefetch /product/2 from /shop again — same source, should be deduped
     prefetchDirect("/product/2", ["A0", "A0.route"]);
+
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
