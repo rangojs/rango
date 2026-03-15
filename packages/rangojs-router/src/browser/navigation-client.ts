@@ -87,11 +87,19 @@ export function createNavigationClient(
       }
 
       // Check in-memory prefetch cache before making a network request.
-      // Skip cache for stale revalidation (needs fresh data), HMR (needs
-      // fresh modules), and intercept contexts (source-dependent responses).
+      // Skip cache for:
+      // - stale revalidation (needs fresh data from server)
+      // - HMR (needs fresh modules)
+      // - intercept contexts (source-dependent responses)
+      // - same-pathname navigations (search param changes need server-side
+      //   revalidation which depends on prev vs current params)
       const cacheKey = buildCacheKey(targetUrl);
+      const currentPathname = new URL(window.location.href).pathname;
+      const targetPathname = new URL(targetUrl, window.location.origin)
+        .pathname;
+      const isSamePathname = currentPathname === targetPathname;
       const cachedResponse =
-        !staleRevalidation && !hmr && !interceptSourceUrl
+        !staleRevalidation && !hmr && !interceptSourceUrl && !isSamePathname
           ? consumePrefetch(cacheKey)
           : null;
 
