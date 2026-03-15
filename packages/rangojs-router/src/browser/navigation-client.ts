@@ -91,15 +91,9 @@ export function createNavigationClient(
       // - stale revalidation (needs fresh data from server)
       // - HMR (needs fresh modules)
       // - intercept contexts (source-dependent responses)
-      // - same-pathname navigations (search param changes need server-side
-      //   revalidation which depends on prev vs current params)
       const cacheKey = buildCacheKey(targetUrl);
-      const currentPathname = new URL(window.location.href).pathname;
-      const targetPathname = new URL(targetUrl, window.location.origin)
-        .pathname;
-      const isSamePathname = currentPathname === targetPathname;
       const cachedResponse =
-        !staleRevalidation && !hmr && !interceptSourceUrl && !isSamePathname
+        !staleRevalidation && !hmr && !interceptSourceUrl
           ? consumePrefetch(cacheKey)
           : null;
 
@@ -205,6 +199,19 @@ export function createNavigationClient(
       try {
         // Deserialize RSC payload
         const payload = await deps.createFromFetch<RscPayload>(responsePromise);
+
+        // Client-side diff: prefetch responses contain ALL matched segments,
+        // but we only need to update segments the client doesn't already have.
+        // Filter diff to exclude currently-mounted segment IDs so the
+        // reconciler preserves existing segments (layouts, shared loaders)
+        // and only applies new ones from the prefetch response.
+        if (cachedResponse && payload.metadata?.diff) {
+          const currentIds = new Set(segmentIds);
+          payload.metadata.diff = payload.metadata.diff.filter(
+            (id) => !currentIds.has(id),
+          );
+        }
+
         if (tx) {
           browserDebugLog(tx, "response received", {
             isPartial: payload.metadata?.isPartial,
