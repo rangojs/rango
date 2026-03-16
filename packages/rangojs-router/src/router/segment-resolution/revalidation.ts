@@ -608,6 +608,8 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         context,
         actionContext,
         stale,
+        traceSource:
+          entry.type === "route" ? "route-handler" : "layout-handler",
       });
       emitRevalidationDecision(
         entry.shortCode,

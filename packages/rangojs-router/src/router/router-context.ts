@@ -189,7 +189,10 @@ export interface RouterContext<TEnv = any> {
       | "cache-hit"
       | "loader"
       | "parallel"
-      | "orphan-layout";
+      | "orphan-layout"
+      | "route-handler"
+      | "layout-handler"
+      | "intercept-loader";
   }) => Promise<boolean>;
 
   // Request context

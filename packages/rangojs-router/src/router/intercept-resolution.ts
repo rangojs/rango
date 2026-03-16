@@ -188,6 +188,7 @@ export async function resolveInterceptEntry<TEnv>(
           context,
           actionContext,
           stale,
+          traceSource: "intercept-loader",
         });
 
         if (!shouldRevalidate) {
@@ -355,6 +356,7 @@ export async function resolveInterceptLoadersOnly<TEnv>(
         context,
         actionContext,
         stale,
+        traceSource: "intercept-loader",
       });
 
       if (!shouldRevalidate) {

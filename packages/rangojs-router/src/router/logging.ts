@@ -12,7 +12,10 @@ export interface RevalidationTraceEntry {
     | "cache-hit"
     | "loader"
     | "parallel"
-    | "orphan-layout";
+    | "orphan-layout"
+    | "route-handler"
+    | "layout-handler"
+    | "intercept-loader";
   defaultShouldRevalidate: boolean;
   finalShouldRevalidate: boolean;
   reason: string;
