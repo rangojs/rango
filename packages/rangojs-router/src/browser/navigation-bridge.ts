@@ -480,13 +480,15 @@ export function createNavigationBridge(
                 addTransitionType("navigation-back");
               }
               onUpdate(popstateUpdate);
+              // Restore inside the transition so React commits the new
+              // content before scroll restoration measures scrollHeight.
+              handleNavigationEnd({ restore: true, isStreaming });
             });
           } else {
             onUpdate(popstateUpdate);
+            // Restore scroll position for back/forward navigation
+            handleNavigationEnd({ restore: true, isStreaming });
           }
-
-          // Restore scroll position for back/forward navigation
-          handleNavigationEnd({ restore: true, isStreaming });
 
           // SWR: If stale, trigger background revalidation
           if (isStale) {
