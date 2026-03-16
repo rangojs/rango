@@ -83,6 +83,7 @@ export async function handleRscRendering<TEnv>(
           slots: result.slots,
           handles: handleStore.stream(),
           version: ctx.version,
+          prefetchCacheTTL: ctx.router.prefetchCacheTTL,
         },
       };
     }
@@ -143,6 +144,7 @@ export async function handleRscRendering<TEnv>(
           rootLayout: ctx.router.rootLayout,
           handles: handleStore.stream(),
           version: ctx.version,
+          prefetchCacheTTL: ctx.router.prefetchCacheTTL,
           themeConfig: ctx.router.themeConfig,
           initialTheme: reqCtx.theme,
         },
