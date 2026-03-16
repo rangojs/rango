@@ -57,8 +57,14 @@ export interface MiddlewareContext<
   /** Original request */
   request: Request;
 
-  /** Parsed URL */
+  /** Parsed URL (with internal `_rsc*` params stripped) */
   url: URL;
+
+  /**
+   * The original request URL with all parameters intact, including
+   * internal `_rsc*` transport params.
+   */
+  originalUrl: URL;
 
   /** URL pathname */
   pathname: string;
@@ -73,11 +79,8 @@ export interface MiddlewareContext<
   params: TParams;
 
   /**
-   * Response stub (read-only). Before `next()`, returns the shared response stub
-   * where headers and cookies accumulate. After `next()`, returns the downstream response.
-   *
-   * Use `ctx.header()` to set response headers, or `cookies()` for cookie mutations.
-   * To replace the response entirely, return a new `Response` from the middleware.
+   * @deprecated Use `ctx.headers` to read/write response headers, or
+   * `ctx.header(name, value)`. Will be removed in a future version.
    */
   readonly res: Response;
 

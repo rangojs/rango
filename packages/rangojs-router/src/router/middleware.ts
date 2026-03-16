@@ -166,6 +166,7 @@ export function createMiddlewareContext<TEnv>(
   return {
     request,
     url,
+    originalUrl: new URL(request.url),
     pathname: url.pathname,
     searchParams: url.searchParams,
     env: env as MiddlewareContext<TEnv>["env"],

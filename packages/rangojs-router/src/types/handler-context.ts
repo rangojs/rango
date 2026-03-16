@@ -228,9 +228,17 @@ export type HandlerContext<
    */
   pathname: string;
   /**
-   * The full URL object (with system params filtered).
+   * The full URL object (with internal `_rsc*` params stripped).
+   * Use this for application logic — routing, link generation, display.
    */
   url: URL;
+  /**
+   * The original request URL with all parameters intact, including
+   * internal `_rsc*` transport params. Use `ctx.url` for application
+   * logic — this is only needed for advanced cases like debugging
+   * or custom cache keying.
+   */
+  originalUrl: URL;
   /**
    * Platform bindings (DB, KV, secrets, etc.).
    * Access resources like `ctx.env.DB`, `ctx.env.KV`.
@@ -267,16 +275,8 @@ export type HandlerContext<
     <T>(contextVar: ContextVar<T>, value: T): void;
   } & (<K extends keyof DefaultVars>(key: K, value: DefaultVars[K]) => void);
   /**
-   * Stub response for setting headers/cookies.
-   * Headers set here are merged into the final response.
-   *
-   * @example
-   * ```typescript
-   * route("product", (ctx) => {
-   *   ctx.res.headers.set("Cache-Control", "s-maxage=60");
-   *   return <ProductPage />;
-   * });
-   * ```
+   * @deprecated Use `ctx.headers` to read/write response headers, or
+   * `ctx.header(name, value)` in middleware. Will be removed in a future version.
    */
   res: Response;
   /**

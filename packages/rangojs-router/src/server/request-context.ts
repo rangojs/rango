@@ -49,8 +49,13 @@ export interface RequestContext<
   env: TEnv;
   /** Original HTTP request */
   request: Request;
-  /** Parsed URL (system params like _rsc* are NOT filtered here) */
+  /** Parsed URL (with internal `_rsc*` params stripped) */
   url: URL;
+  /**
+   * The original request URL with all parameters intact, including
+   * internal `_rsc*` transport params.
+   */
+  originalUrl: URL;
   /** URL pathname */
   pathname: string;
   /** URL search params (system params like _rsc* are NOT filtered here) */
@@ -73,10 +78,8 @@ export interface RequestContext<
    */
   params: TParams;
   /**
-   * Stub response for setting headers/cookies (read-only).
-   * Headers set here are merged into the final response.
-   * Use header() or setStatus() to mutate response headers/status.
-   * Use cookies().set()/cookies().delete() for cookie mutations.
+   * @deprecated Use `ctx.headers` to read/write response headers, or
+   * `ctx.header(name, value)`. Will be removed in a future version.
    */
   readonly res: Response;
 
@@ -556,6 +559,7 @@ export function createRequestContext<TEnv>(
     env,
     request,
     url,
+    originalUrl: new URL(request.url),
     pathname: url.pathname,
     searchParams: url.searchParams,
     var: variables,

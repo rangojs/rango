@@ -92,7 +92,7 @@ const timingMiddleware: Middleware = async (ctx, next) => {
   const start = Date.now();
   await next();
   const duration = Date.now() - start;
-  ctx.res.headers.set("X-Request-Duration", String(duration));
+  ctx.headers.set("X-Request-Duration", String(duration));
 };
 
 /**
@@ -119,8 +119,8 @@ const errorMiddleware: Middleware = async (ctx, next) => {
     await next();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    ctx.res.headers.set("X-Error-Caught", "true");
-    ctx.res.headers.set("X-Error-Message", message);
+    ctx.headers.set("X-Error-Caught", "true");
+    ctx.headers.set("X-Error-Message", message);
     return new Response(`Error caught by middleware: ${message}`, {
       status: 500,
       headers: { "X-Error-Caught": "true", "X-Error-Message": message },
