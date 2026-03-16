@@ -302,6 +302,10 @@ export function restoreScrollPosition(options?: {
         cancelScrollRestorationPolling();
       }
     }, SCROLL_POLL_INTERVAL_MS);
+
+    // Return true to prevent handleNavigationEnd from falling through
+    // to scrollToTop(). The polling will handle the final scroll.
+    return true;
   }
 
   return false;
