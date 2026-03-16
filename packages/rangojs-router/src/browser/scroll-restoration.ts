@@ -288,7 +288,11 @@ export function restoreScrollPosition(options?: {
   // Not streaming — scroll after React commits and browser paints.
   // startTransition defers the DOM commit, so scrolling synchronously
   // would be overwritten when React replaces the content.
-  requestAnimationFrame(() => {
+  const defer =
+    typeof requestAnimationFrame === "function"
+      ? requestAnimationFrame
+      : (fn: () => void) => setTimeout(fn, 0);
+  defer(() => {
     window.scrollTo(0, savedY);
     debugLog("[Scroll] Restored position:", savedY, "for key:", key);
   });

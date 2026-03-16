@@ -485,8 +485,16 @@ export function createNavigationBridge(
             onUpdate(popstateUpdate);
           }
 
-          // Restore scroll position for back/forward navigation
-          handleNavigationEnd({ restore: true, isStreaming });
+          // Restore scroll position for back/forward navigation.
+          // Defer to next frame so React has committed the cached content to
+          // the DOM before we measure scrollHeight and restore scroll position.
+          const defer =
+            typeof requestAnimationFrame === "function"
+              ? requestAnimationFrame
+              : (fn: () => void) => setTimeout(fn, 0);
+          defer(() => {
+            handleNavigationEnd({ restore: true, isStreaming });
+          });
 
           // SWR: If stale, trigger background revalidation
           if (isStale) {
