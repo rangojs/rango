@@ -470,10 +470,10 @@ describe("middleware", () => {
       expect(post).toBeUndefined();
     });
 
-    it("should allow ctx.res access after next()", async () => {
+    it("should allow ctx.headers access after next()", async () => {
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         await next();
-        ctx.res.headers.set("X-Via-Ctx", "yes");
+        ctx.headers.set("X-Via-Ctx", "yes");
         // No return - forgiving API
       };
 
@@ -728,13 +728,13 @@ describe("middleware", () => {
       ).rejects.toThrow("Middleware must call next()");
     });
 
-    it("should allow setting headers before next() via ctx.res", async () => {
+    it("should allow setting headers before and after next() via ctx.headers", async () => {
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
-        // Set header before next() using stub response
-        ctx.res.headers.set("X-Before-Next", "works");
+        // Set header before next() using ctx.headers
+        ctx.headers.set("X-Before-Next", "works");
         await next();
         // Set header after next() as well
-        ctx.res.headers.set("X-After-Next", "also-works");
+        ctx.headers.set("X-After-Next", "also-works");
       };
 
       const response = await executeMiddleware(
@@ -797,23 +797,6 @@ describe("middleware", () => {
       );
 
       expect(receivedParams).toEqual({ id: "123" });
-    });
-
-    it("should throw when middleware tries to assign ctx.res", async () => {
-      const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
-        await next();
-        (ctx as any).res = new Response("Replaced", { status: 201 });
-      };
-
-      await expect(
-        executeMiddleware(
-          [createMockEntry(middleware)],
-          new Request("http://localhost/test"),
-          {},
-          {},
-          async () => new Response("Original"),
-        ),
-      ).rejects.toThrow("ctx.res is read-only");
     });
 
     it("should warn when middleware returns non-Response value", async () => {
@@ -1308,14 +1291,15 @@ describe("middleware", () => {
       expect(result!.status).toBe(401);
     });
 
-    it("should allow ctx.res access after next() without throwing", async () => {
+    it("should allow ctx.headers access after next() without throwing", async () => {
       const stubResponse = new Response(null, { status: 200 });
-      let resStatus: number | undefined;
+      stubResponse.headers.set("X-Test", "value");
+      let headerValue: string | null | undefined;
 
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         await next();
-        // This should not throw - ctx.res should be accessible
-        resStatus = ctx.res.status;
+        // This should not throw - ctx.headers should be accessible
+        headerValue = ctx.headers.get("X-Test");
       };
 
       const result = await executeInterceptMiddleware(
@@ -1327,7 +1311,7 @@ describe("middleware", () => {
         stubResponse,
       );
 
-      expect(resStatus).toBe(200);
+      expect(headerValue).toBe("value");
       expect(result).toBeNull(); // No short-circuit, no modifications
     });
 
@@ -1350,25 +1334,6 @@ describe("middleware", () => {
       // Should return null (no short-circuit) - headers are on stubResponse for caller to merge
       expect(result).toBeNull();
       expect(stubResponse.headers.get("X-Custom-Header")).toBe("custom-value");
-    });
-
-    it("should throw when middleware tries to assign ctx.res in intercept mode", async () => {
-      const stubResponse = new Response(null, { status: 200 });
-      const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
-        await next();
-        (ctx as any).res = new Response("Custom body", { status: 201 });
-      };
-
-      await expect(
-        executeInterceptMiddleware(
-          [middleware],
-          new Request("http://localhost/test"),
-          {},
-          {},
-          {},
-          stubResponse,
-        ),
-      ).rejects.toThrow("ctx.res is read-only");
     });
 
     it("should NOT short-circuit when cookies set after next() - cookies go on stubResponse", async () => {
@@ -1753,7 +1718,7 @@ describe("middleware", () => {
       expect(reqCtx.cookie("session")).toBeUndefined();
     });
 
-    it("middleware cookies().set visible on ctx.res before next()", async () => {
+    it("middleware cookies().set visible on ctx.headers before next()", async () => {
       const request = new Request("http://localhost/test");
       const reqCtx = createRequestContext({
         env: {},
@@ -1774,8 +1739,8 @@ describe("middleware", () => {
                 paramNames: [],
                 handler: async (ctx, next) => {
                   cookies().set("token", "abc123", { httpOnly: true });
-                  // ctx.res should reflect the cookie set above
-                  setCookieHeaders = ctx.res.headers.getSetCookie();
+                  // ctx.headers should reflect the cookie set above
+                  setCookieHeaders = ctx.headers.getSetCookie();
                   return next();
                 },
                 mountPrefix: null,
@@ -1795,7 +1760,7 @@ describe("middleware", () => {
       expect(setCookieHeaders[0]).toContain("HttpOnly");
     });
 
-    it("middleware ctx.header visible on ctx.res before next()", async () => {
+    it("middleware ctx.header visible on ctx.headers before next()", async () => {
       const request = new Request("http://localhost/test");
       const reqCtx = createRequestContext({
         env: {},
@@ -1816,7 +1781,7 @@ describe("middleware", () => {
                 paramNames: [],
                 handler: async (ctx, next) => {
                   ctx.header("X-Request-Id", "req-42");
-                  headerValue = ctx.res.headers.get("X-Request-Id");
+                  headerValue = ctx.headers.get("X-Request-Id");
                   return next();
                 },
                 mountPrefix: null,

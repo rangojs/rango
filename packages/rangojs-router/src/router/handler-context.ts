@@ -239,6 +239,7 @@ export function createHandlerContext<TEnv>(
     search: searchSchema ? resolvedSearchParams : {},
     pathname,
     url,
+    originalUrl: new URL(request.url),
     env: bindings,
     var: variables,
     get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as HandlerContext<
@@ -323,6 +324,7 @@ export function createPrerenderContext<TEnv>(
     search: {},
     pathname,
     url: syntheticUrl,
+    originalUrl: syntheticUrl,
     get env(): TEnv {
       return throwUnavailable("env");
     },
@@ -403,6 +405,9 @@ export function createStaticContext<TEnv>(
     },
     get url(): URL {
       return throwUnavailable("url");
+    },
+    get originalUrl(): URL {
+      return throwUnavailable("originalUrl");
     },
     get env(): TEnv {
       return throwUnavailable("env");

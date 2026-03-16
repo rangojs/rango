@@ -57,8 +57,14 @@ export interface MiddlewareContext<
   /** Original request */
   request: Request;
 
-  /** Parsed URL */
+  /** Parsed URL (with internal `_rsc*` params stripped) */
   url: URL;
+
+  /**
+   * The original request URL with all parameters intact, including
+   * internal `_rsc*` transport params.
+   */
+  originalUrl: URL;
 
   /** URL pathname */
   pathname: string;
@@ -73,16 +79,7 @@ export interface MiddlewareContext<
   params: TParams;
 
   /**
-   * Response stub (read-only). Before `next()`, returns the shared response stub
-   * where headers and cookies accumulate. After `next()`, returns the downstream response.
-   *
-   * Use `ctx.header()` to set response headers, or `cookies()` for cookie mutations.
-   * To replace the response entirely, return a new `Response` from the middleware.
-   */
-  readonly res: Response;
-
-  /**
-   * Shorthand for ctx.res.headers — response headers.
+   * Response headers.
    * Before `next()`, returns headers from the shared response stub.
    * After `next()`, returns headers from the downstream response.
    */
@@ -101,11 +98,10 @@ export interface MiddlewareContext<
   var: DefaultVars;
 
   /**
-   * Set a response header - can be called before or after `next()`
+   * Set a response header - can be called before or after `next()`.
    *
    * When called before `next()`, headers are queued and merged into the final response.
    * When called after `next()`, headers are set directly on the response.
-   * Shorthand for `ctx.res.headers.set()`.
    */
   header(name: string, value: string): void;
 
@@ -202,7 +198,7 @@ export interface MiddlewareEntry<TEnv = any> {
 }
 
 /**
- * Mutable response holder - allows ctx.res to be updated after next() is called
+ * Mutable response holder - tracks the current response through the middleware chain.
  */
 export interface ResponseHolder {
   response: Response | null;

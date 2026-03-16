@@ -163,9 +163,25 @@ export function createMiddlewareContext<TEnv>(
   // Cookie operations are handled by the standalone cookies() function which
   // delegates to the shared RequestContext internally.
   // The runtime implementation - types are enforced at call sites via MiddlewareContext<TEnv>
+  // Internal helper: resolve the current response (stub before next(), real after).
+  // Not exposed on the public MiddlewareContext type — use ctx.headers instead.
+  const getResponse = (): Response => {
+    if (isPreNext()) {
+      const reqCtx = _getRequestContext();
+      if (reqCtx) return reqCtx.res;
+    }
+    if (!responseHolder.response) {
+      throw new Error(
+        "Response is not available - responseHolder was not initialized",
+      );
+    }
+    return responseHolder.response;
+  };
+
   return {
     request,
     url,
+    originalUrl: new URL(request.url),
     pathname: url.pathname,
     searchParams: url.searchParams,
     env: env as MiddlewareContext<TEnv>["env"],
@@ -180,28 +196,8 @@ export function createMiddlewareContext<TEnv>(
       ) as MiddlewareContext<TEnv>["routeName"];
     },
 
-    get res(): Response {
-      // Before next(): return shared RequestContext stub so headers
-      // set via ctx.header() are visible on ctx.res.
-      if (isPreNext()) {
-        const reqCtx = _getRequestContext();
-        if (reqCtx) return reqCtx.res;
-      }
-      if (!responseHolder.response) {
-        throw new Error(
-          "ctx.res is not available - responseHolder was not initialized",
-        );
-      }
-      return responseHolder.response;
-    },
-    set res(_: Response) {
-      throw new Error(
-        "ctx.res is read-only. Use ctx.header() to set response headers, or cookies() for cookie mutations.",
-      );
-    },
-
     get headers(): Headers {
-      return this.res.headers;
+      return getResponse().headers;
     },
 
     get: ((keyOrVar: any) =>
@@ -302,9 +298,9 @@ export function matchMiddleware<TEnv>(
  *
  * Features:
  * - `await next()` returns actual Response
- * - `ctx.res` available after `await next()` (like Hono's `c.res`)
- * - `ctx.header()` shorthand for setting headers
- * - Forgiving: if middleware doesn't return, uses `ctx.res`
+ * - `ctx.headers` available before and after `await next()`
+ * - `ctx.header()` shorthand for setting a single header
+ * - Forgiving: if middleware doesn't return, uses the downstream response
  * - Short-circuit: return Response to stop chain
  * - Error catching: try/catch around `next()` works
  */
