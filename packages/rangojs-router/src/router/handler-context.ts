@@ -214,14 +214,17 @@ export function createHandlerContext<TEnv>(
     requestContext?.res ?? new Response(null, { status: 200 });
 
   // Guard mutating Headers methods so they throw inside "use cache" functions.
+  // Uses lazy `ctx` reference (assigned below) — only the specific handler ctx
+  // is stamped by cache-runtime, not the shared request context.
   const MUTATING_HEADERS_METHODS = new Set(["set", "append", "delete"]);
+  let ctx: InternalHandlerContext<any, TEnv>;
   const guardedHeaders = new Proxy(stubResponse.headers, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
       if (typeof value === "function") {
         if (MUTATING_HEADERS_METHODS.has(prop as string)) {
           return (...args: any[]) => {
-            assertNotInsideCacheExec(requestContext, "headers");
+            assertNotInsideCacheExec(ctx, "headers");
             return value.apply(target, args);
           };
         }
@@ -231,7 +234,7 @@ export function createHandlerContext<TEnv>(
     },
   });
 
-  const ctx: InternalHandlerContext<any, TEnv> = {
+  ctx = {
     params,
     build: false,
     request,
@@ -247,7 +250,7 @@ export function createHandlerContext<TEnv>(
       TEnv
     >["get"],
     set: ((keyOrVar: any, value: any) => {
-      assertNotInsideCacheExec(requestContext, "set");
+      assertNotInsideCacheExec(ctx, "set");
       contextSet(variables, keyOrVar, value);
     }) as HandlerContext<any, TEnv>["set"],
     res: stubResponse, // Stub response for setting headers

@@ -201,6 +201,28 @@ test.describe("use-cache basic", () => {
     expect(message).toMatch(/ctx\.headers\(\) cannot be called inside/i);
   });
 
+  test("child ctx.set() works when parent layout has 'use cache' after revalidation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/use-cache-test/cached-parent-child-set"));
+    await waitForHydration(page);
+
+    // Initial render — ctx.set() should work
+    await expect(page.getByTestId("child-set-value")).toHaveText("from-child");
+    const ts1 = await page.getByTestId("child-set-ts").textContent();
+
+    // Trigger revalidation via server action
+    await page.getByTestId("child-set-revalidate").click();
+    await page.getByTestId("child-set-revalidate-result").waitFor();
+
+    // After revalidation — ctx.set() must still work (not blocked by cached parent)
+    await expect(page.getByTestId("child-set-value")).toHaveText("from-child");
+    const ts2 = await page.getByTestId("child-set-ts").textContent();
+    expect(ts2).not.toBe(ts1);
+  });
+
   test("path.json with use cache: params differentiate entries", async ({
     request,
   }) => {
@@ -397,6 +419,25 @@ test.describe("use-cache basic (production)", () => {
       .getByTestId("guard-ctx-headers-set-message")
       .textContent();
     expect(message).toMatch(/ctx\.headers\(\) cannot be called inside/i);
+  });
+
+  test("child ctx.set() works when parent layout has 'use cache' after revalidation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/use-cache-test/cached-parent-child-set"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("child-set-value")).toHaveText("from-child");
+    const ts1 = await page.getByTestId("child-set-ts").textContent();
+
+    await page.getByTestId("child-set-revalidate").click();
+    await page.getByTestId("child-set-revalidate-result").waitFor();
+
+    await expect(page.getByTestId("child-set-value")).toHaveText("from-child");
+    const ts2 = await page.getByTestId("child-set-ts").textContent();
+    expect(ts2).not.toBe(ts1);
   });
 
   test("path.json with use cache: params differentiate entries", async ({

@@ -16,6 +16,7 @@ import {
   getSwrTestData,
 } from "./use-cache-fn.js";
 import { InterleaveActionButton } from "../components/InterleaveActionButton.js";
+import { RevalidateButton } from "../components/RevalidateButton.js";
 import { UseCacheTestLoader } from "../loaders.js";
 
 /**
@@ -26,7 +27,7 @@ import { UseCacheTestLoader } from "../loaders.js";
  * and inline "use cache" in handlers and layouts with handle data.
  */
 export const useCachePatterns = urls(
-  ({ path, layout, loading, intercept, loader, when }) => [
+  ({ path, layout, loading, intercept, loader, when, revalidate }) => [
     // Basic: file-level "use cache", no args
     path(
       "/basic",
@@ -498,6 +499,37 @@ export const useCachePatterns = urls(
         );
       },
       { name: "useCacheTest.guardCtxHeadersSet" },
+    ),
+    // Repro: cached layout with child handler that calls ctx.set().
+    // During revalidation the shared request context is stamped by the
+    // cached layout, which must NOT block the child's ctx.set().
+    layout(
+      async () => {
+        "use cache";
+        return (
+          <div data-testid="cached-layout-with-child-set">
+            <Outlet />
+          </div>
+        );
+      },
+      () => [
+        path(
+          "/cached-parent-child-set",
+          (ctx) => {
+            ctx.set("childData", "from-child");
+            const val = ctx.get("childData");
+            return (
+              <div data-testid="child-set-page">
+                <span data-testid="child-set-value">{val}</span>
+                <span data-testid="child-set-ts">{Date.now()}</span>
+                <RevalidateButton testId="child-set-revalidate" />
+              </div>
+            );
+          },
+          { name: "useCacheTest.cachedParentChildSet" },
+          () => [revalidate(() => true)],
+        ),
+      ],
     ),
   ],
 );

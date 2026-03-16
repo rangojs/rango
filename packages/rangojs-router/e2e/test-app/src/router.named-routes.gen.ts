@@ -211,6 +211,7 @@ export const NamedRoutes = {
   "useCacheTest.useCacheTest.basic": "/use-cache-test/basic",
   "useCacheTest.useCacheTest.brandCheck": "/use-cache-test/brand-check",
   "useCacheTest.useCacheTest.cachedNode": "/use-cache-test/cached-node",
+  "useCacheTest.useCacheTest.cachedParentChildSet": "/use-cache-test/cached-parent-child-set",
   "useCacheTest.useCacheTest.guardCookies": "/use-cache-test/guard-cookies",
   "useCacheTest.useCacheTest.guardCtxHeadersSet": "/use-cache-test/guard-ctx-headers-set",
   "useCacheTest.useCacheTest.guardCtxSet": "/use-cache-test/guard-ctx-set",
