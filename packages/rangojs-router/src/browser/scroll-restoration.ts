@@ -278,21 +278,17 @@ export function restoreScrollPosition(options?: {
   window.scrollTo(0, maxScrollY);
   debugLog("[Scroll] Partial restore to:", maxScrollY, "target:", savedY);
 
-  // Poll while streaming until we can scroll to target position
-  if (options?.retryIfStreaming && options?.isStreaming?.()) {
+  // Poll until we can scroll to the target position.
+  // This covers both streaming (content arriving incrementally) and
+  // React's batched startTransition rendering (DOM updates are async
+  // even for cached navigations with no streaming).
+  if (options?.retryIfStreaming) {
     const startTime = Date.now();
 
     pendingPollInterval = setInterval(() => {
       // Stop if we've exceeded the timeout
       if (Date.now() - startTime > SCROLL_POLL_TIMEOUT_MS) {
         debugLog("[Scroll] Polling timeout, giving up");
-        cancelScrollRestorationPolling();
-        return;
-      }
-
-      // Stop if streaming ended
-      if (!options.isStreaming?.()) {
-        debugLog("[Scroll] Streaming ended, stopping poll");
         cancelScrollRestorationPolling();
         return;
       }
