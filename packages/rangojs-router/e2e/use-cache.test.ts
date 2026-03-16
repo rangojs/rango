@@ -223,6 +223,61 @@ test.describe("use-cache basic", () => {
     expect(ts2).not.toBe(ts1);
   });
 
+  test("layout loader segment persists in _rsc_segments across navigations", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Track _rsc_segments on each partial navigation request
+    const segmentRequests: string[][] = [];
+    page.on("request", (req) => {
+      const url = new URL(req.url());
+      const segments = url.searchParams.get("_rsc_segments");
+      if (segments) {
+        segmentRequests.push(decodeURIComponent(segments).split(","));
+      }
+    });
+
+    await page.goto(f.url("/use-cache-test/loader-segments/items?page=1"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("loader-segments-current-page")).toHaveText(
+      "1",
+    );
+
+    // Navigate to page 2 — first client navigation
+    await page.getByTestId("loader-segments-link-2").click();
+    await expect(page.getByTestId("loader-segments-current-page")).toHaveText(
+      "2",
+    );
+
+    // Navigate to page 3
+    await page.getByTestId("loader-segments-link-3").click();
+    await expect(page.getByTestId("loader-segments-current-page")).toHaveText(
+      "3",
+    );
+
+    // Navigate backwards to page 1 — this is where the loader used to drop
+    await page.getByTestId("loader-segments-link-1").click();
+    await expect(page.getByTestId("loader-segments-current-page")).toHaveText(
+      "1",
+    );
+
+    // Verify every partial navigation included the loader segment ID.
+    // Regression: getNonLoaderSegmentIds stripped loader IDs from cache-hit
+    // navigations, causing them to disappear from tracking permanently.
+    const loaderSegmentPattern = /D\d+\./; // Loader IDs contain "D0.", "D1.", etc.
+    for (let i = 0; i < segmentRequests.length; i++) {
+      const hasLoader = segmentRequests[i].some((id) =>
+        loaderSegmentPattern.test(id),
+      );
+      expect(
+        hasLoader,
+        `Navigation ${i + 1} missing loader segment in _rsc_segments: [${segmentRequests[i].join(", ")}]`,
+      ).toBe(true);
+    }
+  });
+
   test("path.json with use cache: params differentiate entries", async ({
     request,
   }) => {
@@ -438,6 +493,54 @@ test.describe("use-cache basic (production)", () => {
     await expect(page.getByTestId("child-set-value")).toHaveText("from-child");
     const ts2 = await page.getByTestId("child-set-ts").textContent();
     expect(ts2).not.toBe(ts1);
+  });
+
+  test("layout loader segment persists in _rsc_segments across navigations", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    const segmentRequests: string[][] = [];
+    page.on("request", (req) => {
+      const url = new URL(req.url());
+      const segments = url.searchParams.get("_rsc_segments");
+      if (segments) {
+        segmentRequests.push(decodeURIComponent(segments).split(","));
+      }
+    });
+
+    await page.goto(f.url("/use-cache-test/loader-segments/items?page=1"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("loader-segments-current-page")).toHaveText(
+      "1",
+    );
+
+    await page.getByTestId("loader-segments-link-2").click();
+    await expect(page.getByTestId("loader-segments-current-page")).toHaveText(
+      "2",
+    );
+
+    await page.getByTestId("loader-segments-link-3").click();
+    await expect(page.getByTestId("loader-segments-current-page")).toHaveText(
+      "3",
+    );
+
+    await page.getByTestId("loader-segments-link-1").click();
+    await expect(page.getByTestId("loader-segments-current-page")).toHaveText(
+      "1",
+    );
+
+    const loaderSegmentPattern = /D\d+\./;
+    for (let i = 0; i < segmentRequests.length; i++) {
+      const hasLoader = segmentRequests[i].some((id) =>
+        loaderSegmentPattern.test(id),
+      );
+      expect(
+        hasLoader,
+        `Navigation ${i + 1} missing loader segment in _rsc_segments: [${segmentRequests[i].join(", ")}]`,
+      ).toBe(true);
+    }
   });
 
   test("path.json with use cache: params differentiate entries", async ({

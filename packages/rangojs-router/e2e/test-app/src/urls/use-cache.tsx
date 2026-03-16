@@ -17,7 +17,47 @@ import {
 } from "./use-cache-fn.js";
 import { InterleaveActionButton } from "../components/InterleaveActionButton.js";
 import { RevalidateButton } from "../components/RevalidateButton.js";
-import { UseCacheTestLoader } from "../loaders.js";
+import { UseCacheTestLoader, LayoutCountLoader } from "../loaders.js";
+
+// Included routes for loader segment tracking test.
+// Mirrors real setup: handler calls a 'use cache' function internally.
+const loaderSegmentPages = urls(({ path }) => [
+  path(
+    "/:pageId",
+    async (ctx) => {
+      const page = ctx.url.searchParams.get("page") || "1";
+      // Call a cached function internally (like the real app)
+      const data = await getBasicTimestamp();
+      return (
+        <div data-testid="loader-segments-page">
+          <span data-testid="loader-segments-current-page">{page}</span>
+          <span data-testid="loader-segments-ts">{data.ts}</span>
+          <nav>
+            <Link
+              to="/use-cache-test/loader-segments/items?page=1"
+              data-testid="loader-segments-link-1"
+            >
+              Page 1
+            </Link>
+            <Link
+              to="/use-cache-test/loader-segments/items?page=2"
+              data-testid="loader-segments-link-2"
+            >
+              Page 2
+            </Link>
+            <Link
+              to="/use-cache-test/loader-segments/items?page=3"
+              data-testid="loader-segments-link-3"
+            >
+              Page 3
+            </Link>
+          </nav>
+        </div>
+      );
+    },
+    { name: "loaderSegmentPage", search: { page: "number?" } },
+  ),
+]);
 
 /**
  * "use cache" test routes.
@@ -27,7 +67,7 @@ import { UseCacheTestLoader } from "../loaders.js";
  * and inline "use cache" in handlers and layouts with handle data.
  */
 export const useCachePatterns = urls(
-  ({ path, layout, loading, intercept, loader, when, revalidate }) => [
+  ({ path, layout, loading, intercept, loader, when, revalidate, include }) => [
     // Basic: file-level "use cache", no args
     path(
       "/basic",
@@ -531,5 +571,22 @@ export const useCachePatterns = urls(
         ),
       ],
     ),
+
+    // Repro: layout loader disappears from _rsc_segments after navigation.
+    // Mirrors real-world setup: top-level layout with loader (revalidate
+    // returns false for non-cart actions), routes via include() with
+    // 'use cache' handler. After navigating between pages with different
+    // search params, the loader segment should persist in _rsc_segments.
+    layout(
+      () => (
+        <div data-testid="loader-segments-layout">
+          <Outlet />
+        </div>
+      ),
+      () => [loader(LayoutCountLoader, () => [revalidate(() => false)])],
+    ),
+    include("/loader-segments", loaderSegmentPages, {
+      name: "loaderSegmentPages",
+    }),
   ],
 );

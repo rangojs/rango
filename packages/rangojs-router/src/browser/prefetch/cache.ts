@@ -21,10 +21,18 @@ let cacheTTL = 300_000;
 /**
  * Initialize the prefetch cache with the configured TTL.
  * Called once at app startup with the value from server metadata.
- * A TTL of 0 disables the in-memory cache.
+ * A TTL of 0 disables the in-memory cache and all prefetching.
  */
 export function initPrefetchCache(ttlMs: number): void {
   cacheTTL = ttlMs;
+}
+
+/**
+ * Check if the prefetch cache is disabled (TTL <= 0).
+ * When disabled, no prefetch requests should be issued.
+ */
+export function isPrefetchCacheDisabled(): boolean {
+  return cacheTTL <= 0;
 }
 const MAX_PREFETCH_CACHE_SIZE = 50;
 

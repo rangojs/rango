@@ -40,11 +40,6 @@ if (typeof Symbol.dispose === "undefined") {
   (Symbol as any).dispose = Symbol("Symbol.dispose");
 }
 
-/** Get IDs of non-loader segments (layouts, routes, parallels). */
-function getNonLoaderSegmentIds(segments: ResolvedSegment[]): string[] {
-  return segments.filter((s) => s.type !== "loader").map((s) => s.id);
-}
-
 export { createNavigationTransaction };
 
 /**
@@ -284,7 +279,7 @@ export function createNavigationBridge(
         await fetchPartialUpdate(
           url,
           hasUsableCache
-            ? getNonLoaderSegmentIds(cachedSegments!)
+            ? cachedSegments!.map((s) => s.id)
             : options?._skipCache
               ? [] // Action redirect: send no segments so server renders everything fresh
               : undefined,
@@ -497,7 +492,7 @@ export function createNavigationBridge(
           if (isStale) {
             debugLog("[Browser] Cache is stale, background revalidating...");
             // Background revalidation - don't await, just fire and forget
-            const segmentIds = getNonLoaderSegmentIds(cachedSegments);
+            const segmentIds = cachedSegments.map((s) => s.id);
 
             const tx = createNavigationTransaction(
               store,

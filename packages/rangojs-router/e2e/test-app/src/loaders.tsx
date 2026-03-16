@@ -1,5 +1,11 @@
 import { createLoader, cookies } from "@rangojs/router";
 
+// Layout-level loader for segment tracking tests
+export const LayoutCountLoader = createLoader(async () => {
+  "use server";
+  return { count: Date.now() };
+});
+
 // Simple loader for prerender client component tests
 export const PrerenderTestLoader = createLoader(async () => {
   return { test: true, message: "prerender-loader-data" };

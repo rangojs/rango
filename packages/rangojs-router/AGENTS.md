@@ -3,3 +3,7 @@
 A file-system based React Server Components router.
 
 Run `/rango` to understand the API. Detailed guides for each feature are in the `skills/` directory (e.g. `node_modules/@rangojs/router/skills/loader`, `skills/caching`, `skills/middleware`, etc.).
+
+## Development rules
+
+- Always commit generated files (e.g. `*.gen.ts`) alongside the source changes that produced them.

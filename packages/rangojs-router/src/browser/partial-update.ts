@@ -411,8 +411,10 @@ export function createPartialUpdater(
         }
       }
 
-      // Commit navigation - transaction handles all store mutations atomically
-      const allSegmentIds = reconciled.segments.map((s) => s.id);
+      // Commit navigation - use server's matched as the authoritative segment ID list.
+      // reconciled.segments may be missing IDs (e.g., loader segments not in diff or cache)
+      // but the server's matched always includes all expected segment IDs.
+      const allSegmentIds = matchedIds;
       const serverLocationState = payload.metadata?.locationState;
       const overrides: CommitOverrides | undefined = isInterceptResponse
         ? {
