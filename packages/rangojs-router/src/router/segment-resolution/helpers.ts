@@ -174,7 +174,7 @@ export function catchSegmentError<TEnv>(
   const setResponseStatus = (status: number) => {
     const reqCtx = getRequestContext();
     if (reqCtx) {
-      reqCtx.setStatus(status);
+      reqCtx._setStatus(status);
     }
   };
 

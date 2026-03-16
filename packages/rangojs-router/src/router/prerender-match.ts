@@ -117,6 +117,7 @@ export async function matchForPrerender<TEnv = any>(
       deleteCookie: () => {},
       header: () => {},
       setStatus: () => {},
+      _setStatus: () => {},
       use: (() => {
         throw new Error("use() not available during pre-rendering");
       }) as any,
@@ -346,6 +347,7 @@ export async function renderStaticSegment<TEnv = any>(
     deleteCookie: () => {},
     header: () => {},
     setStatus: () => {},
+    _setStatus: () => {},
     use: (() => {
       throw new Error("use() not available during static pre-rendering");
     }) as any,

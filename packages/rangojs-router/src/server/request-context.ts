@@ -95,6 +95,8 @@ export interface RequestContext<
   header(name: string, value: string): void;
   /** Set the response status code */
   setStatus(status: number): void;
+  /** @internal Set status bypassing cache-exec guard (for framework error handling) */
+  _setStatus(status: number): void;
 
   /**
    * Access loader data or push handle data.
@@ -301,6 +303,7 @@ export type PublicRequestContext<
   | "_reportBackgroundError"
   | "_debugPerformance"
   | "_metricsStore"
+  | "_setStatus"
   | "res"
 >;
 
@@ -629,8 +632,13 @@ export function createRequestContext<TEnv>(
 
     setStatus(status: number): void {
       assertNotInsideCacheExec(ctx, "setStatus");
-      // Response.status is read-only, so we must create a new Response.
-      // Headers are passed by reference — no cookie cache invalidation needed.
+      stubResponse = new Response(null, {
+        status,
+        headers: stubResponse.headers,
+      });
+    },
+
+    _setStatus(status: number): void {
       stubResponse = new Response(null, {
         status,
         headers: stubResponse.headers,

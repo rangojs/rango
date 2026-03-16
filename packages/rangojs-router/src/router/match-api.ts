@@ -591,7 +591,7 @@ export async function matchError<TEnv>(
 
   const reqCtx = getRequestContext();
   if (reqCtx) {
-    reqCtx.setStatus(500);
+    reqCtx._setStatus(500);
   }
 
   const effectiveFallback = fallback || DefaultErrorFallback;
