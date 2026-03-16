@@ -198,17 +198,33 @@ test.describe("bundle-analysis", () => {
       expect(clientBundle).toContain("__rsc_router_breadcrumbs__");
     });
 
-    test("built-in handle tag should not contain file paths", async () => {
+    test("built-in handle tag in client bundle should not leak file paths", async () => {
       const clientBundle = getClientBundleContent();
 
-      // Built-in handles (e.g., Breadcrumbs) live in node_modules and are
-      // NOT processed by exposeInternalIds. They use stable manual tags
-      // passed as the second argument to createHandle(). Verify the tag
-      // does not leak file paths into the client bundle.
-      const tag = "__rsc_router_breadcrumbs__";
-      expect(clientBundle).toContain(tag);
-      expect(tag).not.toContain("/");
-      expect(tag).not.toContain("src");
+      // Built-in handles live in node_modules and are NOT processed by
+      // exposeInternalIds. They use stable manual tags passed as the second
+      // argument to createHandle(). Extract ALL string literals near the
+      // breadcrumbs tag and verify none contain file paths.
+      //
+      // In the minified bundle the tag appears as a createHandle argument:
+      //   Kt(Ir,"__rsc_router_breadcrumbs__")
+      // If the plugin accidentally processed the file, there'd also be a
+      //   Wt.$$id = "src/handles/breadcrumbs.ts#Breadcrumbs"
+      // which we want to catch.
+      const breadcrumbsContext = clientBundle.match(
+        /.{0,200}__rsc_router_breadcrumbs__.{0,200}/,
+      );
+      expect(breadcrumbsContext).toBeTruthy();
+
+      // The surrounding context should not contain source file paths
+      const context = breadcrumbsContext![0];
+      expect(context).not.toMatch(/src\/handles/);
+      expect(context).not.toMatch(/breadcrumbs\.ts/);
+
+      // There should be no $$id assignment with a file path for this handle
+      expect(clientBundle).not.toMatch(
+        /\$\$id\s*=\s*"[^"]*breadcrumbs\.ts[^"]*"/,
+      );
     });
   });
 
