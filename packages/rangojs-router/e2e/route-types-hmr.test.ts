@@ -162,6 +162,22 @@ test.describe.serial("route-types-hmr", () => {
   });
 
   test("should not overwrite when routes have not changed", async () => {
+    // Wait for gen file mtime to stabilize after the previous test's
+    // afterEach restoration — the debounced re-discovery may still be
+    // writing when we enter this test.
+    let lastMtime = 0;
+    let stableChecks = 0;
+    while (stableChecks < 3) {
+      const s = await fs.stat(genFilePath);
+      if (s.mtimeMs === lastMtime) {
+        stableChecks++;
+      } else {
+        stableChecks = 0;
+        lastMtime = s.mtimeMs;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+
     // Get the initial mtime of the gen file
     const statBefore = await fs.stat(genFilePath);
 
