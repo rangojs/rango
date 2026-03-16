@@ -259,6 +259,9 @@ export type {
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 
+// Breadcrumb types
+export type { BreadcrumbItem } from "./handles/breadcrumbs.js";
+
 // Reverse type utilities for type-safe URL generation (Django-style URL reversal)
 export type {
   ScopedReverseFunction,

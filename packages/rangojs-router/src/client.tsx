@@ -544,6 +544,7 @@ export { useHandle } from "./browser/react/use-handle.js";
 export { Meta } from "./handles/meta.js";
 export { MetaTags } from "./handles/MetaTags.js";
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
+export { Breadcrumbs, type BreadcrumbItem } from "./handles/breadcrumbs.js";
 
 // Location state - type-safe navigation state
 export {

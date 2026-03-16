@@ -1,5 +1,4 @@
-import { cookies, headers } from "@rangojs/router";
-import { Breadcrumbs } from "../handles.js";
+import { cookies, headers, Breadcrumbs } from "@rangojs/router";
 
 // Function-level "use cache" — each function has its own directive.
 

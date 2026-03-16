@@ -1,7 +1,7 @@
 import type { Handler } from "@rangojs/router";
+import { Breadcrumbs } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { SlowLoader } from "../loaders.js";
-import { Breadcrumbs } from "../handles.js";
 import { RefTestLoaderProp } from "../components/RefTestLoaderProp.js";
 import { RefTestHandleProp } from "../components/RefTestHandleProp.js";
 

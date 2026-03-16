@@ -1,7 +1,6 @@
 "use client";
 
-import { Link, useHandle } from "@rangojs/router/client";
-import { Breadcrumbs } from "../handles.js";
+import { Link, useHandle, Breadcrumbs } from "@rangojs/router/client";
 import { Fragment, ReactNode, Suspense, use } from "react";
 
 /**

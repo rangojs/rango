@@ -65,7 +65,7 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 
 ### Components
 
-`Outlet`, `ParallelOutlet`, `Link`, `ScrollRestoration`, `Meta`, `MetaTags`
+`Outlet`, `ParallelOutlet`, `Link`, `ScrollRestoration`, `Meta`, `MetaTags`, `Breadcrumbs`
 
 ### Hooks
 
@@ -177,7 +177,7 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
 
 ### Handle Data
 
-`createHandle`, `useHandle`, handle propagation from route handlers into client components, segment ordering and reconciler. Built-in: `Meta` handle for head tags.
+`createHandle`, `useHandle`, handle propagation from route handlers into client components, segment ordering and reconciler. Built-in: `Meta` handle for head tags, `Breadcrumbs` handle for breadcrumb navigation.
 
 ### Revalidation
 

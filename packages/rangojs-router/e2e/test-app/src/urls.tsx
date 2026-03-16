@@ -1,4 +1,4 @@
-import { urls, cookies, Meta } from "@rangojs/router";
+import { urls, cookies, Meta, Breadcrumbs } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { RootLayout } from "./components/layouts/index.js";
 import { blogPatterns } from "./urls/blog.js";
@@ -48,6 +48,7 @@ import { actionRedirectRevalidationPatterns } from "./urls/action-redirect-reval
 import { hashNavigationPatterns } from "./urls/hash-navigation.js";
 import { linkBehaviorPatterns } from "./urls/link-behavior.js";
 import { delayedBreadcrumbPatterns } from "./urls/delayed-breadcrumbs.js";
+import { breadcrumbTrailPatterns } from "./urls/breadcrumb-trail.js";
 import { manifestCacheTestPatterns } from "./urls/manifest-cache-test.js";
 import { authBoundaryPatterns } from "./urls/auth-boundary.js";
 import { contentOwnershipPatterns } from "./urls/content-ownership.js";
@@ -65,7 +66,6 @@ import {
   SlowProductDetailLoader,
 } from "./loaders.js";
 import { SlowProductLocationState } from "./location-states.js";
-import { Breadcrumbs } from "./handles.js";
 import { Modal } from "./components/Modal.js";
 import { QuantityControl } from "./components/QuantityControl.js";
 import { SlowModalSkeleton } from "./components/SlowModalSkeleton.js";
@@ -481,6 +481,7 @@ export const urlpatterns = urls(
       include("/", handlePatterns, { name: "" }),
       include("/", hydrationPatterns, { name: "" }),
       include("/", delayedBreadcrumbPatterns, { name: "" }),
+      include("/", breadcrumbTrailPatterns, { name: "" }),
 
       // Trailing slash patterns
       include("/", trailingSlashPatterns, { name: "" }),

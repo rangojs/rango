@@ -1,8 +1,13 @@
-import { urls, Prerender, Static, getRequestContext } from "@rangojs/router";
+import {
+  urls,
+  Prerender,
+  Static,
+  getRequestContext,
+  Breadcrumbs,
+} from "@rangojs/router";
 import { ChangelogPage } from "./prerender-fs.js";
 import { PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
-import { Breadcrumbs } from "../handles.js";
 
 // Static handler on a non-parameterized route -- should be pre-rendered at build time.
 export const StaticPage = Static((ctx) => {

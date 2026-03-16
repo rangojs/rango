@@ -1,4 +1,4 @@
-import { urls, Meta } from "@rangojs/router";
+import { urls, Meta, Breadcrumbs } from "@rangojs/router";
 import { isCachedFunction } from "@rangojs/router/cache-runtime";
 import { Link, Outlet } from "@rangojs/router/client";
 import { getBasicTimestamp, getDataForCategory } from "./use-cache-data.js";
@@ -16,7 +16,6 @@ import {
   getSwrTestData,
 } from "./use-cache-fn.js";
 import { InterleaveActionButton } from "../components/InterleaveActionButton.js";
-import { Breadcrumbs } from "../handles.js";
 import { UseCacheTestLoader } from "../loaders.js";
 
 /**

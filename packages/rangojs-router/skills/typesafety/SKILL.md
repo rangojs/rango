@@ -414,26 +414,30 @@ Both approaches coexist: `ctx.get("user")` (global via Vars) and
 Handles have typed data:
 
 ```typescript
-// handles/breadcrumbs.ts
-import { createHandle } from "@rangojs/router";
+// Built-in Breadcrumbs handle — import from "@rangojs/router"
+import { Breadcrumbs } from "@rangojs/router";
+// Type: Handle<BreadcrumbItem, BreadcrumbItem[]>
+// BreadcrumbItem: { label: string; href: string; content?: ReactNode | Promise<ReactNode> }
 
-// All export patterns work: export const, const + export { X }, export { X as Y }
-export const Breadcrumbs = createHandle<{ label: string; href: string }>();
+// In route handler — push is fully typed
+path("/shop/product/:slug", (ctx) => {
+  const breadcrumb = ctx.use(Breadcrumbs);
+  breadcrumb({ label: "Products", href: "/shop/products" });
+  return <ProductPage />;
+}, { name: "product" });
 
-// In route definition - use handle() DSL
-import { urls } from "@rangojs/router";
-
-export const urlpatterns = urls(({ path, handle }) => [
-  path("/shop/product/:slug", ProductPage, { name: "product" }, () => [
-    handle(Breadcrumbs, { label: "Products", href: "/shop/products" }),
-  ]),
-]);
-
-// In client - typed array
+// In client — typed array
+import { useHandle, Breadcrumbs } from "@rangojs/router/client";
 function BreadcrumbNav() {
   const crumbs = useHandle(Breadcrumbs);
-  // crumbs: Array<{ label: string; href: string }>
+  // crumbs: BreadcrumbItem[]
 }
+
+// Custom handles also work the same way
+import { createHandle } from "@rangojs/router";
+export const PageTitle = createHandle<string, string>(
+  (segments) => segments.flat().at(-1) ?? "Default Title"
+);
 ```
 
 ## Ref Prop Type Safety (Loaders & Handles)
@@ -447,14 +451,12 @@ export const ProductLoader = createLoader(async (ctx) => {
   return { product: await fetchProduct(ctx.params.slug) };
 });
 
-// handles.ts
-export const Breadcrumbs = createHandle<{ label: string; href: string }>();
+// Built-in Breadcrumbs — or any custom handle created with createHandle()
 
 // Client component — typeof infers all generics
 ("use client");
-import { useLoader, useHandle } from "@rangojs/router/client";
+import { useLoader, useHandle, type Breadcrumbs } from "@rangojs/router/client";
 import type { ProductLoader } from "../loaders";
-import type { Breadcrumbs } from "../handles";
 
 function MyComponent({
   loader,

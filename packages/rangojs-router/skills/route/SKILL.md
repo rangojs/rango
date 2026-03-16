@@ -355,8 +355,7 @@ urls(({ path, layout }) => [
 ## Complete Example
 
 ```typescript
-import { urls } from "@rangojs/router";
-import { Breadcrumbs } from "./handles/breadcrumbs";
+import { urls, Breadcrumbs } from "@rangojs/router";
 
 export const urlpatterns = urls(({ path, layout, loader, loading }) => [
   // Simple route

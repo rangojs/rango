@@ -1,6 +1,5 @@
-import { urls } from "@rangojs/router";
+import { urls, Breadcrumbs } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
-import { Breadcrumbs } from "../handles.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

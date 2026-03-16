@@ -247,8 +247,7 @@ Access accumulated handle data from route segments:
 
 ```tsx
 "use client";
-import { useHandle } from "@rangojs/router/client";
-import { Breadcrumbs } from "../handles/breadcrumbs";
+import { useHandle, Breadcrumbs } from "@rangojs/router/client";
 
 function BreadcrumbNav() {
   const crumbs = useHandle(Breadcrumbs);
@@ -282,8 +281,7 @@ path("/dashboard", (ctx) => {
 
 // Client component — typeof infers the full Handle<T> type
 ("use client");
-import { useHandle } from "@rangojs/router/client";
-import type { Breadcrumbs } from "../handles";
+import { useHandle, type Breadcrumbs } from "@rangojs/router/client";
 
 function DashboardNav({ handle }: { handle: typeof Breadcrumbs }) {
   const crumbs = useHandle(handle);
