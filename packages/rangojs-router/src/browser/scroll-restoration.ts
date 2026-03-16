@@ -264,51 +264,35 @@ export function restoreScrollPosition(options?: {
     return false;
   }
 
-  // Check if page is tall enough to scroll to saved position
-  const maxScrollY = document.documentElement.scrollHeight - window.innerHeight;
-  const canScrollToPosition = savedY <= maxScrollY;
-
-  if (canScrollToPosition) {
-    window.scrollTo(0, savedY);
-    debugLog("[Scroll] Restored position:", savedY, "for key:", key);
-    return true;
-  }
-
-  // Scroll as far as we can for now
-  window.scrollTo(0, maxScrollY);
-  debugLog("[Scroll] Partial restore to:", maxScrollY, "target:", savedY);
-
-  // Poll while streaming until we can scroll to target position
+  // If streaming, poll until streaming ends then scroll to saved position
   if (options?.retryIfStreaming && options?.isStreaming?.()) {
     const startTime = Date.now();
 
     pendingPollInterval = setInterval(() => {
-      // Stop if we've exceeded the timeout
       if (Date.now() - startTime > SCROLL_POLL_TIMEOUT_MS) {
         debugLog("[Scroll] Polling timeout, giving up");
         cancelScrollRestorationPolling();
         return;
       }
 
-      // Stop if streaming ended
       if (!options.isStreaming?.()) {
-        debugLog("[Scroll] Streaming ended, stopping poll");
-        cancelScrollRestorationPolling();
-        return;
-      }
-
-      // Check if we can now scroll to the target position
-      const currentMaxScrollY =
-        document.documentElement.scrollHeight - window.innerHeight;
-      if (savedY <= currentMaxScrollY) {
         window.scrollTo(0, savedY);
-        debugLog("[Scroll] Poll restored position:", savedY);
+        debugLog("[Scroll] Restored after streaming:", savedY);
         cancelScrollRestorationPolling();
       }
     }, SCROLL_POLL_INTERVAL_MS);
+
+    return true;
   }
 
-  return false;
+  // Not streaming — scroll after React commits and browser paints.
+  // startTransition defers the DOM commit, so scrolling synchronously
+  // would be overwritten when React replaces the content.
+  requestAnimationFrame(() => {
+    window.scrollTo(0, savedY);
+    debugLog("[Scroll] Restored position:", savedY, "for key:", key);
+  });
+  return true;
 }
 
 /**
