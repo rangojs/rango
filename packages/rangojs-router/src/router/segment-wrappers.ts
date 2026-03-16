@@ -204,6 +204,7 @@ export function createSegmentWrappers<TEnv = any>(
     interceptResult: { intercept: InterceptEntry; entry: EntryData } | null,
     localRouteName: string,
     pathname: string,
+    stale?: boolean,
   ): ReturnType<typeof _resolveAllSegmentsWithRevalidation> {
     return _resolveAllSegmentsWithRevalidation(
       entries,
@@ -221,6 +222,7 @@ export function createSegmentWrappers<TEnv = any>(
       localRouteName,
       pathname,
       segmentDeps,
+      stale,
     );
   }
 

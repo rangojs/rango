@@ -168,6 +168,7 @@ export function withSegmentResolution<TEnv>(
           ctx.interceptResult,
           ctx.localRouteName,
           ctx.pathname,
+          ctx.stale,
         ),
       );
 

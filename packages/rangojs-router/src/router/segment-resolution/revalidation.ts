@@ -1165,6 +1165,7 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
   localRouteName: string,
   pathname: string,
   deps: SegmentResolutionDeps<TEnv>,
+  stale?: boolean,
 ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
   const allSegments: ResolvedSegment[] = [];
   const matchedIds: string[] = [];
@@ -1209,7 +1210,7 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
           loaderPromises,
           deps,
           actionContext,
-          false,
+          stale,
         ),
       (seg) => ({ segments: [seg], matchedIds: [seg.id] }),
       deps,

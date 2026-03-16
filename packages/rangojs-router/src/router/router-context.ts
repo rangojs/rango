@@ -138,6 +138,7 @@ export interface RouterContext<TEnv = any> {
     interceptResult: InterceptResult | null,
     localRouteName: string,
     pathname: string,
+    stale?: boolean,
   ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
 
   // Generator-based segment resolution (for pipeline)
