@@ -1213,9 +1213,7 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
         ),
       (seg) => ({ segments: [seg], matchedIds: [seg.id] }),
       deps,
-      telemetry
-        ? { request, url: context.url, routeKey, isPartial: true, telemetry }
-        : undefined,
+      { request, url: context.url, routeKey, isPartial: true, telemetry },
       pathname,
     );
     doneEntry();
