@@ -104,7 +104,8 @@ const ProductPage: Handler<"product"> = (ctx) => {
 Best for reusable included modules.
 
 ```tsx
-import type { Handler, ScopedRouteMap } from "@rangojs/router";
+import type { Handler } from "@rangojs/router";
+import type { ScopedRouteMap } from "@rangojs/router/__internal";
 
 type BlogRoutes = ScopedRouteMap<"blog">;
 

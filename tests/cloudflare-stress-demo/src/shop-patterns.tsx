@@ -8,7 +8,7 @@
  * Requests to /shop/product/* skip the /shop/category entry (and vice versa)
  */
 import { urls, type Handler } from "@rangojs/router";
-import { getMatchDebugStats } from "@rangojs/router";
+import { getMatchDebugStats } from "@rangojs/router/__internal";
 
 // Benchmark handler - returns JSON with matchStats
 const ShopBenchmarkHandler: Handler<"home"> = async (ctx) => {

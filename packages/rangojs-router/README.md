@@ -275,7 +275,8 @@ All handler typing styles are supported, but they solve different problems:
 Example of a scoped local name inside a mounted module:
 
 ```tsx
-import type { Handler, ScopedRouteMap } from "@rangojs/router";
+import type { Handler } from "@rangojs/router";
+import type { ScopedRouteMap } from "@rangojs/router/__internal";
 
 type BlogRoutes = ScopedRouteMap<"blog">;
 

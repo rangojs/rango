@@ -229,7 +229,7 @@ INTERNAL_RANGO_DEBUG=1 pnpm dev
 Enable match statistics in `src/urls.tsx`:
 
 ```typescript
-import { enableMatchDebug } from "@rangojs/router";
+import { enableMatchDebug } from "@rangojs/router/__internal";
 enableMatchDebug(true);
 ```
 

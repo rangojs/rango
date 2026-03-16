@@ -10,9 +10,6 @@
  *   import from "@rangojs/router/client"
  */
 
-// Universal rendering utilities (work on both server and client)
-export { renderSegments } from "./segment-system.js";
-
 // Error classes (can be used on both server and client)
 export {
   RouteNotFoundError,
@@ -22,9 +19,6 @@ export {
   HandlerError,
   BuildError,
   InvalidHandlerError,
-  NetworkError,
-  isNetworkError,
-  sanitizeError,
   RouterError,
   Skip,
   isSkip,
@@ -41,7 +35,6 @@ export type {
   TrailingSlashMode,
   // Handler types
   Handler, // Supports params object, path pattern, or route name
-  ScopedRouteMap, // Scoped view of GeneratedRouteMap for Handler<"localName", ScopedRouteMap<"prefix">>
   HandlerContext,
   ExtractParams,
   GenericParams,
@@ -194,20 +187,6 @@ export function createReverse(): never {
   throw serverOnlyStubError("createReverse");
 }
 
-/**
- * Error-throwing stub for server-only `enableMatchDebug` function.
- */
-export function enableMatchDebug(): never {
-  throw serverOnlyStubError("enableMatchDebug");
-}
-
-/**
- * Error-throwing stub for server-only `getMatchDebugStats` function.
- */
-export function getMatchDebugStats(): never {
-  throw serverOnlyStubError("getMatchDebugStats");
-}
-
 // Error-throwing stubs for server-only route helpers
 export function layout(): never {
   throw serverOnlyStubError("layout");
@@ -268,8 +247,6 @@ export type {
   ReverseFunction,
   ExtractLocalRoutes,
   ParamsFor,
-  SanitizePrefix,
-  MergeRoutes,
 } from "./reverse.js";
 // scopedReverse() helper for handlers to get locally-typed reverse
 export { scopedReverse } from "./reverse.js";
@@ -289,20 +266,7 @@ export type { PathResponse } from "./href-client.js";
 export { createConsoleSink } from "./router/telemetry.js";
 export { createOTelSink } from "./router/telemetry-otel.js";
 export type { OTelTracer, OTelSpan } from "./router/telemetry-otel.js";
-export type {
-  TelemetrySink,
-  TelemetryEvent,
-  RequestStartEvent,
-  RequestEndEvent,
-  RequestErrorEvent,
-  RequestTimeoutEvent,
-  LoaderStartEvent,
-  LoaderEndEvent,
-  LoaderErrorEvent,
-  HandlerErrorEvent,
-  CacheDecisionEvent,
-  RevalidationDecisionEvent,
-} from "./router/telemetry.js";
+export type { TelemetrySink, TelemetryEvent } from "./router/telemetry.js";
 
 // Timeout types and error class
 export { RouterTimeoutError } from "./router/timeout.js";

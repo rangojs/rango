@@ -2,7 +2,7 @@
  * 500 routes for include() testing with various param patterns
  */
 import { urls, type Handler } from "@rangojs/router";
-import { getMatchDebugStats } from "@rangojs/router";
+import { getMatchDebugStats } from "@rangojs/router/__internal";
 import type { routes } from "./included-patterns.gen.js";
 
 // Benchmark handler for API routes - returns debug stats

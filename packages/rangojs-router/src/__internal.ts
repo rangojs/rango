@@ -165,6 +165,98 @@ export type {
 export type { InternalHandlerContext } from "./types.js";
 
 // ============================================================================
+// Rendering (Internal)
+// ============================================================================
+
+/**
+ * @internal
+ * Builds React element trees from route segments.
+ */
+export { renderSegments } from "./segment-system.js";
+
+// ============================================================================
+// Error Utilities (Internal)
+// ============================================================================
+
+/**
+ * @internal
+ * Error sanitization and network error utilities.
+ */
+export { sanitizeError, NetworkError, isNetworkError } from "./errors.js";
+
+// ============================================================================
+// Type Utilities (Internal)
+// ============================================================================
+
+/**
+ * @internal
+ * Scoped view of GeneratedRouteMap for Handler<"localName", ScopedRouteMap<"prefix">>.
+ */
+export type { ScopedRouteMap } from "./types.js";
+
+/**
+ * @internal
+ * Type-level utilities for reverse URL generation.
+ */
+export type { MergeRoutes, SanitizePrefix } from "./reverse.js";
+
+/**
+ * @internal
+ * Individual telemetry event types.
+ */
+export type {
+  RequestStartEvent,
+  RequestEndEvent,
+  RequestErrorEvent,
+  RequestTimeoutEvent,
+  LoaderStartEvent,
+  LoaderEndEvent,
+  LoaderErrorEvent,
+  HandlerErrorEvent,
+  CacheDecisionEvent,
+  RevalidationDecisionEvent,
+} from "./router/telemetry.js";
+
+// ============================================================================
+// Pre-render / Static Handler Guards (Internal)
+// ============================================================================
+
+/**
+ * @internal
+ * Type guard for prerender handler definitions.
+ */
+export { isPrerenderHandler } from "./prerender.js";
+
+/**
+ * @internal
+ * Type guard for static handler definitions.
+ */
+export { isStaticHandler } from "./static-handler.js";
+
+// ============================================================================
+// URL Pattern Internals
+// ============================================================================
+
+/**
+ * @internal
+ * Sentinel used to tag response-type route entries.
+ */
+export { RESPONSE_TYPE } from "./urls.js";
+
+// ============================================================================
+// Route Match Debug (Internal)
+// ============================================================================
+
+/**
+ * @internal
+ * Debug utilities for route matching performance analysis.
+ */
+export {
+  enableMatchDebug,
+  getMatchDebugStats,
+} from "./router/pattern-matching.js";
+
+// ============================================================================
 // Debug Utilities (Internal)
 // ============================================================================
 
