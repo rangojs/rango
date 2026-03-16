@@ -65,19 +65,24 @@ export const urlpatterns = urls(({ path, loader }) => [
 
 ## Consuming Loader Data
 
-### In Server Components
+Loaders are the **live data layer** — they resolve fresh on every request.
+The way you consume them depends on whether you're in a server component
+(route handler) or a client component.
 
-```typescript
-import { useLoader } from "@rangojs/router/client";
-import { ProductLoader } from "./loaders/product";
+> **IMPORTANT: Prefer consuming loaders in client components.** Keeping data
+> fetching in loaders and consumption in client components creates a clean
+> separation: the server-side handler renders static markup that can be
+> freely cached with `cache()`, while loader data stays fresh on every
+> request. When you consume loaders in server handlers via `ctx.use()`, the
+> handler output depends on the loader data, which means caching the handler
+> also caches the data — defeating the purpose of the live data layer.
 
-async function ProductPage() {
-  const { product } = await useLoader(ProductLoader);
-  return <h1>{product.name}</h1>;
-}
-```
+### In Client Components (Preferred)
 
-### In Client Components
+Client components use `useLoader()` from `@rangojs/router/client`.
+The loader **must** be registered with `loader()` in the route's DSL
+segments so the framework knows to resolve it during SSR and stream
+the data to the client:
 
 ```typescript
 "use client";
@@ -89,6 +94,42 @@ function ProductDetails() {
   return <div>{data.product.description}</div>;
 }
 ```
+
+```typescript
+// Route definition — loader() registration required for client consumption
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  loader(ProductLoader), // Required for useLoader() in client components
+]);
+```
+
+### In Route Handlers (Server Components)
+
+In server components, use `ctx.use(Loader)` directly in the route handler.
+This doesn't require `loader()` registration in the DSL — it works
+standalone. **However**, prefer client-side consumption when possible (see
+note above).
+
+```typescript
+import { ProductLoader } from "./loaders/product";
+
+// Route handler — server component
+path("/product/:slug", async (ctx) => {
+  const { product } = await ctx.use(ProductLoader);
+  return <h1>{product.name}</h1>;
+}, { name: "product" })
+```
+
+When you do register with `loader()` in the DSL, `ctx.use()` returns the
+same memoized result — loaders never run twice per request.
+
+**Never use `useLoader()` in server components** — it is a client-only API.
+
+### Summary
+
+| Context                      | API                 | `loader()` DSL required? |
+| ---------------------------- | ------------------- | ------------------------ |
+| Client component (preferred) | `useLoader(Loader)` | **Yes**                  |
+| Route handler (server)       | `ctx.use(Loader)`   | No                       |
 
 ## Loader Context
 
@@ -538,13 +579,12 @@ export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalid
   ]),
 ]);
 
-// pages/product.tsx
-import { useLoader } from "@rangojs/router/client";
+// pages/product.tsx — server component (route handler)
 import { ProductLoader, CartLoader } from "./loaders/shop";
 
-async function ProductPage() {
-  const { product } = await useLoader(ProductLoader);
-  const { cart } = await useLoader(CartLoader);
+async function ProductPage(ctx) {
+  const { product } = await ctx.use(ProductLoader);
+  const { cart } = await ctx.use(CartLoader);
 
   return (
     <div>
