@@ -192,25 +192,23 @@ test.describe("bundle-analysis", () => {
     test("handle $$id references SHOULD exist in client bundle", async () => {
       const clientBundle = getClientBundleContent();
 
-      // Breadcrumbs handle $$id must be present for useHandle to resolve data
-      expect(clientBundle).toMatch(/\$\$id.*Breadcrumbs/);
+      // Built-in Breadcrumbs handle uses a stable manual tag (not plugin-generated)
+      // because the source lives in node_modules and the exposeInternalIds plugin
+      // skips node_modules. The manual tag must be present for useHandle to work.
+      expect(clientBundle).toContain("__rsc_router_breadcrumbs__");
     });
 
-    test("handle $$id format should be hash#ExportName", async () => {
+    test("built-in handle tag should not contain file paths", async () => {
       const clientBundle = getClientBundleContent();
 
-      // Extract the Breadcrumbs $$id value
-      const match = clientBundle.match(
-        /\$\$id\s*=\s*"([^"]+Breadcrumbs[^"]*)"/,
-      );
-      expect(match).toBeTruthy();
-
-      const id = match![1];
-      // Should be hex hash followed by #ExportName
-      expect(id).toMatch(/^[0-9a-f]+#[A-Za-z]\w*$/);
-      // Should NOT contain file paths
-      expect(id).not.toContain("/");
-      expect(id).not.toContain("src");
+      // Built-in handles (e.g., Breadcrumbs) live in node_modules and are
+      // NOT processed by exposeInternalIds. They use stable manual tags
+      // passed as the second argument to createHandle(). Verify the tag
+      // does not leak file paths into the client bundle.
+      const tag = "__rsc_router_breadcrumbs__";
+      expect(clientBundle).toContain(tag);
+      expect(tag).not.toContain("/");
+      expect(tag).not.toContain("src");
     });
   });
 

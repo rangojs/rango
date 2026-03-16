@@ -204,3 +204,47 @@ export const urlpatterns = urls(({ path, layout }) => [
 ```
 
 Navigating to `/shop/widget` produces: `Home / Shop / widget`
+
+## Custom Handles
+
+Create your own handle with `createHandle()`:
+
+```typescript
+import { createHandle } from "@rangojs/router";
+
+// Default: flatten into array
+export const PageTitle = createHandle<string, string>(
+  (segments) => segments.flat().at(-1) ?? "Default Title",
+);
+
+// No collect function: default flattens into T[]
+export const Warnings = createHandle<string>();
+```
+
+The Vite `exposeInternalIds` plugin auto-injects a stable `$$id` based on
+file path and export name. No manual naming required for project-local code.
+
+### Handles in 3rd-party packages
+
+The `exposeInternalIds` plugin skips `node_modules/`, so handles defined in
+published packages won't get auto-injected IDs. Pass a manual tag as the
+second argument to `createHandle()`:
+
+```typescript
+import { createHandle } from "@rangojs/router";
+
+// With a collect function (reducer): collect is first arg, tag is second
+export const Breadcrumbs = createHandle<BreadcrumbItem, BreadcrumbItem[]>(
+  collectBreadcrumbs,
+  "__my_package_breadcrumbs__",
+);
+
+// Without a collect function: pass undefined, then the tag
+export const Warnings = createHandle<string>(
+  undefined,
+  "__my_package_warnings__",
+);
+```
+
+The tag must be globally unique and stable across builds. Without it,
+`createHandle` throws in development mode.
