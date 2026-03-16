@@ -209,6 +209,8 @@ export const NamedRoutes = {
   "useCacheTest.useCacheTest.brandCheck": "/use-cache-test/brand-check",
   "useCacheTest.useCacheTest.cachedNode": "/use-cache-test/cached-node",
   "useCacheTest.useCacheTest.guardCookies": "/use-cache-test/guard-cookies",
+  "useCacheTest.useCacheTest.guardCtxHeadersSet": "/use-cache-test/guard-ctx-headers-set",
+  "useCacheTest.useCacheTest.guardCtxSet": "/use-cache-test/guard-ctx-set",
   "useCacheTest.useCacheTest.guardHeaders": "/use-cache-test/guard-headers",
   "useCacheTest.useCacheTest.inlineHandler": "/use-cache-test/inline-handler",
   "useCacheTest.useCacheTest.inlineLayout": "/use-cache-test/inline-layout",

@@ -11,6 +11,8 @@ import {
   getCachedActionData,
   cachedReadsCookies,
   cachedReadsHeaders,
+  cachedCallsCtxSet,
+  cachedCallsCtxHeadersSet,
   getSwrTestData,
 } from "./use-cache-fn.js";
 import { InterleaveActionButton } from "../components/InterleaveActionButton.js";
@@ -449,6 +451,54 @@ export const useCachePatterns = urls(
         }
       },
       { name: "useCacheTest.guardHeaders" },
+    ),
+
+    // Guard: ctx.set() throws inside "use cache" when handler ctx is passed.
+    // Uses regular path() (not path.json()) because path.json() uses a
+    // lightweight responseHandlerCtx that doesn't have ctx.set().
+    path(
+      "/guard-ctx-set",
+      async (ctx) => {
+        let threw = false;
+        let message: string | null = null;
+        try {
+          await cachedCallsCtxSet(ctx);
+        } catch (e) {
+          threw = true;
+          message = e instanceof Error ? e.message : String(e);
+        }
+        return (
+          <div>
+            <span data-testid="guard-ctx-set-threw">{String(threw)}</span>
+            <span data-testid="guard-ctx-set-message">{message}</span>
+          </div>
+        );
+      },
+      { name: "useCacheTest.guardCtxSet" },
+    ),
+
+    // Guard: ctx.headers.set() throws inside "use cache" when handler ctx is passed.
+    path(
+      "/guard-ctx-headers-set",
+      async (ctx) => {
+        let threw = false;
+        let message: string | null = null;
+        try {
+          await cachedCallsCtxHeadersSet(ctx);
+        } catch (e) {
+          threw = true;
+          message = e instanceof Error ? e.message : String(e);
+        }
+        return (
+          <div>
+            <span data-testid="guard-ctx-headers-set-threw">
+              {String(threw)}
+            </span>
+            <span data-testid="guard-ctx-headers-set-message">{message}</span>
+          </div>
+        );
+      },
+      { name: "useCacheTest.guardCtxHeadersSet" },
     ),
   ],
 );

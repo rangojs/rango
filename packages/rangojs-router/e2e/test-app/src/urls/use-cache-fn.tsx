@@ -154,3 +154,23 @@ export async function cachedReadsHeaders(ctx: any): Promise<string> {
   headers().get("x-test");
   return "no-throw";
 }
+
+/**
+ * Guard test: ctx.set() is called inside "use cache".
+ * The handler-context set() should throw because side effects are lost on cache hit.
+ */
+export async function cachedCallsCtxSet(ctx: any): Promise<string> {
+  "use cache";
+  ctx.set("test-key", "test-value");
+  return "no-throw";
+}
+
+/**
+ * Guard test: ctx.headers.set() is called inside "use cache".
+ * The guarded Headers proxy should throw on mutating methods.
+ */
+export async function cachedCallsCtxHeadersSet(ctx: any): Promise<string> {
+  "use cache";
+  ctx.headers.set("X-Test", "test-value");
+  return "no-throw";
+}

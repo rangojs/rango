@@ -171,6 +171,36 @@ test.describe("use-cache basic", () => {
     expect(body.data.message).toMatch(/headers\(\) cannot be called inside/i);
   });
 
+  test("ctx.set() throws inside a 'use cache' function", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/use-cache-test/guard-ctx-set"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("guard-ctx-set-threw")).toHaveText("true");
+    const message = await page
+      .getByTestId("guard-ctx-set-message")
+      .textContent();
+    expect(message).toMatch(/ctx\.set\(\) cannot be called inside/i);
+  });
+
+  test("ctx.headers.set() throws inside a 'use cache' function", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/use-cache-test/guard-ctx-headers-set"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("guard-ctx-headers-set-threw")).toHaveText(
+      "true",
+    );
+    const message = await page
+      .getByTestId("guard-ctx-headers-set-message")
+      .textContent();
+    expect(message).toMatch(/ctx\.headers\(\) cannot be called inside/i);
+  });
+
   test("path.json with use cache: params differentiate entries", async ({
     request,
   }) => {
@@ -337,6 +367,36 @@ test.describe("use-cache basic (production)", () => {
 
     expect(body.data.threw).toBe(true);
     expect(body.data.message).toMatch(/headers\(\) cannot be called inside/i);
+  });
+
+  test("ctx.set() throws inside a 'use cache' function", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/use-cache-test/guard-ctx-set"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("guard-ctx-set-threw")).toHaveText("true");
+    const message = await page
+      .getByTestId("guard-ctx-set-message")
+      .textContent();
+    expect(message).toMatch(/ctx\.set\(\) cannot be called inside/i);
+  });
+
+  test("ctx.headers.set() throws inside a 'use cache' function", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/use-cache-test/guard-ctx-headers-set"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("guard-ctx-headers-set-threw")).toHaveText(
+      "true",
+    );
+    const message = await page
+      .getByTestId("guard-ctx-headers-set-message")
+      .textContent();
+    expect(message).toMatch(/ctx\.headers\(\) cannot be called inside/i);
   });
 
   test("path.json with use cache: params differentiate entries", async ({
