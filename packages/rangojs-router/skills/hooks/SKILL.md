@@ -58,6 +58,26 @@ function NavigationControls() {
 }
 ```
 
+#### Skipping revalidation
+
+Pass `revalidate: false` to skip the RSC server fetch for same-pathname navigations (search param or hash changes). The URL updates and all hooks re-render, but server components stay as-is.
+
+```tsx
+// Update search params without server round-trip
+router.push("/products?color=blue", { revalidate: false });
+router.replace("/products?page=3", { revalidate: false });
+```
+
+If the pathname changes, `revalidate: false` is silently ignored and a full navigation occurs. This also works on `<Link>`:
+
+```tsx
+<Link to="/products?color=blue" revalidate={false}>
+  Blue
+</Link>
+```
+
+Plain `<a>` tags can opt in via `data-revalidate="false"`.
+
 ### useSegments()
 
 Access current URL path and matched route segments:

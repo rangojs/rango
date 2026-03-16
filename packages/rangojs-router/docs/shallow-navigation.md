@@ -87,62 +87,12 @@ When the user presses back after a shallow navigation:
 
 If the user does a full navigation after a shallow one, the server receives the current URL as `X-RSC-Router-Client-Path` and renders normally. No special handling needed.
 
-## Implementation outline
+## Implementation
 
-### 1. Types
-
-Add `revalidate?: boolean` to `NavigateOptions` and `LinkProps`.
-
-### 2. Navigation bridge (`navigation-bridge.ts`)
-
-In `navigate()`, insert an early return before the fetch when `revalidate === false` and the pathname hasn't changed:
-
-```typescript
-if (options?.revalidate === false) {
-  const targetUrl = new URL(url, window.location.origin);
-  const currentUrl = new URL(window.location.href);
-
-  // Only skip revalidation for same-pathname navigations
-  if (targetUrl.pathname === currentUrl.pathname) {
-    const resolvedState = resolveNavigationState(options.state);
-    const historyKey = generateHistoryKey(url);
-
-    // Copy current segments to the new history key
-    const currentKey = store.getHistoryKey();
-    const currentCache = store.getCachedSegments(currentKey);
-    if (currentCache?.segments) {
-      store.cacheSegmentsForHistory(
-        historyKey,
-        currentCache.segments,
-        currentCache.handleData,
-      );
-    }
-
-    // Update browser URL
-    const historyState = buildHistoryState(resolvedState, {}, {});
-    if (options.replace) {
-      window.history.replaceState(historyState, "", url);
-    } else {
-      window.history.pushState(historyState, "", url);
-    }
-
-    // Notify hooks — location updates, state stays idle
-    eventController.setLocation(targetUrl);
-    return;
-  }
-
-  // Pathname changed — fall through to full navigation
-}
-```
-
-### 3. Link component (`Link.tsx`)
-
-Pass `revalidate` prop through to `ctx.navigate()`:
-
-```tsx
-// In click handler:
-ctx.navigate(to, { replace, scroll, state, revalidate });
-```
+- `revalidate?: boolean` on `NavigateOptions` and `LinkProps` (`types.ts`)
+- Early return in `navigation-bridge.ts` `navigate()` when `revalidate === false` and same pathname
+- Preserves intercept context, scroll restoration, and `useLocationState()` dispatch
+- `data-revalidate="false"` on `<a>` tags via `link-interceptor.ts`
 
 ## Non-goals
 
