@@ -81,6 +81,16 @@ export interface LinkProps extends Omit<
    */
   reloadDocument?: boolean;
   /**
+   * Whether to revalidate server data on navigation.
+   * Set to `false` to skip the RSC server fetch and only update the URL.
+   *
+   * Only takes effect when the pathname stays the same (search param / hash changes).
+   * If the pathname changes, this option is ignored and a full navigation occurs.
+   *
+   * @default true
+   */
+  revalidate?: boolean;
+  /**
    * Prefetch strategy for the link destination
    * @default "none"
    */
@@ -170,6 +180,7 @@ export const Link: ForwardRefExoticComponent<
     replace = false,
     scroll = true,
     reloadDocument = false,
+    revalidate,
     prefetch = "none",
     state,
     children,
@@ -262,9 +273,9 @@ export const Link: ForwardRefExoticComponent<
         resolvedState = currentState;
       }
 
-      ctx.navigate(to, { replace, scroll, state: resolvedState });
+      ctx.navigate(to, { replace, scroll, state: resolvedState, revalidate });
     },
-    [to, isExternal, reloadDocument, replace, scroll, ctx, onClick],
+    [to, isExternal, reloadDocument, replace, scroll, revalidate, ctx, onClick],
   );
 
   const handleMouseEnter = useCallback(() => {
@@ -340,6 +351,7 @@ export const Link: ForwardRefExoticComponent<
       data-external={isExternal ? "" : undefined}
       data-scroll={scroll === false ? "false" : undefined}
       data-replace={replace ? "true" : undefined}
+      data-revalidate={revalidate === false ? "false" : undefined}
       {...props}
     >
       <LinkContext.Provider value={to}>{children}</LinkContext.Provider>

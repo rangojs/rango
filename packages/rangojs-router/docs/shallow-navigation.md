@@ -1,6 +1,6 @@
 # Shallow Navigation
 
-RFC for client-only URL updates that skip server RSC fetches.
+RFC for client-only URL updates that skip server RSC revalidation.
 
 ## Problem
 
@@ -15,47 +15,63 @@ Today, every `router.push()` or `<Link>` click triggers a partial RSC fetch. For
 
 ## Proposed API
 
+### `<Link>`
+
+```tsx
+// Full navigation (default — fetches RSC from server)
+<Link to="/products?color=blue">Blue</Link>
+
+// Skip revalidation (URL-only, no server fetch)
+<Link to="/products?color=blue" revalidate={false}>Blue</Link>
+<Link to="/products?color=blue" revalidate={false} replace>Blue</Link>
+```
+
 ### `useRouter()`
 
 ```tsx
 const router = useRouter();
 
-// Full navigation (default — fetches RSC from server)
+// Full navigation (default)
 router.push("/products?color=blue");
 
-// Shallow navigation (URL-only, no server fetch)
-router.push("/products?color=blue", { shallow: true });
-router.replace("/products?page=3", { shallow: true });
+// Skip revalidation
+router.push("/products?color=blue", { revalidate: false });
+router.replace("/products?page=3", { revalidate: false });
 ```
 
-### `<Link>`
+### Same-pathname constraint
+
+`revalidate: false` only takes effect when the **pathname stays the same**. If the pathname changes, the option is silently ignored and a full navigation occurs. This keeps the API safe — path changes imply different server data, and there's no need for client-side param extraction or trie matching.
 
 ```tsx
-<Link to="/products?color=blue" shallow>Blue</Link>
-<Link to="/products?color=blue" shallow replace>Blue</Link>
+// Same pathname — revalidate: false takes effect
+// /products?color=red → /products?color=blue  ✓ no server fetch
+
+// Different pathname — revalidate: false ignored, full navigation
+// /products?color=red → /categories?color=blue  ✗ full fetch
 ```
 
 ### Hooks that react to shallow navigation
 
-These hooks subscribe to the event controller and will re-render:
+All location-aware hooks re-render with the new URL. The navigation is real — only the server fetch is skipped.
 
-| Hook                | Updates on shallow nav?            |
-| ------------------- | ---------------------------------- |
-| `useSearchParams()` | Yes                                |
-| `usePathname()`     | Yes                                |
-| `useParams()`       | Yes (if path params change)        |
-| `useNavigation()`   | No (state stays "idle" — no fetch) |
+| Hook                | Updates?                                                         |
+| ------------------- | ---------------------------------------------------------------- |
+| `useSearchParams()` | Yes — reflects new search params                                 |
+| `usePathname()`     | Yes (unchanged since pathname must be the same)                  |
+| `useParams()`       | Yes (unchanged since pathname must be the same)                  |
+| `useNavigation()`   | `location` updates to new URL; `state` stays `"idle"` (no fetch) |
 
 Server components do **not** re-render — the existing React tree stays as-is.
 
 ## Behavior
 
-When `shallow: true`:
+When `revalidate: false` and the pathname matches:
 
 1. **No RSC fetch.** The server is not contacted.
 2. **URL updates** via `history.pushState` / `replaceState`.
-3. **Event controller notifies** subscribers (`setLocation`, `setParams`, `notify`).
-4. **Hooks re-render** — `useSearchParams()`, `usePathname()`, `useParams()` reflect the new URL.
+3. **Event controller notifies** subscribers (`setLocation`, `notify`).
+4. **Hooks re-render** — all location-aware hooks reflect the new URL.
 5. **Segments cached** — the current segments are copied to the new history key so back/forward restores them instantly.
 6. **Server components unchanged** — no `onUpdate()` call, no tree re-render.
 
@@ -69,77 +85,68 @@ When the user presses back after a shallow navigation:
 
 ### Full navigation after shallow navigation
 
-If the user does a full (non-shallow) navigation after a shallow one, the server receives the current URL as `X-RSC-Router-Client-Path` and renders normally. No special handling needed.
+If the user does a full navigation after a shallow one, the server receives the current URL as `X-RSC-Router-Client-Path` and renders normally. No special handling needed.
 
 ## Implementation outline
 
 ### 1. Types
 
-Add `shallow?: boolean` to `NavigateOptions` and `LinkProps`.
+Add `revalidate?: boolean` to `NavigateOptions` and `LinkProps`.
 
 ### 2. Navigation bridge (`navigation-bridge.ts`)
 
-In `navigate()`, insert an early return before the fetch:
+In `navigate()`, insert an early return before the fetch when `revalidate === false` and the pathname hasn't changed:
 
 ```typescript
-if (options?.shallow) {
-  const resolvedState = resolveNavigationState(options.state);
-  const historyKey = generateHistoryKey(url);
-
-  // Copy current segments to the new history key
-  const currentKey = store.getHistoryKey();
-  const currentCache = store.getCachedSegments(currentKey);
-  if (currentCache?.segments) {
-    store.cacheSegmentsForHistory(
-      historyKey,
-      currentCache.segments,
-      currentCache.handleData,
-    );
-  }
-
-  // Update browser URL
-  const historyState = buildHistoryState(resolvedState, {}, {});
-  if (options.replace) {
-    window.history.replaceState(historyState, "", url);
-  } else {
-    window.history.pushState(historyState, "", url);
-  }
-
-  // Notify hooks
+if (options?.revalidate === false) {
   const targetUrl = new URL(url, window.location.origin);
-  eventController.setLocation(targetUrl);
-  // Extract params from current segments (no server match available)
-  // For search-only changes, params stay the same.
-  return;
+  const currentUrl = new URL(window.location.href);
+
+  // Only skip revalidation for same-pathname navigations
+  if (targetUrl.pathname === currentUrl.pathname) {
+    const resolvedState = resolveNavigationState(options.state);
+    const historyKey = generateHistoryKey(url);
+
+    // Copy current segments to the new history key
+    const currentKey = store.getHistoryKey();
+    const currentCache = store.getCachedSegments(currentKey);
+    if (currentCache?.segments) {
+      store.cacheSegmentsForHistory(
+        historyKey,
+        currentCache.segments,
+        currentCache.handleData,
+      );
+    }
+
+    // Update browser URL
+    const historyState = buildHistoryState(resolvedState, {}, {});
+    if (options.replace) {
+      window.history.replaceState(historyState, "", url);
+    } else {
+      window.history.pushState(historyState, "", url);
+    }
+
+    // Notify hooks — location updates, state stays idle
+    eventController.setLocation(targetUrl);
+    return;
+  }
+
+  // Pathname changed — fall through to full navigation
 }
 ```
 
 ### 3. Link component (`Link.tsx`)
 
-Pass `shallow` prop through to `ctx.navigate()`:
+Pass `revalidate` prop through to `ctx.navigate()`:
 
 ```tsx
 // In click handler:
-ctx.navigate(to, { replace, scroll, state, shallow });
+ctx.navigate(to, { replace, scroll, state, revalidate });
 ```
-
-### 4. Params extraction for shallow path changes
-
-When the path changes during shallow nav (e.g., `/blog/post-1` → `/blog/post-2`), we need to extract route params client-side. Options:
-
-- **Use the serialized trie** — it's already in the client bundle for prefetch matching. Call `tryTrieMatch()` on the new URL to get params.
-- **Keep previous params** — simpler, correct for search-only changes. For path changes, the caller is responsible for knowing the params won't be server-validated.
-
-Recommend: use the trie for correctness when available, fall back to previous params.
 
 ## Non-goals
 
 - **Server component re-rendering** — shallow navigation explicitly skips this. Use full navigation when server data must change.
 - **Loader re-execution** — loaders are server-side. Shallow nav skips them entirely.
+- **Cross-pathname shallow navigation** — if the path changes, you need server data. No client-side route matching or param extraction.
 - **Scroll restoration** — shallow nav does not scroll to top by default (can be opt-in via `scroll: true`).
-
-## Open questions
-
-1. Should `shallow` be allowed when the **route** changes (different path pattern), or only for same-route navigations (search param / hash changes)?
-2. Should there be a `router.shallow(url)` convenience method, or is `{ shallow: true }` sufficient?
-3. Should `useNavigation()` report a brief "loading" state for shallow nav, or stay "idle" throughout?

@@ -233,6 +233,25 @@ export interface NavigateOptions {
   replace?: boolean;
   scroll?: boolean;
   /**
+   * Whether to revalidate server data on navigation.
+   * Set to `false` to skip the RSC server fetch and only update the URL.
+   *
+   * Only takes effect when the pathname stays the same (search param / hash changes).
+   * If the pathname changes, this option is ignored and a full navigation occurs.
+   *
+   * All location-aware hooks (`useSearchParams`, `useNavigation`, etc.) still update.
+   * Server components do not re-render.
+   *
+   * @default true
+   *
+   * @example
+   * ```tsx
+   * router.push("/products?color=blue", { revalidate: false });
+   * router.replace("/products?page=3", { revalidate: false });
+   * ```
+   */
+  revalidate?: boolean;
+  /**
    * State to pass to history.pushState/replaceState
    * Accessible via useLocationState() hook.
    *

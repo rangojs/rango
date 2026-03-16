@@ -10,6 +10,12 @@ import {
   createNavigationTransaction,
   resolveNavigationState,
 } from "./navigation-transaction.js";
+import { buildHistoryState } from "./history-state.js";
+import {
+  handleNavigationStart,
+  handleNavigationEnd,
+  ensureHistoryKey,
+} from "./scroll-restoration.js";
 
 // addTransitionType is only available in React experimental
 const addTransitionType: ((type: string) => void) | undefined =
@@ -18,7 +24,6 @@ const addTransitionType: ((type: string) => void) | undefined =
 import { setupLinkInterception } from "./link-interceptor.js";
 import { createPartialUpdater } from "./partial-update.js";
 import { generateHistoryKey } from "./navigation-store.js";
-import { handleNavigationEnd } from "./scroll-restoration.js";
 import type { EventController } from "./event-controller.js";
 import { isInterceptOnlyCache } from "./intercept-utils.js";
 import {
@@ -111,6 +116,85 @@ export function createNavigationBridge(
           return;
         }
         window.location.href = targetUrl.href;
+        return;
+      }
+
+      // Shallow navigation: skip RSC fetch when revalidate is false
+      // and the pathname hasn't changed (search param / hash only change).
+      if (
+        options?.revalidate === false &&
+        targetUrl.pathname === new URL(window.location.href).pathname
+      ) {
+        // Preserve intercept context from the current history entry so that
+        // popstate uses the correct cache key (:intercept suffix) and restores
+        // the right full-page vs modal semantics.
+        const currentHistoryState = window.history.state;
+        const isIntercept = currentHistoryState?.intercept === true;
+        const interceptSourceUrl = isIntercept
+          ? currentHistoryState?.sourceUrl
+          : undefined;
+
+        const historyKey = generateHistoryKey(url, { intercept: isIntercept });
+
+        // Copy current segments to the new history key so back/forward restores instantly
+        const currentKey = store.getHistoryKey();
+        const currentCache = store.getCachedSegments(currentKey);
+        if (currentCache?.segments) {
+          const currentHandleData = eventController.getHandleState().data;
+          store.cacheSegmentsForHistory(
+            historyKey,
+            currentCache.segments,
+            currentHandleData,
+          );
+        }
+
+        // Save current scroll position before changing URL
+        handleNavigationStart();
+
+        // Snapshot old state before pushState/replaceState overwrites it
+        const oldState = window.history.state;
+
+        // Update browser URL (carry intercept context into history state)
+        const historyState = buildHistoryState(
+          resolvedState,
+          {
+            intercept: isIntercept || undefined,
+            sourceUrl: interceptSourceUrl,
+          },
+          {},
+        );
+        if (options.replace) {
+          window.history.replaceState(historyState, "", url);
+        } else {
+          window.history.pushState(historyState, "", url);
+        }
+
+        // Ensure new history entry has a scroll restoration key
+        ensureHistoryKey();
+
+        // Notify useLocationState() hooks when state changes
+        const hasOldState =
+          oldState &&
+          typeof oldState === "object" &&
+          ("state" in oldState ||
+            Object.keys(oldState).some((k) => k.startsWith("__rsc_ls_")));
+        const hasNewState =
+          historyState &&
+          ("state" in historyState ||
+            Object.keys(historyState).some((k) => k.startsWith("__rsc_ls_")));
+        if (hasOldState || hasNewState) {
+          window.dispatchEvent(new Event("__rsc_locationstate"));
+        }
+
+        // Update store history key so future navigations reference the right cache
+        store.setHistoryKey(historyKey);
+        store.setCurrentUrl(url);
+
+        // Notify hooks — location updates, state stays idle
+        eventController.setLocation(targetUrl);
+
+        // Handle post-navigation scroll
+        handleNavigationEnd({ scroll: options.scroll });
         return;
       }
 

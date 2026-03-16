@@ -117,6 +117,7 @@ export function setupLinkInterception(
     // Read navigation options from data attributes (set by Link component)
     const scrollAttr = link.getAttribute("data-scroll");
     const replaceAttr = link.getAttribute("data-replace");
+    const revalidateAttr = link.getAttribute("data-revalidate");
 
     const navigateOptions: NavigateOptions = {};
     if (scrollAttr === "false") {
@@ -124,6 +125,9 @@ export function setupLinkInterception(
     }
     if (replaceAttr === "true") {
       navigateOptions.replace = true;
+    }
+    if (revalidateAttr === "false") {
+      navigateOptions.revalidate = false;
     }
 
     onNavigate(href, navigateOptions);

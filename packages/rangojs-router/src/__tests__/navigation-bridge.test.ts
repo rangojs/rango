@@ -24,11 +24,14 @@ import { createNavigationBridge } from "../browser/navigation-bridge";
 function createStore() {
   return {
     getHistoryKey: vi.fn(() => "http://localhost/current"),
-    getCachedSegments: vi.fn(() => undefined),
+    getCachedSegments: vi.fn((): any => undefined),
     hasHistoryCache: vi.fn(() => false),
     cacheSegmentsForHistory: vi.fn(),
     setInterceptSourceUrl: vi.fn(),
     setCrossTabRefreshCallback: vi.fn(),
+    setHistoryKey: vi.fn(),
+    setCurrentUrl: vi.fn(),
+    getInterceptSourceUrl: vi.fn(() => null),
   };
 }
 
@@ -38,6 +41,326 @@ function createEventController() {
     getHandleState: vi.fn(() => ({ data: {} })),
   };
 }
+
+describe("navigation-bridge revalidate: false", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    fetchPartialUpdateMock.mockReset();
+    createNavigationTransactionMock.mockReset();
+  });
+
+  it("skips server fetch for same-pathname search param change", async () => {
+    const pushState = vi.fn();
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/products?color=red",
+        origin: "http://localhost",
+      },
+      history: {
+        state: {},
+        pushState,
+        replaceState: vi.fn(),
+      },
+    });
+
+    const store = createStore();
+    store.getHistoryKey.mockReturnValue("http://localhost/products?color=red");
+    store.getCachedSegments.mockReturnValue({
+      segments: [{ id: "root", type: "layout" }] as any,
+    });
+
+    const setLocation = vi.fn();
+    const eventController = {
+      ...createEventController(),
+      setLocation,
+    };
+
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: eventController as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+
+    await bridge.navigate("/products?color=blue", { revalidate: false });
+
+    // No server fetch should have been made
+    expect(fetchPartialUpdateMock).not.toHaveBeenCalled();
+    expect(createNavigationTransactionMock).not.toHaveBeenCalled();
+
+    // URL should have been updated via pushState
+    expect(pushState).toHaveBeenCalledWith(
+      expect.any(Object),
+      "",
+      "/products?color=blue",
+    );
+
+    // Event controller should have been notified with new location
+    expect(setLocation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pathname: "/products",
+        search: "?color=blue",
+      }),
+    );
+
+    // Segments should have been cached for the new history key
+    expect(store.cacheSegmentsForHistory).toHaveBeenCalled();
+  });
+
+  it("uses replaceState when replace: true with revalidate: false", async () => {
+    const replaceState = vi.fn();
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/products?page=1",
+        origin: "http://localhost",
+      },
+      history: {
+        state: {},
+        pushState: vi.fn(),
+        replaceState,
+      },
+    });
+
+    const store = createStore();
+    store.getCachedSegments.mockReturnValue(undefined);
+
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: {
+        ...createEventController(),
+        setLocation: vi.fn(),
+      } as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+
+    await bridge.navigate("/products?page=2", {
+      revalidate: false,
+      replace: true,
+    });
+
+    expect(replaceState).toHaveBeenCalledWith(
+      expect.any(Object),
+      "",
+      "/products?page=2",
+    );
+    expect(fetchPartialUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it("falls through to full navigation when pathname changes", async () => {
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/products",
+        origin: "http://localhost",
+      },
+      history: {
+        state: {},
+        pushState: vi.fn(),
+        replaceState: vi.fn(),
+      },
+    });
+
+    const store = createStore();
+    const tx = {
+      handle: { signal: new AbortController().signal },
+      with: vi.fn(() => ({})),
+      [Symbol.dispose]: vi.fn(),
+    };
+    createNavigationTransactionMock.mockReturnValue(tx);
+    fetchPartialUpdateMock.mockResolvedValue(undefined);
+
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: createEventController() as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+
+    await bridge.navigate("/categories?color=blue", { revalidate: false });
+
+    // Should have fallen through to full navigation
+    expect(fetchPartialUpdateMock).toHaveBeenCalledTimes(1);
+    expect(createNavigationTransactionMock).toHaveBeenCalled();
+  });
+
+  it("does full navigation when revalidate is not set", async () => {
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/products?color=red",
+        origin: "http://localhost",
+      },
+      history: {
+        state: {},
+        pushState: vi.fn(),
+        replaceState: vi.fn(),
+      },
+    });
+
+    const store = createStore();
+    const tx = {
+      handle: { signal: new AbortController().signal },
+      with: vi.fn(() => ({})),
+      [Symbol.dispose]: vi.fn(),
+    };
+    createNavigationTransactionMock.mockReturnValue(tx);
+    fetchPartialUpdateMock.mockResolvedValue(undefined);
+
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: createEventController() as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+
+    await bridge.navigate("/products?color=blue");
+
+    // Default behavior: full navigation with server fetch
+    expect(fetchPartialUpdateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches __rsc_locationstate when state is passed with revalidate: false", async () => {
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/products?color=red",
+        origin: "http://localhost",
+      },
+      history: {
+        state: {},
+        pushState: vi.fn(),
+        replaceState: vi.fn(),
+        scrollRestoration: "manual",
+      },
+      dispatchEvent,
+      scrollTo: vi.fn(),
+    });
+
+    const store = createStore();
+    store.getCachedSegments.mockReturnValue(undefined);
+
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: {
+        ...createEventController(),
+        setLocation: vi.fn(),
+      } as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+
+    await bridge.navigate("/products?color=blue", {
+      revalidate: false,
+      state: { from: "filter" },
+    });
+
+    // __rsc_locationstate should have been dispatched for useLocationState()
+    expect(dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "__rsc_locationstate" }),
+    );
+  });
+
+  it("preserves intercept context in history state and cache key", async () => {
+    const pushState = vi.fn();
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/product/123?tab=reviews",
+        origin: "http://localhost",
+      },
+      history: {
+        // Current entry is an intercept
+        state: { intercept: true, sourceUrl: "http://localhost/products" },
+        pushState,
+        replaceState: vi.fn(),
+        scrollRestoration: "manual",
+      },
+      dispatchEvent: vi.fn(),
+      scrollTo: vi.fn(),
+    });
+
+    const store = createStore();
+    store.getHistoryKey.mockReturnValue(
+      "http://localhost/product/123?tab=reviews:intercept",
+    );
+    store.getCachedSegments.mockReturnValue({
+      segments: [{ id: "root", type: "layout" }] as any,
+    });
+
+    const setLocation = vi.fn();
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: {
+        ...createEventController(),
+        setLocation,
+      } as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+
+    await bridge.navigate("/product/123?tab=specs", { revalidate: false });
+
+    // No server fetch
+    expect(fetchPartialUpdateMock).not.toHaveBeenCalled();
+
+    // History state should carry intercept info
+    expect(pushState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intercept: true,
+        sourceUrl: "http://localhost/products",
+      }),
+      "",
+      "/product/123?tab=specs",
+    );
+
+    // Store history key should include :intercept suffix
+    expect(store.setHistoryKey).toHaveBeenCalledWith(
+      expect.stringContaining("intercept"),
+    );
+  });
+
+  it("does not dispatch __rsc_locationstate when no state is involved", async () => {
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/products?color=red",
+        origin: "http://localhost",
+      },
+      history: {
+        state: null,
+        pushState: vi.fn(),
+        replaceState: vi.fn(),
+        scrollRestoration: "manual",
+      },
+      dispatchEvent,
+      scrollTo: vi.fn(),
+    });
+
+    const store = createStore();
+    store.getCachedSegments.mockReturnValue(undefined);
+
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: {
+        ...createEventController(),
+        setLocation: vi.fn(),
+      } as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+
+    await bridge.navigate("/products?color=blue", { revalidate: false });
+
+    // No state involved — should not dispatch
+    expect(dispatchEvent).not.toHaveBeenCalled();
+  });
+});
 
 describe("navigation-bridge redirect validation", () => {
   afterEach(() => {

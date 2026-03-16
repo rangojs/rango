@@ -175,7 +175,9 @@ export default defineConfig({
           name: "webkit-smoke",
           testMatch: "**/smoke.test.ts",
           use: webkitConfig,
-          dependencies: ["build"],
+          // Run after the main suite to avoid resource contention with
+          // Chrome-based dev/production tests sharing the dev server.
+          dependencies: ["dev", "production"],
         },
       ],
   workers: process.env.CI ? 3 : 6,
