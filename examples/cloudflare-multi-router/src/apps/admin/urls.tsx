@@ -28,7 +28,7 @@ function UsersPage(ctx: HandlerContext) {
 
 export const adminPatterns = urls(({ path, layout }) => [
   layout(<AdminLayout />, () => [
-    path("/", DashboardPage, { name: "dashboard" }),
+    path("/", DashboardPage, { name: "home" }),
     path("/users", UsersPage, { name: "users" }),
   ]),
 ]);
