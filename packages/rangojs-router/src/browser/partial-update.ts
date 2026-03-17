@@ -19,7 +19,6 @@ import type { BoundTransaction } from "./navigation-transaction.js";
 import { ServerRedirect } from "../errors.js";
 import { debugLog } from "./logging.js";
 import { validateRedirectOrigin } from "./validate-redirect-origin.js";
-import { handleNavigationEnd } from "./scroll-restoration.js";
 
 /**
  * Configuration for creating a partial updater
@@ -264,6 +263,10 @@ export function createPartialUpdater(
               ...metadataWithoutHandles,
               cachedHandleData: mode.targetCacheHandleData,
             },
+            scroll:
+              commitScroll !== false
+                ? { enabled: commitScroll }
+                : { enabled: false },
           };
 
           const cachedHasTransition = existingSegments.some(
@@ -280,7 +283,6 @@ export function createPartialUpdater(
             onUpdate(cachedUpdate);
           }
 
-          handleNavigationEnd({ scroll: commitScroll });
           debugLog("[Browser] Navigation complete (rendered from cache)");
           return;
         }
@@ -303,9 +305,12 @@ export function createPartialUpdater(
           onUpdate({
             root: newTree,
             metadata: payload.metadata,
+            scroll:
+              leaveScroll !== false
+                ? { enabled: leaveScroll }
+                : { enabled: false },
           });
 
-          handleNavigationEnd({ scroll: leaveScroll });
           debugLog("[Browser] Navigation complete (left intercept)");
           return;
         }
@@ -454,8 +459,13 @@ export function createPartialUpdater(
 
       debugLog("[partial-update] updating document");
 
-      // Emit update to trigger React render
+      // Emit update to trigger React render.
+      // Scroll info is included so NavigationProvider applies it after React commits.
       const hasTransition = reconciled.mainSegments.some((s) => s.transition);
+      const scrollPayload =
+        navScroll !== false
+          ? { enabled: navScroll }
+          : { enabled: false as const };
 
       if (mode.type === "action" || mode.type === "stale-revalidation") {
         startTransition(() => {
@@ -465,6 +475,7 @@ export function createPartialUpdater(
           onUpdate({
             root: newTree,
             metadata: payload.metadata!,
+            scroll: scrollPayload,
           });
         });
       } else if (hasTransition) {
@@ -475,17 +486,16 @@ export function createPartialUpdater(
           onUpdate({
             root: newTree,
             metadata: payload.metadata!,
+            scroll: scrollPayload,
           });
         });
       } else {
         onUpdate({
           root: newTree,
           metadata: payload.metadata!,
+          scroll: scrollPayload,
         });
       }
-
-      // Scroll after onUpdate so React has the new content before we scroll
-      handleNavigationEnd({ scroll: navScroll });
 
       debugLog("[Browser] Navigation complete");
       return;
@@ -519,6 +529,10 @@ export function createPartialUpdater(
       const fullHasTransition = segments.some(
         (s: ResolvedSegment) => s.transition,
       );
+      const fullScrollPayload =
+        fullScroll !== false
+          ? { enabled: fullScroll }
+          : { enabled: false as const };
 
       if (mode.type === "stale-revalidation") {
         await rawStreamComplete;
@@ -529,6 +543,7 @@ export function createPartialUpdater(
           onUpdate({
             root: newTree,
             metadata: payload.metadata!,
+            scroll: fullScrollPayload,
           });
         });
       } else if (mode.type === "action") {
@@ -539,6 +554,7 @@ export function createPartialUpdater(
           onUpdate({
             root: newTree,
             metadata: payload.metadata!,
+            scroll: fullScrollPayload,
           });
         });
       } else if (fullHasTransition) {
@@ -549,16 +565,17 @@ export function createPartialUpdater(
           onUpdate({
             root: newTree,
             metadata: payload.metadata!,
+            scroll: fullScrollPayload,
           });
         });
       } else {
         onUpdate({
           root: newTree,
           metadata: payload.metadata!,
+          scroll: fullScrollPayload,
         });
       }
 
-      handleNavigationEnd({ scroll: fullScroll });
       return;
     }
   }

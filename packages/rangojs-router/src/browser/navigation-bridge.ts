@@ -461,10 +461,6 @@ export function createNavigationBridge(
           }
           eventController.setParams(cachedParams);
 
-          // Scroll to top immediately to avoid flicker from the previous
-          // page's scroll position while React paints the cached content.
-          window.scrollTo(0, 0);
-
           const popstateUpdate = {
             root,
             metadata: {
@@ -476,6 +472,7 @@ export function createNavigationBridge(
               cachedHandleData,
               params: cachedParams,
             },
+            scroll: { restore: true, isStreaming },
           };
           const hasTransition = cachedSegments.some((s) => s.transition);
           if (hasTransition) {
@@ -488,9 +485,6 @@ export function createNavigationBridge(
           } else {
             onUpdate(popstateUpdate);
           }
-
-          // Restore the actual saved scroll position after React paints.
-          handleNavigationEnd({ restore: true, isStreaming });
 
           // SWR: If stale, trigger background revalidation
           if (isStale) {
