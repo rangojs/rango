@@ -19,6 +19,14 @@ import type { BoundTransaction } from "./navigation-transaction.js";
 import { ServerRedirect } from "../errors.js";
 import { debugLog } from "./logging.js";
 import { validateRedirectOrigin } from "./validate-redirect-origin.js";
+import type { NavigationUpdate } from "./types.js";
+
+/** Build a scroll payload from the commit's scroll option */
+function toScrollPayload(
+  scroll: boolean | undefined,
+): NonNullable<NavigationUpdate["scroll"]> {
+  return { enabled: scroll !== false ? scroll : false };
+}
 
 /**
  * Configuration for creating a partial updater
@@ -263,10 +271,7 @@ export function createPartialUpdater(
               ...metadataWithoutHandles,
               cachedHandleData: mode.targetCacheHandleData,
             },
-            scroll:
-              commitScroll !== false
-                ? { enabled: commitScroll }
-                : { enabled: false },
+            scroll: toScrollPayload(commitScroll),
           };
 
           const cachedHasTransition = existingSegments.some(
@@ -305,10 +310,7 @@ export function createPartialUpdater(
           onUpdate({
             root: newTree,
             metadata: payload.metadata,
-            scroll:
-              leaveScroll !== false
-                ? { enabled: leaveScroll }
-                : { enabled: false },
+            scroll: toScrollPayload(leaveScroll),
           });
 
           debugLog("[Browser] Navigation complete (left intercept)");
@@ -462,10 +464,7 @@ export function createPartialUpdater(
       // Emit update to trigger React render.
       // Scroll info is included so NavigationProvider applies it after React commits.
       const hasTransition = reconciled.mainSegments.some((s) => s.transition);
-      const scrollPayload =
-        navScroll !== false
-          ? { enabled: navScroll }
-          : { enabled: false as const };
+      const scrollPayload = toScrollPayload(navScroll);
 
       if (mode.type === "action" || mode.type === "stale-revalidation") {
         startTransition(() => {
@@ -529,10 +528,7 @@ export function createPartialUpdater(
       const fullHasTransition = segments.some(
         (s: ResolvedSegment) => s.transition,
       );
-      const fullScrollPayload =
-        fullScroll !== false
-          ? { enabled: fullScroll }
-          : { enabled: false as const };
+      const fullScrollPayload = toScrollPayload(fullScroll);
 
       if (mode.type === "stale-revalidation") {
         await rawStreamComplete;

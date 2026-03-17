@@ -327,9 +327,9 @@ export function NavigationProvider({
     const unsubscribe = store.onUpdate((update) => {
       // Capture scroll intent — it will be applied in useLayoutEffect
       // after React commits this state update to the DOM.
-      if (update.scroll) {
-        pendingScrollRef.current = update.scroll;
-      }
+      // Always assign (even undefined) to clear stale scroll from prior navigations,
+      // so server actions or error updates don't accidentally replay old scroll.
+      pendingScrollRef.current = update.scroll;
 
       setPayload({
         root: update.root,
