@@ -56,6 +56,13 @@ export interface RouteEntry<TEnv = any> {
   mountIndex: number;
 
   /**
+   * Router ID that owns this entry. Used to namespace the manifest cache
+   * so multi-router setups (host routing) don't share cached EntryData
+   * across routers with overlapping mountIndex + routeKey combinations.
+   */
+  routerId?: string;
+
+  /**
    * Route keys in this entry that have pre-render handlers.
    * Used by the non-trie match path to set the `pr` flag.
    */

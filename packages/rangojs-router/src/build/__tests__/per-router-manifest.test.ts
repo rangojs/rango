@@ -419,21 +419,40 @@ describe("ensureRouterManifest lazy loading", () => {
     );
   });
 
-  it("should not re-load if manifest is already set", async () => {
+  it("should not re-load if manifest AND trie are already set", async () => {
     let loadCount = 0;
     registerRouterManifestLoader("cached", () => {
       loadCount++;
       return Promise.resolve({ manifest: { x: "/x" } });
     });
 
-    // Pre-set the manifest
+    // Pre-set both manifest and trie
     setRouterManifest("cached", { y: "/y" });
+    setRouterTrie("cached", { type: "root", children: {} } as any);
 
     await ensureRouterManifest("cached");
 
-    // Loader was never called because manifest already existed
+    // Loader was never called because both manifest and trie already existed
     expect(loadCount).toBe(0);
     expect(getRouterManifest("cached")).toEqual({ y: "/y" });
+  });
+
+  it("should re-load if manifest is set but trie is missing", async () => {
+    let loadCount = 0;
+    const mockTrie = { type: "root", children: {} } as any;
+    registerRouterManifestLoader("manifest-only", () => {
+      loadCount++;
+      return Promise.resolve({ manifest: { x: "/x" }, trie: mockTrie });
+    });
+
+    // Pre-set only the manifest (trie missing — e.g. virtual module in dev mode)
+    setRouterManifest("manifest-only", { y: "/y" });
+
+    await ensureRouterManifest("manifest-only");
+
+    // Loader was called to load the missing trie
+    expect(loadCount).toBe(1);
+    expect(getRouterTrie("manifest-only")).toBe(mockTrie);
   });
 
   it("should remove loader after successful load", async () => {

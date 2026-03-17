@@ -52,8 +52,10 @@ export function createFindMatch<TEnv = any>(
       : undefined;
 
     // Phase 1: Try trie match (O(path_length))
-    // Prefer per-router trie (isolated) over global trie (merged).
-    const routeTrie = getRouterTrie(deps.routerId) ?? getRouteTrie();
+    // Only use the per-router trie. The global trie merges routes from ALL
+    // routers and must not be used — in multi-router setups (host routing)
+    // overlapping paths like "/" would match the wrong app's route.
+    const routeTrie = getRouterTrie(deps.routerId);
     if (routeTrie) {
       const trieStart = performance.now();
       const trieResult = tryTrieMatch(routeTrie, pathname);

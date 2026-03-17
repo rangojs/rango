@@ -4,7 +4,7 @@ export {};
 declare global {
   namespace RSCRouter {
     interface GeneratedRouteMap {
-      dashboard: "/";
+      home: "/";
       users: "/users";
     }
   }

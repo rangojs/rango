@@ -65,7 +65,9 @@ export async function loadManifest(
   const mountIndex = entry.mountIndex;
 
   // Check module-level cache (persists across requests within same isolate)
-  const cacheKey = `${VERSION}:${mountIndex ?? ""}:${routeKey}:${isSSR ? 1 : 0}`;
+  // Include routerId so multi-router setups (host routing) don't share cached
+  // EntryData across routers with overlapping mountIndex + routeKey combinations.
+  const cacheKey = `${VERSION}:${entry.routerId ?? ""}:${mountIndex ?? ""}:${routeKey}:${isSSR ? 1 : 0}`;
   const cached = manifestModuleCache.get(cacheKey);
   if (cached) {
     const cacheStart = performance.now();
