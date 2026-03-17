@@ -370,13 +370,21 @@ export function handleNavigationEnd(options: {
     // Fall through to hash or top if no saved position
   }
 
-  // Try hash scrolling first
-  if (scrollToHash()) {
-    return;
-  }
+  // Defer hash and scroll-to-top to after React paints the new content,
+  // so the user doesn't see the current page jump before the new route appears.
+  const defer =
+    typeof requestAnimationFrame === "function"
+      ? requestAnimationFrame
+      : (fn: () => void) => setTimeout(fn, 0);
+  defer(() => {
+    // Try hash scrolling first
+    if (scrollToHash()) {
+      return;
+    }
 
-  // Default: scroll to top
-  scrollToTop();
+    // Default: scroll to top
+    scrollToTop();
+  });
 }
 
 /**
