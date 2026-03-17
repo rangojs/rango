@@ -55,6 +55,8 @@ export const NamedRoutes = {
   testCachedJson: "/test/cached-json",
   testCachedText: "/test/cached-text",
   testCachedXml: "/test/cached-xml",
+  testKvCachedJson: "/test/kv-cached-json",
+  testKvL2Check: "/test/kv-l2-check",
   testMimeAny: "/test/mime/any",
   testMimeHtml: "/test/mime/html",
   testMimeImage: "/test/mime/image",

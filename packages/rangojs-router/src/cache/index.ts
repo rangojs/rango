@@ -29,6 +29,7 @@ export { MemorySegmentCacheStore } from "./memory-segment-store.js";
 export {
   CFCacheStore,
   type CFCacheStoreOptions,
+  type KVNamespace,
   CACHE_STALE_AT_HEADER,
   CACHE_STATUS_HEADER,
 } from "./cf/index.js";

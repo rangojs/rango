@@ -10,7 +10,11 @@
  */
 
 // Public API
-export { CFCacheStore, type CFCacheStoreOptions } from "./cf-cache-store.js";
+export {
+  CFCacheStore,
+  type CFCacheStoreOptions,
+  type KVNamespace,
+} from "./cf-cache-store.js";
 
 // Header constants for debugging and inspection
 export {

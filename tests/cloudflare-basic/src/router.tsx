@@ -21,11 +21,12 @@ export const router = createRouter<AppBindings>({
     enableSystem: true,
     enableColorScheme: true,
   },
-  // CF cache store with ExecutionContext for non-blocking writes
-  cache: (_env, ctx) => ({
+  // CF cache store with L1 (Cache API) + L2 (KV) for cross-colo persistence
+  cache: (env, ctx) => ({
     store: new CFCacheStore({
       defaults: { ttl: 60, swr: 300 },
       ctx: ctx!, // Always provided in Cloudflare Workers
+      kv: env.KV, // KV L2 for global persistence
     }),
   }),
 })
