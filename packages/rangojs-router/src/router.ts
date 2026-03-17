@@ -751,6 +751,7 @@ export function createRouter<TEnv = any>(
             trailingSlash: trailingSlashConfig,
             handler: urlPatterns.handler,
             mountIndex: currentMountIndex,
+            routerId,
             cacheProfiles: resolvedCacheProfiles,
             ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
             ...(passthroughRouteKeys ? { passthroughRouteKeys } : {}),
@@ -770,6 +771,7 @@ export function createRouter<TEnv = any>(
           trailingSlash: trailingSlashConfig,
           handler: urlPatterns.handler,
           mountIndex: currentMountIndex,
+          routerId,
           cacheProfiles: resolvedCacheProfiles,
           ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
           ...(passthroughRouteKeys ? { passthroughRouteKeys } : {}),
@@ -813,6 +815,7 @@ export function createRouter<TEnv = any>(
           trailingSlash: trailingSlashConfig,
           handler: urlPatterns.handler,
           mountIndex: mountIndex++,
+          routerId,
           // Lazy evaluation fields
           lazy: true,
           lazyPatterns: lazyInclude.patterns,
