@@ -8,8 +8,10 @@ const {
   buildPrefetchKeyMock,
 } = vi.hoisted(() => ({
   getRangoStateMock: vi.fn(() => "v1:abc"),
-  consumePrefetchMock: vi.fn(() => null),
-  consumeInflightPrefetchMock: vi.fn(() => null),
+  consumePrefetchMock: vi.fn((): Response | null => null),
+  consumeInflightPrefetchMock: vi.fn(
+    (): Promise<Response | null> | null => null,
+  ),
   buildPrefetchKeyMock: vi.fn(
     (source: string, target: URL) =>
       source + "\0" + target.pathname + target.search,

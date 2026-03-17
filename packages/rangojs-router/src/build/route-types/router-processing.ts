@@ -45,7 +45,9 @@ function isRoutableSourceFile(name: string): boolean {
       name.endsWith(".tsx") ||
       name.endsWith(".js") ||
       name.endsWith(".jsx")) &&
-    !name.includes(".gen.")
+    !name.includes(".gen.") &&
+    !name.includes(".test.") &&
+    !name.includes(".spec.")
   );
 }
 
@@ -70,7 +72,15 @@ function findRouterFilesRecursive(
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      if (
+        entry.name === "node_modules" ||
+        entry.name === "dist" ||
+        entry.name === "coverage" ||
+        entry.name === "__tests__" ||
+        entry.name === "__mocks__" ||
+        entry.name.startsWith(".")
+      )
+        continue;
       childDirs.push(fullPath);
       continue;
     }
