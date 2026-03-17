@@ -136,6 +136,33 @@ test.describe("multi-router (dev)", () => {
       await waitForHydration(page);
       await expect(testId(page, "admin-dashboard-page")).toBeVisible();
     });
+
+    // Regression: nested lazy includes (via include()) create RouteEntry
+    // objects in lazy-includes.ts. Both apps include("/api", ...) with a
+    // route named "status" — these nested lazy entries must also carry
+    // routerId to avoid manifest cache collisions.
+    test("nested lazy includes render their own content per router (no cross-router cache collision)", async ({
+      page,
+    }) => {
+      // Visit site /api/status first — populates manifest cache for the lazy entry
+      const siteResponse = await page.goto(f.url("/api/status"));
+      expect(siteResponse!.status()).toBe(200);
+      await waitForHydration(page);
+      await expect(testId(page, "site-api-status")).toBeVisible();
+      await expect(testId(page, "site-api-status-text")).toHaveText("site-ok");
+
+      // Now visit admin /api/status — must NOT reuse site's cached manifest
+      const adminUrl = f
+        .url("/api/status")
+        .replace("localhost", "admin.localhost");
+      const adminResponse = await page.goto(adminUrl);
+      expect(adminResponse!.status()).toBe(200);
+      await waitForHydration(page);
+      await expect(testId(page, "admin-api-status")).toBeVisible();
+      await expect(testId(page, "admin-api-status-text")).toHaveText(
+        "admin-ok",
+      );
+    });
   });
 });
 
@@ -226,6 +253,27 @@ test.describe("multi-router (production)", () => {
       expect(adminResponse!.status()).toBe(200);
       await waitForHydration(page);
       await expect(testId(page, "admin-dashboard-page")).toBeVisible();
+    });
+
+    test("nested lazy includes render their own content per router (no cross-router cache collision)", async ({
+      page,
+    }) => {
+      const siteResponse = await page.goto(f.url("/api/status"));
+      expect(siteResponse!.status()).toBe(200);
+      await waitForHydration(page);
+      await expect(testId(page, "site-api-status")).toBeVisible();
+      await expect(testId(page, "site-api-status-text")).toHaveText("site-ok");
+
+      const adminUrl = f
+        .url("/api/status")
+        .replace("localhost", "admin.localhost");
+      const adminResponse = await page.goto(adminUrl);
+      expect(adminResponse!.status()).toBe(200);
+      await waitForHydration(page);
+      await expect(testId(page, "admin-api-status")).toBeVisible();
+      await expect(testId(page, "admin-api-status-text")).toHaveText(
+        "admin-ok",
+      );
     });
   });
 });

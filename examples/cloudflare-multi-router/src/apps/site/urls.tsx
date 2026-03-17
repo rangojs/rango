@@ -1,6 +1,7 @@
 import { urls } from "@rangojs/router";
 import { Meta, type HandlerContext } from "@rangojs/router";
 import { SiteLayout } from "./components/Layout.js";
+import { siteApiPatterns } from "./api.js";
 
 function HomePage(ctx: HandlerContext) {
   const meta = ctx.use(Meta);
@@ -26,9 +27,10 @@ function AboutPage(ctx: HandlerContext) {
   );
 }
 
-export const sitePatterns = urls(({ path, layout }) => [
+export const sitePatterns = urls(({ path, layout, include }) => [
   layout(<SiteLayout />, () => [
     path("/", HomePage, { name: "home" }),
     path("/about", AboutPage, { name: "about" }),
+    include("/api", siteApiPatterns, { name: "api" }),
   ]),
 ]);
