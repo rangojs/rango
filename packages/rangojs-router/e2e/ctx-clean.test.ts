@@ -33,6 +33,15 @@ test.describe("ctx internal param stripping", () => {
     expect(urlSearch).toContain("page=1");
     expect(urlSearch).not.toContain("_rsc");
 
+    // getRequestContext().url.search should also be clean
+    const reqCtxUrlSearch = await testId(
+      page,
+      "req-ctx-url-search",
+    ).textContent();
+    expect(reqCtxUrlSearch).toContain("q=hello");
+    expect(reqCtxUrlSearch).toContain("page=1");
+    expect(reqCtxUrlSearch).not.toContain("_rsc");
+
     // ctx.searchParams keys should only have user keys
     const paramKeys = await testId(page, "ctx-param-keys").textContent();
     expect(paramKeys).toContain("page");
@@ -62,6 +71,15 @@ test.describe("ctx internal param stripping", () => {
     expect(urlSearch).toContain("page=2");
     expect(urlSearch).not.toContain("_rsc");
 
+    // Verify getRequestContext().url is also clean during client navigation
+    const reqCtxUrlSearch = await testId(
+      page,
+      "req-ctx-url-search",
+    ).textContent();
+    expect(reqCtxUrlSearch).toContain("q=navigated");
+    expect(reqCtxUrlSearch).toContain("page=2");
+    expect(reqCtxUrlSearch).not.toContain("_rsc");
+
     const paramKeys = await testId(page, "ctx-param-keys").textContent();
     expect(paramKeys).not.toContain("_rsc");
   });
@@ -88,6 +106,14 @@ test.describe("ctx internal param stripping (production)", () => {
     expect(urlSearch).toContain("page=1");
     expect(urlSearch).not.toContain("_rsc");
 
+    const reqCtxUrlSearch = await testId(
+      page,
+      "req-ctx-url-search",
+    ).textContent();
+    expect(reqCtxUrlSearch).toContain("q=hello");
+    expect(reqCtxUrlSearch).toContain("page=1");
+    expect(reqCtxUrlSearch).not.toContain("_rsc");
+
     const paramKeys = await testId(page, "ctx-param-keys").textContent();
     expect(paramKeys).toContain("page");
     expect(paramKeys).toContain("q");
@@ -112,6 +138,14 @@ test.describe("ctx internal param stripping (production)", () => {
     expect(urlSearch).toContain("q=navigated");
     expect(urlSearch).toContain("page=2");
     expect(urlSearch).not.toContain("_rsc");
+
+    const reqCtxUrlSearch = await testId(
+      page,
+      "req-ctx-url-search",
+    ).textContent();
+    expect(reqCtxUrlSearch).toContain("q=navigated");
+    expect(reqCtxUrlSearch).toContain("page=2");
+    expect(reqCtxUrlSearch).not.toContain("_rsc");
 
     const paramKeys = await testId(page, "ctx-param-keys").textContent();
     expect(paramKeys).not.toContain("_rsc");

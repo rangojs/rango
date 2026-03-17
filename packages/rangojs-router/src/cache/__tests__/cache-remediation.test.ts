@@ -288,7 +288,13 @@ describe("cache key search param handling (via CacheScope)", () => {
 
   function makeRequestContext(searchString: string) {
     const url = new URL(`http://localhost/test${searchString}`);
-    return { url, _cacheStore: null, _handleStore: null };
+    return {
+      url,
+      originalUrl: new URL(url),
+      searchParams: url.searchParams,
+      _cacheStore: null,
+      _handleStore: null,
+    };
   }
 
   it("produces distinct keys for different query params", async () => {
