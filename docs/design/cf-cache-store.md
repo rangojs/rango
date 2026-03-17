@@ -116,41 +116,42 @@ class CFCacheStore implements SegmentCacheStore {
    }
    ```
 
-### Phase 2: KV Sub-store (Future)
+### Phase 2: KV Sub-store (Implemented)
 
-Add optional KV backing for persistence. Edge Cache checks first, falls back to KV on miss.
+Optional KV backing for cross-colo persistence. Edge Cache checks first, falls back to KV on miss, promotes KV hits back to L1.
 
 ```typescript
 interface CFCacheStoreOptions {
   // ... existing options ...
 
-  /** Optional KV namespace for persistence */
+  /** Optional KV namespace for L2 persistence */
   kv?: KVNamespace;
-  /** KV-specific TTL (default: same as edge cache TTL) */
-  kvTtl?: number;
 }
+
+// Usage
+new CFCacheStore({ ctx, kv: env.CACHE_KV, defaults: { ttl: 60, swr: 300 } });
 ```
 
 **Layered Read Strategy:**
 
 ```
-1. Check Edge Cache
+1. Check Edge Cache (L1)
    └─ HIT → return immediately
    └─ MISS → continue
 
-2. Check KV (if configured)
-   └─ HIT → populate Edge Cache, return
-   └─ MISS → return null
-
-3. (Caller handles cache miss, stores fresh data)
+2. Check KV (L2, if configured)
+   └─ HIT → serve + promote to L1 via waitUntil
+   └─ MISS → return null (caller renders fresh)
 ```
 
 **Write Strategy:**
 
 ```
-1. Write to Edge Cache (sync)
-2. Write to KV (async via waitUntil if available)
+1. Write to Edge Cache (L1, via waitUntil)
+2. Write to KV (L2, via separate waitUntil — only if totalTtl >= 60s)
 ```
+
+**KV envelopes** store staleness metadata (staleAt, expiresAt) alongside the data. Document cache bodies are base64-encoded for binary safety. SWR stampede protection stays on L1 only (KV can't do atomic compare-and-swap).
 
 ## Usage
 
@@ -737,11 +738,12 @@ packages/rsc-router/src/cache/
 
 ### Phase 2: KV Sub-store
 
-- [ ] Design KV schema and key structure
-- [ ] Implement layered read (Edge Cache -> KV)
-- [ ] Implement async write to KV (inline, wrapped by waitUntil at CacheScope)
-- [ ] Handle KV-specific TTL configuration
-- [ ] Tests for layered caching behavior
+- [x] Design KV schema and key structure (envelope types: KVSegmentEnvelope, KVItemEnvelope, KVResponseEnvelope)
+- [x] Implement layered read (Edge Cache -> KV -> promote to L1 via waitUntil)
+- [x] Implement async write to KV (parallel waitUntil alongside L1 write)
+- [x] Handle KV-specific TTL configuration (expirationTtl >= 60s guard, version-keyed)
+- [x] Binary-safe response body encoding (base64 for document cache)
+- [x] Tests for layered caching behavior (28 tests covering all three cache levels)
 
 ### Phase 3: Advanced (Future)
 

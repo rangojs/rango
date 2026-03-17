@@ -120,9 +120,9 @@ const store = new MemorySegmentCacheStore({
 });
 ```
 
-### Cloudflare KV Store
+### Cloudflare Edge Cache Store
 
-For distributed caching on Cloudflare Workers:
+For distributed caching on Cloudflare Workers using the Cache API:
 
 ```typescript
 import { CFCacheStore } from "@rangojs/router/cache";
@@ -132,13 +132,46 @@ const router = createRouter<AppBindings>({
   urls: urlpatterns,
   cache: (env, ctx) => ({
     store: new CFCacheStore({
-      kv: env.CACHE_KV,
-      waitUntil: (fn) => ctx!.waitUntil(fn),
+      ctx,
+      defaults: { ttl: 60, swr: 300 },
     }),
     enabled: true,
   }),
 });
 ```
+
+### With KV L2 Persistence
+
+Add a KV namespace for global cross-colo persistence. On Cache API miss, KV is
+checked and hits are promoted back to L1. Writes go to both layers.
+
+```typescript
+import { CFCacheStore } from "@rangojs/router/cache";
+
+const router = createRouter<AppBindings>({
+  document: Document,
+  urls: urlpatterns,
+  cache: (env, ctx) => ({
+    store: new CFCacheStore({
+      ctx,
+      kv: env.CACHE_KV, // optional KV namespace binding
+      defaults: { ttl: 60, swr: 300 },
+    }),
+    enabled: true,
+  }),
+});
+```
+
+**How the two layers work:**
+
+| Scenario     | L1 (Cache API) | L2 (KV) | Result                        |
+| ------------ | -------------- | ------- | ----------------------------- |
+| Hot request  | HIT            | —       | Serve from L1 (fast)          |
+| Cold colo    | MISS           | HIT     | Serve from KV, promote to L1  |
+| First render | MISS           | MISS    | Render, write to both L1 + KV |
+
+KV entries require `expirationTtl >= 60s`. Short-lived entries (< 60s total TTL)
+are only cached in L1.
 
 ## Nested Cache Boundaries
 

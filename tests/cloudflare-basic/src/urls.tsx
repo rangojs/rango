@@ -109,6 +109,30 @@ export const urlpatterns = urls(
       { name: "testUncachedJson" },
     ),
 
+    // KV L2 test: read KV directly to verify cache writes land in L2
+    path.json(
+      "/test/kv-l2-check",
+      async (ctx) => {
+        const kv = ctx.env.KV;
+        // List all keys with cache version prefix to check KV was populated
+        const list = await kv.list({ limit: 50 });
+        return {
+          kvKeyCount: list.keys.length,
+          kvKeys: list.keys.map((k: { name: string }) => k.name),
+        };
+      },
+      { name: "testKvL2Check" },
+    ),
+
+    // KV L2 test: cached route with unique path for isolated testing
+    cache({ ttl: 600 }, () => [
+      path.json(
+        "/test/kv-cached-json",
+        () => ({ source: "kv-cached", ts: Date.now() }),
+        { name: "testKvCachedJson" },
+      ),
+    ]),
+
     // Content negotiation test routes (same URL, different response types)
     path.json(
       "/test/negotiate",
