@@ -285,19 +285,16 @@ export function restoreScrollPosition(options?: {
     return true;
   }
 
-  // Try restoring immediately — works when cached content is already in the DOM.
-  window.scrollTo(0, savedY);
-  debugLog("[Scroll] Restored position (immediate):", savedY, "for key:", key);
-
-  // Also schedule a deferred restore after React paints, in case
-  // startTransition hasn't committed the DOM yet.
+  // Not streaming — scroll after React commits and browser paints.
+  // startTransition defers the DOM commit, so scrolling synchronously
+  // would be overwritten when React replaces the content.
   const defer =
     typeof requestAnimationFrame === "function"
       ? requestAnimationFrame
       : (fn: () => void) => setTimeout(fn, 0);
   defer(() => {
     window.scrollTo(0, savedY);
-    debugLog("[Scroll] Restored position (deferred):", savedY, "for key:", key);
+    debugLog("[Scroll] Restored position:", savedY, "for key:", key);
   });
   return true;
 }

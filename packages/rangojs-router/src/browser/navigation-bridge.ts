@@ -461,6 +461,10 @@ export function createNavigationBridge(
           }
           eventController.setParams(cachedParams);
 
+          // Scroll to top immediately to avoid flicker from the previous
+          // page's scroll position while React paints the cached content.
+          window.scrollTo(0, 0);
+
           const popstateUpdate = {
             root,
             metadata: {
@@ -485,9 +489,7 @@ export function createNavigationBridge(
             onUpdate(popstateUpdate);
           }
 
-          // Restore scroll position for back/forward navigation.
-          // restoreScrollPosition() tries immediately (works for cached content
-          // already in the DOM) and also defers via rAF as a fallback.
+          // Restore the actual saved scroll position after React paints.
           handleNavigationEnd({ restore: true, isStreaming });
 
           // SWR: If stale, trigger background revalidation
