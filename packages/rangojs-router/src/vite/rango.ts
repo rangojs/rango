@@ -36,7 +36,7 @@ import { createRouterDiscoveryPlugin } from "./router-discovery.js";
  * @example Node.js (default)
  * ```ts
  * export default defineConfig({
- *   plugins: [react(), rango({ router: './src/router.tsx' })],
+ *   plugins: [react(), rango()],
  * });
  * ```
  *
