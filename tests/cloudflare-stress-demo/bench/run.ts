@@ -4,7 +4,12 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import autocannon from "autocannon";
 import { scenarios, timingPaths, warmupPaths } from "./scenarios.js";
-import { startDevServer, startProdServer } from "./server.js";
+import {
+  startDevServer,
+  startProdServer,
+  getGroupRssKb,
+  startRssPolling,
+} from "./server.js";
 import {
   formatMarkdown,
   type BenchmarkResult,
@@ -223,14 +228,26 @@ async function main() {
   console.log(`  Ready at ${baseUrl}\n`);
 
   try {
+    // RSS before warmup
+    const rssBeforeWarmup = getGroupRssKb(server.pid);
+
     // Warmup
     console.log("Warming up...");
     await warmup(baseUrl);
+    const rssAfterWarmup = getGroupRssKb(server.pid);
+    console.log(
+      `  RSS: ${Math.round(rssBeforeWarmup / 1024)} MB -> ${Math.round(rssAfterWarmup / 1024)} MB after warmup`,
+    );
     console.log("");
 
-    // Throughput
+    // Throughput with RSS polling
     console.log("Running throughput scenarios...");
+    const rssPoller = startRssPolling(server.pid);
     const throughput = await runScenario(baseUrl);
+    const rssResult = rssPoller.stop();
+    console.log(
+      `  Peak RSS during load: ${Math.round(rssResult.peakRssKb / 1024)} MB, final: ${Math.round(rssResult.finalRssKb / 1024)} MB`,
+    );
     console.log("");
 
     // Server Timing
@@ -238,12 +255,21 @@ async function main() {
     const serverTiming = await collectTimings(baseUrl);
     console.log(`  Collected ${serverTiming.length} profiles\n`);
 
+    // Memory summary
+    const memory = {
+      beforeWarmupMb: Math.round(rssBeforeWarmup / 1024),
+      afterWarmupMb: Math.round(rssAfterWarmup / 1024),
+      peakUnderLoadMb: Math.round(rssResult.peakRssKb / 1024),
+      finalMb: Math.round(rssResult.finalRssKb / 1024),
+    };
+
     // Assemble result
     const result: BenchmarkResult = {
       meta,
       build: buildSizes,
       throughput,
       serverTiming,
+      memory,
     };
 
     // Output

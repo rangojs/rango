@@ -45,6 +45,14 @@ export interface BenchmarkResult {
   build?: BuildSizes;
   throughput: ThroughputResult[];
   serverTiming: TimingResult[];
+  memory?: MemoryResult;
+}
+
+export interface MemoryResult {
+  beforeWarmupMb: number;
+  afterWarmupMb: number;
+  peakUnderLoadMb: number;
+  finalMb: number;
 }
 
 function pad(s: string, n: number) {
@@ -142,6 +150,19 @@ export function formatMarkdown(result: BenchmarkResult): string {
         `| ${st.path} | ${fmtMs(st.totalMs)}ms | ${vals.join(" | ")} |`,
       );
     }
+    lines.push("");
+  }
+
+  if (result.memory) {
+    const m = result.memory;
+    lines.push("## Memory (server process group RSS)");
+    lines.push("");
+    lines.push("| Phase | RSS |");
+    lines.push("|-------|-----|");
+    lines.push(`| Before warmup | ${m.beforeWarmupMb} MB |`);
+    lines.push(`| After warmup | ${m.afterWarmupMb} MB |`);
+    lines.push(`| Peak under load | ${m.peakUnderLoadMb} MB |`);
+    lines.push(`| Final (after load) | ${m.finalMb} MB |`);
     lines.push("");
   }
 
