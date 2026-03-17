@@ -13,8 +13,6 @@ export const VIRTUAL_ROUTES_MANIFEST_ID = "virtual:rsc-router/routes-manifest";
 export interface PluginOptions {
   enableBuildPrerender?: boolean;
   staticRouteTypesGeneration?: boolean;
-  include?: string[];
-  exclude?: string[];
   // Mutable ref for deferred auto-discovery (node preset).
   // The auto-discover config() hook populates this before configResolved.
   routerPathRef?: { path?: string };

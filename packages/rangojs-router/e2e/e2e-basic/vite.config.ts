@@ -3,11 +3,7 @@ import path from "path";
 import { rango } from "@rangojs/router/vite";
 
 export default defineConfig({
-  plugins: [
-    rango({
-      router: "./src/router.tsx",
-    }),
-  ],
+  plugins: [rango()],
   esbuild: {
     target: "es2022",
   },

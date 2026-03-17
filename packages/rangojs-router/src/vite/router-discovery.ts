@@ -14,7 +14,6 @@ import {
   formatNestedRouterConflictError,
   findNestedRouterConflict,
   findRouterFiles,
-  createScanFilter,
 } from "../build/generate-route-types.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
 import { createVirtualStubPlugin } from "./plugins/virtual-stub-plugin.js";
@@ -167,13 +166,6 @@ export function createRouterDiscoveryPlugin(
         } else if (Array.isArray(entries) && entries.length > 0) {
           s.resolvedEntryPath = entries[0];
         }
-      }
-      // Compile include/exclude patterns into a scan filter
-      if (opts?.include || opts?.exclude) {
-        s.scanFilter = createScanFilter(s.projectRoot, {
-          include: opts.include,
-          exclude: opts.exclude,
-        });
       }
       // Generate combined named-routes.gen.ts from static source parsing.
       // Runs before the dev server starts so the gen file exists immediately for IDE.
