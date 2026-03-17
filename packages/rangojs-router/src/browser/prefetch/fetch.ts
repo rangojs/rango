@@ -6,12 +6,16 @@
  * real navigation so the server returns a proper diff. The Response is fully
  * buffered and stored in an in-memory cache for instant consumption on
  * subsequent navigation.
+ *
+ * In-flight promises are tracked in the cache so that navigation can reuse
+ * a prefetch that is still downloading instead of starting a duplicate request.
  */
 
 import {
   buildPrefetchKey,
   hasPrefetch,
   markPrefetchInflight,
+  setInflightPromise,
   storePrefetch,
   clearPrefetchInflight,
   currentGeneration,
@@ -52,18 +56,19 @@ function buildPrefetchUrl(
 
 /**
  * Core prefetch fetch logic. Fetches the response, fully buffers the body,
- * and stores it in the in-memory cache. Returns a Promise and accepts an
- * optional AbortSignal for cancellation by the prefetch queue.
+ * and stores it in the in-memory cache. The returned Promise resolves to
+ * the buffered Response (or null on failure) so navigation can reuse
+ * in-flight prefetches via consumeInflightPrefetch().
  */
 function executePrefetchFetch(
   key: string,
   fetchUrl: string,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<Response | null> {
   const gen = currentGeneration();
   markPrefetchInflight(key);
 
-  return fetch(fetchUrl, {
+  const promise: Promise<Response | null> = fetch(fetchUrl, {
     priority: "low" as RequestPriority,
     signal,
     headers: {
@@ -73,7 +78,7 @@ function executePrefetchFetch(
     },
   })
     .then(async (response) => {
-      if (!response.ok) return;
+      if (!response.ok) return null;
       // Fully buffer the response body so the cached Response is
       // self-contained and doesn't depend on the network connection.
       // This eliminates the race condition where the user clicks before
@@ -84,14 +89,16 @@ function executePrefetchFetch(
         status: response.status,
         statusText: response.statusText,
       });
-      storePrefetch(key, cachedResponse, gen);
+      storePrefetch(key, cachedResponse.clone(), gen);
+      return cachedResponse;
     })
-    .catch(() => {
-      // Silently ignore prefetch failures (including abort)
-    })
+    .catch(() => null)
     .finally(() => {
       clearPrefetchInflight(key);
     });
+
+  setInflightPromise(key, promise);
+  return promise;
 }
 
 /**
@@ -128,8 +135,11 @@ export function prefetchQueued(
   const key = buildPrefetchKey(window.location.href, targetUrl);
   if (hasPrefetch(key)) return key;
   const fetchUrlStr = targetUrl.toString();
-  enqueuePrefetch(key, (signal) =>
-    executePrefetchFetch(key, fetchUrlStr, signal),
-  );
+  enqueuePrefetch(key, (signal) => {
+    // Re-check at execution time: a hover-triggered prefetchDirect may
+    // have started or completed this key while the item sat in the queue.
+    if (hasPrefetch(key)) return Promise.resolve();
+    return executePrefetchFetch(key, fetchUrlStr, signal).then(() => {});
+  });
   return key;
 }

@@ -1,14 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { cancelAllPrefetchesMock, invalidateRangoStateMock } = vi.hoisted(
-  () => ({
-    cancelAllPrefetchesMock: vi.fn(),
-    invalidateRangoStateMock: vi.fn(),
-  }),
-);
+const { abortAllPrefetchesMock, invalidateRangoStateMock } = vi.hoisted(() => ({
+  abortAllPrefetchesMock: vi.fn(),
+  invalidateRangoStateMock: vi.fn(),
+}));
 
 vi.mock("../browser/prefetch/queue", () => ({
-  cancelAllPrefetches: cancelAllPrefetchesMock,
+  abortAllPrefetches: abortAllPrefetchesMock,
 }));
 
 vi.mock("../browser/rango-state", () => ({
@@ -19,17 +17,19 @@ import {
   buildPrefetchKey,
   clearPrefetchCache,
   clearPrefetchInflight,
+  consumeInflightPrefetch,
   consumePrefetch,
   currentGeneration,
   hasPrefetch,
   markPrefetchInflight,
+  setInflightPromise,
   storePrefetch,
 } from "../browser/prefetch/cache";
 
 describe("prefetch cache", () => {
   beforeEach(() => {
     clearPrefetchCache();
-    cancelAllPrefetchesMock.mockClear();
+    abortAllPrefetchesMock.mockClear();
     invalidateRangoStateMock.mockClear();
   });
 
@@ -118,7 +118,7 @@ describe("prefetch cache", () => {
     expect(currentGeneration()).toBe(before + 1);
     expect(hasPrefetch("/a")).toBe(false);
     expect(hasPrefetch("http://localhost/\0/b")).toBe(false);
-    expect(cancelAllPrefetchesMock).toHaveBeenCalledTimes(1);
+    expect(abortAllPrefetchesMock).toHaveBeenCalledTimes(1);
     expect(invalidateRangoStateMock).toHaveBeenCalledTimes(1);
   });
 
@@ -136,5 +136,58 @@ describe("prefetch cache", () => {
     expect(hasPrefetch("key-0")).toBe(false);
     expect(hasPrefetch("key-50")).toBe(true);
     expect(hasPrefetch("key-1")).toBe(true);
+  });
+
+  describe("inflight promise tracking", () => {
+    it("consumeInflightPrefetch returns stored promise and removes it", async () => {
+      const key = "http://localhost/\0/products";
+      const response = new Response("prefetched");
+      const promise = Promise.resolve(response);
+
+      markPrefetchInflight(key);
+      setInflightPromise(key, promise);
+
+      expect(hasPrefetch(key)).toBe(true);
+
+      const consumed = consumeInflightPrefetch(key);
+      expect(consumed).toBe(promise);
+      // Inflight flag is preserved so hasPrefetch() blocks duplicates
+      expect(hasPrefetch(key)).toBe(true);
+      // Second consume returns null (promise already handed off)
+      expect(consumeInflightPrefetch(key)).toBe(null);
+      // clearPrefetchInflight removes the inflight flag
+      clearPrefetchInflight(key);
+      expect(hasPrefetch(key)).toBe(false);
+
+      // Promise still resolves correctly
+      const result = await consumed;
+      expect(result).toBe(response);
+    });
+
+    it("consumeInflightPrefetch returns null when nothing is in-flight", () => {
+      expect(consumeInflightPrefetch("nonexistent")).toBe(null);
+    });
+
+    it("clearPrefetchInflight removes both inflight flag and promise", () => {
+      const key = "/test";
+      markPrefetchInflight(key);
+      setInflightPromise(key, Promise.resolve(null));
+
+      expect(hasPrefetch(key)).toBe(true);
+
+      clearPrefetchInflight(key);
+      expect(hasPrefetch(key)).toBe(false);
+      expect(consumeInflightPrefetch(key)).toBe(null);
+    });
+
+    it("clearPrefetchCache clears inflight promises", () => {
+      const key = "/test";
+      markPrefetchInflight(key);
+      setInflightPromise(key, Promise.resolve(new Response("body")));
+
+      clearPrefetchCache();
+
+      expect(consumeInflightPrefetch(key)).toBe(null);
+    });
   });
 });
