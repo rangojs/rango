@@ -64,6 +64,8 @@ export interface AppVariables {
   alsActionCustomProbe?: string;
   // Middleware ctx parity test variable
   mwVarTest?: string;
+  // use-cache parent-child set test variable
+  childData?: string;
 }
 
 export type AppEnv = AppBindings;
