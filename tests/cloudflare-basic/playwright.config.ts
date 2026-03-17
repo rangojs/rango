@@ -45,7 +45,7 @@ export default defineConfig({
         {
           name: "dev",
           grep: /^(?!.*\(production\))/,
-          testIgnore: ["**/hmr.test.ts", "**/*.setup.ts"],
+          testIgnore: ["**/hmr*.test.ts", "**/*.setup.ts"],
           use: {
             ...devices["Desktop Chrome"],
             baseURL: `http://localhost:${DEV_PORT}`,
@@ -62,7 +62,7 @@ export default defineConfig({
         },
         {
           name: "hmr",
-          testMatch: ["**/hmr.test.ts"],
+          testMatch: ["**/hmr*.test.ts"],
           use: { ...devices["Desktop Chrome"] },
           fullyParallel: false,
         },
@@ -79,7 +79,7 @@ export default defineConfig({
         {
           name: "dev",
           grep: /^(?!.*\(production\))/,
-          testIgnore: ["**/hmr.test.ts", "**/*.setup.ts"],
+          testIgnore: ["**/hmr*.test.ts", "**/*.setup.ts"],
           use: {
             ...devices["Desktop Chrome"],
             baseURL: `http://localhost:${DEV_PORT}`,
@@ -100,7 +100,7 @@ export default defineConfig({
         },
         {
           name: "hmr",
-          testMatch: ["**/hmr.test.ts"],
+          testMatch: ["**/hmr*.test.ts"],
           use: { ...devices["Desktop Chrome"] },
           fullyParallel: false,
           dependencies: ["dev", "production"],
