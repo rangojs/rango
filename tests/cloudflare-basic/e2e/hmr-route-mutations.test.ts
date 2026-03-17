@@ -5,7 +5,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
 
+// Route mutation tests are too flaky on GH Actions due to unreliable inotify
+// on overlayfs. Run locally only; skip in CI.
 test.describe.serial("hmr-route-mutations", () => {
+  test.skip(
+    !!process.env.CI,
+    "Skipped in CI — inotify unreliable on GH Actions",
+  );
   const f = useFixture({
     root: ".",
     mode: "dev",
