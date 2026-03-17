@@ -19,9 +19,9 @@ export interface OnErrorRecord {
   message: string;
   actionId?: string;
 }
-export let lastOnErrorCall: OnErrorRecord | null = null;
-export function resetLastOnErrorCall() {
-  lastOnErrorCall = null;
+export const onErrorLog: OnErrorRecord[] = [];
+export function clearOnErrorLog() {
+  onErrorLog.length = 0;
 }
 
 /**
@@ -193,11 +193,11 @@ export const router = createRouter<AppEnv>({
     },
   },
   onError: (context) => {
-    lastOnErrorCall = {
+    onErrorLog.push({
       phase: context.phase,
       message: context.error.message,
       actionId: context.actionId,
-    };
+    });
   },
 })
   // Bug-repro: cookies set AFTER await next() in the outermost middleware.

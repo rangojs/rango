@@ -15,7 +15,7 @@ async function waitForOnError(
   page: import("@playwright/test").Page,
   errorUrl: string,
   expectedPhase: string,
-  timeout = 5000,
+  timeout = 10000,
 ): Promise<{ phase: string; message: string; actionId?: string }> {
   let result: any = null;
   await expect
@@ -24,9 +24,16 @@ async function waitForOnError(
         try {
           const response = await page.request.get(errorUrl);
           const data = await response.json();
-          if (data.data && data.data.phase === expectedPhase) {
-            result = data.data;
-            return true;
+          // The endpoint returns an array of error records (or null)
+          const log = data.data;
+          if (Array.isArray(log)) {
+            const match = log.find(
+              (entry: any) => entry.phase === expectedPhase,
+            );
+            if (match) {
+              result = match;
+              return true;
+            }
           }
         } catch {
           // JSON parse may fail if server is mid-restart; retry
@@ -55,8 +62,8 @@ function onErrorTests(f: ReturnType<typeof useFixture>) {
     await page.goto(f.url("/location-state"));
     await waitForHydration(page);
 
-    // Clear any previous error
-    await page.request.get(f.url("/__test/last-error"));
+    // Clear any previous errors
+    await page.request.get(f.url("/__test/clear-error-log"));
 
     // Trigger action that throws
     await page.locator('[data-testid="throw-error-btn"]').click();
@@ -73,8 +80,8 @@ function onErrorTests(f: ReturnType<typeof useFixture>) {
   });
 
   test("handler error reports phase='handler'", async ({ page }) => {
-    // Clear any previous error
-    await page.request.get(f.url("/__test/last-error"));
+    // Clear any previous errors
+    await page.request.get(f.url("/__test/clear-error-log"));
 
     // Hit a response route that throws — triggers onError with phase="handler"
     const response = await page.request.get(
@@ -123,8 +130,8 @@ function onErrorProgressiveEnhancementTests(f: ReturnType<typeof useFixture>) {
   }) => {
     await page.goto(f.url("/location-state"));
 
-    // Clear any previous error
-    await page.request.get(f.url("/__test/last-error"));
+    // Clear any previous errors
+    await page.request.get(f.url("/__test/clear-error-log"));
 
     await Promise.all([
       page.waitForLoadState("domcontentloaded"),

@@ -681,17 +681,24 @@ export const urlpatterns = urls(
         },
       ),
 
-      // Test utils: read and reset last onError call for e2e verification
+      // Test utils: read onError log (non-destructive)
       path.json(
         "/__test/last-error",
         async () => {
-          const { lastOnErrorCall, resetLastOnErrorCall } =
-            await import("./router.js");
-          const result = lastOnErrorCall;
-          resetLastOnErrorCall();
-          return result;
+          const { onErrorLog } = await import("./router.js");
+          return onErrorLog.length > 0 ? [...onErrorLog] : null;
         },
         { name: "testLastError" },
+      ),
+      // Test utils: clear onError log
+      path.json(
+        "/__test/clear-error-log",
+        async () => {
+          const { clearOnErrorLog } = await import("./router.js");
+          clearOnErrorLog();
+          return { cleared: true };
+        },
+        { name: "testClearErrorLog" },
       ),
 
       // Test utils: response route that throws to trigger onError with phase="handler"
