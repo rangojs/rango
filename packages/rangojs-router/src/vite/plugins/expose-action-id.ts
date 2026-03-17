@@ -278,9 +278,7 @@ export function exposeActionId(): Plugin {
       if (!rscPluginApi) {
         throw new Error(
           "[rsc-router] Could not find @vitejs/plugin-rsc. " +
-            "@rangojs/router requires the Vite RSC plugin.\n" +
-            "The RSC plugin should be included automatically. If you disabled it with\n" +
-            "rango({ rsc: false }), add rsc() before rango() in your config.",
+            "@rangojs/router requires the Vite RSC plugin, which is included automatically by rango().",
         );
       }
 
