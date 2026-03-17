@@ -5,11 +5,21 @@
  * Hover prefetches bypass this queue — they fire directly for immediate response
  * to user intent.
  *
- * All queued/executing prefetches share a single AbortController so they can
- * be cancelled in bulk when a navigation starts.
+ * Draining is deferred to the next animation frame so prefetch network activity
+ * never blocks paint. This applies to both the initial batch and subsequent
+ * batches — every drain cycle yields to the browser first.
+ *
+ * When a navigation starts, queued prefetches are cancelled but executing ones
+ * are left running. Navigation can reuse their in-flight responses via the
+ * prefetch cache's inflight promise map, avoiding duplicate requests.
  */
 
 const MAX_CONCURRENT = 2;
+
+const deferToNextPaint: (fn: () => void) => void =
+  typeof requestAnimationFrame === "function"
+    ? requestAnimationFrame
+    : (fn) => setTimeout(fn, 0);
 
 let active = 0;
 const queue: Array<{
@@ -19,6 +29,7 @@ const queue: Array<{
 const queued = new Set<string>();
 const executing = new Set<string>();
 let abortController: AbortController | null = null;
+let drainScheduled = false;
 
 function startExecution(
   key: string,
@@ -34,6 +45,21 @@ function startExecution(
     if (executing.delete(key)) {
       active--;
     }
+    scheduleDrain();
+  });
+}
+
+/**
+ * Schedule a drain on the next animation frame.
+ * Coalesces multiple drain requests into a single rAF callback so
+ * batch completion doesn't schedule redundant frames.
+ */
+function scheduleDrain(): void {
+  if (drainScheduled) return;
+  if (active >= MAX_CONCURRENT || queue.length === 0) return;
+  drainScheduled = true;
+  deferToNextPaint(() => {
+    drainScheduled = false;
     drain();
   });
 }
@@ -48,8 +74,8 @@ function drain(): void {
 
 /**
  * Enqueue a prefetch for concurrency-limited execution.
- * If below the concurrency limit, executes immediately.
- * Otherwise queues for later execution.
+ * Execution is always deferred to the next animation frame to avoid
+ * blocking paint, even when below the concurrency limit.
  * Deduplicates by key — items already queued or executing are skipped.
  *
  * The executor receives an AbortSignal that is aborted when
@@ -61,20 +87,33 @@ export function enqueuePrefetch(
 ): void {
   if (queued.has(key) || executing.has(key)) return;
 
-  if (active < MAX_CONCURRENT) {
-    startExecution(key, execute);
-  } else {
-    queued.add(key);
-    queue.push({ key, execute });
-  }
+  queued.add(key);
+  queue.push({ key, execute });
+  scheduleDrain();
 }
 
 /**
- * Cancel all in-flight and queued prefetches.
- * Called when a navigation starts — speculative prefetches should not
- * compete with navigation fetches for connection slots.
+ * Cancel queued prefetches. Executing prefetches are left running so
+ * navigation can reuse their in-flight responses (checked via
+ * consumeInflightPrefetch in the prefetch cache). With MAX_CONCURRENT=2
+ * and priority: "low", in-flight prefetches don't meaningfully compete
+ * with navigation fetches under HTTP/2 multiplexing.
+ *
+ * Called when a navigation starts via the NavigationProvider's
+ * event controller subscription.
  */
 export function cancelAllPrefetches(): void {
+  queue.length = 0;
+  queued.clear();
+  drainScheduled = false;
+}
+
+/**
+ * Hard-cancel everything including in-flight prefetches.
+ * Used by clearPrefetchCache (server action invalidation) where
+ * in-flight responses would be stale.
+ */
+export function abortAllPrefetches(): void {
   abortController?.abort();
   abortController = null;
 
@@ -85,4 +124,5 @@ export function cancelAllPrefetches(): void {
   // so active settles at 0 without underflow.
   executing.clear();
   active = 0;
+  drainScheduled = false;
 }
