@@ -147,32 +147,44 @@ export function useFixture(options: {
       }
     }
     if (options.mode === "build") {
-      const hasBuildDep = testInfo.project.dependencies.includes("build");
-      if (!process.env.TEST_SKIP_BUILD && !hasBuildDep) {
-        const buildProc = runCli({
-          command: options.buildCommand ?? `pnpm build`,
-          label: `${options.root}:build`,
+      // Reuse shared preview server if the project has a baseURL configured
+      // and the fixture root matches the default test-app (other roots like
+      // e2e-basic or e2e-timeout need their own server).
+      const isDefaultRoot = cwd === path.resolve("./e2e/test-app");
+      const sharedURL =
+        isDefaultRoot &&
+        !options.isolatedServer &&
+        testInfo.project.use.baseURL;
+      if (sharedURL) {
+        baseURL = sharedURL;
+      } else {
+        const hasBuildDep = testInfo.project.dependencies.includes("build");
+        if (!process.env.TEST_SKIP_BUILD && !hasBuildDep) {
+          const buildProc = runCli({
+            command: options.buildCommand ?? `pnpm build`,
+            label: `${options.root}:build`,
+            cwd,
+            ...options.cliOptions,
+          });
+          await buildProc.done;
+        }
+        proc = runCli({
+          command: options.command ?? `pnpm preview`,
+          label: `${options.root}:preview`,
           cwd,
           ...options.cliOptions,
         });
-        await buildProc.done;
+        const port = await proc.findPort();
+        baseURL = `http://localhost:${port}`;
+        await waitForReady(baseURL, () => ({
+          stdout: proc.stdout(),
+          stderr: proc.stderr(),
+        }));
+        cleanup = async () => {
+          proc.kill();
+          await proc.done;
+        };
       }
-      proc = runCli({
-        command: options.command ?? `pnpm preview`,
-        label: `${options.root}:preview`,
-        cwd,
-        ...options.cliOptions,
-      });
-      const port = await proc.findPort();
-      baseURL = `http://localhost:${port}`;
-      await waitForReady(baseURL, () => ({
-        stdout: proc.stdout(),
-        stderr: proc.stderr(),
-      }));
-      cleanup = async () => {
-        proc.kill();
-        await proc.done;
-      };
     }
   });
 
