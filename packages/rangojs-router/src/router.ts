@@ -560,6 +560,7 @@ export function createRouter<TEnv = any>(
     mergedRouteMap,
     nextMountIndex: () => mountIndex++,
     getPrecomputedByPrefix,
+    routerId,
   };
 
   function evaluateLazyEntry(entry: RouteEntry<TEnv>): void {

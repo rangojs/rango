@@ -14,6 +14,7 @@ export interface LazyEvalDeps<TEnv = any> {
   mergedRouteMap: Record<string, string>;
   nextMountIndex: () => number;
   getPrecomputedByPrefix: () => Map<string, Record<string, string>> | null;
+  routerId?: string;
 }
 
 // Detect lazy includes in handler result and create placeholder entries
@@ -200,6 +201,7 @@ export function evaluateLazyEntry<TEnv = any>(
       trailingSlash: entry.trailingSlash,
       handler: (lazyInclude.patterns as UrlPatterns<TEnv>).handler,
       mountIndex: deps.nextMountIndex(),
+      routerId: deps.routerId,
       // Lazy evaluation fields
       lazy: true,
       lazyPatterns: lazyInclude.patterns,
