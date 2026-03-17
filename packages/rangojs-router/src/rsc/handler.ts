@@ -22,7 +22,6 @@ import type {
   RscPayload,
   CreateRSCHandlerOptions,
   LoadSSRModule,
-  SSRModule,
 } from "./types.js";
 import {
   createResponseWithMergedHeaders,
@@ -134,21 +133,13 @@ export function createRSCHandler<
   } = deps;
 
   // Use provided loadSSRModule or default to vite RSC module loader.
-  // In production the SSR module is stable across requests, so memoize
-  // the dynamic import to avoid repeated module resolution overhead.
-  // In dev mode Vite may hot-reload the module, so skip memoization.
-  const rawLoadSSRModule: LoadSSRModule =
+  // No memoization: ES module caching in the runtime already avoids
+  // repeated resolution, and memoizing here can break multi-router
+  // setups (host routing) where different routers share the same
+  // process but need independent SSR module lifecycle.
+  const loadSSRModule: LoadSSRModule =
     options.loadSSRModule ??
     (() => import.meta.viteRsc.loadModule("ssr", "index"));
-  let _ssrModulePromise: Promise<SSRModule> | undefined;
-  const loadSSRModule: LoadSSRModule =
-    process.env.NODE_ENV === "production"
-      ? () =>
-          (_ssrModulePromise ??= rawLoadSSRModule().catch((err) => {
-            _ssrModulePromise = undefined;
-            throw err;
-          }))
-      : rawLoadSSRModule;
 
   /**
    * Per-request error reporter that deduplicates via the ALS request context.
