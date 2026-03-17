@@ -199,7 +199,13 @@ export function registerRouterManifestLoader(
 }
 
 export async function ensureRouterManifest(routerId: string): Promise<void> {
-  if (perRouterManifestMap.has(routerId)) return;
+  // Check both manifest AND trie. The virtual module's setRouterManifest()
+  // pre-sets the manifest at startup, but the per-router trie is only
+  // available from the lazy loader. Without this, the lazy loader never
+  // runs and findMatch falls back to the global merged trie — which
+  // contains routes from ALL routers and breaks multi-router setups.
+  if (perRouterManifestMap.has(routerId) && perRouterTrieMap.has(routerId))
+    return;
   const loader = routerManifestLoaders.get(routerId);
   if (loader) {
     const mod = await loader();
