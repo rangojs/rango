@@ -16,8 +16,6 @@ import {
   requireRequestContext,
   createRequestContext,
 } from "../server/request-context.js";
-import * as rscDeps from "@vitejs/plugin-rsc/rsc";
-
 import type {
   RscPayload,
   CreateRSCHandlerOptions,
@@ -35,7 +33,6 @@ import {
   type ResponseRouteMatch,
 } from "./response-route-handler.js";
 import { generateNonce, nonce as nonceToken } from "./nonce.js";
-import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
 import type { RouterRequestInput } from "../router/router-interfaces.js";
 import { invokeOnError } from "../router/error-handling.js";
@@ -100,7 +97,7 @@ import {
  * import { createRSCHandler } from "@rangojs/router/rsc";
  * import { router } from "./router.js";
  *
- * export default createRSCHandler({ router });
+ * export default await createRSCHandler({ router });
  * ```
  *
  * @example With custom deps (advanced)
@@ -109,21 +106,31 @@ import {
  * import * as rsc from "@vitejs/plugin-rsc/rsc";
  * import { router } from "./router.js";
  *
- * export default createRSCHandler({
+ * export default await createRSCHandler({
  *   router,
  *   deps: rsc,
  *   loadSSRModule: () => import.meta.viteRsc.loadModule("ssr", "index"),
  * });
  * ```
  */
-export function createRSCHandler<
+export async function createRSCHandler<
   TEnv = unknown,
   TRoutes extends Record<string, string> = Record<string, string>,
->(options: CreateRSCHandlerOptions<TEnv, TRoutes>) {
-  const { router, version = VERSION, nonce: nonceProvider } = options;
+>(
+  options: CreateRSCHandlerOptions<TEnv, TRoutes>,
+): Promise<
+  (request: Request, input?: RouterRequestInput<TEnv>) => Promise<Response>
+> {
+  // Dynamically import virtual/external modules that may not be initialized
+  // during HMR re-evaluation due to circular dependencies in Vite's SSR
+  // module graph. These were previously top-level static imports which caused
+  // "Cannot read properties of undefined" errors during HMR.
+  const { router, nonce: nonceProvider } = options;
+  const version =
+    options.version ?? (await import("@rangojs/router:version")).VERSION;
 
   // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
-  const deps = options.deps ?? rscDeps;
+  const deps = options.deps ?? (await import("@vitejs/plugin-rsc/rsc"));
   const {
     renderToReadableStream,
     decodeReply,

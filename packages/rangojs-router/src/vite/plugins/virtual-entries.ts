@@ -81,23 +81,27 @@ import "virtual:rsc-router/routes-manifest";
 // Lazily create the handler on first request so that ESM live bindings
 // have resolved by the time we read \`router\`. During HMR the module may
 // re-evaluate before router.tsx finishes, leaving the import undefined.
+let _handlerPromise;
 let _handler;
-export default function handler(request, env) {
+export default async function handler(request, env) {
   if (!_handler) {
-    _handler = createRSCHandler({
-      router,
-      version: VERSION,
-      deps: {
-        renderToReadableStream,
-        decodeReply,
-        createTemporaryReferenceSet,
-        loadServerAction,
-        decodeAction,
-        decodeFormState,
-      },
-      loadSSRModule: () =>
-        import.meta.viteRsc.loadModule("ssr", "index"),
-    });
+    if (!_handlerPromise) {
+      _handlerPromise = createRSCHandler({
+        router,
+        version: VERSION,
+        deps: {
+          renderToReadableStream,
+          decodeReply,
+          createTemporaryReferenceSet,
+          loadServerAction,
+          decodeAction,
+          decodeFormState,
+        },
+        loadSSRModule: () =>
+          import.meta.viteRsc.loadModule("ssr", "index"),
+      });
+    }
+    _handler = await _handlerPromise;
   }
   return _handler(request, env);
 }

@@ -110,7 +110,7 @@ describe("handler SSR kickoff placement", () => {
       params: {},
     });
 
-    const handler = createRSCHandler({ router });
+    const handler = await createRSCHandler({ router });
     const request = new Request("https://example.com/api/data");
 
     await handler(request, { env: {} });
@@ -127,7 +127,7 @@ describe("handler SSR kickoff placement", () => {
       negotiated: true,
     });
 
-    const handler = createRSCHandler({ router });
+    const handler = await createRSCHandler({ router });
     const request = new Request("https://example.com/products", {
       headers: { accept: "application/json" },
     });
@@ -144,7 +144,7 @@ describe("handler SSR kickoff placement", () => {
     // The handler will throw downstream because rendering isn't fully mocked,
     // but startSSRSetup runs before the error. Assert previewMatch was reached
     // to confirm the negative path tests aren't passing due to an early crash.
-    const handler = createRSCHandler({ router });
+    const handler = await createRSCHandler({ router });
     const request = new Request("https://example.com/");
 
     try {
@@ -160,7 +160,7 @@ describe("handler SSR kickoff placement", () => {
   it("does NOT start SSR setup for RSC-only requests (Accept without text/html)", async () => {
     const router = createMockRouter(null);
 
-    const handler = createRSCHandler({ router });
+    const handler = await createRSCHandler({ router });
     const request = new Request("https://example.com/", {
       headers: { accept: "text/x-component" },
     });

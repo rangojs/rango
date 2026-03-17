@@ -92,7 +92,7 @@ function createMockRouter(
 describe("handler metrics finalization", () => {
   it("includes handler:total in Server-Timing header", async () => {
     const router = createMockRouter();
-    const handler = createRSCHandler({ router });
+    const handler = await createRSCHandler({ router });
     const request = new Request("https://example.com/api/data");
 
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -124,7 +124,7 @@ describe("handler metrics finalization", () => {
       ],
     });
 
-    const handler = createRSCHandler({ router });
+    const handler = await createRSCHandler({ router });
     const request = new Request("https://example.com/api/data");
 
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -161,7 +161,7 @@ describe("handler metrics finalization", () => {
       ],
     });
 
-    const handler = createRSCHandler({ router });
+    const handler = await createRSCHandler({ router });
     const request = new Request("https://example.com/?_rsc_partial=1", {
       headers: { accept: "text/x-component" },
     });
@@ -193,7 +193,7 @@ describe("handler metrics finalization", () => {
       ],
     });
 
-    const handler = createRSCHandler({ router });
+    const handler = await createRSCHandler({ router });
     const request = new Request("https://example.com/api/data");
 
     const logs: string[] = [];
@@ -239,7 +239,7 @@ describe("handler metrics finalization", () => {
       ],
     });
 
-    const handler = createRSCHandler({ router });
+    const handler = await createRSCHandler({ router });
     const request = new Request("https://example.com/api/data");
 
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -256,7 +256,7 @@ describe("handler metrics finalization", () => {
 
   it("emits bootstrap Server-Timing entries without debugPerformance", async () => {
     const router = createMockRouter({ debugPerformance: false });
-    const handler = createRSCHandler({ router });
+    const handler = await createRSCHandler({ router });
     const request = new Request("https://example.com/api/data");
 
     const response = await handler(request, { env: {} });
@@ -280,7 +280,7 @@ describe("handler metrics finalization", () => {
     );
 
     const router = createMockRouter();
-    const handler = createRSCHandler({ router });
+    const handler = await createRSCHandler({ router });
     const request = new Request("https://example.com/api/data");
 
     vi.spyOn(console, "log").mockImplementation(() => {});
