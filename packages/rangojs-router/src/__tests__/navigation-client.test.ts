@@ -1,12 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NetworkError, ServerRedirect } from "../errors";
 
-const { getRangoStateMock } = vi.hoisted(() => ({
+const {
+  getRangoStateMock,
+  consumePrefetchMock,
+  consumeInflightPrefetchMock,
+  buildPrefetchKeyMock,
+} = vi.hoisted(() => ({
   getRangoStateMock: vi.fn(() => "v1:abc"),
+  consumePrefetchMock: vi.fn(() => null),
+  consumeInflightPrefetchMock: vi.fn(() => null),
+  buildPrefetchKeyMock: vi.fn(
+    (source: string, target: URL) =>
+      source + "\0" + target.pathname + target.search,
+  ),
 }));
 
 vi.mock("../browser/rango-state", () => ({
   getRangoState: getRangoStateMock,
+}));
+
+vi.mock("../browser/prefetch/cache", () => ({
+  consumePrefetch: consumePrefetchMock,
+  consumeInflightPrefetch: consumeInflightPrefetchMock,
+  buildPrefetchKey: buildPrefetchKeyMock,
 }));
 
 import { createNavigationClient } from "../browser/navigation-client";
@@ -24,6 +41,8 @@ describe("navigation-client", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    consumePrefetchMock.mockReset().mockReturnValue(null);
+    consumeInflightPrefetchMock.mockReset().mockReturnValue(null);
   });
 
   it("builds partial fetch URL and headers", async () => {
@@ -146,6 +165,111 @@ describe("navigation-client", () => {
       }),
     ).resolves.toMatchObject({
       payload: { metadata: { matched: [], diff: [] } },
+    });
+  });
+
+  describe("prefetch cache integration", () => {
+    it("uses completed cache entry without fetching", async () => {
+      const cachedBody = "cached-rsc-payload";
+      consumePrefetchMock.mockReturnValue(new Response(cachedBody));
+
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+      const client = createNavigationClient({
+        createFromFetch: async (responsePromise: Promise<Response>) => {
+          const response = await responsePromise;
+          const text = await response.clone().text();
+          return { metadata: { matched: [], diff: [], body: text } };
+        },
+      } as any);
+
+      const result = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(result.payload.metadata).toMatchObject({ matched: [], diff: [] });
+      expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses in-flight prefetch promise when cache misses", async () => {
+      const inflightBody = "inflight-rsc-payload";
+      consumeInflightPrefetchMock.mockReturnValue(
+        Promise.resolve(new Response(inflightBody)),
+      );
+
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+      const client = createNavigationClient({
+        createFromFetch: async (responsePromise: Promise<Response>) => {
+          const response = await responsePromise;
+          const text = await response.clone().text();
+          return { metadata: { matched: [], diff: [], body: text } };
+        },
+      } as any);
+
+      const result = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
+      expect(consumeInflightPrefetchMock).toHaveBeenCalledTimes(1);
+      expect(result.payload.metadata).toMatchObject({ matched: [], diff: [] });
+    });
+
+    it("falls back to fresh fetch when in-flight promise resolves null", async () => {
+      consumeInflightPrefetchMock.mockReturnValue(Promise.resolve(null));
+
+      const fetchMock = vi.fn(
+        async () => new Response("fresh-payload", { status: 200 }),
+      );
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+      const client = createNavigationClient({
+        createFromFetch: async (responsePromise: Promise<Response>) => {
+          await responsePromise;
+          return { metadata: { matched: [], diff: [] } };
+        },
+      } as any);
+
+      const result = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(result.payload.metadata).toMatchObject({ matched: [], diff: [] });
+    });
+
+    it("skips prefetch cache for stale revalidation", async () => {
+      const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+      const client = createNavigationClient({
+        createFromFetch: async (responsePromise: Promise<Response>) => {
+          await responsePromise;
+          return { metadata: { matched: [], diff: [] } };
+        },
+      } as any);
+
+      await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+        staleRevalidation: true,
+      });
+
+      expect(consumePrefetchMock).not.toHaveBeenCalled();
+      expect(consumeInflightPrefetchMock).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
   });
 });

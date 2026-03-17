@@ -17,7 +17,11 @@ import {
   emptyResponse,
   teeWithCompletion,
 } from "./response-adapter.js";
-import { buildPrefetchKey, consumePrefetch } from "./prefetch/cache.js";
+import {
+  buildPrefetchKey,
+  consumePrefetch,
+  consumeInflightPrefetch,
+} from "./prefetch/cache.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -90,10 +94,15 @@ export function createNavigationClient(
       // server's diff response depends on the source page context.
       // Skip cache for stale revalidation (needs fresh data), HMR (needs
       // fresh modules), and intercept contexts (source-dependent responses).
+      const canUsePrefetch = !staleRevalidation && !hmr && !interceptSourceUrl;
       const cacheKey = buildPrefetchKey(previousUrl, fetchUrl);
-      const cachedResponse =
-        !staleRevalidation && !hmr && !interceptSourceUrl
-          ? consumePrefetch(cacheKey)
+      const cachedResponse = canUsePrefetch ? consumePrefetch(cacheKey) : null;
+      // If no completed cache entry, check for in-flight prefetch.
+      // This reuses a prefetch that is still downloading rather than
+      // starting a duplicate request from scratch.
+      const inflightPrefetch =
+        !cachedResponse && canUsePrefetch
+          ? consumeInflightPrefetch(cacheKey)
           : null;
 
       // Track when the stream completes
@@ -102,32 +111,15 @@ export function createNavigationClient(
         resolveStreamComplete = resolve;
       });
 
-      let responsePromise: Promise<Response>;
-
-      if (cachedResponse) {
-        if (tx) {
-          browserDebugLog(tx, "prefetch cache hit", { key: cacheKey });
-        }
-        // Cached response body is already fully buffered (arrayBuffer),
-        // so stream completion is immediate.
-        responsePromise = Promise.resolve(cachedResponse).then((response) => {
-          return teeWithCompletion(
-            response,
-            () => {
-              if (tx) browserDebugLog(tx, "stream complete (from cache)");
-              resolveStreamComplete();
-            },
-            signal,
-          );
-        });
-      } else {
+      /** Start a fresh navigation fetch (no cache / inflight hit). */
+      const doFreshFetch = (): Promise<Response> => {
         if (tx) {
           browserDebugLog(tx, "fetching", {
             path: `${fetchUrl.pathname}${fetchUrl.search}`,
           });
         }
 
-        responsePromise = fetch(fetchUrl, {
+        return fetch(fetchUrl, {
           headers: {
             "X-RSC-Router-Client-Path": previousUrl,
             "X-Rango-State": getRangoState(),
@@ -183,6 +175,60 @@ export function createNavigationClient(
             signal,
           );
         });
+      };
+
+      let responsePromise: Promise<Response>;
+
+      if (cachedResponse) {
+        if (tx) {
+          browserDebugLog(tx, "prefetch cache hit", { key: cacheKey });
+        }
+        // Cached response body is already fully buffered (arrayBuffer),
+        // so stream completion is immediate.
+        responsePromise = Promise.resolve(cachedResponse).then((response) => {
+          return teeWithCompletion(
+            response,
+            () => {
+              if (tx) browserDebugLog(tx, "stream complete (from cache)");
+              resolveStreamComplete();
+            },
+            signal,
+          );
+        });
+      } else if (inflightPrefetch) {
+        if (tx) {
+          browserDebugLog(tx, "reusing inflight prefetch", { key: cacheKey });
+        }
+        // Await the in-flight prefetch. If it resolves with a Response,
+        // use it like a cache hit. If it fails (null), fall back to
+        // a fresh navigation fetch.
+        responsePromise = inflightPrefetch.then((prefetchResponse) => {
+          if (!prefetchResponse) {
+            if (tx) {
+              browserDebugLog(
+                tx,
+                "inflight prefetch failed, falling back to fetch",
+              );
+            }
+            return doFreshFetch();
+          }
+          if (tx) {
+            browserDebugLog(tx, "inflight prefetch resolved", {
+              key: cacheKey,
+            });
+          }
+          return teeWithCompletion(
+            prefetchResponse,
+            () => {
+              if (tx)
+                browserDebugLog(tx, "stream complete (from inflight prefetch)");
+              resolveStreamComplete();
+            },
+            signal,
+          );
+        });
+      } else {
+        responsePromise = doFreshFetch();
       }
 
       try {

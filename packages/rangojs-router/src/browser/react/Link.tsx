@@ -279,7 +279,15 @@ export const Link: ForwardRefExoticComponent<
   );
 
   const handleMouseEnter = useCallback(() => {
-    if (resolvedStrategy === "hover" && !isExternal && ctx?.store) {
+    if (
+      (resolvedStrategy === "hover" || resolvedStrategy === "viewport") &&
+      !isExternal &&
+      ctx?.store
+    ) {
+      // For "hover", this is the primary prefetch trigger.
+      // For "viewport", this upgrades/prioritizes a potentially queued
+      // prefetch — prefetchDirect bypasses the queue, and hasPrefetch
+      // deduplicates if the viewport prefetch already completed.
       const segmentState = ctx.store.getSegmentState();
       prefetchDirect(to, segmentState.currentSegmentIds, ctx.version);
     }
