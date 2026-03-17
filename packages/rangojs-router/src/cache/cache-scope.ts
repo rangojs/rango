@@ -73,7 +73,7 @@ function getDefaultRouteCacheKey(
   isIntercept?: boolean,
 ): string {
   const ctx = getRequestContext();
-  const isPartial = ctx?.url.searchParams.has("_rsc_partial") ?? false;
+  const isPartial = ctx?.originalUrl?.searchParams.has("_rsc_partial") ?? false;
   const searchParams = ctx?.url.searchParams;
   const host = ctx?.url.host ?? "localhost";
 
@@ -326,7 +326,7 @@ export class CacheScope {
     const key = await this.resolveKey(pathname, params, isIntercept);
 
     // Check if this is a partial request (navigation) vs document request
-    const isPartial = requestCtx.url.searchParams.has("_rsc_partial");
+    const isPartial = requestCtx.originalUrl.searchParams.has("_rsc_partial");
 
     requestCtx.waitUntil(async () => {
       await handleStore.settled;

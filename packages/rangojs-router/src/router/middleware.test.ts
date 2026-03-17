@@ -273,6 +273,44 @@ describe("middleware", () => {
       expect(await response.text()).toBe("OK");
     });
 
+    it("should strip _rsc* params from ctx.url and ctx.searchParams", async () => {
+      let capturedUrl: URL | undefined;
+      let capturedSearchParams: URLSearchParams | undefined;
+      let capturedOriginalUrl: URL | undefined;
+
+      const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
+        capturedUrl = ctx.url;
+        capturedSearchParams = ctx.searchParams;
+        capturedOriginalUrl = ctx.originalUrl;
+        return next();
+      };
+
+      await executeMiddleware(
+        [createMockEntry(middleware)],
+        new Request(
+          "http://localhost/test?q=hello&_rsc_partial=1&_rsc_segments=M0&page=2",
+        ),
+        {},
+        {},
+        async () => new Response("OK"),
+      );
+
+      // ctx.url should have _rsc* stripped
+      expect(capturedUrl!.searchParams.has("_rsc_partial")).toBe(false);
+      expect(capturedUrl!.searchParams.has("_rsc_segments")).toBe(false);
+      expect(capturedUrl!.searchParams.get("q")).toBe("hello");
+      expect(capturedUrl!.searchParams.get("page")).toBe("2");
+
+      // ctx.searchParams should match ctx.url.searchParams
+      expect(capturedSearchParams).toBe(capturedUrl!.searchParams);
+      expect(capturedSearchParams!.has("_rsc_partial")).toBe(false);
+
+      // ctx.originalUrl should preserve all params
+      expect(capturedOriginalUrl!.searchParams.has("_rsc_partial")).toBe(true);
+      expect(capturedOriginalUrl!.searchParams.has("_rsc_segments")).toBe(true);
+      expect(capturedOriginalUrl!.searchParams.get("q")).toBe("hello");
+    });
+
     it("should execute middleware in order", async () => {
       const order: number[] = [];
 
