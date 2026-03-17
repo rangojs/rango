@@ -3,8 +3,10 @@
 import React, {
   useState,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useMemo,
+  useRef,
   use,
   type ReactNode,
 } from "react";
@@ -25,6 +27,7 @@ import { ThemeProvider } from "../../theme/ThemeProvider.js";
 import { NonceContext } from "./nonce-context.js";
 import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
 import { cancelAllPrefetches } from "../prefetch/queue.js";
+import { handleNavigationEnd } from "../scroll-restoration.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -301,9 +304,33 @@ export function NavigationProvider({
     return unsub;
   }, [eventController]);
 
+  // Pending scroll action to apply after React commits
+  const pendingScrollRef = useRef<NavigationUpdate["scroll"]>(undefined);
+
+  // Apply scroll after React commits the new content to the DOM
+  useLayoutEffect(() => {
+    const scrollAction = pendingScrollRef.current;
+    if (!scrollAction) return;
+    pendingScrollRef.current = undefined;
+
+    if (scrollAction.enabled === false) return;
+
+    handleNavigationEnd({
+      restore: scrollAction.restore,
+      scroll: scrollAction.enabled,
+      isStreaming: scrollAction.isStreaming,
+    });
+  });
+
   // Subscribe to UI updates (for re-rendering the tree)
   useEffect(() => {
     const unsubscribe = store.onUpdate((update) => {
+      // Capture scroll intent — it will be applied in useLayoutEffect
+      // after React commits this state update to the DOM.
+      // Always assign (even undefined) to clear stale scroll from prior navigations,
+      // so server actions or error updates don't accidentally replay old scroll.
+      pendingScrollRef.current = update.scroll;
+
       setPayload({
         root: update.root,
         metadata: update.metadata,

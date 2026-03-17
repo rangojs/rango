@@ -215,6 +215,15 @@ export interface SegmentState {
 export interface NavigationUpdate {
   root: ReactNode | Promise<ReactNode>;
   metadata: RscMetadata;
+  /** Scroll behavior to apply after React commits this update */
+  scroll?: {
+    /** For back/forward: restore saved position */
+    restore?: boolean;
+    /** Set to false to disable scrolling entirely */
+    enabled?: boolean;
+    /** Function to check if streaming is in progress */
+    isStreaming?: () => boolean;
+  };
 }
 
 /**

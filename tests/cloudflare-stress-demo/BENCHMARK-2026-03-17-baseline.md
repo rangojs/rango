@@ -12,58 +12,58 @@
 
 ### Throughput
 
-| Scenario | req/s | p50 ms | p95 ms | p99 ms |
-|----------|-------|--------|--------|--------|
-| json-health | 695 | 11 | 39 | 54 |
-| json-items-param | 938 | 9 | 23 | 34 |
-| bench-first (best-case match) | 1,836 | 4 | 10 | 12 |
-| bench-last (3 routes checked) | 894 | 10 | 24 | 47 |
-| bench-api-first (prefix skip) | 713 | 12 | 30 | 51 |
-| bench-api-last (5005 routes) | 1,348 | 4 | 16 | 23 |
-| ssr-home (full SSR) | 408 | 4 | 122 | 135 |
+| Scenario                      | req/s | p50 ms | p95 ms | p99 ms |
+| ----------------------------- | ----- | ------ | ------ | ------ |
+| json-health                   | 695   | 11     | 39     | 54     |
+| json-items-param              | 938   | 9      | 23     | 34     |
+| bench-first (best-case match) | 1,836 | 4      | 10     | 12     |
+| bench-last (3 routes checked) | 894   | 10     | 24     | 47     |
+| bench-api-first (prefix skip) | 713   | 12     | 30     | 51     |
+| bench-api-last (5005 routes)  | 1,348 | 4      | 16     | 23     |
+| ssr-home (full SSR)           | 408   | 4      | 122    | 135    |
 
 ### Server Timing (single request, no load)
 
-| Path | Total | route-matching | handler-total | render-total | ssr-render-html |
-|------|-------|----------------|---------------|--------------|-----------------|
-| /bench/first | 1ms | 0ms | 0ms | - | - |
-| /bench/last | 0ms | 0ms | 0ms | - | - |
-| /api/bench/first | 0ms | 0ms | 0ms | - | - |
-| /api/bench/last | 0ms | 0ms | 0ms | - | - |
-| / (SSR home) | 9ms | 0ms | 8ms | 7ms | 4ms |
+| Path             | Total | route-matching | handler-total | render-total | ssr-render-html |
+| ---------------- | ----- | -------------- | ------------- | ------------ | --------------- |
+| /bench/first     | 1ms   | 0ms            | 0ms           | -            | -               |
+| /bench/last      | 0ms   | 0ms            | 0ms           | -            | -               |
+| /api/bench/first | 0ms   | 0ms            | 0ms           | -            | -               |
+| /api/bench/last  | 0ms   | 0ms            | 0ms           | -            | -               |
+| / (SSR home)     | 9ms   | 0ms            | 8ms           | 7ms          | 4ms             |
 
 ## Production Mode (wrangler dev / workerd)
 
 ### Throughput
 
-| Scenario | req/s | p50 ms | p95 ms | p99 ms |
-|----------|-------|--------|--------|--------|
-| json-health | 181 | 40 | 195 | 227 |
-| json-items-param | 183 | 36 | 180 | 243 |
-| bench-first (best-case match) | 72 | 121 | 360 | 458 |
-| bench-last (3 routes checked) | 58 | 148 | 429 | 480 |
-| bench-api-first (prefix skip) | 52 | 167 | 389 | 745 |
-| bench-api-last (5005 routes) | 83 | 95 | 357 | 384 |
-| ssr-home (full SSR) | 47 | 202 | 480 | 552 |
+| Scenario                      | req/s | p50 ms | p95 ms | p99 ms |
+| ----------------------------- | ----- | ------ | ------ | ------ |
+| json-health                   | 181   | 40     | 195    | 227    |
+| json-items-param              | 183   | 36     | 180    | 243    |
+| bench-first (best-case match) | 72    | 121    | 360    | 458    |
+| bench-last (3 routes checked) | 58    | 148    | 429    | 480    |
+| bench-api-first (prefix skip) | 52    | 167    | 389    | 745    |
+| bench-api-last (5005 routes)  | 83    | 95     | 357    | 384    |
+| ssr-home (full SSR)           | 47    | 202    | 480    | 552    |
 
 ### Server Timing (single request, no load)
 
-| Path | Total | route-matching | handler-total | render-total | ssr-render-html |
-|------|-------|----------------|---------------|--------------|-----------------|
-| /bench/first | 3ms | 0ms | 1ms | - | - |
-| /bench/last | 2ms | 0ms | 1ms | - | - |
-| /api/bench/first | 4ms | 0ms | 1ms | - | - |
-| /api/bench/last | 1ms | 0ms | 0ms | - | - |
-| / (SSR home) | 4ms | 0ms | 3ms | 3ms | 2ms |
+| Path             | Total | route-matching | handler-total | render-total | ssr-render-html |
+| ---------------- | ----- | -------------- | ------------- | ------------ | --------------- |
+| /bench/first     | 3ms   | 0ms            | 1ms           | -            | -               |
+| /bench/last      | 2ms   | 0ms            | 1ms           | -            | -               |
+| /api/bench/first | 4ms   | 0ms            | 1ms           | -            | -               |
+| /api/bench/last  | 1ms   | 0ms            | 0ms           | -            | -               |
+| / (SSR home)     | 4ms   | 0ms            | 3ms           | 3ms          | 2ms             |
 
 ### Build
 
-| Metric | Value |
-|--------|-------|
-| Build time | 5.3s |
-| Client JS | 281 KB |
-| RSC | 7.8 MB |
-| Total | 8.1 MB |
+| Metric     | Value  |
+| ---------- | ------ |
+| Build time | 5.3s   |
+| Client JS  | 281 KB |
+| RSC        | 7.8 MB |
+| Total      | 8.1 MB |
 
 ## Notes
 

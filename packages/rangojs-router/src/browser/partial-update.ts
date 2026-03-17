@@ -19,6 +19,14 @@ import type { BoundTransaction } from "./navigation-transaction.js";
 import { ServerRedirect } from "../errors.js";
 import { debugLog } from "./logging.js";
 import { validateRedirectOrigin } from "./validate-redirect-origin.js";
+import type { NavigationUpdate } from "./types.js";
+
+/** Build a scroll payload from the commit's scroll option */
+function toScrollPayload(
+  scroll: boolean | undefined,
+): NonNullable<NavigationUpdate["scroll"]> {
+  return { enabled: scroll !== false ? scroll : false };
+}
 
 /**
  * Configuration for creating a partial updater
@@ -246,7 +254,10 @@ export function createPartialUpdater(
             forceAwait: true,
           });
 
-          tx.commit(matchedIds, existingSegments);
+          const { scroll: commitScroll } = tx.commit(
+            matchedIds,
+            existingSegments,
+          );
 
           // Include cachedHandleData in metadata so NavigationProvider can restore
           // breadcrumbs and other handle data from cache.
@@ -260,6 +271,7 @@ export function createPartialUpdater(
               ...metadataWithoutHandles,
               cachedHandleData: mode.targetCacheHandleData,
             },
+            scroll: toScrollPayload(commitScroll),
           };
 
           const cachedHasTransition = existingSegments.some(
@@ -290,11 +302,15 @@ export function createPartialUpdater(
             forceAwait: true,
           });
 
-          tx.commit(matchedIds, existingSegments);
+          const { scroll: leaveScroll } = tx.commit(
+            matchedIds,
+            existingSegments,
+          );
 
           onUpdate({
             root: newTree,
             metadata: payload.metadata,
+            scroll: toScrollPayload(leaveScroll),
           });
 
           debugLog("[Browser] Navigation complete (left intercept)");
@@ -426,7 +442,11 @@ export function createPartialUpdater(
         : serverLocationState
           ? { serverState: serverLocationState }
           : undefined;
-      tx.commit(allSegmentIds, reconciled.segments, overrides);
+      const { scroll: navScroll } = tx.commit(
+        allSegmentIds,
+        reconciled.segments,
+        overrides,
+      );
 
       // For stale revalidation: verify history key hasn't changed before updating UI
       if (mode.type === "stale-revalidation") {
@@ -441,8 +461,10 @@ export function createPartialUpdater(
 
       debugLog("[partial-update] updating document");
 
-      // Emit update to trigger React render
+      // Emit update to trigger React render.
+      // Scroll info is included so NavigationProvider applies it after React commits.
       const hasTransition = reconciled.mainSegments.some((s) => s.transition);
+      const scrollPayload = toScrollPayload(navScroll);
 
       if (mode.type === "action" || mode.type === "stale-revalidation") {
         startTransition(() => {
@@ -452,6 +474,7 @@ export function createPartialUpdater(
           onUpdate({
             root: newTree,
             metadata: payload.metadata!,
+            scroll: scrollPayload,
           });
         });
       } else if (hasTransition) {
@@ -462,12 +485,14 @@ export function createPartialUpdater(
           onUpdate({
             root: newTree,
             metadata: payload.metadata!,
+            scroll: scrollPayload,
           });
         });
       } else {
         onUpdate({
           root: newTree,
           metadata: payload.metadata!,
+          scroll: scrollPayload,
         });
       }
 
@@ -494,15 +519,16 @@ export function createPartialUpdater(
       }
 
       const fullUpdateServerState = payload.metadata?.locationState;
-      if (fullUpdateServerState) {
-        tx.commit(segmentIds, segments, { serverState: fullUpdateServerState });
-      } else {
-        tx.commit(segmentIds, segments);
-      }
+      const { scroll: fullScroll } = fullUpdateServerState
+        ? tx.commit(segmentIds, segments, {
+            serverState: fullUpdateServerState,
+          })
+        : tx.commit(segmentIds, segments);
 
       const fullHasTransition = segments.some(
         (s: ResolvedSegment) => s.transition,
       );
+      const fullScrollPayload = toScrollPayload(fullScroll);
 
       if (mode.type === "stale-revalidation") {
         await rawStreamComplete;
@@ -513,6 +539,7 @@ export function createPartialUpdater(
           onUpdate({
             root: newTree,
             metadata: payload.metadata!,
+            scroll: fullScrollPayload,
           });
         });
       } else if (mode.type === "action") {
@@ -523,6 +550,7 @@ export function createPartialUpdater(
           onUpdate({
             root: newTree,
             metadata: payload.metadata!,
+            scroll: fullScrollPayload,
           });
         });
       } else if (fullHasTransition) {
@@ -533,12 +561,14 @@ export function createPartialUpdater(
           onUpdate({
             root: newTree,
             metadata: payload.metadata!,
+            scroll: fullScrollPayload,
           });
         });
       } else {
         onUpdate({
           root: newTree,
           metadata: payload.metadata!,
+          scroll: fullScrollPayload,
         });
       }
 

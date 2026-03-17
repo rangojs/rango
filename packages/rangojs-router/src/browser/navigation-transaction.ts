@@ -7,7 +7,6 @@ import type {
 import { generateHistoryKey } from "./navigation-store.js";
 import {
   handleNavigationStart,
-  handleNavigationEnd,
   ensureHistoryKey,
 } from "./scroll-restoration.js";
 import type { EventController, NavigationHandle } from "./event-controller.js";
@@ -81,11 +80,12 @@ export interface BoundTransaction {
   readonly currentUrl: string;
   /** Start streaming and get a token to end it when the stream completes */
   startStreaming(): StreamingToken;
+  /** Commit the navigation. Returns the effective scroll option for the caller to handle. */
   commit(
     segmentIds: string[],
     segments: ResolvedSegment[],
     overrides?: BoundCommitOverrides,
-  ): void;
+  ): { scroll?: boolean };
 }
 
 /**
@@ -93,7 +93,7 @@ export interface BoundTransaction {
  * Uses the event controller handle for lifecycle management
  */
 interface NavigationTransaction extends Disposable {
-  commit(options: CommitOptions): void;
+  commit(options: CommitOptions): { scroll?: boolean };
   with(
     options: Omit<CommitOptions, "segmentIds" | "segments">,
   ): BoundTransaction;
@@ -120,7 +120,7 @@ export function createNavigationTransaction(
   /**
    * Commit the navigation - updates store and URL atomically
    */
-  function commit(opts: CommitOptions): void {
+  function commit(opts: CommitOptions): { scroll?: boolean } {
     committed = true;
 
     const {
@@ -150,7 +150,7 @@ export function createNavigationTransaction(
       // Without this, the entry lingers and weakens state-machine invariants.
       handle.complete(parsedUrl);
       debugLog("[Browser] Cache-only commit, historyKey:", historyKey);
-      return;
+      return { scroll: false };
     }
 
     // Save current scroll position before navigating
@@ -172,7 +172,7 @@ export function createNavigationTransaction(
       debugLog("[Browser] Store updated (action)");
       // Complete navigation to clear loading state
       handle.complete(parsedUrl);
-      return;
+      return { scroll: false };
     }
 
     // Build history state - include user state, intercept info, and server-set state
@@ -205,14 +205,16 @@ export function createNavigationTransaction(
     // Complete the navigation in event controller (sets idle state, updates location)
     handle.complete(parsedUrl);
 
-    // Handle scroll after navigation
-    handleNavigationEnd({ scroll });
+    // NOTE: Scroll is NOT handled here. The caller (partial-update.ts) handles
+    // scroll AFTER onUpdate() so React has the new content before we scroll.
 
     debugLog(
       "[Browser] Navigation committed, historyKey:",
       historyKey,
       intercept ? "(intercept)" : "",
     );
+
+    return { scroll };
   }
 
   return {
@@ -263,7 +265,7 @@ export function createNavigationTransaction(
             overrides?.state !== undefined ? overrides.state : opts.state;
           // Server-set location state: only from overrides (set by partial-update)
           const serverState = overrides?.serverState;
-          commit({
+          return commit({
             ...opts,
             segmentIds,
             segments,

@@ -123,7 +123,7 @@ function createMockTx(currentUrl = "http://localhost/") {
   return {
     currentUrl,
     startStreaming: vi.fn(() => ({ end: vi.fn() })),
-    commit: vi.fn(),
+    commit: vi.fn(() => ({ scroll: undefined })),
   };
 }
 
@@ -194,10 +194,12 @@ describe("partial-update", () => {
       );
 
       // onUpdate called with rendered tree
-      expect(onUpdate).toHaveBeenCalledWith({
-        root: `tree-2`,
-        metadata: expect.objectContaining({ isPartial: true }),
-      });
+      expect(onUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          root: `tree-2`,
+          metadata: expect.objectContaining({ isPartial: true }),
+        }),
+      );
     });
 
     it("preserves cached component when server returns null for layout", async () => {
@@ -789,10 +791,12 @@ describe("partial-update", () => {
       // Commit with segment IDs from server
       expect(tx.commit).toHaveBeenCalledWith(["L0", "L0R0"], serverSegments);
 
-      expect(onUpdate).toHaveBeenCalledWith({
-        root: "full-tree",
-        metadata: expect.objectContaining({ isPartial: false }),
-      });
+      expect(onUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          root: "full-tree",
+          metadata: expect.objectContaining({ isPartial: false }),
+        }),
+      );
     });
 
     it("returns early for full update when signal is aborted", async () => {

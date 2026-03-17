@@ -10,6 +10,15 @@
 
 import { debugLog } from "./logging.js";
 
+/**
+ * Defers a callback to the next animation frame.
+ * Falls back to setTimeout(0) in environments without requestAnimationFrame.
+ */
+const deferToNextPaint: (fn: () => void) => void =
+  typeof requestAnimationFrame === "function"
+    ? requestAnimationFrame
+    : (fn) => setTimeout(fn, 0);
+
 const SCROLL_STORAGE_KEY = "rsc-router-scroll-positions";
 
 /**
@@ -288,11 +297,7 @@ export function restoreScrollPosition(options?: {
   // Not streaming — scroll after React commits and browser paints.
   // startTransition defers the DOM commit, so scrolling synchronously
   // would be overwritten when React replaces the content.
-  const defer =
-    typeof requestAnimationFrame === "function"
-      ? requestAnimationFrame
-      : (fn: () => void) => setTimeout(fn, 0);
-  defer(() => {
+  deferToNextPaint(() => {
     window.scrollTo(0, savedY);
     debugLog("[Scroll] Restored position:", savedY, "for key:", key);
   });
@@ -370,13 +375,17 @@ export function handleNavigationEnd(options: {
     // Fall through to hash or top if no saved position
   }
 
-  // Try hash scrolling first
-  if (scrollToHash()) {
-    return;
-  }
+  // Defer hash and scroll-to-top to after React paints the new content,
+  // so the user doesn't see the current page jump before the new route appears.
+  deferToNextPaint(() => {
+    // Try hash scrolling first
+    if (scrollToHash()) {
+      return;
+    }
 
-  // Default: scroll to top
-  scrollToTop();
+    // Default: scroll to top
+    scrollToTop();
+  });
 }
 
 /**
