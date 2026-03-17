@@ -71,9 +71,9 @@ export function redirect(
       // actions both deliver state through Flight payloads, so suppress for those.
       if (
         reqCtx &&
-        !reqCtx.url.searchParams.has("_rsc_partial") &&
+        !reqCtx.originalUrl.searchParams.has("_rsc_partial") &&
         !reqCtx.request.headers.has("rsc-action") &&
-        !reqCtx.url.searchParams.has("_rsc_action")
+        !reqCtx.originalUrl.searchParams.has("_rsc_action")
       ) {
         console.warn(
           `[Router] redirect() with state during a full-page (SSR) request to "${url}". ` +

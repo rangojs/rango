@@ -17,6 +17,91 @@ function createDeferred<T>() {
 }
 
 describe("RequestContext", () => {
+  describe("url stripping", () => {
+    it("ctx.url should have _rsc* params stripped", () => {
+      const rawUrl = new URL(
+        "https://example.com/products?q=hello&_rsc_partial=1&_rsc_segments=M0,M1&page=2",
+      );
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request(rawUrl),
+        url: rawUrl,
+        variables: {},
+      });
+
+      expect(ctx.url.searchParams.has("_rsc_partial")).toBe(false);
+      expect(ctx.url.searchParams.has("_rsc_segments")).toBe(false);
+      expect(ctx.url.searchParams.get("q")).toBe("hello");
+      expect(ctx.url.searchParams.get("page")).toBe("2");
+      expect(ctx.url.pathname).toBe("/products");
+    });
+
+    it("ctx.originalUrl should preserve all _rsc* params", () => {
+      const rawUrl = new URL(
+        "https://example.com/test?_rsc_partial=1&_rsc_stale=true&q=search",
+      );
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request(rawUrl),
+        url: rawUrl,
+        variables: {},
+      });
+
+      expect(ctx.originalUrl.searchParams.has("_rsc_partial")).toBe(true);
+      expect(ctx.originalUrl.searchParams.has("_rsc_stale")).toBe(true);
+      expect(ctx.originalUrl.searchParams.get("q")).toBe("search");
+    });
+
+    it("ctx.searchParams should have _rsc* params stripped (same as ctx.url)", () => {
+      const rawUrl = new URL(
+        "https://example.com/test?_rsc_partial=1&q=search",
+      );
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request(rawUrl),
+        url: rawUrl,
+        variables: {},
+      });
+
+      expect(ctx.searchParams.has("_rsc_partial")).toBe(false);
+      expect(ctx.searchParams.get("q")).toBe("search");
+      // searchParams should be the same object as url.searchParams
+      expect(ctx.searchParams).toBe(ctx.url.searchParams);
+    });
+
+    it("ctx.url should be a clean URL when no _rsc* params exist", () => {
+      const rawUrl = new URL("https://example.com/test?q=hello&page=2");
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request(rawUrl),
+        url: rawUrl,
+        variables: {},
+      });
+
+      expect(ctx.url.searchParams.get("q")).toBe("hello");
+      expect(ctx.url.searchParams.get("page")).toBe("2");
+    });
+
+    it("getRequestContext().url should have _rsc* params stripped", () => {
+      const rawUrl = new URL(
+        "https://example.com/page?_rsc_partial=1&_rsc_v=abc&tab=pricing",
+      );
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request(rawUrl),
+        url: rawUrl,
+        variables: {},
+      });
+
+      runWithRequestContext(ctx, () => {
+        const current = getRequestContext();
+        expect(current.url.searchParams.has("_rsc_partial")).toBe(false);
+        expect(current.url.searchParams.has("_rsc_v")).toBe(false);
+        expect(current.url.searchParams.get("tab")).toBe("pricing");
+      });
+    });
+  });
+
   describe("cookie parsing", () => {
     it("should parse normal cookies correctly", () => {
       const ctx = createRequestContext({

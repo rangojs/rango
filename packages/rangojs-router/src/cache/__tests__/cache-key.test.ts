@@ -44,6 +44,8 @@ function makeRequestContext(searchString: string, host = "localhost") {
   const url = new URL(`http://${host}/test${searchString}`);
   return {
     url,
+    originalUrl: new URL(url),
+    searchParams: url.searchParams,
     _cacheStore: null,
     _handleStore: null,
   };
