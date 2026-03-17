@@ -11,6 +11,7 @@ const webkitConfig = {
 };
 
 const DEV_SERVER_PORT = 5188;
+const PREVIEW_SERVER_PORT = 5189;
 
 const isUIMode = process.argv.includes("--ui");
 
@@ -19,15 +20,25 @@ export default defineConfig({
   fullyParallel: true,
   globalTimeout: 600000, // 10 minutes max
   timeout: process.env.CI ? 60000 : 30000, // 60s on CI, 30s locally
-  webServer: {
-    // Build first (for production tests), then clean optimizer cache and start
-    // dev server. Building before the dev server prevents `vite build` from
-    // overwriting the running server's optimizer cache (node_modules/.vite/deps).
-    command: `pnpm build && rm -rf node_modules/.vite && pnpm dev --port ${DEV_SERVER_PORT}`,
-    cwd: "./e2e/test-app",
-    port: DEV_SERVER_PORT,
-    reuseExistingServer: !process.env.CI,
-  },
+  webServer: [
+    {
+      // Build first (for production tests), then clean optimizer cache and start
+      // dev server. Building before the dev server prevents `vite build` from
+      // overwriting the running server's optimizer cache (node_modules/.vite/deps).
+      command: `pnpm build && rm -rf node_modules/.vite && pnpm dev --port ${DEV_SERVER_PORT}`,
+      cwd: "./e2e/test-app",
+      port: DEV_SERVER_PORT,
+      reuseExistingServer: !process.env.CI,
+    },
+    {
+      // Shared preview server for all production tests using test-app.
+      // Started after the build (included in the dev server command above).
+      command: `pnpm preview --port ${PREVIEW_SERVER_PORT}`,
+      cwd: "./e2e/test-app",
+      port: PREVIEW_SERVER_PORT,
+      reuseExistingServer: !process.env.CI,
+    },
+  ],
   use: {
     screenshot: "only-on-failure",
     trace: "on-all-retries",
@@ -68,7 +79,10 @@ export default defineConfig({
           name: "production",
           grep: /\(production/,
           testIgnore: ["**/smoke.test.ts"],
-          use: browserConfig,
+          use: {
+            ...browserConfig,
+            baseURL: `http://localhost:${PREVIEW_SERVER_PORT}`,
+          },
           fullyParallel: false,
         },
         {
@@ -137,14 +151,11 @@ export default defineConfig({
           name: "production",
           grep: /\(production/,
           testIgnore: ["**/smoke.test.ts"],
-          use: browserConfig,
-          // Run production tests serially to avoid port conflicts.
-          // Each test file spins up its own preview server.
-          fullyParallel: false,
-          // CI startup flake has been isolated to preview-server readiness.
-          // Keep production worker count aligned with the existing CI shard
-          // throughput while the fixture improvements provide better diagnostics.
-          workers: process.env.CI ? 3 : undefined,
+          use: {
+            ...browserConfig,
+            baseURL: `http://localhost:${PREVIEW_SERVER_PORT}`,
+          },
+          // Shared preview server — no port conflicts, safe to parallelize.
           dependencies: ["build"],
         },
         {
