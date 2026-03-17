@@ -19,6 +19,7 @@ import type { BoundTransaction } from "./navigation-transaction.js";
 import { ServerRedirect } from "../errors.js";
 import { debugLog } from "./logging.js";
 import { validateRedirectOrigin } from "./validate-redirect-origin.js";
+import { handleNavigationEnd } from "./scroll-restoration.js";
 
 /**
  * Configuration for creating a partial updater
@@ -246,7 +247,10 @@ export function createPartialUpdater(
             forceAwait: true,
           });
 
-          tx.commit(matchedIds, existingSegments);
+          const { scroll: commitScroll } = tx.commit(
+            matchedIds,
+            existingSegments,
+          );
 
           // Include cachedHandleData in metadata so NavigationProvider can restore
           // breadcrumbs and other handle data from cache.
@@ -276,6 +280,7 @@ export function createPartialUpdater(
             onUpdate(cachedUpdate);
           }
 
+          handleNavigationEnd({ scroll: commitScroll });
           debugLog("[Browser] Navigation complete (rendered from cache)");
           return;
         }
@@ -290,13 +295,17 @@ export function createPartialUpdater(
             forceAwait: true,
           });
 
-          tx.commit(matchedIds, existingSegments);
+          const { scroll: leaveScroll } = tx.commit(
+            matchedIds,
+            existingSegments,
+          );
 
           onUpdate({
             root: newTree,
             metadata: payload.metadata,
           });
 
+          handleNavigationEnd({ scroll: leaveScroll });
           debugLog("[Browser] Navigation complete (left intercept)");
           return;
         }
@@ -426,7 +435,11 @@ export function createPartialUpdater(
         : serverLocationState
           ? { serverState: serverLocationState }
           : undefined;
-      tx.commit(allSegmentIds, reconciled.segments, overrides);
+      const { scroll: navScroll } = tx.commit(
+        allSegmentIds,
+        reconciled.segments,
+        overrides,
+      );
 
       // For stale revalidation: verify history key hasn't changed before updating UI
       if (mode.type === "stale-revalidation") {
@@ -471,6 +484,9 @@ export function createPartialUpdater(
         });
       }
 
+      // Scroll after onUpdate so React has the new content before we scroll
+      handleNavigationEnd({ scroll: navScroll });
+
       debugLog("[Browser] Navigation complete");
       return;
     } else {
@@ -494,11 +510,11 @@ export function createPartialUpdater(
       }
 
       const fullUpdateServerState = payload.metadata?.locationState;
-      if (fullUpdateServerState) {
-        tx.commit(segmentIds, segments, { serverState: fullUpdateServerState });
-      } else {
-        tx.commit(segmentIds, segments);
-      }
+      const { scroll: fullScroll } = fullUpdateServerState
+        ? tx.commit(segmentIds, segments, {
+            serverState: fullUpdateServerState,
+          })
+        : tx.commit(segmentIds, segments);
 
       const fullHasTransition = segments.some(
         (s: ResolvedSegment) => s.transition,
@@ -542,6 +558,7 @@ export function createPartialUpdater(
         });
       }
 
+      handleNavigationEnd({ scroll: fullScroll });
       return;
     }
   }
