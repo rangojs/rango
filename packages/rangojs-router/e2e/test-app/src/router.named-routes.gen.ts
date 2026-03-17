@@ -13,7 +13,6 @@ export const NamedRoutes = {
   "authBoundary.globalProtected": "/auth-boundary/global-protected",
   "authBoundary.index": "/auth-boundary",
   "authBoundary.routeProtected": "/auth-boundary/route-protected",
-  "blog.comments": "/blog/:postId/comments",
   "blog.index": "/blog",
   "blog.post": "/blog/:postId",
   "breadcrumbTrail.docs": "/breadcrumb-trail/docs",
