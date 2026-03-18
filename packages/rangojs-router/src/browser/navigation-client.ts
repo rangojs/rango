@@ -166,11 +166,18 @@ export function createNavigationClient(
             throw new ServerRedirect(redirect.url, undefined);
           }
 
+          // Throw on non-OK responses that aren't valid RSC error payloads.
+          // Server-rendered errors (500 with RSC content-type) carry error
+          // boundary data and must flow through the normal RSC pipeline.
           if (!response.ok) {
-            resolveStreamComplete();
-            throw new Error(
-              `Partial RSC fetch failed: ${response.status} ${response.statusText}`,
-            );
+            const ct = response.headers.get("content-type") || "";
+            const isRscPayload = ct.includes("text/x-component");
+            if (!isRscPayload) {
+              resolveStreamComplete();
+              throw new Error(
+                `Partial RSC fetch failed: ${response.status} ${response.statusText}`,
+              );
+            }
           }
 
           return teeWithCompletion(
