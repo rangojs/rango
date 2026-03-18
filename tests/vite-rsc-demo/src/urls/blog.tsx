@@ -48,8 +48,7 @@ export const blogPatterns = urls(
         parallel(
           {
             "@sidebar": async (ctx) => {
-              const data = await ctx.use(BlogSidebarLoader);
-              return <BlogSidebar data={data} />;
+              return <BlogSidebar />;
             },
           },
           () => [loader(BlogSidebarLoader), loading(<BlogSidebarSkeleton />)],

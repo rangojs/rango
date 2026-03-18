@@ -472,7 +472,7 @@ export async function resolveParallelEntry<TEnv>(
     });
   }
 
-  if (!parallelEntry.loading && !options?.skipLoaders) {
+  if (!options?.skipLoaders) {
     const loaderSegments = await resolveLoaders(
       parallelEntry,
       context,
@@ -560,10 +560,32 @@ export async function resolveLoadersOnly<TEnv>(
 ): Promise<ResolvedSegment[]> {
   const loaderSegments: ResolvedSegment[] = [];
 
-  for (const entry of entries) {
-    const belongsToRoute = entry.type === "route";
-    const segments = await resolveLoaders(entry, context, belongsToRoute, deps);
+  async function collectEntryLoaders(
+    entry: EntryData,
+    belongsToRoute: boolean,
+    shortCodeOverride?: string,
+  ): Promise<void> {
+    const segments = await resolveLoaders(
+      entry,
+      context,
+      belongsToRoute,
+      deps,
+      shortCodeOverride,
+    );
     loaderSegments.push(...segments);
+
+    for (const parallelEntry of entry.parallel) {
+      await collectEntryLoaders(parallelEntry, belongsToRoute, entry.shortCode);
+    }
+
+    const childBelongsToRoute = belongsToRoute || entry.type === "route";
+    for (const layoutEntry of entry.layout) {
+      await collectEntryLoaders(layoutEntry, childBelongsToRoute);
+    }
+  }
+
+  for (const entry of entries) {
+    await collectEntryLoaders(entry, entry.type === "route");
   }
 
   return loaderSegments;

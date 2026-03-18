@@ -1,6 +1,8 @@
+import { createLoader } from "../../loader.js";
 import { describe, it, expect, vi } from "vitest";
 import {
   resolveOrphanLayoutWithRevalidation,
+  resolveParallelEntry,
   resolveParallelSegmentsWithRevalidation,
 } from "../segment-resolution";
 
@@ -54,6 +56,12 @@ function createParallelEntry(handler: any) {
     notFoundBoundary: [],
   } as any;
 }
+
+const TestParallelLoader = (createLoader as Function)(
+  async () => ({ sidebar: true }),
+  undefined,
+  "test#ParallelLoader",
+);
 
 describe("segment-resolution parallel loading", () => {
   it("does not await parallel handler promise in revalidation path when loading is set", async () => {
@@ -214,5 +222,77 @@ describe("segment-resolution parallel loading", () => {
     expect(slotHandler).toHaveBeenCalledTimes(1);
     expect(result.segments).toHaveLength(1);
     expect(result.segments[0]?.type).toBe("parallel");
+  });
+
+  it("resolves parallel loaders even when loading is set", async () => {
+    const context = createContext();
+    const entry = {
+      ...createParallelEntry(() => "sidebar"),
+      loader: [{ loader: TestParallelLoader, revalidate: [] }],
+    } as any;
+
+    const segments = await resolveParallelEntry(
+      entry,
+      {},
+      context,
+      false,
+      "L0",
+      {
+        wrapLoaderPromise: vi.fn((promise: Promise<any>) => promise),
+        trackHandler: vi.fn((p: any) => p),
+      } as any,
+    );
+
+    expect(segments.map((segment) => segment.type)).toEqual([
+      "parallel",
+      "loader",
+    ]);
+    expect(segments[1]?.id).toBe("L0D0.test#ParallelLoader");
+  });
+
+  it("revalidation resolves parallel loaders even when loading is set", async () => {
+    const context = createContext();
+    const entry = {
+      id: "blog.layout",
+      type: "layout",
+      shortCode: "L0",
+      handler: "layout",
+      loader: [],
+      layout: [],
+      parallel: [
+        {
+          ...createParallelEntry(() => "sidebar"),
+          loader: [{ loader: TestParallelLoader, revalidate: [] }],
+        },
+      ],
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+    } as any;
+
+    const result = await resolveParallelSegmentsWithRevalidation(
+      entry,
+      {},
+      context,
+      false,
+      new Set<string>(),
+      {},
+      context.request,
+      context.url,
+      context.url,
+      "/blog",
+      {
+        wrapLoaderPromise: vi.fn((promise: Promise<any>) => promise),
+        trackHandler: vi.fn((p: any) => p),
+      } as any,
+    );
+
+    expect(result.segments.map((segment) => segment.type)).toEqual([
+      "parallel",
+      "loader",
+    ]);
+    expect(result.segments[1]?.id).toBe("L0D0.test#ParallelLoader");
   });
 });

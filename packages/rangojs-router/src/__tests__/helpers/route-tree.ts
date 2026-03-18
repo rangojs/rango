@@ -13,6 +13,7 @@ import type { urls } from "../../urls.js";
 import {
   RSCRouterContext,
   runWithPrefixes,
+  getIsolatedLazyParent,
   type EntryData,
   type InterceptEntry,
   type LoaderEntry,
@@ -143,7 +144,7 @@ export function buildRouteTree(
         patternsByPrefix: new Map(),
         trailingSlash: trailingSlashMap,
         namespace: "lazy",
-        parent: (lazy.context.parent as EntryData | null) ?? null,
+        parent: getIsolatedLazyParent(lazy.context.parent as EntryData | null),
         counters: lazyCounters,
         mountIndex,
         rootScoped: lazy.context.rootScoped,

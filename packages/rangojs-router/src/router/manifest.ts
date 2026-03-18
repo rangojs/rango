@@ -9,6 +9,7 @@ import { createRouteHelpers } from "../route-definition";
 import {
   getContext,
   runWithPrefixes,
+  getIsolatedLazyParent,
   type EntryData,
   type MetricsStore,
 } from "../server/context";
@@ -114,8 +115,11 @@ export async function loadManifest(
     // This ensures routes are registered under the correct layout hierarchy
     const lazyContext =
       entry.lazy && entry.lazyPatterns ? entry.lazyContext : null;
-    const parentForContext =
-      (lazyContext?.parent as EntryData | null) ?? Store.parent;
+    const parentForContext = lazyContext
+      ? getIsolatedLazyParent(
+          (lazyContext.parent as EntryData | null) ?? Store.parent,
+        )
+      : Store.parent;
 
     // For lazy entries, merge captured counters from include() so the
     // handler's entries get shortCode indices after sibling entries that

@@ -1373,4 +1373,56 @@ describe("route tree inspection", () => {
     expect(cacheEntry.intercept[0].loader).toHaveLength(1);
     expect(cacheEntry.intercept[0].loader[0].loader).toBe(DetailLoader);
   });
+
+  // -------------------------------------------------------------------------
+  // Cross-include isolation
+  // -------------------------------------------------------------------------
+
+  it("does not leak loaders/middleware from one include into another", () => {
+    const ShopLoader = (createLoader as Function)(
+      async () => ({ items: [] }),
+      undefined,
+      "test#ShopLoader",
+    );
+    const shopMiddleware: MiddlewareFn = async (_ctx, next) => next();
+
+    const shopPatterns = urls<any>(({ path, layout, loader, middleware }) => [
+      middleware(shopMiddleware),
+      loader(ShopLoader),
+      layout(ShopLayout, () => [
+        path("/", ProductList, { name: "index" }),
+        path("/:slug", ProductDetail, { name: "detail" }),
+      ]),
+    ]);
+
+    const dashboardPatterns = urls<any>(({ path }) => [
+      path("/", Dashboard, { name: "index" }),
+    ]);
+
+    const tree = buildRouteTree(
+      urls(({ path, include }) => [
+        path("/", HomePage, { name: "home" }),
+        include("/shop", shopPatterns, { name: "shop" }),
+        include("/dashboard", dashboardPatterns, { name: "dashboard" }),
+      ]),
+    );
+
+    // Shop route should have the shop loader in its parent chain
+    const shopEntry = tree.entry("shop.index")!;
+    const shopParent = shopEntry.parent!; // shop layout
+    const shopRoot = shopParent.parent!; // cloned synthetic root
+    expect(shopRoot.loader).toHaveLength(1);
+    expect(shopRoot.loader[0].loader).toBe(ShopLoader);
+    expect(shopRoot.middleware).toHaveLength(1);
+    expect(shopRoot.middleware[0]).toBe(shopMiddleware);
+
+    // Dashboard route must NOT have shop loaders/middleware in its parent chain
+    const dashEntry = tree.entry("dashboard.index")!;
+    let current = dashEntry.parent;
+    while (current) {
+      expect(current.loader).toHaveLength(0);
+      expect(current.middleware).toHaveLength(0);
+      current = current.parent;
+    }
+  });
 });
