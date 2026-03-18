@@ -79,6 +79,8 @@ export interface DerivedNavigationState {
   state: "idle" | "loading";
   /** Whether any operation is streaming */
   isStreaming: boolean;
+  /** Whether a navigation is active (fetching or streaming, before commit) */
+  isNavigating: boolean;
   /** Current committed location */
   location: NavigationLocation;
   /** URL being navigated to (null if idle) */
@@ -389,6 +391,9 @@ export function createEventController(
     return {
       state,
       isStreaming,
+      // True when a navigation is active (fetching or streaming, before
+      // commit). Broader than pendingUrl which clears during streaming.
+      isNavigating: currentNavigation !== null,
       location,
       // pendingUrl only during fetching phase - once streaming starts (URL changed), not pending.
       // Background revalidations (skipLoadingState) don't expose a pending URL.
