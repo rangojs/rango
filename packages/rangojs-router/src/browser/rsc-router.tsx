@@ -290,8 +290,10 @@ export async function initBrowserApp(
         // Don't interrupt an active user navigation — startNavigation()
         // would abort it and refetch the old URL (window.location.href
         // hasn't updated yet). The user's navigation will pick up the
-        // new server code when it completes.
-        if (eventController.getState().state === "loading") {
+        // new server code when it completes. Only check for navigations
+        // (pendingUrl), not actions — saving during a server action
+        // should still trigger an HMR refresh.
+        if (eventController.getState().pendingUrl) {
           console.log("[RSCRouter] HMR: Skipping — navigation in progress");
           return;
         }
