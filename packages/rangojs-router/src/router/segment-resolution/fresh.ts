@@ -480,6 +480,15 @@ export async function resolveParallelEntry<TEnv>(
       deps,
       parentShortCode,
     );
+    // Tag parallel-owned loaders so renderSegments can stream them
+    // using the parallel's loading() instead of awaiting on the layout
+    const parallelLoading =
+      parallelEntry.loading === false ? undefined : parallelEntry.loading;
+    if (parallelLoading) {
+      for (const seg of loaderSegments) {
+        seg.parallelLoading = parallelLoading;
+      }
+    }
     segments.push(...loaderSegments);
   }
 

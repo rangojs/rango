@@ -284,12 +284,60 @@ export async function renderSegments(
         children: nodeContent,
       });
     } else {
-      // Has loaders but no loading skeleton - await loaders and render directly
-      const resolvedData = await loaderDataPromise;
+      // Has loaders but no loading skeleton.
+      // Split: parallel-owned loaders stream (their parallel has loading()),
+      // layout-owned loaders are awaited (they gate the layout content).
+      const layoutLoaders = loaderEntries.filter((l) => !l.parallelLoading);
+      const parallelOwnedLoaders = loaderEntries.filter(
+        (l) => !!l.parallelLoading,
+      );
+
+      // Await only layout-owned loaders
+      const layoutLoaderIds = layoutLoaders.map((l) => l.loaderId!);
+      const layoutLoaderDataPromise =
+        layoutLoaders.length > 0
+          ? Promise.all(
+              layoutLoaders.map((l) =>
+                l.loaderData instanceof Promise
+                  ? l.loaderData
+                  : Promise.resolve(l.loaderData),
+              ),
+            )
+          : Promise.resolve([]);
+      const resolvedData = await layoutLoaderDataPromise;
       const { loaderData, errorFallback } = resolveLoaderData(
         resolvedData,
-        loaderIds,
+        layoutLoaderIds,
       );
+
+      // Parallel-owned loaders: attach to their owning parallel segment
+      // as loaderDataPromise so ParallelOutlet wraps in LoaderBoundary
+      if (parallelOwnedLoaders.length > 0) {
+        const parallelLoaderIds = parallelOwnedLoaders.map((l) => l.loaderId!);
+        const parallelLoaderDataPromise =
+          forceAwait || isAction
+            ? await Promise.all(
+                parallelOwnedLoaders.map((l) =>
+                  l.loaderData instanceof Promise
+                    ? l.loaderData
+                    : Promise.resolve(l.loaderData),
+                ),
+              )
+            : Promise.all(
+                parallelOwnedLoaders.map((l) =>
+                  l.loaderData instanceof Promise
+                    ? l.loaderData
+                    : Promise.resolve(l.loaderData),
+                ),
+              );
+        // Attach to all parallel segments that have loading set
+        for (const p of node.parallel) {
+          if (p.loading) {
+            p.loaderDataPromise = parallelLoaderDataPromise;
+            p.loaderIds = parallelLoaderIds;
+          }
+        }
+      }
 
       content = createElement(OutletProvider, {
         key,

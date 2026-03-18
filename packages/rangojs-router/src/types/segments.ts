@@ -51,6 +51,7 @@ export interface ResolvedSegment {
   // Loader-specific fields
   loaderId?: string; // For loaders: the loader $$id identifier
   loaderData?: any; // For loaders: the resolved data from loader execution
+  parallelLoading?: ReactNode; // For parallel-owned loaders: the parallel's loading fallback
   // Intercept loader fields (for streaming loader data in parallel segments)
   loaderDataPromise?: Promise<any[]> | any[]; // Loader data promise or resolved array
   loaderIds?: string[]; // IDs ($$id) of loaders for this segment
