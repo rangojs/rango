@@ -467,6 +467,46 @@ describe("createDocumentCacheMiddleware", () => {
       expect(response.headers.get("x-document-cache-status")).toBe("MISS");
     });
 
+    it("should differentiate Accept-based RSC requests from HTML document requests", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const rscCtx = createMockMiddlewareContext("http://localhost/page", {
+        headers: { Accept: "text/x-component" },
+      });
+      const rscNext = vi.fn().mockResolvedValue(
+        new Response("RSC", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+
+      await middleware(rscCtx, rscNext);
+      await vi.runAllTimersAsync();
+
+      const htmlCtx = createMockMiddlewareContext("http://localhost/page", {
+        headers: { Accept: "text/html" },
+      });
+      const htmlNext = vi.fn().mockResolvedValue(
+        new Response("HTML", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+
+      const response = (await middleware(htmlCtx, htmlNext)) as Response;
+
+      expect(htmlNext).toHaveBeenCalledTimes(1);
+      expect(response.headers.get("x-document-cache-status")).toBe("MISS");
+      expect(mockStore.cache.has("/page:rsc")).toBe(true);
+      expect(mockStore.cache.has("/page:html")).toBe(true);
+    });
+
     it("should include segment hash in cache key for partial requests", async () => {
       const { createDocumentCacheMiddleware } =
         await import("../document-cache.js");

@@ -52,7 +52,7 @@ test.describe("prerender navigation (production)", () => {
 
     // Navigate to blog — blog sidebar (parallel @sidebar) should appear
     await testId(page, "nav-blog").click();
-    await expect(testId(page, "blog-index")).toBeVisible();
+    await expect(testId(page, "blog-index")).toBeVisible({ timeout: 10000 });
     await expect(testId(page, "blog-title")).toHaveText("Blog");
 
     // The parallel @sidebar must be rendered

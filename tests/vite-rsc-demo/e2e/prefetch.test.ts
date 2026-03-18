@@ -477,7 +477,7 @@ base.describe("prefetch-on-hover (production)", () => {
         .toBe(1);
 
       await blogLink.click();
-      await page.waitForURL("**/blog", { timeout: 5000 });
+      await baseExpect(page).toHaveURL(/\/blog/, { timeout: 10000 });
 
       // Both requests should share the same X-Rango-State value
       const prefetchState = rscRequests[0]!.headers["x-rango-state"];

@@ -195,6 +195,7 @@ export const NamedRoutes = {
   "static-reverse": "/static-reverse",
   "static-shell": "/static-shell/:tag",
   streamModeTest: "/stream-mode-test",
+  testClearErrorLog: "/__test/clear-error-log",
   testLastError: "/__test/last-error",
   testLoaderIds: "/__test/loader-ids",
   testManifestCacheCounter: "/__test/manifest-cache-counter",
