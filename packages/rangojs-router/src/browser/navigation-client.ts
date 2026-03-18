@@ -166,6 +166,13 @@ export function createNavigationClient(
             throw new ServerRedirect(redirect.url, undefined);
           }
 
+          if (!response.ok) {
+            resolveStreamComplete();
+            throw new Error(
+              `Partial RSC fetch failed: ${response.status} ${response.statusText}`,
+            );
+          }
+
           return teeWithCompletion(
             response,
             () => {
