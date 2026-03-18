@@ -6,8 +6,11 @@ import path from "node:path";
 import { execSync } from "node:child_process";
 
 // Local-only regression test — timing-dependent, not suitable for CI.
-// Run manually: npx playwright test e2e/hmr-burst-save.test.ts --project=hmr
-test.describe.skip("hmr burst save", () => {
+// Run manually: TEST_BURST_SAVE=1 npx playwright test e2e/hmr-burst-save.test.ts --project=hmr
+const skip = !process.env.TEST_BURST_SAVE;
+test.describe("hmr burst save", () => {
+  // eslint-disable-next-line playwright/no-skipped-test
+  test.skip(() => skip, "Set TEST_BURST_SAVE=1 to run");
   const f = useFixture({
     root: ".",
     mode: "dev",

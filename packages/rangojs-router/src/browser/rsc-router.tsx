@@ -286,6 +286,16 @@ export async function initBrowserApp(
       // Debounce: wait 200ms of quiet before fetching
       hmrTimer = setTimeout(async () => {
         hmrTimer = null;
+
+        // Don't interrupt an active user navigation — startNavigation()
+        // would abort it and refetch the old URL (window.location.href
+        // hasn't updated yet). The user's navigation will pick up the
+        // new server code when it completes.
+        if (eventController.getState().state === "loading") {
+          console.log("[RSCRouter] HMR: Skipping — navigation in progress");
+          return;
+        }
+
         console.log("[RSCRouter] HMR: Server update, refetching RSC");
 
         const abort = new AbortController();
