@@ -131,6 +131,70 @@ describe("lazy include parent isolation", () => {
       expect(shopEntry.routes).toHaveProperty("shop.index");
       expect(dashEntry.routes).toHaveProperty("dashboard.index");
     });
+
+    it("isolates root-scoped includes with empty prefix and { name: '' }", () => {
+      const sharedParent = makeSyntheticRoot();
+
+      // include("", errorPatterns, { name: "" }) — root-scoped, no prefix
+      const errorPatterns = urls<any>(({ path, middleware }) => [
+        middleware(shopMiddleware),
+        path("/error-test", DashboardPage, { name: "errorTest" }),
+      ]);
+
+      const dashPatterns = urls<any>(({ path }) => [
+        path("/", DashboardPage, { name: "index" }),
+      ]);
+
+      // Root-scoped include: prefix="", namePrefix=undefined (name="" doesn't
+      // produce a prefix segment). This hits the else branch in
+      // evaluateLazyEntry (line 157) where runWithPrefixes is skipped.
+      const errorEntry: RouteEntry = {
+        prefix: "",
+        staticPrefix: "",
+        routes: {},
+        handler: errorPatterns.handler,
+        mountIndex: 5,
+        lazy: true,
+        lazyEvaluated: false,
+        lazyPatterns: errorPatterns,
+        lazyContext: {
+          urlPrefix: "",
+          namePrefix: undefined,
+          parent: sharedParent,
+          counters: {},
+          rootScoped: true,
+        },
+      } as unknown as RouteEntry;
+
+      const dashEntry: RouteEntry = {
+        prefix: "/dashboard",
+        staticPrefix: "/dashboard",
+        routes: {},
+        handler: dashPatterns.handler,
+        mountIndex: 6,
+        lazy: true,
+        lazyEvaluated: false,
+        lazyPatterns: dashPatterns,
+        lazyContext: {
+          urlPrefix: "",
+          namePrefix: "dashboard",
+          parent: sharedParent,
+          counters: {},
+        },
+      } as unknown as RouteEntry;
+
+      const deps = makeLazyEvalDeps([errorEntry, dashEntry]);
+
+      evaluateLazyEntry(errorEntry, deps);
+      evaluateLazyEntry(dashEntry, deps);
+
+      // Shared parent untouched despite root-scoped include
+      expect(sharedParent.middleware).toHaveLength(0);
+
+      // Routes registered correctly (root-scoped = no name prefix)
+      expect(errorEntry.routes).toHaveProperty("errorTest");
+      expect(dashEntry.routes).toHaveProperty("dashboard.index");
+    });
   });
 
   // -------------------------------------------------------------------------
