@@ -214,6 +214,15 @@ export function createVersionPlugin(): Plugin {
 
       if (!isRscModule) return;
 
+      // Skip re-bumping when the version virtual module itself is invalidated
+      // (our own bumpVersion() invalidates it, which re-triggers hotUpdate).
+      if (
+        ctx.modules.length === 1 &&
+        ctx.modules[0].id === "\0" + VIRTUAL_IDS.version
+      ) {
+        return;
+      }
+
       if (isCodeModule(ctx.file)) {
         const filePath = normalizeModuleId(ctx.file);
         const previousSignature = clientModuleSignatures.get(filePath);
