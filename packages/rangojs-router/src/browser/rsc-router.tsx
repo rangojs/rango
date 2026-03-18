@@ -310,6 +310,13 @@ export async function initBrowserApp(
 
           if (abort.signal.aborted) return;
 
+          // If the server returned a non-RSC response (404, 500 without
+          // error boundary), the payload won't have valid metadata.
+          // Reload to recover rather than leaving the page stale.
+          if (!payload.metadata) {
+            throw new Error("HMR refetch returned invalid payload");
+          }
+
           if (payload.metadata?.isPartial) {
             const segments = payload.metadata.segments || [];
             const matched = payload.metadata.matched || [];
