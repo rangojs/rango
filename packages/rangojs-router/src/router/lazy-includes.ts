@@ -4,6 +4,7 @@ import {
   EntryData,
   RSCRouterContext,
   runWithPrefixes,
+  getIsolatedLazyParent,
 } from "../server/context";
 import type { UrlPatterns } from "../urls.js";
 import type { AllUseItems, IncludeItem } from "../route-types.js";
@@ -138,7 +139,7 @@ export function evaluateLazyEntry<TEnv = any>(
       patternsByPrefix,
       trailingSlash: trailingSlashMap,
       namespace: "lazy",
-      parent: (lazyContext?.parent as EntryData | null) ?? null,
+      parent: getIsolatedLazyParent(lazyContext?.parent as EntryData | null),
       counters: lazyCounters,
       cacheProfiles: (lazyContext as any)?.cacheProfiles,
       rootScoped: (lazyContext as any)?.rootScoped,

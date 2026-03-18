@@ -553,6 +553,35 @@ export function getRootScoped(): boolean {
 // Export HelperContext type for use in other modules
 export type { HelperContext };
 
+/**
+ * Return an isolated copy of a lazy include's captured parent entry.
+ *
+ * DSL helpers (loader(), middleware(), etc.) mutate ctx.parent in place.
+ * Multiple include() scopes capture the *same* syntheticMapRoot as their
+ * parent, so without isolation one include's loaders/middleware leak into
+ * every other route that shares that root.
+ *
+ * The clone is shallow: only the mutable arrays are copied so each
+ * include pushes to its own list. The rest of the entry (id, shortCode,
+ * parent pointer, handler) stays shared, which is correct and cheap.
+ */
+export function getIsolatedLazyParent(
+  captured: EntryData | null | undefined,
+): EntryData | null {
+  if (!captured) return null;
+  return {
+    ...captured,
+    loader: [...captured.loader],
+    middleware: [...captured.middleware],
+    revalidate: [...captured.revalidate],
+    errorBoundary: [...captured.errorBoundary],
+    notFoundBoundary: [...captured.notFoundBoundary],
+    layout: [...captured.layout],
+    parallel: [...captured.parallel],
+    intercept: [...captured.intercept],
+  };
+}
+
 // ============================================================================
 //  Performance Metrics Helpers
 // ============================================================================
