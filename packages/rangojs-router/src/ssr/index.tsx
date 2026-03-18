@@ -168,6 +168,7 @@ function createSsrEventController(opts: {
   const state: DerivedNavigationState = {
     state: "idle",
     isStreaming: false,
+    isNavigating: false,
     location,
     pendingUrl: null,
     inflightActions: [],
