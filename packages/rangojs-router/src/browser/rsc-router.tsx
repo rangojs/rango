@@ -263,71 +263,102 @@ export async function initBrowserApp(
   // Build initial tree with rootLayout
   const initialTree = renderSegments(initialPayload.metadata!.segments);
 
-  // Setup HMR
+  // Setup HMR with debounce — burst saves (format-on-save, rapid edits)
+  // fire many rsc:update events in quick succession. Without debouncing,
+  // each event triggers a fetchPartial() which on slow routes can pile up
+  // and overwhelm the worker (cross-request promise issues, 500s).
   if (import.meta.hot) {
-    import.meta.hot.on("rsc:update", async () => {
-      console.log("[RSCRouter] HMR: Server update, refetching RSC");
+    let hmrTimer: ReturnType<typeof setTimeout> | null = null;
+    let hmrAbort: AbortController | null = null;
 
-      const handle = eventController.startNavigation(window.location.href, {
-        replace: true,
-      });
-      const streamingToken = handle.startStreaming();
+    import.meta.hot.on("rsc:update", () => {
+      // Cancel any pending debounce timer
+      if (hmrTimer !== null) {
+        clearTimeout(hmrTimer);
+      }
 
-      const interceptSourceUrl = store.getInterceptSourceUrl();
+      // Abort any in-flight HMR fetch so it doesn't race with the next one
+      if (hmrAbort) {
+        hmrAbort.abort();
+        hmrAbort = null;
+      }
 
-      try {
-        const { payload, streamComplete } = await client.fetchPartial({
-          targetUrl: window.location.href,
-          segmentIds: [],
-          previousUrl: store.getSegmentState().currentUrl,
-          interceptSourceUrl: interceptSourceUrl || undefined,
-          hmr: true,
+      // Debounce: wait 200ms of quiet before fetching
+      hmrTimer = setTimeout(async () => {
+        hmrTimer = null;
+        console.log("[RSCRouter] HMR: Server update, refetching RSC");
+
+        const abort = new AbortController();
+        hmrAbort = abort;
+
+        const handle = eventController.startNavigation(window.location.href, {
+          replace: true,
         });
+        const streamingToken = handle.startStreaming();
 
-        if (payload.metadata?.isPartial) {
-          const segments = payload.metadata.segments || [];
-          const matched = payload.metadata.matched || [];
+        const interceptSourceUrl = store.getInterceptSourceUrl();
 
-          // Derive intercept state from the returned payload, not the
-          // pre-fetch store snapshot. If the HMR edit removed intercept
-          // behavior, the response won't contain intercept segments.
-          const responseIsIntercept = segments.some(isInterceptSegment);
+        try {
+          const { payload, streamComplete } = await client.fetchPartial({
+            targetUrl: window.location.href,
+            segmentIds: [],
+            previousUrl: store.getSegmentState().currentUrl,
+            interceptSourceUrl: interceptSourceUrl || undefined,
+            hmr: true,
+            signal: abort.signal,
+          });
 
-          // Sync store intercept state with what the server returned
-          if (!responseIsIntercept && interceptSourceUrl) {
-            store.setInterceptSourceUrl(null);
+          if (abort.signal.aborted) return;
+
+          if (payload.metadata?.isPartial) {
+            const segments = payload.metadata.segments || [];
+            const matched = payload.metadata.matched || [];
+
+            // Derive intercept state from the returned payload, not the
+            // pre-fetch store snapshot. If the HMR edit removed intercept
+            // behavior, the response won't contain intercept segments.
+            const responseIsIntercept = segments.some(isInterceptSegment);
+
+            // Sync store intercept state with what the server returned
+            if (!responseIsIntercept && interceptSourceUrl) {
+              store.setInterceptSourceUrl(null);
+            }
+
+            store.setSegmentIds(matched);
+            store.setCurrentUrl(window.location.href);
+
+            const historyKey = generateHistoryKey(window.location.href, {
+              intercept: responseIsIntercept,
+            });
+            store.setHistoryKey(historyKey);
+            const currentHandleData = eventController.getHandleState().data;
+            store.cacheSegmentsForHistory(
+              historyKey,
+              segments,
+              currentHandleData,
+            );
+
+            const { main, intercept } = splitInterceptSegments(segments);
+            store.emitUpdate({
+              root: renderSegments(main, {
+                interceptSegments: intercept.length > 0 ? intercept : undefined,
+              }),
+              metadata: payload.metadata,
+            });
           }
 
-          store.setSegmentIds(matched);
-          store.setCurrentUrl(window.location.href);
-
-          const historyKey = generateHistoryKey(window.location.href, {
-            intercept: responseIsIntercept,
-          });
-          store.setHistoryKey(historyKey);
-          const currentHandleData = eventController.getHandleState().data;
-          store.cacheSegmentsForHistory(
-            historyKey,
-            segments,
-            currentHandleData,
-          );
-
-          const { main, intercept } = splitInterceptSegments(segments);
-          store.emitUpdate({
-            root: renderSegments(main, {
-              interceptSegments: intercept.length > 0 ? intercept : undefined,
-            }),
-            metadata: payload.metadata,
-          });
+          await streamComplete;
+          handle.complete(new URL(window.location.href));
+          console.log("[RSCRouter] HMR: RSC stream complete");
+        } catch (err) {
+          if (abort.signal.aborted) return;
+          throw err;
+        } finally {
+          if (hmrAbort === abort) hmrAbort = null;
+          streamingToken.end();
+          handle[Symbol.dispose]();
         }
-
-        await streamComplete;
-        handle.complete(new URL(window.location.href));
-        console.log("[RSCRouter] HMR: RSC stream complete");
-      } finally {
-        streamingToken.end();
-        handle[Symbol.dispose]();
-      }
+      }, 200);
     });
   }
 

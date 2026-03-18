@@ -135,8 +135,11 @@ export function createVersionPlugin(): Plugin {
   let server: any = null;
   const clientModuleSignatures = new Map<string, ClientModuleSignature>();
 
+  let versionCounter = 0;
   const bumpVersion = (reason: string) => {
-    currentVersion = Date.now().toString(16);
+    // Use timestamp + counter to guarantee uniqueness even when multiple
+    // bumps happen within the same millisecond (e.g. cascading HMR events).
+    currentVersion = Date.now().toString(16) + String(++versionCounter);
     console.log(`[rsc-router] ${reason}, version updated: ${currentVersion}`);
 
     const rscEnv = server?.environments?.rsc;
