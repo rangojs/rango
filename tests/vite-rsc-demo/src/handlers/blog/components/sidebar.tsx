@@ -1,9 +1,12 @@
-import type { BlogSidebarData } from "../loaders/sidebar.js";
+"use client";
+import { useLoader } from "@rangojs/router/client";
+import { BlogSidebarLoader, type BlogSidebarData } from "../loaders/sidebar.js";
 
 /**
  * Blog Sidebar component - displays recent posts, categories, and tags
  */
-export function BlogSidebar({ data }: { data: BlogSidebarData }) {
+export function BlogSidebar() {
+  const { data } = useLoader(BlogSidebarLoader);
   return (
     <aside
       style={{

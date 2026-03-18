@@ -259,8 +259,11 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
   const allLoaderSegments: ResolvedSegment[] = [];
   const allMatchedIds: string[] = [];
 
-  for (const entry of entries) {
-    const belongsToRoute = entry.type === "route";
+  async function collectEntryLoaders(
+    entry: EntryData,
+    belongsToRoute: boolean,
+    shortCodeOverride?: string,
+  ): Promise<void> {
     const { segments, matchedIds } = await resolveLoadersWithRevalidation(
       entry,
       context,
@@ -273,11 +276,24 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
       routeKey,
       deps,
       actionContext,
-      undefined, // shortCodeOverride
+      shortCodeOverride,
       stale,
     );
     allLoaderSegments.push(...segments);
     allMatchedIds.push(...matchedIds);
+
+    for (const parallelEntry of entry.parallel) {
+      await collectEntryLoaders(parallelEntry, belongsToRoute, entry.shortCode);
+    }
+
+    const childBelongsToRoute = belongsToRoute || entry.type === "route";
+    for (const layoutEntry of entry.layout) {
+      await collectEntryLoaders(layoutEntry, childBelongsToRoute);
+    }
+  }
+
+  for (const entry of entries) {
+    await collectEntryLoaders(entry, entry.type === "route");
   }
 
   return { segments: allLoaderSegments, matchedIds: allMatchedIds };
@@ -305,7 +321,8 @@ export function buildEntryRevalidateMap(
         if (parallelEntry.type === "parallel") {
           const slots = Object.keys(parallelEntry.handler) as `@${string}`[];
           for (const slot of slots) {
-            const parallelId = `${parallelEntry.shortCode}.${slot}`;
+            const parallelParentShortCode = parentShortCode ?? entry.shortCode;
+            const parallelId = `${parallelParentShortCode}.${slot}`;
             map.set(parallelId, {
               entry: parallelEntry,
               revalidate: parallelEntry.revalidate,
@@ -316,7 +333,7 @@ export function buildEntryRevalidateMap(
     }
 
     for (const layoutEntry of entry.layout) {
-      processEntry(layoutEntry);
+      processEntry(layoutEntry, entry.shortCode);
     }
   }
 
@@ -504,25 +521,23 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       });
     }
 
-    if (!parallelEntry.loading) {
-      const loaderResult = await resolveLoadersWithRevalidation(
-        parallelEntry,
-        context,
-        belongsToRoute,
-        clientSegmentIds,
-        prevParams,
-        request,
-        prevUrl,
-        nextUrl,
-        routeKey,
-        deps,
-        actionContext,
-        entry.shortCode,
-        stale,
-      );
-      segments.push(...loaderResult.segments);
-      matchedIds.push(...loaderResult.matchedIds);
-    }
+    const loaderResult = await resolveLoadersWithRevalidation(
+      parallelEntry,
+      context,
+      belongsToRoute,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      deps,
+      actionContext,
+      entry.shortCode,
+      stale,
+    );
+    segments.push(...loaderResult.segments);
+    matchedIds.push(...loaderResult.matchedIds);
   }
 
   return { segments, matchedIds };
