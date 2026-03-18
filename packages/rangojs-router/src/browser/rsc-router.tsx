@@ -352,7 +352,9 @@ export async function initBrowserApp(
           console.log("[RSCRouter] HMR: RSC stream complete");
         } catch (err) {
           if (abort.signal.aborted) return;
-          throw err;
+          console.warn("[RSCRouter] HMR: Refetch failed, reloading page", err);
+          window.location.reload();
+          return;
         } finally {
           if (hmrAbort === abort) hmrAbort = null;
           streamingToken.end();
