@@ -234,5 +234,105 @@ describe("lazy include parent isolation", () => {
         },
       );
     });
+
+    it("does not leak intercepts, layouts, or revalidation into sibling include ancestry (prerender path)", async () => {
+      const sharedParent = makeSyntheticRoot();
+
+      const shopRevalidation = () => false;
+
+      // Shop patterns: intercept + orphan layout + revalidation at top level
+      const shopPatterns = urls<any>(
+        ({ path, layout, intercept, revalidate }) => [
+          revalidate(shopRevalidation),
+          layout(ShopLayout, () => [
+            intercept("@modal", ".detail", Div, () => []),
+            path("/", ProductList, { name: "index" }),
+            path("/:slug", Div, { name: "detail" }),
+          ]),
+        ],
+      );
+
+      // Blog patterns: nothing at top level
+      const blogPatterns = urls<any>(({ path }) => [
+        path("/", Div, { name: "index" }),
+      ]);
+
+      const shopRouteEntry: RouteEntry = {
+        prefix: "/shop",
+        staticPrefix: "/shop",
+        routes: { "shop.index": "/shop/" } as any,
+        handler: shopPatterns.handler,
+        mountIndex: 3,
+        lazy: true,
+        lazyEvaluated: false,
+        lazyPatterns: shopPatterns,
+        lazyContext: {
+          urlPrefix: "",
+          namePrefix: "shop",
+          parent: sharedParent,
+          counters: {},
+        },
+      } as unknown as RouteEntry;
+
+      const blogRouteEntry: RouteEntry = {
+        prefix: "/blog",
+        staticPrefix: "/blog",
+        routes: { "blog.index": "/blog/" } as any,
+        handler: blogPatterns.handler,
+        mountIndex: 4,
+        lazy: true,
+        lazyEvaluated: false,
+        lazyPatterns: blogPatterns,
+        lazyContext: {
+          urlPrefix: "",
+          namePrefix: "blog",
+          parent: sharedParent,
+          counters: {},
+        },
+      } as unknown as RouteEntry;
+
+      await RSCRouterContext.run(
+        {
+          manifest: new Map(),
+          patterns: new Map(),
+          patternsByPrefix: new Map(),
+          trailingSlash: new Map(),
+          namespace: "root",
+          parent: sharedParent,
+          counters: {},
+          mountIndex: 0,
+        },
+        async () => {
+          // Load shop first — pushes revalidation to its isolated parent
+          await loadManifest(shopRouteEntry, "shop.index", "/shop/");
+
+          // Then blog
+          const blogManifest = await loadManifest(
+            blogRouteEntry,
+            "blog.index",
+            "/blog/",
+          );
+
+          // Walk blog's ancestry exactly as matchForPrerender does (lines 214-229)
+          // and verify nothing leaked from shop
+          let current: EntryData | null = blogManifest;
+          while (current) {
+            expect(current.intercept).toHaveLength(0);
+            expect(current.revalidate).toHaveLength(0);
+            // layout array = orphan layouts attached to this entry
+            if (current.parent === null) {
+              // root entry — should have no orphan layouts from shop
+              expect(current.layout).toHaveLength(0);
+            }
+            current = current.parent;
+          }
+
+          // Shared parent still untouched
+          expect(sharedParent.intercept).toHaveLength(0);
+          expect(sharedParent.revalidate).toHaveLength(0);
+          expect(sharedParent.layout).toHaveLength(0);
+        },
+      );
+    });
   });
 });
