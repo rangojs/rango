@@ -197,20 +197,20 @@ describe("navigation-client", () => {
       expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it("does a fresh fetch when prefetch is still inflight (for streaming)", async () => {
+    it("uses in-flight prefetch promise when cache misses", async () => {
+      const inflightBody = "inflight-rsc-payload";
       consumeInflightPrefetchMock.mockReturnValue(
-        Promise.resolve(new Response("inflight-rsc-payload")),
+        Promise.resolve(new Response(inflightBody)),
       );
 
-      const fetchMock = vi.fn(
-        async () => new Response("fresh-payload", { status: 200 }),
-      );
+      const fetchMock = vi.fn();
       vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
 
       const client = createNavigationClient({
         createFromFetch: async (responsePromise: Promise<Response>) => {
-          await responsePromise;
-          return { metadata: { matched: [], diff: [] } };
+          const response = await responsePromise;
+          const text = await response.clone().text();
+          return { metadata: { matched: [], diff: [], body: text } };
         },
       } as any);
 
@@ -220,8 +220,7 @@ describe("navigation-client", () => {
         segmentIds: ["root"],
       });
 
-      // Inflight prefetch is skipped — fresh fetch is used for streaming
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).not.toHaveBeenCalled();
       expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
       expect(consumeInflightPrefetchMock).toHaveBeenCalledTimes(1);
       expect(result.payload.metadata).toMatchObject({ matched: [], diff: [] });

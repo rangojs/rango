@@ -196,19 +196,37 @@ export function createNavigationClient(
           );
         });
       } else if (inflightPrefetch) {
-        // Inflight prefetch is still buffering (arrayBuffer). Don't await it —
-        // the full buffer may take seconds for streaming responses (e.g., slow
-        // parallel loaders). Instead, do a fresh fetch so createFromFetch can
-        // consume the response stream incrementally. The inflight prefetch
-        // completes in the background and populates the cache for future use.
         if (tx) {
-          browserDebugLog(
-            tx,
-            "inflight prefetch pending, using fresh fetch for streaming",
-            { key: cacheKey },
-          );
+          browserDebugLog(tx, "reusing inflight prefetch", { key: cacheKey });
         }
-        responsePromise = doFreshFetch();
+        // Await the in-flight prefetch. If it resolves with a Response,
+        // use it like a cache hit. If it fails (null), fall back to
+        // a fresh navigation fetch.
+        responsePromise = inflightPrefetch.then((prefetchResponse) => {
+          if (!prefetchResponse) {
+            if (tx) {
+              browserDebugLog(
+                tx,
+                "inflight prefetch failed, falling back to fetch",
+              );
+            }
+            return doFreshFetch();
+          }
+          if (tx) {
+            browserDebugLog(tx, "inflight prefetch resolved", {
+              key: cacheKey,
+            });
+          }
+          return teeWithCompletion(
+            prefetchResponse,
+            () => {
+              if (tx)
+                browserDebugLog(tx, "stream complete (from inflight prefetch)");
+              resolveStreamComplete();
+            },
+            signal,
+          );
+        });
       } else {
         responsePromise = doFreshFetch();
       }
