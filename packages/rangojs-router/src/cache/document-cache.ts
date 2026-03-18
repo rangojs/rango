@@ -13,6 +13,7 @@
 
 import type { MiddlewareFn, MiddlewareContext } from "../router/middleware.js";
 import { getRequestContext } from "../server/request-context.js";
+import { mayNeedSSR } from "../rsc/ssr-setup.js";
 import { sortedSearchString } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
 
@@ -241,9 +242,12 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       return next();
     }
 
-    // Determine request type for cache key differentiation
+    // Determine request type for cache key differentiation.
+    // Full-document RSC fetches (Accept: text/x-component or __rsc) must not
+    // share the HTML cache slot for the same pathname.
     const isPartial = url.searchParams.has("_rsc_partial");
-    const typeLabel = isPartial ? "RSC" : "HTML";
+    const isRscRequest = !mayNeedSSR(ctx.request, url);
+    const typeLabel = isRscRequest ? "RSC" : "HTML";
 
     // Track whether next() has been called so the catch block knows
     // whether it is safe to fall through to the handler.
@@ -257,7 +261,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       const clientSegments = url.searchParams.get("_rsc_segments") || "";
       const segmentHash =
         isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
-      const typeSuffix = isPartial ? ":rsc" : ":html";
+      const typeSuffix = isRscRequest ? ":rsc" : ":html";
 
       let searchSuffix = "";
       if (!keyGenerator) {
