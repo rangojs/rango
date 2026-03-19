@@ -49,23 +49,6 @@ test.describe("cache-status-behavior", () => {
     };
   }
 
-  async function waitForCacheHit(pathPattern: string, sinceOffset: number) {
-    await expect
-      .poll(
-        () => {
-          const stdout = f.proc().stdout().substring(sinceOffset);
-          return (
-            stdout.includes("[CacheScope] HIT:") && stdout.includes(pathPattern)
-          );
-        },
-        {
-          timeout: 15000,
-          message: `Expected [CacheScope] HIT: log for ${pathPattern}`,
-        },
-      )
-      .toBe(true);
-  }
-
   test("200 response should be cached", async ({ page }) => {
     using _ = expectNoPageError(page);
 

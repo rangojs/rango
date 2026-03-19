@@ -299,9 +299,9 @@ export const postRevalidation: Revalidate<{ slug: string }, RSCRouter.Env> = ({
       defaultShouldRevalidate,
     },
   );
-  // Revalidate on blog probe action or when slug changes.
-  // Search-only changes (e.g., ?tab=1) should NOT trigger revalidation.
-  const isBlogProbeAction = actionId?.includes("handlers/blog/actions/probe");
-  if (isBlogProbeAction) return true;
+  // Actions: defer to framework default (revalidate route segments after mutations).
+  // Navigation: only revalidate when slug changes, not on search-only changes
+  // (e.g., ?tab=1 → ?tab=2) because the handler doesn't use search params.
+  if (actionId) return defaultShouldRevalidate;
   return currentParams.slug !== nextParams.slug;
 };
