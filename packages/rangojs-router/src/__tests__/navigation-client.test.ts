@@ -197,37 +197,10 @@ describe("navigation-client", () => {
       expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it("uses in-flight prefetch promise when cache misses", async () => {
-      const inflightBody = "inflight-rsc-payload";
+    it("starts a fresh fetch instead of reusing an in-flight prefetch", async () => {
       consumeInflightPrefetchMock.mockReturnValue(
-        Promise.resolve(new Response(inflightBody)),
+        new Promise<Response | null>(() => {}),
       );
-
-      const fetchMock = vi.fn();
-      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
-
-      const client = createNavigationClient({
-        createFromFetch: async (responsePromise: Promise<Response>) => {
-          const response = await responsePromise;
-          const text = await response.clone().text();
-          return { metadata: { matched: [], diff: [], body: text } };
-        },
-      } as any);
-
-      const result = await client.fetchPartial({
-        targetUrl: "/products",
-        previousUrl: "/current",
-        segmentIds: ["root"],
-      });
-
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
-      expect(consumeInflightPrefetchMock).toHaveBeenCalledTimes(1);
-      expect(result.payload.metadata).toMatchObject({ matched: [], diff: [] });
-    });
-
-    it("falls back to fresh fetch when in-flight promise resolves null", async () => {
-      consumeInflightPrefetchMock.mockReturnValue(Promise.resolve(null));
 
       const fetchMock = vi.fn(
         async () => new Response("fresh-payload", { status: 200 }),
@@ -248,6 +221,8 @@ describe("navigation-client", () => {
       });
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
+      expect(consumeInflightPrefetchMock).not.toHaveBeenCalled();
       expect(result.payload.metadata).toMatchObject({ matched: [], diff: [] });
     });
 

@@ -20,6 +20,49 @@ import { RootErrorBoundary } from "./root-error-boundary.js";
 const ReactViewTransition: any =
   "ViewTransition" in React ? (React as any).ViewTransition : null;
 
+function restoreParallelLoaderMarkers(
+  segments: ResolvedSegment[],
+): ResolvedSegment[] {
+  const parallelLoadingByParent = new Map<string, ReactNode>();
+  let nextSegments: ResolvedSegment[] | null = null;
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+
+    if (segment.type === "parallel") {
+      const parentId = segment.id.split(".")[0];
+      if (
+        parentId &&
+        segment.loading !== undefined &&
+        segment.loading !== null &&
+        segment.loading !== false
+      ) {
+        parallelLoadingByParent.set(parentId, segment.loading);
+      }
+      continue;
+    }
+
+    if (segment.type !== "loader" || segment.parallelLoading !== undefined) {
+      continue;
+    }
+
+    const parentId = segment.id.split("D")[0];
+    const parallelLoading = parentId
+      ? parallelLoadingByParent.get(parentId)
+      : undefined;
+    if (parallelLoading === undefined) {
+      continue;
+    }
+
+    if (!nextSegments) {
+      nextSegments = segments.slice();
+    }
+    nextSegments[i] = { ...segment, parallelLoading };
+  }
+
+  return nextSegments ?? segments;
+}
+
 /**
  * Resolve loader data from raw results, unwrapping LoaderDataResult wrappers
  */
@@ -143,6 +186,10 @@ export async function renderSegments(
   } = options || {};
 
   const temporalLazyRefs: Promise<any>[] = [];
+  const normalizedSegments = restoreParallelLoaderMarkers(segments);
+  const normalizedInterceptSegments = interceptSegments
+    ? restoreParallelLoaderMarkers(interceptSegments)
+    : undefined;
 
   /**
    * Registers promises from lazy/async components for awaiting.
@@ -167,7 +214,7 @@ export async function renderSegments(
     );
   }
   // Separate segments by type, passing intercept segments for explicit injection
-  const tree = segmentTreeWalk(segments, interceptSegments);
+  const tree = segmentTreeWalk(normalizedSegments, normalizedInterceptSegments);
   // Render content segments as siblings
   let content: ReactNode = null;
   for (const node of tree) {

@@ -77,20 +77,19 @@ function executePrefetchFetch(
       "X-Rango-Prefetch": "1",
     },
   })
-    .then(async (response) => {
+    .then((response) => {
       if (!response.ok) return null;
-      // Fully buffer the response body so the cached Response is
-      // self-contained and doesn't depend on the network connection.
-      // This eliminates the race condition where the user clicks before
-      // the response body has been fully downloaded.
-      const buffer = await response.arrayBuffer();
-      const cachedResponse = new Response(buffer, {
+      // Don't buffer with arrayBuffer() — that blocks until the entire
+      // body downloads, defeating streaming for slow loaders.
+      // Tee the body: one branch for navigation, one for cache storage.
+      const [navStream, cacheStream] = response.body!.tee();
+      const responseInit = {
         headers: response.headers,
         status: response.status,
         statusText: response.statusText,
-      });
-      storePrefetch(key, cachedResponse.clone(), gen);
-      return cachedResponse;
+      };
+      storePrefetch(key, new Response(cacheStream, responseInit), gen);
+      return new Response(navStream, responseInit);
     })
     .catch(() => null)
     .finally(() => {

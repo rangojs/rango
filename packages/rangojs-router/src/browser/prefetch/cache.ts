@@ -130,8 +130,8 @@ export function consumeInflightPrefetch(
 
 /**
  * Store a prefetch response in the in-memory cache.
- * The response body must be fully buffered (e.g. via arrayBuffer()) before
- * storing, so the cached Response is self-contained and network-independent.
+ * The response should be a clone() of the original so the caller can
+ * still consume the body. The clone's body streams independently.
  *
  * Skips storage if the generation has changed since the fetch started
  * (a server action invalidated the cache mid-flight).
