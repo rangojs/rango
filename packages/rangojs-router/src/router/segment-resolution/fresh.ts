@@ -7,7 +7,11 @@
 
 import type { ReactNode } from "react";
 import { invariant } from "../../errors";
-import type { EntryData } from "../../server/context";
+import {
+  getParallelEntries,
+  getParallelSlotEntries,
+  type EntryData,
+} from "../../server/context";
 import type {
   HandlerContext,
   InternalHandlerContext,
@@ -197,7 +201,10 @@ export async function resolveSegment<TEnv>(
       ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
     });
 
-    for (const parallelEntry of entry.parallel) {
+    const resolvedParallelEntries = new Set<string>();
+    for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
+      entry.parallel,
+    )) {
       const parallelSegments = await resolveParallelEntry(
         parallelEntry,
         params,
@@ -207,8 +214,11 @@ export async function resolveSegment<TEnv>(
         deps,
         options,
         routeKey,
+        [slot],
+        !resolvedParallelEntries.has(parallelEntry.id),
       );
       segments.push(...parallelSegments);
+      resolvedParallelEntries.add(parallelEntry.id);
     }
 
     for (const orphan of entry.layout) {
@@ -286,7 +296,10 @@ export async function resolveSegment<TEnv>(
       segments.push(...orphanSegments);
     }
 
-    for (const parallelEntry of entry.parallel) {
+    const resolvedParallelEntries = new Set<string>();
+    for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
+      entry.parallel,
+    )) {
       const parallelSegments = await resolveParallelEntry(
         parallelEntry,
         params,
@@ -296,8 +309,11 @@ export async function resolveSegment<TEnv>(
         deps,
         options,
         routeKey,
+        [slot],
+        !resolvedParallelEntries.has(parallelEntry.id),
       );
       segments.push(...parallelSegments);
+      resolvedParallelEntries.add(parallelEntry.id);
     }
 
     segments.push({
@@ -368,7 +384,10 @@ export async function resolveOrphanLayout<TEnv>(
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
   });
 
-  for (const parallelEntry of orphan.parallel) {
+  const resolvedParallelEntries = new Set<string>();
+  for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
+    orphan.parallel,
+  )) {
     const parallelSegments = await resolveParallelEntry(
       parallelEntry,
       params,
@@ -378,8 +397,11 @@ export async function resolveOrphanLayout<TEnv>(
       deps,
       options,
       routeKey,
+      [slot],
+      !resolvedParallelEntries.has(parallelEntry.id),
     );
     segments.push(...parallelSegments);
+    resolvedParallelEntries.add(parallelEntry.id);
   }
 
   return segments;
@@ -397,6 +419,8 @@ export async function resolveParallelEntry<TEnv>(
   deps: SegmentResolutionDeps<TEnv>,
   options?: ResolveSegmentOptions,
   routeKey?: string,
+  slotNames?: `@${string}`[],
+  includeLoaders: boolean = true,
 ): Promise<ResolvedSegment[]> {
   invariant(
     parallelEntry.type === "parallel",
@@ -411,7 +435,14 @@ export async function resolveParallelEntry<TEnv>(
     | ReactNode
   >;
 
-  for (const [slot, handler] of Object.entries(slots)) {
+  const slotsToResolve = slotNames ?? (Object.keys(slots) as `@${string}`[]);
+
+  for (const slot of slotsToResolve) {
+    const handler = slots[slot];
+    if (handler === undefined) {
+      continue;
+    }
+
     let component: ReactNode | undefined = await tryStaticSlot(
       parallelEntry,
       slot,
@@ -472,7 +503,7 @@ export async function resolveParallelEntry<TEnv>(
     });
   }
 
-  if (!options?.skipLoaders) {
+  if (!options?.skipLoaders && includeLoaders) {
     const loaderSegments = await resolveLoaders(
       parallelEntry,
       context,
@@ -583,7 +614,10 @@ export async function resolveLoadersOnly<TEnv>(
     );
     loaderSegments.push(...segments);
 
-    for (const parallelEntry of entry.parallel) {
+    const seenParallelEntryIds = new Set<string>();
+    for (const parallelEntry of getParallelEntries(entry.parallel)) {
+      if (seenParallelEntryIds.has(parallelEntry.id)) continue;
+      seenParallelEntryIds.add(parallelEntry.id);
       await collectEntryLoaders(parallelEntry, belongsToRoute, entry.shortCode);
     }
 

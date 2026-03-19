@@ -38,7 +38,7 @@ function makeSyntheticRoot(mountIndex = 0): EntryData {
     errorBoundary: [],
     notFoundBoundary: [],
     layout: [],
-    parallel: [],
+    parallel: {},
     intercept: [],
     loader: [],
   };

@@ -10,7 +10,11 @@ import type { ReactNode } from "react";
 import { invariant } from "../../errors";
 import { revalidate } from "../loader-resolution.js";
 import { evaluateRevalidation } from "../revalidation.js";
-import type { EntryData } from "../../server/context";
+import {
+  getParallelEntries,
+  getParallelSlotEntries,
+  type EntryData,
+} from "../../server/context";
 import type {
   HandlerContext,
   InternalHandlerContext,
@@ -282,7 +286,10 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
     allLoaderSegments.push(...segments);
     allMatchedIds.push(...matchedIds);
 
-    for (const parallelEntry of entry.parallel) {
+    const seenParallelEntryIds = new Set<string>();
+    for (const parallelEntry of getParallelEntries(entry.parallel)) {
+      if (seenParallelEntryIds.has(parallelEntry.id)) continue;
+      seenParallelEntryIds.add(parallelEntry.id);
       await collectEntryLoaders(parallelEntry, belongsToRoute, entry.shortCode);
     }
 
@@ -317,18 +324,15 @@ export function buildEntryRevalidateMap(
     map.set(entry.shortCode, { entry, revalidate: entry.revalidate });
 
     if (entry.type !== "parallel") {
-      for (const parallelEntry of entry.parallel) {
-        if (parallelEntry.type === "parallel") {
-          const slots = Object.keys(parallelEntry.handler) as `@${string}`[];
-          for (const slot of slots) {
-            const parallelParentShortCode = parentShortCode ?? entry.shortCode;
-            const parallelId = `${parallelParentShortCode}.${slot}`;
-            map.set(parallelId, {
-              entry: parallelEntry,
-              revalidate: parallelEntry.revalidate,
-            });
-          }
-        }
+      for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
+        entry.parallel,
+      )) {
+        const parallelParentShortCode = parentShortCode ?? entry.shortCode;
+        const parallelId = `${parallelParentShortCode}.${slot}`;
+        map.set(parallelId, {
+          entry: parallelEntry,
+          revalidate: parallelEntry.revalidate,
+        });
       }
     }
 
@@ -365,7 +369,10 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
   const segments: ResolvedSegment[] = [];
   const matchedIds: string[] = [];
 
-  for (const parallelEntry of entry.parallel) {
+  const resolvedParallelEntries = new Set<string>();
+  for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
+    entry.parallel,
+  )) {
     invariant(
       parallelEntry.type === "parallel",
       `Expected parallel entry, got: ${parallelEntry.type}`,
@@ -376,141 +383,59 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>)
       | ReactNode
     >;
+    const handler = slots[slot];
+    invariant(handler !== undefined, `Expected handler for slot ${slot}`);
 
-    for (const [slot, handler] of Object.entries(slots)) {
-      const parallelId = `${entry.shortCode}.${slot}`;
+    const parallelId = `${entry.shortCode}.${slot}`;
 
-      const isFullRefetch = clientSegmentIds.size === 0;
-      // When the parent layout is new (not in client's segment set),
-      // all its parallel children must be resolved and tracked.
-      // Without this, navigating to a new layout with parallels
-      // (e.g., BlogLayout with @sidebar) from a different route
-      // would silently drop those parallel segments.
-      const isNewParent = !clientSegmentIds.has(entry.shortCode);
-      if (
-        isFullRefetch ||
-        clientSegmentIds.has(parallelId) ||
-        belongsToRoute ||
-        isNewParent
-      ) {
-        matchedIds.push(parallelId);
+    const isFullRefetch = clientSegmentIds.size === 0;
+    const isNewParent = !clientSegmentIds.has(entry.shortCode);
+    if (
+      isFullRefetch ||
+      clientSegmentIds.has(parallelId) ||
+      belongsToRoute ||
+      isNewParent
+    ) {
+      matchedIds.push(parallelId);
+    }
+
+    const shouldResolve = await (async () => {
+      if (isFullRefetch) {
+        if (isTraceActive()) {
+          pushRevalidationTraceEntry({
+            segmentId: parallelId,
+            segmentType: "parallel",
+            belongsToRoute,
+            source: "parallel",
+            defaultShouldRevalidate: true,
+            finalShouldRevalidate: true,
+            reason: "full-refetch",
+          });
+        }
+        return true;
+      }
+      if (!clientSegmentIds.has(parallelId)) {
+        const result = belongsToRoute || isNewParent;
+        if (isTraceActive()) {
+          pushRevalidationTraceEntry({
+            segmentId: parallelId,
+            segmentType: "parallel",
+            belongsToRoute,
+            source: "parallel",
+            defaultShouldRevalidate: result,
+            finalShouldRevalidate: result,
+            reason: result ? "new-segment" : "skip-parent-chain",
+          });
+        }
+        return result;
       }
 
-      const shouldResolve = await (async () => {
-        if (isFullRefetch) {
-          if (isTraceActive()) {
-            pushRevalidationTraceEntry({
-              segmentId: parallelId,
-              segmentType: "parallel",
-              belongsToRoute,
-              source: "parallel",
-              defaultShouldRevalidate: true,
-              finalShouldRevalidate: true,
-              reason: "full-refetch",
-            });
-          }
-          return true;
-        }
-        if (!clientSegmentIds.has(parallelId)) {
-          const result = belongsToRoute || isNewParent;
-          if (isTraceActive()) {
-            pushRevalidationTraceEntry({
-              segmentId: parallelId,
-              segmentType: "parallel",
-              belongsToRoute,
-              source: "parallel",
-              defaultShouldRevalidate: result,
-              finalShouldRevalidate: result,
-              reason: result ? "new-segment" : "skip-parent-chain",
-            });
-          }
-          return result;
-        }
-
-        const dummySegment: ResolvedSegment = {
-          id: parallelId,
-          namespace: parallelEntry.id,
-          type: "parallel",
-          index: 0,
-          component: null as any,
-          params,
-          slot,
-          belongsToRoute,
-          parallelName: `${parallelEntry.id}.${slot}`,
-          ...(parallelEntry.mountPath
-            ? { mountPath: parallelEntry.mountPath }
-            : {}),
-        };
-
-        return await evaluateRevalidation({
-          segment: dummySegment,
-          prevParams,
-          getPrevSegment: null,
-          request,
-          prevUrl,
-          nextUrl,
-          revalidations: parallelEntry.revalidate.map((fn, i) => ({
-            name: `revalidate${i}`,
-            fn,
-          })),
-          routeKey,
-          context,
-          actionContext,
-          stale,
-          traceSource: "parallel",
-        });
-      })();
-      emitRevalidationDecision(
-        parallelId,
-        context.pathname,
-        routeKey,
-        shouldResolve,
-      );
-
-      let component: ReactNode | undefined;
-      if (shouldResolve) {
-        component = await tryStaticSlot(parallelEntry, slot, parallelId);
-      }
-      if (component === undefined) {
-        const hasLoadingFallback =
-          parallelEntry.loading !== undefined &&
-          parallelEntry.loading !== false;
-        if (!shouldResolve) {
-          component = null;
-        } else if (hasLoadingFallback) {
-          const result =
-            typeof handler === "function" ? handler(context) : handler;
-          if (result instanceof Promise) {
-            const tracked = deps.trackHandler(result, {
-              segmentId: parallelId,
-              segmentType: "parallel",
-            });
-            observeStreamedHandler(
-              tracked,
-              parallelId,
-              "parallel",
-              context.pathname,
-              routeKey,
-              params,
-            );
-            component = tracked as ReactNode;
-          } else {
-            component = result as ReactNode;
-          }
-        } else {
-          component =
-            typeof handler === "function" ? await handler(context) : handler;
-        }
-      }
-
-      segments.push({
+      const dummySegment: ResolvedSegment = {
         id: parallelId,
         namespace: parallelEntry.id,
         type: "parallel",
         index: 0,
-        component,
-        loading: parallelEntry.loading === false ? null : parallelEntry.loading,
-        transition: parallelEntry.transition,
+        component: null as any,
         params,
         slot,
         belongsToRoute,
@@ -518,7 +443,87 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         ...(parallelEntry.mountPath
           ? { mountPath: parallelEntry.mountPath }
           : {}),
+      };
+
+      return await evaluateRevalidation({
+        segment: dummySegment,
+        prevParams,
+        getPrevSegment: null,
+        request,
+        prevUrl,
+        nextUrl,
+        revalidations: parallelEntry.revalidate.map((fn, i) => ({
+          name: `revalidate${i}`,
+          fn,
+        })),
+        routeKey,
+        context,
+        actionContext,
+        stale,
+        traceSource: "parallel",
       });
+    })();
+    emitRevalidationDecision(
+      parallelId,
+      context.pathname,
+      routeKey,
+      shouldResolve,
+    );
+
+    let component: ReactNode | undefined;
+    if (shouldResolve) {
+      component = await tryStaticSlot(parallelEntry, slot, parallelId);
+    }
+    if (component === undefined) {
+      const hasLoadingFallback =
+        parallelEntry.loading !== undefined && parallelEntry.loading !== false;
+      if (!shouldResolve) {
+        component = null;
+      } else if (hasLoadingFallback) {
+        const result =
+          typeof handler === "function" ? handler(context) : handler;
+        if (result instanceof Promise) {
+          const tracked = deps.trackHandler(result, {
+            segmentId: parallelId,
+            segmentType: "parallel",
+          });
+          observeStreamedHandler(
+            tracked,
+            parallelId,
+            "parallel",
+            context.pathname,
+            routeKey,
+            params,
+          );
+          component = tracked as ReactNode;
+        } else {
+          component = result as ReactNode;
+        }
+      } else {
+        component =
+          typeof handler === "function" ? await handler(context) : handler;
+      }
+    }
+
+    segments.push({
+      id: parallelId,
+      namespace: parallelEntry.id,
+      type: "parallel",
+      index: 0,
+      component,
+      loading: parallelEntry.loading === false ? null : parallelEntry.loading,
+      transition: parallelEntry.transition,
+      params,
+      slot,
+      belongsToRoute,
+      parallelName: `${parallelEntry.id}.${slot}`,
+      ...(parallelEntry.mountPath
+        ? { mountPath: parallelEntry.mountPath }
+        : {}),
+    });
+
+    if (resolvedParallelEntries.has(parallelEntry.id)) {
+      continue;
     }
 
     const loaderResult = await resolveLoadersWithRevalidation(
@@ -538,6 +543,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
     );
     segments.push(...loaderResult.segments);
     matchedIds.push(...loaderResult.matchedIds);
+    resolvedParallelEntries.add(parallelEntry.id);
   }
 
   return { segments, matchedIds };
@@ -1012,143 +1018,72 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
   });
 
-  for (const parallelEntry of orphan.parallel) {
+  const resolvedParallelEntries = new Set<string>();
+  for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
+    orphan.parallel,
+  )) {
     invariant(
       parallelEntry.type === "parallel",
       `Expected parallel entry, got: ${parallelEntry.type}`,
     );
 
-    const loaderResult = await resolveLoadersWithRevalidation(
-      parallelEntry,
-      context,
-      belongsToRoute,
-      clientSegmentIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      routeKey,
-      deps,
-      actionContext,
-      undefined,
-      stale,
-    );
-    segments.push(...loaderResult.segments);
-    matchedIds.push(...loaderResult.matchedIds);
+    if (!resolvedParallelEntries.has(parallelEntry.id)) {
+      const loaderResult = await resolveLoadersWithRevalidation(
+        parallelEntry,
+        context,
+        belongsToRoute,
+        clientSegmentIds,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey,
+        deps,
+        actionContext,
+        undefined,
+        stale,
+      );
+      segments.push(...loaderResult.segments);
+      matchedIds.push(...loaderResult.matchedIds);
+      resolvedParallelEntries.add(parallelEntry.id);
+    }
 
     const slots = parallelEntry.handler as Record<
       `@${string}`,
       | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>)
       | ReactNode
     >;
+    const handler = slots[slot];
+    invariant(handler !== undefined, `Expected handler for slot ${slot}`);
 
-    for (const [slot, handler] of Object.entries(slots)) {
-      // Use orphan.shortCode (the parent layout) to match the SSR path
-      // (resolveParallelEntry receives parentShortCode = orphan.shortCode).
-      // Using parallelEntry.shortCode would generate IDs the client doesn't know about.
-      const parallelId = `${orphan.shortCode}.${slot}`;
-      matchedIds.push(parallelId);
+    // Use orphan.shortCode (the parent layout) to match the SSR path
+    // (resolveParallelEntry receives parentShortCode = orphan.shortCode).
+    // Using parallelEntry.shortCode would generate IDs the client doesn't know about.
+    const parallelId = `${orphan.shortCode}.${slot}`;
+    matchedIds.push(parallelId);
 
-      const shouldResolve = await (async () => {
-        if (!clientSegmentIds.has(parallelId)) {
-          if (isTraceActive()) {
-            pushRevalidationTraceEntry({
-              segmentId: parallelId,
-              segmentType: "parallel",
-              belongsToRoute,
-              source: "parallel",
-              defaultShouldRevalidate: true,
-              finalShouldRevalidate: true,
-              reason: "new-segment",
-            });
-          }
-          return true;
+    const shouldResolve = await (async () => {
+      if (!clientSegmentIds.has(parallelId)) {
+        if (isTraceActive()) {
+          pushRevalidationTraceEntry({
+            segmentId: parallelId,
+            segmentType: "parallel",
+            belongsToRoute,
+            source: "parallel",
+            defaultShouldRevalidate: true,
+            finalShouldRevalidate: true,
+            reason: "new-segment",
+          });
         }
-
-        const dummySegment: ResolvedSegment = {
-          id: parallelId,
-          namespace: parallelEntry.id,
-          type: "parallel",
-          index: 0,
-          component: null as any,
-          params,
-          slot,
-          belongsToRoute,
-          parallelName: `${parallelEntry.id}.${slot}`,
-          ...(parallelEntry.mountPath
-            ? { mountPath: parallelEntry.mountPath }
-            : {}),
-        };
-
-        return await evaluateRevalidation({
-          segment: dummySegment,
-          prevParams,
-          getPrevSegment: null,
-          request,
-          prevUrl,
-          nextUrl,
-          revalidations: parallelEntry.revalidate.map((fn, i) => ({
-            name: `revalidate${i}`,
-            fn,
-          })),
-          routeKey,
-          context,
-          actionContext,
-          stale,
-          traceSource: "parallel",
-        });
-      })();
-      emitRevalidationDecision(
-        parallelId,
-        context.pathname,
-        routeKey,
-        shouldResolve,
-      );
-
-      let component: ReactNode | undefined;
-      if (shouldResolve) {
-        component = await tryStaticSlot(parallelEntry, slot, parallelId);
-      }
-      if (component === undefined) {
-        const hasLoadingFallback =
-          parallelEntry.loading !== undefined &&
-          parallelEntry.loading !== false;
-        if (!shouldResolve) {
-          component = null;
-        } else if (hasLoadingFallback) {
-          const result =
-            typeof handler === "function" ? handler(context) : handler;
-          if (result instanceof Promise) {
-            const tracked = deps.trackHandler(result, {
-              segmentId: parallelId,
-              segmentType: "parallel",
-            });
-            observeStreamedHandler(
-              tracked,
-              parallelId,
-              "parallel",
-              context.pathname,
-              routeKey,
-              params,
-            );
-            component = tracked as ReactNode;
-          } else {
-            component = result as ReactNode;
-          }
-        } else {
-          component =
-            typeof handler === "function" ? await handler(context) : handler;
-        }
+        return true;
       }
 
-      segments.push({
+      const dummySegment: ResolvedSegment = {
         id: parallelId,
         namespace: parallelEntry.id,
         type: "parallel",
         index: 0,
-        component,
-        loading: parallelEntry.loading === false ? null : parallelEntry.loading,
-        transition: parallelEntry.transition,
+        component: null as any,
         params,
         slot,
         belongsToRoute,
@@ -1156,8 +1091,84 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         ...(parallelEntry.mountPath
           ? { mountPath: parallelEntry.mountPath }
           : {}),
+      };
+
+      return await evaluateRevalidation({
+        segment: dummySegment,
+        prevParams,
+        getPrevSegment: null,
+        request,
+        prevUrl,
+        nextUrl,
+        revalidations: parallelEntry.revalidate.map((fn, i) => ({
+          name: `revalidate${i}`,
+          fn,
+        })),
+        routeKey,
+        context,
+        actionContext,
+        stale,
+        traceSource: "parallel",
       });
+    })();
+    emitRevalidationDecision(
+      parallelId,
+      context.pathname,
+      routeKey,
+      shouldResolve,
+    );
+
+    let component: ReactNode | undefined;
+    if (shouldResolve) {
+      component = await tryStaticSlot(parallelEntry, slot, parallelId);
     }
+    if (component === undefined) {
+      const hasLoadingFallback =
+        parallelEntry.loading !== undefined && parallelEntry.loading !== false;
+      if (!shouldResolve) {
+        component = null;
+      } else if (hasLoadingFallback) {
+        const result =
+          typeof handler === "function" ? handler(context) : handler;
+        if (result instanceof Promise) {
+          const tracked = deps.trackHandler(result, {
+            segmentId: parallelId,
+            segmentType: "parallel",
+          });
+          observeStreamedHandler(
+            tracked,
+            parallelId,
+            "parallel",
+            context.pathname,
+            routeKey,
+            params,
+          );
+          component = tracked as ReactNode;
+        } else {
+          component = result as ReactNode;
+        }
+      } else {
+        component =
+          typeof handler === "function" ? await handler(context) : handler;
+      }
+    }
+
+    segments.push({
+      id: parallelId,
+      namespace: parallelEntry.id,
+      type: "parallel",
+      index: 0,
+      component,
+      loading: parallelEntry.loading === false ? null : parallelEntry.loading,
+      transition: parallelEntry.transition,
+      params,
+      slot,
+      belongsToRoute,
+      parallelName: `${parallelEntry.id}.${slot}`,
+      ...(parallelEntry.mountPath
+        ? { mountPath: parallelEntry.mountPath }
+        : {}),
+    });
   }
 
   return { segments, matchedIds };

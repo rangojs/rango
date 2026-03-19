@@ -92,7 +92,7 @@ function makeParallelLoaderEntry(): EntryData {
       },
     ],
     layout: [],
-    parallel: [],
+    parallel: {},
     intercept: [],
     middleware: [],
     revalidate: [vi.fn(() => true)],

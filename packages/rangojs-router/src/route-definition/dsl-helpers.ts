@@ -282,7 +282,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
       errorBoundary: [],
       notFoundBoundary: [],
       layout: [],
-      parallel: [],
+      parallel: {},
       intercept: [],
       loader: [],
       ...(cacheUrlPrefix ? { mountPath: cacheUrlPrefix } : {}),
@@ -320,7 +320,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
     errorBoundary: [],
     notFoundBoundary: [],
     layout: [],
-    parallel: [],
+    parallel: {},
     intercept: [],
     loader: [],
     ...(cacheUrlPrefix2 ? { mountPath: cacheUrlPrefix2 } : {}),
@@ -393,6 +393,8 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     "parallel() cannot be nested inside another parallel()",
   );
 
+  const slotNames = Object.keys(slots as Record<string, any>) as `@${string}`[];
+
   const namespace = `${ctx.namespace}.$${store.getNextIndex("parallel")}`;
 
   // Unwrap any static handler definitions in parallel slots
@@ -431,7 +433,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     errorBoundary: [],
     notFoundBoundary: [],
     layout: [],
-    parallel: [],
+    parallel: {},
     intercept: [],
     loader: [],
     ...(parallelUrlPrefix ? { mountPath: parallelUrlPrefix } : {}),
@@ -454,7 +456,30 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     );
   }
 
-  ctx.parent.parallel.push(entry);
+  for (const slotName of slotNames) {
+    const slotEntry = {
+      ...entry,
+      handler: { [slotName]: unwrappedSlots[slotName]! },
+      middleware: [...entry.middleware],
+      revalidate: [...entry.revalidate],
+      errorBoundary: [...entry.errorBoundary],
+      notFoundBoundary: [...entry.notFoundBoundary],
+      layout: [...entry.layout],
+      parallel: { ...entry.parallel },
+      intercept: [...entry.intercept],
+      loader: [...entry.loader],
+      ...(entry.staticHandlerIds?.[slotName]
+        ? {
+            isStaticPrerender: true as const,
+            staticHandlerIds: { [slotName]: entry.staticHandlerIds[slotName]! },
+          }
+        : {
+            isStaticPrerender: undefined,
+            staticHandlerIds: undefined,
+          }),
+    } satisfies EntryData;
+    ctx.parent.parallel[slotName] = slotEntry;
+  }
   return { name: namespace, type: "parallel" } as ParallelItem;
 };
 
@@ -687,7 +712,7 @@ const transitionFn = (
     errorBoundary: [],
     notFoundBoundary: [],
     layout: [],
-    parallel: [],
+    parallel: {},
     intercept: [],
     loader: [],
   } as EntryData;
@@ -734,7 +759,7 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
     errorBoundary: [],
     notFoundBoundary: [],
     layout: [],
-    parallel: [],
+    parallel: {},
     intercept: [],
     loader: [],
   } satisfies EntryData;
@@ -791,7 +816,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     revalidate: [],
     errorBoundary: [],
     notFoundBoundary: [],
-    parallel: [],
+    parallel: {},
     intercept: [],
     layout: [],
     loader: [],

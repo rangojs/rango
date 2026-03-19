@@ -56,7 +56,7 @@ function makeParentEntry(): EntryData {
     handler: null as any,
     loader: [],
     layout: [],
-    parallel: [],
+    parallel: {},
     intercept: [],
     revalidate: [],
     errorBoundary: [],

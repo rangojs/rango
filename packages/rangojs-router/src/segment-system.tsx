@@ -23,21 +23,20 @@ const ReactViewTransition: any =
 function restoreParallelLoaderMarkers(
   segments: ResolvedSegment[],
 ): ResolvedSegment[] {
-  const parallelLoadingByParent = new Map<string, ReactNode>();
+  const parallelLoadingByNamespace = new Map<string, ReactNode>();
   let nextSegments: ResolvedSegment[] | null = null;
 
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
 
     if (segment.type === "parallel") {
-      const parentId = segment.id.split(".")[0];
       if (
-        parentId &&
+        segment.namespace &&
         segment.loading !== undefined &&
         segment.loading !== null &&
         segment.loading !== false
       ) {
-        parallelLoadingByParent.set(parentId, segment.loading);
+        parallelLoadingByNamespace.set(segment.namespace, segment.loading);
       }
       continue;
     }
@@ -46,9 +45,8 @@ function restoreParallelLoaderMarkers(
       continue;
     }
 
-    const parentId = segment.id.split("D")[0];
-    const parallelLoading = parentId
-      ? parallelLoadingByParent.get(parentId)
+    const parallelLoading = segment.namespace
+      ? parallelLoadingByNamespace.get(segment.namespace)
       : undefined;
     if (parallelLoading === undefined) {
       continue;
@@ -374,39 +372,58 @@ export async function renderSegments(
       // Parallel-owned loaders: attach to their owning parallel segment
       // as loaderDataPromise so ParallelOutlet wraps in LoaderBoundary
       if (parallelOwnedLoaders.length > 0) {
-        const parallelLoaderIds = parallelOwnedLoaders.map((l) => l.loaderId!);
-        const parallelLoaderSources = parallelOwnedLoaders.map(
-          (l) => l.loaderData,
-        );
-        // Attach to all parallel segments that have loading set
-        for (const p of node.parallel) {
-          if (p.loading) {
-            p.loaderIds = parallelLoaderIds;
-            const shouldReuseParallelPromise =
-              p.loaderDataPromise !== undefined &&
-              hasSameReferences(p.parallelLoaderSources, parallelLoaderSources);
+        const loadersByParallelNamespace = new Map<string, ResolvedSegment[]>();
 
-            const parallelLoaderDataPromise = shouldReuseParallelPromise
-              ? p.loaderDataPromise
-              : forceAwait || isAction
-                ? await Promise.all(
-                    parallelOwnedLoaders.map((l) =>
-                      l.loaderData instanceof Promise
-                        ? l.loaderData
-                        : Promise.resolve(l.loaderData),
-                    ),
-                  )
-                : Promise.all(
-                    parallelOwnedLoaders.map((l) =>
-                      l.loaderData instanceof Promise
-                        ? l.loaderData
-                        : Promise.resolve(l.loaderData),
-                    ),
-                  );
-
-            p.loaderDataPromise = parallelLoaderDataPromise;
-            p.parallelLoaderSources = parallelLoaderSources;
+        for (const loader of parallelOwnedLoaders) {
+          if (!loader.namespace) {
+            continue;
           }
+          const existing = loadersByParallelNamespace.get(loader.namespace);
+          if (existing) {
+            existing.push(loader);
+          } else {
+            loadersByParallelNamespace.set(loader.namespace, [loader]);
+          }
+        }
+
+        for (const p of node.parallel) {
+          if (!p.loading || !p.namespace) {
+            continue;
+          }
+
+          const ownedLoaders = loadersByParallelNamespace.get(p.namespace);
+          if (!ownedLoaders || ownedLoaders.length === 0) {
+            continue;
+          }
+
+          const parallelLoaderIds = ownedLoaders.map((l) => l.loaderId!);
+          const parallelLoaderSources = ownedLoaders.map((l) => l.loaderData);
+          p.loaderIds = parallelLoaderIds;
+
+          const shouldReuseParallelPromise =
+            p.loaderDataPromise !== undefined &&
+            hasSameReferences(p.parallelLoaderSources, parallelLoaderSources);
+
+          const parallelLoaderDataPromise = shouldReuseParallelPromise
+            ? p.loaderDataPromise
+            : forceAwait || isAction
+              ? await Promise.all(
+                  ownedLoaders.map((l) =>
+                    l.loaderData instanceof Promise
+                      ? l.loaderData
+                      : Promise.resolve(l.loaderData),
+                  ),
+                )
+              : Promise.all(
+                  ownedLoaders.map((l) =>
+                    l.loaderData instanceof Promise
+                      ? l.loaderData
+                      : Promise.resolve(l.loaderData),
+                  ),
+                );
+
+          p.loaderDataPromise = parallelLoaderDataPromise;
+          p.parallelLoaderSources = parallelLoaderSources;
         }
       }
 

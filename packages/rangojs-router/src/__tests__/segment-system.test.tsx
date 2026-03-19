@@ -755,12 +755,14 @@ describe("segment-system", () => {
           seg({ id: "L0", type: "layout" }),
           seg({
             id: "L0.@sidebar",
+            namespace: "parallel.sidebar",
             type: "parallel",
             slot: "@sidebar",
             loading: loadingSkeleton,
           }),
           seg({
             id: "L0D0.sidebar-data",
+            namespace: "parallel.sidebar",
             type: "loader",
             loaderId: "sidebar-loader",
             loaderData: loaderPromise,
@@ -789,12 +791,14 @@ describe("segment-system", () => {
         const segments: ResolvedSegment[] = [
           seg({
             id: "R0.@sidebar",
+            namespace: "parallel.sidebar",
             type: "parallel",
             slot: "@sidebar",
             loading: loadingSkeleton,
           }),
           seg({
             id: "R0D0.sidebar-data",
+            namespace: "parallel.sidebar",
             type: "loader",
             loaderId: "sidebar-loader",
             loaderData: loaderPromise,
@@ -817,6 +821,64 @@ describe("segment-system", () => {
         );
       });
 
+      it("keeps parallel-owned loaders isolated per parallel definition", async () => {
+        const sidebarLoading = createElement("div", null, "Loading sidebar");
+        const modalLoading = createElement("div", null, "Loading modal");
+        const sidebarLoaderPromise = Promise.resolve({ sidebar: true });
+        const modalLoaderPromise = Promise.resolve({ modal: true });
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0.@sidebar",
+            namespace: "parallel.sidebar",
+            type: "parallel",
+            slot: "@sidebar",
+            loading: sidebarLoading,
+          }),
+          seg({
+            id: "L0.@modal",
+            namespace: "parallel.modal",
+            type: "parallel",
+            slot: "@modal",
+            loading: modalLoading,
+          }),
+          seg({
+            id: "L0D0.sidebar-data",
+            namespace: "parallel.sidebar",
+            type: "loader",
+            loaderId: "sidebar-loader",
+            loaderData: sidebarLoaderPromise,
+          }),
+          seg({
+            id: "L0D1.modal-data",
+            namespace: "parallel.modal",
+            type: "loader",
+            loaderId: "modal-loader",
+            loaderData: modalLoaderPromise,
+          }),
+          seg({ id: "L0R0", type: "route" }),
+        ];
+
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+        const outlets = collectByType(tree, MockOutletProvider);
+        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
+        const sidebarParallel = layoutOutlet.props.parallel.find(
+          (p: ResolvedSegment) => p.slot === "@sidebar",
+        ) as ResolvedSegment;
+        const modalParallel = layoutOutlet.props.parallel.find(
+          (p: ResolvedSegment) => p.slot === "@modal",
+        ) as ResolvedSegment;
+
+        expect(sidebarParallel.loaderIds).toEqual(["sidebar-loader"]);
+        expect(modalParallel.loaderIds).toEqual(["modal-loader"]);
+        expect(sidebarParallel.loaderDataPromise).toBeInstanceOf(Promise);
+        expect(modalParallel.loaderDataPromise).toBeInstanceOf(Promise);
+        expect(sidebarParallel.loaderDataPromise).not.toBe(
+          modalParallel.loaderDataPromise,
+        );
+      });
+
       it("reuses pending parallel loader promise across rerenders with the same loader inputs", async () => {
         let resolveLoader!: (value: unknown) => void;
         const loaderPromise = new Promise((resolve) => {
@@ -827,12 +889,14 @@ describe("segment-system", () => {
           seg({ id: "L0", type: "layout" }),
           seg({
             id: "L0.@sidebar",
+            namespace: "parallel.sidebar",
             type: "parallel",
             slot: "@sidebar",
             loading: loadingSkeleton,
           }),
           seg({
             id: "L0D0.sidebar-data",
+            namespace: "parallel.sidebar",
             type: "loader",
             loaderId: "sidebar-loader",
             loaderData: loaderPromise,

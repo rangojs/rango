@@ -79,7 +79,7 @@ function makeEntry(loaderId: string): EntryData {
       },
     ],
     layout: [],
-    parallel: [],
+    parallel: {},
     intercept: [],
     revalidate: [],
     errorBoundary: [],
@@ -101,9 +101,13 @@ vi.mock("../telemetry.js", () => ({
 }));
 
 // Mock server/context track (needed by resolveAllSegmentsWithRevalidation)
-vi.mock("../../server/context.js", () => ({
-  track: vi.fn(() => vi.fn()),
-}));
+vi.mock("../../server/context.js", async () => {
+  const actual = await vi.importActual("../../server/context.js");
+  return {
+    ...(actual as object),
+    track: vi.fn(() => vi.fn()),
+  };
+});
 
 describe("stale propagation through resolveLoadersOnlyWithRevalidation", () => {
   it("passes stale=true to evaluateRevalidation when provided", async () => {

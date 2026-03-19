@@ -199,7 +199,7 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
       errorBoundary: [],
       notFoundBoundary: [],
       layout: [],
-      parallel: [],
+      parallel: {},
       intercept: [],
       loader: [],
       ...(urlPrefix ? { mountPath: urlPrefix } : {}),

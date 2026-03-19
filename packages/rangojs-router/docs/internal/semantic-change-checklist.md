@@ -42,6 +42,19 @@ revalidation, intercepts, prerender, or request context propagation.
 - Are intercept and full-route paths consistent with contract?
 - Are direct vs soft navigation semantics still stable?
 
+## Parallel Slots
+
+- Does this change affect parallel slot resolution or rendering?
+- Are parallel loaders still streaming when `loading()` is set (not blocking parent)?
+- Are parallel loaders still blocking when no `loading()` is set?
+- Does slot override (last-definition-wins) still work for duplicate `@slot` names?
+- Is `parallelLoading` reconstructed correctly at render time?
+  The tag is NOT serialized — `restoreParallelLoaderMarkers()` in
+  `segment-system.tsx` reconstructs it from parallel segment `loading` +
+  loader `namespace` matching. Verify the reconstruction still runs after
+  cache deserialization, revalidation, and partial navigation paths.
+- On SPA navigation, do parallel loaders update without skeleton flash?
+
 ## Prerender / Passthrough
 
 - Does build-time prerender behavior still match documented contract?

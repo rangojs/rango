@@ -167,7 +167,9 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
 - Route-level loading boundaries via `loading()`
 - Error/not-found boundary composition
 - View Transition config via `transition()`
-- Parallel slots and modal/intercept rendering
+- Parallel slot streaming: `loading()` + `loader()` on a parallel makes it an independent streaming unit (own `LoaderBoundary`, non-blocking across SSR, SPA navigation, and cache-hit paths). Without `loading()`, parallel loaders block the parent layout.
+- Slot override dedup: last `parallel()` definition wins per `@slot` name, enabling composition overrides
+- Modal/intercept rendering via `intercept()` with `when()` conditions
 
 ### Location State
 
