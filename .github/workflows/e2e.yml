@@ -293,9 +293,13 @@ jobs:
             shard: 2
             shardTotal: 2
           # HMR tests run serially (workers=1) to avoid filesystem interference
-          - project: hmr
-            workers: 1
           - project: hmr-client
+            workers: 1
+          - project: hmr-loader
+            workers: 1
+          - project: hmr-routes
+            workers: 1
+          - project: hmr-intercept
             workers: 1
 
     steps:
