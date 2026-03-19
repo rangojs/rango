@@ -120,13 +120,6 @@ async function waitForReady(
   throw new Error(`Server not ready after ${timeoutMs}ms: ${url}${details}`);
 }
 
-async function clearLocalViteCache(cwd: string) {
-  await rm(path.join(cwd, "node_modules/.vite"), {
-    recursive: true,
-    force: true,
-  });
-}
-
 export type Fixture = ReturnType<typeof useFixture>;
 
 export function useFixture(options: {
@@ -164,9 +157,6 @@ export function useFixture(options: {
       if (sharedURL) {
         baseURL = sharedURL;
       } else {
-        if (options.isolatedServer) {
-          await clearLocalViteCache(cwd);
-        }
         proc = runCli({
           command: options.command ?? `pnpm dev`,
           label: `${options.root}:dev`,
@@ -200,9 +190,6 @@ export function useFixture(options: {
       } else {
         const hasBuildDep = testInfo.project.dependencies.includes("build");
         if (!process.env.TEST_SKIP_BUILD && !hasBuildDep) {
-          if (options.isolatedServer) {
-            await clearLocalViteCache(cwd);
-          }
           const buildProc = runCli({
             command: options.buildCommand ?? `pnpm build`,
             label: `${options.root}:build`,

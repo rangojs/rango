@@ -472,6 +472,7 @@ test.describe("cache-intercept-routes", () => {
     // Now go to intercept index and do intercept navigation to item-b
     await page.goto(f.url("/cache-test/intercept"));
     await waitForHydration(page);
+    await page.waitForTimeout(100);
 
     const beforeInterceptStdout = f.proc().stdout();
     const beforeInterceptLen = beforeInterceptStdout.length;
@@ -659,6 +660,7 @@ test.describe("useLoader-with-loader-registration", () => {
     // Start at the useLoader intercept index page
     await page.goto(f.url("/cache-test/useloader"));
     await waitForHydration(page);
+    await page.waitForTimeout(100);
 
     // Verify we're on the index
     await expect(page.getByTestId("useloader-intercept-index")).toBeVisible();

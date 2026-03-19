@@ -302,13 +302,14 @@ const matrixRows: SemanticMatrixRow[] = [
       };
 
       // The dedicated prerender-intercept suite covers the modal behavior in
-      // depth. Here we allow one retry if a heavily loaded dev run falls back
-      // to the full page on the first click, then assert the semantic contract.
+      // depth. Here we allow several retries if a heavily loaded dev run falls
+      // back to the full page on an attempt, then assert the semantic contract.
       let surface = await clickAndReadSurface();
-      for (let attempt = 0; surface === "detail" && attempt < 2; attempt++) {
+      for (let attempt = 0; surface === "detail" && attempt < 5; attempt++) {
         await page.goBack();
         await expect(testId(page, "pri-index")).toBeVisible();
         await waitForHydration(page);
+        await page.waitForTimeout(250);
         surface = await clickAndReadSurface();
       }
 

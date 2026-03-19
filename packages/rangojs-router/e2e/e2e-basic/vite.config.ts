@@ -3,7 +3,8 @@ import path from "path";
 import { rango } from "@rangojs/router/vite";
 
 export default defineConfig({
-  cacheDir: process.env.RANGO_E2E_VITE_CACHE_DIR,
+  cacheDir:
+    process.env.RANGO_E2E_VITE_CACHE_DIR ?? "node_modules/.vite-e2e-basic",
   plugins: [rango()],
   esbuild: {
     target: "es2022",

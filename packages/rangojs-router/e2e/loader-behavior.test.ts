@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError, testId } from "./helper";
+import {
+  waitForHydration,
+  expectNoPageError,
+  expectNoReload,
+  testId,
+} from "./helper";
 
 /**
  * Tests for loader behavior:
@@ -320,12 +325,14 @@ test.describe("loader-behavior", () => {
       // Direct load (SSR) to the skipSSR route
       await page.goto(f.url("/slow-streaming-skip-ssr"));
       await waitForHydration(page);
+      await page.waitForTimeout(100);
 
       await expect(
         page.locator('[data-testid="slow-skip-ssr-page"]'),
       ).toBeVisible();
 
       // Trigger revalidation action
+      await using __ = await expectNoReload(page);
       await page
         .locator('[data-testid="slow-skip-ssr-revalidate-btn"]')
         .click();
