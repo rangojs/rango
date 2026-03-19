@@ -197,10 +197,40 @@ describe("navigation-client", () => {
       expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it("starts a fresh fetch instead of reusing an in-flight prefetch", async () => {
+    it("reuses an in-flight prefetch response without starting a fresh fetch", async () => {
       consumeInflightPrefetchMock.mockReturnValue(
-        new Promise<Response | null>(() => {}),
+        Promise.resolve(new Response("prefetched-stream", { status: 200 })),
       );
+
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+      const client = createNavigationClient({
+        createFromFetch: async (responsePromise: Promise<Response>) => {
+          const response = await responsePromise;
+          const text = await response.clone().text();
+          return { metadata: { matched: [], diff: [], body: text } };
+        },
+      } as any);
+
+      const result = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
+      expect(consumeInflightPrefetchMock).toHaveBeenCalledTimes(1);
+      expect(result.payload.metadata).toMatchObject({
+        matched: [],
+        diff: [],
+        body: "prefetched-stream",
+      });
+    });
+
+    it("falls back to a fresh fetch when the in-flight prefetch resolves null", async () => {
+      consumeInflightPrefetchMock.mockReturnValue(Promise.resolve(null));
 
       const fetchMock = vi.fn(
         async () => new Response("fresh-payload", { status: 200 }),
@@ -209,8 +239,9 @@ describe("navigation-client", () => {
 
       const client = createNavigationClient({
         createFromFetch: async (responsePromise: Promise<Response>) => {
-          await responsePromise;
-          return { metadata: { matched: [], diff: [] } };
+          const response = await responsePromise;
+          const text = await response.clone().text();
+          return { metadata: { matched: [], diff: [], body: text } };
         },
       } as any);
 
@@ -222,8 +253,12 @@ describe("navigation-client", () => {
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
-      expect(consumeInflightPrefetchMock).not.toHaveBeenCalled();
-      expect(result.payload.metadata).toMatchObject({ matched: [], diff: [] });
+      expect(consumeInflightPrefetchMock).toHaveBeenCalledTimes(1);
+      expect(result.payload.metadata).toMatchObject({
+        matched: [],
+        diff: [],
+        body: "fresh-payload",
+      });
     });
 
     it("skips prefetch cache for stale revalidation", async () => {

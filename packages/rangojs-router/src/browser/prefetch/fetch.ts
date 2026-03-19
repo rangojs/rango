@@ -55,10 +55,10 @@ function buildPrefetchUrl(
 }
 
 /**
- * Core prefetch fetch logic. Fetches the response, fully buffers the body,
- * and stores it in the in-memory cache. The returned Promise resolves to
- * the buffered Response (or null on failure) so navigation can reuse
- * in-flight prefetches via consumeInflightPrefetch().
+ * Core prefetch fetch logic. Fetches the response, tees the body, and stores
+ * one branch in the in-memory cache. The returned Promise resolves to the
+ * sibling navigation branch (or null on failure) so navigation can safely
+ * reuse an in-flight prefetch via consumeInflightPrefetch().
  */
 function executePrefetchFetch(
   key: string,

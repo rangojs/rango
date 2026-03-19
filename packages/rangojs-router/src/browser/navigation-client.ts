@@ -17,7 +17,11 @@ import {
   emptyResponse,
   teeWithCompletion,
 } from "./response-adapter.js";
-import { buildPrefetchKey, consumePrefetch } from "./prefetch/cache.js";
+import {
+  buildPrefetchKey,
+  consumeInflightPrefetch,
+  consumePrefetch,
+} from "./prefetch/cache.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -91,12 +95,12 @@ export function createNavigationClient(
       // Skip cache for stale revalidation (needs fresh data), HMR (needs
       // fresh modules), and intercept contexts (source-dependent responses).
       //
-      // Intentionally do not reuse an in-flight prefetch here. Navigation needs
-      // its own response stream so Flight can start rendering immediately,
-      // without being coupled to a speculative prefetch body's lifecycle.
       const canUsePrefetch = !staleRevalidation && !hmr && !interceptSourceUrl;
       const cacheKey = buildPrefetchKey(previousUrl, fetchUrl);
       const cachedResponse = canUsePrefetch ? consumePrefetch(cacheKey) : null;
+      const inflightResponsePromise = canUsePrefetch
+        ? consumeInflightPrefetch(cacheKey)
+        : null;
       // Track when the stream completes
       let resolveStreamComplete: () => void;
       const streamComplete = new Promise<void>((resolve) => {
@@ -182,6 +186,29 @@ export function createNavigationClient(
             response,
             () => {
               if (tx) browserDebugLog(tx, "stream complete (from cache)");
+              resolveStreamComplete();
+            },
+            signal,
+          );
+        });
+      } else if (inflightResponsePromise) {
+        if (tx) {
+          browserDebugLog(tx, "reusing inflight prefetch", { key: cacheKey });
+        }
+        responsePromise = inflightResponsePromise.then(async (response) => {
+          if (!response) {
+            if (tx) {
+              browserDebugLog(tx, "inflight prefetch unavailable, refetching");
+            }
+            return doFreshFetch();
+          }
+
+          return teeWithCompletion(
+            response,
+            () => {
+              if (tx) {
+                browserDebugLog(tx, "stream complete (from inflight prefetch)");
+              }
               resolveStreamComplete();
             },
             signal,
