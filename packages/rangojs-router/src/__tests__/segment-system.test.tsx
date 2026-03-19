@@ -816,6 +816,54 @@ describe("segment-system", () => {
           Promise,
         );
       });
+
+      it("reuses pending parallel loader promise across rerenders with the same loader inputs", async () => {
+        let resolveLoader!: (value: unknown) => void;
+        const loaderPromise = new Promise((resolve) => {
+          resolveLoader = resolve;
+        });
+        const loadingSkeleton = createElement("div", null, "Loading sidebar");
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0.@sidebar",
+            type: "parallel",
+            slot: "@sidebar",
+            loading: loadingSkeleton,
+          }),
+          seg({
+            id: "L0D0.sidebar-data",
+            type: "loader",
+            loaderId: "sidebar-loader",
+            loaderData: loaderPromise,
+          }),
+          seg({ id: "L0R0", type: "route" }),
+        ];
+
+        const firstResult = await renderSegments(segments);
+        const firstTree = toTreeNode(firstResult);
+        const firstOutlets = collectByType(firstTree, MockOutletProvider);
+        const firstLayoutOutlet = firstOutlets.find(
+          (o) => o.props.segment.id === "L0",
+        )!;
+        const firstPromise =
+          firstLayoutOutlet.props.parallel[0].loaderDataPromise;
+
+        const secondResult = await renderSegments(segments);
+        const secondTree = toTreeNode(secondResult);
+        const secondOutlets = collectByType(secondTree, MockOutletProvider);
+        const secondLayoutOutlet = secondOutlets.find(
+          (o) => o.props.segment.id === "L0",
+        )!;
+        const secondPromise =
+          secondLayoutOutlet.props.parallel[0].loaderDataPromise;
+
+        expect(firstPromise).toBeInstanceOf(Promise);
+        expect(secondPromise).toBe(firstPromise);
+
+        resolveLoader({ sidebar: true });
+        await firstPromise;
+      });
     });
   });
 });

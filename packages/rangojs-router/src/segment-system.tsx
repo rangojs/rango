@@ -63,6 +63,20 @@ function restoreParallelLoaderMarkers(
   return nextSegments ?? segments;
 }
 
+function hasSameReferences(a: unknown[] | undefined, b: unknown[]): boolean {
+  if (!a || a.length !== b.length) {
+    return false;
+  }
+
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 /**
  * Resolve loader data from raw results, unwrapping LoaderDataResult wrappers
  */
@@ -361,27 +375,37 @@ export async function renderSegments(
       // as loaderDataPromise so ParallelOutlet wraps in LoaderBoundary
       if (parallelOwnedLoaders.length > 0) {
         const parallelLoaderIds = parallelOwnedLoaders.map((l) => l.loaderId!);
-        const parallelLoaderDataPromise =
-          forceAwait || isAction
-            ? await Promise.all(
-                parallelOwnedLoaders.map((l) =>
-                  l.loaderData instanceof Promise
-                    ? l.loaderData
-                    : Promise.resolve(l.loaderData),
-                ),
-              )
-            : Promise.all(
-                parallelOwnedLoaders.map((l) =>
-                  l.loaderData instanceof Promise
-                    ? l.loaderData
-                    : Promise.resolve(l.loaderData),
-                ),
-              );
+        const parallelLoaderSources = parallelOwnedLoaders.map(
+          (l) => l.loaderData,
+        );
         // Attach to all parallel segments that have loading set
         for (const p of node.parallel) {
           if (p.loading) {
-            p.loaderDataPromise = parallelLoaderDataPromise;
             p.loaderIds = parallelLoaderIds;
+            const shouldReuseParallelPromise =
+              p.loaderDataPromise !== undefined &&
+              hasSameReferences(p.parallelLoaderSources, parallelLoaderSources);
+
+            const parallelLoaderDataPromise = shouldReuseParallelPromise
+              ? p.loaderDataPromise
+              : forceAwait || isAction
+                ? await Promise.all(
+                    parallelOwnedLoaders.map((l) =>
+                      l.loaderData instanceof Promise
+                        ? l.loaderData
+                        : Promise.resolve(l.loaderData),
+                    ),
+                  )
+                : Promise.all(
+                    parallelOwnedLoaders.map((l) =>
+                      l.loaderData instanceof Promise
+                        ? l.loaderData
+                        : Promise.resolve(l.loaderData),
+                    ),
+                  );
+
+            p.loaderDataPromise = parallelLoaderDataPromise;
+            p.parallelLoaderSources = parallelLoaderSources;
           }
         }
       }
