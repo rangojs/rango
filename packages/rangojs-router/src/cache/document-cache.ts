@@ -205,18 +205,24 @@ export function createDocumentCacheMiddleware<TEnv = any>(
   ): Promise<Response> {
     const url = ctx.url;
 
+    // Use the original request URL for _rsc* param detection and cache key
+    // differentiation. ctx.url is stripped of _rsc* params by the middleware
+    // pipeline (stripInternalParams), so _rsc_partial, _rsc_segments, etc.
+    // are not visible on ctx.url in production.
+    const rawUrl = new URL(ctx.request.url);
+
     // Only cache GET requests — mutations and other methods must not be cached
     if (ctx.request.method !== "GET") {
       return next();
     }
 
     // Skip RSC action requests (mutations shouldn't be cached)
-    if (url.searchParams.has("_rsc_action")) {
+    if (rawUrl.searchParams.has("_rsc_action")) {
       return next();
     }
 
     // Skip loader requests (have their own caching)
-    if (url.searchParams.has("_rsc_loader")) {
+    if (rawUrl.searchParams.has("_rsc_loader")) {
       return next();
     }
 
@@ -243,10 +249,10 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     }
 
     // Determine request type for cache key differentiation.
-    // Full-document RSC fetches (Accept: text/x-component or __rsc) must not
-    // share the HTML cache slot for the same pathname.
-    const isPartial = url.searchParams.has("_rsc_partial");
-    const isRscRequest = !mayNeedSSR(ctx.request, url);
+    // Uses rawUrl for _rsc* param checks and mayNeedSSR for Accept-based
+    // detection. Full-document RSC fetches must not share the HTML cache slot.
+    const isPartial = rawUrl.searchParams.has("_rsc_partial");
+    const isRscRequest = !mayNeedSSR(ctx.request, rawUrl);
     const typeLabel = isRscRequest ? "RSC" : "HTML";
 
     // Track whether next() has been called so the catch block knows
@@ -258,7 +264,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       // gracefully to the origin handler instead of rejecting the request.
       // This is a deliberate fail-open-to-origin policy: the fallback is
       // "serve uncached from origin", not "use a different cache key".
-      const clientSegments = url.searchParams.get("_rsc_segments") || "";
+      const clientSegments = rawUrl.searchParams.get("_rsc_segments") || "";
       const segmentHash =
         isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
       const typeSuffix = isRscRequest ? ":rsc" : ":html";
