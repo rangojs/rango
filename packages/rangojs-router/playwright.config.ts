@@ -25,7 +25,7 @@ export default defineConfig({
       // Build first (for production tests), then clean optimizer cache and start
       // dev server. Building before the dev server prevents `vite build` from
       // overwriting the running server's optimizer cache (node_modules/.vite/deps).
-      command: `pnpm build && rm -rf node_modules/.vite && pnpm dev --port ${DEV_SERVER_PORT}`,
+      command: `pnpm build && rm -rf node_modules/.vite-e2e-test-app && pnpm dev --port ${DEV_SERVER_PORT}`,
       cwd: "./e2e/test-app",
       port: DEV_SERVER_PORT,
       reuseExistingServer: !process.env.CI,
@@ -92,13 +92,20 @@ export default defineConfig({
           fullyParallel: false,
         },
         {
-          name: "hmr",
-          testMatch: [
-            "**/loader-hmr.test.ts",
-            "**/route-types-hmr.test.ts",
-            "**/intercept-hmr*.test.ts",
-            "**/refresh-cmd.test.ts",
-          ],
+          name: "hmr-loader",
+          testMatch: ["**/loader-hmr.test.ts", "**/refresh-cmd.test.ts"],
+          use: browserConfig,
+          fullyParallel: false,
+        },
+        {
+          name: "hmr-routes",
+          testMatch: "**/route-types-hmr.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+        },
+        {
+          name: "hmr-intercept",
+          testMatch: "**/intercept-hmr*.test.ts",
           use: browserConfig,
           fullyParallel: false,
         },
@@ -155,7 +162,10 @@ export default defineConfig({
             ...browserConfig,
             baseURL: `http://localhost:${PREVIEW_SERVER_PORT}`,
           },
-          // Shared preview server — no port conflicts, safe to parallelize.
+          // Shared preview server on the built test-app has shown intermittent
+          // connection-refused failures under long high-parallel runs. Keep the
+          // production project serial for stability.
+          fullyParallel: false,
           dependencies: ["build"],
         },
         {
@@ -163,37 +173,51 @@ export default defineConfig({
           testMatch: "**/client-component-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
-          dependencies: process.env.CI ? [] : ["dev", "production"],
+          // Run after build completes. On CI there are no dependencies so
+          // HMR tests can start immediately. Locally we wait for the build
+          // but NOT for dev/production — flaky dev tests must not block HMR.
+          dependencies: process.env.CI ? [] : ["build"],
         },
         {
-          name: "hmr",
-          // Only run HMR test files (loader-hmr and route-types-hmr modify server modules
-          // that can corrupt RSC module state, so they run after hmr-client)
-          testMatch: [
-            "**/loader-hmr.test.ts",
-            "**/route-types-hmr.test.ts",
-            "**/intercept-hmr*.test.ts",
-            "**/refresh-cmd.test.ts",
-          ],
+          name: "hmr-loader",
+          // Loader HMR and refresh tests don't modify route definitions,
+          // so they can run independently of route-modifying HMR tests.
+          testMatch: ["**/loader-hmr.test.ts", "**/refresh-cmd.test.ts"],
           use: browserConfig,
-          // HMR tests modify files, run serially to avoid conflicts
           fullyParallel: false,
-          dependencies: process.env.CI
-            ? []
-            : ["dev", "production", "hmr-client"],
+          dependencies: process.env.CI ? [] : ["hmr-client"],
+        },
+        {
+          name: "hmr-routes",
+          // Route-types HMR modifies route definition files — must not
+          // overlap with intercept-hmr which expects routes to be intact.
+          testMatch: "**/route-types-hmr.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          dependencies: process.env.CI ? [] : ["hmr-loader"],
+        },
+        {
+          name: "hmr-intercept",
+          // Intercept HMR modifies the intercept config file. Runs after
+          // route-types HMR to avoid file-modification conflicts.
+          testMatch: "**/intercept-hmr*.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          dependencies: process.env.CI ? [] : ["hmr-routes"],
         },
         {
           name: "webkit-smoke",
           testMatch: "**/smoke.test.ts",
           use: webkitConfig,
-          // Run after the main suite to avoid resource contention with
-          // Chrome-based dev/production tests sharing the dev server.
-          dependencies: ["dev", "production"],
+          // Run after the build completes to avoid resource contention.
+          // Does not depend on dev/production to avoid being blocked by
+          // flaky dev tests.
+          dependencies: ["build"],
         },
       ],
-  workers: process.env.CI ? 3 : 6,
+  workers: 3,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
+  retries: 2,
   reporter: [
     ["list"],
     ...(process.env.CI ? [["github"], ["html", { open: "never" }]] : []),

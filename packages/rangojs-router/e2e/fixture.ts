@@ -1,4 +1,5 @@
 import { type SpawnOptions, spawn } from "node:child_process";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { stripVTControlCharacters, styleText } from "node:util";
 import test from "@playwright/test";
@@ -86,6 +87,19 @@ function tailOutput(text: string, maxChars = 4000): string {
   return `...${text.slice(-maxChars)}`;
 }
 
+function createIsolatedViteCacheDir(
+  cwd: string,
+  projectName: string,
+  mode: "dev" | "build" | undefined,
+) {
+  const safeProjectName = projectName.replace(/[^a-zA-Z0-9_-]/g, "-");
+  return path.join(
+    cwd,
+    ".vite-isolated",
+    `${safeProjectName}-${mode ?? "server"}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+}
+
 async function waitForReady(
   url: string,
   getOutput?: () => { stdout: string; stderr: string },
@@ -106,6 +120,13 @@ async function waitForReady(
   throw new Error(`Server not ready after ${timeoutMs}ms: ${url}${details}`);
 }
 
+async function clearLocalViteCache(cwd: string) {
+  await rm(path.join(cwd, "node_modules/.vite"), {
+    recursive: true,
+    force: true,
+  });
+}
+
 export type Fixture = ReturnType<typeof useFixture>;
 
 export function useFixture(options: {
@@ -121,18 +142,37 @@ export function useFixture(options: {
 
   const cwd = path.resolve(options.root);
   let proc!: ReturnType<typeof runCli>;
+  let isolatedViteCacheDir: string | undefined;
 
   test.beforeAll(async ({}, testInfo) => {
+    if (options.isolatedServer) {
+      isolatedViteCacheDir = createIsolatedViteCacheDir(
+        cwd,
+        testInfo.project.name,
+        options.mode,
+      );
+    }
+    const cliEnv = {
+      ...options.cliOptions?.env,
+      ...(isolatedViteCacheDir
+        ? { RANGO_E2E_VITE_CACHE_DIR: isolatedViteCacheDir }
+        : {}),
+    };
+
     if (options.mode === "dev") {
       const sharedURL = !options.isolatedServer && testInfo.project.use.baseURL;
       if (sharedURL) {
         baseURL = sharedURL;
       } else {
+        if (options.isolatedServer) {
+          await clearLocalViteCache(cwd);
+        }
         proc = runCli({
           command: options.command ?? `pnpm dev`,
           label: `${options.root}:dev`,
           cwd,
           ...options.cliOptions,
+          env: cliEnv,
         });
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
@@ -160,11 +200,15 @@ export function useFixture(options: {
       } else {
         const hasBuildDep = testInfo.project.dependencies.includes("build");
         if (!process.env.TEST_SKIP_BUILD && !hasBuildDep) {
+          if (options.isolatedServer) {
+            await clearLocalViteCache(cwd);
+          }
           const buildProc = runCli({
             command: options.buildCommand ?? `pnpm build`,
             label: `${options.root}:build`,
             cwd,
             ...options.cliOptions,
+            env: cliEnv,
           });
           await buildProc.done;
         }
@@ -173,6 +217,7 @@ export function useFixture(options: {
           label: `${options.root}:preview`,
           cwd,
           ...options.cliOptions,
+          env: cliEnv,
         });
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
@@ -190,6 +235,9 @@ export function useFixture(options: {
 
   test.afterAll(async () => {
     await cleanup?.();
+    if (isolatedViteCacheDir) {
+      await rm(isolatedViteCacheDir, { recursive: true, force: true });
+    }
   });
 
   return {

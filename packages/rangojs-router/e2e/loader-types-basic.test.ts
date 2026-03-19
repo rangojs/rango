@@ -12,6 +12,7 @@ import { waitForHydration, expectNoPageError } from "./helper";
  */
 
 const E2E_BASIC_ROOT = "./e2e/e2e-basic";
+test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async () => {
   const cwd = path.resolve(E2E_BASIC_ROOT);
@@ -43,7 +44,7 @@ test.describe("loader-types-basic", () => {
     expect(firstCount).toBeTruthy();
     expect(firstTs).toBeTruthy();
 
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1500);
 
     await page.goto(f.url("/"));
     await waitForHydration(page);
@@ -92,7 +93,7 @@ test.describe("loader-types-basic", () => {
     await expect(page.getByTestId("null-value")).toHaveText("null");
     const firstCount = await page.getByTestId("null-count").textContent();
 
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1500);
 
     await page.goto(f.url("/"));
     await waitForHydration(page);

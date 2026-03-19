@@ -1,6 +1,4 @@
-import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { x } from "tinyexec";
 import { useFixture } from "./fixture";
 import { waitForHydration } from "./helper";
 
@@ -57,16 +55,23 @@ async function waitForOnError(
 function timeoutTests(f: ReturnType<typeof useFixture>) {
   // Warm the Vite module graph for ALL tested routes before tests run.
   // The first cold request on CI can exceed the 2s timeout due to module
-  // compilation. We warm each route until we get a non-error response,
-  // confirming all modules are compiled for subsequent tests.
+  // compilation. We warm each route until we get a response (not necessarily
+  // 200 — slow-render and slow-response intentionally timeout with 504).
   test.beforeAll(async () => {
-    const routesToWarm = ["/", "/timeout/fast-render", "/timeout/slow-action"];
+    const routesToWarm = [
+      "/",
+      "/timeout/fast-render",
+      "/timeout/slow-action",
+      "/timeout/slow-render",
+      "/timeout/slow-response",
+    ];
     for (const route of routesToWarm) {
       const deadline = Date.now() + 30000;
       while (Date.now() < deadline) {
         try {
           const res = await fetch(f.url(route));
-          if (res.ok) break;
+          // Accept any response — timeout routes return 504 by design
+          if (res.status > 0) break;
         } catch {}
         await new Promise((r) => setTimeout(r, 500));
       }
@@ -109,7 +114,7 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
   });
 
   test("onError records timeout with metadata", async ({ page }) => {
-    // Clear any previous error
+    // Clear any previous error (last-error reads and resets)
     await page.request.get(f.url("/__test/last-error"));
 
     // Trigger a slow render (will timeout)
@@ -185,12 +190,6 @@ test.describe("timeout (production)", () => {
   });
 
   test.setTimeout(120000);
-
-  // Build the e2e-timeout app (the shared "build" setup only builds test-app)
-  test.beforeAll(async () => {
-    const cwd = path.resolve("./e2e/e2e-timeout");
-    await x("pnpm", ["build"], { nodeOptions: { cwd } });
-  });
 
   timeoutTests(f);
 });

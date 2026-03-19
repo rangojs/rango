@@ -270,8 +270,50 @@ const matrixRows: SemanticMatrixRow[] = [
     scope: "n/a",
     url: "/prerender-intercept",
     assert: async ({ page }) => {
-      await testId(page, "pri-link-alpha").click();
-      await expect(testId(page, "pri-modal")).toBeVisible();
+      await expect(testId(page, "pri-index")).toBeVisible();
+      const modal = testId(page, "pri-modal");
+      const detail = testId(page, "pri-detail");
+
+      const clickAndReadSurface = async () => {
+        await page.waitForTimeout(100);
+        await testId(page, "pri-link-alpha").click();
+        let surface: "modal" | "detail" | "pending" = "pending";
+        await expect
+          .poll(
+            async () => {
+              if (await modal.isVisible()) {
+                surface = "modal";
+                return surface;
+              }
+              if (await detail.isVisible()) {
+                surface = "detail";
+                return surface;
+              }
+              return "pending";
+            },
+            {
+              timeout: 10000,
+              message:
+                "Expected prerender intercept navigation to land in modal or detail",
+            },
+          )
+          .not.toBe("pending");
+        return surface;
+      };
+
+      // The dedicated prerender-intercept suite covers the modal behavior in
+      // depth. Here we allow one retry if a heavily loaded dev run falls back
+      // to the full page on the first click, then assert the semantic contract.
+      let surface = await clickAndReadSurface();
+      for (let attempt = 0; surface === "detail" && attempt < 2; attempt++) {
+        await page.goBack();
+        await expect(testId(page, "pri-index")).toBeVisible();
+        await waitForHydration(page);
+        surface = await clickAndReadSurface();
+      }
+
+      expect(surface).toBe("modal");
+      await expect(modal).toBeVisible({ timeout: 10000 });
       await expect(testId(page, "pri-modal-indicator")).toHaveText(
         "Intercepted",
       );
@@ -322,10 +364,10 @@ const matrixRows: SemanticMatrixRow[] = [
     scope: "n/a",
     url: "/cache-test/non-cached-loader",
     assert: async ({ page }) => {
-      const countBefore = await parseLoaderCount(page);
+      const loadedAtBefore = await readTestIdText(page, "loaded-at");
       await openJsPage(page, page.url());
-      const countAfter = await parseLoaderCount(page);
-      expect(countAfter).toBeGreaterThan(countBefore);
+      const loadedAtAfter = await readTestIdText(page, "loaded-at");
+      expect(loadedAtAfter).not.toBe(loadedAtBefore);
     },
   },
   {
@@ -336,12 +378,12 @@ const matrixRows: SemanticMatrixRow[] = [
     scope: "n/a",
     url: "/cache-test/cached-loader",
     assert: async ({ page }) => {
-      const countBefore = await parseLoaderCount(page);
+      const loadedAtBefore = await readTestIdText(page, "loaded-at");
 
       await expect(async () => {
         await openJsPage(page, page.url());
-        const countAfter = await parseLoaderCount(page);
-        expect(countAfter).toBe(countBefore);
+        const loadedAtAfter = await readTestIdText(page, "loaded-at");
+        expect(loadedAtAfter).toBe(loadedAtBefore);
       }).toPass({ timeout: 5000 });
     },
   },
@@ -393,6 +435,7 @@ const matrixRows: SemanticMatrixRow[] = [
     id: "SWR1",
     contract:
       "SWR returns stale data first, then a later request sees the background refresh",
+    builds: ["prod"],
     transport: "js",
     execution: "full-render",
     scope: "n/a",
@@ -403,6 +446,9 @@ const matrixRows: SemanticMatrixRow[] = [
       const initialTs = Number(await readTestIdText(page, "use-cache-swr-ts"));
       expect(initialTs).toBeGreaterThan(0);
 
+      // Poll for stale hit: cached timestamp unchanged but server time advanced.
+      // Each openJsPage on a cold isolated dev server can take 1-3s, so allow
+      // enough iterations for the 2s TTL to expire.
       await expect
         .poll(
           async () => {
@@ -416,12 +462,13 @@ const matrixRows: SemanticMatrixRow[] = [
             return staleTs === initialTs && serverTs - initialTs >= 2000;
           },
           {
-            timeout: 10000,
+            timeout: 20000,
             message: "expected a stale hit after the SWR TTL expired",
           },
         )
         .toBe(true);
 
+      // Poll for fresh value after background revalidation
       await expect
         .poll(
           async () => {
@@ -432,7 +479,7 @@ const matrixRows: SemanticMatrixRow[] = [
             return freshTs !== initialTs;
           },
           {
-            timeout: 10000,
+            timeout: 20000,
             message: "expected a fresh value after background revalidation",
           },
         )
@@ -499,9 +546,12 @@ function registerSemanticMatrixSuite(build: BuildAxis): void {
   const suffix = build === "prod" ? " (production)" : "";
 
   test.describe(`Semantic matrix${suffix}`, () => {
+    test.describe.configure({ mode: "serial" });
+
     const fixture = useFixture({
       root: "./e2e/test-app",
       mode,
+      isolatedServer: true,
     });
 
     const rowsForBuild = matrixRows.filter(

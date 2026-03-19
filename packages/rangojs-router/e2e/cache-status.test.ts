@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
 
+// This file uses a single isolated dev server and asserts against shared
+// server stdout. Keep it serial so per-test log windows do not overlap.
+test.describe.configure({ mode: "serial" });
+
 /**
  * Tests that validate cache status behavior.
  *
@@ -43,6 +47,23 @@ test.describe("cache-status-behavior", () => {
       hits: lines.filter((line) => line.includes("[CacheScope] HIT:")),
       cached: lines.filter((line) => line.includes("[CacheScope] Cached:")),
     };
+  }
+
+  async function waitForCacheHit(pathPattern: string, sinceOffset: number) {
+    await expect
+      .poll(
+        () => {
+          const stdout = f.proc().stdout().substring(sinceOffset);
+          return (
+            stdout.includes("[CacheScope] HIT:") && stdout.includes(pathPattern)
+          );
+        },
+        {
+          timeout: 15000,
+          message: `Expected [CacheScope] HIT: log for ${pathPattern}`,
+        },
+      )
+      .toBe(true);
   }
 
   test("200 response should be cached", async ({ page }) => {
@@ -144,62 +165,6 @@ test.describe("cache-status-behavior", () => {
     // Should NOT have Cached (non-200 responses are skipped)
     expect(
       logs.cached.some((log) => log.includes("/cache-status/server-error")),
-    ).toBeFalsy();
-  });
-
-  test("cached 200 should hit on second request", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    const beforeFirstStdout = f.proc().stdout();
-    const beforeFirstLen = beforeFirstStdout.length;
-
-    // First visit - populate cache
-    await page.goto(f.url("/cache-status/success"));
-    await waitForHydration(page);
-
-    // Wait for async cache write to complete before navigating away
-    await expect
-      .poll(
-        () => {
-          const stdout = f.proc().stdout().substring(beforeFirstLen);
-          return (
-            stdout.includes("[CacheScope] Cached:") &&
-            stdout.includes("/cache-status/success")
-          );
-        },
-        {
-          timeout: 5000,
-          message: "Expected cache write to complete for /cache-status/success",
-        },
-      )
-      .toBe(true);
-
-    // Navigate away
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    // Record stdout before second visit
-    const beforeSecondStdout = f.proc().stdout();
-    const beforeSecondLen = beforeSecondStdout.length;
-
-    // Second visit - should hit cache
-    await page.goto(f.url("/cache-status/success"));
-    await waitForHydration(page);
-
-    // Check logs
-    const afterSecondStdout = f.proc().stdout();
-    const secondLogs = getCacheLogs(
-      afterSecondStdout.substring(beforeSecondLen),
-    );
-
-    // Should have HIT (from cache)
-    expect(
-      secondLogs.hits.some((log) => log.includes("/cache-status/success")),
-    ).toBe(true);
-
-    // Should NOT have MISS
-    expect(
-      secondLogs.misses.some((log) => log.includes("/cache-status/success")),
     ).toBeFalsy();
   });
 

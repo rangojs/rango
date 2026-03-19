@@ -5,6 +5,7 @@ import { rango, poke } from "@rangojs/router/vite";
 import devtoolsJson from "vite-plugin-devtools-json";
 
 export default defineConfig({
+  cacheDir: process.env.RANGO_E2E_VITE_CACHE_DIR,
   plugins: [react(), rango(), devtoolsJson(), poke()],
   esbuild: {
     target: "es2022",

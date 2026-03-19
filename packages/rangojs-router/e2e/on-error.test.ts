@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration } from "./helper";
 
+test.describe.configure({ mode: "serial" });
+
 /**
  * Poll __test/last-error until an error with the expected phase is recorded.
  * Replaces fixed waitForTimeout calls for deterministic error propagation checks.
@@ -106,6 +108,7 @@ test.describe("onError", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
+    isolatedServer: true,
   });
 
   onErrorTests(f);
@@ -115,6 +118,7 @@ test.describe("onError (production)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "build",
+    isolatedServer: true,
   });
 
   test.setTimeout(120000);
@@ -138,10 +142,12 @@ function onErrorProgressiveEnhancementTests(f: ReturnType<typeof useFixture>) {
       page.locator('[data-testid="throw-form-error-submit-btn"]').click(),
     ]);
 
+    // PE form POST on cold isolated server can be slow — increase timeout
     const error = await waitForOnError(
       page,
       f.url("/__test/last-error"),
       "action",
+      60000,
     );
 
     expect(error.phase).toBe("action");
@@ -154,6 +160,7 @@ test.describe("onError progressive enhancement", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
+    isolatedServer: true,
   });
 
   onErrorProgressiveEnhancementTests(f);
@@ -163,6 +170,7 @@ test.describe("onError progressive enhancement (production)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "build",
+    isolatedServer: true,
   });
 
   test.setTimeout(120000);
