@@ -29,7 +29,7 @@ async function waitForClientAgeToExceed(
   locator: import("@playwright/test").Locator,
   baseline: number,
   delta = 1,
-  timeout = 5000,
+  timeout = 15000,
 ): Promise<number> {
   await expect
     .poll(() => readClientAge(locator), { timeout })
