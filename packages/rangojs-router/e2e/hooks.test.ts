@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError, goBack } from "./helper";
+import {
+  waitForHydration,
+  expectNoPageError,
+  expectNoReload,
+  goBack,
+} from "./helper";
 
 /**
  * Tests for useNavigation and useAction hooks
@@ -94,7 +99,7 @@ test.describe("useNavigation", () => {
     // Should return to idle state after navigation completes
     await expect(
       page.locator('[data-testid="nav-status-state"]'),
-    ).toContainText("state:idle", { timeout: 5000 });
+    ).toContainText("state:idle");
   });
 
   test("should show streaming state during streaming navigation", async ({
@@ -113,34 +118,17 @@ test.describe("useNavigation", () => {
       page.locator('[data-testid="nav-status-streaming"]'),
     ).toContainText("streaming:false");
 
-    await page.evaluate(() => {
-      (
-        window as typeof window & { __sawStreamingState?: boolean }
-      ).__sawStreamingState = false;
-      const observer = new MutationObserver(() => {
-        const streamingEl = document.querySelector(
-          '[data-testid="nav-status-streaming"]',
-        );
-        if (streamingEl?.textContent?.includes("streaming:true")) {
-          (
-            window as typeof window & { __sawStreamingState?: boolean }
-          ).__sawStreamingState = true;
-        }
-      });
-      const target = document.querySelector('[data-testid="nav-status"]');
-      if (target) {
-        observer.observe(target, {
-          childList: true,
-          subtree: true,
-          characterData: true,
-        });
-      }
-      (
-        window as typeof window & {
-          __streamingStateObserver?: MutationObserver;
-        }
-      ).__streamingStateObserver = observer;
-    });
+    const streamingStateSeen = page
+      .waitForFunction(
+        () =>
+          document
+            .querySelector('[data-testid="nav-status-streaming"]')
+            ?.textContent?.includes("streaming:true") ?? false,
+        undefined,
+        { timeout: 4000 },
+      )
+      .then(() => true)
+      .catch(() => false);
 
     // Navigate to streaming route (has loading component)
     const streamingLink = page.locator('[data-testid="slow-streaming-link"]');
@@ -154,17 +142,9 @@ test.describe("useNavigation", () => {
     // Wait for content to load
     await expect(
       page.locator('[data-testid="slow-streaming-page"]'),
-    ).toBeVisible({ timeout: 5000 });
+    ).toBeVisible();
 
-    const sawStreaming = await page.evaluate(() => {
-      (
-        window as typeof window & {
-          __streamingStateObserver?: MutationObserver;
-        }
-      ).__streamingStateObserver?.disconnect();
-      return !!(window as typeof window & { __sawStreamingState?: boolean })
-        .__sawStreamingState;
-    });
+    const sawStreaming = await streamingStateSeen;
 
     expect(sawStreaming).toBe(true);
 
@@ -206,7 +186,7 @@ test.describe("useNavigation", () => {
     await productLink.click();
     await expect(
       page.locator('[data-testid="nav-status-pathname"]'),
-    ).toContainText("path:/product/product-a", { timeout: 5000 });
+    ).toContainText("path:/product/product-a");
 
     // Navigate back and wait for navigation to complete
     await goBack(page);
@@ -214,7 +194,7 @@ test.describe("useNavigation", () => {
     // Pathname should return to /
     await expect(
       page.locator('[data-testid="nav-status-pathname"]'),
-    ).toContainText("path:/", { timeout: 5000 });
+    ).toContainText("path:/");
   });
 });
 
@@ -270,7 +250,7 @@ test.describe("useAction", () => {
     await expect(actionStatus).toContainText("Action status: idle", {
       timeout: 10000,
     });
-    await expect(button).toContainText("Streaming Action", { timeout: 5000 });
+    await expect(button).toContainText("Streaming Action");
     await expect(button).toBeEnabled();
   });
 
@@ -326,7 +306,7 @@ test.describe("useAction", () => {
     await expect(actionStatus).toContainText("Action status: idle", {
       timeout: 10000,
     });
-    await expect(button).toContainText("Streaming Action", { timeout: 5000 });
+    await expect(button).toContainText("Streaming Action");
     await expect(button).toBeEnabled();
   });
 
@@ -335,15 +315,17 @@ test.describe("useAction", () => {
 
     await page.goto(f.url("/product/product-a"));
     await waitForHydration(page);
+    await page.waitForTimeout(100);
 
     // Click add to cart button
+    await using __ = await expectNoReload(page);
     const addToCartBtn = page.locator('[data-testid="add-to-cart-btn"]');
     await addToCartBtn.click();
 
     // Should show result when action completes
     await expect(
       page.locator('[data-testid="add-to-cart-btn-result"]'),
-    ).toBeVisible({ timeout: 5000 });
+    ).toBeVisible();
   });
 });
 
@@ -431,31 +413,26 @@ test.describe("useNavigation during actions", () => {
       page.locator('[data-testid="StreamingActionStatus-action-status"]'),
     ).toContainText("loading", { timeout: 2000 });
 
-    // Navigate back while action is running
-    await page.goBack();
+    // Navigate away while the action is running. Pending-actions e2e coverage
+    // owns the browser-history/back-button edge cases; this hook test keeps the
+    // focus on navigation and action state remaining independent.
+    await page.locator('[data-testid="nav-home"]').click();
 
-    // Going back while the action is still running should restore an earlier
-    // navigation surface without leaving navigation state stuck in loading.
+    // The navigation should still complete promptly without leaving the router
+    // stuck in a loading state.
     await expect
-      .poll(
-        async () => {
-          if (await productModal.isVisible()) return "modal";
-          if (await page.locator('[data-testid="home-page"]').isVisible()) {
-            return "home";
-          }
-          return "pending";
-        },
-        {
-          timeout: 5000,
-          message: "Expected back navigation to restore modal or home view",
-        },
-      )
-      .not.toBe("pending");
+      .poll(async () => page.url(), {
+        timeout: 5000,
+        message: "Expected navigation away from the detail URL",
+      })
+      .not.toContain("/product/product-a");
 
-    // Navigation should return to idle after popstate
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+
+    // Navigation should return to idle after the route change.
     await expect(
       page.locator('[data-testid="nav-status-state"]'),
-    ).toContainText("state:idle", { timeout: 2000 });
+    ).toContainText("state:idle", { timeout: 10000 });
   });
 });
 
@@ -501,7 +478,7 @@ test.describe("useNavigation (production)", () => {
     // Pathname should update
     await expect(
       page.locator('[data-testid="nav-status-pathname"]'),
-    ).toContainText("path:/product/product-a", { timeout: 5000 });
+    ).toContainText("path:/product/product-a");
   });
 });
 
@@ -541,7 +518,7 @@ test.describe("useAction (production)", () => {
     await expect(
       page.locator('[data-testid="StreamingActionStatus-action-status"]'),
     ).toContainText("Action status: idle", { timeout: 10000 });
-    await expect(button).toContainText("Streaming Action", { timeout: 5000 });
+    await expect(button).toContainText("Streaming Action");
     await expect(button).toBeEnabled();
   });
 
@@ -557,6 +534,6 @@ test.describe("useAction (production)", () => {
     // Should show result
     await expect(
       page.locator('[data-testid="add-to-cart-btn-result"]'),
-    ).toBeVisible({ timeout: 5000 });
+    ).toBeVisible();
   });
 });

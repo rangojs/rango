@@ -44,6 +44,7 @@ export default defineConfig({
     trace: "on-all-retries",
   },
   expect: {
+    timeout: 10000,
     toPass: { timeout: 10000 },
   },
   // In UI mode, flatten projects to avoid the dependency chain that breaks

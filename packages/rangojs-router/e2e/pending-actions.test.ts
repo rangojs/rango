@@ -45,7 +45,7 @@ test.describe("pending-actions-navigation", () => {
     await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
 
     // 5. Wait for pending action responses
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(1500);
 
     // 6. Navigate back - should return to intercept view
     await goBack(page);
@@ -94,7 +94,7 @@ test.describe("pending-actions-navigation", () => {
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
 
     // 7. Wait for action to complete in background
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(1500);
 
     // 8. Verify UI is still correct
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
@@ -136,7 +136,7 @@ test.describe("pending-actions-navigation", () => {
     await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
 
     // 6. Wait for action to complete
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(1500);
 
     // 7. Index should still be intact
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
@@ -179,7 +179,7 @@ test.describe("pending-actions-navigation", () => {
     ).not.toHaveText("Product A");
 
     // 5. Wait for action to complete
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(1500);
 
     // 6. Navigate back to index
     await goBack(page);

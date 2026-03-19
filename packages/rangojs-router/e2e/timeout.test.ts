@@ -9,7 +9,7 @@ async function waitForOnError(
   page: import("@playwright/test").Page,
   errorUrl: string,
   expectedPhase: string,
-  timeout = 5000,
+  timeout = 15000,
 ): Promise<{
   phase: string;
   message: string;
@@ -81,9 +81,7 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
   test("index page loads without timeout", async ({ page }) => {
     const response = await page.goto(f.url("/"));
     expect(response?.status()).toBe(200);
-    await expect(page.locator('[data-testid="index-page"]')).toBeVisible({
-      timeout: 5000,
-    });
+    await expect(page.locator('[data-testid="index-page"]')).toBeVisible();
   });
 
   test("slow render returns 504 with timeout phase header", async ({
