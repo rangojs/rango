@@ -103,7 +103,7 @@ import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
-import { debugLog, debugWarn } from "../logging.js";
+import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
 
 /**
  * Creates background revalidation middleware
@@ -143,8 +143,11 @@ export function withBackgroundRevalidation<TEnv>(
 
     const requestCtx = getRequestContext();
     const cacheScope = ctx.cacheScope;
+    const debugPerf = !!ctx.metricsStore;
+    const reqId = debugPerf ? getOrCreateRequestId(ctx.request) : undefined;
 
     requestCtx?.waitUntil(async () => {
+      const start = performance.now();
       debugLog("backgroundRevalidation", "revalidating stale route", {
         pathname: ctx.pathname,
         fullMatch: ctx.isFullMatch,
@@ -207,10 +210,22 @@ export function withBackgroundRevalidation<TEnv>(
           completeSegments,
           ctx.isIntercept,
         );
+        if (debugPerf) {
+          const dur = performance.now() - start;
+          console.log(
+            `[RSC Background][req:${reqId}] SWR revalidation ${ctx.pathname} (${dur.toFixed(2)}ms) segments=${completeSegments.length}`,
+          );
+        }
         debugLog("backgroundRevalidation", "revalidation complete", {
           pathname: ctx.pathname,
         });
       } catch (error) {
+        if (debugPerf) {
+          const dur = performance.now() - start;
+          console.log(
+            `[RSC Background][req:${reqId}] SWR revalidation ${ctx.pathname} FAILED (${dur.toFixed(2)}ms) error=${String(error)}`,
+          );
+        }
         debugWarn("backgroundRevalidation", "revalidation failed", {
           pathname: ctx.pathname,
           error: String(error),

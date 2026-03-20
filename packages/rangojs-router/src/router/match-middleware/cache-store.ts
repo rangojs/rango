@@ -104,7 +104,7 @@ import type { ResolvedSegment } from "../../types.js";
 import { getRequestContext } from "../../server/request-context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
-import { debugLog, debugWarn } from "../logging.js";
+import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 
 /**
@@ -174,6 +174,8 @@ export function withCacheStore<TEnv>(
     if (!requestCtx) return;
 
     const cacheScope = ctx.cacheScope;
+    const debugPerf = !!ctx.metricsStore;
+    const reqId = debugPerf ? getOrCreateRequestId(ctx.request) : undefined;
 
     // Register onResponse callback to skip caching for non-200 responses
     // Note: error/notFound status codes are set elsewhere (not caching-specific)
@@ -191,6 +193,7 @@ export function withCacheStore<TEnv>(
         // Proactive caching: render all segments fresh in background
         // This ensures cache has complete components for future requests
         requestCtx.waitUntil(async () => {
+          const start = performance.now();
           debugLog("cacheStore", "proactive caching started", {
             pathname: ctx.pathname,
           });
@@ -258,10 +261,22 @@ export function withCacheStore<TEnv>(
               completeSegments,
               ctx.isIntercept,
             );
+            if (debugPerf) {
+              const dur = performance.now() - start;
+              console.log(
+                `[RSC Background][req:${reqId}] Proactive cache ${ctx.pathname} (${dur.toFixed(2)}ms) segments=${completeSegments.length}`,
+              );
+            }
             debugLog("cacheStore", "proactive caching complete", {
               pathname: ctx.pathname,
             });
           } catch (error) {
+            if (debugPerf) {
+              const dur = performance.now() - start;
+              console.log(
+                `[RSC Background][req:${reqId}] Proactive cache ${ctx.pathname} FAILED (${dur.toFixed(2)}ms) error=${String(error)}`,
+              );
+            }
             debugWarn("cacheStore", "proactive caching failed", {
               pathname: ctx.pathname,
               error: String(error),
@@ -274,12 +289,19 @@ export function withCacheStore<TEnv>(
         // All segments have components - cache directly
         // Schedule caching in waitUntil since cacheRoute is now async (key resolution)
         requestCtx.waitUntil(async () => {
+          const start = performance.now();
           await cacheScope.cacheRoute(
             ctx.pathname,
             ctx.matched.params,
             allSegmentsToCache,
             ctx.isIntercept,
           );
+          if (debugPerf) {
+            const dur = performance.now() - start;
+            console.log(
+              `[RSC Background][req:${reqId}] Cache store ${ctx.pathname} (${dur.toFixed(2)}ms) segments=${allSegmentsToCache.length}`,
+            );
+          }
         });
       }
 

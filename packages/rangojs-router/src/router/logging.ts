@@ -74,7 +74,7 @@ function getHeaderRequestId(request: Request): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function getOrCreateRequestId(request: Request): string {
+export function getOrCreateRequestId(request: Request): string {
   const existing = requestIds.get(request);
   if (existing) return existing;
 
