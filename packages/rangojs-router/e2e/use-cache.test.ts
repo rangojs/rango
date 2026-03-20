@@ -26,15 +26,6 @@ test.describe("use-cache basic", () => {
     isolatedServer: true,
   });
 
-  // First page.goto() on an isolated dev server triggers Vite dep
-  // optimization → module re-evaluation → in-memory cache loss.
-  test("warmup: trigger dep optimization before cache tests", async ({
-    page,
-  }) => {
-    await page.goto(f.url("/use-cache-test/basic"));
-    await waitForHydration(page);
-  });
-
   test("file-level use cache returns cached data on second request", async ({
     page,
   }) => {
