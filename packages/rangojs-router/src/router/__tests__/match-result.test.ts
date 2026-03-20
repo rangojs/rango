@@ -12,6 +12,7 @@ import { createPipelineState } from "../match-context";
 vi.mock("../metrics", () => ({
   logMetrics: vi.fn(),
   generateServerTiming: vi.fn(() => "metric1;dur=10"),
+  appendMetric: vi.fn(),
 }));
 
 // Helper to create async generator from array

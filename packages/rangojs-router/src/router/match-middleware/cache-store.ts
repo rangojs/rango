@@ -120,7 +120,6 @@ export function withCacheStore<TEnv>(
   return async function* (
     source: AsyncGenerator<ResolvedSegment>,
   ): AsyncGenerator<ResolvedSegment> {
-    const pipelineStart = performance.now();
     const ms = ctx.metricsStore;
 
     // Collect all segments while passing them through
@@ -129,6 +128,9 @@ export function withCacheStore<TEnv>(
       allSegments.push(segment);
       yield segment;
     }
+
+    // Measure own work only (after source iteration completes)
+    const ownStart = performance.now();
 
     // Skip caching if:
     // 1. Cache miss but cache scope is disabled
@@ -144,8 +146,8 @@ export function withCacheStore<TEnv>(
       if (ms) {
         ms.metrics.push({
           label: "pipeline:cache-store",
-          duration: performance.now() - pipelineStart,
-          startTime: pipelineStart - ms.requestStart,
+          duration: performance.now() - ownStart,
+          startTime: ownStart - ms.requestStart,
         });
       }
       return;
@@ -287,8 +289,8 @@ export function withCacheStore<TEnv>(
     if (ms) {
       ms.metrics.push({
         label: "pipeline:cache-store",
-        duration: performance.now() - pipelineStart,
-        startTime: pipelineStart - ms.requestStart,
+        duration: performance.now() - ownStart,
+        startTime: ownStart - ms.requestStart,
       });
     }
   };

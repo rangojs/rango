@@ -19,6 +19,8 @@ import type {
 } from "../../types";
 import type { SegmentResolutionDeps } from "../types.js";
 import { resolveLoaderData } from "./loader-cache.js";
+import { _getRequestContext } from "../../server/request-context.js";
+import { appendMetric } from "../metrics.js";
 import {
   handleHandlerResult,
   tryStaticHandler,
@@ -94,9 +96,13 @@ export async function resolveLoaders<TEnv>(
   const shortCode = shortCodeOverride ?? entry.shortCode;
   const hasLoading = "loading" in entry && entry.loading !== undefined;
   const loadingDisabled = hasLoading && entry.loading === false;
+  const ms = _getRequestContext()?._metricsStore;
 
   if (!loadingDisabled) {
-    return loaderEntries.map((loaderEntry, i) => {
+    // Streaming loaders: promises kick off now, settle during RSC serialization.
+    // Record each loader as a marker span showing it was invoked.
+    const loaderStart = performance.now();
+    const segments = loaderEntries.map((loaderEntry, i) => {
       const { loader } = loaderEntry;
       const segmentId = `${shortCode}D${i}.${loader.$$id}`;
       return {
@@ -116,18 +122,31 @@ export async function resolveLoaders<TEnv>(
         belongsToRoute,
       };
     });
+    if (ms) {
+      const dur = performance.now() - loaderStart;
+      for (const seg of segments) {
+        appendMetric(ms, `loader:${seg.loaderId}`, loaderStart, dur, 2);
+      }
+    }
+    return segments;
   }
 
   // Loading disabled: still start all loaders in parallel, but only emit
   // settled promises so handlers don't stream loading placeholders.
+  // We can measure actual execution time here since we await all loaders.
+  const loaderStart = performance.now();
   const pendingLoaderData = loaderEntries.map((loaderEntry) =>
     resolveLoaderData(loaderEntry, ctx, ctx.pathname),
   );
   await Promise.all(pendingLoaderData);
+  const loaderDur = performance.now() - loaderStart;
 
   return loaderEntries.map((loaderEntry, i) => {
     const { loader } = loaderEntry;
     const segmentId = `${shortCode}D${i}.${loader.$$id}`;
+    if (ms) {
+      appendMetric(ms, `loader:${loader.$$id}`, loaderStart, loaderDur, 2);
+    }
     return {
       id: segmentId,
       namespace: entry.id,

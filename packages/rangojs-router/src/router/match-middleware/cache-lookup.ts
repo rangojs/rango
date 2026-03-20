@@ -210,6 +210,9 @@ async function* yieldFromStore<TEnv>(
   }
 
   // Resolve loaders fresh (loaders are never pre-rendered/cached)
+  const ms = ctx.metricsStore;
+  const loaderStart = performance.now();
+
   if (ctx.isFullMatch) {
     if (resolveLoadersOnly) {
       const loaderSegments = await ctx.Store.run(() =>
@@ -249,11 +252,17 @@ async function* yieldFromStore<TEnv>(
     }
   }
 
-  const ms = ctx.metricsStore;
   if (ms) {
+    const loaderEnd = performance.now();
+    ms.metrics.push({
+      label: "pipeline:loader-resolve",
+      duration: loaderEnd - loaderStart,
+      startTime: loaderStart - ms.requestStart,
+      depth: 1,
+    });
     ms.metrics.push({
       label: "pipeline:cache-lookup",
-      duration: performance.now() - pipelineStart,
+      duration: loaderEnd - pipelineStart,
       startTime: pipelineStart - ms.requestStart,
     });
   }
@@ -573,6 +582,7 @@ export function withCacheLookup<TEnv>(
     // Resolve loaders fresh (loaders are NOT cached by default)
     // This ensures fresh data even on cache hit
     const Store = ctx.Store;
+    const loaderStart = performance.now();
 
     if (ctx.isFullMatch) {
       // Full match (document request) - simple loader resolution without revalidation
@@ -624,9 +634,16 @@ export function withCacheLookup<TEnv>(
       }
     }
     if (ms) {
+      const loaderEnd = performance.now();
+      ms.metrics.push({
+        label: "pipeline:loader-resolve",
+        duration: loaderEnd - loaderStart,
+        startTime: loaderStart - ms.requestStart,
+        depth: 1,
+      });
       ms.metrics.push({
         label: "pipeline:cache-lookup",
-        duration: performance.now() - pipelineStart,
+        duration: loaderEnd - pipelineStart,
         startTime: pipelineStart - ms.requestStart,
       });
     }

@@ -147,6 +147,7 @@ export function resolveLoaderData<TEnv>(
   }
 
   const loaderId = loaderEntry.loader.$$id;
+
   const ttl = resolveTtl(options.ttl, store.defaults, DEFAULT_ROUTE_TTL);
   const swrWindow = resolveSwrWindow(options.swr, store.defaults);
   const swr = swrWindow || undefined;

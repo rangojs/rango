@@ -109,6 +109,7 @@
 import type { MatchResult, ResolvedSegment } from "../types.js";
 import type { MatchContext, MatchPipelineState } from "./match-context.js";
 import { debugLog } from "./logging.js";
+import { appendMetric } from "./metrics.js";
 
 /**
  * Collect all segments from an async generator
@@ -210,10 +211,19 @@ export async function collectMatchResult<TEnv>(
 ): Promise<MatchResult> {
   const allSegments = await collectSegments(pipeline);
 
+  const buildStart = performance.now();
+
   // Update state with collected segments if not already set
   if (state.segments.length === 0) {
     state.segments = allSegments;
   }
 
-  return buildMatchResult(allSegments, ctx, state);
+  const result = buildMatchResult(allSegments, ctx, state);
+  appendMetric(
+    ctx.metricsStore,
+    "collect-result",
+    buildStart,
+    performance.now() - buildStart,
+  );
+  return result;
 }
