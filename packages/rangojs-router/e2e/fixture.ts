@@ -5,12 +5,41 @@ import { stripVTControlCharacters, styleText } from "node:util";
 import test from "@playwright/test";
 import { x } from "tinyexec";
 
+interface ProcessExitInfo {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}
+
+function formatExitInfo(exitInfo: ProcessExitInfo | null) {
+  if (!exitInfo) return "unknown exit state";
+  if (exitInfo.signal) return `signal ${exitInfo.signal}`;
+  if (exitInfo.code === null) return "unknown exit code";
+  return `code ${exitInfo.code}`;
+}
+
+function buildProcessError(
+  message: string,
+  output: {
+    stdout: string;
+    stderr: string;
+    exitInfo?: ProcessExitInfo | null;
+  },
+) {
+  const exitDetails = output.exitInfo
+    ? `\nExit: ${formatExitInfo(output.exitInfo)}`
+    : "";
+  return new Error(
+    `${message}${exitDetails}\nRecent stdout:\n${tailOutput(output.stdout)}\n\nRecent stderr:\n${tailOutput(output.stderr)}`,
+  );
+}
+
 function runCli(options: { command: string; label?: string } & SpawnOptions) {
   const [name, ...args] = options.command.split(" ");
   const child = x(name!, args, { nodeOptions: options }).process!;
   const label = `[${options.label ?? "cli"}]`;
   let stdout = "";
   let stderr = "";
+  let exitInfo: ProcessExitInfo | null = null;
   child.stdout!.on("data", (data) => {
     stdout += stripVTControlCharacters(String(data));
     if (process.env.TEST_DEBUG) {
@@ -23,28 +52,28 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
       console.log(styleText("magenta", label), data.toString());
     }
   });
-  const done = new Promise<void>((resolve) => {
-    child.on("exit", (code) => {
+  const done = new Promise<ProcessExitInfo>((resolve) => {
+    child.on("exit", (code, signal) => {
+      exitInfo = { code, signal };
       if (code !== 0 && code !== 143 && process.platform !== "win32") {
         console.log(styleText("magenta", `${label}`), `exit code ${code}`);
       }
-      resolve();
+      resolve(exitInfo);
     });
   });
 
   async function findPort(timeoutMs = 60000): Promise<number> {
-    let stdout = "";
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(
-          new Error(
-            `Timed out waiting for server to start after ${timeoutMs}ms. Stdout: ${stdout}`,
+          buildProcessError(
+            `Timed out waiting for server to start after ${timeoutMs}ms.`,
+            { stdout, stderr, exitInfo },
           ),
         );
       }, timeoutMs);
 
       child.stdout!.on("data", (data) => {
-        stdout += stripVTControlCharacters(String(data));
         const match = stdout.match(/http:\/\/localhost:(\d+)/);
         if (match) {
           clearTimeout(timeout);
@@ -52,11 +81,15 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
         }
       });
 
-      child.on("exit", (code) => {
+      child.on("exit", (code, signal) => {
         clearTimeout(timeout);
-        if (code !== 0) {
+        if (code !== 0 || signal) {
           reject(
-            new Error(`Server exited with code ${code}. Stdout: ${stdout}`),
+            buildProcessError("Server exited before reporting a port.", {
+              stdout,
+              stderr,
+              exitInfo: { code, signal },
+            }),
           );
         }
       });
@@ -82,6 +115,7 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
     done,
     findPort,
     kill,
+    exitInfo: () => exitInfo,
     stdout: () => stdout,
     stderr: () => stderr,
   };
@@ -108,11 +142,23 @@ function createIsolatedViteCacheDir(
 
 async function waitForReady(
   url: string,
-  getOutput?: () => { stdout: string; stderr: string },
+  getOutput?: () => {
+    stdout: string;
+    stderr: string;
+    exitInfo?: ProcessExitInfo | null;
+  },
   timeoutMs = process.env.CI ? 60000 : 30000,
 ) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    const output = getOutput?.();
+    if (output?.exitInfo) {
+      throw buildProcessError(`Server exited before becoming ready: ${url}`, {
+        stdout: output.stdout,
+        stderr: output.stderr,
+        exitInfo: output.exitInfo,
+      });
+    }
     try {
       const res = await fetch(url);
       if (res.ok) return;
@@ -120,10 +166,11 @@ async function waitForReady(
     await new Promise((r) => setTimeout(r, 100));
   }
   const output = getOutput?.();
-  const details = output
-    ? `\nRecent stdout:\n${tailOutput(output.stdout)}\n\nRecent stderr:\n${tailOutput(output.stderr)}`
-    : "";
-  throw new Error(`Server not ready after ${timeoutMs}ms: ${url}${details}`);
+  throw buildProcessError(`Server not ready after ${timeoutMs}ms: ${url}`, {
+    stdout: output?.stdout ?? "",
+    stderr: output?.stderr ?? "",
+    exitInfo: output?.exitInfo,
+  });
 }
 
 /**
@@ -205,6 +252,7 @@ export function useFixture(options: {
         await waitForReady(baseURL, () => ({
           stdout: proc.stdout(),
           stderr: proc.stderr(),
+          exitInfo: proc.exitInfo(),
         }));
         // Isolated dev servers need a warmup SSR request to trigger Vite's
         // dep optimizer before real tests run. The first full SSR request
@@ -241,7 +289,14 @@ export function useFixture(options: {
             ...options.cliOptions,
             env: cliEnv,
           });
-          await buildProc.done;
+          const buildExitInfo = await buildProc.done;
+          if (buildExitInfo.code !== 0 || buildExitInfo.signal) {
+            throw buildProcessError(`Build failed for ${options.root}.`, {
+              stdout: buildProc.stdout(),
+              stderr: buildProc.stderr(),
+              exitInfo: buildExitInfo,
+            });
+          }
         }
         proc = runCli({
           command: options.command ?? `pnpm preview`,
@@ -255,6 +310,7 @@ export function useFixture(options: {
         await waitForReady(baseURL, () => ({
           stdout: proc.stdout(),
           stderr: proc.stderr(),
+          exitInfo: proc.exitInfo(),
         }));
         cleanup = async () => {
           proc.kill();
