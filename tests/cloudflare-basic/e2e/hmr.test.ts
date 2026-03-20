@@ -86,6 +86,35 @@ test.describe("hmr", () => {
     return { expectedText };
   }
 
+  // First HMR trigger after `rm -rf node_modules/.vite` may cause Vite to
+  // re-discover optimized dependencies → full page reload instead of the
+  // incremental `rsc:update` event. This warmup absorbs that reload so
+  // subsequent tests get clean HMR updates.
+  test("warmup: preheat dep optimizer with dummy HMR", async ({ page }) => {
+    test.setTimeout(60_000);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    const fullPath = path.join(f.root, "src/pages/home.tsx");
+    const original = fs.readFileSync(fullPath, "utf-8");
+    const marker = `\n// HMR warmup: ${Date.now()}\n`;
+    fs.writeFileSync(fullPath, original + marker, "utf-8");
+
+    // Wait for either rsc:update (fast path) or a full reload (dep optimization).
+    // After dep optimization, the page reloads and re-hydrates.
+    await expect(async () => {
+      await page.reload();
+      await waitForHydration(page);
+      await expect(testId(page, "home-page")).toBeVisible({ timeout: 3000 });
+    }).toPass({ timeout: 30_000, intervals: [2_000, 3_000, 5_000] });
+
+    // Restore original
+    fs.writeFileSync(fullPath, original, "utf-8");
+    // Let the restore HMR settle
+    await page.waitForTimeout(3000);
+  });
+
   test("should update content after HMR without page reload", async ({
     page,
   }) => {

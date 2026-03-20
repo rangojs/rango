@@ -76,6 +76,45 @@ test.describe.serial("hmr-route-mutations", () => {
     await new Promise((r) => setTimeout(r, 5000));
   });
 
+  // First route-tree change after `rm -rf node_modules/.vite` may cause Vite
+  // to discover new client deps (e.g. spin-delay) → `✨ new dependencies
+  // optimized` → full page reload. This warmup adds a real route to trigger
+  // that discovery so subsequent tests get clean program reloads.
+  // Uses fs.writeFileSync directly (not saveAndWrite) so afterEach doesn't
+  // restore — beforeAll's git checkout handles cleanup on the next run.
+  test("warmup: preheat dep optimizer with route addition", async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+
+    const content = readUrls();
+    const modified = content.replace(
+      'path("/about", AboutPage, { name: "about" }),',
+      `path("/about", AboutPage, { name: "about" }),
+        path("/hmr-warmup", () => <div>warmup</div>, { name: "hmrWarmup" }),`,
+    );
+    const p = urlsPath();
+    fs.writeFileSync(p, modified, "utf-8");
+    const retouchTimer = setInterval(() => {
+      fs.writeFileSync(p, modified, "utf-8");
+    }, 8000);
+
+    // Wait for the route to become available (absorbs dep optimization reload)
+    await expect(async () => {
+      await page.goto(f.url("/hmr-warmup"));
+      await expect(
+        page.locator("div").filter({ hasText: "warmup" }),
+      ).toBeVisible({
+        timeout: 2000,
+      });
+    }).toPass({ timeout: 45_000, intervals: [2_000, 3_000, 5_000] });
+    clearInterval(retouchTimer);
+
+    // Restore and let the program reload settle before real tests
+    fs.writeFileSync(p, content, "utf-8");
+    await new Promise((r) => setTimeout(r, 8000));
+  });
+
   // -- Group 1: Basic Add/Remove/Rename --
 
   test("should serve a newly added route", async ({ page }) => {
