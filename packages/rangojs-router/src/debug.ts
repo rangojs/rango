@@ -2,7 +2,7 @@
  * Debug utilities for manifest inspection and comparison
  */
 
-import type { EntryData } from "./server/context";
+import { getParallelSlotCount, type EntryData } from "./server/context";
 
 /**
  * Serialized entry for debug output
@@ -64,7 +64,7 @@ export function serializeManifest(
       hasLoader: entry.loader?.length > 0,
       hasMiddleware: entry.middleware?.length > 0,
       hasErrorBoundary: entry.errorBoundary?.length > 0,
-      parallelCount: entry.parallel?.length ?? 0,
+      parallelCount: getParallelSlotCount(entry.parallel),
       interceptCount: entry.intercept?.length ?? 0,
     };
 

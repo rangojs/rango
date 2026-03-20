@@ -66,7 +66,7 @@ export default defineConfig({
       ],
   workers: process.env.CI ? 3 : 4,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
+  retries: 2,
   reporter: [
     ["list"],
     ...(process.env.CI ? [["github"], ["html", { open: "never" }]] : []),

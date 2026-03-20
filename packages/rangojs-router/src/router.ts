@@ -690,7 +690,7 @@ export function createRouter<TEnv = any>(
         errorBoundary: [],
         notFoundBoundary: [],
         layout: [],
-        parallel: [],
+        parallel: {},
         intercept: [],
         loader: [],
       };

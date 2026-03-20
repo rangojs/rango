@@ -160,8 +160,13 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
 
       // For non-action actors: cached segments the server decided not to re-render.
       // - Preserve loading=false (suppressed boundary) to maintain tree structure
-      // - Clear truthy loading (active skeleton) to prevent suspense on cached content
+      // - Preserve parallel segment loading so renderSegments can reconstruct
+      //   parallel-owned loader markers from the cached slot metadata
+      // - Clear other truthy loading values to prevent suspense on cached content
       if (actor !== "action") {
+        if (fromCache.type === "parallel" && fromCache.loading !== undefined) {
+          return fromCache;
+        }
         if (fromCache.loading !== undefined && fromCache.loading !== false) {
           return { ...fromCache, loading: undefined };
         }

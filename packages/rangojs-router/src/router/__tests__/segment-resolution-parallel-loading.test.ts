@@ -1,9 +1,11 @@
 import { createLoader } from "../../loader.js";
 import { describe, it, expect, vi } from "vitest";
 import {
+  resolveSegment,
   resolveOrphanLayoutWithRevalidation,
   resolveParallelEntry,
   resolveParallelSegmentsWithRevalidation,
+  resolveSegmentWithRevalidation,
 } from "../segment-resolution";
 
 function createDeferred<T>() {
@@ -16,6 +18,7 @@ function createDeferred<T>() {
 
 function createContext() {
   const request = new Request("https://example.com/blog");
+  const vars = new Map<any, any>();
   return {
     params: {},
     request,
@@ -24,8 +27,10 @@ function createContext() {
     url: new URL(request.url),
     env: {},
     var: {},
-    get: () => undefined,
-    set: () => {},
+    get: (key: any) => vars.get(key),
+    set: (key: any, value: any) => {
+      vars.set(key, value);
+    },
     header: () => {},
     status: () => {},
     html: () => new Response(""),
@@ -48,7 +53,7 @@ function createParallelEntry(handler: any) {
     loading: "sidebar-loading",
     loader: [],
     layout: [],
-    parallel: [],
+    parallel: {},
     intercept: [],
     middleware: [],
     revalidate: [],
@@ -64,6 +69,87 @@ const TestParallelLoader = (createLoader as Function)(
 );
 
 describe("segment-resolution parallel loading", () => {
+  it("executes parent layout handler before parallel handlers in fresh resolution", async () => {
+    const context = createContext();
+    const layoutEntry = {
+      id: "blog.layout",
+      type: "layout",
+      shortCode: "L0",
+      handler: (ctx: any) => {
+        ctx.set("fromParent", "parent-value");
+        return "layout";
+      },
+      loader: [],
+      layout: [],
+      parallel: [
+        createParallelEntry((ctx: any) => `parallel:${ctx.get("fromParent")}`),
+      ],
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+    } as any;
+
+    const result = await resolveSegment(
+      layoutEntry,
+      "/blog",
+      {},
+      context,
+      new Map(),
+      {
+        trackHandler: (p: any) => p,
+        wrapLoaderPromise: (p: Promise<any>) => p,
+      } as any,
+    );
+
+    const parallelSegment = result.find((s) => s.type === "parallel");
+    expect(parallelSegment?.component).toBe("parallel:parent-value");
+  });
+
+  it("executes parent layout handler before parallel handlers in revalidation", async () => {
+    const context = createContext();
+    const layoutEntry = {
+      id: "blog.layout",
+      type: "layout",
+      shortCode: "L0",
+      handler: (ctx: any) => {
+        ctx.set("fromParent", "parent-value");
+        return "layout";
+      },
+      loader: [],
+      layout: [],
+      parallel: [
+        createParallelEntry((ctx: any) => `parallel:${ctx.get("fromParent")}`),
+      ],
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+    } as any;
+
+    const result = await resolveSegmentWithRevalidation(
+      layoutEntry,
+      "/blog",
+      {},
+      context,
+      new Set(),
+      {},
+      context.request,
+      context.url,
+      context.url,
+      new Map(),
+      {
+        trackHandler: (p: any) => p,
+        wrapLoaderPromise: (p: Promise<any>) => p,
+      } as any,
+    );
+
+    const parallelSegment = result.segments.find((s) => s.type === "parallel");
+    expect(parallelSegment?.component).toBe("parallel:parent-value");
+  });
+
   it("does not await parallel handler promise in revalidation path when loading is set", async () => {
     const deferred = createDeferred<string>();
     const slotHandler = vi.fn(() => deferred.promise);

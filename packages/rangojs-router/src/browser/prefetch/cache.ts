@@ -1,14 +1,14 @@
 /**
  * Prefetch Cache
  *
- * In-memory cache storing prefetch Response objects for instant cache hits
+ * In-memory cache storing prefetched Response objects for instant cache hits
  * on subsequent navigation. Cache key is source-dependent (includes the
  * current page URL) because the server's diff-based response depends on
  * where the user navigates from.
  *
- * Also tracks in-flight prefetch promises so navigation can reuse a
- * prefetch that is still downloading rather than starting a duplicate
- * request. See consumeInflightPrefetch().
+ * Also tracks in-flight prefetch promises. Each promise resolves to the
+ * navigation branch of a tee'd Response, allowing navigation to adopt a
+ * still-downloading prefetch without reparsing or buffering the body.
  *
  * Replaces the previous browser HTTP cache approach which was unreliable
  * due to response draining race conditions and browser inconsistencies.
@@ -130,8 +130,8 @@ export function consumeInflightPrefetch(
 
 /**
  * Store a prefetch response in the in-memory cache.
- * The response body must be fully buffered (e.g. via arrayBuffer()) before
- * storing, so the cached Response is self-contained and network-independent.
+ * The response should be a clone() of the original so the caller can
+ * still consume the body. The clone's body streams independently.
  *
  * Skips storage if the generation has changed since the fetch started
  * (a server action invalidated the cache mid-flight).

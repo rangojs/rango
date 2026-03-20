@@ -1,4 +1,5 @@
 import { type SpawnOptions, spawn } from "node:child_process";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { stripVTControlCharacters, styleText } from "node:util";
 import test from "@playwright/test";
@@ -66,7 +67,13 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
     if (process.platform === "win32") {
       spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"]);
     } else {
-      child.kill();
+      // Kill entire process group (Vite spawns child processes like workerd).
+      // Falls back to direct kill if process group kill fails.
+      try {
+        process.kill(-child.pid!, "SIGTERM");
+      } catch {
+        child.kill();
+      }
     }
   }
 
@@ -84,6 +91,19 @@ function tailOutput(text: string, maxChars = 4000): string {
   if (!text) return "(empty)";
   if (text.length <= maxChars) return text;
   return `...${text.slice(-maxChars)}`;
+}
+
+function createIsolatedViteCacheDir(
+  cwd: string,
+  projectName: string,
+  mode: "dev" | "build" | undefined,
+) {
+  const safeProjectName = projectName.replace(/[^a-zA-Z0-9_-]/g, "-");
+  return path.join(
+    cwd,
+    ".vite-isolated",
+    `${safeProjectName}-${mode ?? "server"}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
 }
 
 async function waitForReady(
@@ -106,6 +126,36 @@ async function waitForReady(
   throw new Error(`Server not ready after ${timeoutMs}ms: ${url}${details}`);
 }
 
+/**
+ * Warm up an isolated dev server by making real SSR requests.
+ * The first SSR request triggers Vite's dep optimizer to discover SSR deps.
+ * After optimization, modules are re-evaluated and in-memory caches reset.
+ * We retry until the server returns a stable 200, absorbing the dep
+ * optimization cycle so subsequent test requests hit a settled server.
+ */
+async function warmupDevServer(url: string) {
+  const deadline = Date.now() + 30_000;
+  let lastOk = 0;
+  // Need two consecutive OK responses to confirm the server is settled
+  // (first OK may precede dep optimization, second confirms stability).
+  while (Date.now() < deadline && lastOk < 2) {
+    try {
+      const res = await fetch(url, {
+        headers: { accept: "text/html" },
+      });
+      if (res.ok) {
+        await res.text(); // consume body to complete SSR pipeline
+        lastOk++;
+      } else {
+        lastOk = 0;
+      }
+    } catch {
+      lastOk = 0;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
 export type Fixture = ReturnType<typeof useFixture>;
 
 export function useFixture(options: {
@@ -121,8 +171,23 @@ export function useFixture(options: {
 
   const cwd = path.resolve(options.root);
   let proc!: ReturnType<typeof runCli>;
+  let isolatedViteCacheDir: string | undefined;
 
   test.beforeAll(async ({}, testInfo) => {
+    if (options.isolatedServer) {
+      isolatedViteCacheDir = createIsolatedViteCacheDir(
+        cwd,
+        testInfo.project.name,
+        options.mode,
+      );
+    }
+    const cliEnv = {
+      ...options.cliOptions?.env,
+      ...(isolatedViteCacheDir
+        ? { RANGO_E2E_VITE_CACHE_DIR: isolatedViteCacheDir }
+        : {}),
+    };
+
     if (options.mode === "dev") {
       const sharedURL = !options.isolatedServer && testInfo.project.use.baseURL;
       if (sharedURL) {
@@ -133,6 +198,7 @@ export function useFixture(options: {
           label: `${options.root}:dev`,
           cwd,
           ...options.cliOptions,
+          env: cliEnv,
         });
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
@@ -140,6 +206,14 @@ export function useFixture(options: {
           stdout: proc.stdout(),
           stderr: proc.stderr(),
         }));
+        // Isolated dev servers need a warmup SSR request to trigger Vite's
+        // dep optimizer before real tests run. The first full SSR request
+        // discovers deps (e.g. spin-delay) → `ERR_OUTDATED_OPTIMIZED_DEP`
+        // → module re-evaluation → loss of in-memory cache. Without this,
+        // cache tests see different values on the second request.
+        if (options.isolatedServer) {
+          await warmupDevServer(baseURL);
+        }
         cleanup = async () => {
           proc.kill();
           await proc.done;
@@ -165,6 +239,7 @@ export function useFixture(options: {
             label: `${options.root}:build`,
             cwd,
             ...options.cliOptions,
+            env: cliEnv,
           });
           await buildProc.done;
         }
@@ -173,6 +248,7 @@ export function useFixture(options: {
           label: `${options.root}:preview`,
           cwd,
           ...options.cliOptions,
+          env: cliEnv,
         });
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
@@ -190,6 +266,9 @@ export function useFixture(options: {
 
   test.afterAll(async () => {
     await cleanup?.();
+    if (isolatedViteCacheDir) {
+      await rm(isolatedViteCacheDir, { recursive: true, force: true });
+    }
   });
 
   return {

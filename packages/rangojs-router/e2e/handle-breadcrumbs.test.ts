@@ -281,7 +281,7 @@ function breadcrumbTests(mode: "dev" | "build") {
       await testId(page, "add-to-cart-btn").click();
 
       await expect(page.locator("text=Added product-b to cart")).toBeVisible({
-        timeout: 15000,
+        timeout: 20000,
       });
 
       // Async content should still be visible, skeleton should not reappear

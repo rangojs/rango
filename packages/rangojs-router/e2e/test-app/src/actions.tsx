@@ -111,14 +111,19 @@ export async function prerenderTestAction(): Promise<{ ok: true }> {
 }
 
 /**
- * Simple action that triggers revalidation
- * Used to test that loaders registered with loader() are revalidated
+ * Simple action that triggers revalidation.
+ * Mutating a cookie makes the current route re-render so loader-based tests can
+ * verify that registered loaders are re-executed after the action completes.
  */
 export async function triggerRevalidation(): Promise<{
   triggered: boolean;
   timestamp: string;
 }> {
   await delay(100);
+  cookies().set("test-revalidation", new Date().toISOString(), {
+    path: "/",
+    maxAge: 60,
+  });
   return {
     triggered: true,
     timestamp: new Date().toISOString(),

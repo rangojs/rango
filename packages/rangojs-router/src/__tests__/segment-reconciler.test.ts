@@ -198,6 +198,23 @@ describe("segment-reconciler", () => {
 
         expect(result.segments[0].loading).toBe(false);
       });
+
+      it("preserves truthy loading on cached parallel segments not in server response", () => {
+        const cached = seg("L0.@sidebar", {
+          type: "parallel",
+          loading: "sidebar-skeleton" as any,
+        });
+
+        const result = reconcileSegments({
+          actor: "navigation",
+          matched: ["L0.@sidebar"],
+          diff: [],
+          serverSegments: [],
+          cachedSegments: [cached],
+        });
+
+        expect(result.segments[0].loading).toBe("sidebar-skeleton");
+      });
     });
 
     describe("actor: stale-revalidation - same loading behavior as action", () => {
@@ -260,6 +277,23 @@ describe("segment-reconciler", () => {
         });
 
         expect(result.segments[0].loading).toBeUndefined();
+      });
+
+      it("preserves truthy loading on cached parallel segments not in server response", () => {
+        const cached = seg("L0.@sidebar", {
+          type: "parallel",
+          loading: "sidebar-skeleton" as any,
+        });
+
+        const result = reconcileSegments({
+          actor: "stale-revalidation",
+          matched: ["L0.@sidebar"],
+          diff: [],
+          serverSegments: [],
+          cachedSegments: [cached],
+        });
+
+        expect(result.segments[0].loading).toBe("sidebar-skeleton");
       });
     });
 

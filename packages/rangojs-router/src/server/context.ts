@@ -157,10 +157,24 @@ export type InterceptEntry = {
   when: InterceptWhenFn[]; // Selector conditions - all must return true to intercept
 };
 
+export interface ParallelEntryData
+  extends EntryPropCommon, EntryPropDatas, EntryPropSegments {
+  type: "parallel";
+  handler: Record<`@${string}`, Handler<any, any, any> | ReactNode>;
+  loading?: ReactNode | false;
+  transition?: TransitionConfig;
+  /** Set when any parallel slot is a Static definition */
+  isStaticPrerender?: true;
+  /** Per-slot static handler $$ids for build-time store lookup */
+  staticHandlerIds?: Record<string, string>;
+}
+
+export type ParallelEntries = Partial<Record<`@${string}`, ParallelEntryData>>;
+
 export type EntryPropSegments = {
   loader: LoaderEntry[];
   layout: EntryData[];
-  parallel: EntryData[]; // type: "parallel" entries with their own loaders/revalidate/loading
+  parallel: ParallelEntries; // slot -> parallel entry (same entry may back multiple slots)
   intercept: InterceptEntry[]; // intercept definitions for soft navigation
 };
 
@@ -200,18 +214,7 @@ export type EntryData =
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
-  | ({
-      type: "parallel";
-      handler: Record<`@${string}`, Handler<any, any, any> | ReactNode>;
-      loading?: ReactNode | false;
-      transition?: TransitionConfig;
-      /** Set when any parallel slot is a Static definition */
-      isStaticPrerender?: true;
-      /** Per-slot static handler $$ids for build-time store lookup */
-      staticHandlerIds?: Record<string, string>;
-    } & EntryPropCommon &
-      EntryPropDatas &
-      EntryPropSegments)
+  | ParallelEntryData
   | ({
       type: "cache";
       /** Cache entries create cache boundaries and render like layouts (with Outlet) */
@@ -577,9 +580,54 @@ export function getIsolatedLazyParent(
     errorBoundary: [...captured.errorBoundary],
     notFoundBoundary: [...captured.notFoundBoundary],
     layout: [...captured.layout],
-    parallel: [...captured.parallel],
+    parallel: { ...captured.parallel },
     intercept: [...captured.intercept],
   };
+}
+
+export function getParallelEntries(
+  parallels: ParallelEntries | EntryData[] | undefined,
+): ParallelEntryData[] {
+  if (!parallels) return [];
+  if (Array.isArray(parallels)) {
+    return parallels.filter(
+      (entry): entry is ParallelEntryData => entry.type === "parallel",
+    );
+  }
+  return Object.values(parallels).filter(
+    (entry): entry is ParallelEntryData => !!entry,
+  );
+}
+
+export function getParallelSlotEntries(
+  parallels: ParallelEntries | EntryData[] | undefined,
+): Array<{ slot: `@${string}`; entry: ParallelEntryData }> {
+  if (!parallels) return [];
+
+  if (Array.isArray(parallels)) {
+    return getParallelEntries(parallels).flatMap((entry) =>
+      (Object.keys(entry.handler) as `@${string}`[]).map((slot) => ({
+        slot,
+        entry,
+      })),
+    );
+  }
+
+  return Object.entries(parallels)
+    .filter(([, entry]) => !!entry)
+    .map(([slot, entry]) => ({
+      slot: slot as `@${string}`,
+      entry: entry!,
+    }));
+}
+
+export function getParallelSlotCount(
+  parallels: ParallelEntries | EntryData[] | undefined,
+): number {
+  if (!parallels) return 0;
+  return Array.isArray(parallels)
+    ? parallels.filter((entry) => entry?.type === "parallel").length
+    : Object.keys(parallels).length;
 }
 
 // ============================================================================

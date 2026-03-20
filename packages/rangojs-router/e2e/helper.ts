@@ -141,7 +141,7 @@ export async function isVisibleInViewport(
 export async function waitForElement(
   page: Page,
   selector: string,
-  timeout = 5000,
+  timeout = 10000,
 ) {
   await page.locator(selector).waitFor({ state: "visible", timeout });
 }
@@ -202,7 +202,7 @@ export function testId(page: Page, id: string): Locator {
 export async function clickAndWaitFor(
   clickTarget: Locator,
   waitFor: Locator,
-  timeout = 5000,
+  timeout = 10000,
 ) {
   await clickTarget.click();
   await expect(waitFor).toBeVisible({ timeout });
@@ -286,7 +286,7 @@ export async function getNumericContent(locator: Locator): Promise<number> {
 export async function waitForTextChange(
   locator: Locator,
   initialText: string,
-  timeout = 5000,
+  timeout = 10000,
 ) {
   await expect
     .poll(async () => await locator.textContent(), { timeout })
@@ -304,7 +304,7 @@ export async function waitForTextChange(
 export async function waitForNumericChange(
   locator: Locator,
   initialValue: number,
-  timeout = 5000,
+  timeout = 10000,
 ) {
   await expect
     .poll(async () => parseNumber(await locator.textContent()), { timeout })

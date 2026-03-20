@@ -60,19 +60,35 @@ function createMockRequestContext(
 // Mock Middleware Context
 // ============================================================================
 
+/**
+ * Create a mock middleware context that mirrors production behavior:
+ * - ctx.request.url: raw URL with all params (including _rsc*)
+ * - ctx.url: stripped URL without _rsc* params (as stripInternalParams does)
+ *
+ * The document cache middleware must use ctx.request.url for _rsc* detection
+ * since ctx.url has them stripped by the middleware pipeline.
+ */
 function createMockMiddlewareContext(
   url: string,
   options: { method?: string; headers?: Record<string, string> } = {},
 ): MiddlewareContext<any> {
-  const parsedUrl = new URL(url, "http://localhost");
-  const request = new Request(parsedUrl.toString(), {
+  const rawUrl = new URL(url, "http://localhost");
+  const request = new Request(rawUrl.toString(), {
     method: options.method ?? "GET",
     headers: options.headers,
   });
 
+  // Simulate stripInternalParams: remove _rsc* params from ctx.url
+  const strippedUrl = new URL(rawUrl);
+  for (const key of [...strippedUrl.searchParams.keys()]) {
+    if (key.startsWith("_rsc")) {
+      strippedUrl.searchParams.delete(key);
+    }
+  }
+
   return {
     request,
-    url: parsedUrl,
+    url: strippedUrl,
     env: {},
     var: {},
     get: vi.fn(),

@@ -109,6 +109,65 @@ parallel(
 )
 ```
 
+### Streaming Behavior
+
+Parallels with `loading()` are **independent streaming units**. They don't
+block the parent layout or sibling routes during SSR:
+
+- **With `loading()`**: The skeleton renders immediately. The loader runs
+  in the background and streams data to the client when ready. The rest
+  of the page (layout, route content, other parallels) renders without
+  waiting.
+- **Without `loading()`**: The parallel's loaders block the parent layout's
+  rendering. Use this when the data must be available before the page
+  paints (e.g., critical above-the-fold content).
+- **SPA navigation**: Parallel loaders resolve in the background. The
+  existing parallel UI stays visible — no skeleton flash on route changes
+  within the same layout.
+
+```typescript
+// Sidebar streams independently — page renders immediately
+parallel(
+  { "@sidebar": () => <Sidebar /> },
+  () => [loader(SlowSidebarLoader), loading(<SidebarSkeleton />)]
+)
+
+// Cart data blocks layout — must be ready before paint
+parallel(
+  { "@cartBadge": () => <CartBadge /> },
+  () => [loader(CartCountLoader)]  // No loading() = awaited
+)
+```
+
+## Slot Override Semantics
+
+When multiple `parallel()` calls define the same slot name, **the last
+definition wins**. Earlier definitions of that slot are removed. Other
+slots from the earlier call are preserved.
+
+This enables composition patterns where included routes override
+parent-defined slots:
+
+```typescript
+layout(DashboardLayout, () => [
+  // Base slots
+  parallel({
+    "@sidebar": () => <DefaultSidebar />,
+    "@footer": () => <Footer />,
+  }),
+
+  // Override just @sidebar — @footer is preserved
+  parallel({ "@sidebar": () => <CustomSidebar /> }),
+
+  path("/", DashboardIndex, { name: "index" }),
+])
+```
+
+After resolution, the layout has two parallel entries:
+
+- `{ "@footer": () => <Footer /> }` (first call, `@sidebar` removed)
+- `{ "@sidebar": () => <CustomSidebar /> }` (second call, wins)
+
 ## Multiple Parallel Slots
 
 ```typescript

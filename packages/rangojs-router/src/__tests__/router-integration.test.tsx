@@ -4,6 +4,7 @@ import { urls } from "../urls.js";
 import { createLoader } from "../loader.js";
 import { buildRouteTree } from "./helpers/route-tree.js";
 import type { MiddlewareFn } from "../router/middleware.js";
+import { getParallelSlotCount } from "../server/context.js";
 
 // Dummy components
 const RootLayout = (<div>root</div>) as React.ReactNode;
@@ -397,17 +398,54 @@ describe("route tree inspection", () => {
 
     const homeEntry = tree.entry("home")!;
     const layoutEntry = homeEntry.parent!;
-    expect(layoutEntry.parallel).toHaveLength(1);
-    expect(layoutEntry.parallel[0].type).toBe("parallel");
+    expect(getParallelSlotCount(layoutEntry.parallel)).toBe(2);
+    expect(layoutEntry.parallel["@sidebar"]!.type).toBe("parallel");
+    expect(layoutEntry.parallel["@main"]!.type).toBe("parallel");
+    expect(
+      Object.keys(
+        layoutEntry.parallel["@sidebar"]!.handler as Record<string, unknown>,
+      ),
+    ).toEqual(["@sidebar"]);
+    expect(
+      Object.keys(
+        layoutEntry.parallel["@main"]!.handler as Record<string, unknown>,
+      ),
+    ).toEqual(["@main"]);
+  });
 
-    // Parallel slot names are on the layout entry's parallel array
-    const parallelHandler = layoutEntry.parallel[0].handler as Record<
-      string,
-      unknown
-    >;
-    const slotNames = Object.keys(parallelHandler);
-    expect(slotNames).toContain("@sidebar");
-    expect(slotNames).toContain("@main");
+  it("uses last parallel definition for duplicate slot names", () => {
+    const OverrideSidebar = (<div>override-sidebar</div>) as React.ReactNode;
+
+    const tree = buildRouteTree(
+      urls(({ path, layout, parallel }) => [
+        layout(RootLayout, () => [
+          path("/", HomePage, { name: "home" }),
+          parallel({ "@sidebar": Sidebar, "@main": MainContent }),
+          parallel({ "@sidebar": OverrideSidebar }),
+        ]),
+      ]),
+    );
+
+    const homeEntry = tree.entry("home")!;
+    const layoutEntry = homeEntry.parent!;
+
+    expect(getParallelSlotCount(layoutEntry.parallel)).toBe(2);
+
+    const sidebarEntry = layoutEntry.parallel["@sidebar"]!;
+    const mainEntry = layoutEntry.parallel["@main"]!;
+
+    expect(
+      Object.keys(sidebarEntry.handler as Record<string, unknown>),
+    ).toEqual(["@sidebar"]);
+    expect(Object.keys(mainEntry.handler as Record<string, unknown>)).toEqual([
+      "@main",
+    ]);
+    expect((sidebarEntry.handler as Record<string, unknown>)["@sidebar"]).toBe(
+      OverrideSidebar,
+    );
+    expect((mainEntry.handler as Record<string, unknown>)["@main"]).toBe(
+      MainContent,
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -658,8 +696,8 @@ describe("route tree inspection", () => {
     const layoutEntry = feedEntry.parent!;
 
     // Parallel slot is on the layout
-    expect(layoutEntry.parallel).toHaveLength(1);
-    const parallelEntry = layoutEntry.parallel[0];
+    expect(getParallelSlotCount(layoutEntry.parallel)).toBe(2);
+    const parallelEntry = layoutEntry.parallel["@sidebar"]!;
     expect(parallelEntry.type).toBe("parallel");
 
     // Parallel has its own loader and loading
@@ -669,9 +707,12 @@ describe("route tree inspection", () => {
 
     // Slot names
     const handler = parallelEntry.handler as Record<string, unknown>;
-    expect(Object.keys(handler)).toEqual(
-      expect.arrayContaining(["@sidebar", "@content"]),
-    );
+    expect(Object.keys(handler)).toEqual(["@sidebar"]);
+    expect(
+      Object.keys(
+        layoutEntry.parallel["@content"]!.handler as Record<string, unknown>,
+      ),
+    ).toEqual(["@content"]);
 
     // Parallel gets a P prefix shortCode
     expect(parallelEntry.shortCode).toMatch(/^M0L0L0P/);
@@ -1213,13 +1254,12 @@ describe("route tree inspection", () => {
     expect(innerLayout.loader[0].loader).toBe(DeepLoader);
 
     // InnerLayout has parallel slots
-    expect(innerLayout.parallel).toHaveLength(1);
-    const parallelEntry = innerLayout.parallel[0];
+    expect(getParallelSlotCount(innerLayout.parallel)).toBe(2);
+    const parallelEntry = innerLayout.parallel["@panelA"]!;
     expect(parallelEntry.type).toBe("parallel");
-    const slots = parallelEntry.handler as Record<string, unknown>;
-    expect(Object.keys(slots)).toEqual(
-      expect.arrayContaining(["@panelA", "@panelB"]),
-    );
+    expect(
+      Object.keys(parallelEntry.handler as Record<string, unknown>),
+    ).toEqual(["@panelA"]);
 
     // DeepLayout carries middleware (no nested orphan layouts)
     expect(innerLayout.layout).toHaveLength(0);
@@ -1357,8 +1397,8 @@ describe("route tree inspection", () => {
     const homeEntry = tree.entry("home")!;
     const navLayout = homeEntry.parent!;
     expect(navLayout.type).toBe("layout"); // NavLayout
-    expect(navLayout.parallel).toHaveLength(1);
-    const sidebarSlot = navLayout.parallel[0];
+    expect(getParallelSlotCount(navLayout.parallel)).toBe(1);
+    const sidebarSlot = navLayout.parallel["@sidebar"]!;
     expect(sidebarSlot.type).toBe("parallel");
     const sidebarHandler = sidebarSlot.handler as Record<string, unknown>;
     expect(Object.keys(sidebarHandler)).toContain("@sidebar");

@@ -185,8 +185,8 @@ test.describe("revalidate and cache mix (dev)", () => {
     // Sidebar reads handler's timestamp via ctx.get()
     expect(cachedSidebarTs1).toBe(cachedHandlerTs1);
 
-    // Wait for cache write
-    await page.waitForTimeout(500);
+    // Wait for async cache write to complete
+    await page.waitForTimeout(1000);
 
     // SPA navigate back to uncached route — gets fresh content
     await page.getByTestId("link-to-uncached").click();

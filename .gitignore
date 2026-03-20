@@ -10,3 +10,4 @@ lefthook-local.yml
 
 # Temporary research docs
 MIDDLEWARE_RESEARCH.md
+.vite*

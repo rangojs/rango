@@ -19,8 +19,8 @@ import {
 } from "./response-adapter.js";
 import {
   buildPrefetchKey,
-  consumePrefetch,
   consumeInflightPrefetch,
+  consumePrefetch,
 } from "./prefetch/cache.js";
 
 /**
@@ -89,22 +89,18 @@ export function createNavigationClient(
         fetchUrl.searchParams.set("_rsc_v", version);
       }
 
-      // Check in-memory prefetch cache before making a network request.
+      // Check completed in-memory prefetch cache before making a network request.
       // The cache key includes the source URL (previousUrl) because the
       // server's diff response depends on the source page context.
       // Skip cache for stale revalidation (needs fresh data), HMR (needs
       // fresh modules), and intercept contexts (source-dependent responses).
+      //
       const canUsePrefetch = !staleRevalidation && !hmr && !interceptSourceUrl;
       const cacheKey = buildPrefetchKey(previousUrl, fetchUrl);
       const cachedResponse = canUsePrefetch ? consumePrefetch(cacheKey) : null;
-      // If no completed cache entry, check for in-flight prefetch.
-      // This reuses a prefetch that is still downloading rather than
-      // starting a duplicate request from scratch.
-      const inflightPrefetch =
-        !cachedResponse && canUsePrefetch
-          ? consumeInflightPrefetch(cacheKey)
-          : null;
-
+      const inflightResponsePromise = canUsePrefetch
+        ? consumeInflightPrefetch(cacheKey)
+        : null;
       // Track when the stream completes
       let resolveStreamComplete: () => void;
       const streamComplete = new Promise<void>((resolve) => {
@@ -195,33 +191,24 @@ export function createNavigationClient(
             signal,
           );
         });
-      } else if (inflightPrefetch) {
+      } else if (inflightResponsePromise) {
         if (tx) {
           browserDebugLog(tx, "reusing inflight prefetch", { key: cacheKey });
         }
-        // Await the in-flight prefetch. If it resolves with a Response,
-        // use it like a cache hit. If it fails (null), fall back to
-        // a fresh navigation fetch.
-        responsePromise = inflightPrefetch.then((prefetchResponse) => {
-          if (!prefetchResponse) {
+        responsePromise = inflightResponsePromise.then(async (response) => {
+          if (!response) {
             if (tx) {
-              browserDebugLog(
-                tx,
-                "inflight prefetch failed, falling back to fetch",
-              );
+              browserDebugLog(tx, "inflight prefetch unavailable, refetching");
             }
             return doFreshFetch();
           }
-          if (tx) {
-            browserDebugLog(tx, "inflight prefetch resolved", {
-              key: cacheKey,
-            });
-          }
+
           return teeWithCompletion(
-            prefetchResponse,
+            response,
             () => {
-              if (tx)
+              if (tx) {
                 browserDebugLog(tx, "stream complete (from inflight prefetch)");
+              }
               resolveStreamComplete();
             },
             signal,

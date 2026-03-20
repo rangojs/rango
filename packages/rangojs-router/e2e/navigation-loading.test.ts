@@ -104,9 +104,7 @@ test.describe("navigation-state", () => {
     // Wait for content to load
     await expect(
       page.locator('[data-testid="slow-modal-product-name"]'),
-    ).toBeVisible({
-      timeout: 5000,
-    });
+    ).toBeVisible();
 
     // Check history state contains our passed state (typed location state uses __rsc_ls_ prefix)
     // Key is auto-generated: __rsc_ls_src/location-states.ts#SlowProductLocationState
@@ -156,9 +154,7 @@ test.describe("intercept-loading-states", () => {
     // Wait for loader to resolve (2s delay) - content should appear
     await expect(
       page.locator('[data-testid="slow-modal-product-name"]'),
-    ).toBeVisible({
-      timeout: 5000,
-    });
+    ).toBeVisible();
 
     // Loading skeleton should be gone
     await expect(
@@ -202,9 +198,7 @@ test.describe("intercept-loading-states", () => {
     // Wait for content to load
     await expect(
       page.locator('[data-testid="slow-modal-product-name"]'),
-    ).toBeVisible({
-      timeout: 5000,
-    });
+    ).toBeVisible();
 
     // Background should still be visible after loading
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
@@ -281,9 +275,7 @@ test.describe("intercept-loading-states", () => {
     // Wait for modal content to load (2s loader delay)
     await expect(
       page.locator('[data-testid="slow-modal-product-name"]'),
-    ).toBeVisible({
-      timeout: 5000,
-    });
+    ).toBeVisible();
 
     // Click streaming action button
     const streamingButton = page.locator(
@@ -331,9 +323,7 @@ test.describe("intercept-loading-states", () => {
     // Wait for modal content to load
     await expect(
       page.locator('[data-testid="slow-modal-product-name"]'),
-    ).toBeVisible({
-      timeout: 5000,
-    });
+    ).toBeVisible();
 
     // Click streaming action button
     const streamingButton = page.locator(
@@ -373,9 +363,7 @@ test.describe("intercept-loading-states", () => {
     // Wait for modal content to load (2s loader delay)
     await expect(
       page.locator('[data-testid="slow-modal-product-name"]'),
-    ).toBeVisible({
-      timeout: 5000,
-    });
+    ).toBeVisible();
 
     // Loading skeleton should be gone after content loads
     await expect(

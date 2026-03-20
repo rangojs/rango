@@ -196,16 +196,12 @@ test.describe("intercept-navigation", () => {
 
     // Step 3: Navigate back - should show modal again with index background
     await goBack(page);
-    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
-      timeout: 5000,
-    });
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
     // Background should still show index content (not detail page)
     await expect(
       page.locator('[data-testid="product-link-product-b"]'),
-    ).toBeVisible({
-      timeout: 5000,
-    });
+    ).toBeVisible();
 
     // Step 4: Close modal by navigating back again
     await goBack(page);
@@ -219,15 +215,11 @@ test.describe("intercept-navigation", () => {
     // Index content should be visible
     await expect(
       page.locator('[data-testid="product-link-product-a"]'),
-    ).toBeVisible({
-      timeout: 5000,
-    });
+    ).toBeVisible();
 
     // Step 5: Click the same product again
     await productLink.click();
-    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
-      timeout: 5000,
-    });
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
     // BUG: Background should show index content, NOT the detail page
     // The detail page has segment-metadata, index has the product list
@@ -431,7 +423,7 @@ test.describe("stale-revalidation", () => {
     await addToCartButton.click();
     await expect(
       page.locator('[data-testid="add-to-cart-btn-result"]'),
-    ).toBeVisible({ timeout: 5000 });
+    ).toBeVisible();
 
     // 5. Go back - should return to intercept modal
     await goBack(page);
@@ -495,7 +487,7 @@ test.describe("stale-revalidation", () => {
     await addToCartButton.click();
     await expect(
       page.locator('[data-testid="add-to-cart-btn-result"]'),
-    ).toBeVisible({ timeout: 5000 });
+    ).toBeVisible();
 
     // 7. Modal should NOT appear - we're on detail page, not intercept
     await expect(
@@ -687,9 +679,7 @@ test.describe("navigation (production)", () => {
     await page.locator('[data-testid="product-link-product-a"]').click();
 
     // Modal should appear (intercept)
-    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
-      timeout: 5000,
-    });
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
     // URL should change
     await expect(page).toHaveURL(/\/product\/product-a/);
@@ -705,17 +695,15 @@ test.describe("navigation (production)", () => {
     await page.locator('[data-testid="product-link-product-a"]').click();
 
     // Modal should show
-    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
-      timeout: 5000,
-    });
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
     // Navigate to full details
     await page.locator('[data-testid="view-full-details"]').click();
 
     // Should see full product page
-    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible({
-      timeout: 5000,
-    });
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
 
     // Modal should be gone after navigating to full details
     await expect(
@@ -731,21 +719,17 @@ test.describe("navigation (production)", () => {
 
     // Navigate to product modal
     await page.locator('[data-testid="product-link-product-a"]').click();
-    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
-      timeout: 5000,
-    });
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
     // Go to full details
     await page.locator('[data-testid="view-full-details"]').click();
-    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible({
-      timeout: 5000,
-    });
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
 
     // Back should show modal
     await page.goBack();
-    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
-      timeout: 5000,
-    });
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
     // Back again should show index
     await page.goBack();

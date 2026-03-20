@@ -87,9 +87,7 @@ test.describe("handle-meta", () => {
       await waitForHydration(page);
 
       // Title should be updated with product name after data loads
-      await expect(page).toHaveTitle("Product A - RSC Router Test App", {
-        timeout: 5000,
-      });
+      await expect(page).toHaveTitle("Product A - RSC Router Test App");
     });
 
     test("should update description after awaiting product data", async ({
@@ -103,7 +101,6 @@ test.describe("handle-meta", () => {
       await expect(description).toHaveAttribute(
         "content",
         "First test product",
-        { timeout: 5000 },
       );
     });
 
@@ -115,9 +112,7 @@ test.describe("handle-meta", () => {
 
       const ogTitle = await page.locator('meta[property="og:title"]');
       await expect(ogTitle).toHaveCount(1);
-      await expect(ogTitle).toHaveAttribute("content", "Product A", {
-        timeout: 5000,
-      });
+      await expect(ogTitle).toHaveAttribute("content", "Product A");
     });
   });
 
@@ -164,14 +159,10 @@ test.describe("handle-meta", () => {
 
       // Navigate to post-2
       await testId(page, "back-to-blog").click();
-      await expect(testId(page, "blog-index-page")).toBeVisible({
-        timeout: 5000,
-      });
+      await expect(testId(page, "blog-index-page")).toBeVisible();
 
       await testId(page, "blog-post-link-2").click();
-      await expect(testId(page, "blog-post-page")).toBeVisible({
-        timeout: 5000,
-      });
+      await expect(testId(page, "blog-post-page")).toBeVisible();
 
       // Async meta should update for post-2
       ogDescription = page.locator('meta[property="og:description"]');
@@ -190,7 +181,7 @@ test.describe("handle-meta", () => {
       await waitForHydration(page);
 
       // Wait for product data to load
-      await expect(testId(page, "product-name")).toBeVisible({ timeout: 5000 });
+      await expect(testId(page, "product-name")).toBeVisible();
 
       // Check JSON-LD script exists
       const jsonLd = await page.locator('script[type="application/ld+json"]');
@@ -235,20 +226,14 @@ test.describe("handle-meta", () => {
       await testId(page, "product-link-product-a").click();
 
       // Wait for modal to appear
-      await expect(testId(page, "product-modal")).toBeVisible({
-        timeout: 5000,
-      });
+      await expect(testId(page, "product-modal")).toBeVisible();
 
       // Click "View Full Details" to navigate to actual product page
       await testId(page, "view-full-details").click();
 
       // Wait for product page and title update
-      await expect(testId(page, "product-detail-page")).toBeVisible({
-        timeout: 5000,
-      });
-      await expect(page).toHaveTitle("Product A - RSC Router Test App", {
-        timeout: 5000,
-      });
+      await expect(testId(page, "product-detail-page")).toBeVisible();
+      await expect(page).toHaveTitle("Product A - RSC Router Test App");
     });
 
     test("should update title on soft navigation between blog posts", async ({
@@ -261,25 +246,19 @@ test.describe("handle-meta", () => {
 
       // Navigate to post-1
       await testId(page, "blog-post-link-1").click();
-      await expect(testId(page, "blog-post-page")).toBeVisible({
-        timeout: 5000,
-      });
+      await expect(testId(page, "blog-post-page")).toBeVisible();
       await expect(page).toHaveTitle(
         "Post post-1 - Blog - RSC Router Test App",
       );
 
       // Navigate back to blog
       await testId(page, "back-to-blog").click();
-      await expect(testId(page, "blog-index-page")).toBeVisible({
-        timeout: 5000,
-      });
+      await expect(testId(page, "blog-index-page")).toBeVisible();
       await expect(page).toHaveTitle("Blog - RSC Router Test App");
 
       // Navigate to post-2
       await testId(page, "blog-post-link-2").click();
-      await expect(testId(page, "blog-post-page")).toBeVisible({
-        timeout: 5000,
-      });
+      await expect(testId(page, "blog-post-page")).toBeVisible();
       await expect(page).toHaveTitle(
         "Post post-2 - Blog - RSC Router Test App",
       );
@@ -606,16 +585,12 @@ test.describe("handle-meta", () => {
 
       // Navigate to child
       await testId(page, "meta-template-child-link").click();
-      await expect(testId(page, "meta-template-child-page")).toBeVisible({
-        timeout: 5000,
-      });
+      await expect(testId(page, "meta-template-child-page")).toBeVisible();
       await expect(page).toHaveTitle("Child Page | Test Site");
 
       // Navigate to absolute
       await testId(page, "meta-template-absolute-link").click();
-      await expect(testId(page, "meta-template-absolute-page")).toBeVisible({
-        timeout: 5000,
-      });
+      await expect(testId(page, "meta-template-absolute-page")).toBeVisible();
       await expect(page).toHaveTitle("Custom Absolute Title");
     });
   });
@@ -716,9 +691,7 @@ test.describe("handle-meta", () => {
 
       // Navigate to child that unsets robots
       await testId(page, "meta-unset-child-link").click();
-      await expect(testId(page, "meta-unset-child-page")).toBeVisible({
-        timeout: 5000,
-      });
+      await expect(testId(page, "meta-unset-child-page")).toBeVisible();
 
       // robots should be gone
       const robotsOnChild = page.locator('meta[name="robots"]');
@@ -726,9 +699,7 @@ test.describe("handle-meta", () => {
 
       // Navigate back to index
       await testId(page, "meta-unset-index-link").click();
-      await expect(testId(page, "meta-unset-index-page")).toBeVisible({
-        timeout: 5000,
-      });
+      await expect(testId(page, "meta-unset-index-page")).toBeVisible();
 
       // robots should be back
       const robotsBack = page.locator('meta[name="robots"]');
@@ -909,9 +880,7 @@ test.describe("handle-meta (production)", () => {
       await page.goto(f.url("/product/product-a"));
       await waitForHydration(page);
 
-      await expect(page).toHaveTitle("Product A - RSC Router Test App", {
-        timeout: 5000,
-      });
+      await expect(page).toHaveTitle("Product A - RSC Router Test App");
     });
 
     test("should include og:title after awaiting product data", async ({
@@ -922,9 +891,7 @@ test.describe("handle-meta (production)", () => {
 
       const ogTitle = await page.locator('meta[property="og:title"]');
       await expect(ogTitle).toHaveCount(1);
-      await expect(ogTitle).toHaveAttribute("content", "Product A", {
-        timeout: 5000,
-      });
+      await expect(ogTitle).toHaveAttribute("content", "Product A");
     });
   });
 
@@ -1081,17 +1048,11 @@ test.describe("handle-meta (production)", () => {
       await expect(page).toHaveTitle("RSC Router Test App");
 
       await testId(page, "product-link-product-a").click();
-      await expect(testId(page, "product-modal")).toBeVisible({
-        timeout: 5000,
-      });
+      await expect(testId(page, "product-modal")).toBeVisible();
 
       await testId(page, "view-full-details").click();
-      await expect(testId(page, "product-detail-page")).toBeVisible({
-        timeout: 5000,
-      });
-      await expect(page).toHaveTitle("Product A - RSC Router Test App", {
-        timeout: 5000,
-      });
+      await expect(testId(page, "product-detail-page")).toBeVisible();
+      await expect(page).toHaveTitle("Product A - RSC Router Test App");
     });
   });
 });

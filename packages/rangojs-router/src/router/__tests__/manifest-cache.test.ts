@@ -41,7 +41,7 @@ function createTestEntry(routeKey: string, handlerSpy: () => void): RouteEntry {
         notFoundBoundary: [],
         loader: [],
         layout: [],
-        parallel: [],
+        parallel: {},
         intercept: [],
       };
       store.manifest.set("root", layoutEntry);
@@ -58,7 +58,7 @@ function createTestEntry(routeKey: string, handlerSpy: () => void): RouteEntry {
         notFoundBoundary: [],
         loader: [],
         layout: [],
-        parallel: [],
+        parallel: {},
         intercept: [],
       };
       store.manifest.set(routeKey, routeEntry);

@@ -65,10 +65,10 @@ test.describe("streaming-actions", () => {
       // Verify "Streaming..." loading state appears in the result area
       await expect(
         page.locator('[data-testid="streaming-btn-loading"]'),
-      ).toContainText("Streaming...", { timeout: 5000 });
+      ).toContainText("Streaming...");
 
       // Verify state transitions to streaming
-      await expect(actionStatus).toContainText("streaming", { timeout: 5000 });
+      await expect(actionStatus).toContainText("streaming");
 
       // Wait for the streaming result to show "Completed!"
       await expect(
@@ -76,7 +76,7 @@ test.describe("streaming-actions", () => {
       ).toContainText("Completed", { timeout: 10000 });
 
       // Verify state returns to idle after completion
-      await expect(actionStatus).toContainText("idle", { timeout: 5000 });
+      await expect(actionStatus).toContainText("idle");
 
       // Verify timing - streaming completes after ~3000ms
       const elapsed = Date.now() - startTime;

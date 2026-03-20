@@ -69,6 +69,14 @@ global middleware
   use params: `loader(Fn, () => [cache({ ttl })])`.
 - Route-level `cache()` does not cache loader segments; loaders remain live.
 - Prerendered handlers can be frozen while loaders remain live.
+- Parallel slots with `loading()` are independent streaming units. Their
+  loaders run concurrently without blocking the parent layout or sibling
+  routes — on SSR (skeleton renders immediately, data streams), on SPA
+  navigation (existing slot UI stays visible, data refreshes in background),
+  and on cache-hit paths (loaders are reconstructed fresh).
+  Without `loading()`, parallel loaders block the parent.
+- Slot override: when multiple `parallel()` calls define the same `@slot` name,
+  the last definition wins. Earlier definitions of that slot are removed.
 
 ## Handler Loading Contract
 

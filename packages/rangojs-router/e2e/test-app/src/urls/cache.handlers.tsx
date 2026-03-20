@@ -57,6 +57,7 @@ export const CacheInterceptIndexHandler: Handler<
       <li>
         <Link
           to="/cache-test/intercept/item-a"
+          prefetch="none"
           data-testid="cache-intercept-link-a"
         >
           Item A
@@ -65,6 +66,7 @@ export const CacheInterceptIndexHandler: Handler<
       <li>
         <Link
           to="/cache-test/intercept/item-b"
+          prefetch="none"
           data-testid="cache-intercept-link-b"
         >
           Item B
