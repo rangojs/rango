@@ -281,7 +281,11 @@ export function useFixture(options: {
         baseURL = sharedURL;
       } else {
         const hasBuildDep = testInfo.project.dependencies.includes("build");
-        if (!process.env.TEST_SKIP_BUILD && !hasBuildDep) {
+        // The shared Playwright build setup only builds e2e/test-app.
+        // Isolated production fixtures still need their own local build.
+        const canReuseSharedBuild =
+          hasBuildDep && isDefaultRoot && !options.isolatedServer;
+        if (!process.env.TEST_SKIP_BUILD && !canReuseSharedBuild) {
           const buildProc = runCli({
             command: options.buildCommand ?? `pnpm build`,
             label: `${options.root}:build`,
