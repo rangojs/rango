@@ -15,7 +15,12 @@ function formatMs(value: number): string {
 }
 
 function sortMetrics(metrics: PerformanceMetric[]): PerformanceMetric[] {
-  return [...metrics].sort((a, b) => a.startTime - b.startTime);
+  return [...metrics].sort((a, b) => {
+    // handler:total always goes last (it wraps everything)
+    if (a.label === "handler:total") return 1;
+    if (b.label === "handler:total") return -1;
+    return a.startTime - b.startTime;
+  });
 }
 
 interface Span {
