@@ -104,6 +104,7 @@ import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
+import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 
 /**
  * Creates background revalidation middleware
@@ -143,8 +144,9 @@ export function withBackgroundRevalidation<TEnv>(
 
     const requestCtx = getRequestContext();
     const cacheScope = ctx.cacheScope;
-    const debugPerf = !!ctx.metricsStore;
-    const reqId = debugPerf ? getOrCreateRequestId(ctx.request) : undefined;
+    const reqId = INTERNAL_RANGO_DEBUG
+      ? getOrCreateRequestId(ctx.request)
+      : undefined;
 
     requestCtx?.waitUntil(async () => {
       const start = performance.now();
@@ -210,7 +212,7 @@ export function withBackgroundRevalidation<TEnv>(
           completeSegments,
           ctx.isIntercept,
         );
-        if (debugPerf) {
+        if (INTERNAL_RANGO_DEBUG) {
           const dur = performance.now() - start;
           console.log(
             `[RSC Background][req:${reqId}] SWR revalidation ${ctx.pathname} (${dur.toFixed(2)}ms) segments=${completeSegments.length}`,
@@ -220,7 +222,7 @@ export function withBackgroundRevalidation<TEnv>(
           pathname: ctx.pathname,
         });
       } catch (error) {
-        if (debugPerf) {
+        if (INTERNAL_RANGO_DEBUG) {
           const dur = performance.now() - start;
           console.log(
             `[RSC Background][req:${reqId}] SWR revalidation ${ctx.pathname} FAILED (${dur.toFixed(2)}ms) error=${String(error)}`,

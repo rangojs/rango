@@ -490,7 +490,7 @@ export function createRSCHandler<
       // has completed so :post spans are captured in the timeline.
       // Handler timing parts are always emitted (even without debug metrics)
       // so non-debug requests still get bootstrap Server-Timing entries.
-      const metricsFinStart = performance.now();
+      const finalizeStart = performance.now();
       const handlerTimingArr: string[] = variables.__handlerTiming || [];
       // Preserve any existing Server-Timing set by response routes or middleware
       const existingTiming = response.headers.get("Server-Timing");
@@ -500,12 +500,6 @@ export function createRSCHandler<
 
       const metricsStore = requestContext._metricsStore;
       if (metricsStore) {
-        appendMetric(
-          metricsStore,
-          "response-finalize",
-          metricsFinStart,
-          performance.now() - metricsFinStart,
-        );
         // When the store was created at handler start (earlyMetricsStore),
         // handler:total covers the full request. When ctx.debugPerformance()
         // created the store mid-request, use its requestStart to avoid a
@@ -513,6 +507,14 @@ export function createRSCHandler<
         const totalStart = earlyMetricsStore
           ? handlerStart
           : metricsStore.requestStart;
+        // response-finalize measures the gap between render completion and
+        // handler return: header assembly, onResponse callbacks, etc.
+        appendMetric(
+          metricsStore,
+          "response-finalize",
+          finalizeStart,
+          performance.now() - finalizeStart,
+        );
         appendMetric(
           metricsStore,
           "handler:total",

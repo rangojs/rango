@@ -100,9 +100,9 @@ export async function resolveLoaders<TEnv>(
 
   if (!loadingDisabled) {
     // Streaming loaders: promises kick off now, settle during RSC serialization.
-    // Record each loader as a marker span showing it was invoked.
-    const loaderStart = performance.now();
-    const segments = loaderEntries.map((loaderEntry, i) => {
+    // No per-loader timing here — settlement happens asynchronously during
+    // RSC/SSR stream consumption, after the perf timeline is logged.
+    return loaderEntries.map((loaderEntry, i) => {
       const { loader } = loaderEntry;
       const segmentId = `${shortCode}D${i}.${loader.$$id}`;
       return {
@@ -122,30 +122,34 @@ export async function resolveLoaders<TEnv>(
         belongsToRoute,
       };
     });
-    if (ms) {
-      const dur = performance.now() - loaderStart;
-      for (const seg of segments) {
-        appendMetric(ms, `loader:${seg.loaderId}`, loaderStart, dur, 2);
-      }
-    }
-    return segments;
   }
 
   // Loading disabled: still start all loaders in parallel, but only emit
   // settled promises so handlers don't stream loading placeholders.
   // We can measure actual execution time here since we await all loaders.
-  const loaderStart = performance.now();
-  const pendingLoaderData = loaderEntries.map((loaderEntry) =>
-    resolveLoaderData(loaderEntry, ctx, ctx.pathname),
-  );
-  await Promise.all(pendingLoaderData);
-  const loaderDur = performance.now() - loaderStart;
+  const pendingLoaderData = loaderEntries.map((loaderEntry) => {
+    const start = performance.now();
+    const promise = resolveLoaderData(loaderEntry, ctx, ctx.pathname);
+    return { promise, start, loaderId: loaderEntry.loader.$$id };
+  });
+  await Promise.all(pendingLoaderData.map((p) => p.promise));
 
   return loaderEntries.map((loaderEntry, i) => {
     const { loader } = loaderEntry;
     const segmentId = `${shortCode}D${i}.${loader.$$id}`;
-    if (ms) {
-      appendMetric(ms, `loader:${loader.$$id}`, loaderStart, loaderDur, 2);
+    const pending = pendingLoaderData[i]!;
+    if (ms && !ms.metrics.some((m) => m.label === `loader:${loader.$$id}`)) {
+      // All loaders ran in parallel via Promise.all — each span covers
+      // from its own kickoff to the batch settlement, giving a ceiling
+      // on that loader's contribution to the overall wait.
+      const batchEnd = performance.now();
+      appendMetric(
+        ms,
+        `loader:${loader.$$id}`,
+        pending.start,
+        batchEnd - pending.start,
+        2,
+      );
     }
     return {
       id: segmentId,
@@ -156,7 +160,7 @@ export async function resolveLoaders<TEnv>(
       params: ctx.params,
       loaderId: loader.$$id,
       loaderData: deps.wrapLoaderPromise(
-        pendingLoaderData[i]!,
+        pending.promise,
         entry,
         segmentId,
         ctx.pathname,
