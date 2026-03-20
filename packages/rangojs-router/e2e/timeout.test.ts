@@ -53,11 +53,24 @@ async function waitForOnError(
  * - onError is invoked with timeout metadata
  */
 function timeoutTests(f: ReturnType<typeof useFixture>) {
-  // Warm the Vite module graph for ALL tested routes before tests run.
-  // The first cold request on CI can exceed the 2s timeout due to module
-  // compilation. We warm each route until we get a response (not necessarily
-  // 200 — slow-render and slow-response intentionally timeout with 504).
+  // Dev mode needs a broad warmup to absorb Vite's first-request dep work.
+  // Production preview already runs built output, so only a minimal readiness
+  // ping is necessary there.
   test.beforeAll(async () => {
+    if (f.mode === "build") {
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline) {
+        try {
+          const res = await fetch(f.url("/"));
+          if (res.ok) return;
+        } catch {}
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      throw new Error(
+        "Timed out waiting for timeout fixture preview to respond",
+      );
+    }
+
     const routesToWarm = [
       "/",
       "/timeout/fast-render",

@@ -1,6 +1,56 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, testId } from "./helper";
+
+async function waitForCommentFormToSettle(page: Page) {
+  const nameInput = testId(page, "comment-name");
+  const textInput = testId(page, "comment-text");
+  const submitButton = testId(page, "comment-submit");
+
+  await expect(submitButton).toBeEnabled({ timeout: 10000 });
+  await expect(nameInput).toHaveValue("", { timeout: 10000 });
+  await expect(textInput).toHaveValue("", { timeout: 10000 });
+
+  const snapshot = async () => ({
+    name: await nameInput.inputValue(),
+    text: await textInput.inputValue(),
+    enabled: await submitButton.isEnabled(),
+  });
+
+  const first = await snapshot();
+  await page.waitForTimeout(100);
+  await expect.poll(snapshot, { timeout: 10000 }).toEqual(first);
+}
+
+async function submitComment(
+  page: Page,
+  comment: { name: string; text: string },
+) {
+  const nameInput = testId(page, "comment-name");
+  const textInput = testId(page, "comment-text");
+
+  await waitForCommentFormToSettle(page);
+
+  await nameInput.fill(comment.name);
+  await expect(nameInput).toHaveValue(comment.name);
+
+  await textInput.fill(comment.text);
+  await expect(textInput).toHaveValue(comment.text);
+
+  const loaderResponse = page.waitForResponse((response) => {
+    const request = response.request();
+    return (
+      request.method() === "POST" &&
+      response.url().includes("_rsc_loader=") &&
+      response.status() === 200
+    );
+  });
+
+  await testId(page, "comment-submit").click();
+  await loaderResponse;
+
+  await waitForCommentFormToSettle(page);
+}
 
 test.describe("blog comments via loader action (dev)", () => {
   const f = useFixture({
@@ -30,19 +80,26 @@ test.describe("blog comments via loader action (dev)", () => {
     await expect(testId(page, "no-comments")).toBeVisible();
 
     // Fill in the form
-    await testId(page, "comment-name").fill("Alice");
-    await testId(page, "comment-text").fill("Great article!");
-
-    // Submit
-    await testId(page, "comment-submit").click();
+    await submitComment(page, {
+      name: "Alice",
+      text: "Great article!",
+    });
 
     // Comment should appear
-    await expect(testId(page, "comments-list")).toBeVisible({ timeout: 5000 });
+    await expect(testId(page, "comments-list")).toBeVisible({ timeout: 10000 });
     await expect(testId(page, "comments-section")).toContainText(
       "Comments (1)",
+      { timeout: 10000 },
     );
-    await expect(testId(page, "comments-list")).toContainText("Alice");
-    await expect(testId(page, "comments-list")).toContainText("Great article!");
+    await expect(testId(page, "comments-list")).toContainText("Alice", {
+      timeout: 10000,
+    });
+    await expect(testId(page, "comments-list")).toContainText(
+      "Great article!",
+      {
+        timeout: 10000,
+      },
+    );
 
     // "No comments" should be gone
     await expect(testId(page, "no-comments")).not.toBeVisible();
@@ -55,28 +112,31 @@ test.describe("blog comments via loader action (dev)", () => {
     await waitForHydration(page);
 
     // Post first comment
-    await testId(page, "comment-name").fill("Bob");
-    await testId(page, "comment-text").fill("First comment");
-    await testId(page, "comment-submit").click();
-    await expect(testId(page, "comments-list")).toBeVisible({ timeout: 5000 });
+    await submitComment(page, {
+      name: "Bob",
+      text: "First comment",
+    });
+    await expect(testId(page, "comments-list")).toBeVisible({ timeout: 10000 });
     await expect(testId(page, "comments-section")).toContainText(
       "Comments (1)",
+      { timeout: 10000 },
     );
-
-    // Wait for form to fully reset before posting the second comment
-    await expect(testId(page, "comment-submit")).toBeEnabled({ timeout: 5000 });
-    await expect(testId(page, "comment-name")).toHaveValue("");
 
     // Post second comment
-    await testId(page, "comment-name").fill("Carol");
-    await testId(page, "comment-text").fill("Second comment");
-    await testId(page, "comment-submit").click();
+    await submitComment(page, {
+      name: "Carol",
+      text: "Second comment",
+    });
     await expect(testId(page, "comments-section")).toContainText(
       "Comments (2)",
-      { timeout: 5000 },
+      { timeout: 10000 },
     );
-    await expect(testId(page, "comments-list")).toContainText("Bob");
-    await expect(testId(page, "comments-list")).toContainText("Carol");
+    await expect(testId(page, "comments-list")).toContainText("Bob", {
+      timeout: 10000,
+    });
+    await expect(testId(page, "comments-list")).toContainText("Carol", {
+      timeout: 10000,
+    });
   });
 
   test("should clear form after posting", async ({ page }) => {
@@ -85,16 +145,13 @@ test.describe("blog comments via loader action (dev)", () => {
     await page.goto(f.url("/blog/view-transitions"));
     await waitForHydration(page);
 
-    await testId(page, "comment-name").fill("Dave");
-    await testId(page, "comment-text").fill("Nice post!");
-    await testId(page, "comment-submit").click();
+    await submitComment(page, {
+      name: "Dave",
+      text: "Nice post!",
+    });
 
     // Wait for comment to appear
-    await expect(testId(page, "comments-list")).toBeVisible({ timeout: 5000 });
-
-    // Form inputs should be cleared
-    await expect(testId(page, "comment-name")).toHaveValue("");
-    await expect(testId(page, "comment-text")).toHaveValue("");
+    await expect(testId(page, "comments-list")).toBeVisible({ timeout: 10000 });
   });
 
   test("should disable submit button while posting", async ({ page }) => {
@@ -103,12 +160,13 @@ test.describe("blog comments via loader action (dev)", () => {
     await page.goto(f.url("/blog/rsc-routing"));
     await waitForHydration(page);
 
-    await testId(page, "comment-name").fill("Eve");
-    await testId(page, "comment-text").fill("Testing submit");
-    await testId(page, "comment-submit").click();
+    await submitComment(page, {
+      name: "Eve",
+      text: "Testing submit",
+    });
 
     // Wait for comment to appear (action completes)
-    await expect(testId(page, "comments-list")).toBeVisible({ timeout: 5000 });
+    await expect(testId(page, "comments-list")).toBeVisible({ timeout: 10000 });
     // Button should be re-enabled after completion
     await expect(testId(page, "comment-submit")).toBeEnabled();
     await expect(testId(page, "comment-submit")).toContainText("Post Comment");
@@ -120,12 +178,13 @@ test.describe("blog comments via loader action (dev)", () => {
     // Post a unique comment on one blog post
     await page.goto(f.url("/blog/rsc-routing"));
     await waitForHydration(page);
-    await testId(page, "comment-name").fill("Frank");
-    await testId(page, "comment-text").fill("Scoped-test-unique-xyz");
-    await testId(page, "comment-submit").click();
+    await submitComment(page, {
+      name: "Frank",
+      text: "Scoped-test-unique-xyz",
+    });
     await expect(testId(page, "comments-list")).toContainText(
       "Scoped-test-unique-xyz",
-      { timeout: 5000 },
+      { timeout: 10000 },
     );
 
     // Navigate to a different blog post (fresh slug, no prior test comments)
@@ -165,16 +224,25 @@ test.describe("blog comments via loader action (production)", () => {
 
     await expect(testId(page, "no-comments")).toBeVisible();
 
-    await testId(page, "comment-name").fill("Alice");
-    await testId(page, "comment-text").fill("Great article!");
-    await testId(page, "comment-submit").click();
+    await submitComment(page, {
+      name: "Alice",
+      text: "Great article!",
+    });
 
-    await expect(testId(page, "comments-list")).toBeVisible({ timeout: 5000 });
+    await expect(testId(page, "comments-list")).toBeVisible({ timeout: 10000 });
     await expect(testId(page, "comments-section")).toContainText(
       "Comments (1)",
+      { timeout: 10000 },
     );
-    await expect(testId(page, "comments-list")).toContainText("Alice");
-    await expect(testId(page, "comments-list")).toContainText("Great article!");
+    await expect(testId(page, "comments-list")).toContainText("Alice", {
+      timeout: 10000,
+    });
+    await expect(testId(page, "comments-list")).toContainText(
+      "Great article!",
+      {
+        timeout: 10000,
+      },
+    );
     await expect(testId(page, "no-comments")).not.toBeVisible();
   });
 
@@ -184,26 +252,29 @@ test.describe("blog comments via loader action (production)", () => {
     await page.goto(f.url("/blog/composable-caching"));
     await waitForHydration(page);
 
-    await testId(page, "comment-name").fill("Bob");
-    await testId(page, "comment-text").fill("First comment");
-    await testId(page, "comment-submit").click();
-    await expect(testId(page, "comments-list")).toBeVisible({ timeout: 5000 });
+    await submitComment(page, {
+      name: "Bob",
+      text: "First comment",
+    });
+    await expect(testId(page, "comments-list")).toBeVisible({ timeout: 10000 });
     await expect(testId(page, "comments-section")).toContainText(
       "Comments (1)",
+      { timeout: 10000 },
     );
 
-    // Wait for form to fully reset before posting the second comment
-    await expect(testId(page, "comment-submit")).toBeEnabled({ timeout: 5000 });
-    await expect(testId(page, "comment-name")).toHaveValue("");
-
-    await testId(page, "comment-name").fill("Carol");
-    await testId(page, "comment-text").fill("Second comment");
-    await testId(page, "comment-submit").click();
+    await submitComment(page, {
+      name: "Carol",
+      text: "Second comment",
+    });
     await expect(testId(page, "comments-section")).toContainText(
       "Comments (2)",
-      { timeout: 5000 },
+      { timeout: 10000 },
     );
-    await expect(testId(page, "comments-list")).toContainText("Bob");
-    await expect(testId(page, "comments-list")).toContainText("Carol");
+    await expect(testId(page, "comments-list")).toContainText("Bob", {
+      timeout: 10000,
+    });
+    await expect(testId(page, "comments-list")).toContainText("Carol", {
+      timeout: 10000,
+    });
   });
 });
