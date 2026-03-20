@@ -259,6 +259,17 @@ export function createPartialUpdater(
             existingSegments,
           );
 
+          // Fix: tx.commit() cached the source page's handleData because
+          // eventController hasn't been updated yet. Overwrite with the
+          // correct cached handleData to prevent cache corruption on
+          // subsequent navigations to this same URL.
+          if (mode.targetCacheHandleData) {
+            store.updateCacheHandleData(
+              store.getHistoryKey(),
+              mode.targetCacheHandleData,
+            );
+          }
+
           // Include cachedHandleData in metadata so NavigationProvider can restore
           // breadcrumbs and other handle data from cache.
           // Remove `handles` from metadata to prevent NavigationProvider from
