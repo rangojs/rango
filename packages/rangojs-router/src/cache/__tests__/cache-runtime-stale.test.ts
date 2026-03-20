@@ -189,9 +189,11 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(waitUntilFns).toHaveLength(1);
     await waitUntilFns[0]();
 
-    // Both the tainted arg and the ALS RequestContext should have been stamped
+    // Tainted args should be stamped during background execution
     expect(taintedDuringBgExec).toBe(true);
-    expect(requestCtxTaintedDuringBgExec).toBe(true);
+    // RequestContext is intentionally NOT stamped in background to avoid
+    // polluting the shared foreground context (see cache-runtime.ts comment)
+    expect(requestCtxTaintedDuringBgExec).toBe(false);
 
     // After background execution, the stamps should be cleaned up
     expect((taintedCtx as any)[INSIDE_CACHE_EXEC]).toBeUndefined();
@@ -653,7 +655,10 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(INSIDE_CACHE_EXEC in requestCtxObj).toBe(false);
   });
 
-  it("stamps RequestContext during stale background revalidation without tainted args", async () => {
+  it("does not stamp RequestContext during stale background revalidation", async () => {
+    // RequestContext is intentionally not stamped in background revalidation
+    // to avoid polluting the shared foreground context. The foreground miss
+    // path already catches cookies()/headers() misuse on first execution.
     const INSIDE_CACHE_EXEC = Symbol.for("rango:inside-cache-exec");
     const waitUntilFns: Array<() => Promise<void>> = [];
 
@@ -677,7 +682,6 @@ describe("use cache stale revalidation handle preservation", () => {
       shouldRevalidate: true,
     });
 
-    // No tainted args
     let stampedDuringBgExec = false;
     const fn = async (locale: string) => {
       stampedDuringBgExec = INSIDE_CACHE_EXEC in requestCtxObj;
@@ -692,10 +696,8 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(waitUntilFns).toHaveLength(1);
     await waitUntilFns[0]();
 
-    // The guard must have been active during background execution
-    expect(stampedDuringBgExec).toBe(true);
-
-    // After background execution, the stamp must be removed
+    // RequestContext must NOT be stamped in background (avoids foreground pollution)
+    expect(stampedDuringBgExec).toBe(false);
     expect(INSIDE_CACHE_EXEC in requestCtxObj).toBe(false);
   });
 });

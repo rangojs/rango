@@ -214,20 +214,27 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             bgStopCapture = c.stop;
           }
 
-          // Stamp tainted args and RequestContext so request-scoped
-          // reads (cookies, headers) and side effects (ctx.set, etc.)
-          // throw inside background revalidation, same as the miss path.
-          // Uses ref-counted stamp/unstamp so overlapping executions
-          // sharing the same ctx don't clear each other's guards.
+          // Stamp tainted ARGS only — not requestCtx. The args stamp guards
+          // direct ctx method calls (ctx.set, ctx.header, ctx.onResponse, etc.)
+          // which is sufficient for correctness.
+          //
+          // We intentionally skip stamping requestCtx here because:
+          // 1. runBackground starts the async task synchronously (before the
+          //    first await), so stampCacheExec would pollute the shared
+          //    requestCtx while the foreground pipeline is still running.
+          //    This causes assertNotInsideCacheExec to fire when cache-store
+          //    later calls requestCtx.onResponse().
+          // 2. requestCtx methods are closure-bound to the original ctx, so
+          //    neither Object.create() nor a proxy can isolate the stamp.
+          // 3. The foreground miss path already stamps requestCtx and catches
+          //    cookies()/headers() misuse on first execution. The background
+          //    re-runs the same function with the same request.
           const bgTaintedArgs: unknown[] = [];
           for (const arg of args) {
             if (isTainted(arg)) {
               stampCacheExec(arg as object);
               bgTaintedArgs.push(arg);
             }
-          }
-          if (requestCtx) {
-            stampCacheExec(requestCtx as object);
           }
 
           try {
@@ -248,9 +255,6 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           } finally {
             for (const arg of bgTaintedArgs) {
               unstampCacheExec(arg as object);
-            }
-            if (requestCtx) {
-              unstampCacheExec(requestCtx as object);
             }
             // Restore original handle store
             if (originalHandleStore && requestCtx) {
