@@ -261,7 +261,7 @@ async function* yieldFromStore<TEnv>(
       depth: 1,
     });
     ms.metrics.push({
-      label: "pipeline:cache-lookup",
+      label: "pipeline:cache-hit",
       duration: loaderEnd - pipelineStart,
       startTime: pipelineStart - ms.requestStart,
     });
@@ -446,7 +446,7 @@ export function withCacheLookup<TEnv>(
       yield* source;
       if (ms) {
         ms.metrics.push({
-          label: "pipeline:cache-lookup",
+          label: "pipeline:cache-miss",
           duration: performance.now() - pipelineStart,
           startTime: pipelineStart - ms.requestStart,
         });
@@ -466,7 +466,7 @@ export function withCacheLookup<TEnv>(
       yield* source;
       if (ms) {
         ms.metrics.push({
-          label: "pipeline:cache-lookup",
+          label: "pipeline:cache-miss",
           duration: performance.now() - pipelineStart,
           startTime: pipelineStart - ms.requestStart,
         });
@@ -642,7 +642,7 @@ export function withCacheLookup<TEnv>(
         depth: 1,
       });
       ms.metrics.push({
-        label: "pipeline:cache-lookup",
+        label: "pipeline:cache-hit",
         duration: loaderEnd - pipelineStart,
         startTime: pipelineStart - ms.requestStart,
       });
