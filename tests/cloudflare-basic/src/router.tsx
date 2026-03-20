@@ -29,6 +29,10 @@ export const router = createRouter<AppBindings>({
       kv: env.KV, // KV L2 for global persistence
     }),
   }),
+  onError: (ctx) => {
+    console.error("Router error ctx:", ctx);
+    console.error("Router error:", ctx.error.stack || ctx.error);
+  },
 })
   // Document cache middleware - caches full responses based on Cache-Control headers
   .use(createDocumentCacheMiddleware())

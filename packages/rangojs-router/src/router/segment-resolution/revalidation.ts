@@ -383,8 +383,10 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>)
       | ReactNode
     >;
+    // In production, static handler bodies are evicted and the slot value
+    // may be undefined. The static store holds the pre-rendered component.
+    // We defer the handler check until after tryStaticSlot.
     const handler = slots[slot];
-    invariant(handler !== undefined, `Expected handler for slot ${slot}`);
 
     const parallelId = `${entry.shortCode}.${slot}`;
 
@@ -478,6 +480,10 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       const hasLoadingFallback =
         parallelEntry.loading !== undefined && parallelEntry.loading !== false;
       if (!shouldResolve) {
+        component = null;
+      } else if (handler === undefined) {
+        // Handler evicted (production static slot) but static lookup missed.
+        // Nothing to render — use null so the client keeps its cached version.
         component = null;
       } else if (hasLoadingFallback) {
         const result =
@@ -1053,8 +1059,8 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>)
       | ReactNode
     >;
+    // Handler may be undefined in production after static handler eviction.
     const handler = slots[slot];
-    invariant(handler !== undefined, `Expected handler for slot ${slot}`);
 
     // Use orphan.shortCode (the parent layout) to match the SSR path
     // (resolveParallelEntry receives parentShortCode = orphan.shortCode).
@@ -1126,6 +1132,9 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       const hasLoadingFallback =
         parallelEntry.loading !== undefined && parallelEntry.loading !== false;
       if (!shouldResolve) {
+        component = null;
+      } else if (handler === undefined) {
+        // Handler evicted (production static slot) but static lookup missed.
         component = null;
       } else if (hasLoadingFallback) {
         const result =

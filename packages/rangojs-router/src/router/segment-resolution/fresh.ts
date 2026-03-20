@@ -438,11 +438,9 @@ export async function resolveParallelEntry<TEnv>(
   const slotsToResolve = slotNames ?? (Object.keys(slots) as `@${string}`[]);
 
   for (const slot of slotsToResolve) {
-    const handler = slots[slot];
-    if (handler === undefined) {
-      continue;
-    }
-
+    // Try static lookup first — in production, handler bodies are evicted
+    // and replaced with stubs that have no .handler property (undefined).
+    // The static store holds the pre-rendered component for these slots.
     let component: ReactNode | undefined = await tryStaticSlot(
       parallelEntry,
       slot,
@@ -450,6 +448,10 @@ export async function resolveParallelEntry<TEnv>(
     );
 
     if (component === undefined) {
+      const handler = slots[slot];
+      if (handler === undefined) {
+        continue;
+      }
       const doneParallelHandler = track(
         `handler:${parallelEntry.id}.${slot}`,
         2,
