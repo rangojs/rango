@@ -67,7 +67,13 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
     if (process.platform === "win32") {
       spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"]);
     } else {
-      child.kill();
+      // Kill entire process group (Vite spawns child processes like workerd).
+      // Falls back to direct kill if process group kill fails.
+      try {
+        process.kill(-child.pid!, "SIGTERM");
+      } catch {
+        child.kill();
+      }
     }
   }
 
@@ -120,6 +126,36 @@ async function waitForReady(
   throw new Error(`Server not ready after ${timeoutMs}ms: ${url}${details}`);
 }
 
+/**
+ * Warm up an isolated dev server by making real SSR requests.
+ * The first SSR request triggers Vite's dep optimizer to discover SSR deps.
+ * After optimization, modules are re-evaluated and in-memory caches reset.
+ * We retry until the server returns a stable 200, absorbing the dep
+ * optimization cycle so subsequent test requests hit a settled server.
+ */
+async function warmupDevServer(url: string) {
+  const deadline = Date.now() + 30_000;
+  let lastOk = 0;
+  // Need two consecutive OK responses to confirm the server is settled
+  // (first OK may precede dep optimization, second confirms stability).
+  while (Date.now() < deadline && lastOk < 2) {
+    try {
+      const res = await fetch(url, {
+        headers: { accept: "text/html" },
+      });
+      if (res.ok) {
+        await res.text(); // consume body to complete SSR pipeline
+        lastOk++;
+      } else {
+        lastOk = 0;
+      }
+    } catch {
+      lastOk = 0;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
 export type Fixture = ReturnType<typeof useFixture>;
 
 export function useFixture(options: {
@@ -170,6 +206,14 @@ export function useFixture(options: {
           stdout: proc.stdout(),
           stderr: proc.stderr(),
         }));
+        // Isolated dev servers need a warmup SSR request to trigger Vite's
+        // dep optimizer before real tests run. The first full SSR request
+        // discovers deps (e.g. spin-delay) → `ERR_OUTDATED_OPTIMIZED_DEP`
+        // → module re-evaluation → loss of in-memory cache. Without this,
+        // cache tests see different values on the second request.
+        if (options.isolatedServer) {
+          await warmupDevServer(baseURL);
+        }
         cleanup = async () => {
           proc.kill();
           await proc.done;
