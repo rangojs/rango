@@ -631,17 +631,28 @@ export async function resolveLoadersOnly<TEnv>(
     belongsToRoute: boolean,
     shortCodeOverride?: string,
   ): Promise<void> {
-    const segments = await resolveLoaders(
-      entry,
-      context,
-      belongsToRoute,
-      deps,
-      shortCodeOverride,
-    );
-    for (const seg of segments) {
-      if (!seenIds.has(seg.id)) {
-        seenIds.add(seg.id);
-        loaderSegments.push(seg);
+    // Skip if all loaders from this entry have already been resolved
+    // via a parent (e.g., cache boundary wrapping a layout with shared loaders).
+    const entryLoaders = entry.loader ?? [];
+    const sc = shortCodeOverride ?? entry.shortCode;
+    const allAlreadySeen =
+      entryLoaders.length > 0 &&
+      entryLoaders.every((le, i) =>
+        seenIds.has(`${sc}D${i}.${le.loader.$$id}`),
+      );
+    if (!allAlreadySeen) {
+      const segments = await resolveLoaders(
+        entry,
+        context,
+        belongsToRoute,
+        deps,
+        shortCodeOverride,
+      );
+      for (const seg of segments) {
+        if (!seenIds.has(seg.id)) {
+          seenIds.add(seg.id);
+          loaderSegments.push(seg);
+        }
       }
     }
 

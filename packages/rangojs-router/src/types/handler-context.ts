@@ -289,8 +289,12 @@ export type HandlerContext<
   /**
    * Access loader data or push handle data.
    *
+   * Available in route handlers, layout handlers, middleware, server actions,
+   * and server components rendered within the request context.
+   *
    * For loaders: Returns a promise that resolves to the loader data.
-   * Loaders are executed in parallel and memoized per request.
+   * Loaders are executed in parallel and memoized per request — calling
+   * `ctx.use(SameLoader)` multiple times returns the same promise.
    *
    * For handles: Returns a push function to add data for this segment.
    * Handle data accumulates across all matched route segments.
@@ -519,30 +523,112 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
  * })
  * ```
  */
+/**
+ * Revalidation function called during client-side navigation to decide whether
+ * a segment (layout, route, parallel slot, or loader) should be re-rendered.
+ *
+ * Return `true` to re-render, `false` to skip (keep client's current version),
+ * or `{ defaultShouldRevalidate: boolean }` to override the default for
+ * downstream segments.
+ *
+ * @example
+ * ```ts
+ * // Re-render only when a cart action happened or browser signals staleness
+ * revalidate(({ actionId, stale }) =>
+ *   actionId?.includes("cart") || stale || false
+ * )
+ *
+ * // Always re-render when params change (default behavior made explicit)
+ * revalidate(({ defaultShouldRevalidate }) => defaultShouldRevalidate)
+ * ```
+ */
 export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
+  /** Route params from the page being navigated away from. */
   currentParams: TParams;
+  /** Full URL of the page being navigated away from. */
   currentUrl: URL;
+  /** Route params for the navigation target. */
   nextParams: TParams;
+  /** Full URL of the navigation target. */
   nextUrl: URL;
+  /**
+   * The router's default revalidation decision for this segment.
+   * `true` when params changed or the segment is new to the client.
+   * Return this when you want default behavior plus your own conditions.
+   */
   defaultShouldRevalidate: boolean;
+  /** Full handler context — access to `ctx.use()`, `ctx.env`, `ctx.params`, etc. */
   context: HandlerContext<TParams, TEnv>;
-  // Segment metadata (which segment is being evaluated):
+
+  // ── Segment metadata (which segment is being evaluated) ──────────────
+
+  /** The type of segment being revalidated. */
   segmentType: "layout" | "route" | "parallel";
-  layoutName?: string; // Layout name (e.g., "root", "shop", "auth") - only for layouts
-  slotName?: string; // Slot name (e.g., "@sidebar", "@modal") - only for parallels
-  // Action context (populated when revalidation triggered by server action):
-  actionId?: string; // Action identifier (e.g., "src/actions.ts#addToCart")
-  actionUrl?: URL; // URL where action was executed
-  actionResult?: any; // Return value from action execution
-  formData?: FormData; // FormData from action request
-  method?: string; // Request method: 'GET' for navigation, 'POST' for actions
-  routeName?: DefaultRouteName; // Route name of the navigation target (alias for toRouteName)
-  // Named-route identity for both ends of a navigation transition.
-  // Undefined for unnamed internal routes (those without a `name` option).
-  fromRouteName?: DefaultRouteName; // Route name being navigated away from
-  toRouteName?: DefaultRouteName; // Route name being navigated to
-  // Stale cache revalidation (SWR pattern):
-  stale?: boolean; // True if this is a stale cache revalidation request
+  /** Layout name (e.g., `"root"`, `"shop"`, `"auth"`). Only set for layout segments. */
+  layoutName?: string;
+  /** Slot name (e.g., `"@sidebar"`, `"@modal"`). Only set for parallel segments. */
+  slotName?: string;
+
+  // ── Action context (populated when revalidation is triggered by a server action) ──
+
+  /**
+   * Identifier of the server action that triggered revalidation.
+   * `undefined` during normal navigation (no action involved).
+   *
+   * Format: `"src/<path>#<exportName>"` — the file path is the source path
+   * relative to the project root, followed by `#` and the exported function name.
+   *
+   * This is stable and can be used for path-based matching to revalidate
+   * when any action in a module or directory fires:
+   *
+   * @example
+   * ```ts
+   * // Match a specific action
+   * revalidate(({ actionId }) => actionId === "src/actions/cart.ts#addToCart")
+   *
+   * // Match any action in the cart module
+   * revalidate(({ actionId }) => actionId?.includes("cart") ?? false)
+   *
+   * // Match any action under src/apps/store/actions/
+   * revalidate(({ actionId }) => actionId?.startsWith("src/apps/store/actions/") ?? false)
+   * ```
+   */
+  actionId?: string;
+  /** URL where the action was executed (the page the user was on when they triggered the action). */
+  actionUrl?: URL;
+  /** Return value from the action execution. Can be used to conditionally revalidate based on the action's outcome. */
+  actionResult?: any;
+  /** FormData from the action request body. Only set for form-based actions (not inline `"use server"` actions). */
+  formData?: FormData;
+  /** HTTP method: `"GET"` for navigation, `"POST"` for server actions. */
+  method?: string;
+
+  // ── Route identity ───────────────────────────────────────────────────
+
+  /** Route name of the navigation target. Alias for `toRouteName`. */
+  routeName?: DefaultRouteName;
+  /**
+   * Route name being navigated away from.
+   * `undefined` for unnamed internal routes (those without a `name` option).
+   */
+  fromRouteName?: DefaultRouteName;
+  /**
+   * Route name being navigated to.
+   * `undefined` for unnamed internal routes (those without a `name` option).
+   */
+  toRouteName?: DefaultRouteName;
+
+  // ── Staleness signal ─────────────────────────────────────────────────
+
+  /**
+   * `true` when the browser signals that data may be stale — typically because
+   * a server action was executed in this or another tab (`_rsc_stale` header).
+   *
+   * This is NOT segment cache staleness (loaders are never segment-cached).
+   * Use this to decide whether loader data should be re-fetched after an
+   * action that may have mutated backend state.
+   */
+  stale?: boolean;
 }) => boolean | { defaultShouldRevalidate: boolean };
 
 // MiddlewareFn is imported from "../router/middleware.js" and re-exported

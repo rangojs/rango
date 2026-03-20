@@ -109,6 +109,65 @@ vi.mock("../../server/context.js", async () => {
   };
 });
 
+describe("loader revalidation stale isolation", () => {
+  it("segment cache staleness does not propagate to loader revalidation", async () => {
+    // Loaders are NEVER in the segment cache. The cache-hit path passes
+    // ctx.stale (browser-sent), NOT cacheResult.shouldRevalidate.
+    // When the browser doesn't signal staleness, loaders see stale=undefined.
+    mockEvaluateRevalidation.mockClear();
+
+    const entry = makeEntry("cart-loader");
+    const segmentId = "L0R0D0.cart-loader";
+
+    await resolveLoadersOnlyWithRevalidation(
+      [entry],
+      makeContext(),
+      new Set([segmentId]),
+      { id: "1" },
+      new Request("http://localhost/"),
+      new URL("http://localhost/prev"),
+      new URL("http://localhost/next"),
+      "test.route",
+      makeDeps(),
+      undefined, // actionContext
+      undefined, // stale: no browser staleness signal
+    );
+
+    expect(mockEvaluateRevalidation).toHaveBeenCalledTimes(1);
+    expect(mockEvaluateRevalidation).toHaveBeenCalledWith(
+      expect.objectContaining({ stale: undefined }),
+    );
+  });
+
+  it("browser-sent staleness (ctx.stale) does propagate to loader revalidation", async () => {
+    // When the browser signals an action happened (_rsc_stale), loaders
+    // must see stale=true so they can decide to re-fetch.
+    mockEvaluateRevalidation.mockClear();
+
+    const entry = makeEntry("cart-loader-stale");
+    const segmentId = "L0R0D0.cart-loader-stale";
+
+    await resolveLoadersOnlyWithRevalidation(
+      [entry],
+      makeContext(),
+      new Set([segmentId]),
+      { id: "1" },
+      new Request("http://localhost/"),
+      new URL("http://localhost/prev"),
+      new URL("http://localhost/next"),
+      "test.route",
+      makeDeps(),
+      undefined, // actionContext
+      true, // stale: browser says action happened
+    );
+
+    expect(mockEvaluateRevalidation).toHaveBeenCalledTimes(1);
+    expect(mockEvaluateRevalidation).toHaveBeenCalledWith(
+      expect.objectContaining({ stale: true }),
+    );
+  });
+});
+
 describe("stale propagation through resolveLoadersOnlyWithRevalidation", () => {
   it("passes stale=true to evaluateRevalidation when provided", async () => {
     mockEvaluateRevalidation.mockClear();

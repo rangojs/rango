@@ -40,6 +40,7 @@ export const NamedRoutes = {
   "cacheTest.reactNodeNonCached": "/cache-test/react-node-non-cached",
   "cacheTest.responseTypeJson": "/cache-response-type/data/:id",
   "cacheTest.responseTypeText": "/cache-response-type/data/:id",
+  "cacheTest.searchParams": "/cache-test/search-params",
   "cacheTest.statusJson404": "/cache-status-json/not-found",
   "cacheTest.statusJson500": "/cache-status-json/server-error",
   "cacheTest.useLoaderDetail": "/cache-test/useloader/:itemId",

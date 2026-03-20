@@ -117,6 +117,98 @@ function makeParallelLoaderEntry(): EntryData {
   } as any;
 }
 
+/**
+ * Models a cache boundary wrapping a layout that has a loader.
+ * The DSL attaches the loader to both the cache entry and the layout entry,
+ * so the tree walker visits the same loader via two paths.
+ *
+ * Entry tree:
+ *   cache ($cache.0) ── loader: [CartLoader]
+ *     └── layout ($layout.0) ── loader: [CartLoader]  (same $$id)
+ */
+/**
+ * In the real DSL, when a cache boundary wraps a layout that has a loader,
+ * the loader entry ends up on both the cache entry and the layout entry
+ * with the SAME shortCode (the layout's). This causes resolveLoaders to
+ * produce two segments with identical IDs.
+ */
+function makeCacheBoundaryWithSharedLoader(): EntryData {
+  const sharedLoader = {
+    loader: { $$id: "src/loaders/cart.ts#Cart" } as any,
+    revalidate: [vi.fn(() => true)],
+  };
+
+  // Both entries use shortCode "L0" — matching real behavior where
+  // the cache boundary inherits the layout's loader with its shortCode.
+  const layoutEntry = {
+    id: "root.$layout.0",
+    type: "layout",
+    shortCode: "L0",
+    handler: () => null,
+    loader: [sharedLoader],
+    layout: [],
+    parallel: {},
+    intercept: [],
+    middleware: [],
+    revalidate: [],
+    errorBoundary: [],
+    notFoundBoundary: [],
+    handle: [],
+  } as any;
+
+  return {
+    id: "root.$cache.0",
+    type: "cache",
+    shortCode: "L0",
+    handler: () => null,
+    loader: [sharedLoader],
+    layout: [layoutEntry],
+    parallel: {},
+    intercept: [],
+    middleware: [],
+    revalidate: [],
+    errorBoundary: [],
+    notFoundBoundary: [],
+    handle: [],
+  } as any;
+}
+
+describe("cache-boundary shared loader dedup", () => {
+  it("resolveLoadersOnly emits shared loader only once when cache wraps layout", async () => {
+    const segments = await resolveLoadersOnly(
+      [makeCacheBoundaryWithSharedLoader()],
+      makeContext(),
+      makeDeps(),
+    );
+
+    const cartSegments = segments.filter((s) =>
+      s.id.includes("src/loaders/cart.ts#Cart"),
+    );
+    expect(cartSegments).toHaveLength(1);
+  });
+
+  it("resolveLoadersOnlyWithRevalidation emits shared loader only once when cache wraps layout", async () => {
+    mockEvaluateRevalidation.mockClear();
+
+    const result = await resolveLoadersOnlyWithRevalidation(
+      [makeCacheBoundaryWithSharedLoader()],
+      makeContext(),
+      new Set(["C0D0.src/loaders/cart.ts#Cart"]),
+      {},
+      new Request("http://localhost/shop"),
+      new URL("http://localhost/"),
+      new URL("http://localhost/shop"),
+      "shop.category",
+      makeDeps(),
+    );
+
+    const cartSegments = result.segments.filter((s) =>
+      s.id.includes("src/loaders/cart.ts#Cart"),
+    );
+    expect(cartSegments).toHaveLength(1);
+  });
+});
+
 describe("cache-hit parallel loaders", () => {
   it("resolveLoadersOnly includes loaders from parallel entries using the parent shortCode", async () => {
     const segments = await resolveLoadersOnly(

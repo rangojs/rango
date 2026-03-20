@@ -1552,3 +1552,104 @@ test.describe("cache-loader-null (production)", () => {
     expect(Number(secondCount)).toBeGreaterThan(Number(firstCount));
   });
 });
+
+// ============================================================================
+// Search params cache isolation (dev)
+// ============================================================================
+
+test.describe("cache-search-params-isolation-dev", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+    isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
+  });
+
+  test("same path with different search params should render different content", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Visit without search params
+    await page.goto(f.url("/cache-test/search-params"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:none");
+
+    // Visit with ?page=1
+    await page.goto(f.url("/cache-test/search-params?page=1"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:1");
+
+    // Visit with ?page=2
+    await page.goto(f.url("/cache-test/search-params?page=2"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:2");
+  });
+
+  test("client-side Link navigation between different search params should update content", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Load page without params (document request, populates cache)
+    await page.goto(f.url("/cache-test/search-params"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:none");
+
+    // Client-side navigate to ?page=1 via Link click (partial navigation)
+    await page.getByTestId("page-link-1").click();
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:1");
+
+    // Client-side navigate to ?page=2 via Link click — must show page:2, not cached page:1
+    await page.getByTestId("page-link-2").click();
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:2");
+  });
+});
+
+// ============================================================================
+// Search params cache isolation (production)
+// ============================================================================
+
+test.describe("cache-search-params-isolation-prod", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+    isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
+  });
+
+  test("same path with different search params should render different content", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/search-params"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:none");
+
+    await page.goto(f.url("/cache-test/search-params?page=1"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:1");
+
+    await page.goto(f.url("/cache-test/search-params?page=2"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:2");
+  });
+
+  test("client-side Link navigation between different search params should update content", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/search-params"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:none");
+
+    // Client-side navigate via Link (partial navigation with _rsc_partial)
+    await page.getByTestId("page-link-1").click();
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:1");
+
+    await page.getByTestId("page-link-2").click();
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:2");
+  });
+});

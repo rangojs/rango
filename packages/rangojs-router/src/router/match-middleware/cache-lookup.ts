@@ -70,9 +70,11 @@
  *   - No segments yielded from this middleware
  *
  * Loaders:
- *   - NEVER cached by design
+ *   - NEVER cached in the segment cache
  *   - Always resolved fresh on every request
  *   - Ensures data freshness even with cached UI components
+ *   - Segment cache staleness does NOT propagate to loader revalidation;
+ *     loaders use their own revalidation rules (actionId, user-defined)
  *
  *
  * REVALIDATION RULES
@@ -518,7 +520,34 @@ export function withCacheLookup<TEnv>(
 
       // Look up revalidation rules for this segment
       const entryInfo = entryRevalidateMap?.get(segment.id);
+
+      // Even without explicit revalidation rules, route segments and their
+      // children must re-render when search params change — the handler reads
+      // ctx.searchParams so different ?page= values produce different content.
+      const searchChanged = ctx.prevUrl.search !== ctx.url.search;
+      const shouldDefaultRevalidate =
+        searchChanged &&
+        (segment.type === "route" ||
+          (segment.belongsToRoute &&
+            (segment.type === "layout" || segment.type === "parallel")));
+
       if (!entryInfo || entryInfo.revalidate.length === 0) {
+        if (shouldDefaultRevalidate) {
+          // Search params changed — must re-render even without custom rules
+          if (isTraceActive()) {
+            pushRevalidationTraceEntry({
+              segmentId: segment.id,
+              segmentType: segment.type,
+              belongsToRoute: segment.belongsToRoute ?? false,
+              source: "cache-hit",
+              defaultShouldRevalidate: true,
+              finalShouldRevalidate: true,
+              reason: "cached-search-changed",
+            });
+          }
+          yield segment;
+          continue;
+        }
         // No revalidation rules, use default behavior (skip if client has)
         if (isTraceActive()) {
           pushRevalidationTraceEntry({
@@ -615,7 +644,11 @@ export function withCacheLookup<TEnv>(
             ctx.url,
             ctx.routeKey,
             ctx.actionContext,
-            cacheResult.shouldRevalidate || undefined,
+            // Loaders are never cached in the segment cache, so segment
+            // staleness (cacheResult.shouldRevalidate) must not propagate.
+            // But browser-sent staleness (ctx.stale) — indicating an action
+            // happened in this or another tab — must still reach loaders.
+            ctx.stale || undefined,
           ),
         );
 

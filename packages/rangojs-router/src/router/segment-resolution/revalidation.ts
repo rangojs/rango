@@ -269,28 +269,39 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
     belongsToRoute: boolean,
     shortCodeOverride?: string,
   ): Promise<void> {
-    const { segments, matchedIds } = await resolveLoadersWithRevalidation(
-      entry,
-      context,
-      belongsToRoute,
-      clientSegmentIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      routeKey,
-      deps,
-      actionContext,
-      shortCodeOverride,
-      stale,
-    );
-    for (const seg of segments) {
-      if (!seenIds.has(seg.id)) {
-        seenIds.add(seg.id);
-        allLoaderSegments.push(seg);
+    // Skip if all loaders from this entry have already been resolved
+    // via a parent (e.g., cache boundary wrapping a layout with shared loaders).
+    const loaderEntries = entry.loader ?? [];
+    const sc = shortCodeOverride ?? entry.shortCode;
+    const allAlreadySeen =
+      loaderEntries.length > 0 &&
+      loaderEntries.every((le, i) =>
+        seenIds.has(`${sc}D${i}.${le.loader.$$id}`),
+      );
+    if (!allAlreadySeen) {
+      const { segments, matchedIds } = await resolveLoadersWithRevalidation(
+        entry,
+        context,
+        belongsToRoute,
+        clientSegmentIds,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey,
+        deps,
+        actionContext,
+        shortCodeOverride,
+        stale,
+      );
+      for (const seg of segments) {
+        if (!seenIds.has(seg.id)) {
+          seenIds.add(seg.id);
+          allLoaderSegments.push(seg);
+        }
       }
+      allMatchedIds.push(...matchedIds);
     }
-    allMatchedIds.push(...matchedIds);
 
     const seenParallelEntryIds = new Set<string>();
     for (const parallelEntry of getParallelEntries(entry.parallel)) {

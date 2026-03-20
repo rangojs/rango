@@ -245,5 +245,37 @@ export const cachePatterns = urls(
         { name: "cacheTest.statusJson500" },
       ),
     ]),
+    // Search-params cache isolation: same path + different ?page must produce
+    // separate cache entries. Verifies that cache keys include search params.
+    cache({ ttl: 600 }, () => [
+      path(
+        "/cache-test/search-params",
+        (ctx) => {
+          const page = ctx.searchParams.get("page") ?? "none";
+          return (
+            <div>
+              <h1 data-testid="search-page-title">Search Params Cache Test</h1>
+              <p data-testid="search-page-value">page:{page}</p>
+              <p data-testid="search-page-ts">{Date.now()}</p>
+              <nav>
+                <Link
+                  to="/cache-test/search-params?page=1"
+                  data-testid="page-link-1"
+                >
+                  Page 1
+                </Link>
+                <Link
+                  to="/cache-test/search-params?page=2"
+                  data-testid="page-link-2"
+                >
+                  Page 2
+                </Link>
+              </nav>
+            </div>
+          );
+        },
+        { name: "cacheTest.searchParams" },
+      ),
+    ]),
   ],
 );
