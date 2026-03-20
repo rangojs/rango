@@ -25,6 +25,19 @@ test.describe("use-cache streaming", () => {
     isolatedServer: true,
   });
 
+  // First page.goto() on an isolated dev server triggers Vite dep
+  // optimization → module re-evaluation → in-memory cache loss.
+  // This warmup absorbs that cycle via a real browser render.
+  test("warmup: trigger dep optimization before cache tests", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+    // Navigate to the streaming page to warm its SSR modules
+    await page.goto(f.url("/use-cache-test/streaming"));
+    await waitForHydration(page);
+  });
+
   test("streaming: cached timestamp stays consistent while server time advances", async ({
     page,
   }) => {
