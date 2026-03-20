@@ -624,6 +624,7 @@ export async function resolveLoadersOnly<TEnv>(
   deps: SegmentResolutionDeps<TEnv>,
 ): Promise<ResolvedSegment[]> {
   const loaderSegments: ResolvedSegment[] = [];
+  const seenIds = new Set<string>();
 
   async function collectEntryLoaders(
     entry: EntryData,
@@ -637,7 +638,12 @@ export async function resolveLoadersOnly<TEnv>(
       deps,
       shortCodeOverride,
     );
-    loaderSegments.push(...segments);
+    for (const seg of segments) {
+      if (!seenIds.has(seg.id)) {
+        seenIds.add(seg.id);
+        loaderSegments.push(seg);
+      }
+    }
 
     const seenParallelEntryIds = new Set<string>();
     for (const parallelEntry of getParallelEntries(entry.parallel)) {

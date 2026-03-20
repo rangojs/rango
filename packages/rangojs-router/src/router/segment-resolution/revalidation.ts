@@ -262,6 +262,7 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
 ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
   const allLoaderSegments: ResolvedSegment[] = [];
   const allMatchedIds: string[] = [];
+  const seenIds = new Set<string>();
 
   async function collectEntryLoaders(
     entry: EntryData,
@@ -283,7 +284,12 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
       shortCodeOverride,
       stale,
     );
-    allLoaderSegments.push(...segments);
+    for (const seg of segments) {
+      if (!seenIds.has(seg.id)) {
+        seenIds.add(seg.id);
+        allLoaderSegments.push(seg);
+      }
+    }
     allMatchedIds.push(...matchedIds);
 
     const seenParallelEntryIds = new Set<string>();
