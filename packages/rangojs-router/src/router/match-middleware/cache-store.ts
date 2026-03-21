@@ -165,10 +165,14 @@ export function withCacheStore<TEnv>(
     // Combine main segments with intercept segments
     const allSegmentsToCache = [...allSegments, ...state.interceptSegments];
 
-    // Check if any non-loader segments have null components
-    // This happens when client already had those segments (partial navigation)
+    // Check if any non-loader segments have null components from revalidation
+    // skip (client already had them). Segments where the handler intentionally
+    // returned null are not revalidation skips — re-rendering them will still
+    // produce null, so proactive caching would be wasted work.
+    const clientIdSet = new Set(ctx.clientSegmentIds);
     const hasNullComponents = allSegmentsToCache.some(
-      (s) => s.component === null && s.type !== "loader",
+      (s) =>
+        s.component === null && s.type !== "loader" && clientIdSet.has(s.id),
     );
 
     const requestCtx = getRequestContext();

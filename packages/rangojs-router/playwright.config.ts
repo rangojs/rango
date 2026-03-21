@@ -91,24 +91,28 @@ export default defineConfig({
           testMatch: "**/client-component-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          dependencies: ["dev"],
         },
         {
           name: "hmr-loader",
           testMatch: ["**/loader-hmr.test.ts", "**/refresh-cmd.test.ts"],
           use: browserConfig,
           fullyParallel: false,
+          dependencies: ["dev"],
         },
         {
           name: "hmr-routes",
           testMatch: "**/route-types-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          dependencies: ["dev"],
         },
         {
           name: "hmr-intercept",
           testMatch: "**/intercept-hmr*.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          dependencies: ["dev"],
         },
         {
           name: "webkit-smoke",
@@ -174,19 +178,18 @@ export default defineConfig({
           testMatch: "**/client-component-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
-          // Run after build completes. On CI there are no dependencies so
-          // HMR tests can start immediately. Locally we wait for the build
-          // but NOT for dev/production — flaky dev tests must not block HMR.
-          dependencies: process.env.CI ? [] : ["build"],
+          // HMR tests modify route files in the shared test-app directory.
+          // The dev server's Vite watcher picks up these changes, invalidating
+          // modules and busting the in-memory cache — causing cache tests to fail.
+          // Must run after dev tests complete.
+          dependencies: ["dev"],
         },
         {
           name: "hmr-loader",
-          // Loader HMR and refresh tests don't modify route definitions,
-          // so they can run independently of route-modifying HMR tests.
           testMatch: ["**/loader-hmr.test.ts", "**/refresh-cmd.test.ts"],
           use: browserConfig,
           fullyParallel: false,
-          dependencies: process.env.CI ? [] : ["hmr-client"],
+          dependencies: ["dev", "hmr-client"],
         },
         {
           name: "hmr-routes",
@@ -195,7 +198,7 @@ export default defineConfig({
           testMatch: "**/route-types-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
-          dependencies: process.env.CI ? [] : ["hmr-loader"],
+          dependencies: ["dev", "hmr-loader"],
         },
         {
           name: "hmr-intercept",
@@ -204,7 +207,7 @@ export default defineConfig({
           testMatch: "**/intercept-hmr*.test.ts",
           use: browserConfig,
           fullyParallel: false,
-          dependencies: process.env.CI ? [] : ["hmr-routes"],
+          dependencies: ["dev", "hmr-routes"],
         },
         {
           name: "webkit-smoke",

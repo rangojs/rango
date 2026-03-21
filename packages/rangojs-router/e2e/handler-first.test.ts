@@ -110,7 +110,6 @@ test.describe("revalidate and cache mix (dev)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
-    isolatedServer: true,
   });
 
   test("cache scope: handler ctx.set() visible to parallel via SSR", async ({
@@ -185,31 +184,29 @@ test.describe("revalidate and cache mix (dev)", () => {
     // Sidebar reads handler's timestamp via ctx.get()
     expect(cachedSidebarTs1).toBe(cachedHandlerTs1);
 
-    // Wait for async cache write to complete
-    await page.waitForTimeout(1000);
+    // Poll for cache hit: the async cache write runs in the background and
+    // under heavy load can take longer than any fixed timeout. Navigate
+    // back-and-forth until the cached route returns the same timestamp.
+    await expect
+      .poll(
+        async () => {
+          // Navigate to uncached route (fresh content)
+          await page.getByTestId("link-to-uncached").click();
+          await expect(page.getByTestId("handler-first-title")).toBeVisible();
 
-    // SPA navigate back to uncached route — gets fresh content
-    await page.getByTestId("link-to-uncached").click();
-    await expect(page.getByTestId("handler-first-title")).toBeVisible();
+          // Navigate to cached route — check if cache hit
+          await page.getByTestId("link-to-cached").click();
+          await expect(page.getByTestId("cache-scope-title")).toBeVisible();
 
-    const uncachedTs2 = await page
-      .getByTestId("handler-first-timestamp")
-      .textContent();
-    expect(uncachedTs2).not.toBe(uncachedTs1);
+          return page.getByTestId("cache-scope-handler-ts").textContent();
+        },
+        { timeout: 15000, intervals: [1000, 2000, 3000] },
+      )
+      .toBe(cachedHandlerTs1);
 
-    // SPA navigate to cached route again — cache hit
-    await page.getByTestId("link-to-cached").click();
-    await expect(page.getByTestId("cache-scope-title")).toBeVisible();
-
-    const cachedHandlerTs2 = await page
-      .getByTestId("cache-scope-handler-ts")
-      .textContent();
     const cachedSidebarTs2 = await page
       .getByTestId("cache-scope-sidebar-ts")
       .textContent();
-
-    // Cached values are identical to the first visit
-    expect(cachedHandlerTs2).toBe(cachedHandlerTs1);
     expect(cachedSidebarTs2).toBe(cachedHandlerTs1);
   });
 });

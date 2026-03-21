@@ -23,7 +23,6 @@ test.describe("use-cache basic", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
-    isolatedServer: true,
   });
 
   test("file-level use cache returns cached data on second request", async ({

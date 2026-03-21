@@ -22,7 +22,6 @@ test.describe("use-cache streaming", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
-    isolatedServer: true,
   });
 
   test("streaming: cached timestamp stays consistent while server time advances", async ({

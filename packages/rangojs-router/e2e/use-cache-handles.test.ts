@@ -24,7 +24,6 @@ test.describe("use-cache handles", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
-    isolatedServer: true,
   });
 
   test("tainted ctx is excluded from cache key and handles are replayed", async ({
