@@ -722,10 +722,12 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
     () => null,
   );
 
+  // Normalize void handlers (undefined) to null so the reconciler's
+  // component === null checks work consistently for both void and explicit null.
   const resolvedComponent =
     component && typeof component === "object" && "content" in component
-      ? (component as { content: ReactNode }).content
-      : component;
+      ? ((component as { content: ReactNode }).content ?? null)
+      : (component ?? null);
 
   const segment: ResolvedSegment = {
     id: entry.shortCode,

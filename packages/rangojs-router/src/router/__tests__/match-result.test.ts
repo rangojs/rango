@@ -165,8 +165,11 @@ describe("match-result", () => {
       expect(result.matched).toEqual(["seg1", "seg2"]);
     });
 
-    it("should filter out segments with null components", () => {
-      const ctx = createMockContext({ isFullMatch: false });
+    it("should filter null-component segments when client has them", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: ["seg1", "seg2"],
+      });
       const state = createPipelineState();
       state.matchedIds = ["seg1", "seg2"];
 
@@ -179,6 +182,32 @@ describe("match-result", () => {
 
       expect(result.segments).toHaveLength(1);
       expect(result.segments[0].id).toBe("seg2");
+    });
+
+    it("should include null-component segments the client does not have", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: ["old-layout"],
+      });
+      const state = createPipelineState();
+      state.matchedIds = ["root-layout", "route-seg", "child-layout"];
+
+      const segments = [
+        createSegment("root-layout", {
+          component: "RootLayout",
+          type: "layout",
+        }),
+        createSegment("route-seg", { component: null, type: "route" }),
+        createSegment("child-layout", {
+          component: "ChildLayout",
+          type: "layout",
+        }),
+      ];
+
+      const result = buildMatchResult(segments, ctx, state);
+
+      expect(result.segments).toHaveLength(3);
+      expect(result.diff).toContain("route-seg");
     });
 
     it("should include loader segments even with null component", () => {
@@ -458,8 +487,11 @@ describe("match-result", () => {
       expect(result.segments[0].layout).toBe("LayoutWrapper");
     });
 
-    it("should handle partial match with all null components", () => {
-      const ctx = createMockContext({ isFullMatch: false });
+    it("should filter all null-component segments when client has them", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: ["seg1", "seg2"],
+      });
       const state = createPipelineState();
       state.matchedIds = ["seg1", "seg2"];
 
@@ -471,8 +503,28 @@ describe("match-result", () => {
       const result = buildMatchResult(segments, ctx, state);
 
       expect(result.matched).toEqual(["seg1", "seg2"]);
-      expect(result.segments).toHaveLength(0); // All filtered out
-      expect(result.diff).toEqual([]); // No segments to render
+      expect(result.segments).toHaveLength(0);
+      expect(result.diff).toEqual([]);
+    });
+
+    it("should include all null-component segments when client does not have them", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: [],
+      });
+      const state = createPipelineState();
+      state.matchedIds = ["seg1", "seg2"];
+
+      const segments = [
+        createSegment("seg1", { component: null }),
+        createSegment("seg2", { component: null }),
+      ];
+
+      const result = buildMatchResult(segments, ctx, state);
+
+      expect(result.matched).toEqual(["seg1", "seg2"]);
+      expect(result.segments).toHaveLength(2);
+      expect(result.diff).toEqual(["seg1", "seg2"]);
     });
 
     it("should handle empty segment list", () => {
@@ -500,8 +552,11 @@ describe("match-result", () => {
       expect(result.segments[0].namespace).toBe("intercept:modal");
     });
 
-    it("should handle mixed loaders and routes in partial match", () => {
-      const ctx = createMockContext({ isFullMatch: false });
+    it("should include null-component segments client does not have (mixed types)", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: [],
+      });
       const state = createPipelineState();
       state.matchedIds = ["route1", "route2", "loader1", "loader2"];
 
@@ -514,9 +569,35 @@ describe("match-result", () => {
 
       const result = buildMatchResult(segments, ctx, state);
 
-      // Loaders should be included even with null component
-      // Routes with null component should be filtered
-      expect(result.segments).toHaveLength(3); // route2, loader1, loader2
+      // All included — client doesn't have any of them
+      expect(result.segments).toHaveLength(4);
+      expect(result.segments.map((s) => s.id)).toEqual([
+        "route1",
+        "route2",
+        "loader1",
+        "loader2",
+      ]);
+    });
+
+    it("should filter null-component route segments client has but keep loaders", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: ["route1", "route2", "loader1", "loader2"],
+      });
+      const state = createPipelineState();
+      state.matchedIds = ["route1", "route2", "loader1", "loader2"];
+
+      const segments = [
+        createSegment("route1", { component: null, type: "route" }),
+        createSegment("route2", { component: "RouteComponent", type: "route" }),
+        createSegment("loader1", { component: null, type: "loader" }),
+        createSegment("loader2", { component: null, type: "loader" }),
+      ];
+
+      const result = buildMatchResult(segments, ctx, state);
+
+      // route1 filtered (null + client has it), loaders always kept
+      expect(result.segments).toHaveLength(3);
       expect(result.segments.map((s) => s.id)).toEqual([
         "route2",
         "loader1",

@@ -344,7 +344,7 @@ export async function resolveSegment<TEnv>(
       namespace: entry.id,
       type: "route",
       index: 0,
-      component,
+      component: component ?? null,
       loading: entry.loading === false ? null : entry.loading,
       transition: entry.transition,
       params,

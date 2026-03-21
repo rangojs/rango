@@ -4,5 +4,8 @@ export const routes = {
   filtered: { path: "/filtered/:category", search: { q: "string", page: "number?", active: "boolean?" } },
   index: "/",
   "nested.index": "/nested",
+  "nullHandler.index": "/null-handler",
+  "nullHandlerCached.index": "/null-handler-cached",
+  "nullHandlerUseCache.index": "/null-handler-use-cache",
 } as const;
 export type routes = typeof routes;

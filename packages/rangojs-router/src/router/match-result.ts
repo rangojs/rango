@@ -67,10 +67,11 @@
  *   Keep if:
  *     - component !== null (needs rendering)
  *     - type === "loader" (carries data even with null component)
+ *     - client doesn't have the segment (structurally required parent node)
  *
  *   Skip if:
- *     - component === null AND type !== "loader"
- *     - (Client already has this segment's UI)
+ *     - component === null AND type !== "loader" AND client has it cached
+ *     - (Revalidation skip — client already has this segment's UI)
  *
  *
  * INTERCEPT HANDLING
@@ -168,10 +169,15 @@ export function buildMatchResult<TEnv>(
     // Deduplicate allIds (defense-in-depth for partial match path)
     allIds = [...new Set(allIds)];
 
-    // Filter out segments with null components (client already has them)
-    // BUT always include loader segments - they carry data even with null component
+    // Filter out null-component segments only when the client already has
+    // them cached (revalidation skip). If the client doesn't have the segment,
+    // it must be included even with null component — it's structurally required
+    // as a parent node for child layouts/parallels to reconcile against.
+    // Loader segments are always included as they carry data.
+    const clientIdSet = new Set(ctx.clientSegmentIds);
     segmentsToRender = allSegments.filter(
-      (s) => s.component !== null || s.type === "loader",
+      (s) =>
+        s.component !== null || s.type === "loader" || !clientIdSet.has(s.id),
     );
   }
 
