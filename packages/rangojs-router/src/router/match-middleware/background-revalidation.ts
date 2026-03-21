@@ -149,6 +149,13 @@ export function withBackgroundRevalidation<TEnv>(
       : undefined;
 
     requestCtx?.waitUntil(async () => {
+      // Prevent background metrics from polluting foreground timeline.
+      // The foreground uses its own metricsStore reference directly (via
+      // appendMetric), so nulling Store.metrics only affects track() calls
+      // inside this background Store.run() scope.
+      const savedMetrics = ctx.Store.metrics;
+      ctx.Store.metrics = undefined;
+
       const start = performance.now();
       debugLog("backgroundRevalidation", "revalidating stale route", {
         pathname: ctx.pathname,
@@ -179,7 +186,9 @@ export function withBackgroundRevalidation<TEnv>(
         setupLoaderAccess(freshHandlerContext, freshLoaderPromises);
 
         // Resolve all segments fresh (without revalidation logic)
-        // to ensure complete components for caching
+        // to ensure complete components for caching.
+        // Skip DSL loaders — they are never cached (cacheRoute filters them)
+        // and are always resolved fresh on each request.
         const freshSegments = await ctx.Store.run(() =>
           resolveAllSegments(
             ctx.entries,
@@ -187,6 +196,7 @@ export function withBackgroundRevalidation<TEnv>(
             ctx.matched.params,
             freshHandlerContext,
             freshLoaderPromises,
+            { skipLoaders: true },
           ),
         );
 
@@ -234,6 +244,7 @@ export function withBackgroundRevalidation<TEnv>(
         });
       } finally {
         requestCtx._handleStore = originalHandleStore;
+        ctx.Store.metrics = savedMetrics;
       }
     });
   };

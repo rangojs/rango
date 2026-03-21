@@ -210,6 +210,7 @@ export interface RouterContext<TEnv = any> {
     params: Record<string, string>,
     handlerContext: HandlerContext<any, TEnv>,
     loaderPromises: Map<string, Promise<any>>,
+    options?: { skipLoaders?: boolean },
   ) => Promise<ResolvedSegment[]>;
 
   // Generator-based simple resolution

@@ -195,6 +195,10 @@ export function withCacheStore<TEnv>(
         // Proactive caching: render all segments fresh in background
         // This ensures cache has complete components for future requests
         requestCtx.waitUntil(async () => {
+          // Prevent background metrics from polluting foreground timeline.
+          const savedMetrics = ctx.Store.metrics;
+          ctx.Store.metrics = undefined;
+
           const start = performance.now();
           debugLog("cacheStore", "proactive caching started", {
             pathname: ctx.pathname,
@@ -225,7 +229,9 @@ export function withCacheStore<TEnv>(
             // Use normal loader access so handle data is captured
             setupLoaderAccess(proactiveHandlerContext, proactiveLoaderPromises);
 
-            // Re-resolve ALL segments without revalidation
+            // Re-resolve ALL segments without revalidation.
+            // Skip DSL loaders — they are never cached (cacheRoute filters them)
+            // and are always resolved fresh on each request.
             const Store = ctx.Store;
             const freshSegments = await Store.run(() =>
               resolveAllSegments(
@@ -234,6 +240,7 @@ export function withCacheStore<TEnv>(
                 ctx.matched.params,
                 proactiveHandlerContext,
                 proactiveLoaderPromises,
+                { skipLoaders: true },
               ),
             );
 
@@ -285,6 +292,7 @@ export function withCacheStore<TEnv>(
             });
           } finally {
             requestCtx._handleStore = originalHandleStore;
+            ctx.Store.metrics = savedMetrics;
           }
         });
       } else {
