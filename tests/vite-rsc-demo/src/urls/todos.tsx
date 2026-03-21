@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { urls, Meta } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
 import {
   TodosLayout,
@@ -13,23 +13,29 @@ export const todosPatterns = urls(
     // Passthrough layout for error boundary
     layout(<Outlet />, () => [
       errorBoundary(todosErrorBoundary),
-      layout(<TodosLayout />, () => [
-        // Todos loader with revalidation based on actions
-        loader(TodosLoader, () => [
-          revalidate(({ actionId, defaultShouldRevalidate }) => {
-            const isTodosAction = actionId?.includes("todos/actions");
-            return isTodosAction ?? defaultShouldRevalidate;
-          }),
-        ]),
+      layout(
+        (ctx) => {
+          ctx.use(Meta)({ title: "Todos" });
+          return <TodosLayout />;
+        },
+        () => [
+          // Todos loader with revalidation based on actions
+          loader(TodosLoader, () => [
+            revalidate(({ actionId, defaultShouldRevalidate }) => {
+              const isTodosAction = actionId?.includes("todos/actions");
+              return isTodosAction ?? defaultShouldRevalidate;
+            }),
+          ]),
 
-        path("/", TodosIndexPage, { name: "index" }, () => [
-          revalidate(() => false),
-        ]),
-        path("/:id", TodoDetailPage, { name: "detail" }, () => [
-          loader(TodoDetailLoader),
-          revalidate(() => false),
-        ]),
-      ]),
+          path("/", TodosIndexPage, { name: "index" }, () => [
+            revalidate(() => false),
+          ]),
+          path("/:id", TodoDetailPage, { name: "detail" }, () => [
+            loader(TodoDetailLoader),
+            revalidate(() => false),
+          ]),
+        ],
+      ),
     ]),
   ],
 );

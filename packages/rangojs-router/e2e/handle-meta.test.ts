@@ -196,6 +196,51 @@ test.describe("handle-meta", () => {
       expect(parsed.offers["@type"]).toBe("Offer");
       expect(parsed.offers.priceCurrency).toBe("USD");
     });
+
+    test("should add JSON-LD on soft navigation to product page", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      // Home page should have no JSON-LD
+      let jsonLd = page.locator('script[type="application/ld+json"]');
+      await expect(jsonLd).toHaveCount(0);
+
+      // Navigate to product page
+      await testId(page, "product-link-product-a").click();
+      await expect(testId(page, "product-modal")).toBeVisible();
+      await testId(page, "view-full-details").click();
+      await expect(testId(page, "product-detail-page")).toBeVisible();
+
+      // JSON-LD should now be present
+      jsonLd = page.locator('script[type="application/ld+json"]');
+      await expect(jsonLd).toHaveCount(1);
+      const content = await jsonLd.textContent();
+      const parsed = JSON.parse(content!);
+      expect(parsed["@type"]).toBe("Product");
+      expect(parsed.name).toBe("Product A");
+    });
+
+    test("should remove JSON-LD on soft navigation away from product page", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/product/product-a"));
+      await waitForHydration(page);
+      await expect(testId(page, "product-name")).toBeVisible();
+
+      // JSON-LD should be present on product page
+      let jsonLd = page.locator('script[type="application/ld+json"]');
+      await expect(jsonLd).toHaveCount(1);
+
+      // Navigate back to home
+      await testId(page, "back-link").click();
+      await expect(testId(page, "products-list")).toBeVisible();
+
+      // JSON-LD should be gone
+      jsonLd = page.locator('script[type="application/ld+json"]');
+      await expect(jsonLd).toHaveCount(0);
+    });
   });
 
   test.describe("meta updates on navigation", () => {
@@ -892,6 +937,58 @@ test.describe("handle-meta (production)", () => {
       const ogTitle = await page.locator('meta[property="og:title"]');
       await expect(ogTitle).toHaveCount(1);
       await expect(ogTitle).toHaveAttribute("content", "Product A");
+    });
+
+    test("should render JSON-LD script for product", async ({ page }) => {
+      await page.goto(f.url("/product/product-a"));
+      await waitForHydration(page);
+      await expect(testId(page, "product-name")).toBeVisible();
+
+      const jsonLd = page.locator('script[type="application/ld+json"]');
+      await expect(jsonLd).toHaveCount(1);
+      const content = await jsonLd.textContent();
+      const parsed = JSON.parse(content!);
+      expect(parsed["@context"]).toBe("https://schema.org");
+      expect(parsed["@type"]).toBe("Product");
+      expect(parsed.name).toBe("Product A");
+    });
+
+    test("should add JSON-LD on soft navigation to product page", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      let jsonLd = page.locator('script[type="application/ld+json"]');
+      await expect(jsonLd).toHaveCount(0);
+
+      await testId(page, "product-link-product-a").click();
+      await expect(testId(page, "product-modal")).toBeVisible();
+      await testId(page, "view-full-details").click();
+      await expect(testId(page, "product-detail-page")).toBeVisible();
+
+      jsonLd = page.locator('script[type="application/ld+json"]');
+      await expect(jsonLd).toHaveCount(1);
+      const content = await jsonLd.textContent();
+      const parsed = JSON.parse(content!);
+      expect(parsed["@type"]).toBe("Product");
+    });
+
+    test("should remove JSON-LD on soft navigation away from product page", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/product/product-a"));
+      await waitForHydration(page);
+      await expect(testId(page, "product-name")).toBeVisible();
+
+      let jsonLd = page.locator('script[type="application/ld+json"]');
+      await expect(jsonLd).toHaveCount(1);
+
+      await testId(page, "back-link").click();
+      await expect(testId(page, "products-list")).toBeVisible();
+
+      jsonLd = page.locator('script[type="application/ld+json"]');
+      await expect(jsonLd).toHaveCount(0);
     });
   });
 

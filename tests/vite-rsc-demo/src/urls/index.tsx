@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { urls, Meta } from "@rangojs/router";
 import { HomePage } from "../pages/home.js";
 import { AboutPage } from "../pages/about.js";
 import { PrefetchTestPage } from "../pages/prefetch-test.js";
@@ -26,8 +26,22 @@ import { compositionPatterns } from "./composition-test.js";
  */
 export const urlpatterns = urls(({ path, include }) => [
   // Root routes
-  path("/", HomePage, { name: "home.index" }),
-  path("/about", AboutPage, { name: "about.index" }),
+  path(
+    "/",
+    (ctx) => {
+      ctx.use(Meta)({ title: "Home" });
+      return <HomePage />;
+    },
+    { name: "home.index" },
+  ),
+  path(
+    "/about",
+    (ctx) => {
+      ctx.use(Meta)({ title: "About" });
+      return <AboutPage />;
+    },
+    { name: "about.index" },
+  ),
   path("/prefetch-test", PrefetchTestPage, { name: "prefetch-test" }),
 
   // Include patterns from separate modules

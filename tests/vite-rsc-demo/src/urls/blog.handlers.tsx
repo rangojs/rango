@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Handler } from "@rangojs/router";
+import { Meta, type Handler } from "@rangojs/router";
 import { BlogPostPage } from "../pages/blog.js";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import {
@@ -11,10 +11,21 @@ import { AuthorPostsPage } from "../handlers/blog/routes/author-posts.js";
 
 export const BlogPostHandler: Handler<"blog.post"> = (ctx) => {
   const push = ctx.use(Breadcrumbs);
+  const meta = ctx.use(Meta);
   const title = ctx.params.slug
     .split("-")
     .map((w: string) => w[0].toUpperCase() + w.slice(1))
     .join(" ");
+  meta({ title });
+  meta({
+    "script:ld+json": {
+      "@context": "https://schema.org",
+      "@type": "BlogPosting",
+      headline: title,
+      url: `https://example.com/blog/${ctx.params.slug}`,
+      author: { "@type": "Person", name: "Demo Author" },
+    },
+  });
   // Async breadcrumb content with 3s delay for streaming demo
   const asyncContent = new Promise<ReactNode>((resolve) => {
     setTimeout(() => {
@@ -37,7 +48,9 @@ export const BlogPostHandler: Handler<"blog.post"> = (ctx) => {
 
 export const BlogAuthorHandler: Handler<"blog.author"> = (ctx) => {
   const push = ctx.use(Breadcrumbs);
+  const meta = ctx.use(Meta);
   const author = getAuthor(ctx.params.authorSlug);
+  meta({ title: author?.name ?? ctx.params.authorSlug });
   const posts = getPostsByAuthor(ctx.params.authorSlug);
   // Async breadcrumb content -- streams in post count after 2s delay
   const asyncContent = new Promise<ReactNode>((resolve) => {
@@ -61,7 +74,9 @@ export const BlogAuthorHandler: Handler<"blog.author"> = (ctx) => {
 
 export const BlogAuthorPostsHandler: Handler<"blog.author.posts"> = (ctx) => {
   const push = ctx.use(Breadcrumbs);
+  const meta = ctx.use(Meta);
   const author = getAuthor(ctx.params.authorSlug);
+  meta({ title: `Posts by ${author?.name ?? ctx.params.authorSlug}` });
   const posts = getPostsByAuthor(ctx.params.authorSlug);
   push({
     label: author?.name ?? ctx.params.authorSlug,

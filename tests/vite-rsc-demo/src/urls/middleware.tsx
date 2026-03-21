@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { urls, Meta } from "@rangojs/router";
 import {
   MiddlewareDemoLayout,
   MiddlewareIndexPage,
@@ -14,21 +14,27 @@ import {
 } from "../pages/middleware.js";
 
 export const middlewarePatterns = urls(({ path, layout, middleware }) => [
-  layout(<MiddlewareDemoLayout />, () => [
-    middleware(...globalMiddleware),
+  layout(
+    (ctx) => {
+      ctx.use(Meta)({ title: "Middleware" });
+      return <MiddlewareDemoLayout />;
+    },
+    () => [
+      middleware(...globalMiddleware),
 
-    path("/", MiddlewareIndexPage, { name: "index" }),
-    path("/dashboard", MiddlewareDashboardPage, { name: "dashboard" }, () => [
-      middleware(...dashboardMiddleware),
-    ]),
-    path("/timed", MiddlewareTimedPage, { name: "timed" }, () => [
-      middleware(...timedMiddleware),
-    ]),
-    path("/user/:userId", MiddlewareUserPage, { name: "user" }, () => [
-      middleware(...userMiddleware),
-    ]),
-    path("/api/data", MiddlewareApiPage, { name: "api" }, () => [
-      middleware(...apiMiddleware),
-    ]),
-  ]),
+      path("/", MiddlewareIndexPage, { name: "index" }),
+      path("/dashboard", MiddlewareDashboardPage, { name: "dashboard" }, () => [
+        middleware(...dashboardMiddleware),
+      ]),
+      path("/timed", MiddlewareTimedPage, { name: "timed" }, () => [
+        middleware(...timedMiddleware),
+      ]),
+      path("/user/:userId", MiddlewareUserPage, { name: "user" }, () => [
+        middleware(...userMiddleware),
+      ]),
+      path("/api/data", MiddlewareApiPage, { name: "api" }, () => [
+        middleware(...apiMiddleware),
+      ]),
+    ],
+  ),
 ]);
