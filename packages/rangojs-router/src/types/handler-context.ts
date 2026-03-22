@@ -272,8 +272,16 @@ export type HandlerContext<
    * ```
    */
   set: {
-    <T>(contextVar: ContextVar<T>, value: T): void;
-  } & (<K extends keyof DefaultVars>(key: K, value: DefaultVars[K]) => void);
+    <T>(
+      contextVar: ContextVar<T>,
+      value: T,
+      options?: { cache?: boolean },
+    ): void;
+  } & ((
+    key: keyof DefaultVars,
+    value: DefaultVars[keyof DefaultVars],
+    options?: { cache?: boolean },
+  ) => void);
   /**
    * Response headers. Headers set here are merged into the final response.
    *
