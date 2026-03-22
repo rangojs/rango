@@ -77,13 +77,19 @@ test.describe("parallel-meta-slot", () => {
     await page.goto(f.url("/parallel-meta/product-a"));
     await waitForHydration(page);
 
+    // WebSite (root layout) + Product (@meta parallel)
     const jsonLd = page.locator('script[type="application/ld+json"]');
-    await expect(jsonLd).toHaveCount(1);
-    const content = await jsonLd.textContent();
-    const parsed = JSON.parse(content!);
-    expect(parsed["@context"]).toBe("https://schema.org");
-    expect(parsed["@type"]).toBe("Product");
-    expect(parsed.name).toBe("Product A");
+    await expect(jsonLd).toHaveCount(2);
+    const scripts = await jsonLd.allTextContents();
+    const types = scripts.map((s) => JSON.parse(s)["@type"]);
+    expect(types).toContain("WebSite");
+    expect(types).toContain("Product");
+
+    const product = scripts
+      .map((s) => JSON.parse(s))
+      .find((p: any) => p["@type"] === "Product");
+    expect(product["@context"]).toBe("https://schema.org");
+    expect(product.name).toBe("Product A");
   });
 
   test("soft nav from index to product should update meta", async ({
@@ -100,9 +106,9 @@ test.describe("parallel-meta-slot", () => {
     await expect(page.getByTestId("pm-product-page")).toBeVisible();
     await expect(page).toHaveTitle("Product A | Test Store");
 
-    // JSON-LD should appear
+    // WebSite (root layout) + Product (@meta parallel)
     const jsonLd = page.locator('script[type="application/ld+json"]');
-    await expect(jsonLd).toHaveCount(1);
+    await expect(jsonLd).toHaveCount(2);
   });
 
   test("soft nav between products should update meta and breadcrumbs", async ({
@@ -126,6 +132,13 @@ test.describe("parallel-meta-slot", () => {
     await expect(page.getByTestId("breadcrumbs-current")).toHaveText(
       "Product B",
     );
+
+    // "Product A" must be fully removed — no stale trail
+    const breadcrumbNav = page.locator('[data-testid="breadcrumbs"]');
+    await expect(breadcrumbNav).not.toContainText("Product A");
+    // Exact trail: Home / Store / Product B (3 items)
+    const items = breadcrumbNav.locator("li");
+    await expect(items).toHaveCount(3);
   });
 
   test("soft nav back to index should restore defaults", async ({ page }) => {
@@ -143,12 +156,47 @@ test.describe("parallel-meta-slot", () => {
     await expect(page.getByTestId("pm-index-page")).toBeVisible();
     await expect(page).toHaveTitle("Test Store");
 
-    // JSON-LD should be gone
+    // Product JSON-LD should be gone, only WebSite remains
     const jsonLd = page.locator('script[type="application/ld+json"]');
-    await expect(jsonLd).toHaveCount(0);
+    await expect(jsonLd).toHaveCount(1);
+    const parsed = JSON.parse((await jsonLd.textContent())!);
+    expect(parsed["@type"]).toBe("WebSite");
 
     // Breadcrumb should show only layout's "Store" (no product breadcrumb)
     await expect(page.getByTestId("breadcrumbs-current")).toHaveText("Store");
+  });
+
+  test("soft nav between products should update JSON-LD content", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/parallel-meta/product-a"));
+    await waitForHydration(page);
+
+    // Verify Product A JSON-LD
+    let jsonLd = page.locator('script[type="application/ld+json"]');
+    await expect(jsonLd).toHaveCount(2);
+    let scripts = await jsonLd.allTextContents();
+    let product = scripts
+      .map((s) => JSON.parse(s))
+      .find((p: any) => p["@type"] === "Product");
+    expect(product.name).toBe("Product A");
+
+    // Navigate to Product B
+    await page.getByTestId("pm-link-b").click();
+    await expect(page.getByTestId("pm-product-name")).toContainText(
+      "product-b",
+    );
+
+    // JSON-LD should update to Product B
+    jsonLd = page.locator('script[type="application/ld+json"]');
+    await expect(jsonLd).toHaveCount(2);
+    scripts = await jsonLd.allTextContents();
+    product = scripts
+      .map((s) => JSON.parse(s))
+      .find((p: any) => p["@type"] === "Product");
+    expect(product.name).toBe("Product B");
   });
 
   test("SSR should include meta from @meta parallel", async ({ request }) => {
@@ -161,6 +209,20 @@ test.describe("parallel-meta-slot", () => {
     expect(html).toContain("Details for Product A");
     expect(html).toContain('type="application/ld+json"');
     expect(html).toContain('"@type":"Product"');
+  });
+
+  test("SSR should include breadcrumbs from @breadcrumbs parallel", async ({
+    request,
+  }) => {
+    const response = await request.get(f.url("/parallel-meta/product-a"), {
+      headers: { Accept: "text/html,application/xhtml+xml" },
+    });
+    const html = await response.text();
+
+    // Breadcrumb trail should be in SSR HTML: Home / Store / Product A
+    expect(html).toContain('aria-label="Breadcrumb"');
+    expect(html).toContain("Store");
+    expect(html).toContain("Product A");
   });
 });
 
@@ -217,12 +279,18 @@ test.describe("parallel-meta-slot (production)", () => {
     await page.goto(f.url("/parallel-meta/product-b"));
     await waitForHydration(page);
 
+    // WebSite (root layout) + Product (@meta parallel)
     const jsonLd = page.locator('script[type="application/ld+json"]');
-    await expect(jsonLd).toHaveCount(1);
-    const content = await jsonLd.textContent();
-    const parsed = JSON.parse(content!);
-    expect(parsed["@type"]).toBe("Product");
-    expect(parsed.name).toBe("Product B");
+    await expect(jsonLd).toHaveCount(2);
+    const scripts = await jsonLd.allTextContents();
+    const types = scripts.map((s) => JSON.parse(s)["@type"]);
+    expect(types).toContain("WebSite");
+    expect(types).toContain("Product");
+
+    const product = scripts
+      .map((s) => JSON.parse(s))
+      .find((p: any) => p["@type"] === "Product");
+    expect(product.name).toBe("Product B");
   });
 
   test("soft nav between products should update meta and breadcrumbs", async ({
@@ -245,6 +313,13 @@ test.describe("parallel-meta-slot (production)", () => {
     await expect(page.getByTestId("breadcrumbs-current")).toHaveText(
       "Product B",
     );
+
+    // "Product A" must be fully removed — no stale trail
+    const breadcrumbNav = page.locator('[data-testid="breadcrumbs"]');
+    await expect(breadcrumbNav).not.toContainText("Product A");
+    // Exact trail: Home / Store / Product B (3 items)
+    const items = breadcrumbNav.locator("li");
+    await expect(items).toHaveCount(3);
   });
 
   test("soft nav back to index should restore defaults", async ({ page }) => {
@@ -258,10 +333,43 @@ test.describe("parallel-meta-slot (production)", () => {
     await expect(page.getByTestId("pm-index-page")).toBeVisible();
     await expect(page).toHaveTitle("Test Store");
 
+    // Product JSON-LD should be gone, only WebSite remains
     const jsonLd = page.locator('script[type="application/ld+json"]');
-    await expect(jsonLd).toHaveCount(0);
+    await expect(jsonLd).toHaveCount(1);
+    const parsed = JSON.parse((await jsonLd.textContent())!);
+    expect(parsed["@type"]).toBe("WebSite");
 
     await expect(page.getByTestId("breadcrumbs-current")).toHaveText("Store");
+  });
+
+  test("soft nav between products should update JSON-LD content", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/parallel-meta/product-a"));
+    await waitForHydration(page);
+
+    let jsonLd = page.locator('script[type="application/ld+json"]');
+    await expect(jsonLd).toHaveCount(2);
+    let scripts = await jsonLd.allTextContents();
+    let product = scripts
+      .map((s) => JSON.parse(s))
+      .find((p: any) => p["@type"] === "Product");
+    expect(product.name).toBe("Product A");
+
+    await page.getByTestId("pm-link-b").click();
+    await expect(page.getByTestId("pm-product-name")).toContainText(
+      "product-b",
+    );
+
+    jsonLd = page.locator('script[type="application/ld+json"]');
+    await expect(jsonLd).toHaveCount(2);
+    scripts = await jsonLd.allTextContents();
+    product = scripts
+      .map((s) => JSON.parse(s))
+      .find((p: any) => p["@type"] === "Product");
+    expect(product.name).toBe("Product B");
   });
 
   test("SSR should include meta from @meta parallel", async ({ request }) => {
@@ -273,5 +381,21 @@ test.describe("parallel-meta-slot (production)", () => {
     expect(html).toContain("<title>Product A | Test Store</title>");
     expect(html).toContain("Details for Product A");
     expect(html).toContain('type="application/ld+json"');
+    expect(html).toContain('"@type":"Product"');
+    expect(html).toContain('"@type":"WebSite"');
+  });
+
+  test("SSR should include breadcrumbs from @breadcrumbs parallel", async ({
+    request,
+  }) => {
+    const response = await request.get(f.url("/parallel-meta/product-a"), {
+      headers: { Accept: "text/html,application/xhtml+xml" },
+    });
+    const html = await response.text();
+
+    // Breadcrumb trail should be in SSR HTML: Home / Store / Product A
+    expect(html).toContain('aria-label="Breadcrumb"');
+    expect(html).toContain("Store");
+    expect(html).toContain("Product A");
   });
 });

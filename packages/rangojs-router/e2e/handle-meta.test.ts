@@ -176,36 +176,55 @@ test.describe("handle-meta", () => {
   });
 
   test.describe("JSON-LD structured data", () => {
-    test("should render JSON-LD script for product", async ({ page }) => {
-      await page.goto(f.url("/product/product-a"));
-      await waitForHydration(page);
-
-      // Wait for product data to load
-      await expect(testId(page, "product-name")).toBeVisible();
-
-      // Check JSON-LD script exists
-      const jsonLd = await page.locator('script[type="application/ld+json"]');
-      await expect(jsonLd).toHaveCount(1);
-
-      // Verify JSON-LD content
-      const jsonLdContent = await jsonLd.textContent();
-      const parsed = JSON.parse(jsonLdContent!);
-      expect(parsed["@context"]).toBe("https://schema.org");
-      expect(parsed["@type"]).toBe("Product");
-      expect(parsed.name).toBe("Product A");
-      expect(parsed.offers["@type"]).toBe("Offer");
-      expect(parsed.offers.priceCurrency).toBe("USD");
-    });
-
-    test("should add JSON-LD on soft navigation to product page", async ({
+    test("should render layout-level WebSite JSON-LD on home page", async ({
       page,
     }) => {
       await page.goto(f.url("/"));
       await waitForHydration(page);
 
-      // Home page should have no JSON-LD
+      const jsonLd = page.locator('script[type="application/ld+json"]');
+      await expect(jsonLd).toHaveCount(1);
+
+      const parsed = JSON.parse((await jsonLd.textContent())!);
+      expect(parsed["@context"]).toBe("https://schema.org");
+      expect(parsed["@type"]).toBe("WebSite");
+      expect(parsed.name).toBe("RSC Router Test App");
+    });
+
+    test("should render both WebSite and Product JSON-LD on product page", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/product/product-a"));
+      await waitForHydration(page);
+      await expect(testId(page, "product-name")).toBeVisible();
+
+      const jsonLd = page.locator('script[type="application/ld+json"]');
+      await expect(jsonLd).toHaveCount(2);
+
+      const scripts = await jsonLd.allTextContents();
+      const types = scripts.map((s) => JSON.parse(s)["@type"]);
+      expect(types).toContain("WebSite");
+      expect(types).toContain("Product");
+
+      // Verify Product JSON-LD content
+      const product = scripts
+        .map((s) => JSON.parse(s))
+        .find((p: any) => p["@type"] === "Product");
+      expect(product["@context"]).toBe("https://schema.org");
+      expect(product.name).toBe("Product A");
+      expect(product.offers["@type"]).toBe("Offer");
+      expect(product.offers.priceCurrency).toBe("USD");
+    });
+
+    test("should add Product JSON-LD on soft navigation to product page", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      // Home page should have only WebSite JSON-LD
       let jsonLd = page.locator('script[type="application/ld+json"]');
-      await expect(jsonLd).toHaveCount(0);
+      await expect(jsonLd).toHaveCount(1);
 
       // Navigate to product page
       await testId(page, "product-link-product-a").click();
@@ -213,33 +232,69 @@ test.describe("handle-meta", () => {
       await testId(page, "view-full-details").click();
       await expect(testId(page, "product-detail-page")).toBeVisible();
 
-      // JSON-LD should now be present
+      // Both WebSite + Product JSON-LD should be present
       jsonLd = page.locator('script[type="application/ld+json"]');
-      await expect(jsonLd).toHaveCount(1);
-      const content = await jsonLd.textContent();
-      const parsed = JSON.parse(content!);
-      expect(parsed["@type"]).toBe("Product");
-      expect(parsed.name).toBe("Product A");
+      await expect(jsonLd).toHaveCount(2);
+      const scripts = await jsonLd.allTextContents();
+      const types = scripts.map((s) => JSON.parse(s)["@type"]);
+      expect(types).toContain("WebSite");
+      expect(types).toContain("Product");
     });
 
-    test("should remove JSON-LD on soft navigation away from product page", async ({
+    test("should remove Product JSON-LD on soft navigation away, keep WebSite", async ({
       page,
     }) => {
       await page.goto(f.url("/product/product-a"));
       await waitForHydration(page);
       await expect(testId(page, "product-name")).toBeVisible();
 
-      // JSON-LD should be present on product page
+      // Product page should have both JSON-LD scripts
       let jsonLd = page.locator('script[type="application/ld+json"]');
-      await expect(jsonLd).toHaveCount(1);
+      await expect(jsonLd).toHaveCount(2);
 
       // Navigate back to home
       await testId(page, "back-link").click();
       await expect(testId(page, "product-list")).toBeVisible();
 
-      // JSON-LD should be gone
+      // Only WebSite JSON-LD should remain
       jsonLd = page.locator('script[type="application/ld+json"]');
-      await expect(jsonLd).toHaveCount(0);
+      await expect(jsonLd).toHaveCount(1);
+      const parsed = JSON.parse((await jsonLd.textContent())!);
+      expect(parsed["@type"]).toBe("WebSite");
+    });
+
+    test("should update Product JSON-LD when navigating between products", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/product/product-a"));
+      await waitForHydration(page);
+      await expect(testId(page, "product-name")).toBeVisible();
+
+      // Verify Product A JSON-LD
+      let jsonLd = page.locator('script[type="application/ld+json"]');
+      await expect(jsonLd).toHaveCount(2);
+      let scripts = await jsonLd.allTextContents();
+      let product = scripts
+        .map((s) => JSON.parse(s))
+        .find((p: any) => p["@type"] === "Product");
+      expect(product.name).toBe("Product A");
+
+      // Navigate to Product B via home
+      await testId(page, "back-link").click();
+      await expect(testId(page, "product-list")).toBeVisible();
+      await testId(page, "product-link-product-b").click();
+      await expect(testId(page, "product-modal")).toBeVisible();
+      await testId(page, "view-full-details").click();
+      await expect(testId(page, "product-name")).toBeVisible();
+
+      // Verify Product B JSON-LD
+      jsonLd = page.locator('script[type="application/ld+json"]');
+      await expect(jsonLd).toHaveCount(2);
+      scripts = await jsonLd.allTextContents();
+      product = scripts
+        .map((s) => JSON.parse(s))
+        .find((p: any) => p["@type"] === "Product");
+      expect(product.name).toBe("Product B");
     });
   });
 
@@ -429,10 +484,22 @@ test.describe("handle-meta", () => {
       });
       const html = await response.text();
 
-      // JSON-LD should be in initial HTML for SEO crawlers
-      expect(html).toContain('type="application/ld+json"');
-      expect(html).toContain("https://schema.org");
+      // Both WebSite (layout) and Product (route) JSON-LD in SSR HTML
+      expect(html).toContain('"@type":"WebSite"');
       expect(html).toContain('"@type":"Product"');
+      expect(html).toContain("https://schema.org");
+    });
+
+    test("should include WebSite JSON-LD on home page SSR", async ({
+      request,
+    }) => {
+      const response = await request.get(f.url("/"), {
+        headers: htmlHeaders,
+      });
+      const html = await response.text();
+
+      expect(html).toContain('"@type":"WebSite"');
+      expect(html).not.toContain('"@type":"Product"');
     });
   });
 
@@ -939,28 +1006,43 @@ test.describe("handle-meta (production)", () => {
       await expect(ogTitle).toHaveAttribute("content", "Product A");
     });
 
-    test("should render JSON-LD script for product", async ({ page }) => {
+    test("should render layout-level WebSite JSON-LD on home page", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      const jsonLd = page.locator('script[type="application/ld+json"]');
+      await expect(jsonLd).toHaveCount(1);
+
+      const parsed = JSON.parse((await jsonLd.textContent())!);
+      expect(parsed["@type"]).toBe("WebSite");
+    });
+
+    test("should render both WebSite and Product JSON-LD on product page", async ({
+      page,
+    }) => {
       await page.goto(f.url("/product/product-a"));
       await waitForHydration(page);
       await expect(testId(page, "product-name")).toBeVisible();
 
       const jsonLd = page.locator('script[type="application/ld+json"]');
-      await expect(jsonLd).toHaveCount(1);
-      const content = await jsonLd.textContent();
-      const parsed = JSON.parse(content!);
-      expect(parsed["@context"]).toBe("https://schema.org");
-      expect(parsed["@type"]).toBe("Product");
-      expect(parsed.name).toBe("Product A");
+      await expect(jsonLd).toHaveCount(2);
+
+      const scripts = await jsonLd.allTextContents();
+      const types = scripts.map((s) => JSON.parse(s)["@type"]);
+      expect(types).toContain("WebSite");
+      expect(types).toContain("Product");
     });
 
-    test("should add JSON-LD on soft navigation to product page", async ({
+    test("should add Product JSON-LD on soft navigation to product page", async ({
       page,
     }) => {
       await page.goto(f.url("/"));
       await waitForHydration(page);
 
       let jsonLd = page.locator('script[type="application/ld+json"]');
-      await expect(jsonLd).toHaveCount(0);
+      await expect(jsonLd).toHaveCount(1);
 
       await testId(page, "product-link-product-a").click();
       await expect(testId(page, "product-modal")).toBeVisible();
@@ -968,13 +1050,14 @@ test.describe("handle-meta (production)", () => {
       await expect(testId(page, "product-detail-page")).toBeVisible();
 
       jsonLd = page.locator('script[type="application/ld+json"]');
-      await expect(jsonLd).toHaveCount(1);
-      const content = await jsonLd.textContent();
-      const parsed = JSON.parse(content!);
-      expect(parsed["@type"]).toBe("Product");
+      await expect(jsonLd).toHaveCount(2);
+      const scripts = await jsonLd.allTextContents();
+      const types = scripts.map((s) => JSON.parse(s)["@type"]);
+      expect(types).toContain("WebSite");
+      expect(types).toContain("Product");
     });
 
-    test("should remove JSON-LD on soft navigation away from product page", async ({
+    test("should remove Product JSON-LD on soft navigation away, keep WebSite", async ({
       page,
     }) => {
       await page.goto(f.url("/product/product-a"));
@@ -982,13 +1065,46 @@ test.describe("handle-meta (production)", () => {
       await expect(testId(page, "product-name")).toBeVisible();
 
       let jsonLd = page.locator('script[type="application/ld+json"]');
-      await expect(jsonLd).toHaveCount(1);
+      await expect(jsonLd).toHaveCount(2);
 
       await testId(page, "back-link").click();
       await expect(testId(page, "product-list")).toBeVisible();
 
       jsonLd = page.locator('script[type="application/ld+json"]');
-      await expect(jsonLd).toHaveCount(0);
+      await expect(jsonLd).toHaveCount(1);
+      const parsed = JSON.parse((await jsonLd.textContent())!);
+      expect(parsed["@type"]).toBe("WebSite");
+    });
+
+    test("should update Product JSON-LD when navigating between products", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/product/product-a"));
+      await waitForHydration(page);
+      await expect(testId(page, "product-name")).toBeVisible();
+
+      let jsonLd = page.locator('script[type="application/ld+json"]');
+      await expect(jsonLd).toHaveCount(2);
+      let scripts = await jsonLd.allTextContents();
+      let product = scripts
+        .map((s) => JSON.parse(s))
+        .find((p: any) => p["@type"] === "Product");
+      expect(product.name).toBe("Product A");
+
+      await testId(page, "back-link").click();
+      await expect(testId(page, "product-list")).toBeVisible();
+      await testId(page, "product-link-product-b").click();
+      await expect(testId(page, "product-modal")).toBeVisible();
+      await testId(page, "view-full-details").click();
+      await expect(testId(page, "product-name")).toBeVisible();
+
+      jsonLd = page.locator('script[type="application/ld+json"]');
+      await expect(jsonLd).toHaveCount(2);
+      scripts = await jsonLd.allTextContents();
+      product = scripts
+        .map((s) => JSON.parse(s))
+        .find((p: any) => p["@type"] === "Product");
+      expect(product.name).toBe("Product B");
     });
   });
 
@@ -1040,9 +1156,22 @@ test.describe("handle-meta (production)", () => {
       });
       const html = await response.text();
 
-      expect(html).toContain('type="application/ld+json"');
-      expect(html).toContain("https://schema.org");
+      // Both WebSite (layout) and Product (route) JSON-LD in SSR HTML
+      expect(html).toContain('"@type":"WebSite"');
       expect(html).toContain('"@type":"Product"');
+      expect(html).toContain("https://schema.org");
+    });
+
+    test("should include WebSite JSON-LD on home page SSR", async ({
+      request,
+    }) => {
+      const response = await request.get(f.url("/"), {
+        headers: htmlHeaders,
+      });
+      const html = await response.text();
+
+      expect(html).toContain('"@type":"WebSite"');
+      expect(html).not.toContain('"@type":"Product"');
     });
   });
 
