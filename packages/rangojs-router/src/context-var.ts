@@ -12,9 +12,6 @@
  * interface PaginationData { current: number; total: number }
  * export const Pagination = createVar<PaginationData>();
  *
- * // Non-cacheable var — throws if set/get inside cache() or "use cache"
- * export const User = createVar<UserData>({ cache: false });
- *
  * // handler
  * ctx.set(Pagination, { current: 1, total: 4 });
  *
@@ -26,22 +23,8 @@
 export interface ContextVar<T> {
   readonly __brand: "context-var";
   readonly key: symbol;
-  /** When false, the var is non-cacheable — throws inside cache() / "use cache" */
-  readonly cache: boolean;
   /** Phantom field to carry the type parameter. Never set at runtime. */
   readonly __type?: T;
-}
-
-export interface ContextVarOptions {
-  /**
-   * When false, marks this variable as non-cacheable.
-   * Setting or getting this var inside a cache() boundary or "use cache"
-   * function will throw. Use for inherently request-specific data (user
-   * sessions, auth tokens, etc.) that must never be baked into cached segments.
-   *
-   * @default true
-   */
-  cache?: boolean;
 }
 
 /**
@@ -50,12 +33,8 @@ export interface ContextVarOptions {
  * The returned object is used with ctx.set(token, value) and ctx.get(token)
  * for compile-time-checked data flow between handlers, layouts, and middleware.
  */
-export function createVar<T>(options?: ContextVarOptions): ContextVar<T> {
-  return {
-    __brand: "context-var" as const,
-    key: Symbol(),
-    cache: options?.cache !== false,
-  };
+export function createVar<T>(): ContextVar<T> {
+  return { __brand: "context-var" as const, key: Symbol() };
 }
 
 /**
@@ -68,36 +47,6 @@ export function isContextVar(value: unknown): value is ContextVar<unknown> {
     "__brand" in value &&
     (value as { __brand: unknown }).__brand === "context-var"
   );
-}
-
-/**
- * Symbol used as a Set stored on the variables object to track
- * which keys hold non-cacheable values (from write-level { cache: false }).
- */
-const NON_CACHEABLE_KEYS: unique symbol = Symbol.for(
-  "rango:non-cacheable-keys",
-) as any;
-
-function getNonCacheableKeys(variables: any): Set<string | symbol> {
-  if (!variables[NON_CACHEABLE_KEYS]) {
-    variables[NON_CACHEABLE_KEYS] = new Set();
-  }
-  return variables[NON_CACHEABLE_KEYS];
-}
-
-/**
- * Check if a variable value is non-cacheable (either var-level or write-level).
- */
-export function isNonCacheable(
-  variables: any,
-  keyOrVar: string | ContextVar<any>,
-): boolean {
-  if (typeof keyOrVar !== "string" && !keyOrVar.cache) {
-    return true; // var-level policy
-  }
-  const key = typeof keyOrVar === "string" ? keyOrVar : keyOrVar.key;
-  const set = variables[NON_CACHEABLE_KEYS] as Set<string | symbol> | undefined;
-  return set?.has(key) ?? false; // write-level policy
 }
 
 /**
@@ -115,17 +64,6 @@ export function contextGet(
 /** Keys that must never be used as string variable names */
 const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
-export interface ContextSetOptions {
-  /**
-   * When false, marks this specific write as non-cacheable.
-   * "Least cacheable wins" — if either the var definition or this option
-   * says cache: false, the value is non-cacheable.
-   *
-   * @default true (inherits from createVar)
-   */
-  cache?: boolean;
-}
-
 /**
  * Write a variable to the variables store.
  * Accepts either a string key (legacy) or a ContextVar token (typed).
@@ -134,7 +72,6 @@ export function contextSet(
   variables: any,
   keyOrVar: string | ContextVar<any>,
   value: any,
-  options?: ContextSetOptions,
 ): void {
   if (typeof keyOrVar === "string") {
     if (FORBIDDEN_KEYS.has(keyOrVar)) {
@@ -143,14 +80,7 @@ export function contextSet(
       );
     }
     variables[keyOrVar] = value;
-    if (options?.cache === false) {
-      getNonCacheableKeys(variables).add(keyOrVar);
-    }
   } else {
     variables[keyOrVar.key] = value;
-    // Track write-level non-cacheable (var-level is checked via keyOrVar.cache)
-    if (options?.cache === false) {
-      getNonCacheableKeys(variables).add(keyOrVar.key);
-    }
   }
 }

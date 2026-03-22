@@ -4,11 +4,8 @@ import { waitForHydration, expectNoPageError } from "./helper";
 
 /**
  * cache() scope guard tests.
- * Validates "least cacheable wins" policy:
- * - ctx.set(cacheableVar) inside cache() — allowed
- * - ctx.set(nonCacheableVar) inside cache() — throws (var-level policy)
- * - ctx.set(var, val, { cache: false }) inside cache() — throws (write-level)
- * - ctx.headers.set() inside cache() — throws (response-level)
+ * Validates that response-level side effects throw inside cache() boundaries
+ * while ctx.set() remains allowed.
  */
 
 // ============================================================================
@@ -21,9 +18,7 @@ test.describe("cache-scope-guard", () => {
     mode: "dev",
   });
 
-  test("ctx.set(cacheable var) inside cache() should be allowed", async ({
-    page,
-  }) => {
+  test("ctx.set() inside cache() should be allowed", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/cache-scope-guard/set-allowed"));
@@ -39,33 +34,10 @@ test.describe("cache-scope-guard", () => {
     await page.goto(f.url("/cache-scope-guard/header-blocked"));
     await waitForHydration(page);
 
+    // Error boundary catches the guard error
     await expect(page.getByTestId("csg-error-page")).toBeVisible();
     await expect(page.getByTestId("csg-error-message")).toContainText(
       "cache() boundary",
-    );
-  });
-
-  test("ctx.set(nonCacheable var) inside cache() should throw", async ({
-    page,
-  }) => {
-    await page.goto(f.url("/cache-scope-guard/var-blocked"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("csg-error-page")).toBeVisible();
-    await expect(page.getByTestId("csg-error-message")).toContainText(
-      "non-cacheable",
-    );
-  });
-
-  test("ctx.set(var, val, { cache: false }) inside cache() should throw", async ({
-    page,
-  }) => {
-    await page.goto(f.url("/cache-scope-guard/write-blocked"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("csg-error-page")).toBeVisible();
-    await expect(page.getByTestId("csg-error-message")).toContainText(
-      "non-cacheable",
     );
   });
 
@@ -91,9 +63,7 @@ test.describe("cache-scope-guard (production)", () => {
     mode: "build",
   });
 
-  test("ctx.set(cacheable var) inside cache() should be allowed", async ({
-    page,
-  }) => {
+  test("ctx.set() inside cache() should be allowed", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/cache-scope-guard/set-allowed"));
@@ -111,24 +81,7 @@ test.describe("cache-scope-guard (production)", () => {
     await page.goto(f.url("/cache-scope-guard/header-blocked"));
     await waitForHydration(page);
 
-    await expect(page.getByTestId("csg-error-page")).toBeVisible();
-  });
-
-  test("ctx.set(nonCacheable var) inside cache() should render error boundary", async ({
-    page,
-  }) => {
-    await page.goto(f.url("/cache-scope-guard/var-blocked"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("csg-error-page")).toBeVisible();
-  });
-
-  test("ctx.set(var, val, { cache: false }) inside cache() should render error boundary", async ({
-    page,
-  }) => {
-    await page.goto(f.url("/cache-scope-guard/write-blocked"));
-    await waitForHydration(page);
-
+    // Error boundary catches the guard error (message sanitized in production)
     await expect(page.getByTestId("csg-error-page")).toBeVisible();
   });
 });

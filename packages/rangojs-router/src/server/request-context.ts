@@ -572,9 +572,9 @@ export function createRequestContext<TEnv>(
     var: variables,
     get: ((keyOrVar: any) =>
       contextGet(variables, keyOrVar)) as RequestContext<TEnv>["get"],
-    set: ((keyOrVar: any, value: any, options?: any) => {
+    set: ((keyOrVar: any, value: any) => {
       assertNotInsideCacheExec(ctx, "set");
-      contextSet(variables, keyOrVar, value, options);
+      contextSet(variables, keyOrVar, value);
     }) as RequestContext<TEnv>["set"],
     params: {} as Record<string, string>,
 
