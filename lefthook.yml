@@ -12,5 +12,4 @@ pre-commit:
 post-merge:
   jobs:
     - name: install
-      run: pnpm install --frozen-lockfile
-      glob: "pnpm-lock.yaml"
+      run: git diff-tree -r --name-only ORIG_HEAD HEAD | grep -q pnpm-lock.yaml && pnpm install --frozen-lockfile || true
