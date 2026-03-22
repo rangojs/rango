@@ -235,7 +235,7 @@ test.describe("handle-meta", () => {
 
       // Navigate back to home
       await testId(page, "back-link").click();
-      await expect(testId(page, "products-list")).toBeVisible();
+      await expect(testId(page, "product-list")).toBeVisible();
 
       // JSON-LD should be gone
       jsonLd = page.locator('script[type="application/ld+json"]');
@@ -985,7 +985,7 @@ test.describe("handle-meta (production)", () => {
       await expect(jsonLd).toHaveCount(1);
 
       await testId(page, "back-link").click();
-      await expect(testId(page, "products-list")).toBeVisible();
+      await expect(testId(page, "product-list")).toBeVisible();
 
       jsonLd = page.locator('script[type="application/ld+json"]');
       await expect(jsonLd).toHaveCount(0);

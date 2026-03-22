@@ -150,6 +150,8 @@ export const NamedRoutes = {
   negotiateTestJson: "/negotiate-test",
   negotiateTestMd: "/negotiate-test",
   "ns.nsChild": "/ns-reverse",
+  "parallelMeta.index": "/parallel-meta",
+  "parallelMeta.product": "/parallel-meta/:slug",
   peRedirect: "/pe-redirect",
   "prerender-reverse": "/prerender-reverse",
   "prerenderComplex.detail": "/prerender-complex/:slug",

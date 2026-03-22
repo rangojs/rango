@@ -152,7 +152,7 @@ function renderMetaDescriptor(
     const json = JSON.stringify(descriptor["script:ld+json"]);
     return (
       <script
-        key={`ld-json-${index}`}
+        key="ld-json"
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: json }}
       />
