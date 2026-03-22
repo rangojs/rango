@@ -173,6 +173,14 @@ const router = createRouter<AppBindings>({
 KV entries require `expirationTtl >= 60s`. Short-lived entries (< 60s total TTL)
 are only cached in L1.
 
+## Context Variables Inside Cache Boundaries
+
+Context variables (`createVar`) are cacheable by default and can be read and
+written inside `cache()` scopes. Variables marked with `{ cache: false }` (at
+the var level or write level) throw when read inside a cache scope. Response
+side effects (`ctx.header()`, `ctx.cookie()`) always throw inside cache
+boundaries. See `/cache-guide` for the full cache safety table.
+
 ## Nested Cache Boundaries
 
 Override cache settings for specific sections:

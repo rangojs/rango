@@ -7,6 +7,7 @@
 import type { ReactNode } from "react";
 import { track } from "../server/context";
 import type { EntryData } from "../server/context";
+import { contextGet } from "../context-var.js";
 import type {
   ResolvedSegment,
   HandlerContext,
@@ -241,6 +242,11 @@ function createLoaderExecutor<TEnv>(
     pendingLoaders.add(loader.$$id);
 
     const currentLoaderId = loader.$$id;
+    // Loader functions are always fresh (never cached), so they get an
+    // unguarded get that bypasses non-cacheable read guards. This applies
+    // to ALL loaders — DSL and handler-called — because the loader
+    // function itself always re-executes. Also handles nested deps
+    // (loaderA → use(loaderB)) since all share this unguarded get.
     const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> = {
       params: ctx.params,
       routeParams: (ctx.params ?? {}) as Record<string, string>,
@@ -251,7 +257,7 @@ function createLoaderExecutor<TEnv>(
       url: ctx.url,
       env: ctx.env,
       var: ctx.var,
-      get: ctx.get,
+      get: ((keyOrVar: any) => contextGet(ctx.var, keyOrVar)) as typeof ctx.get,
       use: <TDep, TDepParams = any>(
         dep: LoaderDefinition<TDep, TDepParams>,
       ): Promise<TDep> => {

@@ -228,11 +228,12 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
    * ])
    *
-   * // Access loader data in handlers via ctx.use()
-   * route("products.detail", async (ctx) => {
-   *   const product = await ctx.use(ProductLoader);
-   *   return <ProductPage product={product} />;
-   * })
+   * // Consume in client components with useLoader()
+   * // (preferred — cache-safe, always fresh)
+   * function ProductDetails() {
+   *   const { data } = useLoader(ProductLoader);
+   *   return <div>{data.name}</div>;
+   * }
    * ```
    * @param loaderDef - Loader created with createLoader()
    * @param use - Optional callback for loader-specific revalidation rules

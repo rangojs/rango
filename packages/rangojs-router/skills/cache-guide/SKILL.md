@@ -162,6 +162,38 @@ middleware(async (ctx, next) => {
 });
 ```
 
+## Context Variable Cache Safety
+
+Context variables created with `createVar()` are cacheable by default and can
+be read freely inside `cache()` and `"use cache"` scopes. Non-cacheable vars
+throw at read time to prevent request-specific data from being captured.
+
+There are two ways to mark a value as non-cacheable:
+
+```typescript
+// Var-level policy — inherently request-specific data
+const Session = createVar<SessionData>({ cache: false });
+
+// Write-level escalation — this specific write is non-cacheable
+ctx.set(Theme, derivedTheme, { cache: false });
+```
+
+"Least cacheable wins": if either the var definition or the `ctx.set()` call
+specifies `cache: false`, the value is non-cacheable.
+
+**Behavior inside cache scopes:**
+
+| Operation                           | Inside `cache()` / `"use cache"` |
+| ----------------------------------- | -------------------------------- |
+| `ctx.get(cacheableVar)`             | Allowed                          |
+| `ctx.get(nonCacheableVar)`          | Throws                           |
+| `ctx.set(var, value)` (cacheable)   | Allowed                          |
+| `ctx.header()`, `ctx.cookie()`, etc | Throws (response side effects)   |
+
+Write is dumb — `ctx.set()` stores the cache metadata but does not enforce.
+Enforcement happens at read time (`ctx.get()`), where ALS detects the cache
+scope and rejects non-cacheable reads.
+
 ## Loaders Are Always Fresh
 
 Loaders are **never cached** by route-level `cache()`. Even on a full cache hit

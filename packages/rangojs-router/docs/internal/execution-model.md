@@ -251,6 +251,53 @@ Expected visibility pattern:
 - `@orphan-panel` can see outer layout data, not path-local handler data.
 - layout-level `@panel` can see layout data (handler-first), not path-local handler data.
 
+### Cache-safety contract for context variables
+
+Context variables have a cache-safety flag controlled at two levels:
+
+- **Var-level**: `createVar<T>({ cache: false })` — all values are non-cacheable.
+- **Write-level**: `ctx.set(var, value, { cache: false })` — this specific value
+  is non-cacheable, even if the var itself is cacheable.
+
+"Least cacheable wins": if either the var or the write says `cache: false`, the
+stored value is non-cacheable.
+
+**Enforcement is at read time, not write time.** `ctx.set()` stores the
+cache-safety metadata alongside the value but does not throw. When `ctx.get()`
+is called inside a cache scope (detected via ALS — same mechanism as the
+existing `"use cache"` guards), it checks the stored metadata and throws if
+the value is non-cacheable.
+
+- `ctx.get(cacheableVar)` inside cache scope: allowed.
+- `ctx.get(nonCacheableVar)` inside cache scope: throws.
+- `ctx.set(var, value)` inside cache scope: allowed for cacheable vars (children
+  are also inside the cache boundary).
+- Response-level side effects (`ctx.header()`, `ctx.setCookie()`, `ctx.setStatus()`,
+  `ctx.onResponse()`) throw inside cache scope, regardless of cache-safety flag.
+  `ctx.headers.set/append/delete()` also throws via the guarded Headers proxy.
+
+### Loader access paths and cache safety
+
+DSL loaders (registered with `loader()`) and handler-called loaders
+(`ctx.use(Loader)`) have different cache-safety guarantees:
+
+- **DSL `loader()` + client `useLoader()`** — the recommended path. DSL
+  loaders are always resolved fresh (never cached), even inside `cache()`
+  boundaries. Loader functions receive an unguarded `ctx.get()` that
+  bypasses non-cacheable read guards. Data flows to the client via loader
+  segments and is consumed with `useLoader()`.
+
+- **`ctx.use(Loader)` in handlers** — escape hatch. The loader function
+  itself runs fresh, but the handler embeds the result in JSX that is
+  cached with the segment. On cache hit the handler does not re-execute,
+  so the loader result in the cached output may be stale. Non-cacheable
+  variable reads in the handler still throw via the normal read guard.
+
+This is a deliberate design decision: DSL loaders are the semantically
+strong path for request-specific data. `ctx.use(Loader)` is supported
+for convenience (e.g., setting context variables from loader data) but
+should not be treated as equivalent.
+
 ## Revalidation Contract
 
 - Revalidation is segment-scoped and opt-in by rules (`revalidate(...)`).

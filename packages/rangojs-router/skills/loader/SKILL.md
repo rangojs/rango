@@ -65,24 +65,10 @@ export const urlpatterns = urls(({ path, loader }) => [
 
 ## Consuming Loader Data
 
-Loaders are the **live data layer** — they resolve fresh on every request.
-The way you consume them depends on whether you're in a server component
-(route handler) or a client component.
-
-> **IMPORTANT: Prefer consuming loaders in client components.** Keeping data
-> fetching in loaders and consumption in client components creates a clean
-> separation: the server-side handler renders static markup that can be
-> freely cached with `cache()`, while loader data stays fresh on every
-> request. When you consume loaders in server handlers via `ctx.use()`, the
-> handler output depends on the loader data, which means caching the handler
-> also caches the data — defeating the purpose of the live data layer.
-
-### In Client Components (Preferred)
-
-Client components use `useLoader()` from `@rangojs/router/client`.
-The loader **must** be registered with `loader()` in the route's DSL
-segments so the framework knows to resolve it during SSR and stream
-the data to the client:
+Register loaders with `loader()` in the DSL and consume them in client
+components with `useLoader()`. This is the recommended pattern — it keeps
+data fetching on the server and consumption on the client, with a clean
+separation that works correctly with `cache()`.
 
 ```typescript
 "use client";
@@ -96,40 +82,60 @@ function ProductDetails() {
 ```
 
 ```typescript
-// Route definition — loader() registration required for client consumption
+// Route definition — loader() registration required
 path("/product/:slug", ProductPage, { name: "product" }, () => [
-  loader(ProductLoader), // Required for useLoader() in client components
+  loader(ProductLoader),
 ]);
 ```
 
-### In Route Handlers (Server Components)
+DSL loaders are the **live data layer** — they resolve fresh on every
+request, even when the route is inside a `cache()` boundary. The router
+excludes them from the segment cache at storage time and re-resolves them
+on retrieval. This means `cache()` gives you cached UI + fresh data by
+default.
 
-In server components, use `ctx.use(Loader)` directly in the route handler.
-This doesn't require `loader()` registration in the DSL — it works
-standalone. **However**, prefer client-side consumption when possible (see
-note above).
+### Cache safety
+
+DSL loaders can safely read `createVar({ cache: false })` variables
+because they are always resolved fresh. The read guard is bypassed for
+loader functions — they never produce stale data.
+
+### ctx.use(Loader) — escape hatch
+
+For cases where you need loader data in the server handler itself (e.g.,
+to set ctx variables or make routing decisions), use `ctx.use(Loader)`:
 
 ```typescript
-import { ProductLoader } from "./loaders/product";
-
-// Route handler — server component
 path("/product/:slug", async (ctx) => {
   const { product } = await ctx.use(ProductLoader);
-  return <h1>{product.name}</h1>;
-}, { name: "product" })
+  ctx.set(Product, product); // make available to children
+  return <ProductPage />;
+}, { name: "product" }, () => [
+  loader(ProductLoader), // still register for client consumption
+])
 ```
 
-When you do register with `loader()` in the DSL, `ctx.use()` returns the
+When you register with `loader()` in the DSL, `ctx.use()` returns the
 same memoized result — loaders never run twice per request.
+
+**Limitations of ctx.use(Loader):**
+
+- The handler output depends on the loader data. If the route is inside
+  `cache()`, the handler is cached with the loader result baked in —
+  defeating the live data guarantee.
+- Non-cacheable variable reads (`createVar({ cache: false })`) inside the
+  handler still throw, even if the data came from a loader.
+- Prefer DSL `loader()` + client `useLoader()` for data that depends on
+  non-cacheable context variables.
 
 **Never use `useLoader()` in server components** — it is a client-only API.
 
 ### Summary
 
-| Context                      | API                 | `loader()` DSL required? |
-| ---------------------------- | ------------------- | ------------------------ |
-| Client component (preferred) | `useLoader(Loader)` | **Yes**                  |
-| Route handler (server)       | `ctx.use(Loader)`   | No                       |
+| Pattern                        | API                 | Cache-safe | Recommended |
+| ------------------------------ | ------------------- | ---------- | ----------- |
+| DSL + client component         | `useLoader(Loader)` | Yes        | Yes         |
+| Handler escape hatch           | `ctx.use(Loader)`   | No         | When needed |
 
 ## Loader Context
 
@@ -564,10 +570,9 @@ export const CartLoader = createLoader(async (ctx) => {
   return { cart };
 });
 
-// urls.tsx
+// urls.tsx — register loaders in the DSL
 export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalidate }) => [
   layout(<ShopLayout />, () => [
-    // Shared cart loader for all shop routes
     loader(CartLoader, () => [
       revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
     ]),
@@ -579,17 +584,22 @@ export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalid
   ]),
 ]);
 
-// pages/product.tsx — server component (route handler)
+// components/ProductDetails.tsx — consume in client component
+"use client";
+import { useLoader } from "@rangojs/router/client";
 import { ProductLoader, CartLoader } from "./loaders/shop";
 
-async function ProductPage(ctx) {
-  const { product } = await ctx.use(ProductLoader);
-  const { cart } = await ctx.use(CartLoader);
+function ProductDetails() {
+  const { data: { product } } = useLoader(ProductLoader);
+  const { data: { cart } } = useLoader(CartLoader);
 
   return (
     <div>
       <h1>{product.name}</h1>
-      <AddToCartButton productId={product.id} inCart={cart?.items.includes(product.id)} />
+      <AddToCartButton
+        productId={product.id}
+        inCart={cart?.items.includes(product.id)}
+      />
     </div>
   );
 }

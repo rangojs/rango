@@ -204,8 +204,8 @@ export function createMiddlewareContext<TEnv>(
     get: ((keyOrVar: any) =>
       contextGet(variables, keyOrVar)) as MiddlewareContext<TEnv>["get"],
 
-    set: ((keyOrVar: any, value: unknown) => {
-      contextSet(variables, keyOrVar, value);
+    set: ((keyOrVar: any, value: unknown, options?: any) => {
+      contextSet(variables, keyOrVar, value, options);
     }) as MiddlewareContext<TEnv>["set"],
 
     var: variables as MiddlewareContext<TEnv>["var"],

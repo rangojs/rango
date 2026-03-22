@@ -166,11 +166,11 @@ export type LoadOptions =
  *   return await db.products.findBySlug(slug);
  * });
  *
- * // Server usage
- * const cart = ctx.use(CartLoader);
+ * // Client usage (preferred — cache-safe, always fresh)
+ * const { data } = useLoader(CartLoader);
  *
- * // Client usage (fn is stripped, only name remains)
- * const cart = useLoader(CartLoader);
+ * // Server escape hatch (handler needs data directly)
+ * const cart = await ctx.use(CartLoader);
  * ```
  */
 export type LoaderDefinition<

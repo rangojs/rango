@@ -42,7 +42,7 @@ import {
 import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
 import { track } from "../../server/context.js";
-import { stampCacheScope } from "../../cache/taint.js";
+import { RSCRouterContext } from "../../server/context.js";
 
 // ---------------------------------------------------------------------------
 // Telemetry helpers
@@ -1250,7 +1250,8 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
 
     const nonParallelEntry = entry as Exclude<EntryData, { type: "parallel" }>;
     if (entry.type === "cache") {
-      stampCacheScope(context);
+      const store = RSCRouterContext.getStore();
+      if (store) store.insideCacheScope = true;
     }
     const doneEntry = track(`segment:${entry.id}`, 1);
     const resolved = await resolveWithErrorBoundary(

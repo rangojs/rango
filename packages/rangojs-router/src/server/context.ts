@@ -273,6 +273,9 @@ interface HelperContext {
     string,
     import("../cache/profile-registry.js").CacheProfile
   >;
+  /** True when resolving handlers inside a cache() DSL boundary.
+   *  Read by ctx.get() to guard non-cacheable variable reads. */
+  insideCacheScope?: boolean;
 }
 // Use a global symbol key so the AsyncLocalStorage instance survives HMR
 // module re-evaluation. Without this, Vite's RSC module runner may create
@@ -665,4 +668,13 @@ export function track(label: string, depth?: number): () => void {
       ...(depth != null ? { depth } : {}),
     });
   };
+}
+
+/**
+ * Check if the current execution is inside a cache() DSL boundary.
+ * Returns false inside loader execution — loaders are always fresh
+ * (never cached), so non-cacheable reads are safe.
+ */
+export function isInsideCacheScope(): boolean {
+  return RSCRouterContext.getStore()?.insideCacheScope === true;
 }

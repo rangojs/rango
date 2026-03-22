@@ -293,8 +293,11 @@ export type HandlerContext<
    * and server components rendered within the request context.
    *
    * For loaders: Returns a promise that resolves to the loader data.
-   * Loaders are executed in parallel and memoized per request — calling
-   * `ctx.use(SameLoader)` multiple times returns the same promise.
+   * Loaders are executed in parallel and memoized per request.
+   * Prefer DSL `loader()` + client `useLoader()` over `ctx.use(Loader)` —
+   * DSL loaders are always fresh and cache-safe. Use `ctx.use(Loader)` only
+   * when you need loader data in the handler itself (e.g., to set context
+   * variables or make routing decisions).
    *
    * For handles: Returns a push function to add data for this segment.
    * Handle data accumulates across all matched route segments.
@@ -302,10 +305,11 @@ export type HandlerContext<
    *
    * @example
    * ```typescript
-   * // Loader usage
-   * route("cart", async (ctx) => {
-   *   const cart = await ctx.use(CartLoader);
-   *   return <CartPage cart={cart} />;
+   * // Loader escape hatch — use when handler needs the data directly
+   * route("product", async (ctx) => {
+   *   const { product } = await ctx.use(ProductLoader);
+   *   ctx.set(Product, product); // make available to children
+   *   return <ProductPage />;
    * });
    *
    * // Handle usage - direct value

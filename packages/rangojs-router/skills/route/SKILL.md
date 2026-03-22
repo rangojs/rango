@@ -181,6 +181,37 @@ String keys still work (`ctx.set("key", value)` / `ctx.get("key")`), but
 Only route handlers and middleware can call `ctx.set()`. Layouts, parallels,
 and intercepts can only read via `ctx.get()`.
 
+#### Non-cacheable context variables
+
+Mark a var as non-cacheable when it holds inherently request-specific data
+(sessions, auth tokens, per-request IDs). There are two ways:
+
+```typescript
+// Var-level: every value written to this var is non-cacheable
+const Session = createVar<SessionData>({ cache: false });
+
+// Write-level: escalate a normally-cacheable var for this specific write
+const Theme = createVar<string>();
+ctx.set(Theme, userTheme, { cache: false });
+```
+
+"Least cacheable wins" — if either the var definition or the write site says
+`cache: false`, the value is non-cacheable.
+
+Reading a non-cacheable var inside `cache()` or `"use cache"` throws at
+runtime. This prevents request-specific data from leaking into cached output:
+
+```typescript
+// This throws — Session is non-cacheable
+async function CachedWidget(ctx) {
+  "use cache";
+  const session = ctx.get(Session); // Error: non-cacheable var read inside cache scope
+  return <Widget />;
+}
+```
+
+Cacheable vars (the default) can be read freely inside cache scopes.
+
 ### Revalidation Contracts for Handler Data
 
 Handler-first guarantees apply within a single full render pass. For partial

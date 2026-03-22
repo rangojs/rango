@@ -369,7 +369,17 @@ interface PaginationData {
   perPage: number;
 }
 export const Pagination = createVar<PaginationData>();
+
+// Non-cacheable var — reading inside cache() or "use cache" throws at runtime
+const Session = createVar<SessionData>({ cache: false });
 ```
+
+`createVar` accepts an optional options object. The `cache` option (default
+`true`) controls whether the var's values can be read inside cache scopes.
+Write-level escalation is also supported: `ctx.set(Var, value, { cache: false })`
+marks a specific write as non-cacheable even if the var itself is cacheable.
+"Least cacheable wins" — if either says `cache: false`, the value throws on
+read inside `cache()` or `"use cache"`.
 
 ### Producer (handler or middleware)
 

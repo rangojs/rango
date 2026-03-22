@@ -27,8 +27,12 @@ type GetVariableFn = {
  * Set variable function type
  */
 type SetVariableFn = {
-  <T>(contextVar: ContextVar<T>, value: T): void;
-  <K extends keyof DefaultVars>(key: K, value: DefaultVars[K]): void;
+  <T>(contextVar: ContextVar<T>, value: T, options?: { cache?: boolean }): void;
+  <K extends keyof DefaultVars>(
+    key: K,
+    value: DefaultVars[K],
+    options?: { cache?: boolean },
+  ): void;
 };
 
 /**

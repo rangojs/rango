@@ -30,8 +30,7 @@ import {
 } from "./helpers.js";
 import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
-import { track } from "../../server/context.js";
-import { stampCacheScope } from "../../cache/taint.js";
+import { track, RSCRouterContext } from "../../server/context.js";
 
 // ---------------------------------------------------------------------------
 // Streamed handler telemetry
@@ -101,9 +100,7 @@ export async function resolveLoaders<TEnv>(
 
   if (!loadingDisabled) {
     // Streaming loaders: promises kick off now, settle during RSC serialization.
-    // No per-loader timing here — settlement happens asynchronously during
-    // RSC/SSR stream consumption, after the perf timeline is logged.
-    return loaderEntries.map((loaderEntry, i) => {
+    const segments = loaderEntries.map((loaderEntry, i) => {
       const { loader } = loaderEntry;
       const segmentId = `${shortCode}D${i}.${loader.$$id}`;
       return {
@@ -123,11 +120,12 @@ export async function resolveLoaders<TEnv>(
         belongsToRoute,
       };
     });
+
+    return segments;
   }
 
   // Loading disabled: still start all loaders in parallel, but only emit
   // settled promises so handlers don't stream loading placeholders.
-  // We can measure actual execution time here since we await all loaders.
   const pendingLoaderData = loaderEntries.map((loaderEntry) => {
     const start = performance.now();
     const promise = resolveLoaderData(loaderEntry, ctx, ctx.pathname);
@@ -581,11 +579,12 @@ export async function resolveAllSegments<TEnv>(
   } catch {}
 
   for (const entry of entries) {
-    // Stamp handler context when entering a cache() boundary so that
-    // response-level side effects (headers.set, etc.) throw via guards on
-    // the HandlerContext. The stamp persists for all descendant entries.
+    // Set ALS flag when entering a cache() boundary so that ctx.get()
+    // can guard non-cacheable variable reads. Also guards response-level
+    // side effects (headers.set). Persists for all descendant entries.
     if (entry.type === "cache") {
-      stampCacheScope(context);
+      const store = RSCRouterContext.getStore();
+      if (store) store.insideCacheScope = true;
     }
     const doneEntry = track(`segment:${entry.id}`, 1);
     const resolvedSegments = await resolveWithErrorBoundary(

@@ -3,9 +3,14 @@ import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
 
 /**
- * cache() scope guard tests.
- * Validates that response-level side effects throw inside cache() boundaries
- * while ctx.set() remains allowed.
+ * cache() scope guard tests — "least cacheable wins" policy.
+ *
+ * Validates full cycle:
+ * - ctx.set(cacheableVar) inside cache() — allowed
+ * - ctx.set(nonCacheableVar) inside cache() — throws (var-level policy)
+ * - ctx.set(var, val, { cache: false }) inside cache() — throws (write-level)
+ * - ctx.get(nonCacheableVar) inside cache() — throws (read guard)
+ * - ctx.headers.set() inside cache() — throws (response-level)
  */
 
 // ============================================================================
@@ -18,7 +23,9 @@ test.describe("cache-scope-guard", () => {
     mode: "dev",
   });
 
-  test("ctx.set() inside cache() should be allowed", async ({ page }) => {
+  test("ctx.set(cacheable var) inside cache() should be allowed", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/cache-scope-guard/set-allowed"));
@@ -34,10 +41,109 @@ test.describe("cache-scope-guard", () => {
     await page.goto(f.url("/cache-scope-guard/header-blocked"));
     await waitForHydration(page);
 
-    // Error boundary catches the guard error
     await expect(page.getByTestId("csg-error-page")).toBeVisible();
     await expect(page.getByTestId("csg-error-message")).toContainText(
       "cache() boundary",
+    );
+  });
+
+  test("ctx.set(nonCacheable var) inside cache() should throw", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/cache-scope-guard/var-blocked"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+    await expect(page.getByTestId("csg-error-message")).toContainText(
+      "non-cacheable",
+    );
+  });
+
+  test("ctx.set(var, val, { cache: false }) inside cache() should throw", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/cache-scope-guard/write-blocked"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+    await expect(page.getByTestId("csg-error-message")).toContainText(
+      "non-cacheable",
+    );
+  });
+
+  test("ctx.get(nonCacheable var) inside cache() should throw (read guard)", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/cache-scope-guard/read-blocked"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+    await expect(page.getByTestId("csg-error-message")).toContainText(
+      "non-cacheable",
+    );
+  });
+
+  test("@meta parallel reading non-cacheable var inside cache() should throw", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/cache-scope-guard/parallel-read-blocked"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+    await expect(page.getByTestId("csg-error-message")).toContainText(
+      "non-cacheable",
+    );
+  });
+
+  test("getRequestContext().get(nonCacheable) inside cache() should throw", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/cache-scope-guard/reqctx-read-blocked"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+    await expect(page.getByTestId("csg-error-message")).toContainText(
+      "non-cacheable",
+    );
+  });
+
+  test("getRequestContext().header() inside cache() should throw", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/cache-scope-guard/reqctx-header-blocked"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+    await expect(page.getByTestId("csg-error-message")).toContainText(
+      "cache() boundary",
+    );
+  });
+
+  test("loader reading non-cacheable var inside cache() should be allowed", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-scope-guard/loader-read-allowed"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-loader-page")).toBeVisible();
+    await expect(page.getByTestId("csg-loader-value")).toHaveText(
+      "loader-session",
+    );
+  });
+
+  test("async loader reading non-cacheable var after await should be allowed", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-scope-guard/async-loader-read-allowed"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-async-loader-page")).toBeVisible();
+    await expect(page.getByTestId("csg-async-loader-value")).toHaveText(
+      "loader-session",
     );
   });
 
@@ -63,7 +169,9 @@ test.describe("cache-scope-guard (production)", () => {
     mode: "build",
   });
 
-  test("ctx.set() inside cache() should be allowed", async ({ page }) => {
+  test("ctx.set(cacheable var) inside cache() should be allowed", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/cache-scope-guard/set-allowed"));
@@ -80,8 +188,82 @@ test.describe("cache-scope-guard (production)", () => {
   }) => {
     await page.goto(f.url("/cache-scope-guard/header-blocked"));
     await waitForHydration(page);
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+  });
 
-    // Error boundary catches the guard error (message sanitized in production)
+  test("ctx.set(nonCacheable var) inside cache() should render error boundary", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/cache-scope-guard/var-blocked"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+  });
+
+  test("ctx.set(var, val, { cache: false }) inside cache() should render error boundary", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/cache-scope-guard/write-blocked"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+  });
+
+  test("ctx.get(nonCacheable var) inside cache() should render error boundary (read guard)", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/cache-scope-guard/read-blocked"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+  });
+
+  test("@meta parallel reading non-cacheable var inside cache() should render error boundary", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/cache-scope-guard/parallel-read-blocked"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+  });
+
+  test("loader reading non-cacheable var inside cache() should be allowed", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-scope-guard/loader-read-allowed"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-loader-page")).toBeVisible();
+    await expect(page.getByTestId("csg-loader-value")).toHaveText(
+      "loader-session",
+    );
+  });
+
+  test("async loader reading non-cacheable var after await should be allowed", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-scope-guard/async-loader-read-allowed"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-async-loader-page")).toBeVisible();
+    await expect(page.getByTestId("csg-async-loader-value")).toHaveText(
+      "loader-session",
+    );
+  });
+
+  test("getRequestContext().get(nonCacheable) inside cache() should render error boundary", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/cache-scope-guard/reqctx-read-blocked"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+  });
+
+  test("getRequestContext().header() inside cache() should render error boundary", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/cache-scope-guard/reqctx-header-blocked"));
+    await waitForHydration(page);
     await expect(page.getByTestId("csg-error-page")).toBeVisible();
   });
 });

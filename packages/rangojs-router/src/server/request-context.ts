@@ -20,7 +20,12 @@ import type {
   DefaultRouteName,
 } from "../types/global-namespace.js";
 import type { Handle } from "../handle.js";
-import { type ContextVar, contextGet, contextSet } from "../context-var.js";
+import {
+  type ContextVar,
+  contextGet,
+  contextSet,
+  isNonCacheable,
+} from "../context-var.js";
 import { createHandleStore, type HandleStore } from "./handle-store.js";
 import { isHandle } from "../handle.js";
 import { track, type MetricsStore } from "./context.js";
@@ -30,6 +35,7 @@ import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import { THEME_COOKIE } from "../theme/constants.js";
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
 import { NOCACHE_SYMBOL, assertNotInsideCacheExec } from "../cache/taint.js";
+import { isInsideCacheScope } from "./context.js";
 import {
   createReverseFunction,
   stripInternalParams,
@@ -72,8 +78,12 @@ export interface RequestContext<
   };
   /** Set a variable (shared with middleware and handlers) */
   set: {
-    <T>(contextVar: ContextVar<T>, value: T): void;
-    <K extends string>(key: K, value: any): void;
+    <T>(
+      contextVar: ContextVar<T>,
+      value: T,
+      options?: { cache?: boolean },
+    ): void;
+    <K extends string>(key: K, value: any, options?: { cache?: boolean }): void;
   };
   /**
    * Route params (populated after route matching)
@@ -506,6 +516,18 @@ export function createRequestContext<TEnv>(
     responseCookieCache = null;
   };
 
+  // Guard: throw if a response-level side effect is called inside a cache() scope.
+  // Uses ALS to detect the scope (set during segment resolution).
+  function assertNotInsideCacheScopeALS(methodName: string): void {
+    if (isInsideCacheScope()) {
+      throw new Error(
+        `ctx.${methodName}() cannot be called inside a cache() boundary. ` +
+          `On cache hit the handler is skipped, so this side effect would be lost. ` +
+          `Move ctx.${methodName}() to a middleware or layout outside the cache() scope.`,
+      );
+    }
+  }
+
   // Effective cookie read: response stub Set-Cookie wins, then original header.
   // The stub IS the source of truth for same-request mutations.
   const effectiveCookie = (name: string): string | undefined => {
@@ -570,11 +592,19 @@ export function createRequestContext<TEnv>(
     pathname: url.pathname,
     searchParams: cleanUrl.searchParams,
     var: variables,
-    get: ((keyOrVar: any) =>
-      contextGet(variables, keyOrVar)) as RequestContext<TEnv>["get"],
-    set: ((keyOrVar: any, value: any) => {
+    get: ((keyOrVar: any) => {
+      if (isNonCacheable(variables, keyOrVar) && isInsideCacheScope()) {
+        throw new Error(
+          `ctx.get() for a non-cacheable variable cannot be called inside a cache() boundary. ` +
+            `The variable was created with { cache: false } or set with { cache: false }, ` +
+            `and its value would be stale on cache hit. Move the read outside the cached scope.`,
+        );
+      }
+      return contextGet(variables, keyOrVar);
+    }) as RequestContext<TEnv>["get"],
+    set: ((keyOrVar: any, value: any, options?: any) => {
       assertNotInsideCacheExec(ctx, "set");
-      contextSet(variables, keyOrVar, value);
+      contextSet(variables, keyOrVar, value, options);
     }) as RequestContext<TEnv>["set"],
     params: {} as Record<string, string>,
 
@@ -612,6 +642,7 @@ export function createRequestContext<TEnv>(
 
     setCookie(name: string, value: string, options?: CookieOptions): void {
       assertNotInsideCacheExec(ctx, "setCookie");
+      assertNotInsideCacheScopeALS("setCookie");
       stubResponse.headers.append(
         "Set-Cookie",
         serializeCookieValue(name, value, options),
@@ -624,6 +655,7 @@ export function createRequestContext<TEnv>(
       options?: Pick<CookieOptions, "domain" | "path">,
     ): void {
       assertNotInsideCacheExec(ctx, "deleteCookie");
+      assertNotInsideCacheScopeALS("deleteCookie");
       stubResponse.headers.append(
         "Set-Cookie",
         serializeCookieValue(name, "", { ...options, maxAge: 0 }),
@@ -633,11 +665,13 @@ export function createRequestContext<TEnv>(
 
     header(name: string, value: string): void {
       assertNotInsideCacheExec(ctx, "header");
+      assertNotInsideCacheScopeALS("header");
       stubResponse.headers.set(name, value);
     },
 
     setStatus(status: number): void {
       assertNotInsideCacheExec(ctx, "setStatus");
+      assertNotInsideCacheScopeALS("setStatus");
       stubResponse = new Response(null, {
         status,
         headers: stubResponse.headers,
@@ -676,6 +710,7 @@ export function createRequestContext<TEnv>(
 
     onResponse(callback: (response: Response) => Response): void {
       assertNotInsideCacheExec(ctx, "onResponse");
+      assertNotInsideCacheScopeALS("onResponse");
       this._onResponseCallbacks.push(callback);
     },
 
@@ -906,7 +941,6 @@ export function createUseFunction<TEnv>(
       ),
     };
 
-    // Start loader execution with tracking
     const doneLoader = track(`loader:${loader.$$id}`, 2);
     const promise = Promise.resolve(loaderFn(loaderCtx)).finally(() => {
       doneLoader();
