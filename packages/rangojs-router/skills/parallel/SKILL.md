@@ -92,6 +92,32 @@ path("/dashboard/:id", (ctx) => {
 ])
 ```
 
+## Setting Handles (Meta, Breadcrumbs)
+
+Parallel slot handlers can call `ctx.use(Meta)` or `ctx.use(Breadcrumbs)` to
+push handle data. The data is associated with the **parent** layout or route
+segment, not the parallel segment itself. This is because parallels execute
+after their parent handler and inherit its segment scope.
+
+This works well for document-level metadata — the handle data follows the
+parent's lifecycle (appears when the parent is mounted, removed when it
+unmounts).
+
+```typescript
+parallel({
+  "@meta": (ctx) => {
+    const meta = ctx.use(Meta);
+    meta({ title: "Product Detail" });
+    meta({ name: "description", content: "..." });
+    return null; // UI-less slot, only sets metadata
+  },
+  "@sidebar": (ctx) => <Sidebar />,
+})
+```
+
+Multiple parallels on the same parent can each push handle data — they all
+accumulate under the parent segment ID.
+
 ## Parallel Routes with Loaders
 
 Add loaders and loading states to parallel routes:
