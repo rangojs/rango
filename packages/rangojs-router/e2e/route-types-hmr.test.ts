@@ -110,8 +110,15 @@ test.describe.serial("route-types-hmr", () => {
     await fs.writeFile(mainUrlsPath, originalMainUrlsContent);
     await fs.writeFile(handlersPath, originalHandlersContent);
     await fs.writeFile(factoryHmrPath, originalFactoryHmrContent);
-    // Wait for HMR + re-discovery to process the restore
-    await new Promise((r) => setTimeout(r, isCI ? 5000 : 2000));
+    // Wait for HMR + re-discovery to regenerate the gen file.
+    // Verify the gen file is restored to avoid stale modifications
+    // leaking when the dev server shuts down before the watcher fires.
+    await expect(async () => {
+      const gen = await fs.readFile(genFilePath, "utf-8");
+      expect(gen).toContain('"blog.post"');
+      expect(gen).not.toContain('"blog.article"');
+      expect(gen).not.toContain('"blog.comments"');
+    }).toPass({ timeout: isCI ? 15000 : 10000 });
   });
 
   test("should regenerate route types when a new route is added", async () => {
