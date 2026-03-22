@@ -80,13 +80,20 @@ export const CacheInterceptDetailHandler: Handler<
   "cacheTest.interceptDetail"
 > = async (ctx) => {
   const data = await ctx.use(InterceptCacheTestLoader);
+  const otherItem = ctx.params.itemId === "item-a" ? "item-b" : "item-a";
   return (
     <div data-testid="cache-intercept-detail">
       <Link to="/cache-test/intercept" data-testid="back-to-intercept-index">
         Back
       </Link>
-      <h1>Item Detail: {ctx.params.itemId}</h1>
+      <h1 data-testid="detail-item-id">Item Detail: {ctx.params.itemId}</h1>
       <p>This is the full detail page (direct navigation)</p>
+      <Link
+        to={`/cache-test/intercept/${otherItem}`}
+        data-testid={`detail-link-${otherItem}`}
+      >
+        Go to {otherItem}
+      </Link>
       <CacheTestModal data={data} testId="detail-loader-data" />
     </div>
   );

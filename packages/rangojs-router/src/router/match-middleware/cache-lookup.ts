@@ -522,18 +522,23 @@ export function withCacheLookup<TEnv>(
       const entryInfo = entryRevalidateMap?.get(segment.id);
 
       // Even without explicit revalidation rules, route segments and their
-      // children must re-render when search params change — the handler reads
-      // ctx.searchParams so different ?page= values produce different content.
+      // children must re-render when params or search params change — the
+      // handler reads ctx.params/ctx.searchParams so different values produce
+      // different content. Matches evaluateRevalidation's default logic.
       const searchChanged = ctx.prevUrl.search !== ctx.url.search;
+      const routeParamsChanged = !paramsEqual(
+        ctx.matched.params,
+        ctx.prevParams,
+      );
       const shouldDefaultRevalidate =
-        searchChanged &&
+        (searchChanged || routeParamsChanged) &&
         (segment.type === "route" ||
           (segment.belongsToRoute &&
             (segment.type === "layout" || segment.type === "parallel")));
 
       if (!entryInfo || entryInfo.revalidate.length === 0) {
         if (shouldDefaultRevalidate) {
-          // Search params changed — must re-render even without custom rules
+          // Params or search params changed — must re-render even without custom rules
           if (isTraceActive()) {
             pushRevalidationTraceEntry({
               segmentId: segment.id,
@@ -542,7 +547,9 @@ export function withCacheLookup<TEnv>(
               source: "cache-hit",
               defaultShouldRevalidate: true,
               finalShouldRevalidate: true,
-              reason: "cached-search-changed",
+              reason: routeParamsChanged
+                ? "cached-params-changed"
+                : "cached-search-changed",
             });
           }
           yield segment;

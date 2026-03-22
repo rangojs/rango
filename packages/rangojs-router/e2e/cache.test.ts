@@ -589,6 +589,100 @@ test.describe("cache-intercept-routes (production)", () => {
 });
 
 // ============================================================================
+// Cache hit with different route params (regression: param change must re-render)
+// ============================================================================
+
+test.describe("cache-hit-param-change", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test("soft nav between different params on cached route should update content", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Direct-navigate to item-a (document request, populates server cache)
+    await page.goto(f.url("/cache-test/intercept/item-a"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("cache-intercept-detail")).toBeVisible();
+    await expect(page.getByTestId("detail-item-id")).toContainText("item-a");
+
+    // Soft-nav to item-b via sibling link (bypasses intercept when() condition).
+    // This is a partial request with clientSegmentSet populated from item-a.
+    // Server cache for item-b may miss — segments resolve fresh.
+    await page.getByTestId("detail-link-item-b").click();
+    await expect(page.getByTestId("detail-item-id")).toContainText("item-b");
+
+    // Soft-nav back to item-a (cache HIT — item-a was cached on first visit).
+    // The cache-hit revalidation must detect the param change (item-b → item-a)
+    // and re-render the route segment, not keep item-b's stale UI.
+    await page.getByTestId("detail-link-item-a").click();
+    await expect(page.getByTestId("detail-item-id")).toContainText("item-a");
+  });
+
+  test("soft nav between different search params on cached route should update content", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Document request to search-params page (populates cache for ?page=1)
+    await page.goto(f.url("/cache-test/search-params?page=1"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:1");
+
+    // Soft-nav to ?page=2 via link
+    await page.getByTestId("page-link-2").click();
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:2");
+
+    // Soft-nav back to ?page=1 (cache hit, search params changed)
+    await page.getByTestId("page-link-1").click();
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:1");
+  });
+});
+
+test.describe("cache-hit-param-change (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("soft nav between different params on cached route should update content", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/intercept/item-a"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("cache-intercept-detail")).toBeVisible();
+    await expect(page.getByTestId("detail-item-id")).toContainText("item-a");
+
+    await page.getByTestId("detail-link-item-b").click();
+    await expect(page.getByTestId("detail-item-id")).toContainText("item-b");
+
+    await page.getByTestId("detail-link-item-a").click();
+    await expect(page.getByTestId("detail-item-id")).toContainText("item-a");
+  });
+
+  test("soft nav between different search params on cached route should update content", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-test/search-params?page=1"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:1");
+
+    await page.getByTestId("page-link-2").click();
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:2");
+
+    await page.getByTestId("page-link-1").click();
+    await expect(page.getByTestId("search-page-value")).toHaveText("page:1");
+  });
+});
+
+// ============================================================================
 // useLoader with loader() registration (dev)
 // ============================================================================
 
