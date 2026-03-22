@@ -1,12 +1,16 @@
 import { urls, createVar } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 
-const TestData = createVar<string>();
+const CacheableData = createVar<string>();
+const NonCacheableData = createVar<string>({ cache: false });
 
 /**
  * Test routes for cache() scope guards.
- * Validates that response-level side effects (headers.set) throw inside
- * cache() boundaries, while ctx.set() remains allowed.
+ * - ctx.set() with cacheable var inside cache() — allowed
+ * - ctx.set() with non-cacheable var (createVar({ cache: false })) — throws
+ * - ctx.set() with write-level { cache: false } — throws
+ * - ctx.get() of non-cacheable var inside cache() — throws
+ * - ctx.headers.set() inside cache() — throws
  */
 export const cacheScopeGuardPatterns = urls(
   ({ path, layout, cache, errorBoundary }) => [
@@ -22,7 +26,7 @@ export const cacheScopeGuardPatterns = urls(
               to="/cache-scope-guard/set-allowed"
               data-testid="csg-link-set"
             >
-              ctx.set
+              set (ok)
             </Link>
             {" | "}
             <Link
@@ -30,6 +34,20 @@ export const cacheScopeGuardPatterns = urls(
               data-testid="csg-link-header"
             >
               headers
+            </Link>
+            {" | "}
+            <Link
+              to="/cache-scope-guard/var-blocked"
+              data-testid="csg-link-var"
+            >
+              var(cache:false)
+            </Link>
+            {" | "}
+            <Link
+              to="/cache-scope-guard/write-blocked"
+              data-testid="csg-link-write"
+            >
+              write(cache:false)
             </Link>
           </nav>
           <Outlet />
@@ -42,15 +60,17 @@ export const cacheScopeGuardPatterns = urls(
           { name: "index" },
         ),
 
-        // ctx.set() inside cache() — ALLOWED (children are also cached)
+        // ctx.set() with cacheable var inside cache() — ALLOWED
         cache({ ttl: 600 }, () => [
           path(
             "/set-allowed",
             (ctx) => {
-              ctx.set(TestData, "from-cached-handler");
+              ctx.set(CacheableData, "from-cached-handler");
               return (
                 <div data-testid="csg-set-page">
-                  <span data-testid="csg-set-value">{ctx.get(TestData)}</span>
+                  <span data-testid="csg-set-value">
+                    {ctx.get(CacheableData)}
+                  </span>
                 </div>
               );
             },
@@ -69,11 +89,65 @@ export const cacheScopeGuardPatterns = urls(
             "/header-blocked",
             (ctx) => {
               ctx.headers.set("X-Custom", "test");
-              return <div data-testid="csg-header-page">Should not render</div>;
+              return <div>Should not render</div>;
             },
             { name: "headerBlocked" },
           ),
         ]),
+
+        // ctx.set(NonCacheableVar, ...) inside cache() — BLOCKED (var-level policy)
+        cache({ ttl: 600 }, () => [
+          errorBoundary((props) => (
+            <div data-testid="csg-error-page">
+              <span data-testid="csg-error-message">{props.error.message}</span>
+            </div>
+          )),
+          path(
+            "/var-blocked",
+            (ctx) => {
+              ctx.set(NonCacheableData, "user-specific");
+              return <div>Should not render</div>;
+            },
+            { name: "varBlocked" },
+          ),
+        ]),
+
+        // ctx.set(CacheableVar, ..., { cache: false }) inside cache() — BLOCKED (write-level)
+        cache({ ttl: 600 }, () => [
+          errorBoundary((props) => (
+            <div data-testid="csg-error-page">
+              <span data-testid="csg-error-message">{props.error.message}</span>
+            </div>
+          )),
+          path(
+            "/write-blocked",
+            (ctx) => {
+              ctx.set(CacheableData, "sensitive", { cache: false });
+              return <div>Should not render</div>;
+            },
+            { name: "writeBlocked" },
+          ),
+        ]),
+
+        // ctx.set(NonCacheableVar) OUTSIDE cache, then ctx.get() INSIDE cache — BLOCKED
+        path(
+          "/read-blocked-setup",
+          (ctx) => {
+            // Set non-cacheable var outside cache scope (allowed)
+            ctx.set(NonCacheableData, "user-data");
+            return (
+              <div data-testid="csg-read-setup">
+                <Link
+                  to="/cache-scope-guard/read-blocked"
+                  data-testid="csg-link-read"
+                >
+                  Go to read test
+                </Link>
+              </div>
+            );
+          },
+          { name: "readSetup" },
+        ),
       ],
     ),
   ],
