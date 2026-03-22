@@ -5,21 +5,19 @@
  * Hover prefetches bypass this queue — they fire directly for immediate response
  * to user intent.
  *
- * Draining is deferred to the next animation frame so prefetch network activity
- * never blocks paint. This applies to both the initial batch and subsequent
- * batches — every drain cycle yields to the browser first.
+ * Draining waits for an idle main-thread moment and for viewport images to
+ * finish loading, so prefetch fetch() calls never compete with critical
+ * resources for the browser's connection pool.
  *
  * When a navigation starts, queued prefetches are cancelled but executing ones
  * are left running. Navigation can reuse their in-flight responses via the
  * prefetch cache's inflight promise map, avoiding duplicate requests.
  */
 
-const MAX_CONCURRENT = 2;
+import { wait, waitForIdle, waitForViewportImages } from "./resource-ready.js";
 
-const deferToNextPaint: (fn: () => void) => void =
-  typeof requestAnimationFrame === "function"
-    ? requestAnimationFrame
-    : (fn) => setTimeout(fn, 0);
+const MAX_CONCURRENT = 2;
+const IMAGE_WAIT_TIMEOUT = 2000;
 
 let active = 0;
 const queue: Array<{
@@ -30,6 +28,7 @@ const queued = new Set<string>();
 const executing = new Set<string>();
 let abortController: AbortController | null = null;
 let drainScheduled = false;
+let drainGeneration = 0;
 
 function startExecution(
   key: string,
@@ -50,18 +49,32 @@ function startExecution(
 }
 
 /**
- * Schedule a drain on the next animation frame.
- * Coalesces multiple drain requests into a single rAF callback so
- * batch completion doesn't schedule redundant frames.
+ * Schedule a drain after the browser is idle and viewport images are loaded.
+ * Coalesces multiple drain requests into a single deferred callback so
+ * batch completion doesn't schedule redundant waits.
+ *
+ * The two-step wait ensures prefetch fetch() calls don't compete with
+ * images for the browser's connection pool:
+ * 1. waitForIdle — yield until the main thread has a quiet moment
+ * 2. waitForViewportImages OR 2s timeout — yield until visible images
+ *    finish loading, but don't let slow/broken images block indefinitely
  */
 function scheduleDrain(): void {
   if (drainScheduled) return;
   if (active >= MAX_CONCURRENT || queue.length === 0) return;
   drainScheduled = true;
-  deferToNextPaint(() => {
-    drainScheduled = false;
-    drain();
-  });
+  const gen = drainGeneration;
+  waitForIdle()
+    .then(() =>
+      Promise.race([waitForViewportImages(), wait(IMAGE_WAIT_TIMEOUT)]),
+    )
+    .then(() => {
+      drainScheduled = false;
+      // Stale drain: a cancel/abort happened while we were waiting.
+      // A fresh scheduleDrain will be called by whatever enqueues next.
+      if (gen !== drainGeneration) return;
+      if (queue.length > 0) drain();
+    });
 }
 
 function drain(): void {
@@ -74,9 +87,10 @@ function drain(): void {
 
 /**
  * Enqueue a prefetch for concurrency-limited execution.
- * Execution is always deferred to the next animation frame to avoid
- * blocking paint, even when below the concurrency limit.
- * Deduplicates by key — items already queued or executing are skipped.
+ * Execution is deferred until the browser is idle and viewport images
+ * have finished loading, so prefetches never compete with critical
+ * resources. Deduplicates by key — items already queued or executing
+ * are skipped.
  *
  * The executor receives an AbortSignal that is aborted when
  * cancelAllPrefetches() is called (e.g. on navigation start).
@@ -106,6 +120,7 @@ export function cancelAllPrefetches(): void {
   queue.length = 0;
   queued.clear();
   drainScheduled = false;
+  drainGeneration++;
 }
 
 /**
@@ -125,4 +140,5 @@ export function abortAllPrefetches(): void {
   executing.clear();
   active = 0;
   drainScheduled = false;
+  drainGeneration++;
 }

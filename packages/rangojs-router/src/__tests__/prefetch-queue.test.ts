@@ -8,13 +8,27 @@ function deferred<T = void>() {
   return { promise, resolve };
 }
 
+// Mock resource-ready — resolve immediately by default.
+// Individual tests can override via mockReturnValueOnce.
+const mockWaitForIdle = vi.fn(() => Promise.resolve());
+const mockWaitForViewportImages = vi.fn(() => Promise.resolve());
+const mockWait = vi.fn(
+  (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+);
+
+vi.mock("../browser/prefetch/resource-ready", () => ({
+  waitForIdle: (...args: any[]) => mockWaitForIdle(...args),
+  waitForViewportImages: (...args: any[]) => mockWaitForViewportImages(...args),
+  wait: (...args: any[]) => mockWait(...args),
+}));
+
 /**
- * Flush rAF callbacks and pending microtasks so the queue's drain() runs.
+ * Flush pending microtasks and macrotasks so the queue's drain() runs.
  * Multiple rounds handle microtask → macrotask chaining
- * (e.g., .finally() schedules scheduleDrain which schedules rAF).
+ * (e.g., .finally() schedules scheduleDrain which schedules idle wait).
  */
-async function flushRaf() {
-  for (let i = 0; i < 3; i++) {
+async function flush() {
+  for (let i = 0; i < 5; i++) {
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
 }
@@ -22,6 +36,15 @@ async function flushRaf() {
 describe("prefetch queue", () => {
   beforeEach(() => {
     vi.resetModules();
+    mockWaitForIdle.mockClear().mockImplementation(() => Promise.resolve());
+    mockWaitForViewportImages
+      .mockClear()
+      .mockImplementation(() => Promise.resolve());
+    mockWait
+      .mockClear()
+      .mockImplementation(
+        (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+      );
   });
 
   afterEach(async () => {
@@ -29,7 +52,7 @@ describe("prefetch queue", () => {
     abortAllPrefetches();
   });
 
-  it("defers execution to next animation frame", async () => {
+  it("defers execution until idle and images are ready", async () => {
     const { enqueuePrefetch } = await import("../browser/prefetch/queue");
 
     const started: string[] = [];
@@ -40,14 +63,16 @@ describe("prefetch queue", () => {
       return a.promise;
     });
 
-    // Nothing starts synchronously — deferred to rAF
+    // Nothing starts synchronously — deferred to idle + images
     expect(started).toEqual([]);
 
-    await flushRaf();
+    await flush();
     expect(started).toEqual(["a"]);
+    expect(mockWaitForIdle).toHaveBeenCalled();
+    expect(mockWaitForViewportImages).toHaveBeenCalled();
 
     a.resolve();
-    await flushRaf();
+    await flush();
   });
 
   it("runs at most 2 tasks concurrently and drains FIFO", async () => {
@@ -71,19 +96,17 @@ describe("prefetch queue", () => {
       return c.promise;
     });
 
-    // Flush rAF to start first batch
-    await flushRaf();
+    await flush();
     expect(started).toEqual(["a", "b"]);
 
-    // Complete "a", flush rAF for next batch
     a.resolve();
-    await flushRaf();
+    await flush();
 
     expect(started).toEqual(["a", "b", "c"]);
 
     b.resolve();
     c.resolve();
-    await flushRaf();
+    await flush();
   });
 
   it("deduplicates queued and executing keys", async () => {
@@ -101,17 +124,17 @@ describe("prefetch queue", () => {
       return Promise.resolve();
     });
 
-    await flushRaf();
+    await flush();
     expect(calls).toBe(1);
 
     d.resolve();
-    await flushRaf();
+    await flush();
 
     enqueuePrefetch("dup", () => {
       calls++;
       return Promise.resolve();
     });
-    await flushRaf();
+    await flush();
 
     expect(calls).toBe(2);
   });
@@ -138,25 +161,21 @@ describe("prefetch queue", () => {
       return Promise.resolve();
     });
 
-    // Start the first batch
-    await flushRaf();
+    await flush();
     expect(signals).toHaveLength(2);
 
     cancelAllPrefetches();
 
-    // Executing tasks are NOT aborted
     expect(signals.every((signal) => signal.aborted)).toBe(false);
-    // Queued task never starts
     expect(queuedFn).not.toHaveBeenCalled();
 
     a.resolve();
     b.resolve();
-    await flushRaf();
+    await flush();
 
-    // Queue accepts new items after cancel
     const followUp = vi.fn(() => Promise.resolve());
     enqueuePrefetch("d", followUp);
-    await flushRaf();
+    await flush();
     expect(followUp).toHaveBeenCalledTimes(1);
   });
 
@@ -182,24 +201,107 @@ describe("prefetch queue", () => {
       return Promise.resolve();
     });
 
-    await flushRaf();
+    await flush();
     expect(signals).toHaveLength(2);
 
     abortAllPrefetches();
 
-    // Executing tasks ARE aborted
     expect(signals.every((signal) => signal.aborted)).toBe(true);
-    // Queued task never starts
     expect(queuedFn).not.toHaveBeenCalled();
 
     a.resolve();
     b.resolve();
-    await flushRaf();
+    await flush();
 
-    // Queue accepts new items after abort
     const followUp = vi.fn(() => Promise.resolve());
     enqueuePrefetch("d", followUp);
-    await flushRaf();
+    await flush();
     expect(followUp).toHaveBeenCalledTimes(1);
+  });
+
+  it("stale drain after cancelAllPrefetches does not execute new items", async () => {
+    const { enqueuePrefetch, cancelAllPrefetches } =
+      await import("../browser/prefetch/queue");
+
+    // Hold idle gate open — drain is waiting
+    const idleGate = deferred();
+    mockWaitForIdle.mockReturnValueOnce(idleGate.promise);
+
+    const firstFn = vi.fn(() => Promise.resolve());
+    enqueuePrefetch("a", firstFn);
+
+    // Cancel while the drain is still waiting on idle
+    cancelAllPrefetches();
+
+    // Enqueue new work — this schedules a fresh drain
+    const secondFn = vi.fn(() => Promise.resolve());
+    enqueuePrefetch("b", secondFn);
+
+    // Release the OLD idle gate — stale drain should be a no-op
+    idleGate.resolve();
+    await flush();
+
+    // Only the fresh drain should have executed "b"
+    expect(firstFn).not.toHaveBeenCalled();
+    expect(secondFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("stale drain after abortAllPrefetches does not execute new items", async () => {
+    const { enqueuePrefetch, abortAllPrefetches } =
+      await import("../browser/prefetch/queue");
+
+    const idleGate = deferred();
+    mockWaitForIdle.mockReturnValueOnce(idleGate.promise);
+
+    const firstFn = vi.fn(() => Promise.resolve());
+    enqueuePrefetch("a", firstFn);
+
+    abortAllPrefetches();
+
+    const secondFn = vi.fn(() => Promise.resolve());
+    enqueuePrefetch("b", secondFn);
+
+    idleGate.resolve();
+    await flush();
+
+    expect(firstFn).not.toHaveBeenCalled();
+    expect(secondFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for viewport images before draining", async () => {
+    const { enqueuePrefetch } = await import("../browser/prefetch/queue");
+
+    const imageGate = deferred();
+    mockWaitForViewportImages.mockReturnValueOnce(imageGate.promise);
+    // Make the timeout race very long so it doesn't interfere
+    mockWait.mockReturnValueOnce(new Promise(() => {}));
+
+    const fn = vi.fn(() => Promise.resolve());
+    enqueuePrefetch("a", fn);
+
+    // Idle resolves immediately, but images are still loading
+    await flush();
+    expect(fn).not.toHaveBeenCalled();
+
+    // Images finish
+    imageGate.resolve();
+    await flush();
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("proceeds after timeout if images are slow", async () => {
+    const { enqueuePrefetch } = await import("../browser/prefetch/queue");
+
+    // Images never resolve
+    mockWaitForViewportImages.mockReturnValueOnce(new Promise(() => {}));
+    // Timeout resolves immediately (simulating 2s elapsed)
+    mockWait.mockReturnValueOnce(Promise.resolve());
+
+    const fn = vi.fn(() => Promise.resolve());
+    enqueuePrefetch("a", fn);
+
+    await flush();
+    // Should have proceeded via the timeout race winner
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });
