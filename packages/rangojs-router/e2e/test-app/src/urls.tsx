@@ -57,6 +57,7 @@ import { alsScopePatterns } from "./urls/als-scope.js";
 import { streamModePatterns } from "./urls/stream-mode.js";
 import { devDebugPatterns, devInfoHandler } from "./urls/dev-routes.js";
 import { contextDedupPatterns } from "./urls/context-dedup.js";
+import { parallelMetaPatterns } from "./urls/parallel-meta.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -952,6 +953,11 @@ export const urlpatterns = urls(
       // Context dedup test (third-party package with "use client" + createContext)
       include("/context-dedup", contextDedupPatterns, {
         name: "contextDedup",
+      }),
+
+      // @meta parallel slot pattern (handles from parallel slots)
+      include("/parallel-meta", parallelMetaPatterns, {
+        name: "parallelMeta",
       }),
 
       ...(import.meta.env.DEV
