@@ -31,6 +31,7 @@ import {
 import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
 import { track } from "../../server/context.js";
+import { stampCacheScope, unstampCacheScope } from "../../cache/taint.js";
 
 // ---------------------------------------------------------------------------
 // Streamed handler telemetry
@@ -196,66 +197,85 @@ export async function resolveSegment<TEnv>(
   const segments: ResolvedSegment[] = [];
 
   if (entry.type === "layout" || entry.type === "cache") {
-    if (!options?.skipLoaders) {
-      const loaderSegments = await resolveLoaders(entry, context, false, deps);
-      segments.push(...loaderSegments);
+    // Stamp ctx when entering a cache() boundary so that ctx.set(),
+    // ctx.header(), ctx.setCookie() etc. throw — these side effects
+    // are lost on cache hit because the handler body is skipped.
+    const isCacheEntry = entry.type === "cache";
+    if (isCacheEntry) {
+      stampCacheScope(context);
     }
 
-    // Handler-first: layout handler executes before its parallels and orphan
-    // layouts so that ctx.set() values are visible to all children.
-    (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-      entry.shortCode;
+    try {
+      if (!options?.skipLoaders) {
+        const loaderSegments = await resolveLoaders(
+          entry,
+          context,
+          false,
+          deps,
+        );
+        segments.push(...loaderSegments);
+      }
 
-    const doneLayoutHandler = track(`handler:${entry.id}`, 2);
-    const component = await resolveLayoutComponent(entry, context);
-    doneLayoutHandler();
+      // Handler-first: layout handler executes before its parallels and orphan
+      // layouts so that ctx.set() values are visible to all children.
+      (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+        entry.shortCode;
 
-    segments.push({
-      id: entry.shortCode,
-      namespace: entry.id,
-      type: "layout",
-      index: 0,
-      component,
-      loading: entry.loading === false ? null : entry.loading,
-      transition: entry.transition,
-      params,
-      belongsToRoute: false,
-      layoutName: entry.id,
-      ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
-    });
+      const doneLayoutHandler = track(`handler:${entry.id}`, 2);
+      const component = await resolveLayoutComponent(entry, context);
+      doneLayoutHandler();
 
-    const resolvedParallelEntries = new Set<string>();
-    for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
-      entry.parallel,
-    )) {
-      const parallelSegments = await resolveParallelEntry(
-        parallelEntry,
+      segments.push({
+        id: entry.shortCode,
+        namespace: entry.id,
+        type: "layout",
+        index: 0,
+        component,
+        loading: entry.loading === false ? null : entry.loading,
+        transition: entry.transition,
         params,
-        context,
-        false,
-        entry.shortCode,
-        deps,
-        options,
-        routeKey,
-        [slot],
-        !resolvedParallelEntries.has(parallelEntry.id),
-      );
-      segments.push(...parallelSegments);
-      resolvedParallelEntries.add(parallelEntry.id);
-    }
+        belongsToRoute: false,
+        layoutName: entry.id,
+        ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
+      });
 
-    for (const orphan of entry.layout) {
-      const orphanSegments = await resolveOrphanLayout(
-        orphan,
-        params,
-        context,
-        loaderPromises,
-        false,
-        deps,
-        options,
-        routeKey,
-      );
-      segments.push(...orphanSegments);
+      const resolvedParallelEntries = new Set<string>();
+      for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
+        entry.parallel,
+      )) {
+        const parallelSegments = await resolveParallelEntry(
+          parallelEntry,
+          params,
+          context,
+          false,
+          entry.shortCode,
+          deps,
+          options,
+          routeKey,
+          [slot],
+          !resolvedParallelEntries.has(parallelEntry.id),
+        );
+        segments.push(...parallelSegments);
+        resolvedParallelEntries.add(parallelEntry.id);
+      }
+
+      for (const orphan of entry.layout) {
+        const orphanSegments = await resolveOrphanLayout(
+          orphan,
+          params,
+          context,
+          loaderPromises,
+          false,
+          deps,
+          options,
+          routeKey,
+        );
+        segments.push(...orphanSegments);
+      }
+    } finally {
+      if (isCacheEntry) {
+        unstampCacheScope(context);
+      }
     }
   } else if (entry.type === "route") {
     if (!options?.skipLoaders) {

@@ -82,6 +82,61 @@ export function assertNotInsideCacheExec(
 }
 
 /**
+ * Symbol stamped on ctx when resolving handlers inside a cache() DSL boundary.
+ * Separate from INSIDE_CACHE_EXEC ("use cache") because cache() allows
+ * ctx.set() (children are also cached) but blocks response-level side effects
+ * (headers, cookies, status) which are lost on cache hit.
+ */
+export const INSIDE_CACHE_SCOPE: unique symbol = Symbol.for(
+  "rango:inside-cache-scope",
+) as any;
+
+/**
+ * Mark ctx as inside a cache() scope. Must be paired with unstampCacheScope.
+ */
+export function stampCacheScope(obj: object): void {
+  const current = (obj as any)[INSIDE_CACHE_SCOPE] ?? 0;
+  (obj as any)[INSIDE_CACHE_SCOPE] = current + 1;
+}
+
+/**
+ * Remove cache() scope mark.
+ */
+export function unstampCacheScope(obj: object): void {
+  const current = (obj as any)[INSIDE_CACHE_SCOPE] ?? 0;
+  if (current <= 1) {
+    delete (obj as any)[INSIDE_CACHE_SCOPE];
+  } else {
+    (obj as any)[INSIDE_CACHE_SCOPE] = current - 1;
+  }
+}
+
+/**
+ * Throw if ctx is inside a cache() DSL boundary.
+ * Call from response-level side effects (header, setCookie, setStatus, etc.)
+ * which are lost on cache hit because the handler body is skipped.
+ * ctx.set() is allowed inside cache() — children are also cached and can
+ * read the value.
+ */
+export function assertNotInsideCacheScope(
+  ctx: unknown,
+  methodName: string,
+): void {
+  if (
+    ctx !== null &&
+    ctx !== undefined &&
+    typeof ctx === "object" &&
+    (INSIDE_CACHE_SCOPE as symbol) in (ctx as Record<symbol, unknown>)
+  ) {
+    throw new Error(
+      `ctx.${methodName}() cannot be called inside a cache() boundary. ` +
+        `On cache hit the handler is skipped, so this side effect would be lost. ` +
+        `Move ctx.${methodName}() to a middleware or layout outside the cache() scope.`,
+    );
+  }
+}
+
+/**
  * Brand symbol for functions wrapped by registerCachedFunction().
  * Used at runtime to detect when a "use cache" function is misused
  * (e.g., passed as middleware).

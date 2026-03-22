@@ -42,6 +42,7 @@ import {
 import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
 import { track } from "../../server/context.js";
+import { stampCacheScope, unstampCacheScope } from "../../cache/taint.js";
 
 // ---------------------------------------------------------------------------
 // Telemetry helpers
@@ -1248,31 +1249,42 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
     }
 
     const nonParallelEntry = entry as Exclude<EntryData, { type: "parallel" }>;
+    const isCacheEntry = entry.type === "cache";
+    if (isCacheEntry) {
+      stampCacheScope(context);
+    }
     const doneEntry = track(`segment:${entry.id}`, 1);
-    const resolved = await resolveWithErrorBoundary(
-      nonParallelEntry,
-      params,
-      () =>
-        resolveSegmentWithRevalidation(
-          nonParallelEntry,
-          routeKey,
-          params,
-          context,
-          clientSegmentSet,
-          prevParams,
-          request,
-          prevUrl,
-          nextUrl,
-          loaderPromises,
-          deps,
-          actionContext,
-          stale,
-        ),
-      (seg) => ({ segments: [seg], matchedIds: [seg.id] }),
-      deps,
-      { request, url: context.url, routeKey, isPartial: true, telemetry },
-      pathname,
-    );
+    let resolved: SegmentRevalidationResult;
+    try {
+      resolved = await resolveWithErrorBoundary(
+        nonParallelEntry,
+        params,
+        () =>
+          resolveSegmentWithRevalidation(
+            nonParallelEntry,
+            routeKey,
+            params,
+            context,
+            clientSegmentSet,
+            prevParams,
+            request,
+            prevUrl,
+            nextUrl,
+            loaderPromises,
+            deps,
+            actionContext,
+            stale,
+          ),
+        (seg) => ({ segments: [seg], matchedIds: [seg.id] }),
+        deps,
+        { request, url: context.url, routeKey, isPartial: true, telemetry },
+        pathname,
+      );
+    } finally {
+      if (isCacheEntry) {
+        unstampCacheScope(context);
+      }
+    }
     doneEntry();
 
     // Deduplicate segments and matchedIds by ID, matching resolveAllSegments.
