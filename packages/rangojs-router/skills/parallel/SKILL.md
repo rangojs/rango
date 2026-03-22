@@ -118,6 +118,47 @@ parallel({
 Multiple parallels on the same parent can each push handle data — they all
 accumulate under the parent segment ID.
 
+### Pattern: `@meta` slot for per-route metadata overrides
+
+A dedicated `@meta` parallel slot lets routes define metadata separately from
+their handler logic. The layout sets defaults via a title template, and each
+route overrides via its own `@meta` slot. Since child segments push after
+parents and `collectMeta` uses last-wins deduplication, overrides work
+naturally.
+
+```typescript
+// Layout sets defaults
+layout((ctx) => {
+  ctx.use(Meta)({ title: { template: "%s | Store", default: "Store" } });
+  return <StoreLayout />;
+}, () => [
+  // Route with @meta override — decoupled from handler rendering
+  path("/:slug", ProductPage, { name: "product" }, () => [
+    parallel({
+      "@meta": async (ctx) => {
+        const product = await ctx.use(ProductLoader);
+        const meta = ctx.use(Meta);
+        meta({ title: product.name });
+        meta({ name: "description", content: product.description });
+        meta({
+          "script:ld+json": {
+            "@context": "https://schema.org",
+            "@type": "Product",
+            name: product.name,
+            description: product.description,
+          },
+        });
+        return null; // UI-less slot
+      },
+    }),
+  ]),
+])
+```
+
+This keeps the route handler focused on rendering UI while metadata
+(title, description, Open Graph, JSON-LD) lives in a composable slot that
+can be added, removed, or swapped per route without touching the handler.
+
 ## Parallel Routes with Loaders
 
 Add loaders and loading states to parallel routes:
