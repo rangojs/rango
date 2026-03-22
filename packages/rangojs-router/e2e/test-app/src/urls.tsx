@@ -58,6 +58,7 @@ import { streamModePatterns } from "./urls/stream-mode.js";
 import { devDebugPatterns, devInfoHandler } from "./urls/dev-routes.js";
 import { contextDedupPatterns } from "./urls/context-dedup.js";
 import { parallelMetaPatterns } from "./urls/parallel-meta.js";
+import { cacheScopeGuardPatterns } from "./urls/cache-scope-guard.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -958,6 +959,11 @@ export const urlpatterns = urls(
       // @meta parallel slot pattern (handles from parallel slots)
       include("/parallel-meta", parallelMetaPatterns, {
         name: "parallelMeta",
+      }),
+
+      // cache() scope guard tests (header/cookie/status blocked, set allowed)
+      include("/cache-scope-guard", cacheScopeGuardPatterns, {
+        name: "cacheScopeGuard",
       }),
 
       ...(import.meta.env.DEV

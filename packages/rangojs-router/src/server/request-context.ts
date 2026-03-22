@@ -29,11 +29,7 @@ import type { SegmentCacheStore } from "../cache/types.js";
 import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import { THEME_COOKIE } from "../theme/constants.js";
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
-import {
-  NOCACHE_SYMBOL,
-  assertNotInsideCacheExec,
-  assertNotInsideCacheScope,
-} from "../cache/taint.js";
+import { NOCACHE_SYMBOL, assertNotInsideCacheExec } from "../cache/taint.js";
 import {
   createReverseFunction,
   stripInternalParams,
@@ -616,7 +612,6 @@ export function createRequestContext<TEnv>(
 
     setCookie(name: string, value: string, options?: CookieOptions): void {
       assertNotInsideCacheExec(ctx, "setCookie");
-      assertNotInsideCacheScope(ctx, "setCookie");
       stubResponse.headers.append(
         "Set-Cookie",
         serializeCookieValue(name, value, options),
@@ -629,7 +624,6 @@ export function createRequestContext<TEnv>(
       options?: Pick<CookieOptions, "domain" | "path">,
     ): void {
       assertNotInsideCacheExec(ctx, "deleteCookie");
-      assertNotInsideCacheScope(ctx, "deleteCookie");
       stubResponse.headers.append(
         "Set-Cookie",
         serializeCookieValue(name, "", { ...options, maxAge: 0 }),
@@ -639,13 +633,11 @@ export function createRequestContext<TEnv>(
 
     header(name: string, value: string): void {
       assertNotInsideCacheExec(ctx, "header");
-      assertNotInsideCacheScope(ctx, "header");
       stubResponse.headers.set(name, value);
     },
 
     setStatus(status: number): void {
       assertNotInsideCacheExec(ctx, "setStatus");
-      assertNotInsideCacheScope(ctx, "setStatus");
       stubResponse = new Response(null, {
         status,
         headers: stubResponse.headers,
@@ -684,7 +676,6 @@ export function createRequestContext<TEnv>(
 
     onResponse(callback: (response: Response) => Response): void {
       assertNotInsideCacheExec(ctx, "onResponse");
-      assertNotInsideCacheScope(ctx, "onResponse");
       this._onResponseCallbacks.push(callback);
     },
 

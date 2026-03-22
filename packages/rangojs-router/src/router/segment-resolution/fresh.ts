@@ -31,7 +31,7 @@ import {
 import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
 import { track } from "../../server/context.js";
-import { stampCacheScope, unstampCacheScope } from "../../cache/taint.js";
+import { stampCacheScope } from "../../cache/taint.js";
 
 // ---------------------------------------------------------------------------
 // Streamed handler telemetry
@@ -197,85 +197,66 @@ export async function resolveSegment<TEnv>(
   const segments: ResolvedSegment[] = [];
 
   if (entry.type === "layout" || entry.type === "cache") {
-    // Stamp ctx when entering a cache() boundary so that ctx.set(),
-    // ctx.header(), ctx.setCookie() etc. throw — these side effects
-    // are lost on cache hit because the handler body is skipped.
-    const isCacheEntry = entry.type === "cache";
-    if (isCacheEntry) {
-      stampCacheScope(context);
+    if (!options?.skipLoaders) {
+      const loaderSegments = await resolveLoaders(entry, context, false, deps);
+      segments.push(...loaderSegments);
     }
 
-    try {
-      if (!options?.skipLoaders) {
-        const loaderSegments = await resolveLoaders(
-          entry,
-          context,
-          false,
-          deps,
-        );
-        segments.push(...loaderSegments);
-      }
+    // Handler-first: layout handler executes before its parallels and orphan
+    // layouts so that ctx.set() values are visible to all children.
+    (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+      entry.shortCode;
 
-      // Handler-first: layout handler executes before its parallels and orphan
-      // layouts so that ctx.set() values are visible to all children.
-      (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-        entry.shortCode;
+    const doneLayoutHandler = track(`handler:${entry.id}`, 2);
+    const component = await resolveLayoutComponent(entry, context);
+    doneLayoutHandler();
 
-      const doneLayoutHandler = track(`handler:${entry.id}`, 2);
-      const component = await resolveLayoutComponent(entry, context);
-      doneLayoutHandler();
+    segments.push({
+      id: entry.shortCode,
+      namespace: entry.id,
+      type: "layout",
+      index: 0,
+      component,
+      loading: entry.loading === false ? null : entry.loading,
+      transition: entry.transition,
+      params,
+      belongsToRoute: false,
+      layoutName: entry.id,
+      ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
+    });
 
-      segments.push({
-        id: entry.shortCode,
-        namespace: entry.id,
-        type: "layout",
-        index: 0,
-        component,
-        loading: entry.loading === false ? null : entry.loading,
-        transition: entry.transition,
+    const resolvedParallelEntries = new Set<string>();
+    for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
+      entry.parallel,
+    )) {
+      const parallelSegments = await resolveParallelEntry(
+        parallelEntry,
         params,
-        belongsToRoute: false,
-        layoutName: entry.id,
-        ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
-      });
+        context,
+        false,
+        entry.shortCode,
+        deps,
+        options,
+        routeKey,
+        [slot],
+        !resolvedParallelEntries.has(parallelEntry.id),
+      );
+      segments.push(...parallelSegments);
+      resolvedParallelEntries.add(parallelEntry.id);
+    }
 
-      const resolvedParallelEntries = new Set<string>();
-      for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
-        entry.parallel,
-      )) {
-        const parallelSegments = await resolveParallelEntry(
-          parallelEntry,
-          params,
-          context,
-          false,
-          entry.shortCode,
-          deps,
-          options,
-          routeKey,
-          [slot],
-          !resolvedParallelEntries.has(parallelEntry.id),
-        );
-        segments.push(...parallelSegments);
-        resolvedParallelEntries.add(parallelEntry.id);
-      }
-
-      for (const orphan of entry.layout) {
-        const orphanSegments = await resolveOrphanLayout(
-          orphan,
-          params,
-          context,
-          loaderPromises,
-          false,
-          deps,
-          options,
-          routeKey,
-        );
-        segments.push(...orphanSegments);
-      }
-    } finally {
-      if (isCacheEntry) {
-        unstampCacheScope(context);
-      }
+    for (const orphan of entry.layout) {
+      const orphanSegments = await resolveOrphanLayout(
+        orphan,
+        params,
+        context,
+        loaderPromises,
+        false,
+        deps,
+        options,
+        routeKey,
+      );
+      segments.push(...orphanSegments);
     }
   } else if (entry.type === "route") {
     if (!options?.skipLoaders) {
@@ -600,6 +581,12 @@ export async function resolveAllSegments<TEnv>(
   } catch {}
 
   for (const entry of entries) {
+    // Stamp handler context when entering a cache() boundary so that
+    // response-level side effects (headers.set, etc.) throw via guards on
+    // the HandlerContext. The stamp persists for all descendant entries.
+    if (entry.type === "cache") {
+      stampCacheScope(context);
+    }
     const doneEntry = track(`segment:${entry.id}`, 1);
     const resolvedSegments = await resolveWithErrorBoundary(
       entry,

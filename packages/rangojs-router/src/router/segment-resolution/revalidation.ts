@@ -42,7 +42,7 @@ import {
 import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
 import { track } from "../../server/context.js";
-import { stampCacheScope, unstampCacheScope } from "../../cache/taint.js";
+import { stampCacheScope } from "../../cache/taint.js";
 
 // ---------------------------------------------------------------------------
 // Telemetry helpers
@@ -1249,42 +1249,34 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
     }
 
     const nonParallelEntry = entry as Exclude<EntryData, { type: "parallel" }>;
-    const isCacheEntry = entry.type === "cache";
-    if (isCacheEntry) {
+    if (entry.type === "cache") {
       stampCacheScope(context);
     }
     const doneEntry = track(`segment:${entry.id}`, 1);
-    let resolved: SegmentRevalidationResult;
-    try {
-      resolved = await resolveWithErrorBoundary(
-        nonParallelEntry,
-        params,
-        () =>
-          resolveSegmentWithRevalidation(
-            nonParallelEntry,
-            routeKey,
-            params,
-            context,
-            clientSegmentSet,
-            prevParams,
-            request,
-            prevUrl,
-            nextUrl,
-            loaderPromises,
-            deps,
-            actionContext,
-            stale,
-          ),
-        (seg) => ({ segments: [seg], matchedIds: [seg.id] }),
-        deps,
-        { request, url: context.url, routeKey, isPartial: true, telemetry },
-        pathname,
-      );
-    } finally {
-      if (isCacheEntry) {
-        unstampCacheScope(context);
-      }
-    }
+    const resolved = await resolveWithErrorBoundary(
+      nonParallelEntry,
+      params,
+      () =>
+        resolveSegmentWithRevalidation(
+          nonParallelEntry,
+          routeKey,
+          params,
+          context,
+          clientSegmentSet,
+          prevParams,
+          request,
+          prevUrl,
+          nextUrl,
+          loaderPromises,
+          deps,
+          actionContext,
+          stale,
+        ),
+      (seg) => ({ segments: [seg], matchedIds: [seg.id] }),
+      deps,
+      { request, url: context.url, routeKey, isPartial: true, telemetry },
+      pathname,
+    );
     doneEntry();
 
     // Deduplicate segments and matchedIds by ID, matching resolveAllSegments.
