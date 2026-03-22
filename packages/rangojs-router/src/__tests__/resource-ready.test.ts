@@ -111,7 +111,7 @@ describe("waitForViewportImages", () => {
       origAddEventListener(event, handler, opts);
       // On first "load" listener, flip complete and schedule the event
       if (event === "load" && !fireLoadAsync) {
-        imgA.complete = true;
+        (imgA as any).complete = true;
         fireLoadAsync = () => (imgA as any).__fire("load");
       }
     }) as any;

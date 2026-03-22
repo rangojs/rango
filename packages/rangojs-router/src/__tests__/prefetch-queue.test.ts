@@ -10,16 +10,16 @@ function deferred<T = void>() {
 
 // Mock resource-ready — resolve immediately by default.
 // Individual tests can override via mockReturnValueOnce.
-const mockWaitForIdle = vi.fn(() => Promise.resolve());
+const mockWaitForIdle = vi.fn((_timeout?: number) => Promise.resolve());
 const mockWaitForViewportImages = vi.fn(() => Promise.resolve());
 const mockWait = vi.fn(
   (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
 );
 
 vi.mock("../browser/prefetch/resource-ready", () => ({
-  waitForIdle: (...args: any[]) => mockWaitForIdle(...args),
-  waitForViewportImages: (...args: any[]) => mockWaitForViewportImages(...args),
-  wait: (...args: any[]) => mockWait(...args),
+  waitForIdle: (timeout?: number) => mockWaitForIdle(timeout),
+  waitForViewportImages: () => mockWaitForViewportImages(),
+  wait: (ms: number) => mockWait(ms),
 }));
 
 /**
