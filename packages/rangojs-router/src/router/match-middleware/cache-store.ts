@@ -302,6 +302,11 @@ export function withCacheStore<TEnv>(
       } else {
         // All segments have components - cache directly
         // Schedule caching in waitUntil since cacheRoute is now async (key resolution)
+        if (INTERNAL_RANGO_DEBUG) {
+          console.log(
+            `[RSC CacheStore][req:${reqId}] Direct cache path: scheduling cacheRoute for ${ctx.pathname} (${allSegmentsToCache.length} segments, hasNullComponents=${hasNullComponents})`,
+          );
+        }
         requestCtx.waitUntil(async () => {
           const start = performance.now();
           await cacheScope.cacheRoute(

@@ -227,6 +227,43 @@ test.describe("parallel-meta-slot", () => {
 });
 
 // ============================================================================
+// Cache regression: null-component parallels must not block cache writes
+// ============================================================================
+
+test.describe("parallel-meta-cache-regression", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test("route with @meta parallel (returns null) should be cacheable", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // First visit — cache miss, segments resolved fresh
+    await page.goto(f.url("/parallel-meta/product-a"));
+    await waitForHydration(page);
+    await expect(page).toHaveTitle("Product A | Test Store");
+    const firstTs = await page.getByTestId("pm-render-ts").textContent();
+
+    // Wait for background cache write to complete
+    await page.waitForTimeout(500);
+
+    // Second visit — should be cache hit (segments served from cache).
+    // If null-component @meta parallel blocks the cache write, the handler
+    // re-executes and produces a DIFFERENT timestamp (the bug).
+    await page.goto(f.url("/parallel-meta/product-a"));
+    await waitForHydration(page);
+    const secondTs = await page.getByTestId("pm-render-ts").textContent();
+
+    // Same timestamp = served from cache. Different = cache write failed.
+    expect(secondTs).toBe(firstTs);
+    await expect(page).toHaveTitle("Product A | Test Store");
+  });
+});
+
+// ============================================================================
 // Production
 // ============================================================================
 
@@ -397,5 +434,36 @@ test.describe("parallel-meta-slot (production)", () => {
     expect(html).toContain('aria-label="Breadcrumb"');
     expect(html).toContain("Store");
     expect(html).toContain("Product A");
+  });
+});
+
+// ============================================================================
+// Cache regression: production — null-component parallels must not block cache
+// ============================================================================
+
+test.describe("parallel-meta-cache-regression (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("route with @meta parallel (returns null) should be cacheable", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/parallel-meta/product-a"));
+    await waitForHydration(page);
+    await expect(page).toHaveTitle("Product A | Test Store");
+    const firstTs = await page.getByTestId("pm-render-ts").textContent();
+
+    await page.waitForTimeout(500);
+
+    await page.goto(f.url("/parallel-meta/product-a"));
+    await waitForHydration(page);
+    const secondTs = await page.getByTestId("pm-render-ts").textContent();
+
+    expect(secondTs).toBe(firstTs);
+    await expect(page).toHaveTitle("Product A | Test Store");
   });
 });

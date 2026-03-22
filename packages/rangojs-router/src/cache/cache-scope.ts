@@ -328,22 +328,59 @@ export class CacheScope {
     // Check if this is a partial request (navigation) vs document request
     const isPartial = requestCtx.originalUrl.searchParams.has("_rsc_partial");
 
+    if (INTERNAL_RANGO_DEBUG) {
+      debugCacheLog(
+        `[CacheScope] cacheRoute: scheduling waitUntil for ${key} (${nonLoaderSegments.length} segments, isPartial=${isPartial})`,
+      );
+    }
+
     requestCtx.waitUntil(async () => {
+      if (INTERNAL_RANGO_DEBUG) {
+        debugCacheLog(
+          `[CacheScope] waitUntil: awaiting handleStore.settled for ${key}`,
+        );
+      }
+
       await handleStore.settled;
 
-      // For document requests: only cache if ALL segments have components (complete render)
-      // For partial requests: null components are expected (client already has them)
+      if (INTERNAL_RANGO_DEBUG) {
+        debugCacheLog(`[CacheScope] waitUntil: handleStore settled for ${key}`);
+      }
+
+      // For document requests: only cache if layout segments have components
+      // (complete render). Parallel and route segments may legitimately have
+      // null components — UI-less @meta parallels return null, and void route
+      // handlers produce null when the UI lives in parallel slots/layouts.
+      // Partial requests always allow null components (client already has them).
       if (!isPartial) {
-        const hasAllComponents = nonLoaderSegments.every(
-          (s) => s.component !== null,
+        const hasIncompleteLayouts = nonLoaderSegments.some(
+          (s) => s.component === null && s.type === "layout",
         );
-        if (!hasAllComponents) return;
+        if (hasIncompleteLayouts) {
+          const nullSegments = nonLoaderSegments
+            .filter((s) => s.component === null && s.type === "layout")
+            .map((s) => s.id);
+          const error = new Error(
+            `[CacheScope] Cache write skipped: layout segments have null components ` +
+              `(${nullSegments.join(", ")}). This indicates an incomplete render — ` +
+              `layout handlers must return JSX for document requests to be cacheable.`,
+          );
+          error.name = "CacheScopeInvariantError";
+          console.error(error.message);
+          return;
+        }
       }
 
       // Collect handle data for non-loader segments only
       const handles = captureHandles(nonLoaderSegments, handleStore);
 
       try {
+        if (INTERNAL_RANGO_DEBUG) {
+          debugCacheLog(
+            `[CacheScope] waitUntil: serializing ${nonLoaderSegments.length} segments for ${key}`,
+          );
+        }
+
         // Serialize non-loader segments only
         const serializedSegments = await serializeSegments(nonLoaderSegments);
 
@@ -352,6 +389,10 @@ export class CacheScope {
           handles,
           expiresAt: Date.now() + ttl * 1000,
         };
+
+        if (INTERNAL_RANGO_DEBUG) {
+          debugCacheLog(`[CacheScope] waitUntil: calling store.set for ${key}`);
+        }
 
         await store.set(key, data, ttl, swr);
 
