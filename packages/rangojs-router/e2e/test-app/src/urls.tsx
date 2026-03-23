@@ -1,4 +1,4 @@
-import { urls, cookies, Meta, Breadcrumbs } from "@rangojs/router";
+import { urls, cookies, Meta, Breadcrumbs, notFound } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { RootLayout } from "./components/layouts/index.js";
 import { blogPatterns } from "./urls/blog.js";
@@ -960,6 +960,15 @@ export const urlpatterns = urls(
       include("/parallel-meta", parallelMetaPatterns, {
         name: "parallelMeta",
       }),
+
+      // notFound() without a notFoundBoundary — should render 404, not error
+      path(
+        "/not-found-no-boundary",
+        () => {
+          notFound("This item does not exist");
+        },
+        { name: "notFoundNoBoundary" },
+      ),
 
       // cache() scope guard tests (header/cookie/status blocked, set allowed)
       include("/cache-scope-guard", cacheScopeGuardPatterns, {

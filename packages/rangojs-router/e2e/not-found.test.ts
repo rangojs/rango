@@ -14,6 +14,29 @@ import { waitForHydration, testId } from "./helper";
  * - Popstate to unknown route shows 404 content
  */
 function notFoundTests(f: ReturnType<typeof useFixture>) {
+  test.describe("notFound()-without-boundary", () => {
+    test("should return 404 when handler throws notFound() without a notFoundBoundary", async ({
+      page,
+    }) => {
+      const response = await page.goto(f.url("/not-found-no-boundary"));
+      expect(response?.status()).toBe(404);
+    });
+
+    test("should render Not Found UI, not an error page", async ({ page }) => {
+      await page.goto(f.url("/not-found-no-boundary"));
+
+      // Should show a not-found page, not an error boundary
+      await expect(
+        page.getByRole("heading", { name: "Not Found" }),
+      ).toBeVisible({ timeout: 5000 });
+
+      // Should NOT show an error page
+      await expect(
+        page.locator("text=Internal Server Error"),
+      ).not.toBeVisible();
+    });
+  });
+
   test.describe("direct-navigation-to-unknown-route", () => {
     test("should return 404 status for unknown route", async ({ page }) => {
       const response = await page.goto(f.url("/this-page-does-not-exist"));

@@ -160,6 +160,7 @@ export const NamedRoutes = {
   negotiateTest: "/negotiate-test",
   negotiateTestJson: "/negotiate-test",
   negotiateTestMd: "/negotiate-test",
+  notFoundNoBoundary: "/not-found-no-boundary",
   "ns.nsChild": "/ns-reverse",
   "parallelMeta.index": "/parallel-meta",
   "parallelMeta.product": "/parallel-meta/:slug",

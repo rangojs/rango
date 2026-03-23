@@ -8,7 +8,7 @@
  * - Error boundary segment creation
  */
 
-import type { ReactNode } from "react";
+import { createElement, type ReactNode } from "react";
 import { DataNotFoundError } from "../../errors";
 import {
   createErrorInfo,
@@ -180,34 +180,39 @@ export function catchSegmentError<TEnv>(
 
   if (error instanceof DataNotFoundError) {
     const notFoundFallback = deps.findNearestNotFoundBoundary(entry);
+    // Fall back to router's notFound component, then a plain default
+    const notFoundOption = deps.notFoundComponent;
+    const defaultFallback =
+      typeof notFoundOption === "function"
+        ? notFoundOption({ pathname: pathname ?? "" })
+        : (notFoundOption ?? createElement("h1", null, "Not Found"));
+    const effectiveNotFoundFallback = notFoundFallback ?? defaultFallback;
 
-    if (notFoundFallback) {
-      const notFoundInfo = createNotFoundInfo(
-        error,
-        entry.shortCode,
-        entry.type,
-        pathname,
-      );
+    const notFoundInfo = createNotFoundInfo(
+      error,
+      entry.shortCode,
+      entry.type,
+      pathname,
+    );
 
-      reportError(true, {
-        notFound: true,
-        message: notFoundInfo.message,
-      });
+    reportError(true, {
+      notFound: true,
+      message: notFoundInfo.message,
+    });
 
-      debugLog("segment", "notFound boundary handled error", {
-        segmentId: entry.shortCode,
-        message: notFoundInfo.message,
-      });
+    debugLog("segment", "notFound boundary handled error", {
+      segmentId: entry.shortCode,
+      message: notFoundInfo.message,
+    });
 
-      setResponseStatus(404);
+    setResponseStatus(404);
 
-      return createNotFoundSegment(
-        notFoundInfo,
-        notFoundFallback,
-        entry,
-        params,
-      );
-    }
+    return createNotFoundSegment(
+      notFoundInfo,
+      effectiveNotFoundFallback,
+      entry,
+      params,
+    );
   }
 
   const fallback = deps.findNearestErrorBoundary(entry);

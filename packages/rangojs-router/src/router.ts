@@ -526,6 +526,7 @@ export function createRouter<TEnv = any>(
     trackHandler,
     findNearestErrorBoundary,
     findNearestNotFoundBoundary,
+    notFoundComponent: notFound,
     callOnError,
   };
 

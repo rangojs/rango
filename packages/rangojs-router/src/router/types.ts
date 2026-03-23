@@ -96,6 +96,7 @@ export interface SegmentResolutionDeps<TEnv = any> {
   findNearestNotFoundBoundary: (
     entry: EntryData | null,
   ) => ReactNode | NotFoundBoundaryHandler | null;
+  notFoundComponent?: ReactNode | ((props: { pathname: string }) => ReactNode);
   callOnError: (error: unknown, phase: ErrorPhase, context: any) => void;
 }
 

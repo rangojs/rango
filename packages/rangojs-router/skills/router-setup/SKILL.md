@@ -84,10 +84,10 @@ interface RSCRouterOptions<TEnv> {
   // Default error boundary
   defaultErrorBoundary?: ReactNode | ErrorBoundaryHandler;
 
-  // Default not-found boundary
+  // Default not-found boundary for notFound() thrown in handlers/loaders
   defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler;
 
-  // Component for 404 routes
+  // Component for 404 (no route match, or notFound() without a boundary)
   notFound?: ReactNode | ((props: { pathname: string }) => ReactNode);
 
   // Error logging callback
@@ -289,6 +289,56 @@ const router = createRouter({
 
 export default router;
 ```
+
+## Not Found Handling
+
+Two distinct 404 scenarios:
+
+**1. No route matches the URL** — the router renders the `notFound` component from `createRouter()` config. This is automatic.
+
+**2. A handler/loader calls `notFound()`** — signals that the route matched but the data doesn't exist (e.g., invalid product ID).
+
+```typescript
+import { notFound } from "@rangojs/router";
+
+// In a handler or loader
+path("/product/:slug", async (ctx) => {
+  const product = await db.getProduct(ctx.params.slug);
+  if (!product) notFound("Product not found");
+  return <ProductPage product={product} />;
+});
+```
+
+### Fallback chain for `notFound()`
+
+When `notFound()` is thrown, the router looks for a fallback in this order:
+
+1. **`notFoundBoundary()`** — nearest boundary in the route tree (route-level)
+2. **`defaultNotFoundBoundary`** — from `createRouter()` config (app-level)
+3. **`notFound`** — from `createRouter()` config (same component used for no-route-match)
+4. **Default `<h1>Not Found</h1>`** — built-in fallback
+
+All cases set HTTP 404 status.
+
+### notFoundBoundary
+
+Wrap routes with `notFoundBoundary()` for route-specific not-found UI:
+
+```typescript
+urls(({ path, layout }) => [
+  layout(ShopLayout, () => [
+    notFoundBoundary(({ notFound: info }) => (
+      <div>
+        <h1>Not Found</h1>
+        <p>{info.message}</p>
+      </div>
+    )),
+    path("/product/:slug", ProductPage),
+  ]),
+]);
+```
+
+`notFoundBoundary` receives `{ notFound: NotFoundInfo }` where `NotFoundInfo` contains `message`, `segmentId`, `segmentType`, and `pathname`.
 
 ## Including Sub-patterns
 

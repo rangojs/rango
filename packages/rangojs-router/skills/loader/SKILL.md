@@ -554,7 +554,7 @@ export const ProductLoader = createLoader(async (ctx) => {
     .first();
 
   if (!product) {
-    throw new Response("Product not found", { status: 404 });
+    notFound("Product not found");
   }
 
   return { product };
