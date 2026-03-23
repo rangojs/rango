@@ -289,15 +289,17 @@ export function NavigationProvider({
     };
   }, [warmupEnabled]);
 
-  // Cancel speculative prefetches when navigation starts.
-  // Viewport/render prefetches should not compete with navigation fetches.
+  // Cancel non-matching prefetches when navigation starts.
+  // Frees connections so the navigation fetch isn't competing with
+  // speculative prefetches. The prefetch matching the navigation target
+  // is kept alive so it can be reused via consumeInflightPrefetch.
   useEffect(() => {
     let wasIdle = true;
     const unsub = eventController.subscribe(() => {
       const state = eventController.getState();
       const isIdle = state.state === "idle" && !state.isStreaming;
       if (wasIdle && !isIdle) {
-        cancelAllPrefetches();
+        cancelAllPrefetches(state.pendingUrl);
       }
       wasIdle = isIdle;
     });

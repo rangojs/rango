@@ -139,7 +139,7 @@ describe("prefetch queue", () => {
     expect(calls).toBe(2);
   });
 
-  it("cancelAllPrefetches clears queue but leaves executing tasks running", async () => {
+  it("cancelAllPrefetches aborts non-matching in-flight and clears queue", async () => {
     const { enqueuePrefetch, cancelAllPrefetches } =
       await import("../browser/prefetch/queue");
 
@@ -164,9 +164,10 @@ describe("prefetch queue", () => {
     await flush();
     expect(signals).toHaveLength(2);
 
+    // No keepUrl — all in-flight prefetches are aborted
     cancelAllPrefetches();
 
-    expect(signals.every((signal) => signal.aborted)).toBe(false);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
     expect(queuedFn).not.toHaveBeenCalled();
 
     a.resolve();
@@ -177,6 +178,38 @@ describe("prefetch queue", () => {
     enqueuePrefetch("d", followUp);
     await flush();
     expect(followUp).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancelAllPrefetches keeps in-flight prefetch matching keepUrl", async () => {
+    const { enqueuePrefetch, cancelAllPrefetches } =
+      await import("../browser/prefetch/queue");
+
+    const signals = new Map<string, AbortSignal>();
+    const a = deferred();
+    const b = deferred();
+
+    // Keys use format "source\0target" — simulate real cache keys
+    enqueuePrefetch("http://localhost/\0/product/a", (signal) => {
+      signals.set("/product/a", signal);
+      return a.promise;
+    });
+    enqueuePrefetch("http://localhost/\0/product/b", (signal) => {
+      signals.set("/product/b", signal);
+      return b.promise;
+    });
+
+    await flush();
+    expect(signals.size).toBe(2);
+
+    // Navigation to /product/b — keep that prefetch, abort the other
+    cancelAllPrefetches("/product/b");
+
+    expect(signals.get("/product/a")!.aborted).toBe(true);
+    expect(signals.get("/product/b")!.aborted).toBe(false);
+
+    a.resolve();
+    b.resolve();
+    await flush();
   });
 
   it("abortAllPrefetches aborts executing tasks and clears queue", async () => {

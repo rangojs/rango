@@ -26,7 +26,7 @@ const queue: Array<{
 }> = [];
 const queued = new Set<string>();
 const executing = new Set<string>();
-let abortController: AbortController | null = null;
+const abortControllers = new Map<string, AbortController>();
 let drainScheduled = false;
 let drainGeneration = 0;
 
@@ -36,8 +36,10 @@ function startExecution(
 ): void {
   active++;
   executing.add(key);
-  abortController ??= new AbortController();
-  execute(abortController.signal).finally(() => {
+  const ac = new AbortController();
+  abortControllers.set(key, ac);
+  execute(ac.signal).finally(() => {
+    abortControllers.delete(key);
     // Only decrement if this key wasn't already cleared by cancelAllPrefetches.
     // Without this guard, cancelled tasks' .finally() would underflow active
     // below zero, breaking the MAX_CONCURRENT guarantee.
@@ -107,20 +109,32 @@ export function enqueuePrefetch(
 }
 
 /**
- * Cancel queued prefetches. Executing prefetches are left running so
- * navigation can reuse their in-flight responses (checked via
- * consumeInflightPrefetch in the prefetch cache). With MAX_CONCURRENT=2
- * and priority: "low", in-flight prefetches don't meaningfully compete
- * with navigation fetches under HTTP/2 multiplexing.
+ * Cancel queued prefetches and abort in-flight ones that don't match
+ * the current navigation target. If `keepUrl` is provided, the
+ * executing prefetch whose key contains that URL is kept alive so
+ * navigation can reuse its response via consumeInflightPrefetch.
  *
  * Called when a navigation starts via the NavigationProvider's
  * event controller subscription.
  */
-export function cancelAllPrefetches(): void {
+export function cancelAllPrefetches(keepUrl?: string | null): void {
   queue.length = 0;
   queued.clear();
   drainScheduled = false;
   drainGeneration++;
+
+  // Abort in-flight prefetches that aren't for the navigation target.
+  // Keys use format "sourceHref\0targetPathname+search" — match the
+  // target portion (after \0) against keepUrl.
+  for (const [key, ac] of abortControllers) {
+    const target = key.split("\0")[1];
+    if (keepUrl && target && keepUrl.startsWith(target)) continue;
+    ac.abort();
+    abortControllers.delete(key);
+    if (executing.delete(key)) {
+      active--;
+    }
+  }
 }
 
 /**
@@ -129,8 +143,10 @@ export function cancelAllPrefetches(): void {
  * in-flight responses would be stale.
  */
 export function abortAllPrefetches(): void {
-  abortController?.abort();
-  abortController = null;
+  for (const ac of abortControllers.values()) {
+    ac.abort();
+  }
+  abortControllers.clear();
 
   queue.length = 0;
   queued.clear();

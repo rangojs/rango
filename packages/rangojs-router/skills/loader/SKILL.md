@@ -132,10 +132,10 @@ same memoized result — loaders never run twice per request.
 
 ### Summary
 
-| Pattern                        | API                 | Cache-safe | Recommended |
-| ------------------------------ | ------------------- | ---------- | ----------- |
-| DSL + client component         | `useLoader(Loader)` | Yes        | Yes         |
-| Handler escape hatch           | `ctx.use(Loader)`   | No         | When needed |
+| Pattern                | API                 | Cache-safe | Recommended |
+| ---------------------- | ------------------- | ---------- | ----------- |
+| DSL + client component | `useLoader(Loader)` | Yes        | Yes         |
+| Handler escape hatch   | `ctx.use(Loader)`   | No         | When needed |
 
 ## Loader Context
 
