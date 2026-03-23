@@ -54,6 +54,7 @@ test.describe.serial("route-types-hmr", () => {
   let originalMainUrlsContent: string;
   let originalHandlersContent: string;
   let originalFactoryHmrContent: string;
+  let originalGenContent: string;
   let dirtyGuardMessage = "";
 
   test.beforeAll(async () => {
@@ -61,7 +62,7 @@ test.describe.serial("route-types-hmr", () => {
     // has local edits in the target files, bail out rather than overwriting.
     try {
       const dirty = execSync(
-        `git diff --name-only -- "${blogUrlsPath}" "${mainUrlsPath}" "${handlersPath}" "${factoryHmrPath}"`,
+        `git diff --name-only -- "${blogUrlsPath}" "${mainUrlsPath}" "${handlersPath}" "${factoryHmrPath}" "${genFilePath}"`,
         { encoding: "utf-8" },
       ).trim();
       if (dirty) {
@@ -90,12 +91,14 @@ test.describe.serial("route-types-hmr", () => {
     originalMainUrlsContent = gitBaseline(mainUrlsPath);
     originalHandlersContent = gitBaseline(handlersPath);
     originalFactoryHmrContent = gitBaseline(factoryHmrPath);
+    originalGenContent = gitBaseline(genFilePath);
 
     // Write baselines to disk in case a prior crash left stale modifications.
     await fs.writeFile(blogUrlsPath, originalBlogContent);
     await fs.writeFile(mainUrlsPath, originalMainUrlsContent);
     await fs.writeFile(handlersPath, originalHandlersContent);
     await fs.writeFile(factoryHmrPath, originalFactoryHmrContent);
+    await fs.writeFile(genFilePath, originalGenContent);
   });
 
   // Deferred skip: test.skip() cannot be called from beforeAll, so we
@@ -119,6 +122,14 @@ test.describe.serial("route-types-hmr", () => {
       expect(gen).not.toContain('"blog.article"');
       expect(gen).not.toContain('"blog.comments"');
     }).toPass({ timeout: isCI ? 15000 : 10000 });
+  });
+
+  // Force-restore the gen file when the test suite exits, even if
+  // afterEach couldn't wait long enough for the watcher to regenerate.
+  // Prevents the dirty gen file from failing typecheck in subsequent runs.
+  test.afterAll(async () => {
+    if (dirtyGuardMessage || !originalGenContent) return;
+    await fs.writeFile(genFilePath, originalGenContent);
   });
 
   test("should regenerate route types when a new route is added", async () => {
