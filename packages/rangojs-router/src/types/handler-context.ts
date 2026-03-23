@@ -277,9 +277,9 @@ export type HandlerContext<
       value: T,
       options?: { cache?: boolean },
     ): void;
-  } & ((
-    key: keyof DefaultVars,
-    value: DefaultVars[keyof DefaultVars],
+  } & (<K extends keyof DefaultVars>(
+    key: K,
+    value: DefaultVars[K],
     options?: { cache?: boolean },
   ) => void);
   /**
