@@ -139,7 +139,8 @@ export async function initBrowserApp(
     initialTheme,
   } = options;
 
-  // Load initial payload from SSR-injected __FLIGHT_DATA__
+  // React Performance Tracks timing data flows inline in the RSC stream
+  // (no separate debug channel needed).
   const initialPayload =
     await deps.createFromReadableStream<RscPayload>(rscStream);
 

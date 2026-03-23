@@ -26,6 +26,7 @@ import { printBanner, rangoVersion } from "./utils/banner.js";
 import { createVersionInjectorPlugin } from "./plugins/version-injector.js";
 import { createCjsToEsmPlugin } from "./plugins/cjs-to-esm.js";
 import { createRouterDiscoveryPlugin } from "./router-discovery.js";
+import { performanceTracksPlugin } from "./plugins/performance-tracks.js";
 
 /**
  * Vite plugin for @rangojs/router.
@@ -54,13 +55,24 @@ import { createRouterDiscoveryPlugin } from "./router-discovery.js";
 export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   const resolvedOptions: RangoOptions = options ?? { preset: "node" };
   const preset = resolvedOptions.preset ?? "node";
+  if (process.env.INTERNAL_RANGO_DEBUG)
+    console.log("[perf-tracks] rango() called, preset:", preset);
   const showBanner = resolvedOptions.banner ?? true;
 
   const plugins: PluginOption[] = [];
 
   // Get package resolution info (workspace vs npm install)
   const rangoAliases = getPackageAliases();
-  const excludeDeps = getExcludeDeps();
+  const excludeDeps = [
+    ...getExcludeDeps(),
+    // The public browser entry re-exports the RSDW browser client.
+    // Excluding both keeps Vite from freezing the unpatched bundle into
+    // .vite/deps before our source transforms run.
+    "@vitejs/plugin-rsc/browser",
+    // Keep the browser RSDW client out of Vite's dep optimizer so our
+    // cjs-to-esm and performance-tracks transforms can patch the real file.
+    "@vitejs/plugin-rsc/vendor/react-server-dom/client.browser",
+  ];
 
   // Mutable ref for router path (node preset only).
   // Set immediately when user-specified, or populated by the auto-discover
@@ -181,6 +193,9 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
     });
 
     plugins.push(createVirtualEntriesPlugin(finalEntries));
+
+    // Dev-only: React Performance Tracks (RSDW client patch)
+    plugins.push(performanceTracksPlugin());
 
     // Add RSC plugin with cloudflare-specific options
     // Note: loadModuleDevProxy should NOT be used with childEnvironments
@@ -333,6 +348,9 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
 
     // Add virtual entries plugin (RSC entry generated lazily from routerRef)
     plugins.push(createVirtualEntriesPlugin(finalEntries, routerRef));
+
+    // Dev-only: React Performance Tracks (RSDW client patch)
+    plugins.push(performanceTracksPlugin());
 
     plugins.push(
       rsc({

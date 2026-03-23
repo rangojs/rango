@@ -219,8 +219,8 @@ export function createNavigationClient(
       }
 
       try {
-        // Deserialize RSC payload
         const payload = await deps.createFromFetch<RscPayload>(responsePromise);
+
         if (tx) {
           browserDebugLog(tx, "response received", {
             isPartial: payload.metadata?.isPartial,
