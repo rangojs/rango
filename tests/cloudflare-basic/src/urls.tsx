@@ -270,6 +270,13 @@ export const urlpatterns = urls(
           ]),
 
           cache({ ttl: 60, swr: 300 }, () => [
+            middleware((ctx, next) => {
+              ctx.header(
+                "Cache-Control",
+                "s-maxage=60, stale-while-revalidate=300",
+              );
+              return next();
+            }),
             path("/blog", BlogIndexPage, { name: "blog" }),
             path("/blog/:slug", BlogPostPage, { name: "blogPost" }),
           ]),

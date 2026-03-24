@@ -173,8 +173,6 @@ export function SidebarSkeleton() {
 }
 
 export function BlogIndexPage(ctx: HandlerContext) {
-  ctx.headers.set("Cache-Control", "s-maxage=60, stale-while-revalidate=300");
-
   const meta = ctx.use(Meta);
   meta({ title: "Blog - RSC Router Cloudflare" });
   meta({
@@ -252,7 +250,6 @@ export function BlogIndexPage(ctx: HandlerContext) {
 }
 
 export function BlogPostPage(ctx: HandlerContext<{ slug: string }>) {
-  ctx.headers.set("Cache-Control", "s-maxage=60, stale-while-revalidate=300");
   const post = getBlogPost(ctx.params.slug);
 
   if (!post) {
