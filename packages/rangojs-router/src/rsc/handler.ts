@@ -418,10 +418,6 @@ export function createRSCHandler<
       requestContext._debugPerformance = true;
       requestContext._metricsStore = earlyMetricsStore;
     }
-    // React Performance Tracks: NO debug channel is created.
-    // Without a debugChannel, React writes timing D{"time":...} directly
-    // into the main RSC stream. The client reads them inline — no separate
-    // transport needed. Works for both SSR and SPA navigations.
     // Wire background error reporting so "use cache" and other subsystems
     // can surface non-fatal errors through the router's onError callback.
     requestContext._reportBackgroundError = (

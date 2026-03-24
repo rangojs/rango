@@ -671,10 +671,34 @@ export function track(label: string, depth?: number): () => void {
 }
 
 /**
+ * Separate ALS for tracking loader execution scope.
+ * Uses a dedicated ALS (not RSCRouterContext) to avoid issues with
+ * nested RSCRouterContext.run() calls in Vite's module runner.
+ */
+const LOADER_SCOPE_KEY = Symbol.for("rangojs-router:loader-scope");
+const loaderScopeALS: AsyncLocalStorage<{ active: true }> = ((
+  globalThis as any
+)[LOADER_SCOPE_KEY] ??= new AsyncLocalStorage<{ active: true }>());
+
+/**
  * Check if the current execution is inside a cache() DSL boundary.
  * Returns false inside loader execution — loaders are always fresh
  * (never cached), so non-cacheable reads are safe.
  */
 export function isInsideCacheScope(): boolean {
-  return RSCRouterContext.getStore()?.insideCacheScope === true;
+  if (RSCRouterContext.getStore()?.insideCacheScope !== true) return false;
+  // Loaders are always fresh — even inside a cache() boundary, the loader
+  // function re-executes on every request. Skip the guard when running
+  // inside a loader.
+  if (loaderScopeALS.getStore()?.active) return false;
+  return true;
+}
+
+/**
+ * Run `fn` inside a loader scope. While active, cache-scope guards
+ * are bypassed because loaders are always fresh (never cached) and
+ * their side effects (setCookie, header, etc.) are safe.
+ */
+export function runInsideLoaderScope<T>(fn: () => T): T {
+  return loaderScopeALS.run({ active: true }, fn);
 }

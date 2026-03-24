@@ -339,10 +339,17 @@ jobs:
           if [ -n "${{ matrix.workers }}" ]; then
             WORKERS_FLAG="--workers=${{ matrix.workers }}"
           fi
+          # HMR projects use useFixture() to start their own dev server,
+          # so skip dependency projects (dev, build, warmup) that would
+          # re-run hundreds of unrelated tests and blow the timeout.
+          NO_DEPS_FLAG=""
+          if [[ "${{ matrix.project }}" == hmr-* ]]; then
+            NO_DEPS_FLAG="--no-deps"
+          fi
           if [ -n "${{ matrix.shard }}" ]; then
-            pnpm --filter @rangojs/router test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.shardTotal }} $WORKERS_FLAG
+            pnpm --filter @rangojs/router test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.shardTotal }} $WORKERS_FLAG $NO_DEPS_FLAG
           else
-            pnpm --filter @rangojs/router test --project=${{ matrix.project }} $WORKERS_FLAG
+            pnpm --filter @rangojs/router test --project=${{ matrix.project }} $WORKERS_FLAG $NO_DEPS_FLAG
           fi
 
       - name: Upload test results

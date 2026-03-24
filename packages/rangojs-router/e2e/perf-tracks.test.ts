@@ -1,6 +1,5 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration } from "./helper";
 
 /**
  * React Performance Tracks — verifies inline timing data in RSC streams.
@@ -50,18 +49,40 @@ test.describe("performance-tracks (dev)", () => {
     // Partial responses also include inline timing data
     expect(body).toContain(':D{"time":');
   });
+});
 
-  test("SSR response should NOT include X-RSC-Debug-Id header", async ({
+// Production: React strips debug data, so no timing rows should be present.
+test.describe("performance-tracks (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("production SSR should NOT contain timing D rows", async ({
     request,
   }) => {
-    // No debug channel is used — timing goes inline in the stream.
-    // The X-RSC-Debug-Id header should NOT be present.
     const response = await request.get(f.url("/"), {
       headers: { Accept: "text/html,application/xhtml+xml" },
     });
     expect(response.status()).toBe(200);
 
-    const debugId = response.headers()["x-rsc-debug-id"];
-    expect(debugId).toBeFalsy();
+    const html = await response.text();
+
+    // Production builds strip debug data — no D{"time":...} rows
+    expect(html).not.toContain(':D{"time":');
+    expect(html).not.toContain(':D{\\"time\\":');
+  });
+
+  test("production partial should NOT contain timing D rows", async ({
+    request,
+  }) => {
+    const response = await request.get(
+      f.url("/?_rsc_partial=true&_rsc_segments=M0L0,M0L0R0"),
+    );
+    expect(response.status()).toBe(200);
+
+    const body = await response.text();
+
+    expect(body).not.toContain(':D{"time":');
   });
 });

@@ -184,7 +184,6 @@ test.describe("timeout (production)", () => {
   const f = useFixture({
     root: "./e2e/e2e-timeout",
     mode: "build",
-    isolatedServer: true,
   });
 
   test.setTimeout(120000);

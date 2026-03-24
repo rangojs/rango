@@ -139,8 +139,6 @@ export async function initBrowserApp(
     initialTheme,
   } = options;
 
-  // React Performance Tracks timing data flows inline in the RSC stream
-  // (no separate debug channel needed).
   const initialPayload =
     await deps.createFromReadableStream<RscPayload>(rscStream);
 
