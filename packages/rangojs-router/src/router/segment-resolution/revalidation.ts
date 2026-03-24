@@ -41,8 +41,11 @@ import {
 } from "./helpers.js";
 import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
-import { track } from "../../server/context.js";
-import { RSCRouterContext } from "../../server/context.js";
+import {
+  track,
+  RSCRouterContext,
+  runInsideLoaderScope,
+} from "../../server/context.js";
 
 // ---------------------------------------------------------------------------
 // Telemetry helpers
@@ -233,7 +236,9 @@ export async function resolveLoadersWithRevalidation<TEnv>(
       params: ctx.params,
       loaderId: loader.$$id,
       loaderData: deps.wrapLoaderPromise(
-        resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+        runInsideLoaderScope(() =>
+          resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+        ),
         entry,
         segmentId,
         ctx.pathname,
