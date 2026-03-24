@@ -1,6 +1,7 @@
 import type { Plugin } from "vite";
 import * as Vite from "vite";
 import { getPublishedPackageName } from "./package-resolution.js";
+import { performanceTracksOptimizeDepsPlugin } from "../plugins/performance-tracks.js";
 import {
   VIRTUAL_ENTRY_BROWSER,
   VIRTUAL_ENTRY_SSR,
@@ -35,9 +36,9 @@ const versionEsbuildPlugin = {
  * Includes the version stub plugin for all environments.
  */
 export const sharedEsbuildOptions: {
-  plugins: (typeof versionEsbuildPlugin)[];
+  plugins: any[];
 } = {
-  plugins: [versionEsbuildPlugin],
+  plugins: [versionEsbuildPlugin, performanceTracksOptimizeDepsPlugin()],
 };
 
 /**

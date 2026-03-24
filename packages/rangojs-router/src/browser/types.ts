@@ -341,7 +341,13 @@ export type ReadonlyURLSearchParams = Omit<
 export interface RscBrowserDependencies {
   createFromFetch: <T>(
     response: Promise<Response>,
-    options?: { temporaryReferences?: any },
+    options?: {
+      temporaryReferences?: any;
+      findSourceMapURL?: (
+        filename: string,
+        environmentName: string,
+      ) => string | null;
+    },
   ) => Promise<T>;
   createFromReadableStream: <T>(stream: ReadableStream) => Promise<T>;
   encodeReply: (

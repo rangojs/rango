@@ -139,7 +139,6 @@ export async function initBrowserApp(
     initialTheme,
   } = options;
 
-  // Load initial payload from SSR-injected __FLIGHT_DATA__
   const initialPayload =
     await deps.createFromReadableStream<RscPayload>(rscStream);
 

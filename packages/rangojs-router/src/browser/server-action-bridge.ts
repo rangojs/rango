@@ -206,7 +206,6 @@ export function createServerActionBridge(
           "rsc-action": id,
           "X-RSC-Router-Client-Path": segmentState.currentUrl,
           ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
-          // Send intercept source URL so server can maintain intercept context
           ...(interceptSourceUrl && {
             "X-RSC-Router-Intercept-Source": interceptSourceUrl,
           }),
@@ -309,7 +308,6 @@ export function createServerActionBridge(
         matchedCount: payload.metadata?.matched?.length ?? 0,
         diffCount: payload.metadata?.diff?.length ?? 0,
       });
-
       // Guard: if the action was aborted while streaming (e.g., user navigated
       // away or abortAllActions fired), bail out before any reconcile/render/cache
       // writes to avoid overwriting the current UI with stale action results.

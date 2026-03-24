@@ -63,7 +63,9 @@ export interface RSCDependencies {
    */
   renderToReadableStream: <T>(
     payload: T,
-    options?: { temporaryReferences?: unknown },
+    options?: {
+      temporaryReferences?: unknown;
+    },
   ) => ReadableStream<Uint8Array>;
 
   /**

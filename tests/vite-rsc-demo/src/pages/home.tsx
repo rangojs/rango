@@ -1,4 +1,5 @@
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
+import { ReactPerfProbe } from "../components/ReactPerfProbe.js";
 import { TestGetLoaderComponent } from "../components/TestGetLoader.js";
 
 export function HomePage() {
@@ -10,6 +11,7 @@ export function HomePage() {
         <p>Welcome to the RSC Router demo!</p>
 
         <TestGetLoaderComponent />
+        <ReactPerfProbe />
 
         <h2>Features to Test:</h2>
         <ul>

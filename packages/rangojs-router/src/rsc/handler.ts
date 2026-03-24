@@ -14,10 +14,10 @@ import {
   runWithRequestContext,
   setRequestContextParams,
   requireRequestContext,
+  getRequestContext,
   createRequestContext,
 } from "../server/request-context.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
-
 import type {
   RscPayload,
   CreateRSCHandlerOptions,
