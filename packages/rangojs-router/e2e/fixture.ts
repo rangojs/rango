@@ -233,7 +233,10 @@ export function useFixture(options: {
         baseURL = sharedURL;
       } else {
         const hasBuildDep = testInfo.project.dependencies.includes("build");
-        if (!process.env.TEST_SKIP_BUILD && !hasBuildDep) {
+        // Only skip building when the build dependency covers THIS app.
+        // The "build" setup project only builds the default test-app,
+        // so non-default roots (e2e-timeout, e2e-basic) always need their own build.
+        if (!process.env.TEST_SKIP_BUILD && !(hasBuildDep && isDefaultRoot)) {
           const buildProc = runCli({
             command: options.buildCommand ?? `pnpm build`,
             label: `${options.root}:build`,
