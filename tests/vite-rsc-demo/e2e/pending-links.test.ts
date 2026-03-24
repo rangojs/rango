@@ -89,7 +89,9 @@ test.describe("pending-links", () => {
 
     // Dashboard link does NOT have LinkStatusIndicator
     await page.locator('nav a:has-text("Dashboard")').click();
-    await expect(page.locator("text=Dashboard")).toBeVisible({
+    await expect(
+      page.getByRole("heading", { name: "Dashboard Home" }),
+    ).toBeVisible({
       timeout: 10000,
     });
 
@@ -229,7 +231,9 @@ test.describe("pending-links (production)", () => {
     await observePending(page);
 
     await page.locator('nav a:has-text("Dashboard")').click();
-    await expect(page.locator("text=Dashboard")).toBeVisible({
+    await expect(
+      page.getByRole("heading", { name: "Dashboard Home" }),
+    ).toBeVisible({
       timeout: 10000,
     });
 
