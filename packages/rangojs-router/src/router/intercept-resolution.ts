@@ -20,6 +20,7 @@ import { getGlobalRouteMap } from "../route-map-builder.js";
 import { handleHandlerResult } from "./segment-resolution.js";
 import type { SegmentResolutionDeps } from "./types.js";
 import { debugLog } from "./logging.js";
+import { runInsideLoaderScope } from "../server/context.js";
 
 /**
  * Check if an intercept's when conditions are satisfied.
@@ -207,7 +208,7 @@ export async function resolveInterceptEntry<TEnv>(
     loaderIds.push(loader.$$id);
     loaderPromises.push(
       deps.wrapLoaderPromise(
-        context.use(loader),
+        runInsideLoaderScope(() => context.use(loader)),
         parentEntry,
         segmentId,
         context.pathname,
@@ -374,7 +375,7 @@ export async function resolveInterceptLoadersOnly<TEnv>(
     loaderIds.push(loader.$$id);
     loaderPromises.push(
       deps.wrapLoaderPromise(
-        context.use(loader),
+        runInsideLoaderScope(() => context.use(loader)),
         parentEntry,
         segmentId,
         context.pathname,

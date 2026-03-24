@@ -30,7 +30,11 @@ import {
 } from "./helpers.js";
 import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
-import { track, RSCRouterContext } from "../../server/context.js";
+import {
+  track,
+  RSCRouterContext,
+  runInsideLoaderScope,
+} from "../../server/context.js";
 
 // ---------------------------------------------------------------------------
 // Streamed handler telemetry
@@ -112,7 +116,9 @@ export async function resolveLoaders<TEnv>(
         params: ctx.params,
         loaderId: loader.$$id,
         loaderData: deps.wrapLoaderPromise(
-          resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+          runInsideLoaderScope(() =>
+            resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+          ),
           entry,
           segmentId,
           ctx.pathname,
@@ -128,7 +134,9 @@ export async function resolveLoaders<TEnv>(
   // settled promises so handlers don't stream loading placeholders.
   const pendingLoaderData = loaderEntries.map((loaderEntry) => {
     const start = performance.now();
-    const promise = resolveLoaderData(loaderEntry, ctx, ctx.pathname);
+    const promise = runInsideLoaderScope(() =>
+      resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+    );
     return { promise, start, loaderId: loaderEntry.loader.$$id };
   });
   await Promise.all(pendingLoaderData.map((p) => p.promise));
