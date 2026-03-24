@@ -174,6 +174,7 @@ test.describe("timeout", () => {
   const f = useFixture({
     root: "./e2e/e2e-timeout",
     mode: "dev",
+    isolatedServer: true,
   });
 
   timeoutTests(f);
