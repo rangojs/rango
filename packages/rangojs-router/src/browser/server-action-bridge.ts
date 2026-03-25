@@ -167,6 +167,11 @@ export function createServerActionBridge(
       if (version) {
         url.searchParams.set("_rsc_v", version);
       }
+      // Add router ID for app switch detection
+      const rid = store.getRouterId?.();
+      if (rid) {
+        url.searchParams.set("_rsc_rid", rid);
+      }
 
       // Encode arguments
       const encodedBody = await deps.encodeReply(args, { temporaryReferences });

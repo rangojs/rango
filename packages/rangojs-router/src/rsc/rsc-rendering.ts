@@ -54,6 +54,7 @@ export async function handleRscRendering<TEnv>(
       payload = {
         metadata: {
           pathname: url.pathname,
+          routerId: ctx.router.id,
           segments: match.segments,
           matched: match.matched,
           diff: match.diff,
@@ -75,6 +76,7 @@ export async function handleRscRendering<TEnv>(
       payload = {
         metadata: {
           pathname: url.pathname,
+          routerId: ctx.router.id,
           segments: result.segments,
           matched: result.matched,
           diff: result.diff,
@@ -136,6 +138,7 @@ export async function handleRscRendering<TEnv>(
 
         metadata: {
           pathname: url.pathname,
+          routerId: ctx.router.id,
           segments: match.segments,
           matched: match.matched,
           diff: match.diff,

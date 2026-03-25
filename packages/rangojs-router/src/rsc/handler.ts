@@ -840,7 +840,11 @@ export function createRSCHandler<
     handleStore?: ReturnType<typeof requireRequestContext>["_handleStore"],
     actionContinuation?: ActionContinuation,
   ): Promise<Response> {
-    const isPartial = url.searchParams.has("_rsc_partial");
+    // App switch detection: if the client's routerId doesn't match this
+    // router, downgrade to a full render so the entire tree is replaced.
+    const clientRouterId = url.searchParams.get("_rsc_rid");
+    const isAppSwitch = !!(clientRouterId && clientRouterId !== router.id);
+    const isPartial = url.searchParams.has("_rsc_partial") && !isAppSwitch;
     const isAction =
       request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
 
@@ -1025,6 +1029,7 @@ export function createRSCHandler<
         const payload: RscPayload = {
           metadata: {
             pathname: url.pathname,
+            routerId: router.id,
             segments: [notFoundSegment],
             matched: [],
             diff: [],

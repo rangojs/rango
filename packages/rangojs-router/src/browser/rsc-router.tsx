@@ -164,6 +164,12 @@ export async function initBrowserApp(
     ...(storeOptions?.cacheSize && { cacheSize: storeOptions.cacheSize }),
   });
 
+  // Seed router identity from the initial SSR payload so the first
+  // cross-app SPA navigation can detect the app switch.
+  if (initialPayload.metadata?.routerId) {
+    store.setRouterId?.(initialPayload.metadata.routerId);
+  }
+
   // Create event controller for reactive state management
   const eventController = createEventController({
     initialLocation: new URL(window.location.href),
@@ -316,6 +322,7 @@ export async function initBrowserApp(
             segmentIds: [],
             previousUrl: store.getSegmentState().currentUrl,
             interceptSourceUrl: interceptSourceUrl || undefined,
+            routerId: store.getRouterId?.(),
             hmr: true,
             signal: abort.signal,
           });

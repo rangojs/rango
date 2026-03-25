@@ -448,6 +448,12 @@ export function createNavigationBridge(
         store.setCurrentUrl(url);
         store.setPath(new URL(url).pathname);
 
+        // Restore router identity from cache so subsequent navigations
+        // don't falsely detect an app switch.
+        if (cached?.routerId) {
+          store.setRouterId?.(cached.routerId);
+        }
+
         // Render from cache - force await to skip loading fallbacks
         try {
           const root = await renderSegments(cachedSegments, {

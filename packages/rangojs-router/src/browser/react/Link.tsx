@@ -290,7 +290,12 @@ export const Link: ForwardRefExoticComponent<
       // prefetch — prefetchDirect bypasses the queue, and hasPrefetch
       // deduplicates if the viewport prefetch already completed.
       const segmentState = ctx.store.getSegmentState();
-      prefetchDirect(to, segmentState.currentSegmentIds, getAppVersion());
+      prefetchDirect(
+        to,
+        segmentState.currentSegmentIds,
+        getAppVersion(),
+        ctx.store.getRouterId?.(),
+      );
     }
   }, [resolvedStrategy, to, isExternal, ctx]);
 
@@ -309,7 +314,12 @@ export const Link: ForwardRefExoticComponent<
     const triggerPrefetch = () => {
       if (cancelled) return;
       const segmentState = ctx.store.getSegmentState();
-      prefetchQueued(to, segmentState.currentSegmentIds, getAppVersion());
+      prefetchQueued(
+        to,
+        segmentState.currentSegmentIds,
+        getAppVersion(),
+        ctx.store.getRouterId?.(),
+      );
     };
 
     // Schedule prefetch only when the app is idle (no navigation/streaming).

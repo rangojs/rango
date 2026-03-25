@@ -19,6 +19,9 @@ export interface RscPayload {
   metadata?: {
     pathname: string;
     segments: ResolvedSegment[];
+    /** Router instance ID. When this changes between navigations, the client
+     *  discards cached segments and does a full tree replacement (app switch). */
+    routerId?: string;
     isPartial?: boolean;
     isError?: boolean;
     matched?: string[];

@@ -61,6 +61,7 @@ export function createNavigationClient(
         staleRevalidation,
         interceptSourceUrl,
         version,
+        routerId,
         hmr,
       } = options;
 
@@ -87,6 +88,9 @@ export function createNavigationClient(
       }
       if (version) {
         fetchUrl.searchParams.set("_rsc_v", version);
+      }
+      if (routerId) {
+        fetchUrl.searchParams.set("_rsc_rid", routerId);
       }
 
       // Check completed in-memory prefetch cache before making a network request.
