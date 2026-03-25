@@ -1,4 +1,4 @@
-import { createLoader, createVar } from "@rangojs/router";
+import { createLoader, createVar, cookies } from "@rangojs/router";
 
 export const NonCacheableData = createVar<string>({ cache: false });
 
@@ -17,4 +17,14 @@ export const AsyncNonCacheableReaderLoader = createLoader(async (ctx) => {
   await new Promise((resolve) => setTimeout(resolve, 10));
   const session = ctx.get(NonCacheableData);
   return { session: session ?? "no-session-async" };
+});
+
+// Response-level side effect — calls cookies().set() inside a cache() boundary.
+// Tests that the loader scope bypass covers setCookie, not just ctx.get().
+export const CookieWriterLoader = createLoader(async () => {
+  "use server";
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const jar = cookies();
+  jar.set("csg-loader-cookie", "written-by-loader", { path: "/" });
+  return { wrote: true };
 });

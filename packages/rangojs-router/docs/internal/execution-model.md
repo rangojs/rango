@@ -273,8 +273,9 @@ the value is non-cacheable.
 - `ctx.set(var, value)` inside cache scope: allowed for cacheable vars (children
   are also inside the cache boundary).
 - Response-level side effects (`ctx.header()`, `ctx.setCookie()`, `ctx.setStatus()`,
-  `ctx.onResponse()`) throw inside cache scope, regardless of cache-safety flag.
-  `ctx.headers.set/append/delete()` also throws via the guarded Headers proxy.
+  `ctx.onResponse()`) throw inside cache scope **for handlers**, regardless of
+  cache-safety flag. `ctx.headers.set/append/delete()` also throws via the
+  guarded Headers proxy. DSL loaders are exempt — see below.
 
 ### Loader access paths and cache safety
 
@@ -283,15 +284,32 @@ DSL loaders (registered with `loader()`) and handler-called loaders
 
 - **DSL `loader()` + client `useLoader()`** — the recommended path. DSL
   loaders are always resolved fresh (never cached), even inside `cache()`
-  boundaries. Loader functions receive an unguarded `ctx.get()` that
-  bypasses non-cacheable read guards. Data flows to the client via loader
-  segments and is consumed with `useLoader()`.
+  boundaries. Because they always re-execute:
+  - `ctx.get()` bypasses non-cacheable read guards (unguarded context).
+  - Global helpers that touch the response (`cookies().set()`,
+    `cookies().delete()`, `headers()`) are allowed inside loader
+    functions. `LoaderContext` itself does not expose `setCookie` or
+    `header` — loaders access these through the module-level helpers
+    imported from `@rangojs/router`, which delegate to the request
+    context. The cache-scope guard is bypassed via a dedicated
+    `loaderScopeALS` that tracks loader execution separately from the
+    `insideCacheScope` flag on `RSCRouterContext`.
+  - This applies to all DSL loader resolution paths: fresh, revalidation,
+    and intercept.
 
-- **`ctx.use(Loader)` in handlers** — escape hatch. The loader function
-  itself runs fresh, but the handler embeds the result in JSX that is
-  cached with the segment. On cache hit the handler does not re-execute,
-  so the loader result in the cached output may be stale. Non-cacheable
-  variable reads in the handler still throw via the normal read guard.
+- **`ctx.use(Loader)` in handlers** — escape hatch for reading loader
+  data in handlers. The loader function itself runs fresh, but the
+  handler embeds the result in JSX that is cached with the segment. On
+  cache hit the handler does not re-execute, so the loader result in the
+  cached output may be stale. Non-cacheable variable reads in the handler
+  still throw via the normal read guard. Response-level side effects in
+  handler code throw normally.
+  Note: when a loader is registered via both DSL `loader()` and called
+  via `ctx.use()` in the same route, the DSL registration starts the
+  loader in loader scope before the handler runs. The handler's
+  `ctx.use()` call returns the memoized promise — it does not re-execute
+  the loader function. The loader scope bypass applies because the
+  function originally started under `runInsideLoaderScope`.
 
 This is a deliberate design decision: DSL loaders are the semantically
 strong path for request-specific data. `ctx.use(Loader)` is supported

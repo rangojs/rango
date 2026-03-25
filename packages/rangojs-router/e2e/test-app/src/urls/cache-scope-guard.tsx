@@ -4,6 +4,7 @@ import {
   NonCacheableData,
   NonCacheableReaderLoader,
   AsyncNonCacheableReaderLoader,
+  CookieWriterLoader,
 } from "./cache-scope-guard-loader.js";
 
 const CacheableData = createVar<string>();
@@ -301,6 +302,28 @@ export const cacheScopeGuardPatterns = urls(
             ]),
           ],
         ),
+
+        // Loader calling cookies().set() inside cache() — ALLOWED
+        // Response-level side effects are safe in DSL loaders (always fresh).
+        // The handler reads the result via ctx.use() which returns the
+        // memoized promise from the DSL-started loader (standard pattern).
+        cache({ ttl: 600 }, () => [
+          path(
+            "/loader-cookie-allowed",
+            async (ctx) => {
+              const { wrote } = await ctx.use(CookieWriterLoader);
+              return (
+                <div data-testid="csg-loader-cookie-page">
+                  <span data-testid="csg-loader-cookie-value">
+                    {wrote ? "cookie-written" : "no-write"}
+                  </span>
+                </div>
+              );
+            },
+            { name: "loaderCookieAllowed" },
+            () => [loader(CookieWriterLoader)],
+          ),
+        ]),
 
         // ctx.get(NonCacheableVar) inside cache() — BLOCKED (read guard)
         // Layout OUTSIDE cache sets the var, route INSIDE cache reads it

@@ -28,6 +28,7 @@ export const NamedRoutes = {
   "cacheScopeGuard.asyncLoaderReadAllowed": "/cache-scope-guard/async-loader-read-allowed",
   "cacheScopeGuard.headerBlocked": "/cache-scope-guard/header-blocked",
   "cacheScopeGuard.index": "/cache-scope-guard",
+  "cacheScopeGuard.loaderCookieAllowed": "/cache-scope-guard/loader-cookie-allowed",
   "cacheScopeGuard.loaderReadAllowed": "/cache-scope-guard/loader-read-allowed",
   "cacheScopeGuard.parallelReadBlocked": "/cache-scope-guard/parallel-read-blocked",
   "cacheScopeGuard.readBlocked": "/cache-scope-guard/read-blocked",

@@ -147,6 +147,20 @@ test.describe("cache-scope-guard", () => {
     );
   });
 
+  test("loader calling cookies().set() inside cache() should be allowed", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-scope-guard/loader-cookie-allowed"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-loader-cookie-page")).toBeVisible();
+    await expect(page.getByTestId("csg-loader-cookie-value")).toHaveText(
+      "cookie-written",
+    );
+  });
+
   test("ctx.headers.set() inside cache() should throw (SSR)", async ({
     request,
   }) => {
@@ -248,6 +262,20 @@ test.describe("cache-scope-guard (production)", () => {
     await expect(page.getByTestId("csg-async-loader-page")).toBeVisible();
     await expect(page.getByTestId("csg-async-loader-value")).toHaveText(
       "loader-session",
+    );
+  });
+
+  test("loader calling cookies().set() inside cache() should be allowed", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-scope-guard/loader-cookie-allowed"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-loader-cookie-page")).toBeVisible();
+    await expect(page.getByTestId("csg-loader-cookie-value")).toHaveText(
+      "cookie-written",
     );
   });
 
