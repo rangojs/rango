@@ -39,8 +39,8 @@ export interface PartialUpdateConfig {
     segments: ResolvedSegment[],
     options?: RenderSegmentsOptions,
   ) => Promise<ReactNode> | ReactNode;
-  /** RSC version received from server (from initial payload metadata) */
-  version?: string;
+  /** RSC version getter — returns the current version (may change after HMR) */
+  getVersion?: () => string | undefined;
 }
 
 /**
@@ -104,7 +104,13 @@ export type PartialUpdater = (
 export function createPartialUpdater(
   config: PartialUpdateConfig,
 ): PartialUpdater {
-  const { store, client, onUpdate, renderSegments, version } = config;
+  const {
+    store,
+    client,
+    onUpdate,
+    renderSegments,
+    getVersion = () => undefined,
+  } = config;
 
   /**
    * Get current page's cached segments as an array
@@ -193,7 +199,7 @@ export function createPartialUpdater(
       // (action redirect sends empty segments for a fresh render).
       staleRevalidation:
         mode.type === "stale-revalidation" || segments.length === 0,
-      version,
+      version: getVersion(),
     });
     // Mark navigation as streaming (response received, now parsing RSC).
     // Called after fetchPartial so pendingUrl stays set during the network wait,

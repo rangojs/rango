@@ -44,7 +44,8 @@ export interface NavigationStoreContextValue {
 
   /**
    * App version from server payload (stable, immutable).
-   * Used in prefetch requests for version mismatch detection.
+   * Useful for building cache keys. For the *current* version
+   * (which may change after HMR), use getAppVersion() instead.
    */
   version: string | undefined;
 }

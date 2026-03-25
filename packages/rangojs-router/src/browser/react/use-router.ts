@@ -3,6 +3,7 @@
 import { useContext, useMemo } from "react";
 import { NavigationStoreContext } from "./context.js";
 import { prefetchDirect } from "../prefetch/fetch.js";
+import { getAppVersion } from "../app-version.js";
 import type { RouterInstance, RouterNavigateOptions } from "../types.js";
 
 /**
@@ -46,7 +47,7 @@ export function useRouter(): RouterInstance {
       prefetch(url: string): void {
         const segmentState = ctx.store?.getSegmentState();
         if (segmentState) {
-          prefetchDirect(url, segmentState.currentSegmentIds, ctx.version);
+          prefetchDirect(url, segmentState.currentSegmentIds, getAppVersion());
         }
       },
 

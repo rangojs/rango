@@ -526,6 +526,8 @@ export interface NavigationBridge {
   refresh(): Promise<void>;
   handlePopstate(): Promise<void>;
   registerLinkInterception(): () => void;
+  /** Update the RSC version (e.g. after HMR). Clears prefetch cache. */
+  updateVersion(newVersion: string): void;
 }
 
 /**

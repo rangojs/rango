@@ -159,6 +159,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -227,6 +228,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -266,6 +268,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -321,6 +324,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -362,6 +366,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -393,6 +398,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -437,6 +443,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -473,6 +480,7 @@ describe("partial-update", () => {
 
       const tx = createMockTx();
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -508,6 +516,7 @@ describe("partial-update", () => {
         .mockImplementation(() => {});
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -571,6 +580,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -623,6 +633,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -663,6 +674,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -710,6 +722,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -745,6 +758,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -777,6 +791,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -816,6 +831,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -877,6 +893,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -906,6 +923,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -938,6 +956,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -970,6 +989,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -1035,6 +1055,7 @@ describe("partial-update", () => {
         const tx = createMockTx();
 
         const updater = createPartialUpdater({
+          getVersion: () => undefined,
           store: store as any,
           client: client as any,
           onUpdate: vi.fn(),
@@ -1099,6 +1120,7 @@ describe("partial-update", () => {
         const tx = createMockTx();
 
         const updater = createPartialUpdater({
+          getVersion: () => undefined,
           store: store as any,
           client: client as any,
           onUpdate: vi.fn(),
@@ -1164,6 +1186,7 @@ describe("partial-update", () => {
         const tx = createMockTx();
 
         const updater = createPartialUpdater({
+          getVersion: () => undefined,
           store: store as any,
           client: client as any,
           onUpdate: vi.fn(),
@@ -1226,6 +1249,7 @@ describe("partial-update", () => {
         const tx = createMockTx();
 
         const updater = createPartialUpdater({
+          getVersion: () => undefined,
           store: store as any,
           client: client as any,
           onUpdate: vi.fn(),
@@ -1288,6 +1312,7 @@ describe("partial-update", () => {
         const tx = createMockTx();
 
         const updater = createPartialUpdater({
+          getVersion: () => undefined,
           store: store as any,
           client: client as any,
           onUpdate: vi.fn(),
@@ -1330,6 +1355,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -1367,6 +1393,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -1395,6 +1422,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -1430,6 +1458,7 @@ describe("partial-update", () => {
       tx.startStreaming.mockReturnValue({ end: endFn });
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -1476,6 +1505,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),

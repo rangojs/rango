@@ -23,6 +23,7 @@ import type { EventController } from "./event-controller.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 import { initRangoState } from "./rango-state.js";
 import { initPrefetchCache } from "./prefetch/cache.js";
+import { setAppVersion } from "./app-version.js";
 import {
   isInterceptSegment,
   splitInterceptSegments,
@@ -204,6 +205,7 @@ export async function initBrowserApp(
   // Initialize the localStorage state key for cache invalidation.
   // Uses the build version so a new deploy automatically busts all cached prefetches.
   initRangoState(version ?? "0");
+  setAppVersion(version);
 
   // Initialize the in-memory prefetch cache TTL from server config.
   // A value of 0 disables the cache; undefined falls back to the module default.
@@ -230,7 +232,6 @@ export async function initBrowserApp(
     deps,
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
-    version,
     onNavigate: (url, options) => {
       if (!navigateFn) {
         window.location.href = url;
@@ -248,7 +249,7 @@ export async function initBrowserApp(
     client,
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
-    version,
+    version: version,
   });
 
   // Connect action redirect → navigation bridge (now that both are initialized)
@@ -326,6 +327,21 @@ export async function initBrowserApp(
           // Reload to recover rather than leaving the page stale.
           if (!payload.metadata) {
             throw new Error("HMR refetch returned invalid payload");
+          }
+
+          // Update version BEFORE rebuilding state so that
+          // clearHistoryCache() runs first, then the fresh segment
+          // cache entry we create below survives.
+          const newVersion = payload.metadata.version;
+          if (newVersion && newVersion !== version) {
+            console.log(
+              "[RSCRouter] HMR: version changed",
+              version,
+              "→",
+              newVersion,
+              "clearing caches",
+            );
+            navigationBridge.updateVersion(newVersion);
           }
 
           if (payload.metadata?.isPartial) {

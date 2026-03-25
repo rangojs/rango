@@ -4,6 +4,7 @@ import type {
   NavigateOptionsInternal,
   ResolvedSegment,
 } from "./types.js";
+import { setAppVersion } from "./app-version.js";
 import * as React from "react";
 import { startTransition } from "react";
 import {
@@ -67,8 +68,8 @@ export interface NavigationBridgeConfigWithController extends NavigationBridgeCo
 export function createNavigationBridge(
   config: NavigationBridgeConfigWithController,
 ): NavigationBridge {
-  const { store, client, eventController, onUpdate, renderSegments, version } =
-    config;
+  const { store, client, eventController, onUpdate, renderSegments } = config;
+  let version = config.version;
 
   // Create shared partial updater
   const fetchPartialUpdate = createPartialUpdater({
@@ -76,7 +77,7 @@ export function createNavigationBridge(
     client,
     onUpdate,
     renderSegments,
-    version,
+    getVersion: () => version,
   });
 
   return {
@@ -631,6 +632,12 @@ export function createNavigationBridge(
         window.removeEventListener("popstate", handlePopstate);
         window.removeEventListener("pageshow", handlePageShow);
       };
+    },
+
+    updateVersion(newVersion: string): void {
+      version = newVersion;
+      setAppVersion(newVersion);
+      store.clearHistoryCache();
     },
   };
 }

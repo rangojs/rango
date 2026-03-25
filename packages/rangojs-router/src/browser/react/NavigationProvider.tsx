@@ -134,7 +134,7 @@ export interface NavigationProviderProps {
 
   /**
    * App version from server payload (stable, immutable).
-   * Forwarded to prefetch requests for version mismatch detection.
+   * Forwarded to context for cache key building.
    */
   version?: string;
 }
