@@ -107,6 +107,54 @@ export function createNavigationClient(
         resolveStreamComplete = resolve;
       });
 
+      /**
+       * Validate RSC control headers on any response (fresh, cached, or
+       * in-flight). Handles version-mismatch reloads and server redirects.
+       * Returns the response unchanged when no control header is present.
+       */
+      const validateRscHeaders = (
+        response: Response,
+        source: string,
+      ): Response | Promise<Response> => {
+        // Version mismatch — server wants a full page reload
+        const reload = extractRscHeaderUrl(response, "X-RSC-Reload");
+        if (reload === "blocked") {
+          resolveStreamComplete();
+          return emptyResponse();
+        }
+        if (reload) {
+          if (tx) {
+            browserDebugLog(tx, `version mismatch, reloading (${source})`, {
+              reloadUrl: reload.url,
+            });
+          }
+          window.location.href = reload.url;
+          // Block further processing — page is reloading
+          return new Promise<Response>(() => {});
+        }
+
+        // Server-side redirect without state: the server returned 204 with
+        // X-RSC-Redirect instead of a 3xx (which fetch would auto-follow
+        // to a URL rendering full HTML). Throw ServerRedirect so the
+        // navigation bridge catches it and re-navigates with _skipCache.
+        const redirect = extractRscHeaderUrl(response, "X-RSC-Redirect");
+        if (redirect === "blocked") {
+          resolveStreamComplete();
+          return emptyResponse();
+        }
+        if (redirect) {
+          if (tx) {
+            browserDebugLog(tx, `server redirect (${source})`, {
+              redirectUrl: redirect.url,
+            });
+          }
+          resolveStreamComplete();
+          throw new ServerRedirect(redirect.url, undefined);
+        }
+
+        return response;
+      };
+
       /** Start a fresh navigation fetch (no cache / inflight hit). */
       const doFreshFetch = (): Promise<Response> => {
         if (tx) {
@@ -127,43 +175,11 @@ export function createNavigationClient(
           },
           signal,
         }).then((response) => {
-          // Check for version mismatch - server wants us to reload
-          const reload = extractRscHeaderUrl(response, "X-RSC-Reload");
-          if (reload === "blocked") {
-            resolveStreamComplete();
-            return emptyResponse();
-          }
-          if (reload) {
-            if (tx) {
-              browserDebugLog(tx, "version mismatch, reloading", {
-                reloadUrl: reload.url,
-              });
-            }
-            window.location.href = reload.url;
-            return new Promise<Response>(() => {});
-          }
-
-          // Server-side redirect without state: the server returned 204 with
-          // X-RSC-Redirect instead of a 3xx (which fetch would auto-follow
-          // to a URL rendering full HTML). Throw ServerRedirect so the
-          // navigation bridge catches it and re-navigates with _skipCache.
-          const redirect = extractRscHeaderUrl(response, "X-RSC-Redirect");
-          if (redirect === "blocked") {
-            resolveStreamComplete();
-            return emptyResponse();
-          }
-          if (redirect) {
-            if (tx) {
-              browserDebugLog(tx, "server redirect", {
-                redirectUrl: redirect.url,
-              });
-            }
-            resolveStreamComplete();
-            throw new ServerRedirect(redirect.url, undefined);
-          }
+          const validated = validateRscHeaders(response, "fetch");
+          if (validated instanceof Promise) return validated;
 
           return teeWithCompletion(
-            response,
+            validated,
             () => {
               if (tx) browserDebugLog(tx, "stream complete");
               resolveStreamComplete();
@@ -179,11 +195,12 @@ export function createNavigationClient(
         if (tx) {
           browserDebugLog(tx, "prefetch cache hit", { key: cacheKey });
         }
-        // Cached response body is already fully buffered (arrayBuffer),
-        // so stream completion is immediate.
         responsePromise = Promise.resolve(cachedResponse).then((response) => {
+          const validated = validateRscHeaders(response, "prefetch cache");
+          if (validated instanceof Promise) return validated;
+
           return teeWithCompletion(
-            response,
+            validated,
             () => {
               if (tx) browserDebugLog(tx, "stream complete (from cache)");
               resolveStreamComplete();
@@ -203,8 +220,11 @@ export function createNavigationClient(
             return doFreshFetch();
           }
 
+          const validated = validateRscHeaders(response, "inflight prefetch");
+          if (validated instanceof Promise) return validated;
+
           return teeWithCompletion(
-            response,
+            validated,
             () => {
               if (tx) {
                 browserDebugLog(tx, "stream complete (from inflight prefetch)");

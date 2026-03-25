@@ -32,6 +32,7 @@ export type LinkState =
   | StateOrGetter<Record<string, unknown>>;
 
 import { prefetchDirect, prefetchQueued } from "../prefetch/fetch.js";
+import { getAppVersion } from "../app-version.js";
 import {
   observeForPrefetch,
   unobserveForPrefetch,
@@ -289,7 +290,7 @@ export const Link: ForwardRefExoticComponent<
       // prefetch — prefetchDirect bypasses the queue, and hasPrefetch
       // deduplicates if the viewport prefetch already completed.
       const segmentState = ctx.store.getSegmentState();
-      prefetchDirect(to, segmentState.currentSegmentIds, ctx.version);
+      prefetchDirect(to, segmentState.currentSegmentIds, getAppVersion());
     }
   }, [resolvedStrategy, to, isExternal, ctx]);
 
@@ -308,7 +309,7 @@ export const Link: ForwardRefExoticComponent<
     const triggerPrefetch = () => {
       if (cancelled) return;
       const segmentState = ctx.store.getSegmentState();
-      prefetchQueued(to, segmentState.currentSegmentIds, ctx.version);
+      prefetchQueued(to, segmentState.currentSegmentIds, getAppVersion());
     };
 
     // Schedule prefetch only when the app is idle (no navigation/streaming).

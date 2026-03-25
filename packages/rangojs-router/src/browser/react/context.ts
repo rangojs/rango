@@ -43,8 +43,7 @@ export interface NavigationStoreContextValue {
   refresh: () => Promise<void>;
 
   /**
-   * App version from server payload (stable, immutable).
-   * Used in prefetch requests for version mismatch detection.
+   * App version from the initial server payload.
    */
   version: string | undefined;
 }

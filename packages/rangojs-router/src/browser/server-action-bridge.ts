@@ -29,6 +29,7 @@ import {
 } from "./response-adapter.js";
 import { mergeLocationState } from "./history-state.js";
 import { classifyActionOutcome } from "./action-coordinator.js";
+import { getAppVersion } from "./app-version.js";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -43,8 +44,6 @@ if (typeof Symbol.asyncDispose === "undefined") {
  */
 export interface ServerActionBridgeConfigWithController extends ServerActionBridgeConfig {
   eventController: EventController;
-  /** RSC version from initial payload metadata */
-  version?: string;
   /** Callback to trigger SPA navigation (for action redirects) */
   onNavigate?: (
     url: string,
@@ -75,7 +74,6 @@ export function createServerActionBridge(
     deps,
     onUpdate,
     renderSegments,
-    version,
     onNavigate,
   } = config;
 
@@ -86,7 +84,7 @@ export function createServerActionBridge(
     client,
     onUpdate,
     renderSegments,
-    version,
+    getVersion: getAppVersion,
   });
 
   /**
@@ -165,6 +163,7 @@ export function createServerActionBridge(
         segmentState.currentSegmentIds.join(","),
       );
       // Add version param for version mismatch detection
+      const version = getAppVersion();
       if (version) {
         url.searchParams.set("_rsc_v", version);
       }
