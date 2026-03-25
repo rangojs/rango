@@ -265,7 +265,7 @@ export function createPartialUpdater(
             existingSegments,
           );
 
-          // Fix: tx.commit() cached the source page's handleData because
+          // tx.commit() cached the source page's handleData because
           // eventController hasn't been updated yet. Overwrite with the
           // correct cached handleData to prevent cache corruption on
           // subsequent navigations to this same URL.
