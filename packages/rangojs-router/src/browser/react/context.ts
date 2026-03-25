@@ -43,9 +43,7 @@ export interface NavigationStoreContextValue {
   refresh: () => Promise<void>;
 
   /**
-   * App version from server payload (stable, immutable).
-   * Useful for building cache keys. For the *current* version
-   * (which may change after HMR), use getAppVersion() instead.
+   * App version from the initial server payload.
    */
   version: string | undefined;
 }
