@@ -316,7 +316,10 @@ export function withCacheLookup<TEnv>(
 
     // Prerender lookup: check build-time cached data before runtime cache.
     // Prerender data is available regardless of runtime cache configuration.
-    if (!ctx.isAction && ctx.matched.pr) {
+    // Skip for HMR requests — the dev prerender endpoint reads from a stale
+    // RouterRegistry snapshot; rendering fresh ensures edits are visible.
+    const isHmr = !!ctx.request.headers.get("X-RSC-HMR");
+    if (!ctx.isAction && !isHmr && ctx.matched.pr) {
       await ensurePrerenderDeps();
       if (prerenderStoreInstance) {
         const paramHash = _hashParams!(ctx.matched.params);

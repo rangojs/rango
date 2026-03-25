@@ -68,6 +68,7 @@ export default defineConfig({
             "**/route-types-hmr.test.ts",
             "**/client-component-hmr.test.ts",
             "**/intercept-hmr*.test.ts",
+            "**/prerender-hmr.test.ts",
             "**/refresh-cmd.test.ts",
             "**/*.setup.ts",
           ],
@@ -85,6 +86,13 @@ export default defineConfig({
             baseURL: `http://localhost:${PREVIEW_SERVER_PORT}`,
           },
           fullyParallel: false,
+        },
+        {
+          name: "hmr-prerender",
+          testMatch: "**/prerender-hmr.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          dependencies: ["dev"],
         },
         {
           name: "hmr-client",
@@ -150,6 +158,7 @@ export default defineConfig({
             "**/route-types-hmr.test.ts",
             "**/client-component-hmr.test.ts",
             "**/intercept-hmr*.test.ts",
+            "**/prerender-hmr.test.ts",
             "**/refresh-cmd.test.ts",
             "**/*.setup.ts",
           ],
@@ -208,6 +217,14 @@ export default defineConfig({
           use: browserConfig,
           fullyParallel: false,
           dependencies: ["dev", "hmr-routes"],
+        },
+        {
+          name: "hmr-prerender",
+          // Local-only: tests skip on CI via test.skip(!!process.env.CI).
+          testMatch: "**/prerender-hmr.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          dependencies: ["dev"],
         },
         {
           name: "webkit-smoke",
