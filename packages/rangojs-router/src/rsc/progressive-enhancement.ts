@@ -243,6 +243,7 @@ export async function handleProgressiveEnhancement<TEnv>(
     const payload: RscPayload = {
       metadata: {
         pathname: url.pathname,
+        routerId: ctx.router.id,
         segments: match.segments,
         matched: match.matched,
         diff: match.diff,
@@ -342,6 +343,7 @@ async function renderPeErrorBoundary<TEnv>(
   const payload: RscPayload = {
     metadata: {
       pathname: url.pathname,
+      routerId: ctx.router.id,
       segments: errorResult.segments,
       matched: errorResult.matched,
       diff: errorResult.diff,

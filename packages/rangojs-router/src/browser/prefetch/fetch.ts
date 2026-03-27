@@ -34,6 +34,7 @@ function buildPrefetchUrl(
   url: string,
   segmentIds: string[],
   version?: string,
+  routerId?: string,
 ): URL | null {
   let targetUrl: URL;
   try {
@@ -50,6 +51,9 @@ function buildPrefetchUrl(
   }
   if (version) {
     targetUrl.searchParams.set("_rsc_v", version);
+  }
+  if (routerId) {
+    targetUrl.searchParams.set("_rsc_rid", routerId);
   }
   return targetUrl;
 }
@@ -108,10 +112,11 @@ export function prefetchDirect(
   url: string,
   segmentIds: string[],
   version?: string,
+  routerId?: string,
 ): void {
   if (!shouldPrefetch()) return;
 
-  const targetUrl = buildPrefetchUrl(url, segmentIds, version);
+  const targetUrl = buildPrefetchUrl(url, segmentIds, version, routerId);
   if (!targetUrl) return;
   const key = buildPrefetchKey(window.location.href, targetUrl);
   if (hasPrefetch(key)) return;
@@ -127,9 +132,10 @@ export function prefetchQueued(
   url: string,
   segmentIds: string[],
   version?: string,
+  routerId?: string,
 ): string {
   if (!shouldPrefetch()) return "";
-  const targetUrl = buildPrefetchUrl(url, segmentIds, version);
+  const targetUrl = buildPrefetchUrl(url, segmentIds, version, routerId);
   if (!targetUrl) return "";
   const key = buildPrefetchKey(window.location.href, targetUrl);
   if (hasPrefetch(key)) return key;

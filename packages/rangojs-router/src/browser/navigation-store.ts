@@ -28,9 +28,15 @@ const DEFAULT_ACTION_STATE: TrackedActionState = {
 // Maximum number of history entries to cache (URLs visited)
 const HISTORY_CACHE_SIZE = 20;
 
-// Cache entry: [url-key, segments, stale, handleData?]
+// Cache entry: [url-key, segments, stale, handleData?, routerId?]
 // stale=true means the data may be outdated and should be revalidated on access
-type HistoryCacheEntry = [string, ResolvedSegment[], boolean, HandleData?];
+type HistoryCacheEntry = [
+  string,
+  ResolvedSegment[],
+  boolean,
+  HandleData?,
+  string?,
+];
 
 /**
  * Shallow clone handleData to avoid reference sharing between cache entries.
@@ -257,6 +263,11 @@ export function createNavigationStore(
   // Intercept source URL - tracks where the intercept was triggered from
   // Used to maintain intercept context during action revalidation
   let interceptSourceUrl: string | null = null;
+
+  // Router identity - tracks which router is currently active.
+  // When this changes on a partial response, the client forces a full
+  // tree replacement instead of reconciling with stale segments.
+  let currentRouterId: string | undefined;
 
   // Action state tracking (for useAction hook)
   // Maps action function ID to its tracked state
@@ -571,10 +582,17 @@ export function createNavigationStore(
           segments,
           false,
           clonedHandleData,
+          currentRouterId,
         ];
       } else {
         // Add new entry at the end (not stale)
-        historyCache.push([historyKey, segments, false, clonedHandleData]);
+        historyCache.push([
+          historyKey,
+          segments,
+          false,
+          clonedHandleData,
+          currentRouterId,
+        ]);
         // Remove oldest entries if over limit
         while (historyCache.length > cacheSize) {
           historyCache.shift();
@@ -586,14 +604,22 @@ export function createNavigationStore(
      * Get cached segments for a history entry
      * Returns { segments, stale, handleData } or undefined if not cached
      */
-    getCachedSegments(
-      historyKey: string,
-    ):
-      | { segments: ResolvedSegment[]; stale: boolean; handleData?: HandleData }
+    getCachedSegments(historyKey: string):
+      | {
+          segments: ResolvedSegment[];
+          stale: boolean;
+          handleData?: HandleData;
+          routerId?: string;
+        }
       | undefined {
       const entry = historyCache.find(([key]) => key === historyKey);
       if (!entry) return undefined;
-      return { segments: entry[1], stale: entry[2], handleData: entry[3] };
+      return {
+        segments: entry[1],
+        stale: entry[2],
+        handleData: entry[3],
+        routerId: entry[4],
+      };
     },
 
     /**
@@ -621,6 +647,7 @@ export function createNavigationStore(
           entry[1],
           entry[2],
           clonedHandleData,
+          entry[4], // preserve routerId
         ];
       }
     },
@@ -685,6 +712,14 @@ export function createNavigationStore(
      */
     setInterceptSourceUrl(url: string | null): void {
       interceptSourceUrl = url;
+    },
+
+    getRouterId(): string | undefined {
+      return currentRouterId;
+    },
+
+    setRouterId(id: string): void {
+      currentRouterId = id;
     },
 
     // ========================================================================

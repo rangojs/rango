@@ -47,7 +47,12 @@ export function useRouter(): RouterInstance {
       prefetch(url: string): void {
         const segmentState = ctx.store?.getSegmentState();
         if (segmentState) {
-          prefetchDirect(url, segmentState.currentSegmentIds, getAppVersion());
+          prefetchDirect(
+            url,
+            segmentState.currentSegmentIds,
+            getAppVersion(),
+            ctx.store?.getRouterId?.(),
+          );
         }
       },
 

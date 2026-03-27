@@ -208,6 +208,7 @@ export async function executeServerAction<TEnv>(
       const payload: RscPayload = {
         metadata: {
           pathname: url.pathname,
+          routerId: ctx.router.id,
           segments: errorResult.segments,
           isPartial: true,
           matched: errorResult.matched,
@@ -314,6 +315,7 @@ export async function revalidateAfterAction<TEnv>(
   const payload: RscPayload = {
     metadata: {
       pathname: url.pathname,
+      routerId: ctx.router.id,
       segments: matchResult.segments,
       isPartial: true,
       matched: matchResult.matched,

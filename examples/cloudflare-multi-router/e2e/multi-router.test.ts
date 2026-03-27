@@ -164,6 +164,183 @@ test.describe("multi-router (dev)", () => {
       );
     });
   });
+
+  test.describe("routerId isolation", () => {
+    test("site SPA navigation sends _rsc_rid", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      const rscRequests: string[] = [];
+      page.on("request", (req) => {
+        if (req.url().includes("_rsc_partial")) {
+          rscRequests.push(req.url());
+        }
+      });
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      await testId(page, "site-nav-about").click();
+      await expect(testId(page, "site-about-page")).toBeVisible();
+
+      expect(rscRequests.length).toBeGreaterThanOrEqual(1);
+      const url = new URL(rscRequests[0]);
+      expect(url.searchParams.get("_rsc_rid")).toBeTruthy();
+    });
+
+    test("admin SPA navigation sends _rsc_rid", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      const rscRequests: string[] = [];
+      page.on("request", (req) => {
+        if (req.url().includes("_rsc_partial")) {
+          rscRequests.push(req.url());
+        }
+      });
+
+      const adminUrl = f.url("/").replace("localhost", "admin.localhost");
+      await page.goto(adminUrl);
+      await waitForHydration(page);
+
+      await testId(page, "admin-nav-users").click();
+      await expect(testId(page, "admin-users-page")).toBeVisible();
+
+      expect(rscRequests.length).toBeGreaterThanOrEqual(1);
+      const url = new URL(rscRequests[0]);
+      expect(url.searchParams.get("_rsc_rid")).toBeTruthy();
+    });
+
+    test("site and admin have different routerIds", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      // Capture site routerId from SPA navigation
+      const siteRequests: string[] = [];
+      page.on("request", (req) => {
+        if (req.url().includes("_rsc_partial")) {
+          siteRequests.push(req.url());
+        }
+      });
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await testId(page, "site-nav-about").click();
+      await expect(testId(page, "site-about-page")).toBeVisible();
+
+      expect(siteRequests.length).toBeGreaterThanOrEqual(1);
+      const siteRid = new URL(siteRequests[0]).searchParams.get("_rsc_rid");
+
+      // Navigate to admin (full page load — different subdomain)
+      const adminRequests: string[] = [];
+      page.removeAllListeners("request");
+      page.on("request", (req) => {
+        if (req.url().includes("_rsc_partial")) {
+          adminRequests.push(req.url());
+        }
+      });
+
+      const adminUrl = f.url("/").replace("localhost", "admin.localhost");
+      await page.goto(adminUrl);
+      await waitForHydration(page);
+      await testId(page, "admin-nav-users").click();
+      await expect(testId(page, "admin-users-page")).toBeVisible();
+
+      expect(adminRequests.length).toBeGreaterThanOrEqual(1);
+      const adminRid = new URL(adminRequests[0]).searchParams.get("_rsc_rid");
+
+      // Different routers — different IDs
+      expect(siteRid).toBeTruthy();
+      expect(adminRid).toBeTruthy();
+      expect(siteRid).not.toBe(adminRid);
+    });
+  });
+
+  test.describe("path-mounted apps", () => {
+    test("app-a renders on /app-a", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "app-a-home")).toBeVisible();
+      await expect(testId(page, "app-a-home-title")).toHaveText("App A Home");
+    });
+
+    test("app-b renders on /app-b", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/app-b"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "app-b-home")).toBeVisible();
+      await expect(testId(page, "app-b-home-title")).toHaveText("App B Home");
+    });
+
+    test("SPA navigation within app-a sends _rsc_rid", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      const rscRequests: string[] = [];
+      page.on("request", (req) => {
+        if (req.url().includes("_rsc_partial")) {
+          rscRequests.push(req.url());
+        }
+      });
+
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+
+      await testId(page, "app-a-nav-page").click();
+      await expect(testId(page, "app-a-page")).toBeVisible();
+
+      expect(rscRequests.length).toBeGreaterThanOrEqual(1);
+      const url = new URL(rscRequests[0]);
+      expect(url.searchParams.get("_rsc_rid")).toBeTruthy();
+    });
+
+    test("cross-app SPA navigation from app-a to app-b renders app-b", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+
+      // Click link to app-b — this is a same-origin SPA navigation
+      // that crosses router boundaries
+      await testId(page, "app-a-nav-app-b").click();
+      await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
+      await expect(testId(page, "app-b-home-title")).toHaveText("App B Home");
+    });
+
+    test("cross-app navigation uses different routerIds", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      const rscRequests: string[] = [];
+      page.on("request", (req) => {
+        if (req.url().includes("_rsc_partial")) {
+          rscRequests.push(req.url());
+        }
+      });
+
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+
+      // Intra-app navigation
+      await testId(page, "app-a-nav-page").click();
+      await expect(testId(page, "app-a-page")).toBeVisible();
+
+      const appARid = new URL(rscRequests[0]).searchParams.get("_rsc_rid");
+
+      // Cross-app navigation to app-b
+      await testId(page, "app-a-nav-app-b").click();
+      await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
+
+      // The cross-app request should still carry app-a's rid
+      // (the server detects the mismatch and returns a full response)
+      const crossAppReq = rscRequests.find((r) => r.includes("/app-b"));
+      expect(crossAppReq).toBeTruthy();
+      const crossAppRid = new URL(crossAppReq!).searchParams.get("_rsc_rid");
+      expect(crossAppRid).toBe(appARid); // client still thinks it's app-a
+    });
+  });
 });
 
 // ----- PRODUCTION MODE -----
@@ -274,6 +451,176 @@ test.describe("multi-router (production)", () => {
       await expect(testId(page, "admin-api-status-text")).toHaveText(
         "admin-ok",
       );
+    });
+  });
+
+  test.describe("routerId isolation", () => {
+    test("site SPA navigation sends _rsc_rid", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      const rscRequests: string[] = [];
+      page.on("request", (req) => {
+        if (req.url().includes("_rsc_partial")) {
+          rscRequests.push(req.url());
+        }
+      });
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      await testId(page, "site-nav-about").click();
+      await expect(testId(page, "site-about-page")).toBeVisible();
+
+      expect(rscRequests.length).toBeGreaterThanOrEqual(1);
+      const url = new URL(rscRequests[0]);
+      expect(url.searchParams.get("_rsc_rid")).toBeTruthy();
+    });
+
+    test("admin SPA navigation sends _rsc_rid", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      const rscRequests: string[] = [];
+      page.on("request", (req) => {
+        if (req.url().includes("_rsc_partial")) {
+          rscRequests.push(req.url());
+        }
+      });
+
+      const adminUrl = f.url("/").replace("localhost", "admin.localhost");
+      await page.goto(adminUrl);
+      await waitForHydration(page);
+
+      await testId(page, "admin-nav-users").click();
+      await expect(testId(page, "admin-users-page")).toBeVisible();
+
+      expect(rscRequests.length).toBeGreaterThanOrEqual(1);
+      const url = new URL(rscRequests[0]);
+      expect(url.searchParams.get("_rsc_rid")).toBeTruthy();
+    });
+
+    test("site and admin have different routerIds", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      const siteRequests: string[] = [];
+      page.on("request", (req) => {
+        if (req.url().includes("_rsc_partial")) {
+          siteRequests.push(req.url());
+        }
+      });
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+      await testId(page, "site-nav-about").click();
+      await expect(testId(page, "site-about-page")).toBeVisible();
+
+      expect(siteRequests.length).toBeGreaterThanOrEqual(1);
+      const siteRid = new URL(siteRequests[0]).searchParams.get("_rsc_rid");
+
+      const adminRequests: string[] = [];
+      page.removeAllListeners("request");
+      page.on("request", (req) => {
+        if (req.url().includes("_rsc_partial")) {
+          adminRequests.push(req.url());
+        }
+      });
+
+      const adminUrl = f.url("/").replace("localhost", "admin.localhost");
+      await page.goto(adminUrl);
+      await waitForHydration(page);
+      await testId(page, "admin-nav-users").click();
+      await expect(testId(page, "admin-users-page")).toBeVisible();
+
+      expect(adminRequests.length).toBeGreaterThanOrEqual(1);
+      const adminRid = new URL(adminRequests[0]).searchParams.get("_rsc_rid");
+
+      expect(siteRid).toBeTruthy();
+      expect(adminRid).toBeTruthy();
+      expect(siteRid).not.toBe(adminRid);
+    });
+  });
+
+  test.describe("path-mounted apps", () => {
+    test("app-a renders on /app-a", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "app-a-home")).toBeVisible();
+      await expect(testId(page, "app-a-home-title")).toHaveText("App A Home");
+    });
+
+    test("app-b renders on /app-b", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/app-b"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "app-b-home")).toBeVisible();
+      await expect(testId(page, "app-b-home-title")).toHaveText("App B Home");
+    });
+
+    test("SPA navigation within app-a sends _rsc_rid", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      const rscRequests: string[] = [];
+      page.on("request", (req) => {
+        if (req.url().includes("_rsc_partial")) {
+          rscRequests.push(req.url());
+        }
+      });
+
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+
+      await testId(page, "app-a-nav-page").click();
+      await expect(testId(page, "app-a-page")).toBeVisible();
+
+      expect(rscRequests.length).toBeGreaterThanOrEqual(1);
+      const url = new URL(rscRequests[0]);
+      expect(url.searchParams.get("_rsc_rid")).toBeTruthy();
+    });
+
+    test("cross-app SPA navigation from app-a to app-b renders app-b", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+
+      await testId(page, "app-a-nav-app-b").click();
+      await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
+      await expect(testId(page, "app-b-home-title")).toHaveText("App B Home");
+    });
+
+    test("cross-app navigation uses different routerIds", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      const rscRequests: string[] = [];
+      page.on("request", (req) => {
+        if (req.url().includes("_rsc_partial")) {
+          rscRequests.push(req.url());
+        }
+      });
+
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+
+      // Intra-app navigation
+      await testId(page, "app-a-nav-page").click();
+      await expect(testId(page, "app-a-page")).toBeVisible();
+
+      const appARid = new URL(rscRequests[0]).searchParams.get("_rsc_rid");
+
+      // Cross-app navigation to app-b
+      await testId(page, "app-a-nav-app-b").click();
+      await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
+
+      const crossAppReq = rscRequests.find((r) => r.includes("/app-b"));
+      expect(crossAppReq).toBeTruthy();
+      const crossAppRid = new URL(crossAppReq!).searchParams.get("_rsc_rid");
+      expect(crossAppRid).toBe(appARid);
     });
   });
 });

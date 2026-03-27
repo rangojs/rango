@@ -7,7 +7,15 @@ const hostRouter = createHostRouter();
 // Admin sub-app on admin.localhost (must be registered before the catch-all)
 hostRouter.host(["*.localhost"]).map(() => import("./apps/admin/handler.js"));
 
-// Site sub-app on localhost
+// Path-mounted sub-apps on localhost/app-a and localhost/app-b
+hostRouter
+  .host(["localhost/app-a"])
+  .map(() => import("./apps/app-a/handler.js"));
+hostRouter
+  .host(["localhost/app-b"])
+  .map(() => import("./apps/app-b/handler.js"));
+
+// Site sub-app on localhost (catch-all for remaining paths)
 hostRouter.host(["localhost"]).map(() => import("./apps/site/handler.js"));
 
 // Fallback to site app for unmatched hosts

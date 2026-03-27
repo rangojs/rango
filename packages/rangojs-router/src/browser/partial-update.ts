@@ -200,6 +200,7 @@ export function createPartialUpdater(
       staleRevalidation:
         mode.type === "stale-revalidation" || segments.length === 0,
       version: getVersion(),
+      routerId: store.getRouterId?.(),
     });
     // Mark navigation as streaming (response received, now parsing RSC).
     // Called after fetchPartial so pendingUrl stays set during the network wait,
@@ -211,6 +212,21 @@ export function createPartialUpdater(
     const streamComplete = rawStreamComplete.then(() => {
       streamingToken.end();
     });
+
+    // Detect app switch: if routerId changed, the navigation crossed into
+    // a different router (e.g., via host router path mount). Downgrade
+    // partial to full so the entire tree is replaced without reconciliation
+    // against stale segments from the previous app.
+    if (payload.metadata?.routerId) {
+      const prevRouterId = store.getRouterId?.();
+      if (prevRouterId && prevRouterId !== payload.metadata.routerId) {
+        debugLog(
+          `[Browser] App switch detected (${prevRouterId} → ${payload.metadata.routerId}), forcing full update`,
+        );
+        payload.metadata.isPartial = false;
+      }
+      store.setRouterId?.(payload.metadata.routerId);
+    }
 
     // Handle server-side redirect with state
     if (payload.metadata?.redirect) {

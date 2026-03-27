@@ -32,6 +32,9 @@ export type HandleData = Record<string, Record<string, unknown[]>>;
 export interface RscMetadata {
   pathname: string;
   segments: ResolvedSegment[];
+  /** Router instance ID. When this changes between navigations, the client
+   *  forces a full tree replacement (app switch via host router). */
+  routerId?: string;
   isPartial?: boolean;
   isError?: boolean;
   matched?: string[];
@@ -409,10 +412,13 @@ export interface NavigationStore {
     segments: ResolvedSegment[],
     handleData?: HandleData,
   ): void;
-  getCachedSegments(
-    historyKey: string,
-  ):
-    | { segments: ResolvedSegment[]; stale: boolean; handleData?: HandleData }
+  getCachedSegments(historyKey: string):
+    | {
+        segments: ResolvedSegment[];
+        stale: boolean;
+        handleData?: HandleData;
+        routerId?: string;
+      }
     | undefined;
   hasHistoryCache(historyKey: string): boolean;
   updateCacheHandleData(historyKey: string, handleData: HandleData): void;
@@ -427,6 +433,10 @@ export interface NavigationStore {
   // Intercept context tracking (for action revalidation)
   getInterceptSourceUrl(): string | null;
   setInterceptSourceUrl(url: string | null): void;
+
+  // Router identity tracking (for cross-app navigation detection)
+  getRouterId?(): string | undefined;
+  setRouterId?(id: string): void;
 
   // UI update notifications
   onUpdate(callback: UpdateSubscriber): () => void;
@@ -458,6 +468,8 @@ export interface FetchPartialOptions {
   interceptSourceUrl?: string;
   /** RSC version for cache invalidation detection */
   version?: string;
+  /** Current router ID — server detects app switch and returns full response */
+  routerId?: string;
   /** If true, this is an HMR refetch - server should invalidate manifest cache */
   hmr?: boolean;
 }
