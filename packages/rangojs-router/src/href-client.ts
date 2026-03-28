@@ -183,19 +183,15 @@ export type ValidPaths<TRoutes = GetRegisteredRoutes> =
  * ```
  */
 export function href<T extends ValidPaths>(path: T, mount?: string): string {
-  // Stack basename + mount: basename is the app-level prefix,
-  // mount is the include()-scoped prefix. Both apply.
-  const bn = getBasename();
-  let prefix = "";
-  if (bn && bn !== "/") {
-    prefix = bn.endsWith("/") ? bn.slice(0, -1) : bn;
-  }
-  if (mount && mount !== "/") {
-    const normalizedMount = mount.endsWith("/") ? mount.slice(0, -1) : mount;
-    prefix += normalizedMount;
-  }
-  if (prefix) {
-    return prefix + path;
+  // mount already includes basename (mountPath captures the full urlPrefix
+  // at definition time), so use mount when provided, otherwise fall back
+  // to basename for top-level paths outside any include() scope.
+  const effectiveMount = mount ?? getBasename();
+  if (effectiveMount && effectiveMount !== "/") {
+    const normalizedMount = effectiveMount.endsWith("/")
+      ? effectiveMount.slice(0, -1)
+      : effectiveMount;
+    return normalizedMount + path;
   }
   return path;
 }
