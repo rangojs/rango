@@ -1,9 +1,12 @@
 /**
  * Basename storage for href() and Link auto-prefixing.
  *
- * In the browser: set once during initBrowserApp() from the RSC payload.
- * During SSR: set per-request by the RSC handler before rendering client
- * components, so href() produces the same output as in the browser.
+ * Browser: set once during initBrowserApp() from the RSC payload metadata.
+ * SSR: set per-render in SsrRoot from the deserialized payload.
+ * RSC: set per-request in the handler before middleware/rendering.
+ *
+ * Each Vite environment (rsc, ssr, client) has its own module instance,
+ * so setBasename() in one environment does not affect the others.
  */
 
 let _basename: string | undefined;

@@ -31,7 +31,11 @@ export async function buildRouterTrieFromUrlpatterns(
 ): Promise<void> {
   const { generateManifestFull } =
     await import("../build/generate-manifest.js");
-  const generated = generateManifestFull(router.urlpatterns);
+  const generated = generateManifestFull(
+    router.urlpatterns,
+    undefined,
+    router.basename ? { urlPrefix: router.basename } : undefined,
+  );
   if (
     generated._routeAncestry &&
     Object.keys(generated._routeAncestry).length > 0

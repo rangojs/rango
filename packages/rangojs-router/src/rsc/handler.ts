@@ -454,8 +454,8 @@ export function createRSCHandler<
     // - Error boundaries
     // - Streaming
     return runWithRequestContext(requestContext, async () => {
-      // Set basename for SSR so client components (href(), Link) produce
-      // the same prefixed URLs during SSR as they do after hydration.
+      // Set basename in the RSC environment so server-side redirect()
+      // and other RSC-environment helpers produce prefixed URLs.
       setBasename(router.basename);
 
       // Core handler logic (wrapped by middleware)

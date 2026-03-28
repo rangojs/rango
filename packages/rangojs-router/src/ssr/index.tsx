@@ -264,8 +264,8 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         payload ??= createFromReadableStream<RscPayload>(rscStream1);
         const resolved = React.use(payload);
 
-        // Set basename for SSR so client components (href(), Link) produce
-        // the same prefixed URLs as in the browser after hydration.
+        // Set basename in this environment (SSR has its own module instance)
+        // so href()/Link produce basename-prefixed URLs during SSR rendering.
         setBasename(resolved.metadata?.basename);
 
         const themeConfig = resolved.metadata?.themeConfig ?? null;

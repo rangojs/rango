@@ -172,9 +172,8 @@ export async function initBrowserApp(
   }
 
   // Seed basename so href() and Link auto-prefix app-local paths.
-  if (initialPayload.metadata?.basename) {
-    setBasename(initialPayload.metadata.basename);
-  }
+  // Always set (even to undefined) to clear stale state from a prior app.
+  setBasename(initialPayload.metadata?.basename);
 
   // Create event controller for reactive state management
   const eventController = createEventController({
