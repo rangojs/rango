@@ -7,6 +7,18 @@ import type {
 } from "../route-types.js";
 import type { SearchSchema } from "../search-params.js";
 import { RESPONSE_TYPE } from "./response-types.js";
+import type { DefaultEnv } from "../types.js";
+import type { PathHelpers } from "./path-helper-types.js";
+
+/**
+ * Builder function accepted by urls() and as a shorthand for routes()/urls option.
+ * When passed directly to routes() or createRouter({ urls }), it is wrapped in urls() automatically.
+ */
+export type UrlBuilder<
+  TEnv = DefaultEnv,
+  TItems extends readonly (AllUseItems | readonly AllUseItems[])[] =
+    readonly AllUseItems[],
+> = (helpers: PathHelpers<TEnv>) => TItems;
 
 /**
  * Sentinel type for unnamed routes.

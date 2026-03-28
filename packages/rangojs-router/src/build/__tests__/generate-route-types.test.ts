@@ -21,6 +21,7 @@ import {
   extractIncludesWithDiagnostics,
   detectUnresolvableIncludes,
   extractUrlsVariableFromRouter,
+  extractUrlsFromRouter,
   findNestedRouterConflict,
   findRouterFiles,
 } from "../generate-route-types";
@@ -1346,4 +1347,86 @@ export const router = createRouter({
 `;
     expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
   });
+});
+
+// ---------------------------------------------------------------------------
+// extractUrlsFromRouter (inline builder support)
+// ---------------------------------------------------------------------------
+
+describe("extractUrlsFromRouter", () => {
+  it("returns variable kind for .routes(identifier)", () => {
+    const code = `export const router = createRouter().routes(urlpatterns);`;
+    const result = extractUrlsFromRouter(code);
+    expect(result).toEqual({ kind: "variable", name: "urlpatterns" });
+  });
+
+  it("returns variable kind for urls: identifier", () => {
+    const code = `export const router = createRouter({ urls: urlpatterns });`;
+    const result = extractUrlsFromRouter(code);
+    expect(result).toEqual({ kind: "variable", name: "urlpatterns" });
+  });
+
+  it("returns inline kind for .routes(arrow function)", () => {
+    const code = `
+export const router = createRouter({ document: Document }).routes(({ path }) => [
+  path("/", HomePage, { name: "home" }),
+  path("/about", AboutPage, { name: "about" }),
+]);
+`;
+    const result = extractUrlsFromRouter(code);
+    expect(result?.kind).toBe("inline");
+    expect(result!.kind === "inline" && result!.block).toContain(
+      'path("/", HomePage',
+    );
+    expect(result!.kind === "inline" && result!.block).toContain(
+      'path("/about"',
+    );
+  });
+
+  it("returns inline kind for urls: arrow function", () => {
+    const code = `
+export const router = createRouter({
+  document: Document,
+  urls: ({ path, layout }) => [
+    path("/", HomePage, { name: "home" }),
+  ],
+});
+`;
+    const result = extractUrlsFromRouter(code);
+    expect(result?.kind).toBe("inline");
+    expect(result!.kind === "inline" && result!.block).toContain(
+      'path("/", HomePage',
+    );
+  });
+
+  it("returns inline kind for chained .middleware().routes(arrow)", () => {
+    const code = `
+export const router = createRouter<AppEnv>({
+  document: Document,
+}).use(authMiddleware).routes(({ path }) => [
+  path("/dashboard", Dashboard, { name: "dashboard" }),
+]);
+`;
+    const result = extractUrlsFromRouter(code);
+    expect(result?.kind).toBe("inline");
+    expect(result!.kind === "inline" && result!.block).toContain(
+      'path("/dashboard"',
+    );
+  });
+
+  it("returns null for no createRouter call", () => {
+    const code = `const x = someFunction().routes(patterns);`;
+    expect(extractUrlsFromRouter(code)).toBeNull();
+  });
+
+  // Variable-held builders are a known gap: the extractor sees the identifier
+  // and falls into the variable branch, but same-file resolution only matches
+  // `const x = urls(...)`, not `const x = (helpers) => [...]`.
+  // Runtime discovery still generates correct gen files at build time.
+  it.todo(
+    "returns inline kind for .routes(variable) where variable is an arrow function",
+  );
+  it.todo(
+    "returns inline kind for urls: variable where variable is an arrow function",
+  );
 });

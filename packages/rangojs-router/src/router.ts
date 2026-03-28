@@ -19,6 +19,8 @@ import {
 import MapRootLayout from "./server/root-layout.js";
 import type { AllUseItems } from "./route-types.js";
 import type { UrlPatterns } from "./urls.js";
+import type { UrlBuilder } from "./urls/pattern-types.js";
+import { urls } from "./urls.js";
 import {
   EntryData,
   InterceptSelectorContext,
@@ -660,7 +662,13 @@ export function createRouter<TEnv = any>(
     __brand: RSC_ROUTER_BRAND,
     id: routerId,
 
-    routes(urlPatterns: UrlPatterns<TEnv>): any {
+    routes(patternsOrBuilder: UrlPatterns<TEnv> | UrlBuilder<TEnv>): any {
+      // Wrap builder functions in urls() automatically
+      const urlPatterns: UrlPatterns<TEnv> =
+        typeof patternsOrBuilder === "function"
+          ? (urls(patternsOrBuilder) as UrlPatterns<TEnv>)
+          : patternsOrBuilder;
+
       // Store reference for runtime manifest generation
       storedUrlPatterns = urlPatterns;
       const currentMountIndex = mountIndex++;
@@ -999,7 +1007,9 @@ export function createRouter<TEnv = any>(
   RouterRegistry.set(routerId, router);
 
   // If urls option was provided, auto-register them
-  if (urlsOption) {
+  if (typeof urlsOption === "function") {
+    return router.routes(urlsOption) as RSCRouter<TEnv, {}>;
+  } else if (urlsOption) {
     return router.routes(urlsOption) as RSCRouter<TEnv, {}>;
   }
 

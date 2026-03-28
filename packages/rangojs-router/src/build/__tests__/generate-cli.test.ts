@@ -373,6 +373,76 @@ describe("shared-include fixture", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Inline builder fixture (app-with-inline-builder)
+// ---------------------------------------------------------------------------
+
+describe("inline builder fixture", () => {
+  const inlineFixtureDir = join(
+    __dirname,
+    "__fixtures__",
+    "app-with-inline-builder",
+  );
+
+  function inlineGenPath(routerFileName: string): string {
+    return join(
+      inlineFixtureDir,
+      routerFileName.replace(/\.tsx$/, ".named-routes.gen.ts"),
+    );
+  }
+
+  afterEach(() => {
+    for (const f of [
+      inlineGenPath("router.tsx"),
+      inlineGenPath("router-option.tsx"),
+    ]) {
+      try {
+        rmSync(f, { force: true });
+      } catch {}
+    }
+  });
+
+  it("generates named-routes from .routes(builder) shorthand", () => {
+    const routerFile = join(inlineFixtureDir, "router.tsx");
+    writeCombinedRouteTypes(inlineFixtureDir, [routerFile]);
+
+    const genFile = inlineGenPath("router.tsx");
+    expect(existsSync(genFile)).toBe(true);
+
+    const content = readFileSync(genFile, "utf-8");
+
+    // Inline path() routes
+    expect(content).toContain('home: "/"');
+    expect(content).toContain('about: "/about"');
+
+    // Include-resolved routes
+    expect(content).toContain('"api.health"');
+    expect(content).toContain("/api/health");
+    expect(content).toContain('"api.detail"');
+    expect(content).toContain("/api/:id");
+  });
+
+  it("generates named-routes from createRouter({ urls: builder })", () => {
+    const routerFile = join(inlineFixtureDir, "router-option.tsx");
+    writeCombinedRouteTypes(inlineFixtureDir, [routerFile]);
+
+    const genFile = inlineGenPath("router-option.tsx");
+    expect(existsSync(genFile)).toBe(true);
+
+    const content = readFileSync(genFile, "utf-8");
+
+    // Inline path() routes
+    expect(content).toContain('home: "/"');
+    expect(content).toContain('about: "/about"');
+
+    // Include-resolved routes
+    expect(content).toContain('"api.health"');
+    expect(content).toContain("/api/health");
+    expect(content).toContain('"api.detail"');
+    expect(content).toContain("/api/:id");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Factory fixture (app-with-factory)
 // ---------------------------------------------------------------------------
 

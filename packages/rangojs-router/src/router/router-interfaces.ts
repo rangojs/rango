@@ -2,6 +2,7 @@ import type { ComponentType, ReactNode } from "react";
 import type { SerializedManifest } from "../debug.js";
 import type { ReverseFunction } from "../reverse.js";
 import type { UrlPatterns } from "../urls.js";
+import type { UrlBuilder } from "../urls/pattern-types.js";
 import type { EntryData } from "../server/context";
 import type { ErrorInfo, MatchResult } from "../types";
 import type { NonceProvider } from "../rsc/types.js";
@@ -68,12 +69,19 @@ export interface RSCRouter<
   readonly id: string;
 
   /**
-   * Register routes using URL patterns from urls()
+   * Register routes using URL patterns from urls() or a builder function
    *
    * @example
    * ```typescript
-   * createRouter({})
-   *   .routes(urlpatterns)
+   * // With urls()
+   * createRouter({}).routes(urlpatterns)
+   *
+   * // With builder function (urls() is implicit)
+   * createRouter({}).routes(({ path, layout }) => [
+   *   layout(RootLayout, () => [
+   *     path("/", HomePage),
+   *   ]),
+   * ])
    * ```
    */
   routes<T extends UrlPatterns<TEnv, any>>(
@@ -85,6 +93,7 @@ export interface RSCRouter<
         ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
         : Record<string, string>)
   >;
+  routes(builder: UrlBuilder<TEnv>): RSCRouter<TEnv, TRoutes>;
 
   /**
    * Add global middleware that runs on all routes
@@ -189,7 +198,7 @@ export interface RSCRouterInternal<
   readonly id: string;
 
   /**
-   * Register routes using URL patterns from urls()
+   * Register routes using URL patterns from urls() or a builder function
    */
   routes<T extends UrlPatterns<TEnv, any>>(
     patterns: T,
@@ -200,6 +209,7 @@ export interface RSCRouterInternal<
         ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
         : Record<string, string>)
   >;
+  routes(builder: UrlBuilder<TEnv>): RSCRouter<TEnv, TRoutes>;
 
   /**
    * Add global middleware that runs on all routes

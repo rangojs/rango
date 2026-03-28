@@ -8,6 +8,7 @@ import type {
 import type { NonceProvider } from "../rsc/types.js";
 import type { ExecutionContext } from "../server/request-context.js";
 import type { UrlPatterns } from "../urls.js";
+import type { UrlBuilder } from "../urls/pattern-types.js";
 import type { NamedRouteEntry } from "./content-negotiation.js";
 import type { TelemetrySink } from "./telemetry.js";
 import type { RouterTimeouts, OnTimeoutCallback } from "./timeout.js";
@@ -337,25 +338,28 @@ export interface RSCRouterOptions<TEnv = any> {
   /**
    * URL patterns to register with the router.
    *
-   * Alternative to calling `.routes()` method - allows passing patterns
-   * directly in the config for a more concise setup.
+   * Accepts either a `UrlPatterns` object from `urls()` or a builder function
+   * directly (urls() is called implicitly).
    *
    * @example
    * ```typescript
-   * import { urls } from "@rangojs/router/server";
-   *
-   * const urlpatterns = urls(({ path, layout }) => [
-   *   path("/", HomePage, { name: "home" }),
-   *   path("/about", AboutPage, { name: "about" }),
-   * ]);
-   *
-   * const router = createRouter<AppEnv>({
+   * // With urls()
+   * createRouter<AppEnv>({
    *   document: Document,
    *   urls: urlpatterns,
    * });
+   *
+   * // With builder function
+   * createRouter<AppEnv>({
+   *   document: Document,
+   *   urls: ({ path }) => [
+   *     path("/", HomePage, { name: "home" }),
+   *     path("/about", AboutPage, { name: "about" }),
+   *   ],
+   * });
    * ```
    */
-  urls?: UrlPatterns<TEnv, any>;
+  urls?: UrlPatterns<TEnv, any> | UrlBuilder<TEnv>;
 
   /**
    * Injected by the Vite transform at compile time.
