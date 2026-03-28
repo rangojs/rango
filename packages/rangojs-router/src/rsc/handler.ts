@@ -8,7 +8,7 @@
  */
 
 import { createElement } from "react";
-import { setBasename } from "../browser/basename.js";
+import { runWithBasename } from "../browser/basename.js";
 import { RouteNotFoundError } from "../errors.js";
 import { matchMiddleware, executeMiddleware } from "../router/middleware.js";
 import {
@@ -453,83 +453,83 @@ export function createRSCHandler<
     // - Server components during rendering
     // - Error boundaries
     // - Streaming
-    return runWithRequestContext(requestContext, async () => {
-      // Set basename in the RSC environment so server-side redirect()
-      // and other RSC-environment helpers produce prefixed URLs.
-      setBasename(router.basename);
+    return runWithRequestContext(requestContext, () =>
+      // Scope basename per-request via ALS so concurrent requests
+      // in the same environment are isolated.
+      runWithBasename(router.basename, async () => {
+        // Core handler logic (wrapped by middleware)
+        const coreHandler = async (): Promise<Response> => {
+          return coreRequestHandler(request, env, url, variables, nonce);
+        };
 
-      // Core handler logic (wrapped by middleware)
-      const coreHandler = async (): Promise<Response> => {
-        return coreRequestHandler(request, env, url, variables, nonce);
-      };
-
-      // Execute middleware chain if any, otherwise call core handler directly
-      let response: Response;
-      if (matchedMiddleware.length > 0) {
-        const mwResponse = await executeMiddleware(
-          matchedMiddleware,
-          request,
-          env,
-          variables,
-          coreHandler,
-          createReverseFunction(getRequiredRouteMap()),
-        );
-
-        if (
-          url.searchParams.has("_rsc_partial") ||
-          url.searchParams.has("_rsc_action")
-        ) {
-          const intercepted = interceptRedirectForPartial(
-            mwResponse,
-            createRedirectFlightResponse,
+        // Execute middleware chain if any, otherwise call core handler directly
+        let response: Response;
+        if (matchedMiddleware.length > 0) {
+          const mwResponse = await executeMiddleware(
+            matchedMiddleware,
+            request,
+            env,
+            variables,
+            coreHandler,
+            createReverseFunction(getRequiredRouteMap()),
           );
-          response = intercepted ?? finalizeResponse(mwResponse);
+
+          if (
+            url.searchParams.has("_rsc_partial") ||
+            url.searchParams.has("_rsc_action")
+          ) {
+            const intercepted = interceptRedirectForPartial(
+              mwResponse,
+              createRedirectFlightResponse,
+            );
+            response = intercepted ?? finalizeResponse(mwResponse);
+          } else {
+            response = finalizeResponse(mwResponse);
+          }
         } else {
-          response = finalizeResponse(mwResponse);
+          response = await coreHandler();
         }
-      } else {
-        response = await coreHandler();
-      }
 
-      // Finalize metrics after all middleware (including post-next work)
-      // has completed so :post spans are captured in the timeline.
-      // Handler timing parts are always emitted (even without debug metrics)
-      // so non-debug requests still get bootstrap Server-Timing entries.
-      const handlerTimingArr: string[] = variables.__handlerTiming || [];
-      // Preserve any existing Server-Timing set by response routes or middleware
-      const existingTiming = response.headers.get("Server-Timing");
-      const timingParts = existingTiming
-        ? [existingTiming, ...handlerTimingArr]
-        : [...handlerTimingArr];
+        // Finalize metrics after all middleware (including post-next work)
+        // has completed so :post spans are captured in the timeline.
+        // Handler timing parts are always emitted (even without debug metrics)
+        // so non-debug requests still get bootstrap Server-Timing entries.
+        const handlerTimingArr: string[] = variables.__handlerTiming || [];
+        // Preserve any existing Server-Timing set by response routes or middleware
+        const existingTiming = response.headers.get("Server-Timing");
+        const timingParts = existingTiming
+          ? [existingTiming, ...handlerTimingArr]
+          : [...handlerTimingArr];
 
-      const metricsStore = requestContext._metricsStore;
-      if (metricsStore) {
-        // When the store was created at handler start (earlyMetricsStore),
-        // handler:total covers the full request. When ctx.debugPerformance()
-        // created the store mid-request, use its requestStart to avoid a
-        // negative startTime offset.
-        const totalStart = earlyMetricsStore
-          ? handlerStart
-          : metricsStore.requestStart;
-        appendMetric(
-          metricsStore,
-          "handler:total",
-          totalStart,
-          performance.now() - totalStart,
-        );
-        const metricsTiming = buildMetricsTiming(
-          request.method,
-          url.pathname,
-          metricsStore,
-        );
-        if (metricsTiming) timingParts.push(metricsTiming);
-      }
+        const metricsStore = requestContext._metricsStore;
+        if (metricsStore) {
+          // When the store was created at handler start (earlyMetricsStore),
+          // handler:total covers the full request. When ctx.debugPerformance()
+          // created the store mid-request, use its requestStart to avoid a
+          // negative startTime offset.
+          const totalStart = earlyMetricsStore
+            ? handlerStart
+            : metricsStore.requestStart;
+          appendMetric(
+            metricsStore,
+            "handler:total",
+            totalStart,
+            performance.now() - totalStart,
+          );
+          const metricsTiming = buildMetricsTiming(
+            request.method,
+            url.pathname,
+            metricsStore,
+          );
+          if (metricsTiming) timingParts.push(metricsTiming);
+        }
 
-      const fullTiming = timingParts.join(", ");
-      if (fullTiming) response.headers.set("Server-Timing", fullTiming);
+        const fullTiming = timingParts.join(", ");
+        if (fullTiming) response.headers.set("Server-Timing", fullTiming);
 
-      return response;
-    });
+        return response;
+      }),
+    );
   };
 
   // Core request handling logic (separated for middleware wrapping)

@@ -1,5 +1,5 @@
 import React from "react";
-import { setBasename } from "../browser/basename.js";
+import { setBasename, hasAsyncStorage } from "../browser/basename.js";
 import { renderSegments } from "../segment-system.js";
 import { filterSegmentOrder } from "../browser/react/filter-segment-order.js";
 import { ThemeProvider } from "../theme/ThemeProvider.js";
@@ -264,9 +264,12 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         payload ??= createFromReadableStream<RscPayload>(rscStream1);
         const resolved = React.use(payload);
 
-        // Set basename in this environment (SSR has its own module instance)
-        // so href()/Link produce basename-prefixed URLs during SSR rendering.
-        setBasename(resolved.metadata?.basename);
+        // When ALS is available, basename is already scoped per-request by
+        // the RSC handler's runWithBasename(). Only set the module global as
+        // a fallback for edge runtimes without async_hooks.
+        if (!hasAsyncStorage()) {
+          setBasename(resolved.metadata?.basename);
+        }
 
         const themeConfig = resolved.metadata?.themeConfig ?? null;
         const pathname = resolved.metadata?.pathname ?? "/";
