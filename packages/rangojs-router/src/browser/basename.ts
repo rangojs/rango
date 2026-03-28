@@ -9,11 +9,11 @@
  * so setBasename() in one environment does not affect the others.
  *
  * Note: within a single environment, the value is a module-level global.
- * This is safe because React shell rendering is synchronous (no interleaving
- * between setBasename and href()/Link reads within a render pass), and
- * production deployments typically use per-request workers. If a future
- * deployment model requires true concurrent SSR with different basenames
- * in the same process, this would need AsyncLocalStorage.
+ * This is acceptable for current deployment assumptions (Vite dev is
+ * single-threaded; production typically uses per-request workers/serverless).
+ * If SSR requests with different basenames can overlap in the same
+ * environment (e.g. multi-router Node.js server with concurrent streaming),
+ * this should move to request-scoped storage such as AsyncLocalStorage.
  */
 
 let _basename: string | undefined;
