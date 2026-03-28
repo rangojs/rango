@@ -2,9 +2,18 @@
 
 import { useContext, useMemo } from "react";
 import { NavigationStoreContext } from "./context.js";
+import { getBasename } from "../basename.js";
 import { prefetchDirect } from "../prefetch/fetch.js";
 import { getAppVersion } from "../app-version.js";
 import type { RouterInstance, RouterNavigateOptions } from "../types.js";
+
+/** Prefix a root-relative path with basename if not already prefixed. */
+function applyBasename(url: string): string {
+  const bn = getBasename();
+  if (!bn || !url.startsWith("/") || url.startsWith(bn + "/") || url === bn)
+    return url;
+  return url === "/" ? bn : bn + url;
+}
 
 /**
  * Hook to access router actions (push, replace, refresh, prefetch, back, forward).
@@ -33,11 +42,11 @@ export function useRouter(): RouterInstance {
   return useMemo<RouterInstance>(
     () => ({
       push(url: string, options?: RouterNavigateOptions): Promise<void> {
-        return ctx.navigate(url, { ...options, replace: false });
+        return ctx.navigate(applyBasename(url), { ...options, replace: false });
       },
 
       replace(url: string, options?: RouterNavigateOptions): Promise<void> {
-        return ctx.navigate(url, { ...options, replace: true });
+        return ctx.navigate(applyBasename(url), { ...options, replace: true });
       },
 
       refresh(): Promise<void> {
@@ -48,7 +57,7 @@ export function useRouter(): RouterInstance {
         const segmentState = ctx.store?.getSegmentState();
         if (segmentState) {
           prefetchDirect(
-            url,
+            applyBasename(url),
             segmentState.currentSegmentIds,
             getAppVersion(),
             ctx.store?.getRouterId?.(),

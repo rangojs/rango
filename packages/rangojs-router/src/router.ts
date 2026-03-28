@@ -877,8 +877,18 @@ export function createRouter<TEnv = any>(
       patternOrMiddleware: string | MiddlewareFn<TEnv>,
       middleware?: MiddlewareFn<TEnv>,
     ): any {
-      // Global middleware - no mount prefix
-      addMiddleware(patternOrMiddleware, middleware, null);
+      // Auto-prefix pattern with basename so router-level middleware
+      // patterns are router-relative (e.g. "/users/*" matches "/app/users/*").
+      if (basename && typeof patternOrMiddleware === "string") {
+        const pattern = patternOrMiddleware;
+        const prefixed =
+          pattern === "/*" || pattern === "*"
+            ? `${basename}/*`
+            : `${basename}${pattern}`;
+        addMiddleware(prefixed, middleware, null);
+      } else {
+        addMiddleware(patternOrMiddleware, middleware, null);
+      }
       return router;
     },
 
