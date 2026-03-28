@@ -19,6 +19,7 @@ declare global {
 }
 
 export const router = createRouter({
+  basename: "/app",
   cache: { store: cacheStore },
 }).routes(({ path, layout, include }) => [
   layout(AppLayout, () => [

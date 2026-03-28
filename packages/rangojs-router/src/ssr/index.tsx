@@ -1,4 +1,5 @@
 import React from "react";
+import { setBasename } from "../browser/basename.js";
 import { renderSegments } from "../segment-system.js";
 import { filterSegmentOrder } from "../browser/react/filter-segment-order.js";
 import { ThemeProvider } from "../theme/ThemeProvider.js";
@@ -129,6 +130,7 @@ interface RscPayload {
     matched?: string[];
     pathname?: string;
     params?: Record<string, string>;
+    basename?: string;
     themeConfig?: ResolvedThemeConfig | null;
     initialTheme?: Theme;
     version?: string;
@@ -261,6 +263,11 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       function SsrRoot() {
         payload ??= createFromReadableStream<RscPayload>(rscStream1);
         const resolved = React.use(payload);
+
+        // Set basename for SSR so client components (href(), Link) produce
+        // the same prefixed URLs as in the browser after hydration.
+        setBasename(resolved.metadata?.basename);
+
         const themeConfig = resolved.metadata?.themeConfig ?? null;
         const pathname = resolved.metadata?.pathname ?? "/";
 

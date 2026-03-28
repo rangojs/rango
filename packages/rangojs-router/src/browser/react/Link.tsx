@@ -5,11 +5,13 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   type ForwardRefExoticComponent,
   type RefAttributes,
 } from "react";
 import { NavigationStoreContext } from "./context.js";
+import { getBasename } from "../basename.js";
 import { LinkContext } from "./use-link-status.js";
 import type { NavigateOptions } from "../types.js";
 import { isHashOnlyNavigation } from "../link-interceptor.js";
@@ -193,6 +195,16 @@ export const Link: ForwardRefExoticComponent<
   const ctx = useContext(NavigationStoreContext);
   const isExternal = isExternalUrl(to);
 
+  // Auto-prefix with basename for app-local paths.
+  // Skip if external, already prefixed, or not a root-relative path.
+  const resolvedTo = useMemo(() => {
+    if (isExternal) return to;
+    const bn = getBasename();
+    if (!bn || !to.startsWith("/") || to.startsWith(bn + "/") || to === bn)
+      return to;
+    return to === "/" ? bn : bn + to;
+  }, [to, isExternal]);
+
   // Resolve adaptive: viewport on touch devices, hover on pointer devices
   const resolvedStrategy =
     prefetch === "adaptive" ? (isTouchDevice ? "viewport" : "hover") : prefetch;
@@ -274,9 +286,23 @@ export const Link: ForwardRefExoticComponent<
         resolvedState = currentState;
       }
 
-      ctx.navigate(to, { replace, scroll, state: resolvedState, revalidate });
+      ctx.navigate(resolvedTo, {
+        replace,
+        scroll,
+        state: resolvedState,
+        revalidate,
+      });
     },
-    [to, isExternal, reloadDocument, replace, scroll, revalidate, ctx, onClick],
+    [
+      resolvedTo,
+      isExternal,
+      reloadDocument,
+      replace,
+      scroll,
+      revalidate,
+      ctx,
+      onClick,
+    ],
   );
 
   const handleMouseEnter = useCallback(() => {
@@ -291,13 +317,13 @@ export const Link: ForwardRefExoticComponent<
       // deduplicates if the viewport prefetch already completed.
       const segmentState = ctx.store.getSegmentState();
       prefetchDirect(
-        to,
+        resolvedTo,
         segmentState.currentSegmentIds,
         getAppVersion(),
         ctx.store.getRouterId?.(),
       );
     }
-  }, [resolvedStrategy, to, isExternal, ctx]);
+  }, [resolvedStrategy, resolvedTo, isExternal, ctx]);
 
   // Viewport/render prefetch: waits for idle before starting,
   // uses concurrency-limited queue to avoid flooding.
@@ -315,7 +341,7 @@ export const Link: ForwardRefExoticComponent<
       if (cancelled) return;
       const segmentState = ctx.store.getSegmentState();
       prefetchQueued(
-        to,
+        resolvedTo,
         segmentState.currentSegmentIds,
         getAppVersion(),
         ctx.store.getRouterId?.(),
@@ -358,12 +384,12 @@ export const Link: ForwardRefExoticComponent<
         unobserveForPrefetch(observedElement);
       }
     };
-  }, [resolvedStrategy, to, isExternal, ctx]);
+  }, [resolvedStrategy, resolvedTo, isExternal, ctx]);
 
   return (
     <a
       ref={setRef}
-      href={to}
+      href={resolvedTo}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       data-link-component
@@ -373,7 +399,7 @@ export const Link: ForwardRefExoticComponent<
       data-revalidate={revalidate === false ? "false" : undefined}
       {...props}
     >
-      <LinkContext.Provider value={to}>{children}</LinkContext.Provider>
+      <LinkContext.Provider value={resolvedTo}>{children}</LinkContext.Provider>
     </a>
   );
 });

@@ -22,6 +22,7 @@ import {
   detectUnresolvableIncludes,
   extractUrlsVariableFromRouter,
   extractUrlsFromRouter,
+  extractBasenameFromRouter,
   findNestedRouterConflict,
   findRouterFiles,
 } from "../generate-route-types";
@@ -1428,5 +1429,43 @@ export const router = createRouter<AppEnv>({
   );
   it.todo(
     "returns inline kind for urls: variable where variable is an arrow function",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// extractBasenameFromRouter
+// ---------------------------------------------------------------------------
+
+describe("extractBasenameFromRouter", () => {
+  it("extracts basename from createRouter({ basename: '/admin' })", () => {
+    const code = `export const router = createRouter({ basename: "/admin" }).routes(patterns);`;
+    expect(extractBasenameFromRouter(code)).toBe("/admin");
+  });
+
+  it("extracts basename alongside other options", () => {
+    const code = `export const router = createRouter({ basename: "/v2", document: Doc }).routes(patterns);`;
+    expect(extractBasenameFromRouter(code)).toBe("/v2");
+  });
+
+  it("returns undefined when no basename is set", () => {
+    const code = `export const router = createRouter({ document: Doc }).routes(patterns);`;
+    expect(extractBasenameFromRouter(code)).toBeUndefined();
+  });
+
+  it("returns undefined when createRouter has no options", () => {
+    const code = `export const router = createRouter().routes(patterns);`;
+    expect(extractBasenameFromRouter(code)).toBeUndefined();
+  });
+
+  it("ignores basename in non-createRouter calls", () => {
+    const code = `const config = someFunction({ basename: "/admin" });`;
+    expect(extractBasenameFromRouter(code)).toBeUndefined();
+  });
+
+  // Variable-held basenames are a known gap: the extractor only recognizes
+  // string literals, not identifier references. Runtime discovery still
+  // generates correct gen files at build time.
+  it.todo(
+    "extracts basename from variable reference (e.g. basename: BASENAME)",
   );
 });

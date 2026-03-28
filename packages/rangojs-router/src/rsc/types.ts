@@ -41,6 +41,8 @@ export interface RscPayload {
     themeConfig?: ResolvedThemeConfig | null;
     /** Initial theme from cookie (for SSR hydration) */
     initialTheme?: Theme;
+    /** URL prefix for all routes (from createRouter({ basename })). */
+    basename?: string;
     /** Whether connection warmup is enabled */
     warmupEnabled?: boolean;
     /** Server-side redirect with optional state (for partial requests) */

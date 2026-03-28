@@ -73,6 +73,8 @@ export interface RscMetadata {
    * Included when theme is enabled in router config.
    */
   initialTheme?: Theme;
+  /** URL prefix for all routes (from createRouter({ basename })). */
+  basename?: string;
   /** Whether connection warmup is enabled */
   warmupEnabled?: boolean;
   /** Server-side redirect with optional state (for partial requests) */

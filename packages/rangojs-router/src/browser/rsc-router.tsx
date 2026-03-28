@@ -12,6 +12,7 @@ import { createNavigationClient } from "./navigation-client.js";
 import { createServerActionBridge } from "./server-action-bridge.js";
 import { createNavigationBridge } from "./navigation-bridge.js";
 import { NavigationProvider } from "./react/index.js";
+import { setBasename } from "./basename.js";
 import type {
   RscPayload,
   RscBrowserDependencies,
@@ -168,6 +169,11 @@ export async function initBrowserApp(
   // cross-app SPA navigation can detect the app switch.
   if (initialPayload.metadata?.routerId) {
     store.setRouterId?.(initialPayload.metadata.routerId);
+  }
+
+  // Seed basename so href() and Link auto-prefix app-local paths.
+  if (initialPayload.metadata?.basename) {
+    setBasename(initialPayload.metadata.basename);
   }
 
   // Create event controller for reactive state management

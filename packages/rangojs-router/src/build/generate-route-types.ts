@@ -26,6 +26,7 @@ export {
 export {
   extractUrlsVariableFromRouter,
   extractUrlsFromRouter,
+  extractBasenameFromRouter,
   type UrlsExtractionResult,
   buildCombinedRouteMapForRouterFile,
   detectUnresolvableIncludes,

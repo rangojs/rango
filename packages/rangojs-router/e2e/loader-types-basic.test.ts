@@ -28,6 +28,7 @@ test.describe("loader-types-basic", () => {
     root: E2E_BASIC_ROOT,
     mode: "dev",
     isolatedServer: true,
+    readyPath: "/app",
   });
 
   test("cached ReactNode loader returns serialized JSX on cache hit", async ({
@@ -35,7 +36,7 @@ test.describe("loader-types-basic", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/loader-types/react-node-cached"));
+    await page.goto(f.url("/app/loader-types/react-node-cached"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("react-node-cached-page")).toBeVisible();
@@ -46,10 +47,10 @@ test.describe("loader-types-basic", () => {
 
     await page.waitForTimeout(1500);
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
-    await page.goto(f.url("/loader-types/react-node-cached"));
+    await page.goto(f.url("/app/loader-types/react-node-cached"));
     await waitForHydration(page);
 
     const secondCount = await page.getByTestId("rn-count").textContent();
@@ -64,16 +65,16 @@ test.describe("loader-types-basic", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/loader-types/react-node-non-cached"));
+    await page.goto(f.url("/app/loader-types/react-node-non-cached"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("react-node-non-cached-page")).toBeVisible();
     const firstCount = await page.getByTestId("rn-count").textContent();
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
-    await page.goto(f.url("/loader-types/react-node-non-cached"));
+    await page.goto(f.url("/app/loader-types/react-node-non-cached"));
     await waitForHydration(page);
 
     const secondCount = await page.getByTestId("rn-count").textContent();
@@ -86,7 +87,7 @@ test.describe("loader-types-basic", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/loader-types/null-cached"));
+    await page.goto(f.url("/app/loader-types/null-cached"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("null-cached-page")).toBeVisible();
@@ -95,10 +96,10 @@ test.describe("loader-types-basic", () => {
 
     await page.waitForTimeout(1500);
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
-    await page.goto(f.url("/loader-types/null-cached"));
+    await page.goto(f.url("/app/loader-types/null-cached"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("null-value")).toHaveText("null");
@@ -112,17 +113,17 @@ test.describe("loader-types-basic", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/loader-types/null-non-cached"));
+    await page.goto(f.url("/app/loader-types/null-non-cached"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("null-non-cached-page")).toBeVisible();
     await expect(page.getByTestId("null-value")).toHaveText("null");
     const firstCount = await page.getByTestId("null-count").textContent();
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
-    await page.goto(f.url("/loader-types/null-non-cached"));
+    await page.goto(f.url("/app/loader-types/null-non-cached"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("null-value")).toHaveText("null");
@@ -141,6 +142,7 @@ test.describe("loader-types-basic (production)", () => {
     root: E2E_BASIC_ROOT,
     mode: "build",
     buildCommand: "true", // already built at file level
+    readyPath: "/app",
   });
 
   test("cached ReactNode loader returns serialized JSX on cache hit", async ({
@@ -148,7 +150,7 @@ test.describe("loader-types-basic (production)", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/loader-types/react-node-cached"));
+    await page.goto(f.url("/app/loader-types/react-node-cached"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("react-node-cached-page")).toBeVisible();
@@ -159,10 +161,10 @@ test.describe("loader-types-basic (production)", () => {
 
     await page.waitForTimeout(500);
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
-    await page.goto(f.url("/loader-types/react-node-cached"));
+    await page.goto(f.url("/app/loader-types/react-node-cached"));
     await waitForHydration(page);
 
     const secondCount = await page.getByTestId("rn-count").textContent();
@@ -177,16 +179,16 @@ test.describe("loader-types-basic (production)", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/loader-types/react-node-non-cached"));
+    await page.goto(f.url("/app/loader-types/react-node-non-cached"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("react-node-non-cached-page")).toBeVisible();
     const firstCount = await page.getByTestId("rn-count").textContent();
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
-    await page.goto(f.url("/loader-types/react-node-non-cached"));
+    await page.goto(f.url("/app/loader-types/react-node-non-cached"));
     await waitForHydration(page);
 
     const secondCount = await page.getByTestId("rn-count").textContent();
@@ -199,7 +201,7 @@ test.describe("loader-types-basic (production)", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/loader-types/null-cached"));
+    await page.goto(f.url("/app/loader-types/null-cached"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("null-cached-page")).toBeVisible();
@@ -208,10 +210,10 @@ test.describe("loader-types-basic (production)", () => {
 
     await page.waitForTimeout(500);
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
-    await page.goto(f.url("/loader-types/null-cached"));
+    await page.goto(f.url("/app/loader-types/null-cached"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("null-value")).toHaveText("null");
@@ -225,17 +227,17 @@ test.describe("loader-types-basic (production)", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/loader-types/null-non-cached"));
+    await page.goto(f.url("/app/loader-types/null-non-cached"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("null-non-cached-page")).toBeVisible();
     await expect(page.getByTestId("null-value")).toHaveText("null");
     const firstCount = await page.getByTestId("null-count").textContent();
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
-    await page.goto(f.url("/loader-types/null-non-cached"));
+    await page.goto(f.url("/app/loader-types/null-non-cached"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("null-value")).toHaveText("null");

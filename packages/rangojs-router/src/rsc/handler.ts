@@ -8,6 +8,7 @@
  */
 
 import { createElement } from "react";
+import { setBasename } from "../browser/basename.js";
 import { RouteNotFoundError } from "../errors.js";
 import { matchMiddleware, executeMiddleware } from "../router/middleware.js";
 import {
@@ -453,6 +454,10 @@ export function createRSCHandler<
     // - Error boundaries
     // - Streaming
     return runWithRequestContext(requestContext, async () => {
+      // Set basename for SSR so client components (href(), Link) produce
+      // the same prefixed URLs during SSR as they do after hydration.
+      setBasename(router.basename);
+
       // Core handler logic (wrapped by middleware)
       const coreHandler = async (): Promise<Response> => {
         return coreRequestHandler(request, env, url, variables, nonce);
@@ -1030,6 +1035,7 @@ export function createRSCHandler<
           metadata: {
             pathname: url.pathname,
             routerId: router.id,
+            basename: router.basename,
             segments: [notFoundSegment],
             matched: [],
             diff: [],

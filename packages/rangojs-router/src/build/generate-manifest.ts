@@ -285,6 +285,7 @@ export function generateManifest<TEnv>(
 export function generateManifestFull<TEnv>(
   urlpatterns: UrlPatterns<TEnv, any>,
   mountIndex: number = 0,
+  options?: { urlPrefix?: string },
 ): FullManifest {
   const routeManifest: Record<string, string> = {};
   const routeAncestry: Record<string, string[]> = {};
@@ -310,6 +311,8 @@ export function generateManifestFull<TEnv>(
       counters: {},
       mountIndex,
       trackedIncludes, // Enable include tracking
+      // basename sets the initial URL prefix for all path() registrations
+      ...(options?.urlPrefix ? { urlPrefix: options.urlPrefix } : {}),
     },
     () => {
       const helpers = createRouteHelpers();

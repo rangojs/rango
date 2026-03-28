@@ -8,8 +8,12 @@ import { waitForHydration, expectNoPageError } from "./helper";
  * Smoke tests for the e2e-basic app.
  *
  * Lightweight checks covering core routing features: SSR, navigation,
- * include(), URL params, intercept (modal), and client-side href().
+ * include(), URL params, intercept (modal), client-side href(), and basename.
  * Runs before the full test suite to fail fast on fundamental regressions.
+ *
+ * The e2e-basic app uses basename: "/app", so all routes are served under /app.
+ * This validates that basename works end-to-end: server routing, reverse(),
+ * client-side Link auto-prefixing, and href().
  *
  * Both dev and production describes target the same e2e-basic directory.
  * Serial mode at the file level prevents concurrent `pnpm dev` and
@@ -40,12 +44,13 @@ test.describe("smoke", () => {
     root: E2E_BASIC_ROOT,
     mode: "dev",
     isolatedServer: true,
+    readyPath: "/app",
   });
 
   test("SSR renders home page", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("home-page")).toBeVisible();
@@ -55,7 +60,7 @@ test.describe("smoke", () => {
   test("layout structure renders", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("app-root")).toBeVisible();
@@ -67,18 +72,18 @@ test.describe("smoke", () => {
   test("client navigation to about", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
     await page.getByTestId("nav-about").click();
     await expect(page.getByTestId("about-page")).toBeVisible();
-    expect(page.url()).toContain("/about");
+    expect(page.url()).toContain("/app/about");
   });
 
   test("include: blog routes", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
     await page.getByTestId("nav-blog").click();
@@ -89,7 +94,7 @@ test.describe("smoke", () => {
   test("URL params: blog post", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/blog"));
+    await page.goto(f.url("/app/blog"));
     await waitForHydration(page);
 
     await page.getByTestId("post-link-1").click();
@@ -101,7 +106,7 @@ test.describe("smoke", () => {
   test("include: shop routes", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
     await page.getByTestId("nav-shop").click();
@@ -112,7 +117,7 @@ test.describe("smoke", () => {
   test("intercept: modal on soft navigation from shop", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop"));
+    await page.goto(f.url("/app/shop"));
     await waitForHydration(page);
 
     await page.getByTestId("product-link-1").click();
@@ -125,7 +130,7 @@ test.describe("smoke", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop/product/widget"));
+    await page.goto(f.url("/app/shop/product/widget"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("product-detail-page")).toBeVisible();
@@ -135,25 +140,27 @@ test.describe("smoke", () => {
   test("nested navigation: shop to cart", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop"));
+    await page.goto(f.url("/app/shop"));
     await waitForHydration(page);
 
     await page.getByTestId("shop-cart-link").click();
     await expect(page.getByTestId("cart-page")).toBeVisible();
   });
 
-  test("href() client function resolves paths", async ({ page }) => {
+  test("href() client function resolves paths with basename", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
-    await expect(page.getByTestId("href-path-result")).toHaveText("/about");
+    await expect(page.getByTestId("href-path-result")).toHaveText("/app/about");
     await expect(page.getByTestId("href-absolute-result")).toHaveText(
-      "/shop/cart",
+      "/app/shop/cart",
     );
     await expect(page.getByTestId("href-params-result")).toHaveText(
-      "/blog/test",
+      "/app/blog/test",
     );
   });
 });
@@ -167,12 +174,13 @@ test.describe("smoke (production)", () => {
     root: E2E_BASIC_ROOT,
     mode: "build",
     buildCommand: "true", // already built at file level
+    readyPath: "/app",
   });
 
   test("SSR renders home page", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("home-page")).toBeVisible();
@@ -182,7 +190,7 @@ test.describe("smoke (production)", () => {
   test("layout structure renders", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("app-root")).toBeVisible();
@@ -194,18 +202,18 @@ test.describe("smoke (production)", () => {
   test("client navigation to about", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
     await page.getByTestId("nav-about").click();
     await expect(page.getByTestId("about-page")).toBeVisible();
-    expect(page.url()).toContain("/about");
+    expect(page.url()).toContain("/app/about");
   });
 
   test("include: blog routes", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
     await page.getByTestId("nav-blog").click();
@@ -216,7 +224,7 @@ test.describe("smoke (production)", () => {
   test("URL params: blog post", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/blog"));
+    await page.goto(f.url("/app/blog"));
     await waitForHydration(page);
 
     await page.getByTestId("post-link-1").click();
@@ -228,7 +236,7 @@ test.describe("smoke (production)", () => {
   test("include: shop routes", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
     await page.getByTestId("nav-shop").click();
@@ -239,7 +247,7 @@ test.describe("smoke (production)", () => {
   test("intercept: modal on soft navigation from shop", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop"));
+    await page.goto(f.url("/app/shop"));
     await waitForHydration(page);
 
     await page.getByTestId("product-link-1").click();
@@ -252,7 +260,7 @@ test.describe("smoke (production)", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop/product/widget"));
+    await page.goto(f.url("/app/shop/product/widget"));
     await waitForHydration(page);
 
     await expect(page.getByTestId("product-detail-page")).toBeVisible();
@@ -262,25 +270,27 @@ test.describe("smoke (production)", () => {
   test("nested navigation: shop to cart", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop"));
+    await page.goto(f.url("/app/shop"));
     await waitForHydration(page);
 
     await page.getByTestId("shop-cart-link").click();
     await expect(page.getByTestId("cart-page")).toBeVisible();
   });
 
-  test("href() client function resolves paths", async ({ page }) => {
+  test("href() client function resolves paths with basename", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/app"));
     await waitForHydration(page);
 
-    await expect(page.getByTestId("href-path-result")).toHaveText("/about");
+    await expect(page.getByTestId("href-path-result")).toHaveText("/app/about");
     await expect(page.getByTestId("href-absolute-result")).toHaveText(
-      "/shop/cart",
+      "/app/shop/cart",
     );
     await expect(page.getByTestId("href-params-result")).toHaveText(
-      "/blog/test",
+      "/app/blog/test",
     );
   });
 });
