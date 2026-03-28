@@ -78,6 +78,11 @@ interface RSCRouterOptions<TEnv> {
   // Document component wrapping entire app
   document?: ComponentType<{ children: ReactNode }>;
 
+  // URL prefix for sub-path deployments (e.g. "/admin")
+  // All routes, reverse(), href(), Link, redirect(), and router.use()
+  // patterns are automatically prefixed. Route names stay unprefixed.
+  basename?: string;
+
   // Enable per-request performance timeline (console waterfall + Server-Timing header)
   debugPerformance?: boolean;
 
@@ -123,6 +128,33 @@ interface RSCRouterOptions<TEnv> {
   version?: string;
 }
 ```
+
+## Basename (Sub-Path Deployment)
+
+When your app is served under a sub-path (e.g. `/admin` or `/v2`), set `basename`:
+
+```typescript
+const router = createRouter({
+  basename: "/admin",
+  document: Document,
+}).routes(({ path, include }) => [
+  path("/", Dashboard, { name: "home" }),       // matches /admin
+  path("/users", Users, { name: "users" }),     // matches /admin/users
+  include("/api", apiPatterns, { name: "api" }),  // matches /admin/api/*
+]);
+
+router.reverse("home");   // "/admin"
+router.reverse("users");  // "/admin/users"
+```
+
+All URL helpers are basename-aware:
+- `reverse()` returns prefixed paths
+- `href("/users")` returns `"/admin/users"` (client + SSR)
+- `<Link to="/users">` renders `<a href="/admin/users">`
+- `redirect("/login")` redirects to `"/admin/login"`
+- `router.use("/users/*", mw)` matches `/admin/users/*`
+- `useRouter().push("/users")` navigates to `/admin/users`
+- Route names stay unprefixed (`"home"`, not `"admin.home"`)
 
 ## Using the Request Handler
 
