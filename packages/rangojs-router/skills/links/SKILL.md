@@ -141,9 +141,7 @@ function GlobalNav() {
 
 `href()` provides compile-time validation via `ValidPaths` type. Paths are validated against registered route patterns using `PatternToPath`.
 
-When a `basename` is configured on the router, `href()` auto-prefixes paths. Inside `include()` subtrees, `useHref()` returns a mount-aware function whose mount already includes the basename, so `useHref()("/cart")` inside `include("/shop")` on a `basename: "/app"` router returns `"/app/shop/cart"`.
-
-`<Link to="/path">` and `useRouter().push("/path")` are also basename-aware — they auto-prefix root-relative paths that don't already start with the basename.
+`href()` is a raw path helper — it is **not** basename-aware. It returns the path as-is (or with the include mount prefix via `useHref()`). For basename-aware navigation, use `Link`, `useRouter().push()`, or `reverse()`, which auto-prefix root-relative paths with the router's basename.
 
 ## Client: useHref()
 

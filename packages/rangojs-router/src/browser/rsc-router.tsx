@@ -12,7 +12,6 @@ import { createNavigationClient } from "./navigation-client.js";
 import { createServerActionBridge } from "./server-action-bridge.js";
 import { createNavigationBridge } from "./navigation-bridge.js";
 import { NavigationProvider } from "./react/index.js";
-import { setBasename } from "./basename.js";
 import type {
   RscPayload,
   RscBrowserDependencies,
@@ -170,10 +169,6 @@ export async function initBrowserApp(
   if (initialPayload.metadata?.routerId) {
     store.setRouterId?.(initialPayload.metadata.routerId);
   }
-
-  // Seed basename so href() and Link auto-prefix app-local paths.
-  // Always set (even to undefined) to clear stale state from a prior app.
-  setBasename(initialPayload.metadata?.basename);
 
   // Create event controller for reactive state management
   const eventController = createEventController({
@@ -505,6 +500,7 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
       initialTheme={initialTheme}
       warmupEnabled={warmupEnabled}
       version={version}
+      basename={initialPayload.metadata?.basename}
     />
   );
 }

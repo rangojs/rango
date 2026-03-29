@@ -11,7 +11,6 @@ import React, {
   type RefAttributes,
 } from "react";
 import { NavigationStoreContext } from "./context.js";
-import { getBasename } from "../basename.js";
 import { LinkContext } from "./use-link-status.js";
 import type { NavigateOptions } from "../types.js";
 import { isHashOnlyNavigation } from "../link-interceptor.js";
@@ -199,11 +198,11 @@ export const Link: ForwardRefExoticComponent<
   // Skip if external, already prefixed, or not a root-relative path.
   const resolvedTo = useMemo(() => {
     if (isExternal) return to;
-    const bn = getBasename();
+    const bn = ctx?.basename;
     if (!bn || !to.startsWith("/") || to.startsWith(bn + "/") || to === bn)
       return to;
     return to === "/" ? bn : bn + to;
-  }, [to, isExternal]);
+  }, [to, isExternal, ctx?.basename]);
 
   // Resolve adaptive: viewport on touch devices, hover on pointer devices
   const resolvedStrategy =

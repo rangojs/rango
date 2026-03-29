@@ -147,20 +147,18 @@ test.describe("smoke", () => {
     await expect(page.getByTestId("cart-page")).toBeVisible();
   });
 
-  test("href() client function resolves paths with basename", async ({
-    page,
-  }) => {
+  test("href() returns raw paths (not basename-aware)", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/app"));
     await waitForHydration(page);
 
-    await expect(page.getByTestId("href-path-result")).toHaveText("/app/about");
+    await expect(page.getByTestId("href-path-result")).toHaveText("/about");
     await expect(page.getByTestId("href-absolute-result")).toHaveText(
-      "/app/shop/cart",
+      "/shop/cart",
     );
     await expect(page.getByTestId("href-params-result")).toHaveText(
-      "/app/blog/test",
+      "/blog/test",
     );
   });
 });
@@ -277,20 +275,18 @@ test.describe("smoke (production)", () => {
     await expect(page.getByTestId("cart-page")).toBeVisible();
   });
 
-  test("href() client function resolves paths with basename", async ({
-    page,
-  }) => {
+  test("href() returns raw paths (not basename-aware)", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/app"));
     await waitForHydration(page);
 
-    await expect(page.getByTestId("href-path-result")).toHaveText("/app/about");
+    await expect(page.getByTestId("href-path-result")).toHaveText("/about");
     await expect(page.getByTestId("href-absolute-result")).toHaveText(
-      "/app/shop/cart",
+      "/shop/cart",
     );
     await expect(page.getByTestId("href-params-result")).toHaveText(
-      "/app/blog/test",
+      "/blog/test",
     );
   });
 });

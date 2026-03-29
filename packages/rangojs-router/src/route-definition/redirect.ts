@@ -1,8 +1,8 @@
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
-import { getBasename } from "../browser/basename.js";
 import {
   requireRequestContext,
   getRequestContext,
+  _getRequestContext,
 } from "../server/request-context.js";
 
 /**
@@ -85,7 +85,7 @@ export function redirect(
   }
 
   // Auto-prefix root-relative URLs with basename for app-local redirects.
-  const bn = getBasename();
+  const bn = _getRequestContext()?._basename;
   let resolvedUrl = url;
   if (bn && url.startsWith("/") && !url.startsWith(bn + "/") && url !== bn) {
     resolvedUrl = url === "/" ? bn : bn + url;

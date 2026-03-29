@@ -147,14 +147,16 @@ router.reverse("home");   // "/admin"
 router.reverse("users");  // "/admin/users"
 ```
 
-All URL helpers are basename-aware:
+Router-owned APIs are basename-aware:
 - `reverse()` returns prefixed paths
-- `href("/users")` returns `"/admin/users"` (client + SSR)
 - `<Link to="/users">` renders `<a href="/admin/users">`
 - `redirect("/login")` redirects to `"/admin/login"`
 - `router.use("/users/*", mw)` matches `/admin/users/*`
 - `useRouter().push("/users")` navigates to `/admin/users`
 - Route names stay unprefixed (`"home"`, not `"admin.home"`)
+
+Note: `href()` is a raw path helper and does **not** auto-prefix with basename.
+Use `reverse()` or `<Link>` for basename-aware URLs.
 
 ## Using the Request Handler
 

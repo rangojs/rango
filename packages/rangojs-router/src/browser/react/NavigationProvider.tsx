@@ -137,6 +137,11 @@ export interface NavigationProviderProps {
    * Forwarded to context for cache key building.
    */
   version?: string;
+
+  /**
+   * URL prefix for all routes (from createRouter({ basename })).
+   */
+  basename?: string;
 }
 
 /**
@@ -169,6 +174,7 @@ export function NavigationProvider({
   initialTheme,
   warmupEnabled,
   version,
+  basename,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
   const [payload, setPayload] = useState(initialPayload);
@@ -198,6 +204,7 @@ export function NavigationProvider({
       navigate,
       refresh,
       version,
+      basename,
     }),
     [],
   );

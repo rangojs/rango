@@ -1,5 +1,3 @@
-import { getBasename } from "./browser/basename.js";
-
 /**
  * Client-safe type-safe href function
  *
@@ -183,14 +181,9 @@ export type ValidPaths<TRoutes = GetRegisteredRoutes> =
  * ```
  */
 export function href<T extends ValidPaths>(path: T, mount?: string): string {
-  // mount already includes basename (mountPath captures the full urlPrefix
-  // at definition time), so use mount when provided, otherwise fall back
-  // to basename for top-level paths outside any include() scope.
-  const effectiveMount = mount ?? getBasename();
-  if (effectiveMount && effectiveMount !== "/") {
-    const normalizedMount = effectiveMount.endsWith("/")
-      ? effectiveMount.slice(0, -1)
-      : effectiveMount;
+  if (mount && mount !== "/") {
+    // Strip trailing slash from mount to avoid double-slash when joining
+    const normalizedMount = mount.endsWith("/") ? mount.slice(0, -1) : mount;
     return normalizedMount + path;
   }
   return path;
