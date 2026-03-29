@@ -96,6 +96,7 @@ Handles are keyed by segment identity. Actions are standalone `"use server"` fun
 
 Intercepts only run on client-side navigation, not on SSR. If an intercept pushes handle data, that data is present on client nav but absent on initial page load. The capability matrix currently allows it (intercepts are segments in the tree), but this inconsistency may warrant restricting it.
 
-### `ctx.var` retention
+### `ctx.var` removal
 
-Whether to keep `ctx.var` as a direct property alongside `get`/`set`, or remove it entirely in favour of function-only access.
+Decision: remove `ctx.var` from public contexts and keep variable access on
+`ctx.get()` / `ctx.set()` only. The shared backing store remains internal.

@@ -207,9 +207,6 @@ export function createMiddlewareContext<TEnv>(
     set: ((keyOrVar: any, value: unknown, options?: any) => {
       contextSet(variables, keyOrVar, value, options);
     }) as MiddlewareContext<TEnv>["set"],
-
-    var: variables as MiddlewareContext<TEnv>["var"],
-
     header(name: string, value: string): void {
       // Before next(): delegate to shared RequestContext stub
       if (isPreNext()) {

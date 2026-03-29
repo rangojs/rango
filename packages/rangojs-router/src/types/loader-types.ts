@@ -53,7 +53,6 @@ export type LoaderContext<
   pathname: string;
   url: URL;
   env: TEnv;
-  var: DefaultVars;
   get: {
     <T>(contextVar: ContextVar<T>): T | undefined;
   } & (<K extends keyof DefaultVars>(key: K) => DefaultVars[K]);

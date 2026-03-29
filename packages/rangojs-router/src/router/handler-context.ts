@@ -207,7 +207,7 @@ export function createHandlerContext<TEnv>(
   // Get variables from request context - this is the unified context
   // shared between middleware and route handlers
   const requestContext = _getRequestContext();
-  const variables: any = requestContext?.var ?? {};
+  const variables: any = requestContext?._variables ?? {};
 
   // If route has a search schema, parse URLSearchParams into typed object
   const searchSchema = routeName ? getSearchSchema(routeName) : undefined;
@@ -257,7 +257,7 @@ export function createHandlerContext<TEnv>(
     url,
     originalUrl: new URL(request.url),
     env: bindings,
-    var: variables,
+    _variables: variables,
     get: ((keyOrVar: any) => {
       // Read-time guard: non-cacheable var inside cache() → throw.
       // Works for both ContextVar tokens and string keys.
@@ -320,7 +320,7 @@ export function createHandlerContext<TEnv>(
  *
  * Returns an InternalHandlerContext where params, pathname, url, searchParams,
  * search, reverse, and use(handle) work. Request-time properties
- * (request, env, headers, cookies, var, get, set, res) throw with a clear error.
+ * (request, env, headers, cookies, get, set, res) throw with a clear error.
  */
 export function createPrerenderContext<TEnv>(
   params: Record<string, string>,
@@ -354,9 +354,7 @@ export function createPrerenderContext<TEnv>(
     get env(): TEnv {
       return throwUnavailable("env");
     },
-    get var(): any {
-      return throwUnavailable("var");
-    },
+    _variables: variables,
     get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
     set: ((keyOrVar: any, value: any) => {
       contextSet(variables, keyOrVar, value);
@@ -438,9 +436,7 @@ export function createStaticContext<TEnv>(
     get env(): TEnv {
       return throwUnavailable("env");
     },
-    get var(): any {
-      return throwUnavailable("var");
-    },
+    _variables: variables,
     get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
     set: ((keyOrVar: any, value: any) => {
       contextSet(variables, keyOrVar, value);

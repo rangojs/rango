@@ -110,15 +110,15 @@ export const middlewarePatterns = urls(({ path, middleware }) => [
     ],
   ),
 
-  // Test: ctx parity — exercises ctx.headers, ctx.var, ctx.theme, ctx.setTheme,
+  // Test: ctx parity — exercises ctx.headers, ctx.set(), ctx.theme, ctx.setTheme,
   // ctx.setLocationState to verify middleware has the same API surface as handlers.
   path("/ctx-parity", MiddlewareCtxParityHandler, { name: "ctxParity" }, () => [
     middleware(async (ctx, next) => {
       // ctx.headers (before next)
       ctx.headers.set("X-Mw-Headers-Before", "set-before-next");
 
-      // ctx.var
-      ctx.var.mwVarTest = "from-ctx-var";
+      // ctx.set()
+      ctx.set("mwVarTest", "from-ctx-set");
 
       // ctx.theme (read before mutation)
       const themeBefore = ctx.theme;

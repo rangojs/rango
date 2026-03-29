@@ -69,8 +69,8 @@ export interface RequestContext<
   pathname: string;
   /** URL search params (with internal `_rsc*` params stripped, same as `url.searchParams`) */
   searchParams: URLSearchParams;
-  /** Variables set by middleware (same as ctx.var) */
-  var: Record<string, any>;
+  /** @internal Shared variable backing store for ctx.get()/ctx.set(). */
+  _variables: Record<string, any>;
   /** Get a variable set by middleware */
   get: {
     <T>(contextVar: ContextVar<T>): T | undefined;
@@ -321,6 +321,7 @@ export type PublicRequestContext<
   | "_metricsStore"
   | "_basename"
   | "_setStatus"
+  | "_variables"
   | "res"
 >;
 
@@ -595,7 +596,7 @@ export function createRequestContext<TEnv>(
     originalUrl: new URL(request.url),
     pathname: url.pathname,
     searchParams: cleanUrl.searchParams,
-    var: variables,
+    _variables: variables,
     get: ((keyOrVar: any) => {
       if (isNonCacheable(variables, keyOrVar) && isInsideCacheScope()) {
         throw new Error(
@@ -927,7 +928,6 @@ export function createUseFunction<TEnv>(
       pathname: ctx.pathname,
       url: ctx.url,
       env: ctx.env as any,
-      var: ctx.var as any,
       get: ctx.get as any,
       use: <TDep, TDepParams = any>(
         dep: LoaderDefinition<TDep, TDepParams>,

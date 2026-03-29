@@ -377,7 +377,7 @@ Server actions run within the existing request context but:
 ```
 Request arrives
   ↓
-App middleware executes (sets ctx.var.user = ...)
+App middleware executes (calls ctx.set("user", ...))
   ↓
 Route middleware executes
   ↓

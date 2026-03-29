@@ -11,7 +11,11 @@ import type {
   InterceptEntry,
   InterceptSelectorContext,
 } from "../server/context";
-import type { HandlerContext, ResolvedSegment } from "../types";
+import type {
+  HandlerContext,
+  InternalHandlerContext,
+  ResolvedSegment,
+} from "../types";
 import { evaluateRevalidation } from "./revalidation.js";
 import { getRequestContext } from "../server/request-context.js";
 import { executeInterceptMiddleware } from "./middleware.js";
@@ -134,7 +138,7 @@ export async function resolveInterceptEntry<TEnv>(
       context.request,
       context.env,
       params,
-      context.var as Record<string, any>,
+      (context as InternalHandlerContext<any, TEnv>)._variables,
       requestCtx.res,
       createReverseFunction(getGlobalRouteMap()),
     );

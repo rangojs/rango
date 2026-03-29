@@ -96,12 +96,6 @@ export interface MiddlewareContext<
   set: SetVariableFn;
 
   /**
-   * Middleware-injected variables.
-   * Same shared dictionary as `ctx.get()`/`ctx.set()`.
-   */
-  var: DefaultVars;
-
-  /**
    * Set a response header - can be called before or after `next()`.
    *
    * When called before `next()`, headers are queued and merged into the final response.

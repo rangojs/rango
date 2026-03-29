@@ -77,7 +77,7 @@ export function getSSRSetup<TEnv>(
   url: URL,
   metricsStore: MetricsStore | undefined,
 ): Promise<SSRSetup> {
-  const early = _getRequestContext()?.var?.[SSR_SETUP_VAR] as
+  const early = _getRequestContext()?._variables?.[SSR_SETUP_VAR] as
     | Promise<SSRSetup>
     | undefined;
   if (early) return early;

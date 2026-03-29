@@ -5,8 +5,8 @@
  * during cache key generation (before middleware runs).
  *
  * Note: While the full RequestContext is passed, middleware-set variables
- * (ctx.var, ctx.get()) may not be populated yet since cache lookup
- * happens before middleware execution.
+ * read via `ctx.get()` may not be populated yet since cache lookup happens
+ * before middleware execution.
  */
 export type { RequestContext as CacheContext } from "../server/request-context.js";
 
@@ -101,7 +101,7 @@ export interface CacheOptions<TEnv = unknown> {
    * Return false to skip cache for this request (always fetch fresh).
    *
    * Has access to full RequestContext including env, request, params, cookies, etc.
-   * Note: Middleware-set variables (ctx.var) may not be populated yet.
+   * Note: Middleware-set variables read via `ctx.get()` may not be populated yet.
    *
    * @example
    * ```typescript
@@ -123,7 +123,7 @@ export interface CacheOptions<TEnv = unknown> {
    * Bypasses default key generation AND store's keyGenerator.
    *
    * Has access to full RequestContext including env, request, params, cookies, etc.
-   * Note: Middleware-set variables (ctx.var) may not be populated yet.
+   * Note: Middleware-set variables read via `ctx.get()` may not be populated yet.
    *
    * @example
    * ```typescript

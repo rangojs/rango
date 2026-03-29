@@ -282,7 +282,7 @@ interface ResponseHandlerContext<TParams, TEnv> {
   reverse: ReverseFunction;
   // No ctx.use() — no loaders
   // No ctx.res — handler creates its own Response
-  // No ctx.var / ctx.get / ctx.set — no middleware variables
+  // No ctx.set() — response routes can read middleware variables via ctx.get()
 }
 ```
 

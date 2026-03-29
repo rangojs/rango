@@ -140,7 +140,7 @@ URL pattern matching, middleware execution, segment resolution, error matching, 
 
 - `cookies()` -- `CookieStore` with `get`/`getAll`/`has`/`set`/`delete`
 - `headers()` -- read-only header proxy
-- `getRequestContext()` -- full request data server-side
+- `getRequestContext()` -- full request data server-side, plus shared variable access via `ctx.get()`/`ctx.set()`
 - All guard against use inside `"use cache"` functions
 
 ### Search Parameters

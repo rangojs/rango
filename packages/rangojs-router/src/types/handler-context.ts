@@ -170,7 +170,7 @@ export type Handler<
  * - Cleaned route URL (`url`, `searchParams`, `pathname` — no `_rsc*` params)
  * - Original request (`request` — raw transport URL, headers, method, body)
  * - Platform bindings (env.DB, env.KV, env.SECRETS)
- * - Middleware variables (var.user, var.permissions)
+ * - Middleware variables (`get("user")`, `get("permissions")`)
  * - Getter/setter for variables (get('user'), set('user', ...))
  *
  * @example
@@ -178,8 +178,7 @@ export type Handler<
  * const handler = (ctx: HandlerContext<{ slug: string }, AppEnv>) => {
  *   ctx.params.slug        // Route param (string)
  *   ctx.env.DB             // Binding (D1Database)
- *   ctx.var.user           // Variable (User | undefined)
- *   ctx.get('user')        // Alternative getter
+ *   ctx.get('user')        // Variable (User | undefined)
  *   ctx.set('user', {...}) // Setter
  *   ctx.url                // Clean URL (no _rsc* params)
  *   ctx.searchParams       // Clean params (no _rsc* params)
@@ -245,13 +244,8 @@ export type HandlerContext<
    */
   env: TEnv;
   /**
-   * Middleware-injected variables.
-   * Access values like `ctx.var.user`, `ctx.var.permissions`.
-   */
-  var: DefaultVars;
-  /**
    * Type-safe getter for middleware variables.
-   * Alternative to `ctx.var.key` with better autocomplete.
+   * Preferred way to read middleware-injected variables.
    *
    * @example
    * ```typescript
@@ -448,6 +442,8 @@ export type InternalHandlerContext<
 > = HandlerContext<TParams, TEnv, TSearch> & {
   /** @internal Stub response for collecting headers/cookies. */
   res: Response;
+  /** @internal Shared variable backing store for ctx.get()/ctx.set(). */
+  _variables: Record<string, any>;
   /** Prerender-only control flow helper, attached when the runtime context supports it. */
   passthrough?: () => unknown;
   /** Current segment ID for handle data attribution. */

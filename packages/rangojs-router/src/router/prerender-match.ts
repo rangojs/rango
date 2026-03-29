@@ -104,7 +104,7 @@ export async function matchForPrerender<TEnv = any>(
       originalUrl: new URL("http://prerender" + pathname),
       pathname,
       searchParams: new URLSearchParams(),
-      var: variables,
+      _variables: variables,
       get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
       set: ((keyOrVar: any, value: any) => {
         contextSet(variables, keyOrVar, value);
@@ -336,7 +336,7 @@ export async function renderStaticSegment<TEnv = any>(
     originalUrl: syntheticUrl,
     pathname: "/",
     searchParams: syntheticUrl.searchParams,
-    var: {},
+    _variables: {},
     get: () => undefined as any,
     set: () => {},
     params: {},

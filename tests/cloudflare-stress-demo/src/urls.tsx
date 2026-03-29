@@ -31,7 +31,7 @@ enableMatchDebug(true);
 // Benchmark handler - bypasses RSC, returns raw JSON with debug stats
 const BenchmarkHandler: Handler<"benchFirst"> = async (ctx) => {
   const now = Date.now();
-  const start = ctx.var.dateStart ?? 0;
+  const start = ctx.get("dateStart") ?? 0;
   const elapsed = now - start;
   const matchStats = getMatchDebugStats();
 

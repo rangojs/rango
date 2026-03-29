@@ -25,7 +25,7 @@ export interface AppBindings {
 
 /**
  * Middleware-injected variables (user, permissions, etc.)
- * Accessed via ctx.var or ctx.get('key')
+ * Accessed via ctx.get('key')
  */
 export interface AppVariables {
   user?: {

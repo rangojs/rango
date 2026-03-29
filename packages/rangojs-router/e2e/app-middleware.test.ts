@@ -713,14 +713,14 @@ test.describe("app-middleware (dev)", () => {
       expect(response.headers()["x-mw-headers-after"]).toBe("set-after-next");
     });
 
-    test("ctx.var shares variables with handler", async ({ page }) => {
+    test("ctx.set shares variables with handler", async ({ page }) => {
       using _ = expectNoPageError(page);
       await page.goto(f.url("/middleware-test/ctx-parity"));
       await waitForHydration(page);
 
       await expect(
         page.locator('[data-testid="ctx-parity-var-value"]'),
-      ).toContainText("from-ctx-var");
+      ).toContainText("from-ctx-set");
     });
 
     test("ctx.theme and ctx.setTheme work in middleware", async ({ page }) => {
@@ -1159,7 +1159,7 @@ test.describe("app-middleware (production)", () => {
       expect(response.headers()["x-mw-headers-after"]).toBe("set-after-next");
     });
 
-    test("ctx.var shares variables with handler in production", async ({
+    test("ctx.set shares variables with handler in production", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
@@ -1168,7 +1168,7 @@ test.describe("app-middleware (production)", () => {
 
       await expect(
         page.locator('[data-testid="ctx-parity-var-value"]'),
-      ).toContainText("from-ctx-var");
+      ).toContainText("from-ctx-set");
     });
 
     test("ctx.theme and ctx.setTheme work in middleware in production", async ({

@@ -242,6 +242,7 @@ function createLoaderExecutor<TEnv>(
     pendingLoaders.add(loader.$$id);
 
     const currentLoaderId = loader.$$id;
+    const variables = (ctx as InternalHandlerContext<any, TEnv>)._variables;
     // Loader functions are always fresh (never cached), so they get an
     // unguarded get that bypasses non-cacheable read guards. This applies
     // to ALL loaders — DSL and handler-called — because the loader
@@ -256,8 +257,8 @@ function createLoaderExecutor<TEnv>(
       pathname: ctx.pathname,
       url: ctx.url,
       env: ctx.env,
-      var: ctx.var,
-      get: ((keyOrVar: any) => contextGet(ctx.var, keyOrVar)) as typeof ctx.get,
+      get: ((keyOrVar: any) =>
+        contextGet(variables, keyOrVar)) as typeof ctx.get,
       use: <TDep, TDepParams = any>(
         dep: LoaderDefinition<TDep, TDepParams>,
       ): Promise<TDep> => {

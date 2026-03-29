@@ -138,16 +138,17 @@ const router = createRouter({
   basename: "/admin",
   document: Document,
 }).routes(({ path, include }) => [
-  path("/", Dashboard, { name: "home" }),       // matches /admin
-  path("/users", Users, { name: "users" }),     // matches /admin/users
-  include("/api", apiPatterns, { name: "api" }),  // matches /admin/api/*
+  path("/", Dashboard, { name: "home" }), // matches /admin
+  path("/users", Users, { name: "users" }), // matches /admin/users
+  include("/api", apiPatterns, { name: "api" }), // matches /admin/api/*
 ]);
 
-router.reverse("home");   // "/admin"
-router.reverse("users");  // "/admin/users"
+router.reverse("home"); // "/admin"
+router.reverse("users"); // "/admin/users"
 ```
 
 Router-owned APIs are basename-aware:
+
 - `reverse()` returns prefixed paths
 - `<Link to="/users">` renders `<a href="/admin/users">`
 - `redirect("/login")` redirects to `"/admin/login"`
