@@ -14,6 +14,7 @@ import {
   type RevalidationTraceEntry,
   type RevalidationTraceMeta,
 } from "../logging.js";
+import { runWithRequestContext } from "../../server/request-context";
 
 function makeMeta(
   overrides?: Partial<RevalidationTraceMeta>,
@@ -43,6 +44,41 @@ function makeEntry(
   };
 }
 
+function minimalRequestContext(): any {
+  return {
+    env: {},
+    request: new Request("http://localhost/test"),
+    url: new URL("http://localhost/test"),
+    originalUrl: new URL("http://localhost/test"),
+    pathname: "/test",
+    searchParams: new URLSearchParams(),
+    _variables: {},
+    get: () => undefined,
+    set: () => {},
+    params: {},
+    res: new Response(),
+    cookie: () => undefined,
+    cookies: () => ({}),
+    setCookie: () => {},
+    deleteCookie: () => {},
+    header: () => {},
+    setStatus: () => {},
+    _setStatus: () => {},
+    use: () => {
+      throw new Error("not available");
+    },
+    method: "GET",
+    _handleStore: { stream: () => (async function* () {})(), push: () => {} },
+    waitUntil: () => {},
+    onResponse: () => {},
+    _onResponseCallbacks: [],
+    setLocationState: () => {},
+    _reportedErrors: new WeakSet(),
+    reverse: () => "/",
+    _shared: { params: {}, reverse: () => "/" },
+  };
+}
+
 describe("revalidation trace collector", () => {
   it("returns null when no trace was started", () => {
     const result = flushRevalidationTrace();
@@ -50,11 +86,13 @@ describe("revalidation trace collector", () => {
   });
 
   it("returns null when trace not started inside log context", () => {
-    const result = runWithRouterLogContext(
-      { request: new Request("http://localhost/"), transaction: "test" },
-      () => {
-        return flushRevalidationTrace();
-      },
+    const result = runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: new Request("http://localhost/"), transaction: "test" },
+        () => {
+          return flushRevalidationTrace();
+        },
+      ),
     );
     expect(result).toBeNull();
   });
@@ -62,21 +100,23 @@ describe("revalidation trace collector", () => {
   it("collects and flushes entries within a log context", () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const result = runWithRouterLogContext(
-      { request: new Request("http://localhost/"), transaction: "test" },
-      () => {
-        startRevalidationTrace(makeMeta());
-        pushRevalidationTraceEntry(makeEntry({ segmentId: "L0" }));
-        pushRevalidationTraceEntry(
-          makeEntry({
-            segmentId: "R0",
-            segmentType: "route",
-            finalShouldRevalidate: true,
-            reason: "default",
-          }),
-        );
-        return flushRevalidationTrace();
-      },
+    const result = runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: new Request("http://localhost/"), transaction: "test" },
+        () => {
+          startRevalidationTrace(makeMeta());
+          pushRevalidationTraceEntry(makeEntry({ segmentId: "L0" }));
+          pushRevalidationTraceEntry(
+            makeEntry({
+              segmentId: "R0",
+              segmentType: "route",
+              finalShouldRevalidate: true,
+              reason: "default",
+            }),
+          );
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(result).not.toBeNull();
@@ -89,12 +129,14 @@ describe("revalidation trace collector", () => {
   });
 
   it("returns empty entries array when no entries pushed", () => {
-    const result = runWithRouterLogContext(
-      { request: new Request("http://localhost/"), transaction: "test" },
-      () => {
-        startRevalidationTrace(makeMeta());
-        return flushRevalidationTrace();
-      },
+    const result = runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: new Request("http://localhost/"), transaction: "test" },
+        () => {
+          startRevalidationTrace(makeMeta());
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(result).not.toBeNull();
@@ -104,14 +146,16 @@ describe("revalidation trace collector", () => {
   it("clears trace after flush", () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const result = runWithRouterLogContext(
-      { request: new Request("http://localhost/"), transaction: "test" },
-      () => {
-        startRevalidationTrace(makeMeta());
-        pushRevalidationTraceEntry(makeEntry());
-        flushRevalidationTrace();
-        return flushRevalidationTrace();
-      },
+    const result = runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: new Request("http://localhost/"), transaction: "test" },
+        () => {
+          startRevalidationTrace(makeMeta());
+          pushRevalidationTraceEntry(makeEntry());
+          flushRevalidationTrace();
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(result).toBeNull();
@@ -121,27 +165,29 @@ describe("revalidation trace collector", () => {
   it("preserves trace source from each entry", () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const result = runWithRouterLogContext(
-      { request: new Request("http://localhost/"), transaction: "test" },
-      () => {
-        startRevalidationTrace(makeMeta());
-        pushRevalidationTraceEntry(
-          makeEntry({ source: "loader", segmentId: "L0D0.foo" }),
-        );
-        pushRevalidationTraceEntry(
-          makeEntry({ source: "parallel", segmentId: "L0.@sidebar" }),
-        );
-        pushRevalidationTraceEntry(
-          makeEntry({ source: "cache-hit", segmentId: "L0" }),
-        );
-        pushRevalidationTraceEntry(
-          makeEntry({ source: "orphan-layout", segmentId: "L1" }),
-        );
-        pushRevalidationTraceEntry(
-          makeEntry({ source: "segment-resolution", segmentId: "R0" }),
-        );
-        return flushRevalidationTrace();
-      },
+    const result = runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: new Request("http://localhost/"), transaction: "test" },
+        () => {
+          startRevalidationTrace(makeMeta());
+          pushRevalidationTraceEntry(
+            makeEntry({ source: "loader", segmentId: "L0D0.foo" }),
+          );
+          pushRevalidationTraceEntry(
+            makeEntry({ source: "parallel", segmentId: "L0.@sidebar" }),
+          );
+          pushRevalidationTraceEntry(
+            makeEntry({ source: "cache-hit", segmentId: "L0" }),
+          );
+          pushRevalidationTraceEntry(
+            makeEntry({ source: "orphan-layout", segmentId: "L1" }),
+          );
+          pushRevalidationTraceEntry(
+            makeEntry({ source: "segment-resolution", segmentId: "R0" }),
+          );
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(result!.entries.map((e) => e.source)).toEqual([
@@ -158,23 +204,25 @@ describe("revalidation trace collector", () => {
   it("tracks action context in trace meta", () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const result = runWithRouterLogContext(
-      {
-        request: new Request("http://localhost/", { method: "POST" }),
-        transaction: "test",
-      },
-      () => {
-        startRevalidationTrace(makeMeta({ method: "POST", isAction: true }));
-        pushRevalidationTraceEntry(
-          makeEntry({
-            segmentId: "R0",
-            defaultShouldRevalidate: true,
-            finalShouldRevalidate: true,
-            reason: "default",
-          }),
-        );
-        return flushRevalidationTrace();
-      },
+    const result = runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        {
+          request: new Request("http://localhost/", { method: "POST" }),
+          transaction: "test",
+        },
+        () => {
+          startRevalidationTrace(makeMeta({ method: "POST", isAction: true }));
+          pushRevalidationTraceEntry(
+            makeEntry({
+              segmentId: "R0",
+              defaultShouldRevalidate: true,
+              finalShouldRevalidate: true,
+              reason: "default",
+            }),
+          );
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(result!.meta.method).toBe("POST");
@@ -186,21 +234,23 @@ describe("revalidation trace collector", () => {
   it("logs summary with correct revalidated/skipped counts", () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    runWithRouterLogContext(
-      { request: new Request("http://localhost/"), transaction: "test" },
-      () => {
-        startRevalidationTrace(makeMeta());
-        pushRevalidationTraceEntry(
-          makeEntry({ segmentId: "L0", finalShouldRevalidate: false }),
-        );
-        pushRevalidationTraceEntry(
-          makeEntry({ segmentId: "R0", finalShouldRevalidate: true }),
-        );
-        pushRevalidationTraceEntry(
-          makeEntry({ segmentId: "L0D0.x", finalShouldRevalidate: true }),
-        );
-        flushRevalidationTrace();
-      },
+    runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: new Request("http://localhost/"), transaction: "test" },
+        () => {
+          startRevalidationTrace(makeMeta());
+          pushRevalidationTraceEntry(
+            makeEntry({ segmentId: "L0", finalShouldRevalidate: false }),
+          );
+          pushRevalidationTraceEntry(
+            makeEntry({ segmentId: "R0", finalShouldRevalidate: true }),
+          );
+          pushRevalidationTraceEntry(
+            makeEntry({ segmentId: "L0D0.x", finalShouldRevalidate: true }),
+          );
+          flushRevalidationTrace();
+        },
+      ),
     );
 
     // Find the flush log call
@@ -230,32 +280,38 @@ describe("revalidation trace collector", () => {
   });
 
   it("isTraceActive returns false when no trace started", () => {
-    const result = runWithRouterLogContext(
-      { request: new Request("http://localhost/"), transaction: "test" },
-      () => isTraceActive(),
+    const result = runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: new Request("http://localhost/"), transaction: "test" },
+        () => isTraceActive(),
+      ),
     );
     expect(result).toBe(false);
   });
 
   it("isTraceActive returns true after trace started", () => {
-    const result = runWithRouterLogContext(
-      { request: new Request("http://localhost/"), transaction: "test" },
-      () => {
-        startRevalidationTrace(makeMeta());
-        return isTraceActive();
-      },
+    const result = runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: new Request("http://localhost/"), transaction: "test" },
+        () => {
+          startRevalidationTrace(makeMeta());
+          return isTraceActive();
+        },
+      ),
     );
     expect(result).toBe(true);
   });
 
   it("isTraceActive returns false after flush", () => {
-    const result = runWithRouterLogContext(
-      { request: new Request("http://localhost/"), transaction: "test" },
-      () => {
-        startRevalidationTrace(makeMeta());
-        flushRevalidationTrace();
-        return isTraceActive();
-      },
+    const result = runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: new Request("http://localhost/"), transaction: "test" },
+        () => {
+          startRevalidationTrace(makeMeta());
+          flushRevalidationTrace();
+          return isTraceActive();
+        },
+      ),
     );
     expect(result).toBe(false);
   });

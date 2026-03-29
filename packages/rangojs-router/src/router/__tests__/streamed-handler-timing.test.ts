@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { RSCRouterContext, track } from "../../server/context.js";
 import type { MetricsStore } from "../../server/context.js";
+import { runWithRequestContext } from "../../server/request-context.js";
 import { runWithRouterContext } from "../router-context.js";
 import { resolveSegment, resolveParallelEntry } from "../segment-resolution";
 import { resolveEntryHandlerWithRevalidation } from "../segment-resolution/revalidation.js";
@@ -8,6 +9,41 @@ import { resolveEntryHandlerWithRevalidation } from "../segment-resolution/reval
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function minimalRequestContext(): any {
+  return {
+    env: {},
+    request: new Request("http://localhost/test"),
+    url: new URL("http://localhost/test"),
+    originalUrl: new URL("http://localhost/test"),
+    pathname: "/test",
+    searchParams: new URLSearchParams(),
+    _variables: {},
+    get: () => undefined,
+    set: () => {},
+    params: {},
+    res: new Response(),
+    cookie: () => undefined,
+    cookies: () => ({}),
+    setCookie: () => {},
+    deleteCookie: () => {},
+    header: () => {},
+    setStatus: () => {},
+    _setStatus: () => {},
+    use: () => {
+      throw new Error("not available");
+    },
+    method: "GET",
+    _handleStore: { stream: () => (async function* () {})(), push: () => {} },
+    waitUntil: () => {},
+    onResponse: () => {},
+    _onResponseCallbacks: [],
+    setLocationState: () => {},
+    _reportedErrors: new WeakSet(),
+    reverse: () => "/",
+    _shared: { params: {}, reverse: () => "/" },
+  };
+}
 
 function createMetrics(): MetricsStore {
   return { enabled: true, requestStart: performance.now(), metrics: [] };
@@ -178,30 +214,32 @@ describe("streamed handler timing — fresh path", () => {
     } as any;
 
     await runWithMetrics(metrics, () =>
-      runWithRouterContext(minimalRouterCtx(), async () => {
-        await resolveSegment(entry, "blog.post", {}, ctx, new Map(), deps);
+      runWithRequestContext(minimalRequestContext(), () =>
+        runWithRouterContext(minimalRouterCtx(), async () => {
+          await resolveSegment(entry, "blog.post", {}, ctx, new Map(), deps);
 
-        // Handler hasn't settled yet — only entry-level timing should be absent
-        // (track fires synchronously for non-streamed, but for streamed the
-        // handler:blog.post metric should NOT be recorded yet)
-        const handlerMetric = metrics.metrics.find(
-          (m) => m.label === "handler:blog.post",
-        );
-        expect(handlerMetric).toBeUndefined();
+          // Handler hasn't settled yet — only entry-level timing should be absent
+          // (track fires synchronously for non-streamed, but for streamed the
+          // handler:blog.post metric should NOT be recorded yet)
+          const handlerMetric = metrics.metrics.find(
+            (m) => m.label === "handler:blog.post",
+          );
+          expect(handlerMetric).toBeUndefined();
 
-        // Now settle the handler
-        resolveHandler("rendered content");
-        await handlerPromise;
-        await new Promise((r) => setTimeout(r, 0));
+          // Now settle the handler
+          resolveHandler("rendered content");
+          await handlerPromise;
+          await new Promise((r) => setTimeout(r, 0));
 
-        // Now the handler metric should be recorded
-        const recorded = metrics.metrics.find(
-          (m) => m.label === "handler:blog.post",
-        );
-        expect(recorded).toBeDefined();
-        expect(recorded!.depth).toBe(2);
-        expect(recorded!.duration).toBeGreaterThanOrEqual(0);
-      }),
+          // Now the handler metric should be recorded
+          const recorded = metrics.metrics.find(
+            (m) => m.label === "handler:blog.post",
+          );
+          expect(recorded).toBeDefined();
+          expect(recorded!.depth).toBe(2);
+          expect(recorded!.duration).toBeGreaterThanOrEqual(0);
+        }),
+      ),
     );
   });
 
@@ -232,25 +270,27 @@ describe("streamed handler timing — fresh path", () => {
     } as any;
 
     await runWithMetrics(metrics, () =>
-      runWithRouterContext(minimalRouterCtx(), async () => {
-        await resolveParallelEntry(parallelEntry, {}, ctx, false, "L0", deps);
+      runWithRequestContext(minimalRequestContext(), () =>
+        runWithRouterContext(minimalRouterCtx(), async () => {
+          await resolveParallelEntry(parallelEntry, {}, ctx, false, "L0", deps);
 
-        // Not yet settled
-        const before = metrics.metrics.find((m) =>
-          m.label.includes("handler:layout.sidebar"),
-        );
-        expect(before).toBeUndefined();
+          // Not yet settled
+          const before = metrics.metrics.find((m) =>
+            m.label.includes("handler:layout.sidebar"),
+          );
+          expect(before).toBeUndefined();
 
-        resolveHandler("sidebar content");
-        await handlerPromise;
-        await new Promise((r) => setTimeout(r, 0));
+          resolveHandler("sidebar content");
+          await handlerPromise;
+          await new Promise((r) => setTimeout(r, 0));
 
-        const after = metrics.metrics.find((m) =>
-          m.label.includes("handler:layout.sidebar"),
-        );
-        expect(after).toBeDefined();
-        expect(after!.depth).toBe(2);
-      }),
+          const after = metrics.metrics.find((m) =>
+            m.label.includes("handler:layout.sidebar"),
+          );
+          expect(after).toBeDefined();
+          expect(after!.depth).toBe(2);
+        }),
+      ),
     );
   });
 });
@@ -287,41 +327,43 @@ describe("streamed handler timing — revalidation path", () => {
     } as any;
 
     await runWithMetrics(metrics, () =>
-      runWithRouterContext(minimalRouterCtx(), async () => {
-        const result = await resolveEntryHandlerWithRevalidation(
-          entry,
-          {},
-          ctx,
-          true,
-          new Set<string>(), // empty = new segment, always revalidate
-          {},
-          ctx.request,
-          ctx.url,
-          ctx.url,
-          "blog.post",
-          deps,
-        );
+      runWithRequestContext(minimalRequestContext(), () =>
+        runWithRouterContext(minimalRouterCtx(), async () => {
+          const result = await resolveEntryHandlerWithRevalidation(
+            entry,
+            {},
+            ctx,
+            true,
+            new Set<string>(), // empty = new segment, always revalidate
+            {},
+            ctx.request,
+            ctx.url,
+            ctx.url,
+            "blog.post",
+            deps,
+          );
 
-        // Component should be a Promise (streamed)
-        expect(result.segment.component).toBeInstanceOf(Promise);
+          // Component should be a Promise (streamed)
+          expect(result.segment.component).toBeInstanceOf(Promise);
 
-        // Handler metric should NOT be recorded yet
-        const before = metrics.metrics.find(
-          (m) => m.label === "handler:blog.post",
-        );
-        expect(before).toBeUndefined();
+          // Handler metric should NOT be recorded yet
+          const before = metrics.metrics.find(
+            (m) => m.label === "handler:blog.post",
+          );
+          expect(before).toBeUndefined();
 
-        // Settle the handler
-        resolveHandler("rendered");
-        await handlerPromise;
-        await new Promise((r) => setTimeout(r, 0));
+          // Settle the handler
+          resolveHandler("rendered");
+          await handlerPromise;
+          await new Promise((r) => setTimeout(r, 0));
 
-        const after = metrics.metrics.find(
-          (m) => m.label === "handler:blog.post",
-        );
-        expect(after).toBeDefined();
-        expect(after!.depth).toBe(2);
-      }),
+          const after = metrics.metrics.find(
+            (m) => m.label === "handler:blog.post",
+          );
+          expect(after).toBeDefined();
+          expect(after!.depth).toBe(2);
+        }),
+      ),
     );
   });
 
@@ -352,36 +394,38 @@ describe("streamed handler timing — revalidation path", () => {
     } as any;
 
     await runWithMetrics(metrics, () =>
-      runWithRouterContext(minimalRouterCtx(), async () => {
-        const result = await resolveEntryHandlerWithRevalidation(
-          entry,
-          {},
-          ctx,
-          true,
-          new Set<string>(),
-          {},
-          ctx.request,
-          ctx.url,
-          ctx.url,
-          "blog.post",
-          deps,
-        );
+      runWithRequestContext(minimalRequestContext(), () =>
+        runWithRouterContext(minimalRouterCtx(), async () => {
+          const result = await resolveEntryHandlerWithRevalidation(
+            entry,
+            {},
+            ctx,
+            true,
+            new Set<string>(),
+            {},
+            ctx.request,
+            ctx.url,
+            ctx.url,
+            "blog.post",
+            deps,
+          );
 
-        expect(result.segment.component).toBeInstanceOf(Promise);
-        expect(
-          metrics.metrics.find((m) => m.label === "handler:blog.post"),
-        ).toBeUndefined();
+          expect(result.segment.component).toBeInstanceOf(Promise);
+          expect(
+            metrics.metrics.find((m) => m.label === "handler:blog.post"),
+          ).toBeUndefined();
 
-        rejectHandler(new Error("boom"));
-        await handlerPromise.catch(() => {});
-        await new Promise((r) => setTimeout(r, 0));
+          rejectHandler(new Error("boom"));
+          await handlerPromise.catch(() => {});
+          await new Promise((r) => setTimeout(r, 0));
 
-        const recorded = metrics.metrics.find(
-          (m) => m.label === "handler:blog.post",
-        );
-        expect(recorded).toBeDefined();
-        expect(recorded!.depth).toBe(2);
-      }),
+          const recorded = metrics.metrics.find(
+            (m) => m.label === "handler:blog.post",
+          );
+          expect(recorded).toBeDefined();
+          expect(recorded!.depth).toBe(2);
+        }),
+      ),
     );
   });
 });

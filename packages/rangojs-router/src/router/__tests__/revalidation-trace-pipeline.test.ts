@@ -4,6 +4,7 @@
  * evaluateRevalidation paths produce trace entries.
  */
 import { describe, it, expect, vi } from "vitest";
+import { runWithRequestContext } from "../../server/request-context";
 
 // Enable debug mode (must be before importing traced modules)
 vi.mock("../../internal-debug.js", () => ({
@@ -105,38 +106,75 @@ function makeEntry(loaderId: string): EntryData {
   } as any;
 }
 
+function minimalRequestContext(): any {
+  return {
+    env: {},
+    request: new Request("http://localhost/test"),
+    url: new URL("http://localhost/test"),
+    originalUrl: new URL("http://localhost/test"),
+    pathname: "/test",
+    searchParams: new URLSearchParams(),
+    _variables: {},
+    get: () => undefined,
+    set: () => {},
+    params: {},
+    res: new Response(),
+    cookie: () => undefined,
+    cookies: () => ({}),
+    setCookie: () => {},
+    deleteCookie: () => {},
+    header: () => {},
+    setStatus: () => {},
+    _setStatus: () => {},
+    use: () => {
+      throw new Error("not available");
+    },
+    method: "GET",
+    _handleStore: { stream: () => (async function* () {})(), push: () => {} },
+    waitUntil: () => {},
+    onResponse: () => {},
+    _onResponseCallbacks: [],
+    setLocationState: () => {},
+    _reportedErrors: new WeakSet(),
+    reverse: () => "/",
+    _shared: { params: {}, reverse: () => "/" },
+  };
+}
+
 describe("revalidation trace through segment resolution pipeline", () => {
   it("emits new-segment trace entry when loader is not in client set", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const trace = await runWithRouterLogContext(
-      { request: new Request("http://localhost/b"), transaction: "test" },
-      async () => {
-        startRevalidationTrace({
-          method: "GET",
-          prevUrl: "http://localhost/a",
-          nextUrl: "http://localhost/b",
-          routeKey: "test.route",
-          isAction: false,
-        });
+    const trace = await runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: new Request("http://localhost/b"), transaction: "test" },
+        async () => {
+          startRevalidationTrace({
+            method: "GET",
+            prevUrl: "http://localhost/a",
+            nextUrl: "http://localhost/b",
+            routeKey: "test.route",
+            isAction: false,
+          });
 
-        const entry = makeEntry("loader-1");
-        // Empty client set = segment not on client = early return with "new-segment"
-        await resolveLoadersWithRevalidation(
-          entry,
-          makeContext(),
-          true, // belongsToRoute
-          new Set(), // empty clientSegmentIds
-          { id: "0" },
-          new Request("http://localhost/b"),
-          new URL("http://localhost/a"),
-          new URL("http://localhost/b"),
-          "test.route",
-          makeDeps(),
-        );
+          const entry = makeEntry("loader-1");
+          // Empty client set = segment not on client = early return with "new-segment"
+          await resolveLoadersWithRevalidation(
+            entry,
+            makeContext(),
+            true, // belongsToRoute
+            new Set(), // empty clientSegmentIds
+            { id: "0" },
+            new Request("http://localhost/b"),
+            new URL("http://localhost/a"),
+            new URL("http://localhost/b"),
+            "test.route",
+            makeDeps(),
+          );
 
-        return flushRevalidationTrace();
-      },
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(trace).not.toBeNull();
@@ -154,38 +192,40 @@ describe("revalidation trace through segment resolution pipeline", () => {
 
     const segmentId = "L0R0D0.loader-1";
 
-    const trace = await runWithRouterLogContext(
-      {
-        request: new Request("http://localhost/b", { method: "POST" }),
-        transaction: "test",
-      },
-      async () => {
-        startRevalidationTrace({
-          method: "POST",
-          prevUrl: "http://localhost/b",
-          nextUrl: "http://localhost/b",
-          routeKey: "test.route",
-          isAction: true,
-        });
+    const trace = await runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        {
+          request: new Request("http://localhost/b", { method: "POST" }),
+          transaction: "test",
+        },
+        async () => {
+          startRevalidationTrace({
+            method: "POST",
+            prevUrl: "http://localhost/b",
+            nextUrl: "http://localhost/b",
+            routeKey: "test.route",
+            isAction: true,
+          });
 
-        const entry = makeEntry("loader-1");
-        // Segment IS in client set, so it flows through evaluateRevalidation
-        await resolveLoadersWithRevalidation(
-          entry,
-          makeContext(),
-          true,
-          new Set([segmentId]),
-          { id: "1" },
-          new Request("http://localhost/b", { method: "POST" }),
-          new URL("http://localhost/b"),
-          new URL("http://localhost/b"),
-          "test.route",
-          makeDeps(),
-          { actionId: "test-action" },
-        );
+          const entry = makeEntry("loader-1");
+          // Segment IS in client set, so it flows through evaluateRevalidation
+          await resolveLoadersWithRevalidation(
+            entry,
+            makeContext(),
+            true,
+            new Set([segmentId]),
+            { id: "1" },
+            new Request("http://localhost/b", { method: "POST" }),
+            new URL("http://localhost/b"),
+            new URL("http://localhost/b"),
+            "test.route",
+            makeDeps(),
+            { actionId: "test-action" },
+          );
 
-        return flushRevalidationTrace();
-      },
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(trace).not.toBeNull();
@@ -203,53 +243,55 @@ describe("revalidation trace through segment resolution pipeline", () => {
   it("emits both early-return and evaluated entries in one trace", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const trace = await runWithRouterLogContext(
-      { request: new Request("http://localhost/b"), transaction: "test" },
-      async () => {
-        startRevalidationTrace({
-          method: "GET",
-          prevUrl: "http://localhost/a",
-          nextUrl: "http://localhost/b",
-          routeKey: "test.route",
-          isAction: false,
-        });
+    const trace = await runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: new Request("http://localhost/b"), transaction: "test" },
+        async () => {
+          startRevalidationTrace({
+            method: "GET",
+            prevUrl: "http://localhost/a",
+            nextUrl: "http://localhost/b",
+            routeKey: "test.route",
+            isAction: false,
+          });
 
-        // Entry with two loaders
-        const entry: EntryData = {
-          type: "route",
-          shortCode: "L0R0",
-          id: "test-route",
-          handler: null as any,
-          loader: [
-            { loader: { $$id: "loader-A" } as any, revalidate: [] },
-            { loader: { $$id: "loader-B" } as any, revalidate: [] },
-          ],
-          layout: [],
-          parallel: {},
-          intercept: [],
-          revalidate: [],
-          errorBoundary: [],
-          notFoundBoundary: [],
-          middleware: [],
-          handle: [],
-        } as any;
+          // Entry with two loaders
+          const entry: EntryData = {
+            type: "route",
+            shortCode: "L0R0",
+            id: "test-route",
+            handler: null as any,
+            loader: [
+              { loader: { $$id: "loader-A" } as any, revalidate: [] },
+              { loader: { $$id: "loader-B" } as any, revalidate: [] },
+            ],
+            layout: [],
+            parallel: {},
+            intercept: [],
+            revalidate: [],
+            errorBoundary: [],
+            notFoundBoundary: [],
+            middleware: [],
+            handle: [],
+          } as any;
 
-        // Only loader-B is in client set; loader-A will be "new-segment"
-        await resolveLoadersWithRevalidation(
-          entry,
-          makeContext(),
-          true,
-          new Set(["L0R0D1.loader-B"]),
-          { id: "1" },
-          new Request("http://localhost/b"),
-          new URL("http://localhost/a"),
-          new URL("http://localhost/b"),
-          "test.route",
-          makeDeps(),
-        );
+          // Only loader-B is in client set; loader-A will be "new-segment"
+          await resolveLoadersWithRevalidation(
+            entry,
+            makeContext(),
+            true,
+            new Set(["L0R0D1.loader-B"]),
+            { id: "1" },
+            new Request("http://localhost/b"),
+            new URL("http://localhost/a"),
+            new URL("http://localhost/b"),
+            "test.route",
+            makeDeps(),
+          );
 
-        return flushRevalidationTrace();
-      },
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(trace!.entries).toHaveLength(2);

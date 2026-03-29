@@ -1,10 +1,15 @@
 /**
- * Router Context using AsyncLocalStorage
+ * Router Context
  *
  * Provides clean dependency injection for router middleware without parameter drilling.
  * All closure functions from createRouter() are made available via getRouterContext().
+ *
+ * Stored as _router on the canonical request context (derived ALS snapshot).
  */
-import { AsyncLocalStorage } from "async_hooks";
+import {
+  _getRequestContext,
+  _requestContextStorage,
+} from "../server/request-context.js";
 import type { CacheScope } from "../cache/cache-scope.js";
 import type {
   EntryData,
@@ -284,38 +289,39 @@ export interface RouterContext<TEnv = any> {
   } | null>;
 }
 
-// AsyncLocalStorage instance for router context
-const routerContext = new AsyncLocalStorage<RouterContext<any>>();
-
 /**
- * Get router dependencies from AsyncLocalStorage context
+ * Get router dependencies from the canonical request context.
  *
  * @throws Error if called outside of router context (runWithRouterContext)
  */
 export function getRouterContext<TEnv = any>(): RouterContext<TEnv> {
-  const deps = routerContext.getStore();
-  if (!deps) {
+  const ctx = _getRequestContext();
+  const router = ctx?._router;
+  if (!router) {
     throw new Error(
       "getRouterContext() called outside of router context. " +
         "Ensure code is running inside runWithRouterContext().",
     );
   }
-  return deps as RouterContext<TEnv>;
+  return router as RouterContext<TEnv>;
 }
 
 /**
- * Run a function with router dependencies available via getRouterContext()
+ * Run a function with router dependencies available via getRouterContext().
  *
- * All async code within fn() can call getRouterContext() to access router closures.
- * This works across async boundaries thanks to AsyncLocalStorage.
- *
- * @param deps Router dependencies to make available
- * @param fn Function to run with dependencies available
- * @returns Result of fn()
+ * Creates a derived ALS snapshot on the canonical request context with _router set.
+ * Requires an active request context — throws if called outside runWithRequestContext().
  */
 export function runWithRouterContext<T, TEnv = any>(
   deps: RouterContext<TEnv>,
   fn: () => T,
 ): T {
-  return routerContext.run(deps, fn);
+  const ctx = _getRequestContext();
+  if (!ctx) {
+    throw new Error(
+      "runWithRouterContext() called outside of request context. " +
+        "Ensure code is running inside runWithRequestContext().",
+    );
+  }
+  return _requestContextStorage.run({ ...ctx, _router: deps }, fn);
 }

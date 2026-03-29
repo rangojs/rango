@@ -11,6 +11,7 @@ import {
   startRevalidationTrace,
   flushRevalidationTrace,
 } from "../logging.js";
+import { runWithRequestContext } from "../../server/request-context";
 import type { ResolvedSegment, HandlerContext } from "../../types";
 
 function makeSegment(overrides?: Partial<ResolvedSegment>): ResolvedSegment {
@@ -47,35 +48,72 @@ function makeContext(): HandlerContext<any, any> {
   } as any;
 }
 
+function minimalRequestContext(): any {
+  return {
+    env: {},
+    request: new Request("http://localhost/test"),
+    url: new URL("http://localhost/test"),
+    originalUrl: new URL("http://localhost/test"),
+    pathname: "/test",
+    searchParams: new URLSearchParams(),
+    _variables: {},
+    get: () => undefined,
+    set: () => {},
+    params: {},
+    res: new Response(),
+    cookie: () => undefined,
+    cookies: () => ({}),
+    setCookie: () => {},
+    deleteCookie: () => {},
+    header: () => {},
+    setStatus: () => {},
+    _setStatus: () => {},
+    use: () => {
+      throw new Error("not available");
+    },
+    method: "GET",
+    _handleStore: { stream: () => (async function* () {})(), push: () => {} },
+    waitUntil: () => {},
+    onResponse: () => {},
+    _onResponseCallbacks: [],
+    setLocationState: () => {},
+    _reportedErrors: new WeakSet(),
+    reverse: () => "/",
+    _shared: { params: {}, reverse: () => "/" },
+  };
+}
+
 describe("evaluateRevalidation trace integration", () => {
   it("pushes trace entry for default decision (no custom revalidators)", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const trace = await runWithRouterLogContext(
-      { request: new Request("http://localhost/b"), transaction: "test" },
-      async () => {
-        startRevalidationTrace({
-          method: "GET",
-          prevUrl: "http://localhost/a",
-          nextUrl: "http://localhost/b",
-          routeKey: "test.route",
-          isAction: false,
-        });
+    const trace = await runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: new Request("http://localhost/b"), transaction: "test" },
+        async () => {
+          startRevalidationTrace({
+            method: "GET",
+            prevUrl: "http://localhost/a",
+            nextUrl: "http://localhost/b",
+            routeKey: "test.route",
+            isAction: false,
+          });
 
-        await evaluateRevalidation({
-          segment: makeSegment({ type: "route", params: { id: "2" } }),
-          prevParams: { id: "1" },
-          getPrevSegment: null,
-          request: new Request("http://localhost/b"),
-          prevUrl: new URL("http://localhost/a"),
-          nextUrl: new URL("http://localhost/b"),
-          revalidations: [],
-          routeKey: "test.route",
-          context: makeContext(),
-        });
+          await evaluateRevalidation({
+            segment: makeSegment({ type: "route", params: { id: "2" } }),
+            prevParams: { id: "1" },
+            getPrevSegment: null,
+            request: new Request("http://localhost/b"),
+            prevUrl: new URL("http://localhost/a"),
+            nextUrl: new URL("http://localhost/b"),
+            revalidations: [],
+            routeKey: "test.route",
+            context: makeContext(),
+          });
 
-        return flushRevalidationTrace();
-      },
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(trace).not.toBeNull();
@@ -96,31 +134,33 @@ describe("evaluateRevalidation trace integration", () => {
   it("pushes trace entry with hard decision from custom revalidator", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const trace = await runWithRouterLogContext(
-      { request: new Request("http://localhost/b"), transaction: "test" },
-      async () => {
-        startRevalidationTrace({
-          method: "GET",
-          prevUrl: "http://localhost/a",
-          nextUrl: "http://localhost/b",
-          routeKey: "test.route",
-          isAction: false,
-        });
+    const trace = await runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: new Request("http://localhost/b"), transaction: "test" },
+        async () => {
+          startRevalidationTrace({
+            method: "GET",
+            prevUrl: "http://localhost/a",
+            nextUrl: "http://localhost/b",
+            routeKey: "test.route",
+            isAction: false,
+          });
 
-        await evaluateRevalidation({
-          segment: makeSegment({ type: "layout", belongsToRoute: false }),
-          prevParams: {},
-          getPrevSegment: null,
-          request: new Request("http://localhost/b"),
-          prevUrl: new URL("http://localhost/a"),
-          nextUrl: new URL("http://localhost/b"),
-          revalidations: [{ name: "always", fn: () => true }],
-          routeKey: "test.route",
-          context: makeContext(),
-        });
+          await evaluateRevalidation({
+            segment: makeSegment({ type: "layout", belongsToRoute: false }),
+            prevParams: {},
+            getPrevSegment: null,
+            request: new Request("http://localhost/b"),
+            prevUrl: new URL("http://localhost/a"),
+            nextUrl: new URL("http://localhost/b"),
+            revalidations: [{ name: "always", fn: () => true }],
+            routeKey: "test.route",
+            context: makeContext(),
+          });
 
-        return flushRevalidationTrace();
-      },
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(trace!.entries).toHaveLength(1);
@@ -136,32 +176,34 @@ describe("evaluateRevalidation trace integration", () => {
   it("uses traceSource when provided", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const trace = await runWithRouterLogContext(
-      { request: new Request("http://localhost/b"), transaction: "test" },
-      async () => {
-        startRevalidationTrace({
-          method: "GET",
-          prevUrl: "http://localhost/a",
-          nextUrl: "http://localhost/b",
-          routeKey: "test.route",
-          isAction: false,
-        });
+    const trace = await runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: new Request("http://localhost/b"), transaction: "test" },
+        async () => {
+          startRevalidationTrace({
+            method: "GET",
+            prevUrl: "http://localhost/a",
+            nextUrl: "http://localhost/b",
+            routeKey: "test.route",
+            isAction: false,
+          });
 
-        await evaluateRevalidation({
-          segment: makeSegment({ type: "loader", id: "L0D0.loader1" }),
-          prevParams: {},
-          getPrevSegment: null,
-          request: new Request("http://localhost/b"),
-          prevUrl: new URL("http://localhost/a"),
-          nextUrl: new URL("http://localhost/b"),
-          revalidations: [],
-          routeKey: "test.route",
-          context: makeContext(),
-          traceSource: "loader",
-        });
+          await evaluateRevalidation({
+            segment: makeSegment({ type: "loader", id: "L0D0.loader1" }),
+            prevParams: {},
+            getPrevSegment: null,
+            request: new Request("http://localhost/b"),
+            prevUrl: new URL("http://localhost/a"),
+            nextUrl: new URL("http://localhost/b"),
+            revalidations: [],
+            routeKey: "test.route",
+            context: makeContext(),
+            traceSource: "loader",
+          });
 
-        return flushRevalidationTrace();
-      },
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(trace!.entries[0].source).toBe("loader");
@@ -172,54 +214,56 @@ describe("evaluateRevalidation trace integration", () => {
   it("pushes trace entry for POST action revalidation", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const trace = await runWithRouterLogContext(
-      {
-        request: new Request("http://localhost/b", { method: "POST" }),
-        transaction: "test",
-      },
-      async () => {
-        startRevalidationTrace({
-          method: "POST",
-          prevUrl: "http://localhost/b",
-          nextUrl: "http://localhost/b",
-          routeKey: "test.route",
-          isAction: true,
-        });
-
-        // Route segment on POST — default revalidate true
-        await evaluateRevalidation({
-          segment: makeSegment({ type: "route" }),
-          prevParams: { id: "1" },
-          getPrevSegment: null,
+    const trace = await runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        {
           request: new Request("http://localhost/b", { method: "POST" }),
-          prevUrl: new URL("http://localhost/b"),
-          nextUrl: new URL("http://localhost/b"),
-          revalidations: [],
-          routeKey: "test.route",
-          context: makeContext(),
-          actionContext: { actionId: "test-action" },
-        });
+          transaction: "test",
+        },
+        async () => {
+          startRevalidationTrace({
+            method: "POST",
+            prevUrl: "http://localhost/b",
+            nextUrl: "http://localhost/b",
+            routeKey: "test.route",
+            isAction: true,
+          });
 
-        // Layout segment not belonging to route — default revalidate false
-        await evaluateRevalidation({
-          segment: makeSegment({
-            type: "layout",
-            id: "L0",
-            belongsToRoute: false,
-          }),
-          prevParams: { id: "1" },
-          getPrevSegment: null,
-          request: new Request("http://localhost/b", { method: "POST" }),
-          prevUrl: new URL("http://localhost/b"),
-          nextUrl: new URL("http://localhost/b"),
-          revalidations: [],
-          routeKey: "test.route",
-          context: makeContext(),
-          actionContext: { actionId: "test-action" },
-        });
+          // Route segment on POST — default revalidate true
+          await evaluateRevalidation({
+            segment: makeSegment({ type: "route" }),
+            prevParams: { id: "1" },
+            getPrevSegment: null,
+            request: new Request("http://localhost/b", { method: "POST" }),
+            prevUrl: new URL("http://localhost/b"),
+            nextUrl: new URL("http://localhost/b"),
+            revalidations: [],
+            routeKey: "test.route",
+            context: makeContext(),
+            actionContext: { actionId: "test-action" },
+          });
 
-        return flushRevalidationTrace();
-      },
+          // Layout segment not belonging to route — default revalidate false
+          await evaluateRevalidation({
+            segment: makeSegment({
+              type: "layout",
+              id: "L0",
+              belongsToRoute: false,
+            }),
+            prevParams: { id: "1" },
+            getPrevSegment: null,
+            request: new Request("http://localhost/b", { method: "POST" }),
+            prevUrl: new URL("http://localhost/b"),
+            nextUrl: new URL("http://localhost/b"),
+            revalidations: [],
+            routeKey: "test.route",
+            context: makeContext(),
+            actionContext: { actionId: "test-action" },
+          });
+
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(trace!.entries).toHaveLength(2);
@@ -234,36 +278,38 @@ describe("evaluateRevalidation trace integration", () => {
   it("pushes trace with soft-chain reason including revalidator names", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const trace = await runWithRouterLogContext(
-      { request: new Request("http://localhost/b"), transaction: "test" },
-      async () => {
-        startRevalidationTrace({
-          method: "GET",
-          prevUrl: "http://localhost/a",
-          nextUrl: "http://localhost/b",
-          routeKey: "test.route",
-          isAction: false,
-        });
+    const trace = await runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: new Request("http://localhost/b"), transaction: "test" },
+        async () => {
+          startRevalidationTrace({
+            method: "GET",
+            prevUrl: "http://localhost/a",
+            nextUrl: "http://localhost/b",
+            routeKey: "test.route",
+            isAction: false,
+          });
 
-        await evaluateRevalidation({
-          segment: makeSegment({ type: "layout", belongsToRoute: false }),
-          prevParams: {},
-          getPrevSegment: null,
-          request: new Request("http://localhost/b"),
-          prevUrl: new URL("http://localhost/a"),
-          nextUrl: new URL("http://localhost/b"),
-          revalidations: [
-            {
-              name: "myRevalidator",
-              fn: () => ({ defaultShouldRevalidate: true }),
-            },
-          ],
-          routeKey: "test.route",
-          context: makeContext(),
-        });
+          await evaluateRevalidation({
+            segment: makeSegment({ type: "layout", belongsToRoute: false }),
+            prevParams: {},
+            getPrevSegment: null,
+            request: new Request("http://localhost/b"),
+            prevUrl: new URL("http://localhost/a"),
+            nextUrl: new URL("http://localhost/b"),
+            revalidations: [
+              {
+                name: "myRevalidator",
+                fn: () => ({ defaultShouldRevalidate: true }),
+              },
+            ],
+            routeKey: "test.route",
+            context: makeContext(),
+          });
 
-        return flushRevalidationTrace();
-      },
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(trace!.entries[0].reason).toBe("soft-chain:myRevalidator");
@@ -276,31 +322,33 @@ describe("evaluateRevalidation trace integration", () => {
   it("uses nav:params-unchanged when route params don't change", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const trace = await runWithRouterLogContext(
-      { request: new Request("http://localhost/b"), transaction: "test" },
-      async () => {
-        startRevalidationTrace({
-          method: "GET",
-          prevUrl: "http://localhost/a",
-          nextUrl: "http://localhost/b",
-          routeKey: "test.route",
-          isAction: false,
-        });
+    const trace = await runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: new Request("http://localhost/b"), transaction: "test" },
+        async () => {
+          startRevalidationTrace({
+            method: "GET",
+            prevUrl: "http://localhost/a",
+            nextUrl: "http://localhost/b",
+            routeKey: "test.route",
+            isAction: false,
+          });
 
-        await evaluateRevalidation({
-          segment: makeSegment({ type: "route", params: { id: "1" } }),
-          prevParams: { id: "1" },
-          getPrevSegment: null,
-          request: new Request("http://localhost/b"),
-          prevUrl: new URL("http://localhost/a"),
-          nextUrl: new URL("http://localhost/b"),
-          revalidations: [],
-          routeKey: "test.route",
-          context: makeContext(),
-        });
+          await evaluateRevalidation({
+            segment: makeSegment({ type: "route", params: { id: "1" } }),
+            prevParams: { id: "1" },
+            getPrevSegment: null,
+            request: new Request("http://localhost/b"),
+            prevUrl: new URL("http://localhost/a"),
+            nextUrl: new URL("http://localhost/b"),
+            revalidations: [],
+            routeKey: "test.route",
+            context: makeContext(),
+          });
 
-        return flushRevalidationTrace();
-      },
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(trace!.entries[0].reason).toBe("nav:params-unchanged");

@@ -93,6 +93,42 @@ vi.mock("../../errors.js", () => ({
 }));
 
 import { createMatchHandlers } from "../match-handlers.js";
+import { runWithRequestContext } from "../../server/request-context";
+
+function minimalRequestContext(): any {
+  return {
+    env: {},
+    request: new Request("http://localhost/test"),
+    url: new URL("http://localhost/test"),
+    originalUrl: new URL("http://localhost/test"),
+    pathname: "/test",
+    searchParams: new URLSearchParams(),
+    _variables: {},
+    get: () => undefined,
+    set: () => {},
+    params: {},
+    res: new Response(),
+    cookie: () => undefined,
+    cookies: () => ({}),
+    setCookie: () => {},
+    deleteCookie: () => {},
+    header: () => {},
+    setStatus: () => {},
+    _setStatus: () => {},
+    use: () => {
+      throw new Error("not available");
+    },
+    method: "GET",
+    _handleStore: { stream: () => (async function* () {})(), push: () => {} },
+    waitUntil: () => {},
+    onResponse: () => {},
+    _onResponseCallbacks: [],
+    setLocationState: () => {},
+    _reportedErrors: new WeakSet(),
+    reverse: () => "/",
+    _shared: { params: {}, reverse: () => "/" },
+  };
+}
 
 function makeDeps(): any {
   return {
@@ -114,9 +150,8 @@ describe("matchPartial trace wiring", () => {
   it("calls startRevalidationTrace before pipeline and flushRevalidationTrace after", async () => {
     const handlers = createMatchHandlers(makeDeps());
 
-    const result = await handlers.matchPartial(
-      new Request("http://localhost/b"),
-      {},
+    const result = await runWithRequestContext(minimalRequestContext(), () =>
+      handlers.matchPartial(new Request("http://localhost/b"), {}),
     );
 
     expect(result).not.toBeNull();
@@ -143,7 +178,9 @@ describe("matchPartial trace wiring", () => {
     const handlers = createMatchHandlers(deps);
 
     await expect(
-      handlers.matchPartial(new Request("http://localhost/b"), {}),
+      runWithRequestContext(minimalRequestContext(), () =>
+        handlers.matchPartial(new Request("http://localhost/b"), {}),
+      ),
     ).rejects.toThrow("test pipeline error");
 
     expect(startSpy).toHaveBeenCalledTimes(1);
@@ -154,10 +191,12 @@ describe("matchPartial trace wiring", () => {
   it("passes isAction=true when actionContext provided", async () => {
     const handlers = createMatchHandlers(makeDeps());
 
-    await handlers.matchPartial(
-      new Request("http://localhost/b", { method: "POST" }),
-      {},
-      { actionId: "test-action" },
+    await runWithRequestContext(minimalRequestContext(), () =>
+      handlers.matchPartial(
+        new Request("http://localhost/b", { method: "POST" }),
+        {},
+        { actionId: "test-action" },
+      ),
     );
 
     expect(startSpy).toHaveBeenCalledTimes(1);
@@ -171,9 +210,8 @@ describe("matchPartial trace wiring", () => {
 
     const handlers = createMatchHandlers(makeDeps());
 
-    const result = await handlers.matchPartial(
-      new Request("http://localhost/b"),
-      {},
+    const result = await runWithRequestContext(minimalRequestContext(), () =>
+      handlers.matchPartial(new Request("http://localhost/b"), {}),
     );
 
     expect(result).toBeNull();

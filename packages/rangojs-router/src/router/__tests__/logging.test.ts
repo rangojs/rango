@@ -1,10 +1,47 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { runWithRequestContext } from "../../server/request-context";
 
 // Enable debug mode before importing logging module
 vi.stubEnv("INTERNAL_RANGO_DEBUG", "1");
 
 const { runWithRouterLogContext, withRouterLogScope } =
   await import("../logging");
+
+// Minimal request context for tests
+function minimalRequestContext(): any {
+  return {
+    env: {},
+    request: new Request("http://localhost/test"),
+    url: new URL("http://localhost/test"),
+    originalUrl: new URL("http://localhost/test"),
+    pathname: "/test",
+    searchParams: new URLSearchParams(),
+    _variables: {},
+    get: () => undefined,
+    set: () => {},
+    params: {},
+    res: new Response(),
+    cookie: () => undefined,
+    cookies: () => ({}),
+    setCookie: () => {},
+    deleteCookie: () => {},
+    header: () => {},
+    setStatus: () => {},
+    _setStatus: () => {},
+    use: () => {
+      throw new Error("not available");
+    },
+    method: "GET",
+    _handleStore: { stream: () => (async function* () {})(), push: () => {} },
+    waitUntil: () => {},
+    onResponse: () => {},
+    _onResponseCallbacks: [],
+    setLocationState: () => {},
+    _reportedErrors: new WeakSet(),
+    reverse: () => "/",
+    _shared: { params: {}, reverse: () => "/" },
+  };
+}
 
 describe("withRouterLogScope", () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -19,7 +56,9 @@ describe("withRouterLogScope", () => {
 
   function withinLogContext<T>(fn: () => T): T {
     const req = new Request("http://localhost/test");
-    return runWithRouterLogContext({ request: req, transaction: "test" }, fn);
+    return runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext({ request: req, transaction: "test" }, fn),
+    );
   }
 
   function logMessages(): string[] {

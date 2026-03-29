@@ -71,73 +71,79 @@ export async function matchForPrerender<TEnv = any>(
   const matchedParams = matched.params ?? params;
   const matchedPassthroughRoute = isPassthroughRoute ?? matched.pt === true;
 
-  // Build RouterContext for loadManifest/traverseBack
+  // Build RouterContext for segment resolution
   const routerCtx = deps.buildRouterContext();
 
-  return runWithRouterContext(routerCtx, async () => {
-    // 2. Load the manifest entry tree
-    const manifestEntry = await loadManifest(
-      matched.entry,
+  // 2. Load the manifest entry tree (does not need ALS)
+  const manifestEntry = await loadManifest(
+    matched.entry,
+    matched.routeKey,
+    pathname,
+    undefined,
+    false,
+  );
+
+  // 3. Build ancestor chain [root, ..., route]
+  const entries: EntryData[] = [];
+  for (const entry of traverseBack(manifestEntry)) {
+    entries.push(entry);
+  }
+
+  // 4. Create handle store for collecting handle data
+  const handleStore = createHandleStore();
+
+  // 5. Create a minimal request context with the handle store
+  // Shallow-copy getParams vars so each param set is independent
+  const variables: Record<string, any> = buildVars ? { ...buildVars } : {};
+  const stubRes = new Response(null, { status: 200 });
+  const minimalRequestContext: RequestContext<TEnv> = {
+    env: {} as TEnv,
+    request: new Request("http://prerender" + pathname),
+    url: new URL("http://prerender" + pathname),
+    originalUrl: new URL("http://prerender" + pathname),
+    pathname,
+    searchParams: new URLSearchParams(),
+    _variables: variables,
+    get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
+    set: ((keyOrVar: any, value: any) => {
+      contextSet(variables, keyOrVar, value);
+    }) as any,
+    params: matchedParams,
+    res: stubRes,
+    cookie: () => undefined,
+    cookies: () => ({}),
+    setCookie: () => {},
+    deleteCookie: () => {},
+    header: () => {},
+    setStatus: () => {},
+    _setStatus: () => {},
+    use: (() => {
+      throw new Error("use() not available during pre-rendering");
+    }) as any,
+    method: "GET",
+    _handleStore: handleStore,
+    waitUntil: () => {},
+    onResponse: () => {},
+    _onResponseCallbacks: [],
+    setLocationState() {},
+    _locationState: undefined,
+    _reportedErrors: new WeakSet<object>(),
+    reverse: createReverseFunction(
+      deps.mergedRouteMap,
       matched.routeKey,
-      pathname,
-      undefined,
-      false,
-    );
-
-    // 3. Build ancestor chain [root, ..., route]
-    const entries: EntryData[] = [];
-    for (const entry of traverseBack(manifestEntry)) {
-      entries.push(entry);
-    }
-
-    // 4. Create handle store for collecting handle data
-    const handleStore = createHandleStore();
-
-    // 5. Create a minimal request context with the handle store
-    // Shallow-copy getParams vars so each param set is independent
-    const variables: Record<string, any> = buildVars ? { ...buildVars } : {};
-    const stubRes = new Response(null, { status: 200 });
-    const minimalRequestContext: RequestContext<TEnv> = {
-      env: {} as TEnv,
-      request: new Request("http://prerender" + pathname),
-      url: new URL("http://prerender" + pathname),
-      originalUrl: new URL("http://prerender" + pathname),
-      pathname,
-      searchParams: new URLSearchParams(),
-      _variables: variables,
-      get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
-      set: ((keyOrVar: any, value: any) => {
-        contextSet(variables, keyOrVar, value);
-      }) as any,
+      matchedParams,
+      matched.routeKey ? isRouteRootScoped(matched.routeKey) : undefined,
+    ),
+    _shared: {
       params: matchedParams,
-      res: stubRes,
-      cookie: () => undefined,
-      cookies: () => ({}),
-      setCookie: () => {},
-      deleteCookie: () => {},
-      header: () => {},
-      setStatus: () => {},
-      _setStatus: () => {},
-      use: (() => {
-        throw new Error("use() not available during pre-rendering");
-      }) as any,
-      method: "GET",
-      _handleStore: handleStore,
-      waitUntil: () => {},
-      onResponse: () => {},
-      _onResponseCallbacks: [],
-      setLocationState() {},
-      _locationState: undefined,
-      _reportedErrors: new WeakSet<object>(),
-      reverse: createReverseFunction(
-        deps.mergedRouteMap,
-        matched.routeKey,
-        matchedParams,
-        matched.routeKey ? isRouteRootScoped(matched.routeKey) : undefined,
-      ),
-    };
+      reverse: undefined as any,
+    },
+  };
+  minimalRequestContext._shared.reverse = minimalRequestContext.reverse;
 
-    return runWithRequestContext(minimalRequestContext, async () => {
+  // Enter request context first, then router context (derived snapshot)
+  return runWithRequestContext(minimalRequestContext, () =>
+    runWithRouterContext(routerCtx, async () => {
       // 6. Create prerender context with synthetic URL.
       // Prerender handlers get params, pathname, url, searchParams, search,
       // reverse, and use(handle) — but no request, env, headers, or cookies.
@@ -305,8 +311,8 @@ export async function matchForPrerender<TEnv = any>(
         interceptSegments,
         interceptHandles,
       };
-    });
-  });
+    }),
+  );
 }
 
 /**
@@ -365,7 +371,9 @@ export async function renderStaticSegment<TEnv = any>(
       {},
       routeName ? isRouteRootScoped(routeName) : undefined,
     ),
+    _shared: { params: {}, reverse: undefined as any },
   };
+  minimalRequestContext._shared.reverse = minimalRequestContext.reverse;
 
   return runWithRequestContext(minimalRequestContext, async () => {
     // Static handlers get only reverse and use(handle) — no URL, params,

@@ -671,14 +671,15 @@ export function track(label: string, depth?: number): () => void {
 }
 
 /**
- * Separate ALS for tracking loader execution scope.
- * Uses a dedicated ALS (not RSCRouterContext) to avoid issues with
- * nested RSCRouterContext.run() calls in Vite's module runner.
+ * Access the request context ALS without importing request-context.ts
+ * (avoids circular dependency). The ALS is registered on globalThis
+ * by request-context.ts at module load time.
  */
-const LOADER_SCOPE_KEY = Symbol.for("rangojs-router:loader-scope");
-const loaderScopeALS: AsyncLocalStorage<{ active: true }> = ((
-  globalThis as any
-)[LOADER_SCOPE_KEY] ??= new AsyncLocalStorage<{ active: true }>());
+const REQUEST_CONTEXT_KEY = Symbol.for("rangojs-router:request-context");
+
+function getReqCtxStorage(): AsyncLocalStorage<any> | undefined {
+  return (globalThis as any)[REQUEST_CONTEXT_KEY];
+}
 
 /**
  * Check if the current execution is inside a cache() DSL boundary.
@@ -687,10 +688,8 @@ const loaderScopeALS: AsyncLocalStorage<{ active: true }> = ((
  */
 export function isInsideCacheScope(): boolean {
   if (RSCRouterContext.getStore()?.insideCacheScope !== true) return false;
-  // Loaders are always fresh — even inside a cache() boundary, the loader
-  // function re-executes on every request. Skip the guard when running
-  // inside a loader.
-  if (loaderScopeALS.getStore()?.active) return false;
+  const reqCtx = getReqCtxStorage()?.getStore();
+  if (reqCtx?._isInsideLoader) return false;
   return true;
 }
 
@@ -698,7 +697,12 @@ export function isInsideCacheScope(): boolean {
  * Run `fn` inside a loader scope. While active, cache-scope guards
  * are bypassed because loaders are always fresh (never cached) and
  * their side effects (setCookie, header, etc.) are safe.
+ *
+ * Creates a derived ALS snapshot so parallel loaders don't interfere.
  */
 export function runInsideLoaderScope<T>(fn: () => T): T {
-  return loaderScopeALS.run({ active: true }, fn);
+  const storage = getReqCtxStorage();
+  const ctx = storage?.getStore();
+  if (!ctx) return fn();
+  return storage!.run({ ...ctx, _isInsideLoader: true }, fn);
 }

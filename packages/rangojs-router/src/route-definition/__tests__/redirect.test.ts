@@ -62,9 +62,11 @@ describe("redirect()", () => {
         });
       });
 
-      expect(ctx._locationState).toHaveLength(1);
-      expect(ctx._locationState![0].__rsc_ls_key).toBe("flash");
-      expect(ctx._locationState![0].__rsc_ls_value).toEqual({ text: "saved" });
+      expect(ctx._shared._locationState).toHaveLength(1);
+      expect(ctx._shared._locationState![0].__rsc_ls_key).toBe("flash");
+      expect(ctx._shared._locationState![0].__rsc_ls_value).toEqual({
+        text: "saved",
+      });
     });
 
     it("accumulates multiple state entries", () => {
@@ -74,9 +76,9 @@ describe("redirect()", () => {
         });
       });
 
-      expect(ctx._locationState).toHaveLength(2);
-      expect(ctx._locationState![0].__rsc_ls_key).toBe("flash");
-      expect(ctx._locationState![1].__rsc_ls_key).toBe("info");
+      expect(ctx._shared._locationState).toHaveLength(2);
+      expect(ctx._shared._locationState![0].__rsc_ls_key).toBe("flash");
+      expect(ctx._shared._locationState![1].__rsc_ls_key).toBe("info");
     });
 
     it("state is readable via getLocationState() inside context", () => {
@@ -96,7 +98,7 @@ describe("redirect()", () => {
         redirect("/target");
       });
 
-      expect(ctx._locationState).toBeUndefined();
+      expect(ctx._shared._locationState).toBeUndefined();
     });
   });
 
@@ -111,7 +113,7 @@ describe("redirect()", () => {
       });
 
       // State is still set even though the warning fires
-      expect(ctx._locationState).toHaveLength(1);
+      expect(ctx._shared._locationState).toHaveLength(1);
       expect(spy).toHaveBeenCalledOnce();
       expect(spy.mock.calls[0][0]).toContain("full-page (SSR) request");
     });
@@ -128,7 +130,7 @@ describe("redirect()", () => {
         },
       );
 
-      expect(ctx._locationState).toHaveLength(1);
+      expect(ctx._shared._locationState).toHaveLength(1);
       expect(spy).not.toHaveBeenCalled();
     });
 
@@ -147,7 +149,7 @@ describe("redirect()", () => {
         },
       );
 
-      expect(ctx._locationState).toHaveLength(1);
+      expect(ctx._shared._locationState).toHaveLength(1);
       expect(spy).not.toHaveBeenCalled();
     });
 
@@ -163,7 +165,7 @@ describe("redirect()", () => {
         },
       );
 
-      expect(ctx._locationState).toHaveLength(1);
+      expect(ctx._shared._locationState).toHaveLength(1);
       expect(spy).not.toHaveBeenCalled();
     });
 

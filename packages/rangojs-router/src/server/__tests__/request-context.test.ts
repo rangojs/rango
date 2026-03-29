@@ -399,7 +399,7 @@ describe("RequestContext", () => {
         __rsc_ls_value: { text: "hello" },
       });
 
-      expect(ctx._locationState).toEqual([
+      expect(ctx._shared._locationState).toEqual([
         { __rsc_ls_key: "flash", __rsc_ls_value: { text: "hello" } },
       ]);
     });
@@ -417,7 +417,7 @@ describe("RequestContext", () => {
         { __rsc_ls_key: "b", __rsc_ls_value: 2 },
       ]);
 
-      expect(ctx._locationState).toEqual([
+      expect(ctx._shared._locationState).toEqual([
         { __rsc_ls_key: "a", __rsc_ls_value: 1 },
         { __rsc_ls_key: "b", __rsc_ls_value: 2 },
       ]);
@@ -440,7 +440,7 @@ describe("RequestContext", () => {
         { __rsc_ls_key: "third", __rsc_ls_value: "three" },
       ]);
 
-      expect(ctx._locationState).toEqual([
+      expect(ctx._shared._locationState).toEqual([
         { __rsc_ls_key: "first", __rsc_ls_value: "one" },
         { __rsc_ls_key: "second", __rsc_ls_value: "two" },
         { __rsc_ls_key: "third", __rsc_ls_value: "three" },

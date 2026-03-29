@@ -26,10 +26,17 @@ vi.mock("../router-context.js", () => ({
   runWithRouterContext: (_ctx: any, fn: any) => fn(),
 }));
 
-// Mock request-context
+// Mock request-context with real ALS so runWithRouterLogContext can create derived snapshots
+const { _mockRequestContextStorage } = vi.hoisted(() => {
+  const { AsyncLocalStorage } = require("node:async_hooks");
+  return { _mockRequestContextStorage: new AsyncLocalStorage() };
+});
 vi.mock("../../server/request-context.js", () => ({
-  getRequestContext: () => undefined,
-  _getRequestContext: () => undefined,
+  getRequestContext: () => _mockRequestContextStorage.getStore(),
+  _getRequestContext: () => _mockRequestContextStorage.getStore(),
+  _requestContextStorage: _mockRequestContextStorage,
+  runWithRequestContext: (ctx: any, fn: any) =>
+    _mockRequestContextStorage.run(ctx, fn),
 }));
 
 import { withCacheLookup } from "../match-middleware/cache-lookup.js";
@@ -38,6 +45,7 @@ import {
   startRevalidationTrace,
   flushRevalidationTrace,
 } from "../logging.js";
+import { runWithRequestContext } from "../../server/request-context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import type { ResolvedSegment } from "../../types.js";
 
@@ -109,6 +117,41 @@ function makeState(): MatchPipelineState {
   } as any;
 }
 
+function minimalRequestContext(): any {
+  return {
+    env: {},
+    request: new Request("http://localhost/test"),
+    url: new URL("http://localhost/test"),
+    originalUrl: new URL("http://localhost/test"),
+    pathname: "/test",
+    searchParams: new URLSearchParams(),
+    _variables: {},
+    get: () => undefined,
+    set: () => {},
+    params: {},
+    res: new Response(),
+    cookie: () => undefined,
+    cookies: () => ({}),
+    setCookie: () => {},
+    deleteCookie: () => {},
+    header: () => {},
+    setStatus: () => {},
+    _setStatus: () => {},
+    use: () => {
+      throw new Error("not available");
+    },
+    method: "GET",
+    _handleStore: { stream: () => (async function* () {})(), push: () => {} },
+    waitUntil: () => {},
+    onResponse: () => {},
+    _onResponseCallbacks: [],
+    setLocationState: () => {},
+    _reportedErrors: new WeakSet(),
+    reverse: () => "/",
+    _shared: { params: {}, reverse: () => "/" },
+  };
+}
+
 async function collect<T>(gen: AsyncGenerator<T>): Promise<T[]> {
   const results: T[] = [];
   for await (const item of gen) {
@@ -129,22 +172,24 @@ describe("cache-hit trace entries", () => {
     const ctx = makeCtx([], [seg]); // client has no segments
     const state = makeState();
 
-    const trace = await runWithRouterLogContext(
-      { request: ctx.request, transaction: "test" },
-      async () => {
-        startRevalidationTrace({
-          method: "GET",
-          prevUrl: "http://localhost/a",
-          nextUrl: "http://localhost/b",
-          routeKey: "test.route",
-          isAction: false,
-        });
+    const trace = await runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: ctx.request, transaction: "test" },
+        async () => {
+          startRevalidationTrace({
+            method: "GET",
+            prevUrl: "http://localhost/a",
+            nextUrl: "http://localhost/b",
+            routeKey: "test.route",
+            isAction: false,
+          });
 
-        const middleware = withCacheLookup(ctx, state);
-        await collect(middleware(empty()));
+          const middleware = withCacheLookup(ctx, state);
+          await collect(middleware(empty()));
 
-        return flushRevalidationTrace();
-      },
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(trace).not.toBeNull();
@@ -165,22 +210,24 @@ describe("cache-hit trace entries", () => {
     const ctx = makeCtx(["L0"], [seg]); // client HAS this segment
     const state = makeState();
 
-    const trace = await runWithRouterLogContext(
-      { request: ctx.request, transaction: "test" },
-      async () => {
-        startRevalidationTrace({
-          method: "GET",
-          prevUrl: "http://localhost/a",
-          nextUrl: "http://localhost/b",
-          routeKey: "test.route",
-          isAction: false,
-        });
+    const trace = await runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: ctx.request, transaction: "test" },
+        async () => {
+          startRevalidationTrace({
+            method: "GET",
+            prevUrl: "http://localhost/a",
+            nextUrl: "http://localhost/b",
+            routeKey: "test.route",
+            isAction: false,
+          });
 
-        const middleware = withCacheLookup(ctx, state);
-        await collect(middleware(empty()));
+          const middleware = withCacheLookup(ctx, state);
+          await collect(middleware(empty()));
 
-        return flushRevalidationTrace();
-      },
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(trace).not.toBeNull();
@@ -203,22 +250,24 @@ describe("cache-hit trace entries", () => {
     const ctx = makeCtx(["R0"], [segNew, segCached]);
     const state = makeState();
 
-    const trace = await runWithRouterLogContext(
-      { request: ctx.request, transaction: "test" },
-      async () => {
-        startRevalidationTrace({
-          method: "GET",
-          prevUrl: "http://localhost/a",
-          nextUrl: "http://localhost/b",
-          routeKey: "test.route",
-          isAction: false,
-        });
+    const trace = await runWithRequestContext(minimalRequestContext(), () =>
+      runWithRouterLogContext(
+        { request: ctx.request, transaction: "test" },
+        async () => {
+          startRevalidationTrace({
+            method: "GET",
+            prevUrl: "http://localhost/a",
+            nextUrl: "http://localhost/b",
+            routeKey: "test.route",
+            isAction: false,
+          });
 
-        const middleware = withCacheLookup(ctx, state);
-        await collect(middleware(empty()));
+          const middleware = withCacheLookup(ctx, state);
+          await collect(middleware(empty()));
 
-        return flushRevalidationTrace();
-      },
+          return flushRevalidationTrace();
+        },
+      ),
     );
 
     expect(trace!.entries).toHaveLength(2);

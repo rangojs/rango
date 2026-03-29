@@ -7,6 +7,7 @@ import {
   resolveOrphanLayoutWithRevalidation,
 } from "../segment-resolution";
 import type { TelemetrySink, TelemetryEvent } from "../telemetry";
+import { runWithRequestContext } from "../../server/request-context";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -114,6 +115,41 @@ function minimalRouterCtx(telemetry?: TelemetrySink) {
   } as any;
 }
 
+function minimalRequestContext(): any {
+  return {
+    env: {},
+    request: new Request("http://localhost/test"),
+    url: new URL("http://localhost/test"),
+    originalUrl: new URL("http://localhost/test"),
+    pathname: "/test",
+    searchParams: new URLSearchParams(),
+    _variables: {},
+    get: () => undefined,
+    set: () => {},
+    params: {},
+    res: new Response(),
+    cookie: () => undefined,
+    cookies: () => ({}),
+    setCookie: () => {},
+    deleteCookie: () => {},
+    header: () => {},
+    setStatus: () => {},
+    _setStatus: () => {},
+    use: () => {
+      throw new Error("not available");
+    },
+    method: "GET",
+    _handleStore: { stream: () => (async function* () {})(), push: () => {} },
+    waitUntil: () => {},
+    onResponse: () => {},
+    _onResponseCallbacks: [],
+    setLocationState: () => {},
+    _reportedErrors: new WeakSet(),
+    reverse: () => "/",
+    _shared: { params: {}, reverse: () => "/" },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -132,24 +168,26 @@ describe("streamed handler telemetry (handler.error emission)", () => {
       const handlerError = new Error("route handler boom");
       const entry = createRouteEntry(() => Promise.reject(handlerError));
 
-      await runWithRouterContext(minimalRouterCtx(sink), async () => {
-        const segments = await resolveSegment(
-          entry,
-          "blog",
-          { slug: "hello" },
-          ctx,
-          new Map(),
-          deps,
-        );
+      await runWithRequestContext(minimalRequestContext(), () =>
+        runWithRouterContext(minimalRouterCtx(sink), async () => {
+          const segments = await resolveSegment(
+            entry,
+            "blog",
+            { slug: "hello" },
+            ctx,
+            new Map(),
+            deps,
+          );
 
-        // The component is the rejecting promise (streamed, not awaited)
-        const routeSeg = segments.find((s) => s.type === "route");
-        expect(routeSeg).toBeDefined();
-        expect(routeSeg!.component).toBeInstanceOf(Promise);
+          // The component is the rejecting promise (streamed, not awaited)
+          const routeSeg = segments.find((s) => s.type === "route");
+          expect(routeSeg).toBeDefined();
+          expect(routeSeg!.component).toBeInstanceOf(Promise);
 
-        // Let the .catch() handler run
-        await new Promise((r) => setTimeout(r, 10));
-      });
+          // Let the .catch() handler run
+          await new Promise((r) => setTimeout(r, 10));
+        }),
+      );
 
       const handlerEvents = events.filter((e) => e.type === "handler.error");
       expect(handlerEvents).toHaveLength(1);
@@ -168,20 +206,22 @@ describe("streamed handler telemetry (handler.error emission)", () => {
       const deps = createDeps();
       const entry = createRouteEntry(() => Promise.reject(new Error("boom")));
 
-      await runWithRouterContext(minimalRouterCtx(undefined), async () => {
-        const segments = await resolveSegment(
-          entry,
-          "blog",
-          {},
-          ctx,
-          new Map(),
-          deps,
-        );
-        const routeSeg = segments.find((s) => s.type === "route");
-        expect(routeSeg).toBeDefined();
-        // Let any potential .catch() run
-        await new Promise((r) => setTimeout(r, 10));
-      });
+      await runWithRequestContext(minimalRequestContext(), () =>
+        runWithRouterContext(minimalRouterCtx(undefined), async () => {
+          const segments = await resolveSegment(
+            entry,
+            "blog",
+            {},
+            ctx,
+            new Map(),
+            deps,
+          );
+          const routeSeg = segments.find((s) => s.type === "route");
+          expect(routeSeg).toBeDefined();
+          // Let any potential .catch() run
+          await new Promise((r) => setTimeout(r, 10));
+        }),
+      );
       // No crash — the key assertion is that we reach here without error
     });
   });
@@ -197,24 +237,26 @@ describe("streamed handler telemetry (handler.error emission)", () => {
         Promise.reject(slotError),
       );
 
-      await runWithRouterContext(minimalRouterCtx(sink), async () => {
-        const segments = await resolveParallelEntry(
-          parallelEntry,
-          { slug: "hello" },
-          ctx,
-          false,
-          "L0",
-          deps,
-          undefined,
-          "blog",
-        );
+      await runWithRequestContext(minimalRequestContext(), () =>
+        runWithRouterContext(minimalRouterCtx(sink), async () => {
+          const segments = await resolveParallelEntry(
+            parallelEntry,
+            { slug: "hello" },
+            ctx,
+            false,
+            "L0",
+            deps,
+            undefined,
+            "blog",
+          );
 
-        const parallelSeg = segments.find((s) => s.type === "parallel");
-        expect(parallelSeg).toBeDefined();
-        expect(parallelSeg!.component).toBeInstanceOf(Promise);
+          const parallelSeg = segments.find((s) => s.type === "parallel");
+          expect(parallelSeg).toBeDefined();
+          expect(parallelSeg!.component).toBeInstanceOf(Promise);
 
-        await new Promise((r) => setTimeout(r, 10));
-      });
+          await new Promise((r) => setTimeout(r, 10));
+        }),
+      );
 
       const handlerEvents = events.filter((e) => e.type === "handler.error");
       expect(handlerEvents).toHaveLength(1);
@@ -241,27 +283,31 @@ describe("streamed handler telemetry (handler.error emission)", () => {
       );
       const layoutEntry = createLayoutEntry([parallelEntry]);
 
-      await runWithRouterContext(minimalRouterCtx(sink), async () => {
-        const result = await resolveParallelSegmentsWithRevalidation(
-          layoutEntry,
-          { slug: "hello" },
-          ctx,
-          false,
-          new Set<string>(),
-          {},
-          ctx.request,
-          ctx.url,
-          ctx.url,
-          "blog",
-          deps,
-        );
+      await runWithRequestContext(minimalRequestContext(), () =>
+        runWithRouterContext(minimalRouterCtx(sink), async () => {
+          const result = await resolveParallelSegmentsWithRevalidation(
+            layoutEntry,
+            { slug: "hello" },
+            ctx,
+            false,
+            new Set<string>(),
+            {},
+            ctx.request,
+            ctx.url,
+            ctx.url,
+            "blog",
+            deps,
+          );
 
-        const parallelSeg = result.segments.find((s) => s.type === "parallel");
-        expect(parallelSeg).toBeDefined();
-        expect(parallelSeg!.component).toBeInstanceOf(Promise);
+          const parallelSeg = result.segments.find(
+            (s) => s.type === "parallel",
+          );
+          expect(parallelSeg).toBeDefined();
+          expect(parallelSeg!.component).toBeInstanceOf(Promise);
 
-        await new Promise((r) => setTimeout(r, 10));
-      });
+          await new Promise((r) => setTimeout(r, 10));
+        }),
+      );
 
       const handlerEvents = events.filter((e) => e.type === "handler.error");
       expect(handlerEvents).toHaveLength(1);
@@ -297,28 +343,32 @@ describe("streamed handler telemetry (handler.error emission)", () => {
         notFoundBoundary: [],
       } as any;
 
-      await runWithRouterContext(minimalRouterCtx(sink), async () => {
-        const result = await resolveOrphanLayoutWithRevalidation(
-          orphan,
-          { slug: "hello" },
-          ctx,
-          new Set<string>(),
-          {},
-          ctx.request,
-          ctx.url,
-          ctx.url,
-          "blog",
-          new Map(),
-          false,
-          deps,
-        );
+      await runWithRequestContext(minimalRequestContext(), () =>
+        runWithRouterContext(minimalRouterCtx(sink), async () => {
+          const result = await resolveOrphanLayoutWithRevalidation(
+            orphan,
+            { slug: "hello" },
+            ctx,
+            new Set<string>(),
+            {},
+            ctx.request,
+            ctx.url,
+            ctx.url,
+            "blog",
+            new Map(),
+            false,
+            deps,
+          );
 
-        const parallelSeg = result.segments.find((s) => s.type === "parallel");
-        expect(parallelSeg).toBeDefined();
-        expect(parallelSeg!.component).toBeInstanceOf(Promise);
+          const parallelSeg = result.segments.find(
+            (s) => s.type === "parallel",
+          );
+          expect(parallelSeg).toBeDefined();
+          expect(parallelSeg!.component).toBeInstanceOf(Promise);
 
-        await new Promise((r) => setTimeout(r, 10));
-      });
+          await new Promise((r) => setTimeout(r, 10));
+        }),
+      );
 
       const handlerEvents = events.filter((e) => e.type === "handler.error");
       expect(handlerEvents).toHaveLength(1);
@@ -342,17 +392,19 @@ describe("streamed handler telemetry (handler.error emission)", () => {
         Promise.reject(new Error("context test")),
       );
 
-      await runWithRouterContext(minimalRouterCtx(sink), async () => {
-        await resolveSegment(
-          entry,
-          "products.detail",
-          { id: "42" },
-          ctx,
-          new Map(),
-          deps,
-        );
-        await new Promise((r) => setTimeout(r, 10));
-      });
+      await runWithRequestContext(minimalRequestContext(), () =>
+        runWithRouterContext(minimalRouterCtx(sink), async () => {
+          await resolveSegment(
+            entry,
+            "products.detail",
+            { id: "42" },
+            ctx,
+            new Map(),
+            deps,
+          );
+          await new Promise((r) => setTimeout(r, 10));
+        }),
+      );
 
       const evt = events.find((e) => e.type === "handler.error") as any;
       expect(evt).toBeDefined();
