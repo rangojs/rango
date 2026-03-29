@@ -265,10 +265,78 @@ export function extractUrlsFromRouter(
   return result;
 }
 
+/**
+ * Extract the `basename` string literal from createRouter({ basename: "..." }).
+ * Returns the basename value or undefined if not present.
+ */
+export function extractBasenameFromRouter(code: string): string | undefined {
+  const sourceFile = ts.createSourceFile(
+    "router.tsx",
+    code,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  let result: string | undefined;
+
+  function visit(node: ts.Node) {
+    if (result !== undefined) return;
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "createRouter"
+    ) {
+      for (const arg of node.arguments) {
+        if (ts.isObjectLiteralExpression(arg)) {
+          for (const prop of arg.properties) {
+            if (
+              ts.isPropertyAssignment(prop) &&
+              ts.isIdentifier(prop.name) &&
+              prop.name.text === "basename" &&
+              ts.isStringLiteral(prop.initializer)
+            ) {
+              result = prop.initializer.text;
+              return;
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return result;
+}
+
 /** @deprecated Use extractUrlsFromRouter instead */
 export function extractUrlsVariableFromRouter(code: string): string | null {
   const result = extractUrlsFromRouter(code);
   return result?.kind === "variable" ? result.name : null;
+}
+
+/** Apply a basename prefix to all route patterns in a result set. */
+function applyBasenameToRoutes(
+  result: {
+    routes: Record<string, string>;
+    searchSchemas: Record<string, Record<string, string>>;
+  },
+  basename: string,
+): {
+  routes: Record<string, string>;
+  searchSchemas: Record<string, Record<string, string>>;
+} {
+  const prefixed: Record<string, string> = {};
+  for (const [name, pattern] of Object.entries(result.routes)) {
+    if (pattern === "/") {
+      prefixed[name] = basename;
+    } else if (basename.endsWith("/") && pattern.startsWith("/")) {
+      prefixed[name] = basename + pattern.slice(1);
+    } else {
+      prefixed[name] = basename + pattern;
+    }
+  }
+  return { routes: prefixed, searchSchemas: result.searchSchemas };
 }
 
 /**
@@ -292,28 +360,49 @@ export function buildCombinedRouteMapForRouterFile(routerFilePath: string): {
     return { routes: {}, searchSchemas: {} };
   }
 
+  // Detect basename from createRouter({ basename: "..." })
+  const rawBasename = extractBasenameFromRouter(routerSource);
+  const basename = rawBasename
+    ? ("/" + rawBasename.replace(/^\/+|\/+$/g, "")).replace(/^\/$/, "")
+    : undefined;
+
+  let result: {
+    routes: Record<string, string>;
+    searchSchemas: Record<string, Record<string, string>>;
+  };
+
   // Inline builder: extract routes directly from the function body
   if (extraction.kind === "inline") {
-    return buildCombinedRouteMapWithSearch(
+    result = buildCombinedRouteMapWithSearch(
       routerFilePath,
       undefined,
       undefined,
       undefined,
       extraction.block,
     );
-  }
-
-  // Variable reference: follow imports or same-file declaration
-  const imported = resolveImportedVariable(routerSource, extraction.name);
-  if (imported) {
-    const targetFile = resolveImportPath(imported.specifier, routerFilePath);
-    if (!targetFile) {
-      return { routes: {}, searchSchemas: {} };
+  } else {
+    // Variable reference: follow imports or same-file declaration
+    const imported = resolveImportedVariable(routerSource, extraction.name);
+    if (imported) {
+      const targetFile = resolveImportPath(imported.specifier, routerFilePath);
+      if (!targetFile) {
+        return { routes: {}, searchSchemas: {} };
+      }
+      result = buildCombinedRouteMapWithSearch(
+        targetFile,
+        imported.exportedName,
+      );
+    } else {
+      result = buildCombinedRouteMapWithSearch(routerFilePath, extraction.name);
     }
-    return buildCombinedRouteMapWithSearch(targetFile, imported.exportedName);
   }
 
-  return buildCombinedRouteMapWithSearch(routerFilePath, extraction.name);
+  // Apply basename prefix to all extracted route patterns
+  if (basename) {
+    result = applyBasenameToRoutes(result, basename);
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -461,51 +550,20 @@ export function writeCombinedRouteTypes(
   }
 
   for (const routerFilePath of routerFilePaths) {
-    let routerSource: string;
-    try {
-      routerSource = readFileSync(routerFilePath, "utf-8");
-    } catch {
-      continue;
-    }
-    // Extract the urls source from .routes(...) or urls: ...
-    const extraction = extractUrlsFromRouter(routerSource);
-    if (!extraction) continue;
-
-    // Resolve routes from the extraction
-    let result: {
-      routes: Record<string, string>;
-      searchSchemas: Record<string, Record<string, string>>;
-    };
-
-    if (extraction.kind === "inline") {
-      // Inline builder function: parse directly
-      result = buildCombinedRouteMapWithSearch(
-        routerFilePath,
-        undefined,
-        undefined,
-        undefined,
-        extraction.block,
-      );
-    } else {
-      const imported = resolveImportedVariable(routerSource, extraction.name);
-      if (imported) {
-        // Variable is imported from another module
-        const targetFile = resolveImportPath(
-          imported.specifier,
-          routerFilePath,
-        );
-        if (!targetFile) continue;
-        result = buildCombinedRouteMapWithSearch(
-          targetFile,
-          imported.exportedName,
-        );
-      } else {
-        // Variable is defined in the same file
-        result = buildCombinedRouteMapWithSearch(
-          routerFilePath,
-          extraction.name,
-        );
+    const result = buildCombinedRouteMapForRouterFile(routerFilePath);
+    if (
+      Object.keys(result.routes).length === 0 &&
+      Object.keys(result.searchSchemas).length === 0
+    ) {
+      // Check if the file even has a createRouter call — if not, skip entirely.
+      // If it does, fall through to write an empty placeholder below.
+      let routerSource: string;
+      try {
+        routerSource = readFileSync(routerFilePath, "utf-8");
+      } catch {
+        continue;
       }
+      if (!extractUrlsFromRouter(routerSource)) continue;
     }
 
     const routerBasename = pathBasename(routerFilePath).replace(

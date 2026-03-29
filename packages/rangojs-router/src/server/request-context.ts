@@ -287,6 +287,9 @@ export interface RequestContext<
 
   /** @internal Request-scoped performance metrics store */
   _metricsStore?: MetricsStore;
+
+  /** @internal Router basename for this request (used by redirect()) */
+  _basename?: string;
 }
 
 /**
@@ -316,6 +319,7 @@ export type PublicRequestContext<
   | "_reportBackgroundError"
   | "_debugPerformance"
   | "_metricsStore"
+  | "_basename"
   | "_setStatus"
   | "res"
 >;

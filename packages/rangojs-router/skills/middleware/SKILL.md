@@ -26,6 +26,8 @@ const router = createRouter<AppEnv>({})
   .routes(urlpatterns);
 ```
 
+When the router has a `basename`, pattern-scoped `.use()` patterns are automatically prefixed. For example, with `basename: "/app"`, `.use("/admin/*", mw)` matches `/app/admin/*`.
+
 ### Route middleware (`middleware()` in `urls()`)
 
 Registered inside `urls()` callback. Wraps **rendering only** -- it does NOT wrap server action execution. Actions run before route middleware, so when route middleware executes during post-action revalidation, it can observe state that the action set (cookies, context variables, headers).

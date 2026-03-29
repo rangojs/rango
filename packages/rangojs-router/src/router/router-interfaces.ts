@@ -69,6 +69,11 @@ export interface RSCRouter<
   readonly id: string;
 
   /**
+   * URL prefix applied to all routes. Undefined when no basename is configured.
+   */
+  readonly basename: string | undefined;
+
+  /**
    * Register routes using URL patterns from urls() or a builder function
    *
    * @example
@@ -196,6 +201,9 @@ export interface RSCRouterInternal<
    * Used to namespace static output and isolate route maps between routers.
    */
   readonly id: string;
+
+  /** URL prefix applied to all routes. */
+  readonly basename: string | undefined;
 
   /**
    * Register routes using URL patterns from urls() or a builder function
@@ -347,6 +355,9 @@ export interface RSCRouterInternal<
    * Used by the Vite plugin to write per-router named-routes.gen.ts files.
    */
   readonly __sourceFile?: string;
+
+  /** @internal basename for runtime manifest generation */
+  readonly __basename?: string;
 
   match(
     request: Request,

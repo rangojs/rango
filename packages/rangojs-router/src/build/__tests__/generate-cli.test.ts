@@ -443,6 +443,60 @@ describe("inline builder fixture", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Basename fixture (app-with-basename)
+// ---------------------------------------------------------------------------
+
+describe("basename fixture", () => {
+  const basenameFixtureDir = join(
+    __dirname,
+    "__fixtures__",
+    "app-with-basename",
+  );
+  const basenameGenPath = join(
+    basenameFixtureDir,
+    "router.named-routes.gen.ts",
+  );
+
+  afterEach(() => {
+    try {
+      rmSync(basenameGenPath, { force: true });
+    } catch {}
+  });
+
+  it("prefixes all route patterns with basename", () => {
+    const routerFile = join(basenameFixtureDir, "router.tsx");
+    writeCombinedRouteTypes(basenameFixtureDir, [routerFile]);
+
+    expect(existsSync(basenameGenPath)).toBe(true);
+    const content = readFileSync(basenameGenPath, "utf-8");
+
+    // Inline routes get basename prefix
+    expect(content).toContain('home: "/admin"');
+    expect(content).toContain('settings: "/admin/settings"');
+
+    // Include-resolved routes also get basename prefix
+    expect(content).toContain('"api.health": "/admin/api/health"');
+    expect(content).toContain('"api.detail": "/admin/api/:id"');
+  });
+
+  it("does not prefix route names", () => {
+    const routerFile = join(basenameFixtureDir, "router.tsx");
+    writeCombinedRouteTypes(basenameFixtureDir, [routerFile]);
+
+    const content = readFileSync(basenameGenPath, "utf-8");
+
+    // Route names stay unprefixed
+    expect(content).toContain("home:");
+    expect(content).toContain("settings:");
+    expect(content).toContain('"api.health"');
+    expect(content).toContain('"api.detail"');
+
+    // No "admin." name prefix
+    expect(content).not.toContain('"admin.');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Factory fixture (app-with-factory)
 // ---------------------------------------------------------------------------
 

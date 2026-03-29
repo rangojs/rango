@@ -135,6 +135,7 @@ export function createRouter<TEnv = any>(
   const {
     id: userProvidedId,
     $$id: injectedId,
+    basename: basenameOption,
     debugPerformance = false,
     document: documentOption,
     defaultErrorBoundary,
@@ -159,6 +160,13 @@ export function createRouter<TEnv = any>(
     onTimeout,
     originCheck: originCheckOption,
   } = options;
+
+  // Normalize basename: ensure leading slash, strip trailing slash.
+  // A bare "/" is equivalent to no basename.
+  const basename =
+    basenameOption && basenameOption.replace(/^\/+|\/+$/g, "")
+      ? "/" + basenameOption.replace(/^\/+|\/+$/g, "")
+      : undefined;
 
   // Resolve telemetry sink (no-op when not configured)
   const telemetry = resolveSink(telemetrySink);
@@ -661,6 +669,7 @@ export function createRouter<TEnv = any>(
   const router: RSCRouterInternal<TEnv, {}> = {
     __brand: RSC_ROUTER_BRAND,
     id: routerId,
+    basename,
 
     routes(patternsOrBuilder: UrlPatterns<TEnv> | UrlBuilder<TEnv>): any {
       // Wrap builder functions in urls() automatically
@@ -716,6 +725,10 @@ export function createRouter<TEnv = any>(
           counters: {},
           mountIndex: currentMountIndex,
           cacheProfiles: resolvedCacheProfiles,
+          // basename sets the initial URL prefix so all path() patterns
+          // are registered with the prefix (e.g. "/admin" + "/users" = "/admin/users").
+          // No namePrefix — route names stay unprefixed.
+          ...(basename ? { urlPrefix: basename } : {}),
         },
         () => {
           handlerResult = urlPatterns.handler() as AllUseItems[];
@@ -864,8 +877,18 @@ export function createRouter<TEnv = any>(
       patternOrMiddleware: string | MiddlewareFn<TEnv>,
       middleware?: MiddlewareFn<TEnv>,
     ): any {
-      // Global middleware - no mount prefix
-      addMiddleware(patternOrMiddleware, middleware, null);
+      // Auto-prefix pattern with basename so router-level middleware
+      // patterns are router-relative (e.g. "/users/*" matches "/app/users/*").
+      if (basename && typeof patternOrMiddleware === "string") {
+        const pattern = patternOrMiddleware;
+        const prefixed =
+          pattern === "/*" || pattern === "*"
+            ? `${basename}/*`
+            : `${basename}${pattern}`;
+        addMiddleware(prefixed, middleware, null);
+      } else {
+        addMiddleware(patternOrMiddleware, middleware, null);
+      }
       return router;
     },
 
@@ -965,6 +988,9 @@ export function createRouter<TEnv = any>(
 
     // Expose source file for per-router type generation
     __sourceFile,
+
+    // Expose basename for runtime manifest generation
+    __basename: basename,
 
     // RSC request handler (lazily created on first call)
     fetch: (() => {

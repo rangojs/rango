@@ -165,6 +165,8 @@ export function useFixture(options: {
   buildCommand?: string;
   cliOptions?: SpawnOptions;
   isolatedServer?: boolean;
+  /** Path to poll for readiness (default: "/"). Use when basename moves routes off "/". */
+  readyPath?: string;
 }) {
   let cleanup: (() => Promise<void>) | undefined;
   let baseURL!: string;
@@ -202,7 +204,10 @@ export function useFixture(options: {
         });
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
-        await waitForReady(baseURL, () => ({
+        const readyUrl = options.readyPath
+          ? `${baseURL}${options.readyPath}`
+          : baseURL;
+        await waitForReady(readyUrl, () => ({
           stdout: proc.stdout(),
           stderr: proc.stderr(),
         }));
@@ -212,7 +217,7 @@ export function useFixture(options: {
         // → module re-evaluation → loss of in-memory cache. Without this,
         // cache tests see different values on the second request.
         if (options.isolatedServer) {
-          await warmupDevServer(baseURL);
+          await warmupDevServer(readyUrl);
         }
         cleanup = async () => {
           proc.kill();
@@ -255,7 +260,10 @@ export function useFixture(options: {
         });
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
-        await waitForReady(baseURL, () => ({
+        const buildReadyUrl = options.readyPath
+          ? `${baseURL}${options.readyPath}`
+          : baseURL;
+        await waitForReady(buildReadyUrl, () => ({
           stdout: proc.stdout(),
           stderr: proc.stderr(),
         }));

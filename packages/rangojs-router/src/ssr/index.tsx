@@ -129,6 +129,7 @@ interface RscPayload {
     matched?: string[];
     pathname?: string;
     params?: Record<string, string>;
+    basename?: string;
     themeConfig?: ResolvedThemeConfig | null;
     initialTheme?: Theme;
     version?: string;
@@ -261,6 +262,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       function SsrRoot() {
         payload ??= createFromReadableStream<RscPayload>(rscStream1);
         const resolved = React.use(payload);
+
         const themeConfig = resolved.metadata?.themeConfig ?? null;
         const pathname = resolved.metadata?.pathname ?? "/";
 
@@ -286,6 +288,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
           navigate: async () => {},
           refresh: async () => {},
           version: resolved.metadata?.version,
+          basename: resolved.metadata?.basename,
         };
 
         // Build content tree from segments.

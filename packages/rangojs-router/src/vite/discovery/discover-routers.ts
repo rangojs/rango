@@ -135,7 +135,11 @@ export async function discoverRouters(
       continue;
     }
 
-    const manifest = generateManifestFull(router.urlpatterns, routerMountIndex);
+    const manifest = generateManifestFull(
+      router.urlpatterns,
+      routerMountIndex,
+      router.__basename ? { urlPrefix: router.__basename } : undefined,
+    );
     routerMountIndex++;
     allManifests.push({ id, manifest });
     const routeCount = Object.keys(manifest.routeManifest).length;

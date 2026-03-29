@@ -109,6 +109,7 @@ Public API (`RSCRouter` interface):
 - `routeMap`, warmup handling, document wrapper, global not-found/error defaults
 - Named cache profiles via `cacheProfiles`, nonce provider, version tracking
 - Request timeouts via `timeout`/`timeouts`/`onTimeout` options
+- `basename` for sub-path deployments — auto-prefixes all routes, `reverse()`, `Link`, `redirect()`, `router.use()` patterns, and `useRouter()` navigation. `href()` is intentionally not basename-aware (raw path helper).
 
 Internal API (`RSCRouterInternal`, not exported):
 

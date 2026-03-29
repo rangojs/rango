@@ -139,7 +139,9 @@ function GlobalNav() {
 }
 ```
 
-`href()` is an identity function at runtime but provides compile-time validation via `ValidPaths` type. Paths are validated against registered route patterns using `PatternToPath`.
+`href()` provides compile-time validation via `ValidPaths` type. Paths are validated against registered route patterns using `PatternToPath`.
+
+`href()` is a raw path helper — it is **not** basename-aware. It returns the path as-is (or with the include mount prefix via `useHref()`). For basename-aware navigation, use `Link`, `useRouter().push()`, or `reverse()`, which auto-prefix root-relative paths with the router's basename.
 
 ## Client: useHref()
 

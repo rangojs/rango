@@ -500,6 +500,7 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
       initialTheme={initialTheme}
       warmupEnabled={warmupEnabled}
       version={version}
+      basename={initialPayload.metadata?.basename}
     />
   );
 }

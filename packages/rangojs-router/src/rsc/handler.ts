@@ -452,6 +452,9 @@ export function createRSCHandler<
     // - Server components during rendering
     // - Error boundaries
     // - Streaming
+    // Store basename on request context (scoped per-request via existing ALS)
+    requestContext._basename = router.basename;
+
     return runWithRequestContext(requestContext, async () => {
       // Core handler logic (wrapped by middleware)
       const coreHandler = async (): Promise<Response> => {
@@ -1030,6 +1033,7 @@ export function createRSCHandler<
           metadata: {
             pathname: url.pathname,
             routerId: router.id,
+            basename: router.basename,
             segments: [notFoundSegment],
             matched: [],
             diff: [],

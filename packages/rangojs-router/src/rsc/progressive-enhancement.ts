@@ -244,6 +244,7 @@ export async function handleProgressiveEnhancement<TEnv>(
       metadata: {
         pathname: url.pathname,
         routerId: ctx.router.id,
+        basename: ctx.router.basename,
         segments: match.segments,
         matched: match.matched,
         diff: match.diff,
@@ -344,6 +345,7 @@ async function renderPeErrorBoundary<TEnv>(
     metadata: {
       pathname: url.pathname,
       routerId: ctx.router.id,
+      basename: ctx.router.basename,
       segments: errorResult.segments,
       matched: errorResult.matched,
       diff: errorResult.diff,

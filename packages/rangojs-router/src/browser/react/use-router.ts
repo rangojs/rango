@@ -30,14 +30,22 @@ export function useRouter(): RouterInstance {
   }
 
   // Stable reference: ctx is itself stable (NavigationProvider memoizes with [])
-  return useMemo<RouterInstance>(
-    () => ({
+  return useMemo<RouterInstance>(() => {
+    /** Prefix a root-relative path with basename if not already prefixed. */
+    function withBasename(url: string): string {
+      const bn = ctx!.basename;
+      if (!bn || !url.startsWith("/") || url.startsWith(bn + "/") || url === bn)
+        return url;
+      return url === "/" ? bn : bn + url;
+    }
+
+    return {
       push(url: string, options?: RouterNavigateOptions): Promise<void> {
-        return ctx.navigate(url, { ...options, replace: false });
+        return ctx.navigate(withBasename(url), { ...options, replace: false });
       },
 
       replace(url: string, options?: RouterNavigateOptions): Promise<void> {
-        return ctx.navigate(url, { ...options, replace: true });
+        return ctx.navigate(withBasename(url), { ...options, replace: true });
       },
 
       refresh(): Promise<void> {
@@ -48,7 +56,7 @@ export function useRouter(): RouterInstance {
         const segmentState = ctx.store?.getSegmentState();
         if (segmentState) {
           prefetchDirect(
-            url,
+            withBasename(url),
             segmentState.currentSegmentIds,
             getAppVersion(),
             ctx.store?.getRouterId?.(),
@@ -63,7 +71,6 @@ export function useRouter(): RouterInstance {
       forward(): void {
         window.history.forward();
       },
-    }),
-    [],
-  );
+    };
+  }, []);
 }

@@ -97,6 +97,28 @@ export interface RSCRouterOptions<TEnv = any> {
   $$sourceFile?: string;
 
   /**
+   * URL prefix applied to all routes registered with this router.
+   *
+   * Useful when the app is served under a sub-path (e.g. `/admin` or `/v2`).
+   * All `path()` patterns are automatically prefixed and `reverse()` returns
+   * full paths including the basename. Route names are NOT prefixed.
+   *
+   * @example
+   * ```typescript
+   * const router = createRouter({
+   *   basename: "/admin",
+   * }).routes(({ path }) => [
+   *   path("/", Dashboard, { name: "home" }),       // matches /admin
+   *   path("/users", Users, { name: "users" }),     // matches /admin/users
+   * ]);
+   *
+   * router.reverse("home");   // "/admin"
+   * router.reverse("users");  // "/admin/users"
+   * ```
+   */
+  basename?: string;
+
+  /**
    * Enable performance metrics collection
    * When enabled, metrics are output to console and available via Server-Timing header
    */

@@ -2,6 +2,7 @@ import type { LocationStateEntry } from "../browser/react/location-state-shared.
 import {
   requireRequestContext,
   getRequestContext,
+  _getRequestContext,
 } from "../server/request-context.js";
 
 /**
@@ -83,10 +84,17 @@ export function redirect(
     }
   }
 
+  // Auto-prefix root-relative URLs with basename for app-local redirects.
+  const bn = _getRequestContext()?._basename;
+  let resolvedUrl = url;
+  if (bn && url.startsWith("/") && !url.startsWith(bn + "/") && url !== bn) {
+    resolvedUrl = url === "/" ? bn : bn + url;
+  }
+
   return new Response(null, {
     status,
     headers: {
-      Location: url,
+      Location: resolvedUrl,
       "X-RSC-Redirect": "soft",
     },
   });
