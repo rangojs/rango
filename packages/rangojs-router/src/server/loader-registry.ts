@@ -44,18 +44,19 @@ export function setLoaderImports(
 export async function getLoaderLazy(
   id: string,
 ): Promise<LoaderRegistryEntry | undefined> {
-  // Check if already cached in main registry
+  // Always check fetchableLoaderRegistry first — it's the source of truth.
+  // createLoader() updates it during module re-evaluation (HMR), so checking
+  // here ensures we pick up the fresh function after a loader file change.
+  const fetchable = getFetchableLoader(id);
+  if (fetchable) {
+    loaderRegistry.set(id, fetchable);
+    return fetchable;
+  }
+
+  // Fall back to local cache (populated by previous lazy imports in production)
   const existing = loaderRegistry.get(id);
   if (existing) {
     return existing;
-  }
-
-  // Check the fetchable loader registry (populated by createLoader)
-  const fetchable = getFetchableLoader(id);
-  if (fetchable) {
-    // Cache in main registry for future requests
-    loaderRegistry.set(id, fetchable);
-    return fetchable;
   }
 
   // Try to lazy load from the import map (production mode)
