@@ -33,8 +33,8 @@ A code-first, type-safe React Server Components router for serverless deployment
 
 ### Prerequisites
 
-- Node.js 18+
-- pnpm 8+
+- Node.js 22+
+- pnpm 10+
 
 ### Installation
 
@@ -47,9 +47,21 @@ pnpm dev
 ## Quick Example
 
 ```typescript
+import { createRouter } from "@rangojs/router";
+
+const router = createRouter().routes(({ path }) => [
+  path("/", () => <Home />, { name: "home" }),
+  path("/about", () => <About />, { name: "about" }),
+]);
+
+router.reverse("home"); // "/"
+```
+
+For larger apps, extract route modules with `urls()` and compose with `include()`:
+
+```typescript
 import { createRouter, urls } from "@rangojs/router";
 
-// Define a composable module with local route names
 const shopPatterns = urls(({ path }) => [
   path("/", () => <ShopIndex />, { name: "index" }),
   path("/cart", () => <CartPage />, { name: "cart" }),
@@ -59,13 +71,10 @@ const shopPatterns = urls(({ path }) => [
   }, { name: "product" }),
 ]);
 
-// Mount it into the app with a route-name namespace
-const urlpatterns = urls(({ path, include }) => [
+const router = createRouter().routes(({ path, include }) => [
   path("/", () => <Home />, { name: "home" }),
   include("/shop", shopPatterns, { name: "shop" }),
 ]);
-
-const router = createRouter().routes(urlpatterns);
 
 router.reverse("shop.cart"); // "/shop/cart"
 router.reverse("shop.product", { slug: "widget" }); // "/shop/product/widget"

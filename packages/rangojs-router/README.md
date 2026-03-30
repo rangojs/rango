@@ -91,24 +91,29 @@ This file is a server/RSC module and should import router construction APIs from
 
 ```tsx
 // src/router.tsx
-import { createRouter, urls } from "@rangojs/router";
-import { Document } from "./document";
+import { createRouter } from "@rangojs/router";
 
-const blogPatterns = urls(({ path }) => [
-  path("/", BlogIndexPage, { name: "index" }),
-  path("/:slug", BlogPostPage, { name: "post" }),
+export const router = createRouter().routes(({ path }) => [
+  path("/", HomePage, { name: "home" }),
+  path("/about", AboutPage, { name: "about" }),
 ]);
+
+export const reverse = router.reverse;
+// reverse("home") -> "/"
+```
+
+For larger apps, extract route modules with `urls()` and compose with `include()`:
+
+```tsx
+import { createRouter, urls } from "@rangojs/router";
+import { blogPatterns } from "./urls/blog";
 
 const urlpatterns = urls(({ path, include }) => [
   path("/", HomePage, { name: "home" }),
   include("/blog", blogPatterns, { name: "blog" }),
 ]);
 
-export const router = createRouter({ document: Document }).routes(urlpatterns);
-
-// Export typed reverse function for URL generation by route name
-export const reverse = router.reverse;
-
+export const router = createRouter().routes(urlpatterns);
 // reverse("blog.post", { slug: "hello-world" }) -> "/blog/hello-world"
 ```
 
