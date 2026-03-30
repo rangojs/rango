@@ -231,7 +231,7 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 
 ### Dev and HMR
 
-`rango()` plugin discovery, named-route generation, manifest virtual modules, parser/runtime route-type fallback, lazy loader id injection, duplicate plugin detection. `poke()` — dev-only Vite plugin that listens for Ctrl+R on terminal stdin and triggers a full browser reload via HMR.
+`rango()` plugin discovery, named-route generation, manifest virtual modules, parser/runtime route-type fallback, lazy loader id injection, duplicate plugin detection. `poke()` — dev-only Vite plugin that triggers a full browser reload from terminal input: `Ctrl+R` when available, plus safe line-based shortcuts like `e + Enter`.
 
 ---
 
