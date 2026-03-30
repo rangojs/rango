@@ -248,10 +248,7 @@ export async function loadManifest(
 
     invariant(
       Store.manifest.has(routeKey),
-      `Route must be registered for ${routeKey}. ` +
-        `Registered keys: [${[...Store.manifest.keys()].join(", ")}]. ` +
-        `Entry lazy=${!!entry.lazy}, lazyContext.namePrefix=${lazyContext?.namePrefix ?? "(none)"}, ` +
-        `lazyContext.urlPrefix=${(lazyContext as any)?.urlPrefix ?? "(none)"}`,
+      `Route must be registered for ${routeKey}`,
     );
     pushMetric?.("manifest:validation", validationStart);
 
