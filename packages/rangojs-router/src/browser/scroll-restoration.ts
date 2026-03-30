@@ -356,19 +356,18 @@ export function handleNavigationEnd(options: {
   scroll?: boolean;
   isStreaming?: () => boolean;
 }): void {
-  if (!initialized) {
-    return;
-  }
-
   const { restore = false, scroll = true, isStreaming } = options;
 
-  // Don't scroll if explicitly disabled
-  if (scroll === false) {
+  // Don't scroll if explicitly disabled or not in a browser
+  if (scroll === false || typeof window === "undefined") {
     return;
   }
 
-  // For back/forward (restore), try to restore saved position
-  if (restore) {
+  // Save/restore requires initialization (sessionStorage, history state).
+  // But basic scroll-to-top and hash scrolling work without it — this
+  // matters during cross-app navigation where ScrollRestoration unmounts
+  // and remounts, creating a brief window where initialized is false.
+  if (restore && initialized) {
     if (restoreScrollPosition({ retryIfStreaming: true, isStreaming })) {
       return;
     }
@@ -378,6 +377,9 @@ export function handleNavigationEnd(options: {
   // Defer hash and scroll-to-top to after React paints the new content,
   // so the user doesn't see the current page jump before the new route appears.
   deferToNextPaint(() => {
+    // Re-check: the deferred callback may fire after environment teardown
+    if (typeof window === "undefined") return;
+
     // Try hash scrolling first
     if (scrollToHash()) {
       return;
