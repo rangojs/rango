@@ -33,3 +33,27 @@ test.describe("build-time env via KV (production)", () => {
     await expect(testId(page, "build-env-build")).toHaveText("true");
   });
 });
+
+// Dev mode: buildEnv also applies to on-demand /__rsc_prerender evaluation.
+// The handler runs with BuildContext (ctx.build === true) and ctx.env is
+// available from the same getPlatformProxy() bindings acquired at server start.
+test.describe("build-time env via KV (dev)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "dev",
+  });
+
+  test("page renders with build-time env in dev mode", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/build-env"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "build-env-title")).toContainText(
+      "Build Env Test",
+    );
+    await expect(testId(page, "build-env-value")).toHaveText(
+      "seeded-at-build-time",
+    );
+  });
+});

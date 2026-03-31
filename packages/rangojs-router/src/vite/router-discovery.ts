@@ -344,9 +344,6 @@ export function createRouterDiscoveryPlugin(
       }
 
       const discover = async () => {
-        // Acquire build-time env bindings for dev prerender
-        await acquireBuildEnv(s, viteCommand, viteMode);
-
         const rscEnv = (server.environments as any)?.rsc;
         if (!rscEnv?.runner) {
           // Cloudflare dev: no module runner available (workerd-based RSC env).
@@ -357,6 +354,9 @@ export function createRouterDiscoveryPlugin(
           // Create a temp Node.js server to run runtime discovery and generate
           // named route types (static parser can't resolve factory calls).
           try {
+            // Acquire build-time env bindings for dev prerender
+            await acquireBuildEnv(s, viteCommand, viteMode);
+
             const tempRscEnv = await getOrCreateTempServer();
             if (tempRscEnv) {
               await discoverRouters(s, tempRscEnv);
@@ -373,6 +373,9 @@ export function createRouterDiscoveryPlugin(
         }
 
         try {
+          // Acquire build-time env bindings for dev prerender (Node.js path)
+          await acquireBuildEnv(s, viteCommand, viteMode);
+
           // Set the readiness gate BEFORE discovery so early requests
           // block until manifest is populated
           const serverMod = await rscEnv.runner.import(
