@@ -716,10 +716,12 @@ export const BlogPost = Prerender(
 
 ### Passthrough for Unknown Params
 
-```tsx
-import { Prerender } from "@rangojs/router";
+Wrap a `Prerender` definition with `Passthrough()` to add a live handler for unknown params at runtime. The build handler runs at build time, the live handler runs at request time for params not in the prerender cache.
 
-export const ProductPage = Prerender(
+```tsx
+import { Prerender, Passthrough } from "@rangojs/router";
+
+export const ProductPageDef = Prerender(
   async () => {
     const featured = await db.getFeaturedProducts();
     return featured.map((p) => ({ id: p.id }));
@@ -728,16 +730,22 @@ export const ProductPage = Prerender(
     const product = await db.getProduct(ctx.params.id);
     return <Product data={product} />;
   },
-  { passthrough: true },
+);
+
+// In route definition:
+path(
+  "/products/:id",
+  Passthrough(ProductPageDef, async (ctx) => {
+    const product = await ctx.env.DB.getProduct(ctx.params.id);
+    return <Product data={product} />;
+  }),
 );
 ```
 
-With `passthrough: true`, known params are served from the build-time cache and unknown params fall through to live rendering.
-
-Handlers can also skip individual param sets with `ctx.passthrough()`, deferring them to the live handler at runtime:
+Build handlers can also skip individual param sets with `ctx.passthrough()`, deferring them to the live handler:
 
 ```tsx
-export const ProductPage = Prerender(
+export const ProductPageDef = Prerender(
   async () => {
     const all = await db.getAllProducts();
     return all.map((p) => ({ id: p.id }));
@@ -747,7 +755,6 @@ export const ProductPage = Prerender(
     if (!product.published) return ctx.passthrough();
     return <Product data={product} />;
   },
-  { passthrough: true },
 );
 ```
 

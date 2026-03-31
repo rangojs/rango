@@ -1,8 +1,9 @@
-import { urls, Prerender, Static, Skip } from "@rangojs/router";
+import { urls, Prerender, Passthrough, Static, Skip } from "@rangojs/router";
 
-// Prerender handler that skips one param via Skip.
+// Prerender handler that skips one param via Skip at build time.
 // "published" renders normally, "draft" is skipped at build time.
-export const SkipArticle = Prerender(
+// The Passthrough live handler re-executes at runtime for skipped params.
+export const SkipArticleDef = Prerender(
   async () => [{ slug: "published" }, { slug: "draft" }],
   async (ctx) => {
     if (ctx.params.slug === "draft") {
@@ -17,8 +18,19 @@ export const SkipArticle = Prerender(
       </div>
     );
   },
-  { passthrough: true },
 );
+
+export const SkipArticle = Passthrough(SkipArticleDef, async (ctx) => {
+  if (ctx.params.slug === "draft") {
+    throw new Skip("Draft articles are not pre-rendered");
+  }
+  return (
+    <div data-testid="build-skip-article">
+      <h1 data-testid="build-skip-article-title">{ctx.params.slug}</h1>
+      <p data-testid="build-skip-article-content">Article: {ctx.params.slug}</p>
+    </div>
+  );
+});
 
 // Static handler that throws Skip -- should be excluded from build output.
 export const SkipStatic = Static(() => {

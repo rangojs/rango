@@ -170,7 +170,7 @@ test.describe("prerender ctx (production build)", () => {
 });
 
 // -- Passthrough (unknown slug, live render) ---------------------------------
-// passthrough: true keeps handler in bundle. Unknown slugs render live.
+// Passthrough() wraps the Prerender def with a live handler. Unknown slugs render live.
 
 test.describe("prerender ctx passthrough (production build)", () => {
   const f = useFixture({

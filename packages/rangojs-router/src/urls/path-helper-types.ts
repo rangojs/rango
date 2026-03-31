@@ -37,7 +37,10 @@ import type {
   UseItems,
 } from "../route-types.js";
 import type { SearchSchema } from "../search-params.js";
-import type { PrerenderHandlerDefinition } from "../prerender.js";
+import type {
+  PrerenderHandlerDefinition,
+  PassthroughHandlerDefinition,
+} from "../prerender.js";
 import type { StaticHandlerDefinition } from "../static-handler.js";
 import type { InterceptWhenFn } from "../server/context";
 import type {
@@ -70,6 +73,7 @@ export type PathFn<TEnv> = <
         ctx: HandlerContext<TParams, TEnv, TSearch>,
       ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>)
     | PrerenderHandlerDefinition<TParams>
+    | PassthroughHandlerDefinition<TParams, TEnv>
     | StaticHandlerDefinition<TParams>,
   optionsOrUse?: PathOptions<TName, TSearch> | (() => UseItems<RouteUseItem>),
   use?: () => UseItems<RouteUseItem>,

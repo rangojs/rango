@@ -153,6 +153,13 @@ export function Prerender(): never {
 }
 
 /**
+ * Error-throwing stub for server-only `Passthrough` function.
+ */
+export function Passthrough(): never {
+  throw serverOnlyStubError("Passthrough");
+}
+
+/**
  * Error-throwing stub for server-only `Static` function.
  */
 export function Static(): never {

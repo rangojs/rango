@@ -723,7 +723,7 @@ export function createRouterDiscoveryPlugin(
             chunk.code,
             s.resolvedPrerenderModules,
             "Prerender",
-            true,
+            false,
           );
           if (handlers.length > 0) {
             const existing = s.handlerChunkInfoMap.get(fileName);

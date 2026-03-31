@@ -214,7 +214,7 @@ test.describe("prerender locale params (production build)", () => {
 });
 
 // -- Passthrough (unknown locale/slug, live render) --------------------------
-// passthrough: true keeps handler in bundle. Unknown combos render live.
+// Passthrough() wraps the Prerender def with a live handler. Unknown combos render live.
 
 test.describe("prerender locale params passthrough (production build)", () => {
   const f = useFixture({

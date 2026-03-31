@@ -106,13 +106,6 @@ type ResolvePrerenderParams<
 
 export interface PrerenderOptions {
   /**
-   * Keep handler in server bundle for live fallback (default: false).
-   * false: handler replaced with stub, source-only APIs excluded from bundle.
-   * true: handler stays in bundle, unknown params render live at request time.
-   */
-  passthrough?: boolean;
-
-  /**
    * Maximum number of param sets to render in parallel (default: 1).
    * Only applies to dynamic Prerender handlers with getParams().
    * Set to higher values to speed up builds with many routes.
@@ -173,8 +166,8 @@ export interface BuildContext<TParams> {
 
   /**
    * Signal that this param set should not produce a local prerender artifact.
-   * At runtime the handler runs live instead. Only valid on routes declared
-   * with `{ passthrough: true }`.
+   * At runtime the live handler runs instead. Only valid on routes wrapped
+   * with `Passthrough()`.
    */
   passthrough: () => PrerenderPassthroughResult;
 }
@@ -224,23 +217,6 @@ export interface GetParamsContext {
   reverse: BuildReverseFunction;
 }
 
-/**
- * Context type for passthrough Prerender handlers.
- *
- * When `passthrough: true`, the handler runs both at build time and at request
- * time. The context is a full `HandlerContext` with `build: boolean`:
- * - `ctx.build === true`: build-time, env/request/res throw at runtime
- * - `ctx.build === false`: live request, full context available
- *
- * For `passthrough: false` (default), handlers receive `BuildContext` only.
- */
-export type PrerenderPassthroughContext<
-  TParams = {},
-  TEnv = DefaultEnv,
-> = HandlerContext<TParams, TEnv> & {
-  passthrough: () => PrerenderPassthroughResult;
-};
-
 export interface PrerenderHandlerDefinition<
   TParams extends Record<string, any> = any,
 > {
@@ -263,7 +239,7 @@ export interface PrerenderHandlerDefinition<
 // Explicit params work as before:
 //   Prerender<{ slug: string }> → params = { slug: string }
 
-// Overload 1: Static handler, no passthrough (build-time only)
+// Overload 1: Static handler (build-time only)
 export function Prerender<
   T extends
     | keyof DefaultPrerenderRouteMap
@@ -273,34 +249,15 @@ export function Prerender<
 >(
   handler: (
     ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>,
-  ) => ReactNode | Promise<ReactNode>,
-  options?: PrerenderOptions & { passthrough?: false },
-  __injectedId?: string,
-): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
-
-// Overload 2: Static handler, passthrough (build + live — full HandlerContext)
-export function Prerender<
-  T extends
-    | keyof DefaultPrerenderRouteMap
-    | `.${keyof TRouteMap & string}`
-    | Record<string, any> = {},
-  TRouteMap extends {} = DefaultPrerenderRouteMap,
-  TEnv = DefaultEnv,
->(
-  handler: (
-    ctx: PrerenderPassthroughContext<
-      ResolvePrerenderParams<T, TRouteMap>,
-      TEnv
-    >,
   ) =>
     | ReactNode
     | PrerenderPassthroughResult
     | Promise<ReactNode | PrerenderPassthroughResult>,
-  options: PrerenderOptions & { passthrough: true },
+  options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
 
-// Overload 3: Dynamic handler, no passthrough (build-time only)
+// Overload 2: Dynamic handler (build-time only)
 export function Prerender<
   T extends
     | keyof DefaultPrerenderRouteMap
@@ -315,35 +272,11 @@ export function Prerender<
     | ResolvePrerenderParams<T, TRouteMap>[],
   handler: (
     ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>,
-  ) => ReactNode | Promise<ReactNode>,
-  options?: PrerenderOptions & { passthrough?: false },
-  __injectedId?: string,
-): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
-
-// Overload 4: Dynamic handler, passthrough (build + live — full HandlerContext)
-export function Prerender<
-  T extends
-    | keyof DefaultPrerenderRouteMap
-    | `.${keyof TRouteMap & string}`
-    | Record<string, any>,
-  TRouteMap extends {} = DefaultPrerenderRouteMap,
-  TEnv = DefaultEnv,
->(
-  getParams: (
-    ctx: GetParamsContext,
-  ) =>
-    | Promise<ResolvePrerenderParams<T, TRouteMap>[]>
-    | ResolvePrerenderParams<T, TRouteMap>[],
-  handler: (
-    ctx: PrerenderPassthroughContext<
-      ResolvePrerenderParams<T, TRouteMap>,
-      TEnv
-    >,
   ) =>
     | ReactNode
     | PrerenderPassthroughResult
     | Promise<ReactNode | PrerenderPassthroughResult>,
-  options: PrerenderOptions & { passthrough: true },
+  options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
 
@@ -422,7 +355,7 @@ export function Prerender<TParams extends Record<string, any>>(
 /**
  * Sentinel returned by `ctx.passthrough()` to signal that a specific param set
  * should not produce a local prerender artifact. The build skips writing the
- * entry; at runtime the handler runs live (requires `{ passthrough: true }`).
+ * entry; at runtime the Passthrough live handler runs instead.
  */
 export const PRERENDER_PASSTHROUGH: Readonly<{
   __brand: "prerenderPassthrough";
@@ -446,7 +379,7 @@ export function isPrerenderPassthrough(
   );
 }
 
-// -- Type guard -------------------------------------------------------------
+// -- Type guards ------------------------------------------------------------
 
 /**
  * Type guard to check if a value is a PrerenderHandlerDefinition.
@@ -459,5 +392,89 @@ export function isPrerenderHandler(
     value !== null &&
     "__brand" in value &&
     (value as { __brand: unknown }).__brand === "prerenderHandler"
+  );
+}
+
+// -- Passthrough wrapper ----------------------------------------------------
+
+/**
+ * A prerender route with a live fallback handler for unknown params at runtime.
+ *
+ * Wraps a `Prerender(...)` definition with a separate handler that runs at
+ * request time for params not covered by `getParams()`.
+ *
+ * - Build time: `prerenderDef` provides getParams + build handler.
+ * - Runtime: `liveHandler` runs for unknown params with full HandlerContext.
+ *
+ * @example
+ * ```ts
+ * const BlogPrerender = Prerender(
+ *   async () => [{ slug: "getting-started" }, { slug: "api-reference" }],
+ *   async (ctx) => <BlogPost slug={ctx.params.slug} />,
+ * );
+ *
+ * // In route definition:
+ * path("/blog/:slug", Passthrough(BlogPrerender, async (ctx) => {
+ *   const post = await ctx.env.DB.get(ctx.params.slug);
+ *   return <BlogPost slug={ctx.params.slug} post={post} />;
+ * }))
+ * ```
+ */
+export interface PassthroughHandlerDefinition<
+  TParams extends Record<string, any> = any,
+  TEnv = DefaultEnv,
+> {
+  readonly __brand: "passthroughHandler";
+  /** The underlying prerender definition (build-time rendering). */
+  prerenderDef: PrerenderHandlerDefinition<TParams>;
+  /** Live handler for runtime fallback on unknown params. */
+  liveHandler: (
+    ctx: HandlerContext<TParams, TEnv>,
+  ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
+}
+
+export function Passthrough<
+  TParams extends Record<string, any>,
+  TEnv = DefaultEnv,
+>(
+  prerenderDef: PrerenderHandlerDefinition<TParams>,
+  liveHandler: (
+    ctx: HandlerContext<TParams, TEnv>,
+  ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>,
+): PassthroughHandlerDefinition<TParams, TEnv>;
+
+// Implementation
+export function Passthrough<
+  TParams extends Record<string, any>,
+  TEnv = DefaultEnv,
+>(
+  prerenderDef: PrerenderHandlerDefinition<TParams>,
+  liveHandler: (
+    ctx: HandlerContext<TParams, TEnv>,
+  ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>,
+): PassthroughHandlerDefinition<TParams, TEnv> {
+  if (!isPrerenderHandler(prerenderDef)) {
+    throw new Error(
+      "[rsc-router] Passthrough: first argument must be a Prerender() definition.",
+    );
+  }
+  return {
+    __brand: "passthroughHandler" as const,
+    prerenderDef,
+    liveHandler,
+  };
+}
+
+/**
+ * Type guard to check if a value is a PassthroughHandlerDefinition.
+ */
+export function isPassthroughHandler(
+  value: unknown,
+): value is PassthroughHandlerDefinition {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "__brand" in value &&
+    (value as { __brand: unknown }).__brand === "passthroughHandler"
   );
 }

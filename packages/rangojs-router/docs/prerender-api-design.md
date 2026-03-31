@@ -16,9 +16,9 @@ route was pre-rendered.
 - **Build-time segment resolution** - `matchForPrerender()` resolves segments with BuildContext
 - **Flight payload storage** - Serialized segments stored in lazily-loaded prerender manifest
 - **Runtime cache-lookup** - Prerender store checked before segment resolution
-- **Handler eviction** - Non-passthrough handlers stubbed in production bundles
-- **Passthrough mode** - Handler kept in bundle for unknown params (live fallback)
-- **ctx.passthrough()** - Handler can skip local artifact per param set, deferring to live fallback
+- **Handler eviction** - All Prerender handlers stubbed in production bundles
+- **Passthrough wrapper** - `Passthrough(prerenderDef, liveHandler)` provides a separate live handler for unknown params
+- **ctx.passthrough()** - Build handler can skip a param set's artifact, deferring to the live handler
 - **Sub-use semantics** - Child layouts, parallels inside path are pre-rendered
 - **Handle data** - `ctx.use()` data baked into Flight payloads
 - **Loader freshness** - Loaders always run at request time (never pre-rendered)
@@ -27,7 +27,7 @@ route was pre-rendered.
 
 ### Remaining
 
-- **Revalidation with passthrough** - Background re-render of stale prerender data
+- **Revalidation with Passthrough** - Background re-render of stale prerender data
 - **ISR-style revalidation** - Time-based or on-demand re-rendering without full rebuild
 
 ---
@@ -94,8 +94,8 @@ route was pre-rendered.
   |    |    return
   |    |
   |    v
-  |    Passthrough? -> handler runs live
-  |    No passthrough? -> handler stubbed, no render
+  |    Passthrough route? -> live handler runs
+  |    No Passthrough? -> handler stubbed, no render
   |
   v
   Normal segment resolution
@@ -195,54 +195,59 @@ In production builds, `Prerender` exports are replaced with stubs:
 // Original
 export const BlogPost = Prerender(getParams, handler);
 
-// Stubbed (passthrough: false)
+// Stubbed (all Prerender handlers are evicted)
 export const BlogPost = {
   __brand: "prerenderHandler",
   $$id: "abc123#BlogPost",
 };
 ```
 
-The entire original module and its imports are excluded from the RSC server
-bundle. With `passthrough: true`, handler code stays in the bundle.
+All Prerender handlers are evicted in production. The live handler for
+`Passthrough()` routes lives in the urls module and is not evicted.
 
-Client and SSR environments always receive stubs regardless of passthrough mode.
+Client and SSR environments always receive stubs.
 
 ---
 
-## Handler Passthrough Outcome
+## Passthrough Wrapper
 
-A `Prerender` handler on a `{ passthrough: true }` route can return
-`ctx.passthrough()` to skip writing a local prerender artifact for that param
-set. At runtime, the missing entry falls through to the live handler.
+`Passthrough(prerenderDef, liveHandler)` wraps a `Prerender` definition with
+a separate handler for runtime fallback. The build handler runs at build time,
+the live handler runs at request time for params not in the prerender cache.
 
 ```typescript
-export const BlogPost = Prerender(
+export const BlogPostDef = Prerender(
   async () => [{ slug: "a" }, { slug: "b" }],
   async (ctx) => {
     const post = await getPost(ctx.params.slug);
     if (!post) return ctx.passthrough();
     return <article>{post.content}</article>;
   },
-  { passthrough: true },
 );
+
+// In route definition:
+path("/blog/:slug", Passthrough(BlogPostDef, async (ctx) => {
+  const post = await ctx.env.DB.getPost(ctx.params.slug);
+  return <article>{post.content}</article>;
+}));
 ```
 
 ### Semantics
 
-- JSX or `null` from the handler produces a normal prerender entry.
+- JSX or `null` from the build handler produces a normal prerender entry.
 - `ctx.passthrough()` returns a frozen sentinel (`PRERENDER_PASSTHROUGH`).
   `matchForPrerender` detects it and returns `{ passthrough: true }` instead
   of serialized segments. The build skips the manifest entry for that param set.
-- `ctx.passthrough()` on a non-passthrough route throws an invariant error.
-- `getParams()` still enumerates the param set; the handler decides per-param
-  whether to produce an artifact or defer to runtime.
+- `ctx.passthrough()` on a route not wrapped with `Passthrough()` throws.
+- `getParams()` still enumerates the param set; the build handler decides
+  per-param whether to produce an artifact or defer to the live handler.
 
 ### Build-time flow
 
 1. `getParams()` returns param sets (including ones that may passthrough).
 2. For each param set, `matchForPrerender` creates a `BuildContext` with
    `passthrough()` wired (when `isPassthroughRoute` is true).
-3. Handler returns `ctx.passthrough()` for a given param set.
+3. Build handler returns `ctx.passthrough()` for a given param set.
 4. `matchForPrerender` detects the sentinel in resolved segments and returns
    `{ passthrough: true }`.
 5. `expandPrerenderRoutes` logs `PASS` and skips `collectedData` insertion.
@@ -250,8 +255,8 @@ export const BlogPost = Prerender(
 ### Runtime flow
 
 No stored entry exists for that param set. The runtime cache-lookup sees
-`pr + pt + miss` and falls through to the live handler, which runs with
-full `HandlerContext` (`ctx.build === false`).
+`pr + pt + miss` and falls through to the Passthrough live handler, which
+runs with full `HandlerContext` (`ctx.build === false`).
 
 ---
 
@@ -333,8 +338,8 @@ time for loader resolution and any live handler execution.
 ### Actions
 
 Actions do not re-render pre-rendered segments. The frozen handler output
-stays. Loaders can be revalidated by actions. With `passthrough: true` and
-`revalidate()`, the handler itself can re-render live.
+stays. Loaders can be revalidated by actions. With `Passthrough()` routes and
+`revalidate()`, the live handler can re-render.
 
 ### Handle Data
 
@@ -349,7 +354,7 @@ payload. They are replayed into the HandleStore on cache hit via
 Pre-rendered routes set flags on the route trie leaf at build time:
 
 - `pr: true` -- route has pre-rendered segment data
-- `pt: true` -- passthrough mode (handler available for live fallback)
+- `pt: true` -- route wrapped with `Passthrough()` (live handler available)
 
 At runtime, the cache-lookup middleware uses these flags:
 

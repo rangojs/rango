@@ -16,6 +16,7 @@ import { invariant, DataNotFoundError } from "../errors";
 import { validateUserRouteName } from "../route-name.js";
 import {
   isPrerenderHandler,
+  isPassthroughHandler,
   type PrerenderHandlerDefinition,
 } from "../prerender.js";
 import {
@@ -182,17 +183,25 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
     const wrappedHandler: Handler<any, any, TEnv> =
       typeof handler === "function"
         ? (handler as Handler<any, any, TEnv>)
-        : isPrerenderHandler(handler)
-          ? typeof handler.handler === "function"
-            ? (handler.handler as Handler<any, any, TEnv>)
+        : isPassthroughHandler(handler)
+          ? typeof handler.prerenderDef.handler === "function"
+            ? (handler.prerenderDef.handler as Handler<any, any, TEnv>)
             : () => {
                 throw new DataNotFoundError(
                   "No prerender data found for this route",
                 );
               }
-          : isStaticHandler(handler)
-            ? (handler.handler as Handler<any, any, TEnv>)
-            : () => handler;
+          : isPrerenderHandler(handler)
+            ? typeof handler.handler === "function"
+              ? (handler.handler as Handler<any, any, TEnv>)
+              : () => {
+                  throw new DataNotFoundError(
+                    "No prerender data found for this route",
+                  );
+                }
+            : isStaticHandler(handler)
+              ? (handler.handler as Handler<any, any, TEnv>)
+              : () => handler;
 
     const entry = {
       id: namespace,
@@ -212,12 +221,19 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
       intercept: [],
       loader: [],
       ...(urlPrefix ? { mountPath: urlPrefix } : {}),
-      ...(isPrerenderHandler(handler)
+      ...(isPassthroughHandler(handler)
         ? {
             isPrerender: true as const,
-            prerenderDef: handler as PrerenderHandlerDefinition,
+            prerenderDef: handler.prerenderDef as PrerenderHandlerDefinition,
+            isPassthrough: true as const,
+            liveHandler: handler.liveHandler as Handler<any, any, TEnv>,
           }
-        : {}),
+        : isPrerenderHandler(handler)
+          ? {
+              isPrerender: true as const,
+              prerenderDef: handler as PrerenderHandlerDefinition,
+            }
+          : {}),
       ...(isStaticHandler(handler)
         ? {
             isStaticPrerender: true as const,

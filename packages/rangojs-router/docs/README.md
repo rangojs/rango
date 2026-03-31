@@ -61,4 +61,4 @@ They are useful when changing router semantics, tests, or implementation
 details, but they are not the first stop for learning the public API.
 
 - [Prerender passthrough action plan](./internal/prerender-passthrough-action-plan.md)
-  - implementation plan for explicit `ctx.passthrough()` prerender behavior
+  - superseded — documents the migration from `{ passthrough: true }` to `Passthrough()` wrapper

@@ -284,9 +284,14 @@ export async function resolveSegment<TEnv>(
       entry.shortCode,
     );
     if (component === undefined) {
+      // For Passthrough routes at runtime, use the live handler instead of
+      // the build handler. At build time (context.build === true), always
+      // use the build handler from entry.handler.
+      const handler =
+        !context.build && entry.liveHandler ? entry.liveHandler : entry.handler;
       const doneRouteHandler = track(`handler:${entry.id}`, 2);
       if (entry.loading) {
-        const result = handleHandlerResult(entry.handler(context));
+        const result = handleHandlerResult(handler(context));
         if (result instanceof Promise) {
           result.finally(doneRouteHandler).catch(() => {});
           const tracked = deps.trackHandler(result, {
@@ -307,7 +312,7 @@ export async function resolveSegment<TEnv>(
           component = result;
         }
       } else {
-        component = handleHandlerResult(await entry.handler(context));
+        component = handleHandlerResult(await handler(context));
         doneRouteHandler();
       }
     }
