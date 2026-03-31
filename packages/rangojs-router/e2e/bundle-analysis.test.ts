@@ -337,7 +337,6 @@ test.describe("bundle-analysis", () => {
 
   test.describe("version-virtual-module", () => {
     test("VERSION should be in RSC bundle as hex string", async () => {
-      // VERSION may be in index.js or an RSC asset chunk (e.g. __prerender-handlers)
       const rscBundle = getRscBundleContent();
 
       // VERSION should be defined as const VERSION = "hexstring"
@@ -388,33 +387,42 @@ test.describe("bundle-analysis", () => {
   });
 
   test.describe("prerender-handler-eviction", () => {
-    function getPrerenderHandlersContent(): string | null {
-      const files = readdirSync(RSC_ASSETS_DIR).filter(
-        (f) => f.startsWith("__prerender-handlers") && f.endsWith(".js"),
-      );
-      if (files.length === 0) return null;
-      return files
-        .map((file) => readFileSync(join(RSC_ASSETS_DIR, file), "utf-8"))
-        .join("\n");
-    }
-
     function getRscIndexContent(): string {
       return existsSync(RSC_INDEX) ? readFileSync(RSC_INDEX, "utf-8") : "";
     }
 
-    test("__prerender-handlers chunk exists in RSC bundle", async () => {
-      const content = getPrerenderHandlersContent();
-      expect(content).not.toBeNull();
-      expect(content!.length).toBeGreaterThan(0);
+    test("no separate __prerender-handlers or __static-handlers chunks in RSC bundle", async () => {
+      // Handler code is bundled into index.js and evicted there;
+      // no dedicated prerender or static chunk should exist.
+      const prerenderChunks = readdirSync(RSC_ASSETS_DIR).filter(
+        (f) => f.startsWith("__prerender-handlers") && f.endsWith(".js"),
+      );
+      const staticChunks = readdirSync(RSC_ASSETS_DIR).filter(
+        (f) => f.startsWith("__static-handlers") && f.endsWith(".js"),
+      );
+      expect(prerenderChunks.length).toBe(0);
+      expect(staticChunks.length).toBe(0);
     });
 
-    test("handler implementation strings evicted from prerender-handlers chunk", async () => {
-      const content = getPrerenderHandlersContent();
-      expect(content).not.toBeNull();
+    test("handler implementation strings evicted from RSC bundle", async () => {
+      // Check only runtime code (index.js + non-data asset chunks),
+      // not __pr-*/__st-* data assets which contain rendered output.
+      const rscIndex = getRscIndexContent();
+      const runtimeAssets = readdirSync(RSC_ASSETS_DIR)
+        .filter(
+          (f) =>
+            f.endsWith(".js") &&
+            !f.startsWith("__pr-") &&
+            !f.startsWith("__st-"),
+        )
+        .map((file) => readFileSync(join(RSC_ASSETS_DIR, file), "utf-8"))
+        .join("\n");
+      const rscRuntime = rscIndex + "\n" + runtimeAssets;
 
-      // Non-passthrough handler body strings should be replaced with stubs
-      expect(content).not.toContain("pre-rendered documentation");
-      expect(content).not.toContain("Content for");
+      // Non-passthrough handler body strings should be replaced with stubs.
+      // Use strings unique to prerender handlers (not general route handlers).
+      expect(rscRuntime).not.toContain("pre-rendered documentation");
+      expect(rscRuntime).not.toContain("docs-article-content");
     });
 
     test("handler implementation strings NOT in client bundle", async () => {
@@ -429,12 +437,11 @@ test.describe("bundle-analysis", () => {
       expect(ssrBundle).not.toContain("pre-rendered documentation");
     });
 
-    test("evicted handlers have stub shape", async () => {
-      const content = getPrerenderHandlersContent();
-      expect(content).not.toBeNull();
+    test("evicted handlers have stub shape in RSC bundle", async () => {
+      const rscBundle = getRscBundleContent();
 
       // Evicted handlers are replaced with: { __brand: "prerenderHandler", $$id: "..." }
-      expect(content).toMatch(/__brand.*prerenderHandler/);
+      expect(rscBundle).toMatch(/__brand.*prerenderHandler/);
     });
 
     test("__loadPrerenderManifestModule injected into RSC entry", async () => {

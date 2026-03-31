@@ -121,26 +121,12 @@ export function createRouterDiscoveryPlugin(
           __RANGO_DEBUG__: JSON.stringify(!!process.env.INTERNAL_RANGO_DEBUG),
         },
       };
-      if (opts?.enableBuildPrerender) {
-        config.environments = {
-          rsc: {
-            build: {
-              rollupOptions: {
-                output: {
-                  manualChunks(id: string) {
-                    if (s.resolvedPrerenderModules?.has(id)) {
-                      return "__prerender-handlers";
-                    }
-                    if (s.resolvedStaticModules?.has(id)) {
-                      return "__static-handlers";
-                    }
-                  },
-                },
-              },
-            },
-          },
-        };
-      }
+      // Prerender/static handler modules are bundled naturally with the
+      // rest of the RSC entry.  A previous design forced them into dedicated
+      // __prerender-handlers / __static-handlers chunks via manualChunks,
+      // but Rollup hoisted all shared dependencies into those chunks,
+      // inflating them to ~1 MB with active runtime code.  Handler code is
+      // evicted in closeBundle regardless of which chunk it lands in.
       return config;
     },
 
@@ -719,17 +705,20 @@ export function createRouterDiscoveryPlugin(
       if (!s.resolvedPrerenderModules?.size && !s.resolvedStaticModules?.size)
         return;
 
+      // Clear maps at the start of each RSC generateBundle pass.
+      // Vite 6 multi-environment builds run RSC twice (analysis + production);
+      // clearing prevents stale/duplicate records from the analysis pass.
+      s.handlerChunkInfoMap.clear();
+      s.staticHandlerChunkInfoMap.clear();
+
       for (const [fileName, chunk] of Object.entries(bundle) as [
         string,
         any,
       ][]) {
         if (chunk.type !== "chunk") continue;
 
-        // Prerender handlers chunk
-        if (
-          fileName.includes("__prerender-handlers") &&
-          s.resolvedPrerenderModules?.size
-        ) {
+        // Scan all chunks for handler exports (handlers may land in any chunk)
+        if (s.resolvedPrerenderModules?.size) {
           const handlers = extractHandlerExportsFromChunk(
             chunk.code,
             s.resolvedPrerenderModules,
@@ -737,15 +726,19 @@ export function createRouterDiscoveryPlugin(
             true,
           );
           if (handlers.length > 0) {
-            s.handlerChunkInfo = { fileName, exports: handlers };
+            const existing = s.handlerChunkInfoMap.get(fileName);
+            if (existing) {
+              existing.exports.push(...handlers);
+            } else {
+              s.handlerChunkInfoMap.set(fileName, {
+                fileName,
+                exports: handlers,
+              });
+            }
           }
         }
 
-        // Static handlers chunk
-        if (
-          fileName.includes("__static-handlers") &&
-          s.resolvedStaticModules?.size
-        ) {
+        if (s.resolvedStaticModules?.size) {
           const handlers = extractHandlerExportsFromChunk(
             chunk.code,
             s.resolvedStaticModules,
@@ -753,7 +746,15 @@ export function createRouterDiscoveryPlugin(
             false,
           );
           if (handlers.length > 0) {
-            s.staticHandlerChunkInfo = { fileName, exports: handlers };
+            const existing = s.staticHandlerChunkInfoMap.get(fileName);
+            if (existing) {
+              existing.exports.push(...handlers);
+            } else {
+              s.staticHandlerChunkInfoMap.set(fileName, {
+                fileName,
+                exports: handlers,
+              });
+            }
           }
         }
       }

@@ -56,8 +56,8 @@ export interface DiscoveryState {
 
   prerenderManifestEntries: Record<string, string> | null;
   staticManifestEntries: Record<string, string> | null;
-  handlerChunkInfo: ChunkInfo | null;
-  staticHandlerChunkInfo: ChunkInfo | null;
+  handlerChunkInfoMap: Map<string, ChunkInfo>;
+  staticHandlerChunkInfoMap: Map<string, ChunkInfo>;
   rscEntryFileName: string | null;
   resolvedPrerenderModules: Map<string, string[]> | undefined;
   resolvedStaticModules: Map<string, string[]> | undefined;
@@ -93,8 +93,8 @@ export function createDiscoveryState(
 
     prerenderManifestEntries: null,
     staticManifestEntries: null,
-    handlerChunkInfo: null,
-    staticHandlerChunkInfo: null,
+    handlerChunkInfoMap: new Map(),
+    staticHandlerChunkInfoMap: new Map(),
     rscEntryFileName: null,
     resolvedPrerenderModules: undefined,
     resolvedStaticModules: undefined,
