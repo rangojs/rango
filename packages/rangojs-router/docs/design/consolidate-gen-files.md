@@ -78,9 +78,7 @@ re-run the CLI command when they change routes in that module.
 Everything related to `router.named-routes.gen.ts` remains unchanged:
 
 - `writeRouteTypesFiles()` — runtime discovery writes named-routes (kept as-is)
-- Static parser pre-generation on startup for IDE support (kept as-is)
-- `staticRouteTypesGeneration` config option (kept as-is, still controls
-  the static parser fallback for named-routes before runtime discovery)
+- Static parser pre-generation on startup for IDE support (kept as-is, always enabled)
 
 ### CLI (`npx rango generate`)
 
