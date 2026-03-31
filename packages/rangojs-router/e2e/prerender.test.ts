@@ -209,12 +209,17 @@ test.describe("prerender non-prerendered param (production)", () => {
     expect(response?.status()).toBe(404);
   });
 
-  test("non-prerendered slug renders Not Found UI", async ({ page }) => {
+  test("non-prerendered slug renders notFoundBoundary UI", async ({ page }) => {
     await page.goto(f.url("/docs/unknown-slug"));
 
-    await expect(page.getByRole("heading", { name: "Not Found" })).toBeVisible({
-      timeout: 5000,
-    });
+    // The notFoundBoundary on docs.article should catch DataNotFoundError
+    // from the prerender stub and render custom 404 UI.
+    await expect(
+      page.locator('[data-testid="docs-not-found-title"]'),
+    ).toContainText("Doc Not Found");
+    await expect(
+      page.locator('[data-testid="docs-not-found-message"]'),
+    ).toBeVisible();
 
     // Should NOT show an error/500 page
     await expect(page.locator("text=Internal Server Error")).not.toBeVisible();
