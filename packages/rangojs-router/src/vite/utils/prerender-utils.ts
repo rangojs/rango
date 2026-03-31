@@ -31,6 +31,7 @@ export function encodePathParam(value: unknown): string {
 /**
  * Substitute route params into a pattern, stripping constraint and optional
  * syntax (:param(a|b)? -> value). Also handles wildcard params (*key).
+ * Optional params not present in `params` are removed from the output.
  */
 export function substituteRouteParams(
   pattern: string,
@@ -38,6 +39,9 @@ export function substituteRouteParams(
   encode: (value: string) => string = encodeURIComponent,
 ): string {
   let result = pattern;
+  let hadOmittedOptional = false;
+
+  // First pass: substitute provided params
   for (const [key, value] of Object.entries(params)) {
     const escaped = escapeRegExp(key);
     result = result.replace(
@@ -46,6 +50,18 @@ export function substituteRouteParams(
     );
     result = result.replace(`*${key}`, encode(value));
   }
+
+  // Second pass: strip remaining optional param placeholders not in params
+  result = result.replace(/:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?\?/g, () => {
+    hadOmittedOptional = true;
+    return "";
+  });
+
+  // Clean up slashes from omitted optional segments
+  if (hadOmittedOptional) {
+    result = result.replace(/\/\/+/g, "/").replace(/\/+$/, "") || "/";
+  }
+
   return result;
 }
 

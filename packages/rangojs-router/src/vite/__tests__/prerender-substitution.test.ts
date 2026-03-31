@@ -52,4 +52,27 @@ describe("substituteRouteParams", () => {
       "/api/users%2F123",
     );
   });
+
+  it("strips optional param when not in params", () => {
+    expect(
+      substituteRouteParams("/category/:name/:page?", { name: "shoes" }),
+    ).toBe("/category/shoes");
+  });
+
+  it("includes optional param when provided", () => {
+    expect(
+      substituteRouteParams("/category/:name/:page?", {
+        name: "shoes",
+        page: "2",
+      }),
+    ).toBe("/category/shoes/2");
+  });
+
+  it("strips optional constrained param when not in params", () => {
+    expect(substituteRouteParams("/:locale(en|gb)?/blog", {})).toBe("/blog");
+  });
+
+  it("preserves trailing slash on non-optional patterns", () => {
+    expect(substituteRouteParams("/blog/", {})).toBe("/blog/");
+  });
 });
