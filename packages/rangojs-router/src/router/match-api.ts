@@ -91,10 +91,7 @@ export async function createMatchContextForFull<TEnv>(
     });
   }
 
-  if (
-    manifestEntry.type === "route" &&
-    manifestEntry.prerenderDef?.options?.passthrough === true
-  ) {
+  if (manifestEntry.type === "route" && manifestEntry.isPassthrough === true) {
     matched.pt = true;
   }
 
@@ -289,10 +286,7 @@ export async function createMatchContextForPartial<TEnv>(
     });
   }
 
-  if (
-    manifestEntry.type === "route" &&
-    manifestEntry.prerenderDef?.options?.passthrough === true
-  ) {
+  if (manifestEntry.type === "route" && manifestEntry.isPassthrough === true) {
     matched.pt = true;
   }
 

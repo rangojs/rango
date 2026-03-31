@@ -26,7 +26,6 @@ const ValidDetail = Prerender<{ slug: string }>(
     const _slug: string = ctx.params.slug;
     return null;
   },
-  { passthrough: true },
 );
 
 // path pattern has :slug, Prerender declares { slug: string } — exact match
@@ -44,7 +43,6 @@ const NamedRouteDetail = Prerender<"locale.detail">(
     const _slug: string = ctx.params.slug;
     return null;
   },
-  { passthrough: true },
 );
 
 // Subset mounting: handler has { locale, slug } but pattern only has :slug.
@@ -62,7 +60,6 @@ const SupersetDetail = Prerender<{ locale: string; slug: string }>(
     const _slug: string = ctx.params.slug;
     return null;
   },
-  { passthrough: true },
 );
 
 // Subset mounting: { locale, slug } extends { slug } — handler can have extra params
@@ -78,7 +75,6 @@ const WrongParams = Prerender<{ category: string }>(
     const _cat: string = ctx.params.category;
     return null;
   },
-  { passthrough: true },
 );
 
 // { category } does NOT extend { slug } — slug is missing
@@ -98,7 +94,6 @@ const MismatchedNamedRoute = Prerender<"blog.post">(
     const _postId: string = ctx.params.postId;
     return null;
   },
-  { passthrough: true },
 );
 
 const _mismatchedNamedPatterns = urls(({ path }) => [
@@ -117,7 +112,6 @@ const IncludePrefixOnly = Prerender<{ locale: string }>(
     const _locale: string = ctx.params.locale;
     return null;
   },
-  { passthrough: true },
 );
 
 const _includePrefixOnlyPatterns = urls(({ path }) => [

@@ -114,9 +114,9 @@ function createPrerenderPassthroughFn(
     }
     if (!isPassthroughRoute) {
       throw new Error(
-        "ctx.passthrough() is only available on routes declared with " +
-          "{ passthrough: true }. Remove the passthrough() call or add " +
-          "{ passthrough: true } to the Prerender options.",
+        "ctx.passthrough() is only available on routes wrapped with " +
+          "Passthrough(). Remove the passthrough() call or wrap the " +
+          "Prerender definition with Passthrough(prerenderDef, liveHandler).",
       );
     }
     return PRERENDER_PASSTHROUGH;

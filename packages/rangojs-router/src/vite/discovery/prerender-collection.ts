@@ -54,11 +54,12 @@ export async function expandPrerenderRoutes(
   for (const { manifest } of allManifests) {
     if (!manifest.prerenderRoutes) continue;
     const defs = manifest._prerenderDefs || {};
+    const passthroughSet = new Set(manifest.passthroughRoutes || []);
     for (const routeName of manifest.prerenderRoutes) {
       const pattern = manifest.routeManifest[routeName];
       if (!pattern) continue;
       const def = defs[routeName];
-      const isPassthroughRoute = !!def?.options?.passthrough;
+      const isPassthroughRoute = passthroughSet.has(routeName);
       const hasDynamic = pattern.includes(":") || pattern.includes("*");
       if (!hasDynamic) {
         // Static route: use pattern directly (strip trailing slash for URL)

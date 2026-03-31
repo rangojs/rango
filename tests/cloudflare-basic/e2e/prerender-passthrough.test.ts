@@ -275,20 +275,17 @@ test.describe("prerender passthrough bundle output (production)", () => {
     ssrBundle = concatBundleContents(path.join(DIST, "rsc/ssr/assets"));
   });
 
-  test("passthrough handler code stays in RSC prerender-handlers chunk", () => {
-    // GuidesDetail (passthrough: true) should NOT be replaced with a stub
-    // It should contain the full Prerender call
-    expect(prerenderHandlersBundle).toContain("GuidesDetail");
+  test("prerender definitions are evicted from RSC prerender-handlers chunk", () => {
+    // GuidesDetailDef (Prerender def) should be replaced with a stub
     expect(prerenderHandlersBundle).toMatch(
-      /const\s+GuidesDetail\s*=\s*Prerender/,
+      /const\s+GuidesDetailDef\s*=\s*\{\s*__brand:\s*"prerenderHandler"/,
     );
   });
 
-  test("passthrough handler code stays for PaginatedArticles", () => {
-    // PaginatedArticles (passthrough: true) should NOT be evicted
-    expect(prerenderHandlersBundle).toContain("PaginatedArticles");
+  test("PaginatedArticlesDef is evicted from RSC bundle", () => {
+    // PaginatedArticlesDef (Prerender def) should be replaced with a stub
     expect(prerenderHandlersBundle).toMatch(
-      /const\s+PaginatedArticles\s*=\s*Prerender/,
+      /const\s+PaginatedArticlesDef\s*=\s*\{\s*__brand:\s*"prerenderHandler"/,
     );
   });
 
@@ -300,17 +297,11 @@ test.describe("prerender passthrough bundle output (production)", () => {
   });
 
   test("passthrough handler not in client bundle", () => {
-    expect(clientBundle).not.toContain("GuidesDetail");
+    expect(clientBundle).not.toContain("GuidesDetailDef");
   });
 
   test("passthrough handler not in SSR bundle", () => {
-    expect(ssrBundle).not.toContain("GuidesDetail");
-  });
-
-  test("passthrough handler-specific code stays in RSC bundle", () => {
-    // The guide title lookup logic should be in the bundle
-    expect(prerenderHandlersBundle).toContain("Routing Guide");
-    expect(prerenderHandlersBundle).toContain("Caching Guide");
+    expect(ssrBundle).not.toContain("GuidesDetailDef");
   });
 
   test("passthrough handler-specific code not in client bundle", () => {

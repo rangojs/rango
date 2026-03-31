@@ -688,13 +688,20 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         return staticComponent;
       }
       const routeEntry = entry as Extract<EntryData, { type: "route" }>;
+      // For Passthrough routes at runtime, use the live handler instead of
+      // the build handler. At build time (context.build === true), always
+      // use the build handler from routeEntry.handler.
+      const handler =
+        !context.build && routeEntry.liveHandler
+          ? routeEntry.liveHandler
+          : routeEntry.handler;
       if (!routeEntry.loading) {
-        const result = handleHandlerResult(await routeEntry.handler(context));
+        const result = handleHandlerResult(await handler(context));
         doneHandler();
         return result;
       }
       if (!actionContext) {
-        const result = handleHandlerResult(routeEntry.handler(context));
+        const result = handleHandlerResult(handler(context));
         if (result instanceof Promise) {
           result.finally(doneHandler).catch(() => {});
           const tracked = deps.trackHandler(result, {
@@ -717,9 +724,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       debugLog("segment.action", "resolving action route with awaited value", {
         entryId: entry.id,
       });
-      const actionResult = handleHandlerResult(
-        await routeEntry.handler(context),
-      );
+      const actionResult = handleHandlerResult(await handler(context));
       doneHandler();
       return {
         content: Promise.resolve(actionResult),

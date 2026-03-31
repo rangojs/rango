@@ -39,7 +39,7 @@ test.describe("build-skip prerender (dev mode)", () => {
 
 // -- Production build --------------------------------------------------------
 // In production, Skip entries are excluded from the prerender manifest.
-// With passthrough: true, the handler stays in the bundle and renders live
+// Passthrough() wraps the Prerender def with a live handler that renders
 // for unknown/skipped params.
 
 test.describe("build-skip prerender (production build)", () => {
@@ -67,8 +67,8 @@ test.describe("build-skip prerender (production build)", () => {
   test("draft article (skipped via Skip) renders live with passthrough", async ({
     page,
   }) => {
-    // Skip skipped "draft" during build, but passthrough: true keeps
-    // the handler in the bundle. The worker falls through to live rendering.
+    // Skip skipped "draft" during build. Passthrough's live handler
+    // runs at request time for the skipped param.
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/build-skip/draft"));

@@ -205,7 +205,8 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 - `Prerender()`/`Static()` handler types, `BuildContext`, `GetParamsContext`
 - Pre-render manifest generation, intercept pre-render artifacts
 - Runtime prerender cache lookup flow
-- `ctx.passthrough()` per-param artifact skip (defers to live handler on passthrough routes)
+- `Passthrough(prerenderDef, liveHandler)` wrapper for live runtime fallback
+- `ctx.passthrough()` per-param artifact skip (defers to Passthrough live handler)
 - `PRERENDER_PASSTHROUGH` sentinel, `isPrerenderPassthrough()` type guard
 
 ### Request Timeouts

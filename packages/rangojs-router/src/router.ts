@@ -748,7 +748,7 @@ export function createRouter<TEnv = any>(
         if (entry.type === "route" && entry.isPrerender) {
           if (!prerenderRouteKeys) prerenderRouteKeys = new Set();
           prerenderRouteKeys.add(name);
-          if (entry.prerenderDef?.options?.passthrough === true) {
+          if (entry.isPassthrough === true) {
             if (!passthroughRouteKeys) passthroughRouteKeys = new Set();
             passthroughRouteKeys.add(name);
           }

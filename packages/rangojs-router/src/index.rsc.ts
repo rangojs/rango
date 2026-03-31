@@ -114,8 +114,9 @@ export { nonce } from "./rsc/nonce.js";
 // Pre-render handler API
 export {
   Prerender,
+  Passthrough,
   type PrerenderHandlerDefinition,
-  type PrerenderPassthroughContext,
+  type PassthroughHandlerDefinition,
   type PrerenderOptions,
   type BuildContext,
   type StaticBuildContext,

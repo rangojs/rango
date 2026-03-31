@@ -225,7 +225,7 @@ export type {
  * @internal
  * Type guard for prerender handler definitions.
  */
-export { isPrerenderHandler } from "./prerender.js";
+export { isPrerenderHandler, isPassthroughHandler } from "./prerender.js";
 
 /**
  * @internal
