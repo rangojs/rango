@@ -173,6 +173,54 @@ test.describe("prerender-handler (dev mode)", () => {
   });
 });
 
+test.describe("prerender non-prerendered param (dev mode)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test("unknown slug renders on-demand in dev mode", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    // In dev mode, the full handler code is present so it renders fine
+    await page.goto(f.url("/docs/unknown-slug"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="docs-article-title"]'),
+    ).toContainText("unknown-slug");
+    await expect(
+      page.locator('[data-testid="docs-article-content"]'),
+    ).toContainText("Content for unknown-slug");
+  });
+});
+
+test.describe("prerender non-prerendered param (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("non-prerendered slug returns 404, not 500", async ({ page }) => {
+    // Regression: production stubs have no handler function. Visiting a slug
+    // that was NOT returned by getParams() must return 404, not crash with
+    // "routeEntry.handler is not a function".
+    const response = await page.goto(f.url("/docs/unknown-slug"));
+    expect(response?.status()).toBe(404);
+  });
+
+  test("non-prerendered slug renders Not Found UI", async ({ page }) => {
+    await page.goto(f.url("/docs/unknown-slug"));
+
+    await expect(page.getByRole("heading", { name: "Not Found" })).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Should NOT show an error/500 page
+    await expect(page.locator("text=Internal Server Error")).not.toBeVisible();
+  });
+});
+
 test.describe("prerender-complex (dev mode)", () => {
   const f = useFixture({
     root: "./e2e/test-app",

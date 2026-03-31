@@ -12,7 +12,7 @@ import {
   getNamePrefix,
   getRootScoped,
 } from "../server/context";
-import { invariant } from "../errors";
+import { invariant, DataNotFoundError } from "../errors";
 import { validateUserRouteName } from "../route-name.js";
 import {
   isPrerenderHandler,
@@ -176,11 +176,20 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
     }
 
     // Ensure handler is always a function (wrap ReactNode or extract from prerender/static def)
+    // For prerender stubs (production builds where handler code is evicted),
+    // handler.handler is undefined — provide a notFound fallback so requests
+    // for non-prerendered params get 404 instead of "handler is not a function".
     const wrappedHandler: Handler<any, any, TEnv> =
       typeof handler === "function"
         ? (handler as Handler<any, any, TEnv>)
         : isPrerenderHandler(handler)
-          ? (handler.handler as Handler<any, any, TEnv>)
+          ? typeof handler.handler === "function"
+            ? (handler.handler as Handler<any, any, TEnv>)
+            : () => {
+                throw new DataNotFoundError(
+                  "No prerender data found for this route",
+                );
+              }
           : isStaticHandler(handler)
             ? (handler.handler as Handler<any, any, TEnv>)
             : () => handler;
