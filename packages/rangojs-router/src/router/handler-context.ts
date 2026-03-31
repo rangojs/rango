@@ -166,9 +166,24 @@ export function createReverseFunction(
       : hrefParams;
 
     // Substitute params (strip constraint and optional syntax: :param(a|b)? -> value)
+    // Optional params (:param?) are omitted when not provided
     if (effectiveParams) {
+      let hadOmittedOptional = false;
+      // First pass: optional params (trailing ?)
       result = result.replace(
-        /:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?\??/g,
+        /:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?(\?)/g,
+        (_, key) => {
+          const value = effectiveParams[key];
+          if (value === undefined) {
+            hadOmittedOptional = true;
+            return "";
+          }
+          return encodeURIComponent(value);
+        },
+      );
+      // Second pass: required params (no trailing ?)
+      result = result.replace(
+        /:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?(?!\?)/g,
         (_, key) => {
           const value = effectiveParams[key];
           if (value === undefined) {
@@ -177,6 +192,11 @@ export function createReverseFunction(
           return encodeURIComponent(value);
         },
       );
+      // Clean up slashes only when an optional param was actually omitted,
+      // so intentional trailing-slash patterns like "/blog/" are preserved.
+      if (hadOmittedOptional) {
+        result = result.replace(/\/\/+/g, "/").replace(/\/+$/, "") || "/";
+      }
     }
 
     // Append search params as query string

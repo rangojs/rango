@@ -509,4 +509,43 @@ describe("createReverseFunction", () => {
       expect(() => reverse(".flatIndex")).toThrow("Unknown route");
     });
   });
+
+  describe("optional params", () => {
+    const optionalMap: Record<string, string> = {
+      "shop.category": "/category/:name/:page?",
+      "i18n.blog": "/:locale(en|gb)?/blog",
+      trailing: "/blog/",
+    };
+
+    it("omits optional param when not provided", () => {
+      const reverse = createReverseFunction(optionalMap, "shop.category");
+      expect(reverse("shop.category", { name: "shoes" })).toBe(
+        "/category/shoes",
+      );
+    });
+
+    it("includes optional param when provided", () => {
+      const reverse = createReverseFunction(optionalMap, "shop.category");
+      expect(reverse("shop.category", { name: "shoes", page: "2" })).toBe(
+        "/category/shoes/2",
+      );
+    });
+
+    it("omits optional constrained param when not provided", () => {
+      const reverse = createReverseFunction(optionalMap, "i18n.blog");
+      expect(reverse("i18n.blog", {})).toBe("/blog");
+    });
+
+    it("throws for missing required param when optional params exist", () => {
+      const reverse = createReverseFunction(optionalMap, "shop.category");
+      expect(() => reverse("shop.category", {})).toThrow(
+        'Missing param "name"',
+      );
+    });
+
+    it("preserves intentional trailing slash on non-optional patterns", () => {
+      const reverse = createReverseFunction(optionalMap, "trailing");
+      expect(reverse("trailing")).toBe("/blog/");
+    });
+  });
 });
