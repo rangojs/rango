@@ -8,7 +8,6 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "wrangler deploy",
-    "extract": "npx rango extract-names ./",
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
     "bench": "npx tsx bench/run.ts",

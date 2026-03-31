@@ -195,15 +195,8 @@ the correct answer is `--runtime`, not a best-effort guess.
 ## Configuration
 
 ```typescript
-rscRouter({
-  // Disable gen file creation and the file watcher.
-  // Use when gen files are managed externally (e.g., npx rango extract-names).
-  // Default: true
-  staticRouteTypesGeneration: false,
-
-  // Glob patterns to include/exclude from scanning.
-  include: ["src/**"],
-  exclude: ["src/legacy/**"],
+rango({
+  preset: "cloudflare",
 });
 ```
 

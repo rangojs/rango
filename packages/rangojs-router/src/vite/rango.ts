@@ -453,7 +453,6 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
     createRouterDiscoveryPlugin(discoveryEntryPath, {
       routerPathRef: discoveryRouterRef,
       enableBuildPrerender: prerenderEnabled,
-      staticRouteTypesGeneration: resolvedOptions.staticRouteTypesGeneration,
     }),
   );
 

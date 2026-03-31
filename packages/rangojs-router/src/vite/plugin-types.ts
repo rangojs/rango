@@ -7,14 +7,6 @@ interface RangoBaseOptions {
    * @default true
    */
   banner?: boolean;
-
-  /**
-   * Generate named-routes.gen.ts by parsing url modules at startup.
-   * Provides type-safe Handler<"name"> and href() without executing router code.
-   * Set to `false` to disable (run `npx rango extract-names` manually instead).
-   * @default true
-   */
-  staticRouteTypesGeneration?: boolean;
 }
 
 /**
