@@ -121,10 +121,11 @@ export function createPrerenderStore(): PrerenderStore | null {
         if (!mod) return null;
         const specifier = mod.default[key];
         if (!specifier) return null;
-        return mod
-          .loadPrerenderAsset(specifier)
-          .then((asset) => asset.default)
-          .catch(() => null);
+        // Let asset load errors propagate — a missing/corrupted artifact
+        // for a key that exists in the manifest is a build/deploy error
+        // and should surface as a 500, not be silently swallowed as null
+        // (which the handler stub would misreport as a 404).
+        return mod.loadPrerenderAsset(specifier).then((asset) => asset.default);
       });
       cache.set(key, promise);
       return promise;
