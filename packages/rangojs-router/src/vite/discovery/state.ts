@@ -16,6 +16,10 @@ export interface PluginOptions {
   // Mutable ref for deferred auto-discovery (node preset).
   // The auto-discover config() hook populates this before configResolved.
   routerPathRef?: { path?: string };
+  /** Build-time env option from rango() config. */
+  buildEnv?: import("../plugin-types.js").BuildEnvOption;
+  /** Deployment preset (needed for buildEnv "auto" resolution). */
+  preset?: "node" | "cloudflare";
 }
 
 export interface PrecomputedEntry {
@@ -67,6 +71,11 @@ export interface DiscoveryState {
   devServer: any;
   selfWrittenGenFiles: Map<string, { at: number; hash: string }>;
   SELF_WRITE_WINDOW_MS: number;
+
+  /** Resolved build-time env bindings (set during buildStart/configureServer). */
+  resolvedBuildEnv?: Record<string, unknown>;
+  /** Cleanup function for build-time env resources (e.g., miniflare). */
+  buildEnvDispose?: (() => Promise<void> | void) | null;
 }
 
 export function createDiscoveryState(

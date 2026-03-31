@@ -625,6 +625,7 @@ export function createRouter<TEnv = any>(
     params: Record<string, string>,
     buildVars?: Record<string, any>,
     isPassthroughRoute?: boolean,
+    buildEnv?: TEnv,
   ) {
     return _matchForPrerender(
       pathname,
@@ -632,6 +633,7 @@ export function createRouter<TEnv = any>(
       prerenderDeps,
       buildVars,
       isPassthroughRoute,
+      buildEnv,
     );
   }
 
@@ -639,12 +641,14 @@ export function createRouter<TEnv = any>(
     handler: Function,
     handlerId: string,
     routeName?: string,
+    buildEnv?: TEnv,
   ) {
     return _renderStaticSegment<TEnv>(
       handler,
       handlerId,
       mergedRouteMap,
       routeName,
+      buildEnv,
     );
   }
 

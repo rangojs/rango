@@ -351,6 +351,7 @@ export function createPrerenderContext<TEnv>(
   routeName?: string,
   buildVars?: Record<string, any>,
   isPassthroughRoute?: boolean,
+  buildEnv?: TEnv,
 ): InternalHandlerContext<any, TEnv> {
   const syntheticUrl = new URL(`http://prerender${pathname}`);
   const variables = buildVars ?? {};
@@ -374,7 +375,11 @@ export function createPrerenderContext<TEnv>(
     url: syntheticUrl,
     originalUrl: syntheticUrl,
     get env(): TEnv {
-      return throwUnavailable("env");
+      if (buildEnv !== undefined) return buildEnv;
+      throw new Error(
+        "ctx.env is not available during pre-rendering. " +
+          "Configure buildEnv in your rango() plugin options to enable build-time env access.",
+      );
     },
     _variables: variables,
     get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
@@ -422,6 +427,7 @@ export function createPrerenderContext<TEnv>(
 export function createStaticContext<TEnv>(
   routeMap: Record<string, string>,
   routeName?: string,
+  buildEnv?: TEnv,
 ): InternalHandlerContext<any, TEnv> {
   const variables: Record<string, any> = {};
 
@@ -456,7 +462,11 @@ export function createStaticContext<TEnv>(
       return throwUnavailable("originalUrl");
     },
     get env(): TEnv {
-      return throwUnavailable("env");
+      if (buildEnv !== undefined) return buildEnv;
+      throw new Error(
+        "ctx.env is not available in Static() handlers. " +
+          "Configure buildEnv in your rango() plugin options to enable build-time env access.",
+      );
     },
     _variables: variables,
     get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
