@@ -11,7 +11,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
-    rango({ preset: "cloudflare" }),
+    rango({ preset: "cloudflare", buildEnv: "auto" }),
     cloudflare({
       configPath: "./wrangler.json",
       viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },

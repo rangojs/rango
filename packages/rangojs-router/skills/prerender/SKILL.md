@@ -131,7 +131,8 @@ interface BuildContext<TParams> {
     search?: Record<string, unknown>,
   ): string; // URL generation
   passthrough(): PrerenderPassthroughResult; // Skip local artifact (Passthrough routes only)
-  // NOT available: req, headers, cookies, env (throws descriptive errors)
+  env: DefaultEnv; // Available when buildEnv is configured in rango() (throws otherwise)
+  // NOT available: request, headers, cookies (always throw)
 }
 ```
 

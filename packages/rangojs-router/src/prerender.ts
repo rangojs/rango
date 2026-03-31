@@ -124,8 +124,8 @@ export interface PrerenderOptions {
 
 /**
  * Context passed to Prerender() handlers at build time.
- * Has a synthetic URL from getParams, params, and pathname.
- * No request, env, headers, cookies.
+ * Has a synthetic URL from getParams, params, pathname, and optionally env.
+ * No request, headers, cookies.
  */
 export interface BuildContext<TParams> {
   /** Params extracted from the route pattern (populated from getParams). */
@@ -133,6 +133,16 @@ export interface BuildContext<TParams> {
 
   /** True during build-time pre-rendering, false during passthrough live render. */
   build: true;
+
+  /**
+   * Build-time environment bindings (KV, D1, etc.) supplied by the Vite plugin.
+   * Only available when `buildEnv` is configured in rango() options.
+   * Throws with a clear error if not configured.
+   *
+   * This is NOT the live request env — it is shared across all prerender
+   * invocations for the build.
+   */
+  env: DefaultEnv;
 
   /** Read a variable set by getParams or a parent handler. */
   get: {
@@ -180,6 +190,12 @@ export interface StaticBuildContext {
   /** Always true for Static handlers at build time. */
   build: true;
 
+  /**
+   * Build-time environment bindings supplied by the Vite plugin.
+   * Only available when `buildEnv` is configured in rango() options.
+   */
+  env: DefaultEnv;
+
   /** Read a variable (available for type consistency with BuildContext). */
   get: {
     <T>(contextVar: ContextVar<T>): T | undefined;
@@ -206,6 +222,12 @@ export interface StaticBuildContext {
 export interface GetParamsContext {
   /** Always true during build-time getParams execution. */
   build: true;
+
+  /**
+   * Build-time environment bindings supplied by the Vite plugin.
+   * Only available when `buildEnv` is configured in rango() options.
+   */
+  env: DefaultEnv;
 
   /** Set a variable that will be available to each handler invocation via ctx.get(). */
   set: {

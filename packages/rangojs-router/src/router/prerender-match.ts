@@ -54,6 +54,7 @@ export async function matchForPrerender<TEnv = any>(
   deps: PrerenderMatchDeps<TEnv>,
   buildVars?: Record<string, any>,
   isPassthroughRoute?: boolean,
+  buildEnv?: TEnv,
 ): Promise<{
   segments: SerializedSegmentData[];
   handles: Record<string, SegmentHandleData>;
@@ -98,7 +99,7 @@ export async function matchForPrerender<TEnv = any>(
     const variables: Record<string, any> = buildVars ? { ...buildVars } : {};
     const stubRes = new Response(null, { status: 200 });
     const minimalRequestContext: RequestContext<TEnv> = {
-      env: {} as TEnv,
+      env: buildEnv ?? ({} as TEnv),
       request: new Request("http://prerender" + pathname),
       url: new URL("http://prerender" + pathname),
       originalUrl: new URL("http://prerender" + pathname),
@@ -140,7 +141,7 @@ export async function matchForPrerender<TEnv = any>(
     return runWithRequestContext(minimalRequestContext, async () => {
       // 6. Create prerender context with synthetic URL.
       // Prerender handlers get params, pathname, url, searchParams, search,
-      // reverse, and use(handle) — but no request, env, headers, or cookies.
+      // reverse, use(handle), and optionally env (when buildEnv is configured).
       const buildCtx = createPrerenderContext<TEnv>(
         matchedParams,
         pathname,
@@ -148,6 +149,7 @@ export async function matchForPrerender<TEnv = any>(
         matched.routeKey,
         variables,
         matchedPassthroughRoute,
+        buildEnv,
       );
 
       // 7. Wire use() for handles only (loaders throw)
@@ -320,6 +322,7 @@ export async function renderStaticSegment<TEnv = any>(
   handlerId: string,
   mergedRouteMap: Record<string, string>,
   routeName?: string,
+  buildEnv?: TEnv,
 ): Promise<{ encoded: string; handles: Record<string, unknown[]> } | null> {
   const syntheticUrl = new URL("http://prerender/");
   const syntheticRequest = new Request(syntheticUrl);
@@ -330,7 +333,7 @@ export async function renderStaticSegment<TEnv = any>(
   // Minimal request context so setupBuildUse can find the HandleStore
   const stubRes = new Response(null, { status: 200 });
   const minimalRequestContext: RequestContext<TEnv> = {
-    env: {} as TEnv,
+    env: buildEnv ?? ({} as TEnv),
     request: syntheticRequest,
     url: syntheticUrl,
     originalUrl: syntheticUrl,
@@ -368,9 +371,12 @@ export async function renderStaticSegment<TEnv = any>(
   };
 
   return runWithRequestContext(minimalRequestContext, async () => {
-    // Static handlers get only reverse and use(handle) — no URL, params,
-    // request, env, headers, or cookies.
-    const buildCtx = createStaticContext<TEnv>(mergedRouteMap, routeName);
+    // Static handlers get only reverse, use(handle), and optionally env.
+    const buildCtx = createStaticContext<TEnv>(
+      mergedRouteMap,
+      routeName,
+      buildEnv,
+    );
 
     // Set segment ID so handle pushes are keyed correctly
     (buildCtx as InternalHandlerContext<any, TEnv>)._currentSegmentId =
