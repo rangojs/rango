@@ -503,6 +503,47 @@ describe("createReverse", () => {
       'Missing param "step"',
     );
   });
+
+  it("omits optional param segment when not provided", () => {
+    const r = createReverse({
+      "shop.category": "/category/:name/:page?",
+    });
+    expect(r("shop.category" as any, { name: "shoes" })).toBe(
+      "/category/shoes",
+    );
+  });
+
+  it("includes optional param when provided", () => {
+    const r = createReverse({
+      "shop.category": "/category/:name/:page?",
+    });
+    expect(r("shop.category" as any, { name: "shoes", page: "2" })).toBe(
+      "/category/shoes/2",
+    );
+  });
+
+  it("omits optional constrained param when not provided", () => {
+    const r = createReverse({
+      "i18n.blog": "/:locale(en|gb)?/blog",
+    });
+    expect(r("i18n.blog" as any, {})).toBe("/blog");
+  });
+
+  it("still throws for missing required param when optional params exist", () => {
+    const r = createReverse({
+      "shop.category": "/category/:name/:page?",
+    });
+    expect(() => r("shop.category" as any, {} as any)).toThrow(
+      'Missing param "name"',
+    );
+  });
+
+  it("preserves intentional trailing slash on non-optional patterns", () => {
+    const r = createReverse({
+      trailing: "/blog/",
+    });
+    expect(r("trailing" as any)).toBe("/blog/");
+  });
 });
 
 // ========================================================================
