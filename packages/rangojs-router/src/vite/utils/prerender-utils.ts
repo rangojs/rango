@@ -59,7 +59,9 @@ export function substituteRouteParams(
 
   // Clean up slashes from omitted optional segments
   if (hadOmittedOptional) {
+    const hadTrailingSlash = pattern.length > 1 && pattern.endsWith("/");
     result = result.replace(/\/\/+/g, "/").replace(/\/+$/, "") || "/";
+    if (hadTrailingSlash && !result.endsWith("/")) result += "/";
   }
 
   return result;

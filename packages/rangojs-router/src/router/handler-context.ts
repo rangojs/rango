@@ -195,7 +195,9 @@ export function createReverseFunction(
       // Clean up slashes only when an optional param was actually omitted,
       // so intentional trailing-slash patterns like "/blog/" are preserved.
       if (hadOmittedOptional) {
+        const hadTrailingSlash = pattern.length > 1 && pattern.endsWith("/");
         result = result.replace(/\/\/+/g, "/").replace(/\/+$/, "") || "/";
+        if (hadTrailingSlash && !result.endsWith("/")) result += "/";
       }
     }
 

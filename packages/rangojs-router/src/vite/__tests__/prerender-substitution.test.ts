@@ -75,4 +75,11 @@ describe("substituteRouteParams", () => {
   it("preserves trailing slash on non-optional patterns", () => {
     expect(substituteRouteParams("/blog/", {})).toBe("/blog/");
   });
+
+  it("preserves trailing slash when optional param is omitted from slash-terminated pattern", () => {
+    expect(substituteRouteParams("/:locale(en|gb)?/blog/", {})).toBe("/blog/");
+    expect(
+      substituteRouteParams("/category/:name/:page?/", { name: "shoes" }),
+    ).toBe("/category/shoes/");
+  });
 });

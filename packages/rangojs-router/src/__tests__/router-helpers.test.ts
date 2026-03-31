@@ -544,6 +544,17 @@ describe("createReverse", () => {
     });
     expect(r("trailing" as any)).toBe("/blog/");
   });
+
+  it("preserves trailing slash when optional param is omitted from slash-terminated pattern", () => {
+    const r = createReverse({
+      "i18n.blog": "/:locale(en|gb)?/blog/",
+      "shop.category": "/category/:name/:page?/",
+    });
+    expect(r("i18n.blog" as any, {})).toBe("/blog/");
+    expect(r("shop.category" as any, { name: "shoes" })).toBe(
+      "/category/shoes/",
+    );
+  });
 });
 
 // ========================================================================

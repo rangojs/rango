@@ -547,5 +547,17 @@ describe("createReverseFunction", () => {
       const reverse = createReverseFunction(optionalMap, "trailing");
       expect(reverse("trailing")).toBe("/blog/");
     });
+
+    it("preserves trailing slash when optional param is omitted from slash-terminated pattern", () => {
+      const trailingOptMap: Record<string, string> = {
+        "i18n.blog": "/:locale(en|gb)?/blog/",
+        "shop.category": "/category/:name/:page?/",
+      };
+      const r1 = createReverseFunction(trailingOptMap, "i18n.blog");
+      expect(r1("i18n.blog", {})).toBe("/blog/");
+
+      const r2 = createReverseFunction(trailingOptMap, "shop.category");
+      expect(r2("shop.category", { name: "shoes" })).toBe("/category/shoes/");
+    });
   });
 });
