@@ -94,10 +94,16 @@ export const StaticWithReverse = Static((ctx) => {
   );
 });
 
-export const prerenderPatterns = urls(({ path, loader }) => [
+export const prerenderPatterns = urls(({ path, loader, notFoundBoundary }) => [
   path("/docs", DocsPage, { name: "docs" }),
   path("/docs/:slug", DocsArticle, { name: "docs.article" }, () => [
     loader(PrerenderTestLoader),
+    notFoundBoundary(({ notFound: info }) => (
+      <div data-testid="docs-not-found">
+        <h1 data-testid="docs-not-found-title">Doc Not Found</h1>
+        <p data-testid="docs-not-found-message">{info.message}</p>
+      </div>
+    )),
   ]),
   path("/changelog", ChangelogPage, { name: "changelog" }),
   // Static handler on a non-dynamic route
