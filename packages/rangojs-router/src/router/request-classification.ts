@@ -18,15 +18,8 @@
 import { RouteNotFoundError } from "../errors.js";
 import type { EntryData } from "../server/context.js";
 import type { CollectedMiddleware } from "./middleware-types.js";
-import { collectRouteMiddleware } from "./middleware.js";
-import { traverseBack } from "./pattern-matching.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
-import {
-  parseAcceptTypes,
-  RSC_RESPONSE_TYPE,
-  pickNegotiateVariant,
-} from "./content-negotiation.js";
-import { loadManifest } from "./manifest.js";
+import { negotiateRoute } from "./content-negotiation.js";
 import { stripInternalParams } from "./handler-context.js";
 import { resolveRoute, type RouteSnapshot } from "./route-snapshot.js";
 
@@ -60,34 +53,29 @@ interface ResponseRoutePlan<TEnv = any> {
 interface LoaderFetchPlan<TEnv = any> {
   mode: "loader";
   route: RouteSnapshot<TEnv>;
-  routeMiddleware: CollectedMiddleware[];
 }
 
 interface PeRenderPlan<TEnv = any> {
   mode: "pe-render";
   route: RouteSnapshot<TEnv>;
-  routeMiddleware: CollectedMiddleware[];
 }
 
 interface ActionPlan<TEnv = any> {
   mode: "action";
   route: RouteSnapshot<TEnv>;
   actionId: string;
-  routeMiddleware: CollectedMiddleware[];
   negotiated: boolean;
 }
 
 interface FullRenderPlan<TEnv = any> {
   mode: "full-render";
   route: RouteSnapshot<TEnv>;
-  routeMiddleware: CollectedMiddleware[];
   negotiated: boolean;
 }
 
 interface PartialRenderPlan<TEnv = any> {
   mode: "partial-render";
   route: RouteSnapshot<TEnv>;
-  routeMiddleware: CollectedMiddleware[];
   negotiated: boolean;
 }
 
@@ -240,28 +228,17 @@ export async function classifyRequest<TEnv = any>(
     request.headers.get("rsc-action") || url.searchParams.get("_rsc_action");
   const isLoaderFetch = url.searchParams.has("_rsc_loader");
 
-  const routeMiddleware = snapshot.routeMiddleware;
   const hasVariants =
     snapshot.matched.negotiateVariants &&
     snapshot.matched.negotiateVariants.length > 0;
   const negotiated = !!hasVariants;
 
   if (isAction && actionId) {
-    return {
-      mode: "action",
-      route: snapshot,
-      actionId,
-      routeMiddleware,
-      negotiated,
-    };
+    return { mode: "action", route: snapshot, actionId, negotiated };
   }
 
   if (isLoaderFetch) {
-    return {
-      mode: "loader",
-      route: snapshot,
-      routeMiddleware,
-    };
+    return { mode: "loader", route: snapshot };
   }
 
   // PE detection: POST with form content-type, but not a server action
@@ -270,11 +247,7 @@ export async function classifyRequest<TEnv = any>(
     contentType.includes("multipart/form-data") ||
     contentType.includes("application/x-www-form-urlencoded");
   if (request.method === "POST" && !isAction && isFormSubmission) {
-    return {
-      mode: "pe-render",
-      route: snapshot,
-      routeMiddleware,
-    };
+    return { mode: "pe-render", route: snapshot };
   }
 
   // App switch: client's routerId doesn't match this router
@@ -283,20 +256,10 @@ export async function classifyRequest<TEnv = any>(
   const isPartial = url.searchParams.has("_rsc_partial") && !isAppSwitch;
 
   if (isPartial) {
-    return {
-      mode: "partial-render",
-      route: snapshot,
-      routeMiddleware,
-      negotiated,
-    };
+    return { mode: "partial-render", route: snapshot, negotiated };
   }
 
-  return {
-    mode: "full-render",
-    route: snapshot,
-    routeMiddleware,
-    negotiated,
-  };
+  return { mode: "full-render", route: snapshot, negotiated };
 }
 
 // ---------------------------------------------------------------------------
@@ -315,70 +278,24 @@ async function classifyResponseRoute<TEnv>(
 ): Promise<ResponseRoutePlan<TEnv> | null> {
   const { matched, manifestEntry, routeMiddleware, responseType } = snapshot;
 
-  // Content negotiation: when negotiate variants exist, pick the best
-  // handler based on the Accept header.
-  if (matched.negotiateVariants && matched.negotiateVariants.length > 0) {
-    const acceptEntries = parseAcceptTypes(request.headers.get("accept") || "");
-
-    // Build candidate list preserving definition order.
-    const variants = matched.negotiateVariants;
-    let candidates: Array<{ routeKey: string; responseType: string }>;
-    if (responseType) {
-      candidates = [...variants, { routeKey: matched.routeKey, responseType }];
-    } else {
-      const rscCandidate = {
-        routeKey: matched.routeKey,
-        responseType: RSC_RESPONSE_TYPE,
-      };
-      candidates = matched.rscFirst
-        ? [rscCandidate, ...variants]
-        : [...variants, rscCandidate];
-    }
-
-    const variant = pickNegotiateVariant(acceptEntries, candidates);
-
-    // RSC won negotiation — not a response route
-    if (variant.responseType === RSC_RESPONSE_TYPE) {
-      return null;
-    }
-
-    // Response-type primary won, already set
-    if (responseType && variant.routeKey === matched.routeKey) {
-      return {
-        mode: "response",
-        route: snapshot,
-        handler: manifestEntry.handler as Function,
-        responseType,
-        negotiated: true,
-        manifestEntry,
-        routeMiddleware,
-      };
-    }
-
-    // Different variant won — load its manifest entry
-    const negotiateEntry = await loadManifest(
-      matched.entry,
-      variant.routeKey,
-      pathname,
-      undefined,
-      false,
-    );
-    const variantMiddleware = collectRouteMiddleware(
-      traverseBack(negotiateEntry),
-      matched.params,
-    );
+  // Content negotiation via shared helper
+  const negotiation = await negotiateRoute(
+    request,
+    pathname,
+    matched,
+    manifestEntry,
+    responseType,
+    routeMiddleware,
+  );
+  if (negotiation) {
     return {
       mode: "response",
       route: snapshot,
-      handler: negotiateEntry.handler as Function,
-      responseType: variant.responseType,
-      negotiated: true,
-      manifestEntry: negotiateEntry,
-      routeMiddleware: variantMiddleware,
+      ...negotiation,
     };
   }
 
-  // Non-negotiated response route
+  // Non-negotiated response route (no variants, or RSC won negotiation)
   if (responseType) {
     const handler =
       manifestEntry.type === "route" ? manifestEntry.handler : undefined;

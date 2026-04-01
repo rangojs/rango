@@ -356,7 +356,7 @@ describe("classifyRequest", () => {
 
     expect(plan.mode).toBe("full-render");
     if (plan.mode === "full-render") {
-      expect(plan.routeMiddleware).toBe(mw);
+      expect(plan.route!.routeMiddleware).toBe(mw);
     }
   });
 

@@ -2,9 +2,16 @@
  * Content Negotiation Utilities
  *
  * Pure functions for HTTP Accept header parsing and response type matching.
- * Used by createRouter's previewMatch for content negotiation between
+ * Used by previewMatch and classifyRequest for content negotiation between
  * RSC routes and response routes (JSON, text, image, stream, etc.).
  */
+
+import type { EntryData } from "../server/context.js";
+import type { CollectedMiddleware } from "./middleware-types.js";
+import { collectRouteMiddleware } from "./middleware.js";
+import { loadManifest } from "./manifest.js";
+import { traverseBack } from "./pattern-matching.js";
+import type { RouteMatchResult } from "./pattern-matching.js";
 
 // Response type -> MIME type used for Accept header matching
 export const RESPONSE_TYPE_MIME: Record<string, string> = {
@@ -113,4 +120,97 @@ export function pickNegotiateVariant(
   }
   // No match -- use first candidate as default
   return candidates[0]!;
+}
+
+/**
+ * Result of content negotiation for a route with negotiate variants.
+ */
+export interface NegotiationResult {
+  /** The winning response type */
+  responseType: string;
+  /** Handler function for the winning variant */
+  handler: Function;
+  /** Manifest entry for the winning variant (may differ from primary) */
+  manifestEntry: EntryData;
+  /** Route middleware for the winning variant */
+  routeMiddleware: CollectedMiddleware[];
+  /** Always true — negotiation occurred */
+  negotiated: true;
+}
+
+/**
+ * Perform content negotiation for a route with negotiate variants.
+ *
+ * Returns a NegotiationResult when a response route wins negotiation.
+ * Returns null when RSC wins or no negotiation is needed.
+ *
+ * Shared by previewMatch and classifyRequest to avoid duplicating
+ * the candidate-building and variant-loading logic.
+ */
+export async function negotiateRoute(
+  request: Request,
+  pathname: string,
+  matched: RouteMatchResult,
+  manifestEntry: EntryData,
+  responseType: string | undefined,
+  routeMiddleware: CollectedMiddleware[],
+): Promise<NegotiationResult | null> {
+  if (!matched.negotiateVariants || matched.negotiateVariants.length === 0) {
+    return null;
+  }
+
+  const acceptEntries = parseAcceptTypes(request.headers.get("accept") || "");
+
+  // Build candidate list preserving definition order.
+  const variants = matched.negotiateVariants;
+  let candidates: Array<{ routeKey: string; responseType: string }>;
+  if (responseType) {
+    candidates = [...variants, { routeKey: matched.routeKey, responseType }];
+  } else {
+    const rscCandidate = {
+      routeKey: matched.routeKey,
+      responseType: RSC_RESPONSE_TYPE,
+    };
+    candidates = matched.rscFirst
+      ? [rscCandidate, ...variants]
+      : [...variants, rscCandidate];
+  }
+
+  const variant = pickNegotiateVariant(acceptEntries, candidates);
+
+  // RSC won negotiation
+  if (variant.responseType === RSC_RESPONSE_TYPE) {
+    return null;
+  }
+
+  // Primary response-type won — use existing manifest entry and middleware
+  if (responseType && variant.routeKey === matched.routeKey) {
+    return {
+      responseType,
+      handler: manifestEntry.handler as Function,
+      manifestEntry,
+      routeMiddleware,
+      negotiated: true,
+    };
+  }
+
+  // Different variant won — load its manifest entry
+  const negotiateEntry = await loadManifest(
+    matched.entry,
+    variant.routeKey,
+    pathname,
+    undefined,
+    false,
+  );
+  const variantMiddleware = collectRouteMiddleware(
+    traverseBack(negotiateEntry),
+    matched.params,
+  );
+  return {
+    responseType: variant.responseType,
+    handler: negotiateEntry.handler as Function,
+    manifestEntry: negotiateEntry,
+    routeMiddleware: variantMiddleware,
+    negotiated: true,
+  };
 }
