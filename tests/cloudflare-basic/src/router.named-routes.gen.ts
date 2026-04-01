@@ -43,6 +43,7 @@ export const NamedRoutes = {
   proactiveCacheItemB: "/proactive-cache/item-b",
   productReviews: "/item/:productId/reviews",
   "releases.index": "/releases",
+  "renderedBarrier.index": "/rendered-barrier",
   robots: "/robots.txt",
   search: { path: "/search", search: { q: "string", page: "number?", sort: "string?" } },
   shopCategory: "/shop/:categoryId",
