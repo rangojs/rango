@@ -1033,6 +1033,10 @@ export function createRouter<TEnv = any>(
       };
     })(),
 
+    // Low-level route matching for request classification
+    findMatch: (pathname: string, metricsStore?: any) =>
+      findMatch(pathname, metricsStore),
+
     // Debug utility for manifest inspection
     debugManifest: () => buildDebugManifest<TEnv>(routesEntries),
   };

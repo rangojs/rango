@@ -10,6 +10,7 @@ import { runWithRouterLogContext, withRouterLogScope } from "./logging.js";
 import type { EntryData } from "../server/context";
 import type { RouteMatchResult } from "./pattern-matching.js";
 import type { MiddlewareFn } from "./middleware.js";
+import { resolveRoute } from "./route-snapshot.js";
 
 export interface PreviewMatchDeps<TEnv = any> {
   findMatch: (pathname: string) => RouteMatchResult<TEnv> | null;
@@ -42,39 +43,26 @@ export async function previewMatch<TEnv = any>(
         const url = new URL(request.url);
         const pathname = url.pathname;
 
-        // Quick route matching
-        const matched = deps.findMatch(pathname);
-        if (!matched) {
+        // Route resolution via snapshot (lite mode: skip entries/cacheScope
+        // since previewMatch only needs matched, manifestEntry, routeMiddleware,
+        // and responseType)
+        const result = await resolveRoute<TEnv>(pathname, {
+          findMatch: deps.findMatch,
+          lite: true,
+        });
+
+        if (!result) {
           return null;
         }
 
         // Skip redirect check - will be handled in full match
-        if (matched.redirectTo) {
+        if (result.type === "redirect") {
           return { routeMiddleware: undefined };
         }
 
-        // Load manifest (without segment resolution)
-        const manifestEntry = await loadManifest(
-          matched.entry,
-          matched.routeKey,
-          pathname,
-          undefined, // No metrics store for preview
-          false, // isSSR - doesn't matter for preview
-        );
-
-        // Collect route-level middleware from entry tree
-        // Includes middleware from orphan layouts (inline layouts within routes)
-        const routeMiddleware = collectRouteMiddleware(
-          traverseBack(manifestEntry),
-          matched.params,
-        );
-
-        // Check for response type (from trie match or manifest entry)
-        const responseType =
-          matched.responseType ||
-          (manifestEntry.type === "route"
-            ? manifestEntry.responseType
-            : undefined);
+        const snapshot = result.snapshot;
+        const { matched, manifestEntry, routeMiddleware, responseType } =
+          snapshot;
 
         // Content negotiation: when negotiate variants exist, pick the best
         // handler based on the Accept header. Uses q-values and client order
