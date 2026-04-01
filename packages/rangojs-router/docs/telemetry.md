@@ -151,18 +151,18 @@ repeated imports resolve instantly.
 
 ### Metric reference
 
-| Metric                        | Phase      | Description                                          |
-| ----------------------------- | ---------- | ---------------------------------------------------- |
-| `handler:total`               | Handler    | Full request duration from handler entry to response |
+| Metric                        | Phase      | Description                                                                 |
+| ----------------------------- | ---------- | --------------------------------------------------------------------------- |
+| `handler:total`               | Handler    | Full request duration from handler entry to response                        |
 | `route-matching`              | Matching   | Route lookups: full renders or partial fresh (all findMatch calls combined) |
-| `route-matching:nav`          | Matching   | Prev + intercept-source lookups (partial reuse path) |
-| `manifest-loading`            | Matching   | Async manifest load (when not cached)                |
-| `ssr:module-load`             | SSR setup  | Dynamic import of the SSR module                     |
-| `ssr:stream-mode`             | SSR setup  | Stream mode resolution (sync or async)               |
-| `rsc-serialize`               | Rendering  | Synchronous RSC stream creation                      |
-| `ssr-render-html`             | Rendering  | SSR HTML rendering from RSC stream                   |
-| `render:total`                | Rendering  | End-to-end render (serialize + SSR)                  |
-| `middleware:{name}@{pattern}` | Middleware | Combined pre + post duration                         |
+| `route-matching:nav`          | Matching   | Prev + intercept-source lookups (partial reuse path)                        |
+| `manifest-loading`            | Matching   | Async manifest load (when not cached)                                       |
+| `ssr:module-load`             | SSR setup  | Dynamic import of the SSR module                                            |
+| `ssr:stream-mode`             | SSR setup  | Stream mode resolution (sync or async)                                      |
+| `rsc-serialize`               | Rendering  | Synchronous RSC stream creation                                             |
+| `ssr-render-html`             | Rendering  | SSR HTML rendering from RSC stream                                          |
+| `render:total`                | Rendering  | End-to-end render (serialize + SSR)                                         |
+| `middleware:{name}@{pattern}` | Middleware | Combined pre + post duration                                                |
 
 ### Zero overhead when disabled
 

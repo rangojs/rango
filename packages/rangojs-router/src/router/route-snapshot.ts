@@ -71,9 +71,9 @@ export interface ResolveRouteDeps<TEnv = any> {
    * Used by createMatchContextForPartial on the fresh path (no snapshot
    * reuse) so it can measure current + prev + intercept-source findMatch
    * calls under one combined "route-matching" metric. On the reuse path,
-   * classifyRequest already emitted "route-matching" for the current-route
-   * lookup and the partial path emits "route-matching:nav" for the
-   * remaining prev + intercept-source lookups.
+   * the partial path emits "route-matching:nav" for the prev +
+   * intercept-source lookups only (current-route resolution was done
+   * during classification without metrics).
    */
   skipRouteMatchMetric?: boolean;
 }

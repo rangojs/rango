@@ -124,8 +124,6 @@ export interface ClassifyRequestDeps<TEnv = any> {
   findMatch: (pathname: string) => RouteMatchResult<TEnv> | null;
   routerVersion: string;
   routerId: string;
-  /** When provided, resolveRoute emits route-matching and manifest-loading metrics */
-  metricsStore?: import("../server/context.js").MetricsStore;
 }
 
 /**
@@ -181,9 +179,11 @@ export async function classifyRequest<TEnv = any>(
     };
   }
 
+  // No metricsStore — classification is a lightweight gating step.
+  // Route-matching and manifest-loading metrics belong in the match path
+  // (createMatchContextForFull/Partial) which runs the authoritative resolution.
   const result = await resolveRoute<TEnv>(pathname, {
     findMatch: deps.findMatch,
-    metricsStore: deps.metricsStore,
     lite: true,
   });
 
