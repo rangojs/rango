@@ -894,7 +894,13 @@ export function createRSCHandler<
         throw error;
       }
 
-      // Revalidation render wrapped in route middleware
+      // Revalidation render wrapped in route middleware.
+      // Actions from client-side navigation include _rsc_partial — preserve
+      // the partial flag so handleRscRendering returns a Flight stream, not HTML.
+      const clientRouterId = url.searchParams.get("_rsc_rid");
+      const isAppSwitch = !!(clientRouterId && clientRouterId !== router.id);
+      const isPartialAction =
+        url.searchParams.has("_rsc_partial") && !isAppSwitch;
       return executeRenderWithMiddleware(
         plan.routeMiddleware,
         plan.negotiated,
@@ -906,7 +912,7 @@ export function createRSCHandler<
         variables,
         nonce,
         handleStore,
-        false, // isPartial: action revalidation is treated as partial by handleRscRendering
+        isPartialAction,
         actionContinuation,
       );
     }
