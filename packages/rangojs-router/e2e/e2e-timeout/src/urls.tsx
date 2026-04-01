@@ -46,9 +46,9 @@ export const urlpatterns = urls(({ path }) => [
 
   // Test endpoint to read onError state
   path.json("/__test/last-error", async () => {
-    const { lastOnErrorCall, resetLastOnErrorCall } =
+    const { getLastOnErrorCall, resetLastOnErrorCall } =
       await import("./router.js");
-    const result = lastOnErrorCall;
+    const result = getLastOnErrorCall();
     resetLastOnErrorCall();
     return result;
   }),
