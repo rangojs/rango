@@ -896,11 +896,9 @@ export function createRSCHandler<
 
       // Revalidation render wrapped in route middleware.
       // Actions from client-side navigation include _rsc_partial — preserve
-      // the partial flag so handleRscRendering returns a Flight stream, not HTML.
-      const clientRouterId = url.searchParams.get("_rsc_rid");
-      const isAppSwitch = !!(clientRouterId && clientRouterId !== router.id);
-      const isPartialAction =
-        url.searchParams.has("_rsc_partial") && !isAppSwitch;
+      // the partial flag so the revalidation returns a Flight stream, not HTML.
+      // App-switch is already excluded by classifyRequest (would be full-render).
+      const isPartialAction = url.searchParams.has("_rsc_partial");
       return executeRenderWithMiddleware(
         plan.routeMiddleware,
         plan.negotiated,
@@ -1147,10 +1145,7 @@ export function createRSCHandler<
           routeReverse,
         );
 
-        if (
-          url.searchParams.has("_rsc_partial") ||
-          url.searchParams.has("_rsc_action")
-        ) {
+        if (isPartial || actionContinuation) {
           const intercepted = interceptRedirectForPartial(
             mwResponse,
             createRedirectFlightResponse,

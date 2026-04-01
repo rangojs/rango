@@ -158,8 +158,10 @@ export async function classifyRequest<TEnv = any>(
   deps: ClassifyRequestDeps<TEnv>,
 ): Promise<RequestPlan<TEnv>> {
   const pathname = url.pathname;
+  const isAction =
+    request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
 
-  // 1. Version mismatch — runs BEFORE route resolution so stale clients
+  // Version mismatch — runs BEFORE route resolution so stale clients
   // requesting removed routes get a reload, not a 404.
   const clientVersion = url.searchParams.get("_rsc_v");
   if (
@@ -167,9 +169,6 @@ export async function classifyRequest<TEnv = any>(
     clientVersion &&
     clientVersion !== deps.routerVersion
   ) {
-    const isAction =
-      request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
-
     // Strip internal _rsc_* params so the browser reloads to a clean URL
     let reloadUrl = stripInternalParams(url).toString();
     if (isAction) {
@@ -236,9 +235,7 @@ export async function classifyRequest<TEnv = any>(
     return responseResult;
   }
 
-  // 5. Mode detection from request signals
-  const isAction =
-    request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
+  // Mode detection from request signals
   const actionId =
     request.headers.get("rsc-action") || url.searchParams.get("_rsc_action");
   const isLoaderFetch = url.searchParams.has("_rsc_loader");
@@ -350,8 +347,7 @@ async function classifyResponseRoute<TEnv>(
       return {
         mode: "response",
         route: snapshot,
-        handler:
-          manifestEntry.type === "route" ? manifestEntry.handler : undefined!,
+        handler: manifestEntry.handler as Function,
         responseType,
         negotiated: true,
         manifestEntry,
@@ -374,8 +370,7 @@ async function classifyResponseRoute<TEnv>(
     return {
       mode: "response",
       route: snapshot,
-      handler:
-        negotiateEntry.type === "route" ? negotiateEntry.handler : undefined!,
+      handler: negotiateEntry.handler as Function,
       responseType: variant.responseType,
       negotiated: true,
       manifestEntry: negotiateEntry,
