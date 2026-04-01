@@ -133,3 +133,36 @@ export function isHandle(value: unknown): value is Handle<unknown, unknown> {
     (value as { __brand: unknown }).__brand === "handle"
   );
 }
+
+/**
+ * Collect handle data from a HandleData map, applying the handle's collect
+ * function over segments in order. Shared between server-side rendered()
+ * reads and client-side useHandle().
+ *
+ * @param handle - The handle to collect data for
+ * @param data - Full handle data map (handleName -> segmentId -> entries[])
+ * @param segmentOrder - Segment IDs in parent -> child resolution order
+ */
+export function collectHandleData<TData, TAccumulated>(
+  handle: Handle<TData, TAccumulated>,
+  data: Record<string, Record<string, unknown[]>>,
+  segmentOrder: string[],
+): TAccumulated {
+  const collectFn = getCollectFn(handle.$$id);
+  const collect = (collectFn ??
+    (defaultCollect as unknown as (segments: unknown[][]) => unknown)) as (
+    segments: TData[][],
+  ) => TAccumulated;
+
+  const segmentData = data[handle.$$id];
+  if (!segmentData) return collect([]);
+
+  const segmentArrays: TData[][] = [];
+  for (const segmentId of segmentOrder) {
+    const entries = segmentData[segmentId];
+    if (entries && entries.length > 0) {
+      segmentArrays.push(entries as TData[]);
+    }
+  }
+  return collect(segmentArrays);
+}

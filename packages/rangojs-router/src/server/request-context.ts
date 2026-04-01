@@ -271,6 +271,41 @@ export interface RequestContext<
   /** @internal Previous route key (from the navigation source), used for revalidation */
   _prevRouteKey?: string;
 
+  /**
+   * @internal Render barrier for experimental `rendered()` API.
+   * Resolves when all non-loader segments have settled and handle data
+   * is available. Used by DSL loaders that call `ctx.rendered()`.
+   */
+  _renderBarrier: Promise<void>;
+
+  /**
+   * @internal Resolve the render barrier. Accepts resolved segments, filters
+   * out loaders, and captures non-loader segment IDs as the handle ordering.
+   * Called after segment resolution (fresh) or handle replay (cache/prerender).
+   */
+  _resolveRenderBarrier: (
+    segments: Array<{ type: string; id: string }>,
+  ) => void;
+
+  /**
+   * @internal Segment order at barrier resolution time, used by loader
+   * ctx.use(handle) to collect handle data in correct order.
+   */
+  _renderBarrierSegmentOrder?: string[];
+
+  /**
+   * @internal Set to true when the matched entry tree contains any `loading()`
+   * entries (streaming). Used by rendered() to fail fast.
+   */
+  _treeHasStreaming?: boolean;
+
+  /**
+   * @internal Loader IDs that have called rendered() and are waiting for the
+   * barrier. Used to detect deadlocks when a handler tries to await the same
+   * loader via ctx.use(Loader).
+   */
+  _renderBarrierWaiters?: Set<string>;
+
   /** @internal Per-request error dedup set for onError reporting */
   _reportedErrors: WeakSet<object>;
 
@@ -322,6 +357,11 @@ export type PublicRequestContext<
   | "_routeName"
   | "_prevRouteKey"
   | "_reportedErrors"
+  | "_renderBarrier"
+  | "_resolveRenderBarrier"
+  | "_renderBarrierSegmentOrder"
+  | "_treeHasStreaming"
+  | "_renderBarrierWaiters"
   | "_reportBackgroundError"
   | "_debugPerformance"
   | "_metricsStore"
@@ -750,7 +790,33 @@ export function createRequestContext<TEnv>(
     _reportedErrors: new WeakSet<object>(),
     _metricsStore: undefined,
 
+    // Render barrier: deferred promise resolved after non-loader segments settle.
+    _renderBarrier: null as any, // set below
+    _resolveRenderBarrier: null as any, // set below
+    _renderBarrierSegmentOrder: undefined,
+
     reverse: createReverseFunction(getGlobalRouteMap(), undefined, {}),
+  };
+
+  // Create deferred render barrier. Phase 1: non-streaming only, so all handlers
+  // complete synchronously during resolveAllSegments. The barrier is a simple
+  // deferred promise resolved after segment resolution (or after handle replay
+  // on cache/prerender paths). No HandleStore sealing here — that stays in the
+  // existing lifecycle (rsc-rendering.ts, cache-scope.ts, etc.).
+  let barrierResolved = false;
+  let resolveBarrier: () => void;
+  ctx._renderBarrier = new Promise<void>((resolve) => {
+    resolveBarrier = resolve;
+  });
+  ctx._resolveRenderBarrier = (
+    segments: Array<{ type: string; id: string }>,
+  ) => {
+    if (barrierResolved) return;
+    barrierResolved = true;
+    ctx._renderBarrierSegmentOrder = segments
+      .filter((s) => s.type !== "loader")
+      .map((s) => s.id);
+    resolveBarrier();
   };
 
   // Now create use() with access to ctx
@@ -936,12 +1002,12 @@ export function createUseFunction<TEnv>(
       url: ctx.url,
       env: ctx.env as any,
       get: ctx.get as any,
-      use: <TDep, TDepParams = any>(
+      use: (<TDep, TDepParams = any>(
         dep: LoaderDefinition<TDep, TDepParams>,
       ): Promise<TDep> => {
         // Recursive call - will start dep loader if not already started
         return ctx.use(dep);
-      },
+      }) as LoaderContext["use"],
       method: "GET",
       body: undefined,
       reverse: createReverseFunction(
@@ -950,6 +1016,12 @@ export function createUseFunction<TEnv>(
         ctx.params as Record<string, string>,
         ctx._routeName ? isRouteRootScoped(ctx._routeName) : undefined,
       ),
+      rendered: () => {
+        throw new Error(
+          `ctx.rendered() is only available in DSL loaders (registered via loader() in urls()). ` +
+            `It cannot be used from request-context loaders or server actions.`,
+        );
+      },
     };
 
     const doneLoader = track(`loader:${loader.$$id}`, 2);

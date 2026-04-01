@@ -59,6 +59,7 @@ import { streamModePatterns } from "./urls/stream-mode.js";
 import { devDebugPatterns, devInfoHandler } from "./urls/dev-routes.js";
 import { contextDedupPatterns } from "./urls/context-dedup.js";
 import { parallelMetaPatterns } from "./urls/parallel-meta.js";
+import { renderedBarrierPatterns } from "./urls/rendered-barrier.js";
 import { cacheScopeGuardPatterns } from "./urls/cache-scope-guard.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
@@ -977,6 +978,11 @@ export const urlpatterns = urls(
       // cache() scope guard tests (header/cookie/status blocked, set allowed)
       include("/cache-scope-guard", cacheScopeGuardPatterns, {
         name: "cacheScopeGuard",
+      }),
+
+      // rendered() barrier tests (loader reads handle data after handlers settle)
+      include("/rendered-barrier", renderedBarrierPatterns, {
+        name: "renderedBarrier",
       }),
 
       ...(import.meta.env.DEV
