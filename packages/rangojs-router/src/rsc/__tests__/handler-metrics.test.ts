@@ -36,6 +36,31 @@ vi.mock("../manifest-init.js", () => ({
   buildRouterTrieFromUrlpatterns: vi.fn(),
 }));
 
+// Mock dependencies used by classifyRequest → resolveRoute
+vi.mock("../../router/manifest.js", () => ({
+  loadManifest: vi.fn(async () => ({
+    type: "route",
+    shortCode: "R0",
+    parent: null,
+    handler: vi.fn(),
+    responseType: "json",
+  })),
+  clearManifestCache: vi.fn(),
+}));
+
+vi.mock("../../router/middleware.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../router/middleware.js")>();
+  return {
+    ...actual,
+    collectRouteMiddleware: vi.fn(() => []),
+  };
+});
+
+vi.mock("../../cache/cache-scope.js", () => ({
+  createCacheScope: vi.fn(() => null),
+}));
+
 // handleResponseRoute returns a simple response for response-route tests
 vi.mock("../response-route-handler.js", () => ({
   handleResponseRoute: vi.fn(
@@ -59,13 +84,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** Preview result that triggers the response-route short-circuit. */
-const RESPONSE_ROUTE_PREVIEW = {
-  responseType: "json",
-  handler: () => ({ ok: true }),
-  params: {},
-};
-
 function createMockRouter(
   overrides: Partial<RSCRouterInternal<unknown, any>> = {},
 ): RSCRouterInternal<unknown, any> {
@@ -74,7 +92,14 @@ function createMockRouter(
     middleware: [],
     timeouts: { renderStartMs: 30000, actionMs: 30000 },
     debugPerformance: true,
-    previewMatch: vi.fn(async () => RESPONSE_ROUTE_PREVIEW),
+    findMatch: vi.fn(() => ({
+      entry: {},
+      routeKey: "test",
+      params: {},
+      optionalParams: new Set(),
+      responseType: "json",
+    })),
+    previewMatch: vi.fn(async () => null),
     match: vi.fn(async () => ({
       segments: [],
       matched: [],

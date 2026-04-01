@@ -53,6 +53,32 @@ vi.mock("../manifest-init.js", () => ({
   buildRouterTrieFromUrlpatterns: vi.fn(),
 }));
 
+// Mock manifest loading used by resolveRoute (inside classifyRequest)
+vi.mock("../../router/manifest.js", () => ({
+  loadManifest: vi.fn(async () => ({
+    type: "route",
+    shortCode: "R0",
+    parent: null,
+    handler: vi.fn(),
+  })),
+  clearManifestCache: vi.fn(),
+}));
+
+// Mock middleware collection used by resolveRoute
+vi.mock("../../router/middleware.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../router/middleware.js")>();
+  return {
+    ...actual,
+    collectRouteMiddleware: vi.fn(() => []),
+  };
+});
+
+// Mock cache-scope used by resolveRoute
+vi.mock("../../cache/cache-scope.js", () => ({
+  createCacheScope: vi.fn(() => null),
+}));
+
 // Mock response-route-handler to return a simple response
 vi.mock("../response-route-handler.js", () => ({
   handleResponseRoute: vi.fn(
@@ -75,13 +101,20 @@ import { createRSCHandler } from "../handler.js";
 import type { RSCRouterInternal } from "../../router/router-interfaces.js";
 
 function createMockRouter(
-  previewResult: Record<string, unknown> | null = null,
+  matchOverrides?: Record<string, unknown>,
 ): RSCRouterInternal<unknown, any> {
   return {
     id: "test-router",
     middleware: [],
     timeouts: { renderStartMs: 30000, actionMs: 30000 },
-    previewMatch: vi.fn(async () => previewResult),
+    findMatch: vi.fn(() => ({
+      entry: {},
+      routeKey: "test",
+      params: {},
+      optionalParams: new Set(),
+      ...matchOverrides,
+    })),
+    previewMatch: vi.fn(async () => null),
     match: vi.fn(async () => ({
       segments: [],
       matched: [],
@@ -104,27 +137,23 @@ describe("handler SSR kickoff placement", () => {
   });
 
   it("does NOT start SSR setup for response/mime routes", async () => {
-    const router = createMockRouter({
-      responseType: "json",
-      handler: () => ({ ok: true }),
-      params: {},
-    });
+    const router = createMockRouter({ responseType: "json" });
 
     const handler = createRSCHandler({ router });
     const request = new Request("https://example.com/api/data");
 
     await handler(request, { env: {} });
 
-    expect(router.previewMatch).toHaveBeenCalled();
+    expect(router.findMatch).toHaveBeenCalled();
     expect(startSSRSetupSpy).not.toHaveBeenCalled();
   });
 
   it("does NOT start SSR setup for negotiated response routes", async () => {
     const router = createMockRouter({
       responseType: "json",
-      handler: () => ({ data: [1, 2, 3] }),
-      params: {},
-      negotiated: true,
+      negotiateVariants: [
+        { routeKey: "products.json", responseType: "application/json" },
+      ],
     });
 
     const handler = createRSCHandler({ router });
@@ -134,15 +163,15 @@ describe("handler SSR kickoff placement", () => {
 
     await handler(request, { env: {} });
 
-    expect(router.previewMatch).toHaveBeenCalled();
+    expect(router.findMatch).toHaveBeenCalled();
     expect(startSSRSetupSpy).not.toHaveBeenCalled();
   });
 
   it("starts SSR setup for normal HTML page requests", async () => {
-    const router = createMockRouter(null);
+    const router = createMockRouter();
 
     // The handler will throw downstream because rendering isn't fully mocked,
-    // but startSSRSetup runs before the error. Assert previewMatch was reached
+    // but startSSRSetup runs before the error. Assert findMatch was reached
     // to confirm the negative path tests aren't passing due to an early crash.
     const handler = createRSCHandler({ router });
     const request = new Request("https://example.com/");
@@ -153,12 +182,12 @@ describe("handler SSR kickoff placement", () => {
       // Expected — downstream rendering isn't fully mocked
     }
 
-    expect(router.previewMatch).toHaveBeenCalled();
+    expect(router.findMatch).toHaveBeenCalled();
     expect(startSSRSetupSpy).toHaveBeenCalledOnce();
   });
 
   it("does NOT start SSR setup for RSC-only requests (Accept without text/html)", async () => {
-    const router = createMockRouter(null);
+    const router = createMockRouter();
 
     const handler = createRSCHandler({ router });
     const request = new Request("https://example.com/", {
@@ -171,9 +200,9 @@ describe("handler SSR kickoff placement", () => {
       // Expected — downstream rendering isn't fully mocked
     }
 
-    // Verify previewMatch was reached — the negative assertion is from
+    // Verify findMatch was reached — the negative assertion is from
     // mayNeedSSR classification, not an early crash.
-    expect(router.previewMatch).toHaveBeenCalled();
+    expect(router.findMatch).toHaveBeenCalled();
     expect(startSSRSetupSpy).not.toHaveBeenCalled();
   });
 });
