@@ -59,38 +59,30 @@ export async function createMatchContextForFull<TEnv>(
 
   const metricsStore = deps.getMetricsStore();
 
-  // Reuse the classified snapshot from the request context when available.
-  // classifyRequest already called resolveRoute(lite) — ensureFullRouteSnapshot
-  // fills entries/cacheScope without re-running findMatch or loadManifest.
-  const classifiedRoute = getRequestContext()?._classifiedRoute as
-    | RouteSnapshot<TEnv>
-    | undefined;
+  // Full renders always call resolveRoute with isSSR: true because
+  // loadManifest keys its cache on isSSR and stamps Store.isSSR for
+  // downstream behavior. The classified snapshot from classifyRequest
+  // was built without isSSR, so it cannot be reused here.
+  const result = await resolveRoute<TEnv>(pathname, {
+    findMatch: (p) => deps.findMatch(p, metricsStore),
+    metricsStore,
+    isSSR: true,
+  });
 
-  let snapshot: RouteSnapshot<TEnv>;
-  if (classifiedRoute && classifiedRoute.manifestEntry) {
-    snapshot = ensureFullRouteSnapshot(classifiedRoute);
-  } else {
-    const result = await resolveRoute<TEnv>(pathname, {
-      findMatch: (p) => deps.findMatch(p, metricsStore),
-      metricsStore,
-      isSSR: true,
+  if (!result) {
+    throw new RouteNotFoundError(`No route matched for ${pathname}`, {
+      cause: { pathname, method: request.method },
     });
-
-    if (!result) {
-      throw new RouteNotFoundError(`No route matched for ${pathname}`, {
-        cause: { pathname, method: request.method },
-      });
-    }
-
-    if (result.type === "redirect") {
-      return {
-        type: "redirect",
-        redirectUrl: result.redirectTo + url.search,
-      };
-    }
-
-    snapshot = result.snapshot;
   }
+
+  if (result.type === "redirect") {
+    return {
+      type: "redirect",
+      redirectUrl: result.redirectTo + url.search,
+    };
+  }
+
+  const snapshot = result.snapshot;
 
   const { matched } = snapshot;
 
@@ -197,22 +189,33 @@ export async function createMatchContextForPartial<TEnv>(
     clearManifestCache();
   }
 
-  // Time all findMatch calls (current + prev + intercept-source) under one
-  // "route-matching" metric, matching the pre-refactor behavior. resolveRoute
-  // skips its internal metric push so we can measure the combined region.
-  const routeMatchStart = metricsStore ? performance.now() : 0;
-
   // Reuse the classified snapshot when available and not invalidated by HMR.
-  // On HMR, discard the snapshot and resolve fresh to pick up manifest changes.
+  // classifyRequest already called resolveRoute(lite) with isSSR=false, which
+  // matches the partial path. On HMR, discard to pick up manifest changes.
   const classifiedRoute = isHmr
     ? undefined
     : (getRequestContext()?._classifiedRoute as
         | RouteSnapshot<TEnv>
         | undefined);
 
+  // Time route matching. On the reuse path, only nav findMatch calls are new
+  // (current-route findMatch already happened in classifyRequest).
+  // On the fresh path, all findMatch calls are measured together.
+  const routeMatchStart = metricsStore ? performance.now() : 0;
+
   let snapshot: RouteSnapshot<TEnv>;
   if (classifiedRoute && classifiedRoute.manifestEntry) {
     snapshot = ensureFullRouteSnapshot(classifiedRoute);
+    // Emit manifest-loading metric with zero duration — manifest was already
+    // loaded during classification and is reused from cache.
+    if (metricsStore) {
+      const now = performance.now();
+      metricsStore.metrics.push({
+        label: "manifest-loading",
+        duration: 0,
+        startTime: now - metricsStore.requestStart,
+      });
+    }
   } else {
     const result = await resolveRoute<TEnv>(pathname, {
       findMatch: (p) => deps.findMatch(p, metricsStore),
@@ -241,7 +244,7 @@ export async function createMatchContextForPartial<TEnv>(
     matched.pt = true;
   }
 
-  // Navigation state via snapshot (prev + intercept-source findMatch calls)
+  // Navigation state (prev + intercept-source findMatch calls)
   const nav = resolveNavigation(request, url, matched.routeKey, {
     findMatch: deps.findMatch,
   });
@@ -249,7 +252,9 @@ export async function createMatchContextForPartial<TEnv>(
     return null;
   }
 
-  // Push combined route-matching metric covering all findMatch calls
+  // Push route-matching metric covering the work done in this function.
+  // On the reuse path this only includes nav findMatch calls (current-route
+  // findMatch was already done during classification).
   if (metricsStore) {
     metricsStore.metrics.push({
       label: "route-matching",
