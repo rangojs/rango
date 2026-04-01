@@ -1,6 +1,6 @@
 /**
  * Handler-level integration test verifying that response/mime routes
- * never trigger early SSR setup after previewMatch().
+ * never trigger early SSR setup after request classification.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
