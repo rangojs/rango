@@ -577,12 +577,45 @@ export function createRSCHandler<
     }
 
     // ---- 1. Classify ----
+    // classifyRequest may throw RouteNotFoundError for unknown routes.
+    // In that case, fall through to a full-render plan so the pipeline
+    // can render the 404 page via the existing error handling path.
     const classifyStart = performance.now();
-    const plan = await classifyRequest<TEnv>(request, url, {
-      findMatch: router.findMatch,
-      routerVersion: version,
-      routerId: router.id,
-    });
+    let plan: RequestPlan<TEnv>;
+    try {
+      plan = await classifyRequest<TEnv>(request, url, {
+        findMatch: router.findMatch,
+        routerVersion: version,
+        routerId: router.id,
+      });
+    } catch (error) {
+      if (
+        error instanceof RouteNotFoundError ||
+        (error instanceof Error && error.name === "RouteNotFoundError")
+      ) {
+        // Let the render path handle 404 — match()/matchPartial() will
+        // re-throw RouteNotFoundError and the catch block in
+        // executeRenderWithMiddleware renders the not-found page.
+        plan = {
+          mode: "full-render",
+          route: {
+            matched: null as any,
+            manifestEntry: null as any,
+            entries: [],
+            routeKey: "",
+            localRouteName: "",
+            params: {},
+            routeMiddleware: [],
+            cacheScope: null,
+            isPassthrough: false,
+          },
+          routeMiddleware: [],
+          negotiated: false,
+        };
+      } else {
+        throw error;
+      }
+    }
     const classifyDur = performance.now() - classifyStart;
     handlerTiming.push(`handler-classify;dur=${classifyDur.toFixed(2)}`);
 
