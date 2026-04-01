@@ -765,10 +765,20 @@ export function createRSCHandler<
 
     // ---- Response route: skip entire RSC pipeline ----
     if (plan.mode === "response") {
+      // Build ResponseRouteMatch from plan fields. handleResponseRoute
+      // expects a flat object with params at the top level.
+      const responseMatch: ResponseRouteMatch = {
+        responseType: plan.responseType,
+        handler: plan.handler,
+        params: plan.route.params,
+        negotiated: plan.negotiated,
+        manifestEntry: plan.manifestEntry,
+        routeMiddleware: plan.routeMiddleware,
+      };
       const responseOutcome = await withTimeout(
         handleResponseRoute(
           handlerCtx,
-          plan as ResponseRouteMatch,
+          responseMatch,
           request,
           env,
           url,
