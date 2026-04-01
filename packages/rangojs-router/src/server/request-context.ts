@@ -290,6 +290,12 @@ export interface RequestContext<
 
   /** @internal Router basename for this request (used by redirect()) */
   _basename?: string;
+
+  /**
+   * @internal RouteSnapshot from classifyRequest, reused by match/matchPartial
+   * to avoid a second resolveRoute call. Cleared on HMR invalidation.
+   */
+  _classifiedRoute?: unknown;
 }
 
 /**

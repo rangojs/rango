@@ -16,6 +16,7 @@ vi.mock("../../cache/cache-scope.js", () => ({
 import {
   resolveRoute,
   createRouteSnapshot,
+  ensureFullRouteSnapshot,
   type RouteSnapshot,
 } from "../route-snapshot.js";
 import { loadManifest } from "../manifest.js";
@@ -384,5 +385,76 @@ describe("createRouteSnapshot", () => {
     expect(snapshot.routeKey).toBe("blog");
     expect(snapshot.params).toEqual({ slug: "hello" });
     expect(snapshot.isPassthrough).toBe(true);
+  });
+});
+
+describe("ensureFullRouteSnapshot", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns snapshot as-is when entries already populated", () => {
+    const existing = [makeEntry()];
+    const snapshot = createRouteSnapshot({ entries: existing });
+
+    const result = ensureFullRouteSnapshot(snapshot);
+
+    expect(result).toBe(snapshot);
+    expect(result.entries).toBe(existing);
+  });
+
+  it("fills entries from manifestEntry when entries is empty", () => {
+    const parentEntry = makeEntry({
+      type: "layout",
+      shortCode: "L0",
+      parent: null,
+    });
+    const childEntry = makeEntry({
+      type: "route",
+      shortCode: "R0",
+      parent: parentEntry,
+    });
+    const snapshot = createRouteSnapshot({
+      manifestEntry: childEntry,
+      entries: [],
+    });
+
+    const result = ensureFullRouteSnapshot(snapshot);
+
+    expect(result.entries.length).toBeGreaterThan(0);
+    expect(result).not.toBe(snapshot);
+  });
+
+  it("computes cacheScope from entries", () => {
+    const entry = makeEntry({ cache: { options: { ttl: 60 } } });
+    const snapshot = createRouteSnapshot({
+      manifestEntry: entry,
+      entries: [],
+    });
+
+    mockCreateCacheScope.mockReturnValue({ enabled: true } as any);
+
+    const result = ensureFullRouteSnapshot(snapshot);
+
+    expect(mockCreateCacheScope).toHaveBeenCalled();
+  });
+
+  it("preserves all other snapshot fields", () => {
+    const mw = [{ handler: vi.fn(), params: {} }];
+    const snapshot = createRouteSnapshot({
+      routeKey: "blog",
+      params: { slug: "hello" },
+      routeMiddleware: mw,
+      isPassthrough: true,
+      responseType: "json",
+    });
+
+    const result = ensureFullRouteSnapshot(snapshot);
+
+    expect(result.routeKey).toBe("blog");
+    expect(result.params).toEqual({ slug: "hello" });
+    expect(result.routeMiddleware).toBe(mw);
+    expect(result.isPassthrough).toBe(true);
+    expect(result.responseType).toBe("json");
   });
 });

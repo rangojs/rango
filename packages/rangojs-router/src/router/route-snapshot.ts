@@ -184,6 +184,37 @@ export async function resolveRoute<TEnv = any>(
 }
 
 /**
+ * Fill in the entries and cacheScope fields on a lite snapshot.
+ *
+ * When classifyRequest produces a lite snapshot (entries=[], cacheScope=null),
+ * this function computes the missing fields from manifestEntry without
+ * re-running findMatch, loadManifest, or collectRouteMiddleware.
+ *
+ * If the snapshot already has entries, returns it as-is.
+ */
+export function ensureFullRouteSnapshot<TEnv = any>(
+  snapshot: RouteSnapshot<TEnv>,
+): RouteSnapshot<TEnv> {
+  if (snapshot.entries.length > 0) {
+    return snapshot;
+  }
+
+  const entries = [...traverseBack(snapshot.manifestEntry)];
+  let cacheScope: CacheScope | null = null;
+  for (const entry of entries) {
+    if (entry.cache) {
+      cacheScope = createCacheScope(entry.cache, cacheScope);
+    }
+  }
+
+  return {
+    ...snapshot,
+    entries,
+    cacheScope,
+  };
+}
+
+/**
  * Test helper: create a RouteSnapshot with sensible defaults and overrides.
  */
 export function createRouteSnapshot<TEnv = any>(

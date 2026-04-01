@@ -755,9 +755,12 @@ export function createRSCHandler<
       }
     };
 
-    // Set route params early so all execution paths can access ctx.params
+    // Set route params early so all execution paths can access ctx.params.
+    // Also store the classified snapshot so match/matchPartial can reuse it
+    // instead of calling resolveRoute again.
     if (plan.mode !== "redirect") {
       setRequestContextParams(plan.route.params, plan.route.routeKey);
+      requireRequestContext()._classifiedRoute = plan.route;
     }
 
     const routeReverse = createReverseFunction(getRequiredRouteMap());
