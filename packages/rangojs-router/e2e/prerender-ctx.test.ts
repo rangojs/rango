@@ -4,9 +4,10 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
 
 // -- Dev mode ----------------------------------------------------------------
 // In dev mode, Prerender handlers run via on-demand dev prerender.
-// ctx.build is true (handler runs in prerender context), getParams does not
-// run so shared data is absent, but handler -> child data flow via
-// ctx.set()/ctx.get() still works.
+// ctx.build is true (handler runs in prerender context), ctx.dev is true.
+// For passthrough routes, getParams() runs to check known params; its
+// ctx.set() values are carried into the render context. Handler -> child
+// data flow via ctx.set()/ctx.get() still works.
 
 test.describe("prerender ctx (dev mode)", () => {
   const f = useFixture({
@@ -30,17 +31,21 @@ test.describe("prerender ctx (dev mode)", () => {
     await waitForHydration(page);
 
     await expect(testId(page, "prerender-ctx-build")).toContainText("true");
+    await expect(testId(page, "prerender-ctx-dev")).toHaveText("true");
   });
 
-  test("getParams shared data is not available in dev", async ({ page }) => {
+  test("getParams shared data is available in dev (passthrough route runs getParams)", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/prerender-ctx/alpha"));
     await waitForHydration(page);
 
-    // getParams does not run in dev mode
+    // getParams runs in dev mode for passthrough routes to check known params.
+    // Its ctx.set() values are carried forward to the render context.
     await expect(testId(page, "prerender-ctx-shared")).toContainText(
-      "undefined",
+      "fetched-at-build",
     );
   });
 
@@ -95,6 +100,7 @@ test.describe("prerender ctx (production build)", () => {
     await waitForHydration(page);
 
     await expect(testId(page, "prerender-ctx-build")).toContainText("true");
+    await expect(testId(page, "prerender-ctx-dev")).toHaveText("false");
   });
 
   test("getParams shared data is available in pre-rendered content", async ({
@@ -196,6 +202,7 @@ test.describe("prerender ctx passthrough (production build)", () => {
     await waitForHydration(page);
 
     await expect(testId(page, "prerender-ctx-build")).toContainText("false");
+    await expect(testId(page, "prerender-ctx-dev")).toHaveText("false");
   });
 
   test("layout gets handler data in passthrough live render", async ({
@@ -256,6 +263,7 @@ test.describe("prerender ctx.passthrough() (dev mode)", () => {
 
     // On-demand prerender returned passthrough, so handler reruns live
     await expect(testId(page, "prerender-ctx-build")).toContainText("false");
+    await expect(testId(page, "prerender-ctx-dev")).toHaveText("false");
   });
 
   test("gamma layout has correct handler data in dev", async ({ page }) => {
@@ -310,6 +318,7 @@ test.describe("prerender ctx.passthrough() (production build)", () => {
     await waitForHydration(page);
 
     await expect(testId(page, "prerender-ctx-build")).toContainText("false");
+    await expect(testId(page, "prerender-ctx-dev")).toHaveText("false");
   });
 
   test("gamma timestamp changes across reloads (not prerendered)", async ({

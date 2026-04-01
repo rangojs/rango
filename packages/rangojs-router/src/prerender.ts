@@ -136,6 +136,13 @@ export interface BuildContext<TParams> {
   build: true;
 
   /**
+   * True when running in Vite dev mode (on-demand prerender), false during
+   * production `vite build`. Use this to branch on runtime mode without
+   * changing build semantics.
+   */
+  dev: boolean;
+
+  /**
    * Build-time environment bindings (KV, D1, etc.) supplied by the Vite plugin.
    * Only available when `buildEnv` is configured in rango() options.
    * Throws with a clear error if not configured.
@@ -192,6 +199,11 @@ export interface StaticBuildContext {
   build: true;
 
   /**
+   * True when running in Vite dev mode, false during production build.
+   */
+  dev: boolean;
+
+  /**
    * Build-time environment bindings supplied by the Vite plugin.
    * Only available when `buildEnv` is configured in rango() options.
    */
@@ -223,6 +235,11 @@ export interface StaticBuildContext {
 export interface GetParamsContext {
   /** Always true during build-time getParams execution. */
   build: true;
+
+  /**
+   * True when running in Vite dev mode, false during production build.
+   */
+  dev: boolean;
 
   /**
    * Build-time environment bindings supplied by the Vite plugin.

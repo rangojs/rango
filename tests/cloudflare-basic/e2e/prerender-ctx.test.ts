@@ -30,14 +30,18 @@ test.describe("prerender ctx (dev)", () => {
     await expect(testId(page, "prerender-ctx-build")).toContainText("true");
   });
 
-  test("getParams shared data is not available in dev", async ({ page }) => {
+  test("getParams shared data is available in dev (passthrough route runs getParams)", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/prerender-ctx/alpha"));
     await waitForHydration(page);
 
+    // getParams runs in dev mode for passthrough routes to check known params.
+    // Its ctx.set() values are carried forward to the render context.
     await expect(testId(page, "prerender-ctx-shared")).toContainText(
-      "undefined",
+      "fetched-at-build",
     );
   });
 

@@ -19,6 +19,7 @@ export const PrerenderCtxDef = Prerender<{ slug: string }>(
       <div data-testid="prerender-ctx-page">
         <h1 data-testid="prerender-ctx-title">{ctx.params.slug}</h1>
         <p data-testid="prerender-ctx-build">{String(ctx.build)}</p>
+        <p data-testid="prerender-ctx-dev">{String(ctx.dev)}</p>
         <p data-testid="prerender-ctx-shared">
           {ctx.get("sharedFromGetParams") ?? "undefined"}
         </p>
@@ -37,6 +38,7 @@ export const PrerenderCtxTest = Passthrough(PrerenderCtxDef, async (ctx) => {
     <div data-testid="prerender-ctx-page">
       <h1 data-testid="prerender-ctx-title">{ctx.params.slug}</h1>
       <p data-testid="prerender-ctx-build">{String(ctx.build)}</p>
+      <p data-testid="prerender-ctx-dev">{String(ctx.dev)}</p>
       <p data-testid="prerender-ctx-shared">
         {ctx.get("sharedFromGetParams") ?? "undefined"}
       </p>

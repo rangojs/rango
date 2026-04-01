@@ -98,6 +98,9 @@ export async function matchForPrerender<TEnv = any>(
     // In production, only known params are pre-rendered; unknown params fall
     // through to the live handler. Mirror that behavior in dev mode to avoid
     // rendering unknown params with build: true.
+    // Vars collected from getParams() probe — merged into render context below.
+    let devProbeBuildVars: Record<string, any> | undefined;
+
     if (devMode && matchedPassthroughRoute) {
       const routeEntry = entries.find(
         (
@@ -112,11 +115,12 @@ export async function matchForPrerender<TEnv = any>(
       );
       if (routeEntry) {
         try {
-          const buildVars: Record<string, any> = {};
+          const probeBuildVars: Record<string, any> = {};
           const knownParamsList = await routeEntry.prerenderDef.getParams({
             build: true as const,
+            dev: true,
             set: ((keyOrVar: any, value: any) => {
-              contextSet(buildVars, keyOrVar, value);
+              contextSet(probeBuildVars, keyOrVar, value);
             }) as any,
             reverse: createReverseFunction(deps.mergedRouteMap),
             get env() {
@@ -144,6 +148,13 @@ export async function matchForPrerender<TEnv = any>(
               passthrough: true as const,
             };
           }
+          // Preserve vars set by getParams() for the render context
+          if (
+            Object.keys(probeBuildVars).length > 0 ||
+            Object.getOwnPropertySymbols(probeBuildVars).length > 0
+          ) {
+            devProbeBuildVars = probeBuildVars;
+          }
         } catch (err: any) {
           // Mirror production semantics (prerender-collection.ts):
           // Skip errors are intentional — treat as passthrough.
@@ -166,8 +177,13 @@ export async function matchForPrerender<TEnv = any>(
     const handleStore = createHandleStore();
 
     // 5. Create a minimal request context with the handle store
-    // Shallow-copy getParams vars so each param set is independent
-    const variables: Record<string, any> = buildVars ? { ...buildVars } : {};
+    // Shallow-copy getParams vars so each param set is independent.
+    // In dev mode, merge vars from the getParams() probe if the caller
+    // didn't provide buildVars (production passes them from expandPrerenderRoutes).
+    const effectiveBuildVars = buildVars ?? devProbeBuildVars;
+    const variables: Record<string, any> = effectiveBuildVars
+      ? { ...effectiveBuildVars }
+      : {};
     const stubRes = new Response(null, { status: 200 });
     const minimalRequestContext: RequestContext<TEnv> = {
       env: buildEnv ?? ({} as TEnv),
@@ -221,6 +237,7 @@ export async function matchForPrerender<TEnv = any>(
         variables,
         matchedPassthroughRoute,
         buildEnv,
+        devMode,
       );
 
       // 7. Wire use() for handles only (loaders throw)
@@ -394,6 +411,7 @@ export async function renderStaticSegment<TEnv = any>(
   mergedRouteMap: Record<string, string>,
   routeName?: string,
   buildEnv?: TEnv,
+  devMode?: boolean,
 ): Promise<{ encoded: string; handles: Record<string, unknown[]> } | null> {
   const syntheticUrl = new URL("http://prerender/");
   const syntheticRequest = new Request(syntheticUrl);
@@ -447,6 +465,7 @@ export async function renderStaticSegment<TEnv = any>(
       mergedRouteMap,
       routeName,
       buildEnv,
+      devMode,
     );
 
     // Set segment ID so handle pushes are keyed correctly

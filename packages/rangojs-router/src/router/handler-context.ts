@@ -272,6 +272,7 @@ export function createHandlerContext<TEnv>(
   ctx = {
     params,
     build: false,
+    dev: false,
     request,
     searchParams,
     search: searchSchema ? resolvedSearchParams : {},
@@ -352,6 +353,7 @@ export function createPrerenderContext<TEnv>(
   buildVars?: Record<string, any>,
   isPassthroughRoute?: boolean,
   buildEnv?: TEnv,
+  devMode?: boolean,
 ): InternalHandlerContext<any, TEnv> {
   const syntheticUrl = new URL(`http://prerender${pathname}`);
   const variables = buildVars ?? {};
@@ -366,6 +368,7 @@ export function createPrerenderContext<TEnv>(
   return {
     params,
     build: true,
+    dev: devMode ?? false,
     get request(): Request {
       return throwUnavailable("request");
     },
@@ -428,6 +431,7 @@ export function createStaticContext<TEnv>(
   routeMap: Record<string, string>,
   routeName?: string,
   buildEnv?: TEnv,
+  devMode?: boolean,
 ): InternalHandlerContext<any, TEnv> {
   const variables: Record<string, any> = {};
 
@@ -443,6 +447,7 @@ export function createStaticContext<TEnv>(
       return throwUnavailable("params");
     },
     build: true,
+    dev: devMode ?? false,
     get request(): Request {
       return throwUnavailable("request");
     },

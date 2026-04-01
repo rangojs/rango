@@ -177,6 +177,8 @@ with request-dependent fields replaced by descriptive error throwers:
 ```typescript
 interface BuildContext<TParams> {
   params: TParams;
+  build: true; // Always true at build time
+  dev: boolean; // true in Vite dev mode, false during production build
   use: <T>(handle: Handle<T>) => (data: T) => void;
   url: URL; // Synthetic: pattern + params
   pathname: string;

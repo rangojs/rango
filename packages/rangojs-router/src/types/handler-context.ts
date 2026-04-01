@@ -210,6 +210,12 @@ export type HandlerContext<
    */
   build: boolean;
   /**
+   * True when running in Vite dev mode, false during production build or
+   * live request rendering. Use this to branch on runtime mode without
+   * changing build semantics (e.g., skip expensive operations in dev).
+   */
+  dev: boolean;
+  /**
    * The original incoming Request object (transport URL intact).
    * Use `ctx.url` / `ctx.searchParams` for application logic — those have
    * internal `_rsc*` params stripped. `ctx.request` preserves the raw URL

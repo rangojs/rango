@@ -118,6 +118,7 @@ Handlers receive `BuildContext` at build time, a subset of the runtime `HandlerC
 interface BuildContext<TParams> {
   params: TParams; // From getParams
   build: true; // Always true at build time
+  dev: boolean; // true in Vite dev mode, false during production build
   use: <T>(handle: Handle<T>) => (data: T) => void; // Push handle data
   url: URL; // Synthetic URL from pattern + params
   pathname: string; // Pathname from synthetic URL

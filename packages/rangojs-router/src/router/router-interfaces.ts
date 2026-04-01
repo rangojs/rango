@@ -394,6 +394,8 @@ export interface RSCRouterInternal<
     handler: Function,
     handlerId: string,
     routeName?: string,
+    buildEnv?: any,
+    devMode?: boolean,
   ): Promise<{ encoded: string; handles: Record<string, unknown[]> } | null>;
 
   /**
