@@ -68,9 +68,12 @@ export interface ResolveRouteDeps<TEnv = any> {
   lite?: boolean;
   /**
    * When true, skip pushing the "route-matching" metric internally.
-   * Used by createMatchContextForPartial which needs to measure all
-   * three findMatch calls (current + prev + intercept-source) under
-   * one "route-matching" metric and handles timing externally.
+   * Used by createMatchContextForPartial on the fresh path (no snapshot
+   * reuse) so it can measure current + prev + intercept-source findMatch
+   * calls under one combined "route-matching" metric. On the reuse path,
+   * classifyRequest already emitted "route-matching" for the current-route
+   * lookup and the partial path emits "route-matching:nav" for the
+   * remaining prev + intercept-source lookups.
    */
   skipRouteMatchMetric?: boolean;
 }
@@ -138,19 +141,12 @@ export async function resolveRoute<TEnv = any>(
   const isPassthrough =
     manifestEntry.type === "route" && manifestEntry.isPassthrough === true;
 
-  // Materialize entries once and reuse for both middleware collection and
-  // cache scope derivation (avoids a second traverseBack walk).
   let entries: EntryData[];
   let cacheScope: CacheScope | null = null;
   if (lite) {
     entries = [];
   } else {
-    entries = [...traverseBack(manifestEntry)];
-    for (const entry of entries) {
-      if (entry.cache) {
-        cacheScope = createCacheScope(entry.cache, cacheScope);
-      }
-    }
+    ({ entries, cacheScope } = buildEntriesAndCacheScope(manifestEntry));
   }
 
   const routeMiddleware = collectRouteMiddleware(
@@ -199,19 +195,28 @@ export function ensureFullRouteSnapshot<TEnv = any>(
     return snapshot;
   }
 
-  const entries = [...traverseBack(snapshot.manifestEntry)];
+  const { entries, cacheScope } = buildEntriesAndCacheScope(
+    snapshot.manifestEntry,
+  );
+  return { ...snapshot, entries, cacheScope };
+}
+
+/**
+ * Materialize the entry chain and derive the merged cache scope.
+ * Shared by resolveRoute (non-lite) and ensureFullRouteSnapshot.
+ */
+function buildEntriesAndCacheScope(manifestEntry: EntryData): {
+  entries: EntryData[];
+  cacheScope: CacheScope | null;
+} {
+  const entries = [...traverseBack(manifestEntry)];
   let cacheScope: CacheScope | null = null;
   for (const entry of entries) {
     if (entry.cache) {
       cacheScope = createCacheScope(entry.cache, cacheScope);
     }
   }
-
-  return {
-    ...snapshot,
-    entries,
-    cacheScope,
-  };
+  return { entries, cacheScope };
 }
 
 /**

@@ -295,7 +295,7 @@ export interface RequestContext<
    * @internal RouteSnapshot from classifyRequest, reused by match/matchPartial
    * to avoid a second resolveRoute call. Cleared on HMR invalidation.
    */
-  _classifiedRoute?: unknown;
+  _classifiedRoute?: import("../router/route-snapshot.js").RouteSnapshot;
 }
 
 /**
@@ -328,6 +328,7 @@ export type PublicRequestContext<
   | "_basename"
   | "_setStatus"
   | "_variables"
+  | "_classifiedRoute"
   | "res"
 >;
 

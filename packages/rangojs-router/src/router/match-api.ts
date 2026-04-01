@@ -59,10 +59,8 @@ export async function createMatchContextForFull<TEnv>(
 
   const metricsStore = deps.getMetricsStore();
 
-  // Full renders always call resolveRoute with isSSR: true because
-  // loadManifest keys its cache on isSSR and stamps Store.isSSR for
-  // downstream behavior. The classified snapshot from classifyRequest
-  // was built without isSSR, so it cannot be reused here.
+  // Full renders always resolve fresh with isSSR: true because loadManifest
+  // keys its cache on isSSR and stamps Store.isSSR for downstream behavior.
   const result = await resolveRoute<TEnv>(pathname, {
     findMatch: (p) => deps.findMatch(p, metricsStore),
     metricsStore,
@@ -194,9 +192,7 @@ export async function createMatchContextForPartial<TEnv>(
   // matches the partial path. On HMR, discard to pick up manifest changes.
   const classifiedRoute = isHmr
     ? undefined
-    : (getRequestContext()?._classifiedRoute as
-        | RouteSnapshot<TEnv>
-        | undefined);
+    : getRequestContext()?._classifiedRoute;
 
   // Time route matching. On the reuse path, only nav findMatch calls are new
   // (current-route findMatch and manifest-loading were already timed during

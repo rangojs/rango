@@ -57,15 +57,7 @@ export async function previewMatch<TEnv = any>(
         const { matched, manifestEntry, routeMiddleware, responseType } =
           snapshot;
 
-        // Content negotiation via shared helper
-        const negotiation = await negotiateRoute(
-          request,
-          pathname,
-          matched,
-          manifestEntry,
-          responseType,
-          routeMiddleware,
-        );
+        const negotiation = await negotiateRoute(request, pathname, snapshot);
         if (negotiation) {
           return {
             routeMiddleware:

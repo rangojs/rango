@@ -12,6 +12,7 @@ import { collectRouteMiddleware } from "./middleware.js";
 import { loadManifest } from "./manifest.js";
 import { traverseBack } from "./pattern-matching.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
+import type { RouteSnapshot } from "./route-snapshot.js";
 
 // Response type -> MIME type used for Accept header matching
 export const RESPONSE_TYPE_MIME: Record<string, string> = {
@@ -150,11 +151,9 @@ export interface NegotiationResult {
 export async function negotiateRoute(
   request: Request,
   pathname: string,
-  matched: RouteMatchResult,
-  manifestEntry: EntryData,
-  responseType: string | undefined,
-  routeMiddleware: CollectedMiddleware[],
+  snapshot: RouteSnapshot,
 ): Promise<NegotiationResult | null> {
+  const { matched, manifestEntry, routeMiddleware, responseType } = snapshot;
   if (!matched.negotiateVariants || matched.negotiateVariants.length === 0) {
     return null;
   }

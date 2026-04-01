@@ -120,7 +120,7 @@ with every phase encoded as a standard timing entry:
 Server-Timing: handler-nonce;dur=0.01,
   handler-mw-match;dur=0.03,
   handler-ctx-create;dur=0.12,
-  handler-preview-match;dur=0.45,
+  handler-classify;dur=0.45,
   d1-middleware-auth-pre;dur=0.02,
   d1-middleware-auth-post;dur=1.40,
   ssr-module-load;dur=1.30,
@@ -136,7 +136,7 @@ Open Chrome DevTools > Network > click a request > Timing tab to see these
 as a waterfall. Nested metrics (like middleware) use a `d{depth}-` prefix.
 
 Bootstrap handler phases (`handler-nonce`, `handler-mw-match`,
-`handler-ctx-create`, `handler-preview-match`) are always emitted in the
+`handler-ctx-create`, `handler-classify`) are always emitted in the
 `Server-Timing` header, even without `debugPerformance`, to give a baseline
 view of handler overhead on every request.
 
@@ -154,7 +154,8 @@ repeated imports resolve instantly.
 | Metric                        | Phase      | Description                                          |
 | ----------------------------- | ---------- | ---------------------------------------------------- |
 | `handler:total`               | Handler    | Full request duration from handler entry to response |
-| `route-matching`              | Matching   | Trie lookup and segment resolution                   |
+| `route-matching`              | Matching   | Route lookups: full renders or partial fresh (all findMatch calls combined) |
+| `route-matching:nav`          | Matching   | Prev + intercept-source lookups (partial reuse path) |
 | `manifest-loading`            | Matching   | Async manifest load (when not cached)                |
 | `ssr:module-load`             | SSR setup  | Dynamic import of the SSR module                     |
 | `ssr:stream-mode`             | SSR setup  | Stream mode resolution (sync or async)               |

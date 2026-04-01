@@ -193,7 +193,7 @@ export async function classifyRequest<TEnv = any>(
     });
   }
 
-  // 3. Redirect
+  // Redirect
   if (result.type === "redirect") {
     const snapshot: RouteSnapshot<TEnv> = {
       matched: result as any,
@@ -215,7 +215,7 @@ export async function classifyRequest<TEnv = any>(
 
   const snapshot = result.snapshot;
 
-  // 4. Response route — non-RSC short-circuit (JSON, streaming, etc.)
+  // Response route — non-RSC short-circuit (JSON, streaming, etc.)
   const responseResult = await classifyResponseRoute(
     request,
     pathname,
@@ -278,17 +278,9 @@ async function classifyResponseRoute<TEnv>(
   pathname: string,
   snapshot: RouteSnapshot<TEnv>,
 ): Promise<ResponseRoutePlan<TEnv> | null> {
-  const { matched, manifestEntry, routeMiddleware, responseType } = snapshot;
+  const { manifestEntry, responseType } = snapshot;
 
-  // Content negotiation via shared helper
-  const negotiation = await negotiateRoute(
-    request,
-    pathname,
-    matched,
-    manifestEntry,
-    responseType,
-    routeMiddleware,
-  );
+  const negotiation = await negotiateRoute(request, pathname, snapshot);
   if (negotiation) {
     return {
       mode: "response",
@@ -309,7 +301,7 @@ async function classifyResponseRoute<TEnv>(
         responseType,
         negotiated: false,
         manifestEntry,
-        routeMiddleware,
+        routeMiddleware: snapshot.routeMiddleware,
       };
     }
   }
