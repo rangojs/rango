@@ -100,7 +100,6 @@ export async function resolveRoute<TEnv = any>(
     skipRouteMatchMetric = false,
   } = deps;
 
-  // 1. Route matching
   const routeMatchStart =
     metricsStore && !skipRouteMatchMetric ? performance.now() : 0;
   const matched = deps.findMatch(pathname);
@@ -116,12 +115,10 @@ export async function resolveRoute<TEnv = any>(
     return null;
   }
 
-  // 2. Redirect check
   if (matched.redirectTo) {
     return { type: "redirect", redirectTo: matched.redirectTo };
   }
 
-  // 3. Load manifest
   const manifestStart = metricsStore ? performance.now() : 0;
   const manifestEntry = await loadManifest(
     matched.entry,
@@ -138,17 +135,11 @@ export async function resolveRoute<TEnv = any>(
     });
   }
 
-  // 4. Passthrough detection
   const isPassthrough =
     manifestEntry.type === "route" && manifestEntry.isPassthrough === true;
 
-  // 5. Route middleware
-  const routeMiddleware = collectRouteMiddleware(
-    traverseBack(manifestEntry),
-    matched.params,
-  );
-
-  // 6. Cache scope chain (skipped in lite mode — previewMatch doesn't need it)
+  // Materialize entries once and reuse for both middleware collection and
+  // cache scope derivation (avoids a second traverseBack walk).
   let entries: EntryData[];
   let cacheScope: CacheScope | null = null;
   if (lite) {
@@ -162,7 +153,11 @@ export async function resolveRoute<TEnv = any>(
     }
   }
 
-  // 7. Response type + local route name
+  const routeMiddleware = collectRouteMiddleware(
+    lite ? traverseBack(manifestEntry) : entries,
+    matched.params,
+  );
+
   const responseType =
     matched.responseType ||
     (manifestEntry.type === "route" ? manifestEntry.responseType : undefined);
