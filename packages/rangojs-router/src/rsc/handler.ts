@@ -609,7 +609,6 @@ export function createRSCHandler<
             cacheScope: null,
             isPassthrough: false,
           },
-          routeMiddleware: [],
           negotiated: false,
         };
       } else {
@@ -756,9 +755,12 @@ export function createRSCHandler<
       }
     };
 
-    // Set route params early so all execution paths can access ctx.params
+    // Set route params early so all execution paths can access ctx.params.
+    // Also store the classified snapshot so match/matchPartial can reuse it
+    // instead of calling resolveRoute again.
     if (plan.mode !== "redirect") {
       setRequestContextParams(plan.route.params, plan.route.routeKey);
+      requireRequestContext()._classifiedRoute = plan.route;
     }
 
     const routeReverse = createReverseFunction(getRequiredRouteMap());
@@ -842,7 +844,7 @@ export function createRSCHandler<
         handleStore,
         nonce,
         {
-          routeMiddleware: plan.routeMiddleware,
+          routeMiddleware: plan.route.routeMiddleware,
           variables,
           routeReverse,
         },
@@ -900,7 +902,7 @@ export function createRSCHandler<
       // App-switch is already excluded by classifyRequest (would be full-render).
       const isPartialAction = url.searchParams.has("_rsc_partial");
       return executeRenderWithMiddleware(
-        plan.routeMiddleware,
+        plan.route.routeMiddleware,
         plan.negotiated,
         plan.route.routeKey,
         routeReverse,
@@ -919,7 +921,7 @@ export function createRSCHandler<
     if (plan.mode === "full-render" || plan.mode === "partial-render") {
       const isPartial = plan.mode === "partial-render";
       return executeRenderWithMiddleware(
-        plan.routeMiddleware,
+        plan.route.routeMiddleware,
         plan.negotiated,
         plan.route.routeKey,
         routeReverse,
@@ -937,7 +939,7 @@ export function createRSCHandler<
     // falls back to full render
     if (plan.mode === "pe-render") {
       return executeRenderWithMiddleware(
-        plan.routeMiddleware,
+        plan.route.routeMiddleware,
         false,
         plan.route.routeKey,
         routeReverse,

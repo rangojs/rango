@@ -68,9 +68,12 @@ export interface ResolveRouteDeps<TEnv = any> {
   lite?: boolean;
   /**
    * When true, skip pushing the "route-matching" metric internally.
-   * Used by createMatchContextForPartial which needs to measure all
-   * three findMatch calls (current + prev + intercept-source) under
-   * one "route-matching" metric and handles timing externally.
+   * Used by createMatchContextForPartial on the fresh path (no snapshot
+   * reuse) so it can measure current + prev + intercept-source findMatch
+   * calls under one combined "route-matching" metric. On the reuse path,
+   * the partial path emits "route-matching:nav" for the prev +
+   * intercept-source lookups only (current-route resolution was done
+   * during classification without metrics).
    */
   skipRouteMatchMetric?: boolean;
 }
@@ -138,19 +141,12 @@ export async function resolveRoute<TEnv = any>(
   const isPassthrough =
     manifestEntry.type === "route" && manifestEntry.isPassthrough === true;
 
-  // Materialize entries once and reuse for both middleware collection and
-  // cache scope derivation (avoids a second traverseBack walk).
   let entries: EntryData[];
   let cacheScope: CacheScope | null = null;
   if (lite) {
     entries = [];
   } else {
-    entries = [...traverseBack(manifestEntry)];
-    for (const entry of entries) {
-      if (entry.cache) {
-        cacheScope = createCacheScope(entry.cache, cacheScope);
-      }
-    }
+    ({ entries, cacheScope } = buildEntriesAndCacheScope(manifestEntry));
   }
 
   const routeMiddleware = collectRouteMiddleware(
@@ -181,6 +177,46 @@ export async function resolveRoute<TEnv = any>(
       responseType,
     },
   };
+}
+
+/**
+ * Fill in the entries and cacheScope fields on a lite snapshot.
+ *
+ * When classifyRequest produces a lite snapshot (entries=[], cacheScope=null),
+ * this function computes the missing fields from manifestEntry without
+ * re-running findMatch, loadManifest, or collectRouteMiddleware.
+ *
+ * If the snapshot already has entries, returns it as-is.
+ */
+export function ensureFullRouteSnapshot<TEnv = any>(
+  snapshot: RouteSnapshot<TEnv>,
+): RouteSnapshot<TEnv> {
+  if (snapshot.entries.length > 0) {
+    return snapshot;
+  }
+
+  const { entries, cacheScope } = buildEntriesAndCacheScope(
+    snapshot.manifestEntry,
+  );
+  return { ...snapshot, entries, cacheScope };
+}
+
+/**
+ * Materialize the entry chain and derive the merged cache scope.
+ * Shared by resolveRoute (non-lite) and ensureFullRouteSnapshot.
+ */
+function buildEntriesAndCacheScope(manifestEntry: EntryData): {
+  entries: EntryData[];
+  cacheScope: CacheScope | null;
+} {
+  const entries = [...traverseBack(manifestEntry)];
+  let cacheScope: CacheScope | null = null;
+  for (const entry of entries) {
+    if (entry.cache) {
+      cacheScope = createCacheScope(entry.cache, cacheScope);
+    }
+  }
+  return { entries, cacheScope };
 }
 
 /**

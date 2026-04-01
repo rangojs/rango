@@ -98,7 +98,7 @@ export function getSSRSetup<TEnv>(
  * the isRscRequest decision in rsc-rendering.ts.
  *
  * Note: response/mime routes are excluded by the caller — this function
- * runs after previewMatch() classifies the route type.
+ * runs after classifyRequest() determines the request mode.
  */
 export function mayNeedSSR(request: Request, url: URL): boolean {
   if (
