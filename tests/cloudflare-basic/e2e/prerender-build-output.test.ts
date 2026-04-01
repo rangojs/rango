@@ -38,18 +38,18 @@ test.describe("handler eviction (production)", () => {
     clientBundle = concatBundleContents(path.join(DIST, "client/assets"));
     ssrBundle = concatBundleContents(path.join(DIST, "rsc/ssr/assets"));
 
+    // After manualChunks removal (#436), prerender handler stubs are inlined
+    // into the RSC entry/worker-entry chunk instead of a separate
+    // __prerender-handlers file. Concat code chunks (excluding __pr-*/__st-*
+    // prerender asset files which contain rendered output, not handler code).
     const rscAssets = readAllFiles(path.join(DIST, "rsc/assets"));
-    const handlerFile = rscAssets.find((f) =>
-      f.startsWith("__prerender-handlers"),
-    );
-    expect(handlerFile).toBeTruthy();
-    prerenderHandlersBundle = fs.readFileSync(
-      path.join(DIST, "rsc/assets", handlerFile!),
-      "utf-8",
-    );
+    prerenderHandlersBundle = rscAssets
+      .filter((f) => !f.startsWith("__pr-") && !f.startsWith("__st-"))
+      .map((f) => fs.readFileSync(path.join(DIST, "rsc/assets", f), "utf-8"))
+      .join("\n");
   });
 
-  test("prerender-handlers chunk exists in RSC bundle", () => {
+  test("prerender handler stubs exist in RSC bundle", () => {
     expect(prerenderHandlersBundle.length).toBeGreaterThan(0);
   });
 

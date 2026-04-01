@@ -512,6 +512,7 @@ export function createRouterDiscoveryPlugin(
               undefined,
               wantPassthrough,
               s.resolvedBuildEnv,
+              true, // devMode: check getParams for passthrough routes
             );
             if (!result) continue;
             if (result.passthrough) continue;

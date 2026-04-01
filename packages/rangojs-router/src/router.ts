@@ -626,6 +626,7 @@ export function createRouter<TEnv = any>(
     buildVars?: Record<string, any>,
     isPassthroughRoute?: boolean,
     buildEnv?: TEnv,
+    devMode?: boolean,
   ) {
     return _matchForPrerender(
       pathname,
@@ -634,6 +635,7 @@ export function createRouter<TEnv = any>(
       buildVars,
       isPassthroughRoute,
       buildEnv,
+      devMode,
     );
   }
 
