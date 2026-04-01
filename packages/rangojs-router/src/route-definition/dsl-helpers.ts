@@ -37,6 +37,7 @@ import type {
   UseItems,
 } from "../route-types.js";
 import type { RouteHelpers } from "./helpers-types.js";
+import { resolveHandlerUse, mergeHandlerUse } from "./resolve-handler-use.js";
 
 /**
  * Check if an item contains routes (directly or inside nested structures like cache).
@@ -447,15 +448,6 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
       : {}),
   } satisfies EntryData;
 
-  // Run use callback if provided to collect loaders, revalidate, loading
-  if (use && typeof use === "function") {
-    const result = store.run(namespace, entry, use)?.flat(3);
-    invariant(
-      Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-      `parallel() use() callback must return an array of use items [${namespace}]`,
-    );
-  }
-
   for (const slotName of slotNames) {
     const slotEntry = {
       ...entry,
@@ -478,6 +470,22 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
             staticHandlerIds: undefined,
           }),
     } satisfies EntryData;
+
+    // Per-slot: handler.use defaults first, then explicit use second.
+    // This matches the "defaults first, overrides second" rule used by
+    // path(), layout(), and intercept(). Each slot's handler.use is
+    // scoped to its own entry (no cross-slot bleed).
+    const slotHandler = (slots as Record<string, any>)[slotName];
+    const slotHandlerUse = resolveHandlerUse(slotHandler);
+    const slotMergedUse = mergeHandlerUse(slotHandlerUse, use, "parallel");
+    if (slotMergedUse) {
+      const result = store.run(namespace, slotEntry, slotMergedUse)?.flat(3);
+      invariant(
+        Array.isArray(result) && result.every((item) => isValidUseItem(item)),
+        `parallel() use() callback must return an array of use items [${namespace}]`,
+      );
+    }
+
     ctx.parent.parallel[slotName] = slotEntry;
   }
   return { name: namespace, type: "parallel" } as ParallelItem;
@@ -527,8 +535,12 @@ const intercept = (
     when: [], // Selector conditions for conditional interception
   };
 
-  // Run use callback if provided to collect loaders, revalidate, middleware, etc.
-  if (use && typeof use === "function") {
+  // Merge handler.use defaults with explicit use
+  const handlerUseFn = resolveHandlerUse(handler);
+  const mergedUse = mergeHandlerUse(handlerUseFn, use, "intercept");
+
+  // Run merged use callback to collect loaders, revalidate, middleware, etc.
+  if (mergedUse) {
     // Create a temporary parent context for the use() callback
     // so that middleware, loader, revalidate attach to the intercept entry
     const originalParent = ctx.parent;
@@ -555,7 +567,7 @@ const intercept = (
     };
     ctx.parent = tempParent as EntryData;
 
-    const result = use()?.flat(3);
+    const result = mergedUse()?.flat(3);
 
     // Restore original parent
     ctx.parent = originalParent;
@@ -752,7 +764,7 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
     shortCode: store.getShortCode("route"),
     type: "route",
     parent: ctx.parent,
-    handler,
+    handler: handler as unknown as Handler<any, any, any>,
     loading: undefined, // Allow loading() to attach loading state
     middleware: [],
     revalidate: [],
@@ -771,9 +783,12 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
   );
   /* Register route entry */
   ctx.manifest.set(name, entry);
+  /* Merge handler.use defaults with explicit use */
+  const handlerUseFn = resolveHandlerUse(handler);
+  const mergedUse = mergeHandlerUse(handlerUseFn, use, "route");
   /* Run use and attach handlers */
-  if (use && typeof use === "function") {
-    const result = store.run(namespace, entry, use)?.flat(3);
+  if (mergedUse) {
+    const result = store.run(namespace, entry, mergedUse)?.flat(3);
     invariant(
       Array.isArray(result) && result.every((item) => isValidUseItem(item)),
       `route() use() callback must return an array of use items [${namespace}]`,
@@ -834,10 +849,14 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     (handler as any).$$routePrefix = ctx.namePrefix;
   }
 
-  // Run use callback if provided
+  // Merge handler.use defaults with explicit use
+  const handlerUseFn = resolveHandlerUse(handler);
+  const mergedUse = mergeHandlerUse(handlerUseFn, use, "layout");
+
+  // Run merged use callback if present
   let result: AllUseItems[] | undefined;
-  if (use && typeof use === "function") {
-    result = store.run(namespace, entry, use)?.flat(3);
+  if (mergedUse) {
+    result = store.run(namespace, entry, mergedUse)?.flat(3);
 
     invariant(
       Array.isArray(result) && result.every((item) => isValidUseItem(item)),

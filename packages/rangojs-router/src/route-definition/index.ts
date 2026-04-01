@@ -45,6 +45,9 @@ export {
   type RouteHandlers,
 } from "./helper-factories.js";
 
+// Handler use resolver
+export { resolveHandlerUse } from "./resolve-handler-use.js";
+
 // Redirect
 export { redirect } from "./redirect.js";
 

@@ -36,6 +36,7 @@ import type { Handle } from "./handle.js";
 import type { ContextVar } from "./context-var.js";
 import type { ReverseFunction } from "./reverse.js";
 import type { DefaultReverseRouteMap } from "./types/global-namespace.js";
+import type { UseItems, HandlerUseItem } from "./route-types.js";
 import { isCachedFunction } from "./cache/taint.js";
 
 // -- Named route resolution types -------------------------------------------
@@ -229,6 +230,8 @@ export interface PrerenderHandlerDefinition<
   getParams?: (ctx: GetParamsContext) => Promise<TParams[]> | TParams[];
   /** Pre-render options. */
   options?: PrerenderOptions;
+  /** Composable default DSL items merged when the handler is mounted. */
+  use?: () => UseItems<HandlerUseItem>;
 }
 
 // -- Overloads --------------------------------------------------------------
@@ -431,6 +434,8 @@ export interface PassthroughHandlerDefinition<
   liveHandler: (
     ctx: HandlerContext<TParams, TEnv>,
   ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
+  /** Composable default DSL items merged when the handler is mounted. */
+  use?: () => UseItems<HandlerUseItem>;
 }
 
 export function Passthrough<

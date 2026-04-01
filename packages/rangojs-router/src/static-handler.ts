@@ -33,6 +33,7 @@
 import type { ReactNode } from "react";
 import type { Handler } from "./types.js";
 import type { StaticBuildContext } from "./prerender.js";
+import type { UseItems, HandlerUseItem } from "./route-types.js";
 import { isCachedFunction } from "./cache/taint.js";
 
 // -- Types ------------------------------------------------------------------
@@ -56,6 +57,8 @@ export interface StaticHandlerDefinition<
   handler: Handler<TParams>;
   /** Static handler options (passthrough support). */
   options?: StaticHandlerOptions;
+  /** Composable default DSL items merged when the handler is mounted. */
+  use?: () => UseItems<HandlerUseItem>;
 }
 
 // -- Function ---------------------------------------------------------------

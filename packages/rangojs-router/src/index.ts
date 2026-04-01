@@ -88,6 +88,7 @@ export type {
   LayoutUseItem,
   AllUseItems,
   UseItems,
+  HandlerUseItem,
 } from "./route-types.js";
 
 // Response route types (usable in both server and client contexts)
