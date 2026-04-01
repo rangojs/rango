@@ -85,6 +85,7 @@ import {
 import {
   classifyRequest,
   type RequestPlan,
+  type ExecutableRequestPlan,
 } from "../router/request-classification.js";
 
 /**
@@ -668,14 +669,22 @@ export function createRSCHandler<
     }
 
     // ---- 4. Execute ----
-    return executeRequest(plan, request, env, url, variables, nonce);
+    return executeRequest(
+      plan as ExecutableRequestPlan<TEnv>,
+      request,
+      env,
+      url,
+      variables,
+      nonce,
+    );
   }
 
   // Execute a classified request plan. Dispatches to the appropriate handler
   // based on plan.mode. Lives in the createRSCHandler closure for access to
   // handlerCtx, router, callOnError, etc.
+  // Only receives executable plans (version-mismatch is handled above).
   async function executeRequest(
-    plan: RequestPlan<TEnv>,
+    plan: ExecutableRequestPlan<TEnv>,
     request: Request,
     env: TEnv,
     url: URL,

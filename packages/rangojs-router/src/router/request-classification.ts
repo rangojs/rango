@@ -27,6 +27,7 @@ import {
   pickNegotiateVariant,
 } from "./content-negotiation.js";
 import { loadManifest } from "./manifest.js";
+import { stripInternalParams } from "./handler-context.js";
 import { resolveRoute, type RouteSnapshot } from "./route-snapshot.js";
 
 // ---------------------------------------------------------------------------
@@ -41,7 +42,8 @@ interface RedirectPlan<TEnv = any> {
 
 interface VersionMismatchPlan<TEnv = any> {
   mode: "version-mismatch";
-  route: RouteSnapshot<TEnv>;
+  /** May be undefined when version mismatch is detected before route resolution */
+  route?: RouteSnapshot<TEnv>;
   reloadUrl: string;
 }
 
@@ -104,6 +106,15 @@ export type RequestPlan<TEnv = any> =
   | PartialRenderPlan<TEnv>;
 
 /**
+ * Plans that have passed the terminal-check gate (version-mismatch handled)
+ * and are ready for execution. Always have a `route` field.
+ */
+export type ExecutableRequestPlan<TEnv = any> = Exclude<
+  RequestPlan<TEnv>,
+  VersionMismatchPlan<TEnv>
+>;
+
+/**
  * Re-export individual plan types for consumers that need to narrow.
  */
 export type {
@@ -148,7 +159,40 @@ export async function classifyRequest<TEnv = any>(
 ): Promise<RequestPlan<TEnv>> {
   const pathname = url.pathname;
 
-  // 1. Route resolution (lite mode — skip entries/cacheScope)
+  // 1. Version mismatch — runs BEFORE route resolution so stale clients
+  // requesting removed routes get a reload, not a 404.
+  const clientVersion = url.searchParams.get("_rsc_v");
+  if (
+    deps.routerVersion &&
+    clientVersion &&
+    clientVersion !== deps.routerVersion
+  ) {
+    const isAction =
+      request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
+
+    // Strip internal _rsc_* params so the browser reloads to a clean URL
+    let reloadUrl = stripInternalParams(url).toString();
+    if (isAction) {
+      const referer = request.headers.get("referer");
+      if (referer) {
+        try {
+          const refererUrl = new URL(referer);
+          if (refererUrl.origin === url.origin) {
+            reloadUrl = referer;
+          }
+        } catch {
+          // Malformed referer, fall back to stripped url
+        }
+      }
+    }
+
+    return {
+      mode: "version-mismatch",
+      reloadUrl,
+    };
+  }
+
+  // 2. Route resolution (lite mode — skip entries/cacheScope)
   const result = await resolveRoute<TEnv>(pathname, {
     findMatch: deps.findMatch,
     lite: true,
@@ -160,25 +204,10 @@ export async function classifyRequest<TEnv = any>(
     });
   }
 
-  // 2. Redirect
+  // 3. Redirect
   if (result.type === "redirect") {
-    // Build a minimal snapshot for the redirect plan. The route was matched
-    // but is a redirect — we still need the matched data for potential
-    // logging/telemetry, but most fields are empty since we won't render.
-    // Redirects are typically handled by the pipeline (match/matchPartial),
-    // but classifyRequest surfaces them early so handler.ts can dispatch
-    // without entering the pipeline at all.
-    //
-    // Since resolveRoute returns early for redirects (before loadManifest),
-    // we don't have a full snapshot. Throw RouteNotFoundError-like? No —
-    // redirects are a valid classification outcome. We need a second
-    // resolveRoute call to get the snapshot... but that defeats lite mode.
-    //
-    // Simpler: for redirects, the plan doesn't need a full route snapshot.
-    // The redirect URL is all executeRequest needs.
-    // Use a minimal synthetic snapshot.
     const snapshot: RouteSnapshot<TEnv> = {
-      matched: result as any, // The RouteMatchResult with redirectTo
+      matched: result as any,
       manifestEntry: null as any,
       entries: [],
       routeKey: "",
@@ -196,38 +225,6 @@ export async function classifyRequest<TEnv = any>(
   }
 
   const snapshot = result.snapshot;
-
-  // 3. Version mismatch — client has stale code after HMR/deployment
-  const clientVersion = url.searchParams.get("_rsc_v");
-  if (
-    deps.routerVersion &&
-    clientVersion &&
-    clientVersion !== deps.routerVersion
-  ) {
-    const isAction =
-      request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
-
-    let reloadUrl = url.toString();
-    if (isAction) {
-      const referer = request.headers.get("referer");
-      if (referer) {
-        try {
-          const refererUrl = new URL(referer);
-          if (refererUrl.origin === url.origin) {
-            reloadUrl = referer;
-          }
-        } catch {
-          // Malformed referer, fall back to url
-        }
-      }
-    }
-
-    return {
-      mode: "version-mismatch",
-      route: snapshot,
-      reloadUrl,
-    };
-  }
 
   // 4. Response route — non-RSC short-circuit (JSON, streaming, etc.)
   const responseResult = await classifyResponseRoute(

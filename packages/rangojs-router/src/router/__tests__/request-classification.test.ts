@@ -112,6 +112,40 @@ describe("classifyRequest", () => {
     expect(plan.mode).toBe("version-mismatch");
   });
 
+  it("version mismatch on removed route produces reload, not 404", async () => {
+    const { request, url } = makeRequest(
+      "http://localhost/removed?_rsc_v=0.9.0&_rsc_partial=1",
+    );
+    // Route no longer exists — findMatch returns null
+    const deps = makeDeps({
+      findMatch: () => null,
+      routerVersion: "1.0.0",
+    });
+
+    const plan = await classifyRequest(request, url, deps);
+
+    // Should be version-mismatch (reload), NOT throw RouteNotFoundError
+    expect(plan.mode).toBe("version-mismatch");
+  });
+
+  it("version mismatch reload URL strips _rsc_* params", async () => {
+    const { request, url } = makeRequest(
+      "http://localhost/page?_rsc_v=0.9.0&_rsc_partial=1&_rsc_segments=L0,R1&user=alice",
+    );
+    const deps = makeDeps({ routerVersion: "1.0.0" });
+
+    const plan = await classifyRequest(request, url, deps);
+
+    expect(plan.mode).toBe("version-mismatch");
+    if (plan.mode === "version-mismatch") {
+      // Should not contain _rsc_* params, but should keep user params
+      expect(plan.reloadUrl).not.toContain("_rsc_v");
+      expect(plan.reloadUrl).not.toContain("_rsc_partial");
+      expect(plan.reloadUrl).not.toContain("_rsc_segments");
+      expect(plan.reloadUrl).toContain("user=alice");
+    }
+  });
+
   it("version mismatch uses referer for action requests", async () => {
     const { request, url } = makeRequest(
       "http://localhost/page?_rsc_v=0.9.0&_rsc_action=hash%23test",
@@ -305,8 +339,8 @@ describe("classifyRequest", () => {
 
     const plan = await classifyRequest(request, url, deps);
 
-    expect(plan.route.routeKey).toBe("blog");
-    expect(plan.route.params).toEqual({ slug: "hello" });
+    expect(plan.route!.routeKey).toBe("blog");
+    expect(plan.route!.params).toEqual({ slug: "hello" });
   });
 
   // ---- Route middleware is carried ----
