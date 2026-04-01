@@ -450,6 +450,13 @@ export interface RSCRouterInternal<
   ): Promise<MatchResult | null>;
 
   /**
+   * Low-level route matching function.
+   * Used by classifyRequest() for request classification without
+   * entering the full match pipeline.
+   */
+  findMatch(pathname: string, metricsStore?: any): any;
+
+  /**
    * Debug utility to serialize the manifest for inspection
    * Returns a JSON-friendly representation of all routes and layouts
    */
