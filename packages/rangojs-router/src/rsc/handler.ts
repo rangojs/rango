@@ -587,6 +587,7 @@ export function createRSCHandler<
         findMatch: router.findMatch,
         routerVersion: version,
         routerId: router.id,
+        metricsStore: requireRequestContext()._metricsStore,
       });
     } catch (error) {
       if (

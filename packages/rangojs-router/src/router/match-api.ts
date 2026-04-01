@@ -199,23 +199,14 @@ export async function createMatchContextForPartial<TEnv>(
         | undefined);
 
   // Time route matching. On the reuse path, only nav findMatch calls are new
-  // (current-route findMatch already happened in classifyRequest).
-  // On the fresh path, all findMatch calls are measured together.
+  // (current-route findMatch and manifest-loading were already timed during
+  // classifyRequest via its metricsStore). On the fresh path, all findMatch
+  // calls are measured together.
   const routeMatchStart = metricsStore ? performance.now() : 0;
 
   let snapshot: RouteSnapshot<TEnv>;
   if (classifiedRoute && classifiedRoute.manifestEntry) {
     snapshot = ensureFullRouteSnapshot(classifiedRoute);
-    // Emit manifest-loading metric with zero duration — manifest was already
-    // loaded during classification and is reused from cache.
-    if (metricsStore) {
-      const now = performance.now();
-      metricsStore.metrics.push({
-        label: "manifest-loading",
-        duration: 0,
-        startTime: now - metricsStore.requestStart,
-      });
-    }
   } else {
     const result = await resolveRoute<TEnv>(pathname, {
       findMatch: (p) => deps.findMatch(p, metricsStore),
@@ -252,12 +243,14 @@ export async function createMatchContextForPartial<TEnv>(
     return null;
   }
 
-  // Push route-matching metric covering the work done in this function.
-  // On the reuse path this only includes nav findMatch calls (current-route
-  // findMatch was already done during classification).
+  // Push route-matching metric. On the fresh path this covers all findMatch
+  // calls (current + prev + intercept-source). On the reuse path, current-route
+  // findMatch was already timed during classification, so this only covers
+  // the nav lookups (prev + intercept-source).
   if (metricsStore) {
+    const isReuse = !!classifiedRoute;
     metricsStore.metrics.push({
-      label: "route-matching",
+      label: isReuse ? "route-matching:nav" : "route-matching",
       duration: performance.now() - routeMatchStart,
       startTime: routeMatchStart - metricsStore.requestStart,
     });

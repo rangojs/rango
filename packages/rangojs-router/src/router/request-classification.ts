@@ -124,6 +124,8 @@ export interface ClassifyRequestDeps<TEnv = any> {
   findMatch: (pathname: string) => RouteMatchResult<TEnv> | null;
   routerVersion: string;
   routerId: string;
+  /** When provided, resolveRoute emits route-matching and manifest-loading metrics */
+  metricsStore?: import("../server/context.js").MetricsStore;
 }
 
 /**
@@ -179,9 +181,9 @@ export async function classifyRequest<TEnv = any>(
     };
   }
 
-  // 2. Route resolution (lite mode — skip entries/cacheScope)
   const result = await resolveRoute<TEnv>(pathname, {
     findMatch: deps.findMatch,
+    metricsStore: deps.metricsStore,
     lite: true,
   });
 
