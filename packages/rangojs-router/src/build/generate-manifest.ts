@@ -45,7 +45,7 @@ export interface GeneratedManifest {
   routeTrailingSlash?: Record<string, string>;
   /** Route names using Prerender (for dev-mode Node.js delegation) */
   prerenderRoutes?: string[];
-  /** Route names with passthrough: true (handler kept in bundle for live fallback) */
+  /** Route names wrapped with Passthrough() (live handler for runtime fallback) */
   passthroughRoutes?: string[];
   /** Route name → response type for non-RSC routes */
   responseTypeRoutes?: Record<string, string>;
@@ -150,10 +150,7 @@ function buildPrefixTreeNode(
         if (prerenderDefs && entry.prerenderDef) {
           prerenderDefs[name] = entry.prerenderDef;
         }
-        if (
-          passthroughRoutes &&
-          entry.prerenderDef?.options?.passthrough === true
-        ) {
+        if (passthroughRoutes && entry.isPassthrough === true) {
           passthroughRoutes.push(name);
         }
       }
@@ -350,7 +347,7 @@ export function generateManifestFull<TEnv>(
       if (entry.prerenderDef) {
         prerenderDefs[name] = entry.prerenderDef;
       }
-      if (entry.prerenderDef?.options?.passthrough === true) {
+      if (entry.isPassthrough === true) {
         passthroughRoutes.push(name);
       }
     }

@@ -16,6 +16,10 @@ export interface PluginOptions {
   // Mutable ref for deferred auto-discovery (node preset).
   // The auto-discover config() hook populates this before configResolved.
   routerPathRef?: { path?: string };
+  /** Build-time env option from rango() config. */
+  buildEnv?: import("../plugin-types.js").BuildEnvOption;
+  /** Deployment preset (needed for buildEnv "auto" resolution). */
+  preset?: "node" | "cloudflare";
 }
 
 export interface PrecomputedEntry {
@@ -56,8 +60,8 @@ export interface DiscoveryState {
 
   prerenderManifestEntries: Record<string, string> | null;
   staticManifestEntries: Record<string, string> | null;
-  handlerChunkInfo: ChunkInfo | null;
-  staticHandlerChunkInfo: ChunkInfo | null;
+  handlerChunkInfoMap: Map<string, ChunkInfo>;
+  staticHandlerChunkInfoMap: Map<string, ChunkInfo>;
   rscEntryFileName: string | null;
   resolvedPrerenderModules: Map<string, string[]> | undefined;
   resolvedStaticModules: Map<string, string[]> | undefined;
@@ -67,6 +71,11 @@ export interface DiscoveryState {
   devServer: any;
   selfWrittenGenFiles: Map<string, { at: number; hash: string }>;
   SELF_WRITE_WINDOW_MS: number;
+
+  /** Resolved build-time env bindings (set during buildStart/configureServer). */
+  resolvedBuildEnv?: Record<string, unknown>;
+  /** Cleanup function for build-time env resources (e.g., miniflare). */
+  buildEnvDispose?: (() => Promise<void> | void) | null;
 }
 
 export function createDiscoveryState(
@@ -93,8 +102,8 @@ export function createDiscoveryState(
 
     prerenderManifestEntries: null,
     staticManifestEntries: null,
-    handlerChunkInfo: null,
-    staticHandlerChunkInfo: null,
+    handlerChunkInfoMap: new Map(),
+    staticHandlerChunkInfoMap: new Map(),
     rscEntryFileName: null,
     resolvedPrerenderModules: undefined,
     resolvedStaticModules: undefined,

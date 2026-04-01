@@ -1,4 +1,4 @@
-import { urls, Prerender } from "@rangojs/router";
+import { urls, Prerender, Passthrough } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
 
 // Prerender handler mounted under a parameterized include() prefix.
@@ -11,7 +11,7 @@ const SLUGS = ["hello", "world"];
 // Named route resolves full params from GeneratedRouteMap:
 //   "locale.detail" -> "/:locale/blog/:slug" -> { locale: string; slug: string }
 // No casts needed — both locale and slug are fully typed.
-export const PrerenderLocaleDetail = Prerender<"locale.detail">(
+export const PrerenderLocaleDef = Prerender<"locale.detail">(
   async () => {
     // getParams returns cross-product of locale x slug.
     // Fully typed: TS enforces both locale and slug are present.
@@ -40,7 +40,28 @@ export const PrerenderLocaleDetail = Prerender<"locale.detail">(
       </div>
     );
   },
-  { passthrough: true, concurrency: 2 },
+  { concurrency: 2 },
+);
+
+// Passthrough wraps the build-time definition with a live handler for
+// unknown locale+slug combos not covered by getParams.
+export const PrerenderLocaleDetail = Passthrough(
+  PrerenderLocaleDef,
+  async (ctx) => {
+    const content = `content-${ctx.params.locale}-${ctx.params.slug}`;
+    ctx.set("localeContent", content);
+    const listUrl = ctx.reverse(".list");
+    return (
+      <div data-testid="locale-detail-page">
+        <h1 data-testid="locale-detail-title">{ctx.params.slug}</h1>
+        <p data-testid="locale-detail-locale">{ctx.params.locale}</p>
+        <p data-testid="locale-detail-content">{content}</p>
+        <p data-testid="locale-detail-build">{String(ctx.build)}</p>
+        <p data-testid="locale-detail-timestamp">{Date.now()}</p>
+        <p data-testid="locale-detail-list-url">{listUrl}</p>
+      </div>
+    );
+  },
 );
 
 // Orphan layout reads handler data via ctx.get()

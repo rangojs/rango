@@ -1,4 +1,4 @@
-import { Meta, Prerender, createVar } from "@rangojs/router";
+import { Meta, Prerender, Passthrough, createVar } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 
@@ -157,7 +157,7 @@ export const ArticlesIndex = Prerender(async (ctx) => {
 // getParams(ctx) shares allArticles via ctx.set() at build time.
 // Handler slices articles for each page, ctx.set(Pagination, {...}).
 // PaginationLayout (orphan layout) reads ctx.get("pagination") for nav controls.
-export const PaginatedArticles = Prerender<{ page: string }>(
+export const PaginatedArticlesDef = Prerender<{ page: string }>(
   async (ctx) => {
     ctx.set("allArticles", articles);
     return Array.from({ length: PAGE_COUNT }, (_, i) => ({
@@ -216,7 +216,63 @@ export const PaginatedArticles = Prerender<{ page: string }>(
       </div>
     );
   },
-  { passthrough: true, concurrency: 2 },
+  { concurrency: 2 },
+);
+
+export const PaginatedArticles = Passthrough(
+  PaginatedArticlesDef,
+  async (ctx) => {
+    const page = parseInt(ctx.params.page, 10);
+    const start = (page - 1) * ARTICLES_PER_PAGE;
+    const pageArticles = articles.slice(start, start + ARTICLES_PER_PAGE);
+
+    ctx.set(Pagination, {
+      current: page,
+      total: PAGE_COUNT,
+      perPage: ARTICLES_PER_PAGE,
+      articleCount: articles.length,
+    });
+
+    const meta = ctx.use(Meta);
+    meta({ title: "Articles - RSC Router Cloudflare" });
+    meta({
+      name: "description",
+      content: "Articles about pre-rendering, caching, and RSC patterns",
+    });
+
+    const breadcrumb = ctx.use(Breadcrumbs);
+    breadcrumb({ label: "Home", href: ctx.reverse("home") });
+    breadcrumb({
+      label: "Articles",
+      href: ctx.reverse("articles.list", { page: "1" }),
+    });
+
+    return (
+      <div
+        data-testid="articles-index"
+        style={{ display: "flex", gap: "2rem" }}
+      >
+        <div style={{ flex: 1 }}>
+          <h1 data-testid="articles-title">Articles</h1>
+          <p style={{ color: "#666", marginBottom: "2rem" }}>
+            Pre-rendered articles about RSC patterns and techniques.
+          </p>
+          <div data-testid="articles-list">
+            {renderArticleCards(pageArticles, ctx.reverse)}
+          </div>
+          <p
+            data-testid="prerender-timestamp"
+            style={{ marginTop: "2rem", fontSize: "0.875rem", color: "#999" }}
+          >
+            Pre-rendered at: {new Date().toISOString()}
+          </p>
+        </div>
+        <aside style={{ width: "280px", flexShrink: 0 }}>
+          <ParallelOutlet name="@stats" />
+        </aside>
+      </div>
+    );
+  },
 );
 
 // Orphan layout that reads pagination metadata from the handler via ctx.get().

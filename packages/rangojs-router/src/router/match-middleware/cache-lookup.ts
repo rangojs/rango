@@ -324,9 +324,7 @@ export function withCacheLookup<TEnv>(
       if (prerenderStoreInstance) {
         const paramHash = _hashParams!(ctx.matched.params);
         const isPassthroughPrerenderRoute = ctx.entries.some(
-          (entry) =>
-            entry.type === "route" &&
-            entry.prerenderDef?.options?.passthrough === true,
+          (entry) => entry.type === "route" && entry.isPassthrough === true,
         );
 
         if (ctx.isIntercept) {
@@ -396,9 +394,7 @@ export function withCacheLookup<TEnv>(
         if (prerenderStoreInstance) {
           const paramHash = _hashParams!(ctx.matched.params);
           const isPassthroughPrerenderRoute = ctx.entries.some(
-            (entry) =>
-              entry.type === "route" &&
-              entry.prerenderDef?.options?.passthrough === true,
+            (entry) => entry.type === "route" && entry.isPassthrough === true,
           );
 
           if (ctx.isIntercept) {

@@ -54,11 +54,12 @@ export async function expandPrerenderRoutes(
   for (const { manifest } of allManifests) {
     if (!manifest.prerenderRoutes) continue;
     const defs = manifest._prerenderDefs || {};
+    const passthroughSet = new Set(manifest.passthroughRoutes || []);
     for (const routeName of manifest.prerenderRoutes) {
       const pattern = manifest.routeManifest[routeName];
       if (!pattern) continue;
       const def = defs[routeName];
-      const isPassthroughRoute = !!def?.options?.passthrough;
+      const isPassthroughRoute = passthroughSet.has(routeName);
       const hasDynamic = pattern.includes(":") || pattern.includes("*");
       if (!hasDynamic) {
         // Static route: use pattern directly (strip trailing slash for URL)
@@ -73,12 +74,20 @@ export async function expandPrerenderRoutes(
         if (def?.getParams) {
           try {
             const buildVars: Record<string, any> = {};
+            const buildEnv = state.resolvedBuildEnv;
             const getParamsCtx = {
               build: true as const,
               set: ((keyOrVar: any, value: any) => {
                 contextSet(buildVars, keyOrVar, value);
               }) as any,
               reverse: getParamsReverse,
+              get env() {
+                if (buildEnv !== undefined) return buildEnv;
+                throw new Error(
+                  "[rsc-router] ctx.env is not available during build-time getParams(). " +
+                    "Configure buildEnv in your rango() plugin options to enable build-time env access.",
+                );
+              },
             };
             const paramsList = await def.getParams(getParamsCtx);
             const concurrency = def.options?.concurrency ?? 1;
@@ -175,6 +184,7 @@ export async function expandPrerenderRoutes(
               {},
               entry.buildVars,
               entry.isPassthroughRoute,
+              state.resolvedBuildEnv,
             );
             if (!result) continue;
 
@@ -326,6 +336,7 @@ export async function renderStaticHandlers(
             def.handler,
             def.$$id,
             (def as any).$$routePrefix,
+            state.resolvedBuildEnv,
           );
           if (result) {
             const hasHandles = Object.keys(result.handles).length > 0;

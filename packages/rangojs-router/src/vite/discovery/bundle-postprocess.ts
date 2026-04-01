@@ -31,25 +31,25 @@ export function postprocessBundle(state: DiscoveryState): void {
     state.rscEntryFileName ?? "index.js",
   );
 
-  // 1. Evict handler code from __prerender-handlers and __static-handlers chunks.
-  // handlerChunkInfo/staticHandlerChunkInfo are populated by generateBundle
+  // 1. Evict handler code from whichever chunks contain handler exports.
+  // handlerChunkInfoMap/staticHandlerChunkInfoMap are populated by generateBundle
   // after the production RSC build. In Vite 6 multi-environment builds, the
-  // RSC build runs twice (analysis + production). Chunk info is only available
-  // after the production pass, so we run eviction whenever it becomes available.
+  // RSC build runs twice (analysis + production). The maps are cleared at the
+  // start of each generateBundle pass so only production data is used here.
   const evictionTargets: Array<{
-    info: typeof state.handlerChunkInfo;
+    infos: Iterable<import("./state.js").ChunkInfo>;
     fnName: string;
     brand: string;
     label: string;
   }> = [
     {
-      info: state.handlerChunkInfo,
+      infos: state.handlerChunkInfoMap.values(),
       fnName: "Prerender",
       brand: "prerenderHandler",
       label: "handler code from RSC bundle",
     },
     {
-      info: state.staticHandlerChunkInfo,
+      infos: state.staticHandlerChunkInfoMap.values(),
       fnName: "Static",
       brand: "staticHandler",
       label: "static handler code",
@@ -57,35 +57,32 @@ export function postprocessBundle(state: DiscoveryState): void {
   ];
 
   for (const target of evictionTargets) {
-    if (!target.info) continue;
-    const chunkPath = resolve(
-      state.projectRoot,
-      "dist/rsc",
-      target.info.fileName,
-    );
-    try {
-      const code = readFileSync(chunkPath, "utf-8");
-      const result = evictHandlerCode(
-        code,
-        target.info.exports,
-        target.fnName,
-        target.brand,
-      );
-      if (result) {
-        writeFileSync(chunkPath, result.code);
-        const savedKB = (result.savedBytes / 1024).toFixed(1);
-        console.log(
-          `[rsc-router] Evicted ${target.label} (${savedKB} KB saved): ${target.info.fileName}`,
+    for (const info of target.infos) {
+      const chunkPath = resolve(state.projectRoot, "dist/rsc", info.fileName);
+      try {
+        const code = readFileSync(chunkPath, "utf-8");
+        const result = evictHandlerCode(
+          code,
+          info.exports,
+          target.fnName,
+          target.brand,
+        );
+        if (result) {
+          writeFileSync(chunkPath, result.code);
+          const savedKB = (result.savedBytes / 1024).toFixed(1);
+          console.log(
+            `[rsc-router] Evicted ${target.label} (${savedKB} KB saved): ${info.fileName}`,
+          );
+        }
+      } catch (replaceErr: any) {
+        console.warn(
+          `[rsc-router] Failed to evict ${target.label}: ${replaceErr.message}`,
         );
       }
-    } catch (replaceErr: any) {
-      console.warn(
-        `[rsc-router] Failed to evict ${target.label}: ${replaceErr.message}`,
-      );
     }
   }
-  state.handlerChunkInfo = null;
-  state.staticHandlerChunkInfo = null;
+  state.handlerChunkInfoMap.clear();
+  state.staticHandlerChunkInfoMap.clear();
 
   // 2. Write prerender data as separate importable asset modules
   // and inject a lazy manifest loader into the RSC entry.
@@ -138,7 +135,7 @@ export function postprocessBundle(state: DiscoveryState): void {
   // and inject a __STATIC_MANIFEST import into the RSC entry.
   if (hasStaticData && existsSync(rscEntryPath)) {
     const rscCode = readFileSync(rscEntryPath, "utf-8");
-    if (!rscCode.includes("__STATIC_MANIFEST")) {
+    if (!rscCode.includes("__static-manifest.js")) {
       try {
         const manifestEntries: string[] = [];
         let totalBytes = copyStagedBuildAssets(

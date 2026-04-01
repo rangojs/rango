@@ -191,8 +191,12 @@ export type EntryData =
       /** Original PrerenderHandlerDefinition (for build-time getParams access) */
       prerenderDef?: {
         getParams?: (ctx: any) => Promise<any[]> | any[];
-        options?: { passthrough?: boolean };
+        options?: { concurrency?: number };
       };
+      /** Set when route is wrapped with Passthrough() — has a separate live handler */
+      isPassthrough?: true;
+      /** Live handler for runtime fallback (only set on Passthrough routes) */
+      liveHandler?: Handler<any, any, any>;
       /** Set when handler is a Static definition (build-time only) */
       isStaticPrerender?: true;
       /** Static handler $$id for build-time store lookup */

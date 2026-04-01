@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { PRERENDER_PASSTHROUGH, isPrerenderPassthrough } from "../prerender.js";
+import {
+  PRERENDER_PASSTHROUGH,
+  isPrerenderPassthrough,
+  Passthrough,
+  isPassthroughHandler,
+  isPrerenderHandler,
+} from "../prerender.js";
 
 describe("PRERENDER_PASSTHROUGH sentinel", () => {
   it("is frozen", () => {
@@ -20,6 +26,45 @@ describe("PRERENDER_PASSTHROUGH sentinel", () => {
     expect(isPrerenderPassthrough("prerenderPassthrough")).toBe(false);
     expect(isPrerenderPassthrough({})).toBe(false);
     expect(isPrerenderPassthrough({ __brand: "other" })).toBe(false);
+  });
+});
+
+describe("Passthrough() wrapper", () => {
+  const fakePrerenderDef = {
+    __brand: "prerenderHandler" as const,
+    $$id: "test#Handler",
+    handler: async () => null,
+  };
+
+  it("wraps a PrerenderHandlerDefinition with a live handler", () => {
+    const liveHandler = async () => null;
+    const result = Passthrough(fakePrerenderDef, liveHandler);
+    expect(result.__brand).toBe("passthroughHandler");
+    expect(result.prerenderDef).toBe(fakePrerenderDef);
+    expect(result.liveHandler).toBe(liveHandler);
+  });
+
+  it("isPassthroughHandler returns true for Passthrough result", () => {
+    const result = Passthrough(fakePrerenderDef, async () => null);
+    expect(isPassthroughHandler(result)).toBe(true);
+  });
+
+  it("isPassthroughHandler returns false for non-passthrough values", () => {
+    expect(isPassthroughHandler(null)).toBe(false);
+    expect(isPassthroughHandler(undefined)).toBe(false);
+    expect(isPassthroughHandler(fakePrerenderDef)).toBe(false);
+    expect(isPassthroughHandler({ __brand: "other" })).toBe(false);
+  });
+
+  it("isPrerenderHandler returns false for Passthrough result", () => {
+    const result = Passthrough(fakePrerenderDef, async () => null);
+    expect(isPrerenderHandler(result)).toBe(false);
+  });
+
+  it("throws if first argument is not a PrerenderHandlerDefinition", () => {
+    expect(() =>
+      Passthrough({ __brand: "other" } as any, async () => null),
+    ).toThrow("first argument must be a Prerender() definition");
   });
 });
 
@@ -52,7 +97,7 @@ describe("ctx.passthrough() on createPrerenderContext (build-time)", () => {
       false, // not passthrough
     );
     expect(() => (ctx as any).passthrough()).toThrow(
-      "ctx.passthrough() is only available on routes declared with { passthrough: true }",
+      "ctx.passthrough() is only available on routes wrapped with Passthrough()",
     );
   });
 
@@ -65,7 +110,7 @@ describe("ctx.passthrough() on createPrerenderContext (build-time)", () => {
       "blog.post",
     );
     expect(() => (ctx as any).passthrough()).toThrow(
-      "ctx.passthrough() is only available on routes declared with { passthrough: true }",
+      "ctx.passthrough() is only available on routes wrapped with Passthrough()",
     );
   });
 });

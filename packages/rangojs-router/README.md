@@ -716,10 +716,12 @@ export const BlogPost = Prerender(
 
 ### Passthrough for Unknown Params
 
-```tsx
-import { Prerender } from "@rangojs/router";
+Wrap a `Prerender` definition with `Passthrough()` to add a live handler for unknown params at runtime. The build handler runs at build time, the live handler runs at request time for params not in the prerender cache.
 
-export const ProductPage = Prerender(
+```tsx
+import { Prerender, Passthrough } from "@rangojs/router";
+
+export const ProductPageDef = Prerender(
   async () => {
     const featured = await db.getFeaturedProducts();
     return featured.map((p) => ({ id: p.id }));
@@ -728,16 +730,22 @@ export const ProductPage = Prerender(
     const product = await db.getProduct(ctx.params.id);
     return <Product data={product} />;
   },
-  { passthrough: true },
+);
+
+// In route definition:
+path(
+  "/products/:id",
+  Passthrough(ProductPageDef, async (ctx) => {
+    const product = await ctx.env.DB.getProduct(ctx.params.id);
+    return <Product data={product} />;
+  }),
 );
 ```
 
-With `passthrough: true`, known params are served from the build-time cache and unknown params fall through to live rendering.
-
-Handlers can also skip individual param sets with `ctx.passthrough()`, deferring them to the live handler at runtime:
+Build handlers can also skip individual param sets with `ctx.passthrough()`, deferring them to the live handler:
 
 ```tsx
-export const ProductPage = Prerender(
+export const ProductPageDef = Prerender(
   async () => {
     const all = await db.getAllProducts();
     return all.map((p) => ({ id: p.id }));
@@ -747,9 +755,54 @@ export const ProductPage = Prerender(
     if (!product.published) return ctx.passthrough();
     return <Product data={product} />;
   },
-  { passthrough: true },
 );
 ```
+
+### Build-Time Environment Bindings
+
+Prerender handlers can access platform bindings (KV, D1, R2) at build time when `buildEnv` is configured in the Vite plugin:
+
+```ts
+// vite.config.ts
+import { rango } from "@rangojs/router/vite";
+
+rango({ preset: "cloudflare", buildEnv: "auto" });
+```
+
+With `buildEnv: "auto"`, the plugin calls `wrangler.getPlatformProxy()` to provide local bindings. Handlers then access `ctx.env` during build:
+
+```tsx
+export const BlogPosts = Prerender<{ slug: string }>(
+  async (ctx) => {
+    const rows = await ctx.env.DB.prepare("SELECT slug FROM posts").all();
+    return rows.map((r) => ({ slug: r.slug }));
+  },
+  async (ctx) => {
+    const post = await ctx.env.DB.prepare("SELECT * FROM posts WHERE slug = ?")
+      .bind(ctx.params.slug)
+      .first();
+    return <BlogPost post={post} />;
+  },
+);
+```
+
+`buildEnv` also accepts a factory function or plain object:
+
+```ts
+// Custom factory
+rango({
+  buildEnv: async (ctx) => {
+    const { getPlatformProxy } = await import("wrangler");
+    const proxy = await getPlatformProxy();
+    return { env: proxy.env, dispose: proxy.dispose };
+  },
+});
+
+// Plain object (Node.js)
+rango({ buildEnv: { DATABASE_URL: process.env.DATABASE_URL } });
+```
+
+Build-time env applies to both production builds and dev on-demand prerender. Without `buildEnv`, accessing `ctx.env` in a Prerender handler throws with a clear error.
 
 ## Theme
 

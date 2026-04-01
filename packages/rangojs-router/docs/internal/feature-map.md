@@ -205,8 +205,12 @@ Router option `theme`, `ThemeProvider` integration on server and client, `ThemeS
 - `Prerender()`/`Static()` handler types, `BuildContext`, `GetParamsContext`
 - Pre-render manifest generation, intercept pre-render artifacts
 - Runtime prerender cache lookup flow
-- `ctx.passthrough()` per-param artifact skip (defers to live handler on passthrough routes)
+- `Passthrough(prerenderDef, liveHandler)` wrapper for live runtime fallback
+- `ctx.passthrough()` per-param artifact skip (defers to Passthrough live handler)
 - `PRERENDER_PASSTHROUGH` sentinel, `isPrerenderPassthrough()` type guard
+- `buildEnv` Vite plugin option for build-time `ctx.env` access (KV, D1, etc.)
+- `"auto"` mode calls `wrangler.getPlatformProxy()` for Cloudflare presets
+- Applies to both production build and dev `/__rsc_prerender` evaluation
 
 ### Request Timeouts
 

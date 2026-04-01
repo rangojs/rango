@@ -13,4 +13,8 @@ export type {
   RangoNodeOptions,
   RangoCloudflareOptions,
   RangoOptions,
+  BuildEnvOption,
+  BuildEnvFactory,
+  BuildEnvFactoryContext,
+  BuildEnvResult,
 } from "./plugin-types.js";
