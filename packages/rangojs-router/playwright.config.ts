@@ -69,6 +69,7 @@ export default defineConfig({
             "**/client-component-hmr.test.ts",
             "**/intercept-hmr*.test.ts",
             "**/prerender-hmr.test.ts",
+            "**/basename-hmr.test.ts",
             "**/refresh-cmd.test.ts",
             "**/*.setup.ts",
           ],
@@ -123,6 +124,16 @@ export default defineConfig({
           dependencies: ["dev"],
         },
         {
+          name: "hmr-basename",
+          testMatch: "**/basename-hmr.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          // Basename HMR modifies router.tsx to add basename: "/app",
+          // which triggers route rediscovery and rewrites the gen file.
+          // Must run after dev tests to avoid contaminating parallel tests.
+          dependencies: ["dev"],
+        },
+        {
           name: "webkit-smoke",
           testMatch: "**/smoke.test.ts",
           use: webkitConfig,
@@ -159,6 +170,7 @@ export default defineConfig({
             "**/client-component-hmr.test.ts",
             "**/intercept-hmr*.test.ts",
             "**/prerender-hmr.test.ts",
+            "**/basename-hmr.test.ts",
             "**/refresh-cmd.test.ts",
             "**/*.setup.ts",
           ],
@@ -217,6 +229,17 @@ export default defineConfig({
           use: browserConfig,
           fullyParallel: false,
           dependencies: ["dev", "hmr-routes"],
+        },
+        {
+          name: "hmr-basename",
+          // Basename HMR modifies router.tsx to add basename: "/app",
+          // which triggers route rediscovery and rewrites the gen file
+          // with /app-prefixed routes. Must run after dev tests to avoid
+          // contaminating parallel tests with the wrong route map.
+          testMatch: "**/basename-hmr.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          dependencies: ["dev"],
         },
         {
           name: "hmr-prerender",
