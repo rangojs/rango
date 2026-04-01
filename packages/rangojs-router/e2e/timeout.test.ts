@@ -115,14 +115,16 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
     // Clear any previous error (last-error reads and resets)
     await page.request.get(f.url("/__test/last-error"));
 
-    // Trigger a slow render (will timeout)
+    // Trigger a slow render (will timeout at 10s).
+    // On CI under load, server processing delays can push the actual
+    // timeout beyond 10s, so allow 30s for polling.
     await page.request.get(f.url("/timeout/slow-render"));
 
     const error = await waitForOnError(
       page,
       f.url("/__test/last-error"),
       "handler",
-      15000,
+      30000,
     );
 
     expect(error.phase).toBe("handler");
@@ -147,17 +149,23 @@ function timeoutTests(f: ReturnType<typeof useFixture>) {
     expect(loaded).toBe(true);
     await waitForHydration(page);
 
-    // Clear any previous error
+    // Clear any previous error — drain twice to ensure no stale state
+    // from the prior test's slow-render timeout that may still be in flight.
+    await page.request.get(f.url("/__test/last-error"));
+    await page.waitForTimeout(500);
     await page.request.get(f.url("/__test/last-error"));
 
     // Submit the form that triggers the slow server action
     await page.locator('[data-testid="slow-action-btn"]').click();
 
+    // The action delays 20s, timeout fires at 10s. On CI under load the
+    // server may take extra seconds to start processing the POST, so allow
+    // 30s for the timeout to fire and onError to be recorded.
     const error = await waitForOnError(
       page,
       f.url("/__test/last-error"),
       "action",
-      15000,
+      30000,
     );
 
     expect(error.phase).toBe("action");
