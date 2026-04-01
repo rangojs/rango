@@ -77,6 +77,7 @@ export async function expandPrerenderRoutes(
             const buildEnv = state.resolvedBuildEnv;
             const getParamsCtx = {
               build: true as const,
+              dev: !state.isBuildMode,
               set: ((keyOrVar: any, value: any) => {
                 contextSet(buildVars, keyOrVar, value);
               }) as any,
@@ -337,6 +338,7 @@ export async function renderStaticHandlers(
             def.$$id,
             (def as any).$$routePrefix,
             state.resolvedBuildEnv,
+            !state.isBuildMode,
           );
           if (result) {
             const hasHandles = Object.keys(result.handles).length > 0;

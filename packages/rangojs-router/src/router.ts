@@ -644,6 +644,7 @@ export function createRouter<TEnv = any>(
     handlerId: string,
     routeName?: string,
     buildEnv?: TEnv,
+    devMode?: boolean,
   ) {
     return _renderStaticSegment<TEnv>(
       handler,
@@ -651,6 +652,7 @@ export function createRouter<TEnv = any>(
       mergedRouteMap,
       routeName,
       buildEnv,
+      devMode,
     );
   }
 
