@@ -146,10 +146,22 @@ function AccumulatePage(ctx: any) {
   );
 }
 
+// ─── Streaming route: rendered() should be rejected ─────────────────────
+
+function StreamingPage(ctx: any) {
+  const push = ctx.use(RenderedProducts);
+  push("widget-a");
+  return (
+    <div data-testid="rendered-streaming-page">
+      <PriceDisplay loader={LivePricesLoader} testId="rendered-streaming" />
+    </div>
+  );
+}
+
 // ─── URL patterns ───────────────────────────────────────────────────────
 
 export const renderedBarrierPatterns = urls(
-  ({ path, layout, loader, cache }) => [
+  ({ path, layout, loader, cache, loading }) => [
     layout(RenderedBarrierLayout, () => [
       // Fresh SSR (no caching)
       path("/fresh", FreshPage, { name: "fresh" }, () => [
@@ -180,6 +192,14 @@ export const renderedBarrierPatterns = urls(
           loader(LivePricesLoader),
         ]),
       ]),
+
+      // Streaming route: loading() + rendered() should throw
+      path(
+        "/streaming-rejected",
+        StreamingPage,
+        { name: "streamingRejected" },
+        () => [loading(<div>Loading prices...</div>), loader(LivePricesLoader)],
+      ),
     ]),
   ],
 );

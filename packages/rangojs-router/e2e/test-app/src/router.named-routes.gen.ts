@@ -189,6 +189,7 @@ export const NamedRoutes = {
   "renderedBarrier.cached": "/rendered-barrier/cached",
   "renderedBarrier.fresh": "/rendered-barrier/fresh",
   "renderedBarrier.prerender": "/rendered-barrier/prerender",
+  "renderedBarrier.streamingRejected": "/rendered-barrier/streaming-rejected",
   "renderedBarrier.useCache": "/rendered-barrier/use-cache",
   "responseCache.responseCache.html": "/response-cache/cached-html",
   "responseCache.responseCache.json": "/response-cache/cached-json",

@@ -188,6 +188,26 @@ function renderedBarrierTests(mode: "dev" | "build") {
         "3",
       );
     });
+
+    test("streaming tree: rendered() rejects with loading()", async ({
+      page,
+    }) => {
+      // rendered() throws inside the loader because the route has loading().
+      // The error propagates through the RSC render. In production it shows
+      // a generic React error; in dev it shows the Vite error overlay.
+      // Either way, the normal price data should NOT be present.
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+
+      await page.goto(f.url("/rendered-barrier/streaming-rejected"));
+      await page.waitForTimeout(3000);
+
+      // The price display should NOT have rendered successfully
+      const pricesVisible = await testId(page, "rendered-streaming-prices")
+        .isVisible()
+        .catch(() => false);
+      expect(pricesVisible).toBe(false);
+    });
   });
 }
 
