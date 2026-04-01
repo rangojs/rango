@@ -10,6 +10,8 @@ import type { Plugin } from "vite";
 import { createServer as createViteServer } from "vite";
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import {
   formatNestedRouterConflictError,
   findNestedRouterConflict,
@@ -94,6 +96,105 @@ async function createTempRscServer(
   });
 }
 
+// ============================================================================
+// Build-Time Env Resolution
+// ============================================================================
+
+import type {
+  BuildEnvOption,
+  BuildEnvFactoryContext,
+  BuildEnvResult,
+} from "./plugin-types.js";
+
+/**
+ * Resolve the buildEnv option into a concrete { env, dispose? } result.
+ * Handles all four input shapes: false, "auto", factory, plain object.
+ */
+async function resolveBuildEnv(
+  option: BuildEnvOption | undefined,
+  factoryCtx: BuildEnvFactoryContext,
+): Promise<BuildEnvResult | null> {
+  if (!option) return null;
+
+  if (option === "auto") {
+    if (factoryCtx.preset !== "cloudflare") {
+      throw new Error(
+        '[rsc-router] buildEnv: "auto" is only supported with preset: "cloudflare". ' +
+          "Use a factory function or plain object for other presets.",
+      );
+    }
+    try {
+      // Resolve wrangler from the user's project root (not the router package)
+      const userRequire = createRequire(
+        resolve(factoryCtx.root, "package.json"),
+      );
+      const wranglerPath = userRequire.resolve("wrangler");
+      const { getPlatformProxy } = (await import(
+        pathToFileURL(wranglerPath).href
+      )) as {
+        getPlatformProxy: (opts?: any) => Promise<any>;
+      };
+      const proxy = await getPlatformProxy();
+      return {
+        env: proxy.env as Record<string, unknown>,
+        dispose: proxy.dispose,
+      };
+    } catch (err: any) {
+      throw new Error(
+        '[rsc-router] buildEnv: "auto" requires wrangler to be installed.\n' +
+          `Install it with: pnpm add -D wrangler\n${err.message}`,
+      );
+    }
+  }
+
+  if (typeof option === "function") {
+    return await option(factoryCtx);
+  }
+
+  // Plain object
+  return { env: option };
+}
+
+/**
+ * Acquire build-time env bindings and store on discovery state.
+ * Returns true if env was acquired, false if buildEnv is disabled.
+ */
+async function acquireBuildEnv(
+  s: DiscoveryState,
+  command: "serve" | "build",
+  mode: string,
+): Promise<boolean> {
+  const option = s.opts?.buildEnv;
+  if (!option) return false;
+
+  const result = await resolveBuildEnv(option, {
+    root: s.projectRoot,
+    mode,
+    command,
+    preset: s.opts?.preset ?? "node",
+  });
+  if (!result) return false;
+
+  s.resolvedBuildEnv = result.env;
+  s.buildEnvDispose = result.dispose ?? null;
+  return true;
+}
+
+/**
+ * Release build-time env resources and clear state.
+ */
+async function releaseBuildEnv(s: DiscoveryState): Promise<void> {
+  if (s.buildEnvDispose) {
+    try {
+      await s.buildEnvDispose();
+    } catch (err: any) {
+      console.warn(`[rsc-router] buildEnv dispose failed: ${err.message}`);
+    }
+    s.buildEnvDispose = null;
+  }
+  s.resolvedBuildEnv = undefined;
+}
+
 /**
  * Plugin that discovers router instances at dev/build time via the RSC environment.
  *
@@ -111,6 +212,8 @@ export function createRouterDiscoveryPlugin(
   opts?: PluginOptions,
 ): Plugin {
   const s = createDiscoveryState(entryPath, opts);
+  let viteCommand: "serve" | "build" = "build";
+  let viteMode = "production";
 
   return {
     name: "@rangojs/router:discovery",
@@ -133,6 +236,8 @@ export function createRouterDiscoveryPlugin(
     configResolved(config) {
       s.projectRoot = config.root;
       s.isBuildMode = config.command === "build";
+      viteCommand = config.command as "serve" | "build";
+      viteMode = config.mode;
       // Capture user's resolve aliases for the temp server
       s.userResolveAlias = config.resolve.alias;
       // Node preset: pick up auto-discovered router path from the config() hook.
@@ -203,12 +308,13 @@ export function createRouterDiscoveryPlugin(
       let prerenderTempServer: any = null;
       let prerenderNodeRegistry: Map<string, any> | null = null;
 
-      // Clean up the temporary server when the dev server shuts down
+      // Clean up the temporary server and build env when the dev server shuts down
       server.httpServer?.on("close", () => {
         if (prerenderTempServer) {
           prerenderTempServer.close().catch(() => {});
           prerenderTempServer = null;
         }
+        releaseBuildEnv(s).catch(() => {});
       });
 
       async function getOrCreateTempServer(): Promise<any | null> {
@@ -248,6 +354,9 @@ export function createRouterDiscoveryPlugin(
           // Create a temp Node.js server to run runtime discovery and generate
           // named route types (static parser can't resolve factory calls).
           try {
+            // Acquire build-time env bindings for dev prerender
+            await acquireBuildEnv(s, viteCommand, viteMode);
+
             const tempRscEnv = await getOrCreateTempServer();
             if (tempRscEnv) {
               await discoverRouters(s, tempRscEnv);
@@ -264,6 +373,9 @@ export function createRouterDiscoveryPlugin(
         }
 
         try {
+          // Acquire build-time env bindings for dev prerender (Node.js path)
+          await acquireBuildEnv(s, viteCommand, viteMode);
+
           // Set the readiness gate BEFORE discovery so early requests
           // block until manifest is populated
           const serverMod = await rscEnv.runner.import(
@@ -399,6 +511,7 @@ export function createRouterDiscoveryPlugin(
               {},
               undefined,
               wantPassthrough,
+              s.resolvedBuildEnv,
             );
             if (!result) continue;
             if (result.passthrough) continue;
@@ -587,6 +700,9 @@ export function createRouterDiscoveryPlugin(
       s.prerenderManifestEntries = null;
       s.staticManifestEntries = null;
 
+      // Acquire build-time env bindings if configured
+      await acquireBuildEnv(s, viteCommand, viteMode);
+
       let tempServer: any = null;
       // Signal to user-space code (e.g. reverse.ts) that build-time discovery
       // is active. Uses globalThis because the temp server's module runner
@@ -645,6 +761,7 @@ export function createRouterDiscoveryPlugin(
         if (tempServer) {
           await tempServer.close();
         }
+        await releaseBuildEnv(s);
       }
     },
 

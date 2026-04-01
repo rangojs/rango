@@ -57,6 +57,7 @@ import {
   ShopCategoryPage,
 } from "./pages/suffix-params-test.js";
 import { CookieOverlayPage } from "./pages/cookie-overlay.js";
+import { buildEnvPatterns } from "./pages/build-env-handler.js";
 import { ActionLocationStatePage } from "./pages/action-location-state.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
@@ -239,6 +240,7 @@ export const urlpatterns = urls(
     path("/item/:productId/reviews", ProductReviewsPage, {
       name: "productReviews",
     }),
+    include("/build-env", buildEnvPatterns, { name: "buildEnv" }),
     path("/*", CatchAllPage, { name: "catchAll" }),
 
     layout(<RootLayout />, () => [

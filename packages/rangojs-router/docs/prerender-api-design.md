@@ -180,10 +180,16 @@ interface BuildContext<TParams> {
   use: <T>(handle: Handle<T>) => (data: T) => void;
   url: URL; // Synthetic: pattern + params
   pathname: string;
-  // These throw descriptive errors if accessed:
-  // req, headers, cookies, env, request, ctx.redirect, etc.
+  env: DefaultEnv; // Available when buildEnv is configured in rango() (throws otherwise)
+  // These always throw descriptive errors:
+  // request, headers, cookies, ctx.redirect, etc.
 }
 ```
+
+When `buildEnv` is configured in the rango() Vite plugin options, `ctx.env`
+provides the build-time bindings (e.g., KV, D1). This is NOT the live request
+env — it is shared across all prerender invocations for the build. Without
+`buildEnv`, accessing `ctx.env` throws with a clear error message.
 
 ---
 

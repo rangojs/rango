@@ -758,6 +758,52 @@ export const ProductPageDef = Prerender(
 );
 ```
 
+### Build-Time Environment Bindings
+
+Prerender handlers can access platform bindings (KV, D1, R2) at build time when `buildEnv` is configured in the Vite plugin:
+
+```ts
+// vite.config.ts
+import { rango } from "@rangojs/router/vite";
+
+rango({ preset: "cloudflare", buildEnv: "auto" });
+```
+
+With `buildEnv: "auto"`, the plugin calls `wrangler.getPlatformProxy()` to provide local bindings. Handlers then access `ctx.env` during build:
+
+```tsx
+export const BlogPosts = Prerender<{ slug: string }>(
+  async (ctx) => {
+    const rows = await ctx.env.DB.prepare("SELECT slug FROM posts").all();
+    return rows.map((r) => ({ slug: r.slug }));
+  },
+  async (ctx) => {
+    const post = await ctx.env.DB.prepare("SELECT * FROM posts WHERE slug = ?")
+      .bind(ctx.params.slug)
+      .first();
+    return <BlogPost post={post} />;
+  },
+);
+```
+
+`buildEnv` also accepts a factory function or plain object:
+
+```ts
+// Custom factory
+rango({
+  buildEnv: async (ctx) => {
+    const { getPlatformProxy } = await import("wrangler");
+    const proxy = await getPlatformProxy();
+    return { env: proxy.env, dispose: proxy.dispose };
+  },
+});
+
+// Plain object (Node.js)
+rango({ buildEnv: { DATABASE_URL: process.env.DATABASE_URL } });
+```
+
+Build-time env applies to both production builds and dev on-demand prerender. Without `buildEnv`, accessing `ctx.env` in a Prerender handler throws with a clear error.
+
 ## Theme
 
 ### Router Configuration
