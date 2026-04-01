@@ -149,6 +149,13 @@ export function collectHandleData<TData, TAccumulated>(
   segmentOrder: string[],
 ): TAccumulated {
   const collectFn = getCollectFn(handle.$$id);
+  if (!collectFn && process.env.NODE_ENV !== "production") {
+    console.warn(
+      `[rsc-router] Handle "${handle.$$id}" was passed as a prop but its collect ` +
+        `function could not be resolved. Falling back to flat array. ` +
+        `Import the handle module in a client component to register its collect function.`,
+    );
+  }
   const collect = (collectFn ??
     (defaultCollect as unknown as (segments: unknown[][]) => unknown)) as (
     segments: TData[][],
