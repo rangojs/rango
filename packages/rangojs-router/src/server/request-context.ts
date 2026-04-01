@@ -816,6 +816,9 @@ export function createRequestContext<TEnv>(
     ctx._renderBarrierSegmentOrder = segments
       .filter((s) => s.type !== "loader")
       .map((s) => s.id);
+    // Clear deadlock detection set — once the barrier resolves, the loaders
+    // waiting on it will settle and the deadlock window is closed.
+    ctx._renderBarrierWaiters = undefined;
     resolveBarrier();
   };
 
