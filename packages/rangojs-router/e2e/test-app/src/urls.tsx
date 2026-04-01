@@ -34,6 +34,7 @@ import { locationStatePatterns } from "./urls/location-state.js";
 import { responseCachePatterns } from "./urls/response-cache.js";
 import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
 import { handlerFirstPatterns } from "./urls/handler-first.js";
+import { handlerUsePatterns } from "./urls/handler-use.js";
 import { buildSkipPatterns } from "./urls/prerender-build-skip.js";
 import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
@@ -549,6 +550,9 @@ export const urlpatterns = urls(
 
       // Handler-first execution order + cache scope tests
       include("/handler-first", handlerFirstPatterns, { name: "handlerFirst" }),
+
+      // handler.use composable defaults test patterns
+      include("/handler-use", handlerUsePatterns, { name: "handlerUse" }),
 
       // Skip test patterns (prerender + static skip/error handling)
       include("/build-skip", buildSkipPatterns, { name: "buildSkip" }),

@@ -100,6 +100,7 @@ export type {
   LayoutUseItem,
   AllUseItems,
   UseItems,
+  HandlerUseItem,
 } from "./route-types.js";
 
 // Handle API

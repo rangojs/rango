@@ -19,6 +19,7 @@ import type {
   ResolvedRouteMap,
 } from "./route-config.js";
 import type { LoaderDefinition } from "./loader-types.js";
+import type { UseItems, HandlerUseItem } from "../route-types.js";
 
 // Re-export MiddlewareFn for internal/advanced use
 export type { MiddlewareFn } from "../router/middleware.js";
@@ -135,7 +136,7 @@ export type Handler<
     | Record<string, any> = {},
   TRouteMap extends {} = DefaultHandlerRouteMap,
   TEnv = DefaultEnv,
-> = (
+> = ((
   ctx: HandlerContext<
     T extends `.${infer Local}`
       ? Local extends keyof TRouteMap
@@ -160,7 +161,10 @@ export type Handler<
       : ExtractSearchFromEntry<DefaultHandlerRouteMap, T>,
     TRouteMap extends DefaultHandlerRouteMap ? never : TRouteMap
   >,
-) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
+) => ReactNode | Promise<ReactNode> | Response | Promise<Response>) & {
+  /** Composable default DSL items merged when the handler is mounted. */
+  use?: () => UseItems<HandlerUseItem>;
+};
 
 /**
  * Context passed to handlers (Hono-inspired type-safe context)

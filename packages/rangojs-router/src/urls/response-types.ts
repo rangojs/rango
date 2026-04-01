@@ -4,6 +4,7 @@ import type {
   DefaultReverseRouteMap,
   DefaultVars,
 } from "../types/global-namespace.js";
+import type { UseItems, ResponseRouteUseItem } from "../route-types.js";
 
 /**
  * Reverse function for response handler contexts.
@@ -38,9 +39,12 @@ export const RESPONSE_TYPE: unique symbol = Symbol.for(
  * Handler that must return Response (not ReactNode).
  * Used by path.image(), path.stream(), path.any() (binary/streaming data).
  */
-export type ResponseHandler<TParams = Record<string, string>, TEnv = any> = (
+export type ResponseHandler<TParams = Record<string, string>, TEnv = any> = ((
   ctx: ResponseHandlerContext<TParams, TEnv>,
-) => Response | Promise<Response>;
+) => Response | Promise<Response>) & {
+  /** Composable default DSL items merged when the handler is mounted. */
+  use?: () => UseItems<ResponseRouteUseItem>;
+};
 
 /**
  * JSON-serializable value type for auto-wrap support.
@@ -60,9 +64,12 @@ export type JsonValue =
 export type JsonResponseHandler<
   TParams = Record<string, string>,
   TEnv = any,
-> = (
+> = ((
   ctx: ResponseHandlerContext<TParams, TEnv>,
-) => JsonValue | Response | Promise<JsonValue | Response>;
+) => JsonValue | Response | Promise<JsonValue | Response>) & {
+  /** Composable default DSL items merged when the handler is mounted. */
+  use?: () => UseItems<ResponseRouteUseItem>;
+};
 
 /**
  * Handler for text-based response routes (text, html, xml).
@@ -71,9 +78,12 @@ export type JsonResponseHandler<
 export type TextResponseHandler<
   TParams = Record<string, string>,
   TEnv = any,
-> = (
+> = ((
   ctx: ResponseHandlerContext<TParams, TEnv>,
-) => string | Response | Promise<string | Response>;
+) => string | Response | Promise<string | Response>) & {
+  /** Composable default DSL items merged when the handler is mounted. */
+  use?: () => UseItems<ResponseRouteUseItem>;
+};
 
 /**
  * Lighter handler context for response routes.

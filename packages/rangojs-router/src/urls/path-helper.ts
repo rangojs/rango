@@ -35,6 +35,10 @@ import type {
   JsonResponsePathFn,
   TextResponsePathFn,
 } from "./path-helper-types.js";
+import {
+  resolveHandlerUse,
+  mergeHandlerUse,
+} from "../route-definition/resolve-handler-use.js";
 
 /**
  * Check if a value is a valid use item
@@ -142,6 +146,12 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
       options = optionsOrUse as PathOptions;
       use = maybeUse;
     }
+
+    // Merge handler.use() defaults with explicit use()
+    // Response routes (path.json, path.text, etc.) only allow middleware + cache
+    const handlerUseFn = resolveHandlerUse(handler);
+    const mountSite = resolveResponseType(options) ? "response" : "path";
+    const mergedUse = mergeHandlerUse(handlerUseFn, use, mountSite);
 
     // Get prefixes from context (set by include())
     const urlPrefix = getUrlPrefix();
@@ -289,9 +299,9 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
       registerSearchSchema(routeName, options.search);
     }
 
-    // Run use callback if provided
-    if (use && typeof use === "function") {
-      const result = store.run(namespace, entry, use)?.flat(3);
+    // Run merged use callback (handler.use defaults + explicit use) if present
+    if (mergedUse) {
+      const result = store.run(namespace, entry, mergedUse)?.flat(3);
       invariant(
         Array.isArray(result) && result.every((item) => isValidUseItem(item)),
         `path() use() callback must return an array of use items [${namespace}]`,

@@ -257,3 +257,14 @@ export type LoaderUseItem = RevalidateItem | CacheItem;
  * runtime via .flat(3).
  */
 export type UseItems<T> = (T | readonly T[])[];
+
+/**
+ * Union of all items that handler.use() may return.
+ * A handler doesn't know its mount site at definition time, so the type
+ * is intentionally broad — validation happens per-mount-site at runtime.
+ */
+export type HandlerUseItem =
+  | RouteUseItem
+  | LayoutUseItem
+  | ParallelUseItem
+  | InterceptUseItem;
