@@ -55,6 +55,8 @@ export async function matchForPrerender<TEnv = any>(
   buildVars?: Record<string, any>,
   isPassthroughRoute?: boolean,
   buildEnv?: TEnv,
+  /** Dev-only: check getParams() for passthrough routes to skip unknown params. */
+  devMode?: boolean,
 ): Promise<{
   segments: SerializedSegmentData[];
   handles: Record<string, SegmentHandleData>;
@@ -89,6 +91,75 @@ export async function matchForPrerender<TEnv = any>(
     const entries: EntryData[] = [];
     for (const entry of traverseBack(manifestEntry)) {
       entries.push(entry);
+    }
+
+    // 3b. Dev-mode passthrough shortcut: if the route is a Passthrough route
+    // and has getParams(), check if the matched params are in the known list.
+    // In production, only known params are pre-rendered; unknown params fall
+    // through to the live handler. Mirror that behavior in dev mode to avoid
+    // rendering unknown params with build: true.
+    if (devMode && matchedPassthroughRoute) {
+      const routeEntry = entries.find(
+        (
+          e,
+        ): e is EntryData & {
+          type: "route";
+          prerenderDef: { getParams: (ctx: any) => Promise<any[]> | any[] };
+        } =>
+          e.type === "route" &&
+          !!(e as any).isPassthrough &&
+          !!(e as any).prerenderDef?.getParams,
+      );
+      if (routeEntry) {
+        try {
+          const buildVars: Record<string, any> = {};
+          const knownParamsList = await routeEntry.prerenderDef.getParams({
+            build: true as const,
+            set: ((keyOrVar: any, value: any) => {
+              contextSet(buildVars, keyOrVar, value);
+            }) as any,
+            reverse: createReverseFunction(deps.mergedRouteMap),
+            get env() {
+              if (buildEnv !== undefined) return buildEnv;
+              throw new Error(
+                "[rsc-router] ctx.env is not available during dev-mode getParams(). " +
+                  "Configure buildEnv in your rango() plugin options to enable build-time env access.",
+              );
+            },
+          });
+          // Compare only the keys returned by getParams — ignore mount params
+          // from include() prefixes that aren't part of the handler's params.
+          const isKnown = knownParamsList.some((known: Record<string, any>) => {
+            const knownKeys = Object.keys(known);
+            return knownKeys.every(
+              (k) => String(known[k]) === String(matchedParams[k]),
+            );
+          });
+          if (!isKnown) {
+            return {
+              segments: [],
+              handles: {},
+              routeName: matched.routeKey,
+              params: matchedParams,
+              passthrough: true as const,
+            };
+          }
+        } catch (err: any) {
+          // Mirror production semantics (prerender-collection.ts):
+          // Skip errors are intentional — treat as passthrough.
+          // All other errors propagate so dev surfaces them.
+          if (err?.name === "Skip") {
+            return {
+              segments: [],
+              handles: {},
+              routeName: matched.routeKey,
+              params: matchedParams,
+              passthrough: true as const,
+            };
+          }
+          throw err;
+        }
+      }
     }
 
     // 4. Create handle store for collecting handle data

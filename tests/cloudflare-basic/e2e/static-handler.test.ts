@@ -605,18 +605,17 @@ test.describe("static-handler build output (production)", () => {
       )
       .join("\n");
 
-    const rscAssets = readAllFiles(path.join(DIST, "rsc/assets"));
-    const handlerFile = rscAssets.find((f) =>
-      f.startsWith("__static-handlers"),
-    );
-    expect(handlerFile).toBeTruthy();
-    staticHandlersBundle = fs.readFileSync(
-      path.join(DIST, "rsc/assets", handlerFile!),
-      "utf-8",
-    );
+    // After manualChunks removal (#436), static handler stubs are inlined
+    // into the RSC entry/worker-entry chunk instead of a separate
+    // __static-handlers file. Concat code chunks (excluding __pr-*/__st-*
+    // prerender asset files which contain rendered output, not handler code).
+    staticHandlersBundle = readAllFiles(path.join(DIST, "rsc/assets"))
+      .filter((f) => !f.startsWith("__pr-") && !f.startsWith("__st-"))
+      .map((f) => fs.readFileSync(path.join(DIST, "rsc/assets", f), "utf-8"))
+      .join("\n");
   });
 
-  test("static-handlers chunk exists in RSC bundle", () => {
+  test("static handler stubs exist in RSC bundle", () => {
     expect(staticHandlersBundle.length).toBeGreaterThan(0);
   });
 

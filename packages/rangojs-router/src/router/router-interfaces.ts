@@ -374,6 +374,8 @@ export interface RSCRouterInternal<
     params: Record<string, string>,
     buildVars?: Record<string, any>,
     isPassthroughRoute?: boolean,
+    buildEnv?: any,
+    devMode?: boolean,
   ): Promise<{
     segments: SerializedSegmentData[];
     handles: Record<string, SegmentHandleData>;

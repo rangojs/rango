@@ -262,20 +262,19 @@ test.describe("prerender passthrough bundle output (production)", () => {
   let ssrBundle: string;
 
   test.beforeAll(() => {
-    const rscAssets = readAllFiles(path.join(DIST, "rsc/assets"));
-    const handlerFile = rscAssets.find((f) =>
-      f.startsWith("__prerender-handlers"),
-    );
-    expect(handlerFile).toBeTruthy();
-    prerenderHandlersBundle = fs.readFileSync(
-      path.join(DIST, "rsc/assets", handlerFile!),
-      "utf-8",
-    );
+    // After manualChunks removal (#436), prerender handler stubs are inlined
+    // into the RSC entry/worker-entry chunk instead of a separate
+    // __prerender-handlers file. Concat code chunks (excluding __pr-*/__st-*
+    // prerender asset files which contain rendered output, not handler code).
+    prerenderHandlersBundle = readAllFiles(path.join(DIST, "rsc/assets"))
+      .filter((f) => !f.startsWith("__pr-") && !f.startsWith("__st-"))
+      .map((f) => fs.readFileSync(path.join(DIST, "rsc/assets", f), "utf-8"))
+      .join("\n");
     clientBundle = concatBundleContents(path.join(DIST, "client/assets"));
     ssrBundle = concatBundleContents(path.join(DIST, "rsc/ssr/assets"));
   });
 
-  test("prerender definitions are evicted from RSC prerender-handlers chunk", () => {
+  test("prerender definitions are evicted from RSC bundle", () => {
     // GuidesDetailDef (Prerender def) should be replaced with a stub
     expect(prerenderHandlersBundle).toMatch(
       /const\s+GuidesDetailDef\s*=\s*\{\s*__brand:\s*"prerenderHandler"/,

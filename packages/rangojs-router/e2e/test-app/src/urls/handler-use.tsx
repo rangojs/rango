@@ -15,21 +15,21 @@ import type { Handler } from "@rangojs/router";
 // Loaders & context vars
 // ---------------------------------------------------------------------------
 
-const HandlerUseLoader = createLoader(async () => ({
+export const HandlerUseLoader = createLoader(async () => ({
   message: "from-handler-use-loader",
   timestamp: Date.now(),
 }));
 
-const SidebarLoader = createLoader(async () => ({
+export const SidebarLoader = createLoader(async () => ({
   section: "sidebar-data",
 }));
 
-const PanelLoader = createLoader(async () => ({
+export const PanelLoader = createLoader(async () => ({
   section: "panel-data",
 }));
 
 // Slow loader — triggers loading state during client-side navigation
-const SlowSidebarLoader = createLoader(async () => {
+export const SlowSidebarLoader = createLoader(async () => {
   await new Promise((r) => setTimeout(r, 300));
   return { section: "slow-sidebar-data" };
 });
