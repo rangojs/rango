@@ -193,20 +193,40 @@ function renderedBarrierTests(mode: "dev" | "build") {
       page,
     }) => {
       // rendered() throws inside the loader because the route has loading().
-      // The error propagates through the RSC render. In production it shows
-      // a generic React error; in dev it shows the Vite error overlay.
-      // Either way, the normal price data should NOT be present.
+      // The error propagates through RSC and surfaces as either a page error
+      // (pageerror event) or visible error UI (React error boundary / Vite
+      // overlay). We assert BOTH that prices did not render AND that an error
+      // signal was observed — ruling out a silent hang/deadlock.
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
 
-      await page.goto(f.url("/rendered-barrier/streaming-rejected"));
+      const response = await page.goto(
+        f.url("/rendered-barrier/streaming-rejected"),
+      );
       await page.waitForTimeout(3000);
 
-      // The price display should NOT have rendered successfully
+      // Prices must NOT have rendered
       const pricesVisible = await testId(page, "rendered-streaming-prices")
         .isVisible()
         .catch(() => false);
       expect(pricesVisible).toBe(false);
+
+      // At least one error signal must be present: page error event,
+      // non-200 response, or visible error text in the DOM.
+      const hasPageError = errors.length > 0;
+      const hasErrorStatus = response !== null && response.status() >= 400;
+      const hasErrorText = await page
+        .locator("text=/error/i")
+        .first()
+        .isVisible({ timeout: 1000 })
+        .catch(() => false);
+
+      expect(
+        hasPageError || hasErrorStatus || hasErrorText,
+        `Expected an error signal from rendered() rejection, but got none. ` +
+          `Page errors: ${errors.length}, status: ${response?.status()}, ` +
+          `error text visible: ${hasErrorText}`,
+      ).toBe(true);
     });
   });
 }

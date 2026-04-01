@@ -151,9 +151,9 @@ export function collectHandleData<TData, TAccumulated>(
   const collectFn = getCollectFn(handle.$$id);
   if (!collectFn && process.env.NODE_ENV !== "production") {
     console.warn(
-      `[rsc-router] Handle "${handle.$$id}" was passed as a prop but its collect ` +
-        `function could not be resolved. Falling back to flat array. ` +
-        `Import the handle module in a client component to register its collect function.`,
+      `[rsc-router] Handle "${handle.$$id}" has no registered collect function. ` +
+        `Falling back to flat array. Ensure the handle module is imported so ` +
+        `createHandle() runs and registers the collect function.`,
     );
   }
   const collect = (collectFn ??
