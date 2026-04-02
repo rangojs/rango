@@ -173,7 +173,11 @@ export async function handleRscRendering<TEnv>(
 
   // Serialize to RSC stream
   const rscSerializeStart = performance.now();
-  const rscStream = ctx.renderToReadableStream<RscPayload>(payload);
+  const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
+    onError: (error: unknown) => {
+      ctx.callOnError(error, "rendering", { request, url, env });
+    },
+  });
   const rscSerializeDur = performance.now() - rscSerializeStart;
   // This measures synchronous stream creation, not end-to-end stream consumption.
   appendMetric(

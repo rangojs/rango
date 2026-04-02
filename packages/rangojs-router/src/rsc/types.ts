@@ -70,6 +70,7 @@ export interface RSCDependencies {
     payload: T,
     options?: {
       temporaryReferences?: unknown;
+      onError?: (error: unknown) => string | void;
     },
   ) => ReadableStream<Uint8Array>;
 

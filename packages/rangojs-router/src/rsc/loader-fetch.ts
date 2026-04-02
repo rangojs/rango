@@ -168,8 +168,19 @@ export async function handleLoaderFetch<TEnv>(
             loaderResult: unknown;
           }
           const loaderPayload: LoaderPayload = { loaderResult: result };
-          const rscStream =
-            ctx.renderToReadableStream<LoaderPayload>(loaderPayload);
+          const rscStream = ctx.renderToReadableStream<LoaderPayload>(
+            loaderPayload,
+            {
+              onError: (error: unknown) => {
+                ctx.callOnError(error, "rendering", {
+                  request,
+                  url,
+                  env,
+                  loaderName: loaderId,
+                });
+              },
+            },
+          );
 
           return createResponseWithMergedHeaders(rscStream, {
             headers: { "content-type": "text/x-component;charset=utf-8" },
@@ -199,7 +210,16 @@ export async function handleLoaderFetch<TEnv>(
         name: err.name,
       },
     };
-    const rscStream = ctx.renderToReadableStream(errorPayload);
+    const rscStream = ctx.renderToReadableStream(errorPayload, {
+      onError: (error: unknown) => {
+        ctx.callOnError(error, "rendering", {
+          request,
+          url,
+          env,
+          loaderName: loaderId,
+        });
+      },
+    });
 
     return createResponseWithMergedHeaders(rscStream, {
       status: 500,

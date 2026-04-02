@@ -1090,7 +1090,11 @@ export function createRSCHandler<
             },
           };
 
-          const rscStream = renderToReadableStream(payload);
+          const rscStream = renderToReadableStream(payload, {
+            onError: (error: unknown) => {
+              callOnError(error, "rendering", { request, url, env });
+            },
+          });
 
           const isRscRequest =
             isPartial ||

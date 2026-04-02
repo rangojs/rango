@@ -226,6 +226,9 @@ export async function executeServerAction<TEnv>(
 
       const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
         temporaryReferences,
+        onError: (error: unknown) => {
+          ctx.callOnError(error, "rendering", { request, url, env });
+        },
       });
 
       return createResponseWithMergedHeaders(rscStream, {
@@ -332,6 +335,9 @@ export async function revalidateAfterAction<TEnv>(
   const renderStart = performance.now();
   const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
     temporaryReferences,
+    onError: (error: unknown) => {
+      ctx.callOnError(error, "rendering", { request, url, env });
+    },
   });
   const rscSerializeDur = performance.now() - renderStart;
   // This measures synchronous stream creation, not end-to-end stream consumption.

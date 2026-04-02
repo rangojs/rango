@@ -259,7 +259,11 @@ export async function handleProgressiveEnhancement<TEnv>(
       formState: actionResult,
     };
 
-    const rscStream = ctx.renderToReadableStream<RscPayload>(payload);
+    const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
+      onError: (error: unknown) => {
+        ctx.callOnError(error, "rendering", { request, url, env });
+      },
+    });
     // metricsStore=undefined is safe: the handler already stashed the early
     // SSR setup promise on request variables, so getSSRSetup returns it
     // without falling back to a fresh startSSRSetup.
@@ -360,7 +364,11 @@ async function renderPeErrorBoundary<TEnv>(
     },
   };
 
-  const rscStream = ctx.renderToReadableStream<RscPayload>(payload);
+  const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
+    onError: (error: unknown) => {
+      ctx.callOnError(error, "rendering", { request, url, env });
+    },
+  });
   // metricsStore=undefined is safe: the handler already stashed the early
   // SSR setup promise on request variables, so getSSRSetup returns it
   // without falling back to a fresh startSSRSetup.
