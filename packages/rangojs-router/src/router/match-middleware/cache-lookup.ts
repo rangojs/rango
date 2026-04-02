@@ -96,6 +96,7 @@ import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
 import { pushRevalidationTraceEntry, isTraceActive } from "../logging.js";
+import { treeHasStreaming } from "./segment-resolution.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
 import type { HandleStore } from "../../server/handle-store.js";
 import {
@@ -192,6 +193,14 @@ async function* yieldFromStore<TEnv>(
   state.cacheSource = "prerender";
   state.cachedSegments = segments;
   state.cachedMatchedIds = segments.map((s) => s.id);
+
+  // Set streaming flag and resolve render barrier.
+  const reqCtx = handleStoreRef ? undefined : _lazyGetRequestContext?.();
+  const barrierReqCtx = reqCtx ?? _getRequestContext();
+  if (barrierReqCtx) {
+    barrierReqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);
+    barrierReqCtx._resolveRenderBarrier(segments);
+  }
 
   // For partial navigation, nullify components the client already has
   // so parent layouts stay live (client keeps its existing versions).
@@ -612,6 +621,13 @@ export function withCacheLookup<TEnv>(
       }
 
       yield segment;
+    }
+
+    // Set streaming flag and resolve render barrier.
+    const barrierReqCtx = _getRequestContext();
+    if (barrierReqCtx) {
+      barrierReqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);
+      barrierReqCtx._resolveRenderBarrier(cacheResult.segments);
     }
 
     // Resolve loaders fresh (loaders are NOT cached by default)

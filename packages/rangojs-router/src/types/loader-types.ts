@@ -1,4 +1,5 @@
 import type { ContextVar } from "../context-var.js";
+import type { Handle } from "../handle.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import type { ScopedReverseFunction } from "../reverse.js";
 import type { SearchSchema, ResolveSearchSchema } from "../search-params.js";
@@ -57,11 +58,38 @@ export type LoaderContext<
     <T>(contextVar: ContextVar<T>): T | undefined;
   } & (<K extends keyof DefaultVars>(key: K) => DefaultVars[K]);
   /**
-   * Access another loader's data (returns promise since loaders run in parallel)
+   * Access another loader's data, or read handle data after rendered().
+   *
+   * For loaders: returns a promise (loaders run in parallel).
+   * For handles: returns collected data (only after `await ctx.rendered()`).
    */
-  use: <T, TLoaderParams = any>(
-    loader: LoaderDefinition<T, TLoaderParams>,
-  ) => Promise<T>;
+  use: {
+    <T, TLoaderParams = any>(
+      loader: LoaderDefinition<T, TLoaderParams>,
+    ): Promise<T>;
+    <TData, TAccumulated = TData[]>(
+      handle: Handle<TData, TAccumulated>,
+    ): TAccumulated;
+  };
+  /**
+   * **Experimental.** Wait for all non-loader segments to settle.
+   *
+   * After the returned promise resolves, handle data is available via
+   * `ctx.use(handle)`. Only supported in DSL loaders on non-streaming
+   * trees (no `loading()`). Throws if called from a handler-invoked
+   * loader or when the tree uses streaming.
+   *
+   * @example
+   * ```typescript
+   * const PricesLoader = createLoader(async (ctx) => {
+   *   "use server";
+   *   await ctx.rendered();
+   *   const products = ctx.use(Products); // reads handle data
+   *   return pricing.getLive(products.map(p => p.id));
+   * });
+   * ```
+   */
+  rendered: () => Promise<void>;
   /**
    * HTTP method (GET, POST, PUT, PATCH, DELETE)
    * Available when loader is called via load({ method: "POST", ... })
