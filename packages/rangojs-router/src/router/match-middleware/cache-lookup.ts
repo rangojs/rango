@@ -194,11 +194,13 @@ async function* yieldFromStore<TEnv>(
   state.cachedSegments = segments;
   state.cachedMatchedIds = segments.map((s) => s.id);
 
-  // Set streaming flag and resolve render barrier.
+  // Set streaming flag (once) and resolve render barrier.
   const reqCtx = handleStoreRef ? undefined : _lazyGetRequestContext?.();
   const barrierReqCtx = reqCtx ?? _getRequestContext();
   if (barrierReqCtx) {
-    barrierReqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);
+    if (barrierReqCtx._treeHasStreaming === undefined) {
+      barrierReqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);
+    }
     barrierReqCtx._resolveRenderBarrier(segments);
   }
 
@@ -623,10 +625,12 @@ export function withCacheLookup<TEnv>(
       yield segment;
     }
 
-    // Set streaming flag and resolve render barrier.
+    // Set streaming flag (once) and resolve render barrier.
     const barrierReqCtx = _getRequestContext();
     if (barrierReqCtx) {
-      barrierReqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);
+      if (barrierReqCtx._treeHasStreaming === undefined) {
+        barrierReqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);
+      }
       barrierReqCtx._resolveRenderBarrier(cacheResult.segments);
     }
 

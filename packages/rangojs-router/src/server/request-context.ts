@@ -26,7 +26,12 @@ import {
   contextSet,
   isNonCacheable,
 } from "../context-var.js";
-import { createHandleStore, type HandleStore } from "./handle-store.js";
+import {
+  createHandleStore,
+  buildHandleSnapshot,
+  type HandleStore,
+  type HandleData,
+} from "./handle-store.js";
 import { isHandle } from "../handle.js";
 import { track, type MetricsStore } from "./context.js";
 import { getFetchableLoader } from "./fetchable-loader-store.js";
@@ -306,6 +311,19 @@ export interface RequestContext<
    */
   _renderBarrierWaiters?: Set<string>;
 
+  /**
+   * @internal Loader IDs that handlers have started awaiting via ctx.use().
+   * Used for bidirectional deadlock detection: if a loader later calls
+   * rendered() and a handler already awaits it, we can detect the deadlock.
+   */
+  _handlerLoaderDeps?: Set<string>;
+
+  /**
+   * @internal Cached HandleData snapshot built at barrier resolution time.
+   * Avoids rebuilding the snapshot on every loader ctx.use(handle) call.
+   */
+  _renderBarrierHandleSnapshot?: HandleData;
+
   /** @internal Per-request error dedup set for onError reporting */
   _reportedErrors: WeakSet<object>;
 
@@ -362,6 +380,8 @@ export type PublicRequestContext<
   | "_renderBarrierSegmentOrder"
   | "_treeHasStreaming"
   | "_renderBarrierWaiters"
+  | "_handlerLoaderDeps"
+  | "_renderBarrierHandleSnapshot"
   | "_reportBackgroundError"
   | "_debugPerformance"
   | "_metricsStore"
@@ -808,10 +828,18 @@ export function createRequestContext<TEnv>(
   ) => {
     if (barrierResolved) return;
     barrierResolved = true;
-    ctx._renderBarrierSegmentOrder = segments
+    const segOrder = segments
       .filter((s) => s.type !== "loader")
       .map((s) => s.id);
+    ctx._renderBarrierSegmentOrder = segOrder;
+    // Build and cache handle snapshot so loader ctx.use(handle) calls
+    // don't rebuild it on every invocation.
+    ctx._renderBarrierHandleSnapshot = buildHandleSnapshot(
+      handleStore,
+      segOrder,
+    );
     ctx._renderBarrierWaiters = undefined;
+    ctx._handlerLoaderDeps = undefined;
     if (resolveBarrier) resolveBarrier();
   };
   Object.defineProperty(ctx, "_renderBarrier", {

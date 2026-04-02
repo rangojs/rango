@@ -13,6 +13,25 @@
  */
 export type HandleData = Record<string, Record<string, unknown[]>>;
 
+/**
+ * Build a HandleData snapshot from a HandleStore using segment ordering.
+ * Reads data directly from the store for each segment in order.
+ */
+export function buildHandleSnapshot(
+  handleStore: HandleStore,
+  segmentOrder: string[],
+): HandleData {
+  const data: HandleData = {};
+  for (const segmentId of segmentOrder) {
+    const segData = handleStore.getDataForSegment(segmentId);
+    for (const handleName in segData) {
+      if (!data[handleName]) data[handleName] = {};
+      data[handleName][segmentId] = segData[handleName];
+    }
+  }
+  return data;
+}
+
 function createLateHandlePushError(
   handleName: string,
   segmentId: string,

@@ -463,6 +463,135 @@ describe("rendered barrier", () => {
       expect(() => ctx.use(loader)).toThrow("Deadlock");
     });
 
+    it("throws when loader calls rendered() after handler already awaits it (bidirectional)", async () => {
+      mockRequestContext = createMockRequestContext();
+      const ctx = createMockContext();
+      const loaderPromises = new Map<string, Promise<any>>();
+
+      let renderedFn: (() => Promise<void>) | null = null;
+      const loader = createLoader("biDeadlockLoader", async (loaderCtx) => {
+        // Capture rendered() but don't call it yet — handler will call
+        // ctx.use(loader) first, then we call rendered().
+        renderedFn = loaderCtx.rendered.bind(loaderCtx);
+        // Wait long enough for the handler to register its dependency
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await loaderCtx.rendered();
+        return "data";
+      });
+
+      // Start the loader from DSL scope
+      mockInsideLoaderScope = true;
+      setupLoaderAccess(ctx, loaderPromises);
+      const _loaderPromise = ctx.use(loader);
+
+      // Now simulate handler calling ctx.use(sameLoader) — registers dep
+      mockInsideLoaderScope = false;
+      // Handler gets the memoized promise (no throw yet because rendered()
+      // hasn't been called)
+      ctx.use(loader);
+
+      // Give the loader time to attempt rendered() — should throw
+      const result = await Promise.allSettled([_loaderPromise]);
+      const rejection = result[0] as PromiseRejectedResult;
+      expect(rejection.status).toBe("rejected");
+      expect(rejection.reason.message).toContain("Deadlock");
+    });
+
+    it("does NOT false-deadlock when loader is called from inside a handle push callback", async () => {
+      mockRequestContext = createMockRequestContext();
+      const ctx = createMockContext();
+      // Set _currentSegmentId so ctx.use(handle) works
+      (ctx as any)._currentSegmentId = "root.layout";
+      const loaderPromises = new Map<string, Promise<any>>();
+
+      const Products = createHandle<string>(undefined, "test#PushProducts");
+
+      const loader = createLoader("pushCallbackLoader", async (loaderCtx) => {
+        await loaderCtx.rendered();
+        return loaderCtx.use(Products);
+      });
+
+      // Start the loader from DSL scope
+      mockInsideLoaderScope = true;
+      setupLoaderAccess(ctx, loaderPromises);
+      const loaderPromise = ctx.use(loader);
+
+      // Simulate handler calling push with async callback that uses the same loader
+      mockInsideLoaderScope = false;
+      const push = ctx.use(Products);
+      // push callback calls ctx.use(loader) — should NOT register as handler dep
+      push(async () => {
+        const data = await ctx.use(loader);
+        return "derived-from-" + data;
+      });
+
+      // Push handle data and resolve barrier
+      const handleStore = mockRequestContext._handleStore;
+      handleStore.push("test#PushProducts", "root.layout", "product-a");
+      mockRequestContext._resolveRenderBarrier(["root.layout"]);
+
+      // Loader should complete WITHOUT false deadlock.
+      // The result includes "product-a" (direct push) and a Promise
+      // (from the async push callback), but we only care that it
+      // resolved successfully — no deadlock error.
+      const result = await loaderPromise;
+      expect(result).toContainEqual("product-a");
+    });
+
+    it("does NOT false-deadlock from push callback that resumes after barrier resolution", async () => {
+      mockRequestContext = createMockRequestContext();
+      const ctx = createMockContext();
+      (ctx as any)._currentSegmentId = "root.layout";
+      const loaderPromises = new Map<string, Promise<any>>();
+
+      const Products = createHandle<string>(
+        undefined,
+        "test#PostAwaitPushProducts",
+      );
+
+      // Loader waits for rendered(), then reads handle data
+      let loaderRenderedCalled = false;
+      const loader = createLoader("postAwaitPushLoader", async (loaderCtx) => {
+        // Small delay so the push callback's post-await ctx.use(loader)
+        // runs before this loader calls rendered()
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        loaderRenderedCalled = true;
+        await loaderCtx.rendered();
+        return loaderCtx.use(Products);
+      });
+
+      // Start the loader from DSL scope
+      mockInsideLoaderScope = true;
+      setupLoaderAccess(ctx, loaderPromises);
+      const loaderPromise = ctx.use(loader);
+
+      // Handler pushes async callback that awaits first, THEN calls ctx.use(loader)
+      mockInsideLoaderScope = false;
+      const push = ctx.use(Products);
+      push(async () => {
+        // This await causes insideHandlePush to be false when we resume
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        // This ctx.use(loader) runs with insideHandlePush=false, but
+        // barrier has already resolved by now — should NOT register dep
+        const data = await ctx.use(loader);
+        return "derived";
+      });
+
+      // Push handle data and resolve barrier (before push callback resumes)
+      const handleStore = mockRequestContext._handleStore;
+      handleStore.push(
+        "test#PostAwaitPushProducts",
+        "root.layout",
+        "product-z",
+      );
+      mockRequestContext._resolveRenderBarrier(["root.layout"]);
+
+      // Loader should complete without false deadlock
+      const result = await loaderPromise;
+      expect(loaderRenderedCalled).toBe(true);
+      expect(result).toContainEqual("product-z");
+    });
+
     it("does NOT throw when DSL resolves a rendered() loader from another segment", async () => {
       mockInsideLoaderScope = true;
       mockRequestContext = createMockRequestContext();

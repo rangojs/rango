@@ -21,7 +21,7 @@ import type {
 } from "../types";
 import type { LoaderRevalidationResult, ActionContext } from "./types";
 import { isHandle, collectHandleData, type Handle } from "../handle.js";
-import type { HandleStore, HandleData } from "../server/handle-store.js";
+import { buildHandleSnapshot } from "../server/handle-store.js";
 import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import { _getRequestContext } from "../server/request-context.js";
 import { isInsideLoaderScope } from "../server/context.js";
@@ -284,10 +284,9 @@ function createLoaderExecutor<TEnv>(
             );
           }
           const segmentOrder = reqCtx._renderBarrierSegmentOrder ?? [];
-          const snapshot = buildHandleSnapshot(
-            reqCtx._handleStore,
-            segmentOrder,
-          );
+          const snapshot =
+            reqCtx._renderBarrierHandleSnapshot ??
+            buildHandleSnapshot(reqCtx._handleStore, segmentOrder);
           return collectHandleData(item, snapshot, segmentOrder);
         }
 
@@ -324,6 +323,17 @@ function createLoaderExecutor<TEnv>(
           );
         }
 
+        // Bidirectional deadlock check: if a handler already started
+        // awaiting this loader, calling rendered() would deadlock.
+        if (reqCtx._handlerLoaderDeps?.has(currentLoaderId)) {
+          throw new Error(
+            `Deadlock: loader "${currentLoaderId}" called ctx.rendered() but a handler ` +
+              `is already awaiting this loader via ctx.use(). The handler blocks ` +
+              `segment resolution, which blocks the barrier, which blocks this loader. ` +
+              `Move the data dependency to a loader-to-loader pattern instead.`,
+          );
+        }
+
         // Register this loader as waiting for the barrier so that
         // setupLoaderAccess can detect deadlocks when a handler
         // tries to await the same loader via ctx.use().
@@ -355,25 +365,6 @@ function createLoaderExecutor<TEnv>(
 }
 
 /**
- * Build a HandleData snapshot from the HandleStore using segment ordering.
- * Reads data directly from the store for each segment in order.
- */
-function buildHandleSnapshot(
-  handleStore: HandleStore,
-  segmentOrder: string[],
-): HandleData {
-  const data: HandleData = {};
-  for (const segmentId of segmentOrder) {
-    const segData = handleStore.getDataForSegment(segmentId);
-    for (const handleName in segData) {
-      if (!data[handleName]) data[handleName] = {};
-      data[handleName][segmentId] = segData[handleName];
-    }
-  }
-  return data;
-}
-
-/**
  * Set up the use() method on handler context to access loaders and handles.
  *
  * For loaders: Lazily runs loaders, memoizes results per request.
@@ -386,14 +377,21 @@ export function setupLoaderAccess<TEnv>(
   ctx: HandlerContext<any, TEnv>,
   loaderPromises: Map<string, Promise<any>>,
 ): void {
-  // Eagerly capture the HandleStore at setup time (before pipeline async ops).
-  // In workerd/Cloudflare, dynamic imports and fetch() in the match pipeline
-  // can disrupt AsyncLocalStorage, causing getRequestContext() to return
-  // undefined when handlers later call ctx.use(handle). Capturing early
-  // ensures the store reference survives ALS disruption.
-  const handleStoreRef = _getRequestContext()?._handleStore;
+  // Eagerly capture the request context and HandleStore at setup time
+  // (before pipeline async ops). In workerd/Cloudflare, dynamic imports and
+  // fetch() in the match pipeline can disrupt AsyncLocalStorage, causing
+  // getRequestContext() to return undefined when handlers later call
+  // ctx.use(handle). Capturing early ensures references survive ALS disruption.
+  const reqCtxRef = _getRequestContext();
+  const handleStoreRef = reqCtxRef?._handleStore;
 
   const useLoader = createLoaderExecutor(ctx, loaderPromises);
+
+  // Track whether we're inside a handle push callback. Loaders started
+  // from push callbacks (e.g. push(async () => ctx.use(Loader))) do NOT
+  // block segment resolution, so they must not be registered as handler
+  // dependencies for deadlock detection.
+  let insideHandlePush = false;
 
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
     if (isHandle(item)) {
@@ -414,28 +412,53 @@ export function setupLoaderAccess<TEnv>(
       ) => {
         if (!store) return;
 
-        const valueOrPromise =
-          typeof dataOrFn === "function"
-            ? (dataOrFn as () => Promise<unknown>)()
-            : dataOrFn;
+        if (typeof dataOrFn === "function") {
+          // Mark scope so ctx.use(loader) calls inside the callback
+          // are not registered as handler-to-loader deps.
+          insideHandlePush = true;
+          try {
+            const result = (dataOrFn as () => Promise<unknown>)();
+            store.push(handle.$$id, segmentId, result);
+          } finally {
+            insideHandlePush = false;
+          }
+          return;
+        }
 
-        store.push(handle.$$id, segmentId, valueOrPromise);
+        store.push(handle.$$id, segmentId, dataOrFn);
       };
     }
 
-    // Deadlock guard: if a HANDLER awaits a loader that called rendered(),
-    // the handler blocks segment resolution which blocks the barrier.
-    // Skip this check when inside a DSL loader scope (resolveLoaderData
-    // also calls ctx.use() but that's DSL-to-DSL, not handler-to-loader).
+    // Deadlock guard and handler-to-loader dependency tracking.
+    // Skip when inside a DSL loader scope (resolveLoaderData also calls
+    // ctx.use() but that's DSL-to-DSL, not handler-to-loader) or when
+    // inside a handle push callback (push callbacks don't block segment
+    // resolution so they can't cause rendered() deadlocks).
     const loader = item as LoaderDefinition<any, any>;
-    if (loaderPromises.has(loader.$$id) && !isInsideLoaderScope()) {
-      const reqCtx = _getRequestContext();
-      if (reqCtx?._renderBarrierWaiters?.has(loader.$$id)) {
-        throw new Error(
-          `Deadlock: handler is awaiting loader "${loader.$$id}" which called ctx.rendered(). ` +
-            `The loader is waiting for segment resolution, but the handler blocks resolution. ` +
-            `Move the data dependency to a loader-to-loader pattern instead.`,
-        );
+    if (!isInsideLoaderScope() && !insideHandlePush) {
+      const reqCtx = reqCtxRef ?? _getRequestContext();
+      if (reqCtx) {
+        // Direction 1: handler awaits loader that already called rendered()
+        if (
+          loaderPromises.has(loader.$$id) &&
+          reqCtx._renderBarrierWaiters?.has(loader.$$id)
+        ) {
+          throw new Error(
+            `Deadlock: handler is awaiting loader "${loader.$$id}" which called ctx.rendered(). ` +
+              `The loader is waiting for segment resolution, but the handler blocks resolution. ` +
+              `Move the data dependency to a loader-to-loader pattern instead.`,
+          );
+        }
+        // Direction 2: track dep so rendered() can detect the deadlock
+        // if the loader calls it later. Skip when the barrier has already
+        // resolved — no deadlock is possible (rendered() resolves immediately).
+        // _renderBarrierSegmentOrder is undefined before resolution, string[]
+        // after. This also prevents false positives from handle push callbacks
+        // that resume after their first await (post-barrier-resolution).
+        if (reqCtx._renderBarrierSegmentOrder === undefined) {
+          if (!reqCtx._handlerLoaderDeps) reqCtx._handlerLoaderDeps = new Set();
+          reqCtx._handlerLoaderDeps.add(loader.$$id);
+        }
       }
     }
 

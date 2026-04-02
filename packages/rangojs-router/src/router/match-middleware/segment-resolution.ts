@@ -168,7 +168,7 @@ export function withSegmentResolution<TEnv>(
     }
 
     const reqCtx = _getRequestContext();
-    if (reqCtx) {
+    if (reqCtx && reqCtx._treeHasStreaming === undefined) {
       reqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);
     }
 
