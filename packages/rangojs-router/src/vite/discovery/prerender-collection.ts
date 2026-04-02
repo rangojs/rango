@@ -51,6 +51,32 @@ export async function expandPrerenderRoutes(
     return substituteRouteParams(pattern, params);
   };
 
+  let resolvedRoutes = 0;
+  let totalDynamic = 0;
+
+  // Count dynamic routes upfront for progress reporting
+  for (const { manifest } of allManifests) {
+    if (!manifest.prerenderRoutes) continue;
+    for (const routeName of manifest.prerenderRoutes) {
+      const pattern = manifest.routeManifest[routeName];
+      if (pattern && (pattern.includes(":") || pattern.includes("*"))) {
+        totalDynamic++;
+      }
+    }
+  }
+
+  // Periodic progress log so long getParams() calls don't look stalled
+  const paramsStart = performance.now();
+  const progressInterval =
+    totalDynamic > 0
+      ? setInterval(() => {
+          const elapsed = ((performance.now() - paramsStart) / 1000).toFixed(1);
+          console.log(
+            `[rsc-router] Resolving prerender params... ${resolvedRoutes}/${totalDynamic} routes (${elapsed}s)`,
+          );
+        }, 5000)
+      : undefined;
+
   for (const { manifest } of allManifests) {
     if (!manifest.prerenderRoutes) continue;
     const defs = manifest._prerenderDefs || {};
@@ -118,7 +144,9 @@ export async function expandPrerenderRoutes(
                 isPassthroughRoute,
               });
             }
+            resolvedRoutes++;
           } catch (err: any) {
+            resolvedRoutes++;
             // Skip in getParams() skips the entire route
             if (err.name === "Skip") {
               console.log(
@@ -148,6 +176,14 @@ export async function expandPrerenderRoutes(
         }
       }
     }
+  }
+
+  if (progressInterval) {
+    clearInterval(progressInterval);
+    const elapsed = ((performance.now() - paramsStart) / 1000).toFixed(1);
+    console.log(
+      `[rsc-router] Resolved prerender params: ${resolvedRoutes}/${totalDynamic} routes (${elapsed}s)`,
+    );
   }
 
   if (entries.length === 0) return;
