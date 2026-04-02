@@ -816,13 +816,14 @@ export function createRequestContext<TEnv>(
   };
   Object.defineProperty(ctx, "_renderBarrier", {
     get() {
-      // Already resolved before any loader asked — return settled promise
-      if (barrierResolved) return Promise.resolve();
-      // Lazy-create the deferred promise on first access
-      const p = new Promise<void>((resolve) => {
-        resolveBarrier = resolve;
-      });
-      // Replace the getter with the concrete promise for subsequent reads
+      // Barrier already resolved (cache/prerender hit) or first lazy access.
+      // Either way, replace the getter with a concrete value to avoid
+      // repeated Promise.resolve() allocations on subsequent reads.
+      const p = barrierResolved
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            resolveBarrier = resolve;
+          });
       Object.defineProperty(ctx, "_renderBarrier", {
         value: p,
         writable: false,
