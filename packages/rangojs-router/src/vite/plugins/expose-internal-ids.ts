@@ -479,75 +479,64 @@ ${lazyImports.join(",\n")}
       // --- Mixed-type whole-file stub replacement (non-RSC) ---
       // When the individual whole-file checks above fail (each only checks
       // one type), the file has mixed exports (e.g. createLoader + Prerender).
-      // Gather ALL recognized bindings and check if they cover every export.
+      // Gather ALL stub-safe bindings and check if they cover every export.
       // If yes, replace the entire file with stubs — this strips server-only
       // imports (node:fs, DB clients, etc.) that would crash in the browser.
       //
       // Only applies when the file contains Prerender/Static (the handler
       // types that bring server-only code). Files with only loaders, handles,
       // or locationState are handled correctly by the unified pipeline below.
+      //
+      // createLocationState is excluded: its client contract requires
+      // __rsc_ls_key and a callable interface (for Link's state prop),
+      // which a plain { __brand, $$id } stub cannot provide. If a mixed
+      // file includes locationState exports, isExportOnlyFile will return
+      // false and the file falls through to the unified pipeline.
       if (!isRscEnv && (hasPrerenderHandlerCode || hasStaticHandlerCode)) {
-        const allBindings: CreateExportBinding[] = [];
-        if (hasLoaderCode) {
-          allBindings.push(...getBindings(code, getFnNames("createLoader")));
-        }
-        if (hasHandleCode) {
-          allBindings.push(...getBindings(code, getFnNames("createHandle")));
-        }
-        if (hasLocationStateCode) {
-          allBindings.push(
-            ...getBindings(code, getFnNames("createLocationState")),
-          );
-        }
-        if (hasPrerenderHandlerCode) {
-          allBindings.push(
-            ...getBindings(code, getFnNames(PRERENDER_CONFIG.fnName)),
-          );
-        }
-        if (hasStaticHandlerCode) {
-          allBindings.push(
-            ...getBindings(code, getFnNames(STATIC_CONFIG.fnName)),
-          );
-        }
-        if (allBindings.length > 0 && isExportOnlyFile(code, allBindings)) {
-          const stubs: string[] = [];
-          for (const binding of allBindings) {
-            const name = binding.exportNames[0];
-            const stubId = isBuild
-              ? hashId(filePath, name)
-              : `${filePath}#${name}`;
-            // Determine brand from which type this binding belongs to
-            const fnCall = code.slice(
-              binding.callExprStart,
-              binding.callOpenParenPos + 1,
-            );
+        type StubBinding = CreateExportBinding & { brand: string };
+        const stubBindings: StubBinding[] = [];
+
+        const prerenderFnNames = hasPrerenderHandlerCode
+          ? getFnNames(PRERENDER_CONFIG.fnName)
+          : [];
+        const staticFnNames = hasStaticHandlerCode
+          ? getFnNames(STATIC_CONFIG.fnName)
+          : [];
+        const handleFnNames = hasHandleCode ? getFnNames("createHandle") : [];
+        const loaderFnNames = hasLoaderCode ? getFnNames("createLoader") : [];
+
+        for (const fnNames of [
+          prerenderFnNames,
+          staticFnNames,
+          handleFnNames,
+          loaderFnNames,
+        ]) {
+          if (fnNames.length === 0) continue;
+          for (const b of getBindings(code, fnNames)) {
+            const fnCall = code.slice(b.callExprStart, b.callOpenParenPos + 1);
             let brand = "loader";
-            if (
-              hasPrerenderHandlerCode &&
-              getFnNames(PRERENDER_CONFIG.fnName).some((n) =>
-                fnCall.includes(n),
-              )
-            ) {
+            if (prerenderFnNames.some((n) => fnCall.includes(n))) {
               brand = PRERENDER_CONFIG.brand;
-            } else if (
-              hasStaticHandlerCode &&
-              getFnNames(STATIC_CONFIG.fnName).some((n) => fnCall.includes(n))
-            ) {
+            } else if (staticFnNames.some((n) => fnCall.includes(n))) {
               brand = STATIC_CONFIG.brand;
-            } else if (
-              hasHandleCode &&
-              getFnNames("createHandle").some((n) => fnCall.includes(n))
-            ) {
+            } else if (handleFnNames.some((n) => fnCall.includes(n))) {
               brand = "handle";
-            } else if (
-              hasLocationStateCode &&
-              getFnNames("createLocationState").some((n) => fnCall.includes(n))
-            ) {
-              brand = "locationState";
             }
-            stubs.push(
-              `export const ${name} = { __brand: "${brand}", $$id: "${stubId}" };`,
-            );
+            stubBindings.push({ ...b, brand });
+          }
+        }
+
+        if (stubBindings.length > 0 && isExportOnlyFile(code, stubBindings)) {
+          const stubs: string[] = [];
+          for (const binding of stubBindings) {
+            for (const name of binding.exportNames) {
+              const stubId = isBuild
+                ? hashId(filePath, name)
+                : `${filePath}#${name}`;
+              stubs.push(
+                `export const ${name} = { __brand: "${binding.brand}", $$id: "${stubId}" };`,
+              );
+            }
           }
           return { code: stubs.join("\n") + "\n", map: null };
         }

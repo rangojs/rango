@@ -1250,6 +1250,42 @@ export const PAGE_TITLE = "docs";
     expect(result.code).toMatch(/[0-9a-f]{8}#MyPage/);
   });
 
+  it("falls through when file has createLocationState (needs __rsc_ls_key)", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader, createLocationState, Prerender } from "@rangojs/router";
+export const MyLoader = createLoader(async () => ({ ok: true }));
+export const Flash = createLocationState<{ text: string }>({ flash: true });
+export const MyPage = Prerender(() => <div>page</div>);
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    // Should NOT be a whole-file stub — locationState needs __rsc_ls_key
+    // The unified pipeline handles it, so createLocationState call remains
+    expect(result.code).toContain("Flash.__rsc_ls_key");
+  });
+
+  it("preserves all export aliases in whole-file stubs", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader, Prerender } from "@rangojs/router";
+const LocalLoader = createLoader(async () => ({ ok: true }));
+export { LocalLoader as PublicLoader, LocalLoader as LoaderAlias };
+export const MyPage = Prerender(() => <div>page</div>);
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    // Both aliases must appear in the stub output
+    expect(result.code).toContain("export const PublicLoader");
+    expect(result.code).toContain("export const LoaderAlias");
+    expect(result.code).toContain("export const MyPage");
+    // No original code
+    expect(result.code).not.toContain("createLoader(");
+    expect(result.code).not.toContain("import");
+  });
+
   it("all transforms work together in RSC env for mixed file", () => {
     const plugin = createPlugin();
     initDev(plugin);
