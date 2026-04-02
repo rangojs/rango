@@ -35,6 +35,7 @@ import { responseCachePatterns } from "./urls/response-cache.js";
 import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
 import { handlerFirstPatterns } from "./urls/handler-first.js";
 import { handlerUsePatterns } from "./urls/handler-use.js";
+import { parallelLoaderInheritPatterns } from "./urls/parallel-loader-inherit.js";
 import { buildSkipPatterns } from "./urls/prerender-build-skip.js";
 import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
@@ -553,6 +554,9 @@ export const urlpatterns = urls(
 
       // handler.use composable defaults test patterns
       include("/handler-use", handlerUsePatterns, { name: "handlerUse" }),
+
+      // parallel loader inheritance regression test
+      include("/", parallelLoaderInheritPatterns),
 
       // Skip test patterns (prerender + static skip/error handling)
       include("/build-skip", buildSkipPatterns, { name: "buildSkip" }),
