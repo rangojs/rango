@@ -1137,6 +1137,21 @@ export const MyLoader = createLoader(async () => ({ data: readFileSync("x") }));
 export const MyPage = Prerender(() => <div>page</div>);
 `;
 
+  // Mixed file with handle + server-only imports
+  const MIXED_HANDLE_SERVER_IMPORTS = `import { createLoader, createHandle, Prerender } from "@rangojs/router";
+import { readFileSync } from "node:fs";
+export const MyLoader = createLoader(async () => ({ data: readFileSync("x") }));
+export const MyHandle = createHandle((segments) => segments.flat().length);
+export const MyPage = Prerender(() => <div>page</div>);
+`;
+
+  // Mixed file with locationState + Prerender
+  const MIXED_LOCATION_STATE = `import { createLoader, createLocationState, Prerender } from "@rangojs/router";
+export const MyLoader = createLoader(async () => ({ ok: true }));
+export const Flash = createLocationState({ flash: true });
+export const MyPage = Prerender(() => <div>page</div>);
+`;
+
   // Mixed file with non-recognized export (helper function)
   const MIXED_WITH_HELPER = `import { createLoader, Prerender } from "@rangojs/router";
 export const MyLoader = createLoader(async () => ({ ok: true }));
@@ -1162,7 +1177,7 @@ export const MyPage = Prerender(() => <div>page</div>);
     expect(result.code).not.toContain("import");
   });
 
-  it("falls through when file has createHandle (needs collect registration)", () => {
+  it("preserves createHandle call in whole-file stub (collect registration)", () => {
     const plugin = createPlugin();
     initDev(plugin);
 
@@ -1172,11 +1187,57 @@ export const MyPage = Prerender(() => <div>page</div>);
       FILE_ID,
     );
     expect(result).toBeDefined();
-    // Should NOT be a whole-file stub — handle needs collect registration
-    // The unified pipeline handles it: handle $$id injected, Prerender stubbed
+    // Handle call preserved (collect function must register)
+    expect(result.code).toContain("createHandle(");
     expect(result.code).toContain("MyHandle.$$id");
-    expect(result.code).toContain('"prerenderHandler"');
-    expect(result.code).toContain("MyLoader.$$id");
+    // Loader and Prerender are plain stubs
+    expect(result.code).toContain('__brand: "loader"');
+    expect(result.code).toContain('__brand: "prerenderHandler"');
+    // Only @rangojs/router import remains
+    expect(result.code).toContain('from "@rangojs/router"');
+    expect(result.code).not.toContain("Prerender(");
+    expect(result.code).not.toContain("createLoader(");
+  });
+
+  it("strips server-only imports even with createHandle in the file", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const result = plugin.transform.call(
+      clientCtx(),
+      MIXED_HANDLE_SERVER_IMPORTS,
+      FILE_ID,
+    );
+    expect(result).toBeDefined();
+    // node:fs must be stripped
+    expect(result.code).not.toContain("node:fs");
+    expect(result.code).not.toContain("readFileSync");
+    // Handle call preserved with collect function
+    expect(result.code).toContain("createHandle(");
+    expect(result.code).toContain("MyHandle.$$id");
+    // Loader and Prerender are stubs
+    expect(result.code).toContain('__brand: "loader"');
+    expect(result.code).toContain('__brand: "prerenderHandler"');
+  });
+
+  it("preserves createLocationState call in whole-file stub (__rsc_ls_key)", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const result = plugin.transform.call(
+      clientCtx(),
+      MIXED_LOCATION_STATE,
+      FILE_ID,
+    );
+    expect(result).toBeDefined();
+    // LocationState call preserved with __rsc_ls_key
+    expect(result.code).toContain("createLocationState(");
+    expect(result.code).toContain("Flash.__rsc_ls_key");
+    // Loader and Prerender are stubs
+    expect(result.code).toContain('__brand: "loader"');
+    expect(result.code).toContain('__brand: "prerenderHandler"');
+    // Only @rangojs/router import
+    expect(result.code).toContain('from "@rangojs/router"');
   });
 
   it("replaces entire file with stubs in client env (loader + Static)", () => {
@@ -1259,22 +1320,6 @@ export const MyPage = Prerender(() => <div>page</div>);
     // Build mode uses hashed IDs
     expect(result.code).toMatch(/[0-9a-f]{8}#MyLoader/);
     expect(result.code).toMatch(/[0-9a-f]{8}#Nav/);
-  });
-
-  it("falls through when file has createLocationState (needs __rsc_ls_key)", () => {
-    const plugin = createPlugin();
-    initDev(plugin);
-
-    const code = `import { createLoader, createLocationState, Prerender } from "@rangojs/router";
-export const MyLoader = createLoader(async () => ({ ok: true }));
-export const Flash = createLocationState<{ text: string }>({ flash: true });
-export const MyPage = Prerender(() => <div>page</div>);
-`;
-    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
-    expect(result).toBeDefined();
-    // Should NOT be a whole-file stub — locationState needs __rsc_ls_key
-    // The unified pipeline handles it, so createLocationState call remains
-    expect(result.code).toContain("Flash.__rsc_ls_key");
   });
 
   it("preserves all export aliases in whole-file stubs", () => {

@@ -487,16 +487,13 @@ ${lazyImports.join(",\n")}
       // types that bring server-only code). Files with only loaders, handles,
       // or locationState are handled correctly by the unified pipeline below.
       //
-      // createLocationState and createHandle are excluded: locationState
-      // needs __rsc_ls_key and a callable interface, and createHandle()
-      // registers a collect function in a module-level registry that
-      // useHandle() needs on the client. A plain { __brand, $$id } stub
-      // loses both. If a mixed file includes these exports, isExportOnlyFile
-      // returns false and the file falls through to the unified pipeline.
+      // Loader, Prerender, and Static exports become plain { __brand, $$id }
+      // stubs. createHandle and createLocationState need their create*()
+      // functions to execute (collect registration / __rsc_ls_key), so their
+      // call expressions are preserved with only a @rangojs/router import.
+      // This strips all server-only imports while keeping the correct
+      // client contract for every export type.
       if (!isRscEnv && (hasPrerenderHandlerCode || hasStaticHandlerCode)) {
-        type StubBinding = CreateExportBinding & { brand: string };
-        const stubBindings: StubBinding[] = [];
-
         const prerenderFnNames = hasPrerenderHandlerCode
           ? getFnNames(PRERENDER_CONFIG.fnName)
           : [];
@@ -504,38 +501,83 @@ ${lazyImports.join(",\n")}
           ? getFnNames(STATIC_CONFIG.fnName)
           : [];
         const loaderFnNames = hasLoaderCode ? getFnNames("createLoader") : [];
+        const handleFnNames = hasHandleCode ? getFnNames("createHandle") : [];
+        const lsFnNames = hasLocationStateCode
+          ? getFnNames("createLocationState")
+          : [];
 
+        // Collect ALL recognized bindings to check export coverage
+        const allBindings: CreateExportBinding[] = [];
         for (const fnNames of [
           prerenderFnNames,
           staticFnNames,
           loaderFnNames,
+          handleFnNames,
+          lsFnNames,
         ]) {
-          if (fnNames.length === 0) continue;
-          for (const b of getBindings(code, fnNames)) {
-            const fnCall = code.slice(b.callExprStart, b.callOpenParenPos + 1);
-            let brand = "loader";
-            if (prerenderFnNames.some((n) => fnCall.includes(n))) {
-              brand = PRERENDER_CONFIG.brand;
-            } else if (staticFnNames.some((n) => fnCall.includes(n))) {
-              brand = STATIC_CONFIG.brand;
-            }
-            stubBindings.push({ ...b, brand });
+          if (fnNames.length > 0) {
+            allBindings.push(...getBindings(code, fnNames));
           }
         }
 
-        if (stubBindings.length > 0 && isExportOnlyFile(code, stubBindings)) {
-          const stubs: string[] = [];
-          for (const binding of stubBindings) {
-            for (const name of binding.exportNames) {
-              const stubId = isBuild
-                ? hashId(filePath, name)
-                : `${filePath}#${name}`;
-              stubs.push(
-                `export const ${name} = { __brand: "${binding.brand}", $$id: "${stubId}" };`,
+        if (allBindings.length > 0 && isExportOnlyFile(code, allBindings)) {
+          const lines: string[] = [];
+
+          // Determine which @rangojs/router imports are needed
+          const neededImports: string[] = [];
+          if (handleFnNames.length > 0) neededImports.push("createHandle");
+          if (lsFnNames.length > 0) neededImports.push("createLocationState");
+          if (neededImports.length > 0) {
+            lines.push(
+              `import { ${neededImports.join(", ")} } from "@rangojs/router";`,
+            );
+          }
+
+          for (const binding of allBindings) {
+            const fnCall = code.slice(
+              binding.callExprStart,
+              binding.callOpenParenPos + 1,
+            );
+            const isHandle = handleFnNames.some((n) => fnCall.includes(n));
+            const isLocationState = lsFnNames.some((n) => fnCall.includes(n));
+
+            if (isHandle || isLocationState) {
+              // Preserve the original call expression so create*() executes
+              const callExpr = code.slice(
+                binding.callExprStart,
+                binding.callCloseParenPos + 1,
               );
+              for (const name of binding.exportNames) {
+                const stubId = isBuild
+                  ? hashId(filePath, name)
+                  : `${filePath}#${name}`;
+                lines.push(`export const ${name} = ${callExpr};`);
+                if (isHandle) {
+                  lines.push(`${name}.$$id = "${stubId}";`);
+                } else {
+                  lines.push(`${name}.__rsc_ls_key = "__rsc_ls_${stubId}";`);
+                }
+              }
+            } else {
+              // Loader, Prerender, Static → plain stub
+              let brand = "loader";
+              if (prerenderFnNames.some((n) => fnCall.includes(n))) {
+                brand = PRERENDER_CONFIG.brand;
+              } else if (staticFnNames.some((n) => fnCall.includes(n))) {
+                brand = STATIC_CONFIG.brand;
+              }
+              for (const name of binding.exportNames) {
+                const stubId = isBuild
+                  ? hashId(filePath, name)
+                  : `${filePath}#${name}`;
+                lines.push(
+                  `export const ${name} = { __brand: "${brand}", $$id: "${stubId}" };`,
+                );
+              }
             }
           }
-          return { code: stubs.join("\n") + "\n", map: null };
+
+          return { code: lines.join("\n") + "\n", map: null };
         }
       }
 
