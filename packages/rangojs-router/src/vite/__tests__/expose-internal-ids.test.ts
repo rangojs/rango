@@ -1131,10 +1131,9 @@ export const Nav = Static(() => <nav />);
 `;
 
   // Mixed file with server-only imports (simulates commerce SDK with node:fs)
-  const MIXED_WITH_SERVER_IMPORTS = `import { createLoader, createHandle, Prerender } from "@rangojs/router";
+  const MIXED_WITH_SERVER_IMPORTS = `import { createLoader, Prerender } from "@rangojs/router";
 import { readFileSync } from "node:fs";
 export const MyLoader = createLoader(async () => ({ data: readFileSync("x") }));
-export const MyHandle = createHandle();
 export const MyPage = Prerender(() => <div>page</div>);
 `;
 
@@ -1145,7 +1144,25 @@ export const MyPage = Prerender(() => <div>page</div>);
 export const PAGE_TITLE = "docs";
 `;
 
-  it("replaces entire file with stubs in client env (loader + handle + Prerender)", () => {
+  it("replaces entire file with stubs in client env (loader + Prerender, no handle)", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    // loader + Prerender only (no handle/locationState) → whole-file stub
+    const code = `import { createLoader, Prerender } from "@rangojs/router";
+export const MyLoader = createLoader(async () => ({ ok: true }));
+export const MyPage = Prerender(() => <div>page</div>);
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('__brand: "loader"');
+    expect(result.code).toContain('__brand: "prerenderHandler"');
+    expect(result.code).not.toContain("createLoader(");
+    expect(result.code).not.toContain("Prerender(");
+    expect(result.code).not.toContain("import");
+  });
+
+  it("falls through when file has createHandle (needs collect registration)", () => {
     const plugin = createPlugin();
     initDev(plugin);
 
@@ -1155,15 +1172,11 @@ export const PAGE_TITLE = "docs";
       FILE_ID,
     );
     expect(result).toBeDefined();
-    // All exports are stubs with $$id
-    expect(result.code).toContain('__brand: "loader"');
-    expect(result.code).toContain('__brand: "handle"');
-    expect(result.code).toContain('__brand: "prerenderHandler"');
-    // No original code remains
-    expect(result.code).not.toContain("createLoader(");
-    expect(result.code).not.toContain("createHandle(");
-    expect(result.code).not.toContain("Prerender(");
-    expect(result.code).not.toContain("import");
+    // Should NOT be a whole-file stub — handle needs collect registration
+    // The unified pipeline handles it: handle $$id injected, Prerender stubbed
+    expect(result.code).toContain("MyHandle.$$id");
+    expect(result.code).toContain('"prerenderHandler"');
+    expect(result.code).toContain("MyLoader.$$id");
   });
 
   it("replaces entire file with stubs in client env (loader + Static)", () => {
@@ -1225,13 +1238,12 @@ export const PAGE_TITLE = "docs";
 
     const result = plugin.transform.call(
       clientCtx(),
-      MIXED_LOADER_PRERENDER,
+      MIXED_LOADER_STATIC,
       FILE_ID,
     );
     expect(result).toBeDefined();
     expect(result.code).toContain("src/urls.tsx#MyLoader");
-    expect(result.code).toContain("src/urls.tsx#MyHandle");
-    expect(result.code).toContain("src/urls.tsx#MyPage");
+    expect(result.code).toContain("src/urls.tsx#Nav");
   });
 
   it("each stub has hashed $$id in build mode", () => {
@@ -1240,14 +1252,13 @@ export const PAGE_TITLE = "docs";
 
     const result = plugin.transform.call(
       clientCtx(),
-      MIXED_LOADER_PRERENDER,
+      MIXED_LOADER_STATIC,
       FILE_ID,
     );
     expect(result).toBeDefined();
     // Build mode uses hashed IDs
     expect(result.code).toMatch(/[0-9a-f]{8}#MyLoader/);
-    expect(result.code).toMatch(/[0-9a-f]{8}#MyHandle/);
-    expect(result.code).toMatch(/[0-9a-f]{8}#MyPage/);
+    expect(result.code).toMatch(/[0-9a-f]{8}#Nav/);
   });
 
   it("falls through when file has createLocationState (needs __rsc_ls_key)", () => {

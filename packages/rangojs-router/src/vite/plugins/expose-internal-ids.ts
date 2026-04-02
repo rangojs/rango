@@ -487,11 +487,12 @@ ${lazyImports.join(",\n")}
       // types that bring server-only code). Files with only loaders, handles,
       // or locationState are handled correctly by the unified pipeline below.
       //
-      // createLocationState is excluded: its client contract requires
-      // __rsc_ls_key and a callable interface (for Link's state prop),
-      // which a plain { __brand, $$id } stub cannot provide. If a mixed
-      // file includes locationState exports, isExportOnlyFile will return
-      // false and the file falls through to the unified pipeline.
+      // createLocationState and createHandle are excluded: locationState
+      // needs __rsc_ls_key and a callable interface, and createHandle()
+      // registers a collect function in a module-level registry that
+      // useHandle() needs on the client. A plain { __brand, $$id } stub
+      // loses both. If a mixed file includes these exports, isExportOnlyFile
+      // returns false and the file falls through to the unified pipeline.
       if (!isRscEnv && (hasPrerenderHandlerCode || hasStaticHandlerCode)) {
         type StubBinding = CreateExportBinding & { brand: string };
         const stubBindings: StubBinding[] = [];
@@ -502,13 +503,11 @@ ${lazyImports.join(",\n")}
         const staticFnNames = hasStaticHandlerCode
           ? getFnNames(STATIC_CONFIG.fnName)
           : [];
-        const handleFnNames = hasHandleCode ? getFnNames("createHandle") : [];
         const loaderFnNames = hasLoaderCode ? getFnNames("createLoader") : [];
 
         for (const fnNames of [
           prerenderFnNames,
           staticFnNames,
-          handleFnNames,
           loaderFnNames,
         ]) {
           if (fnNames.length === 0) continue;
@@ -519,8 +518,6 @@ ${lazyImports.join(",\n")}
               brand = PRERENDER_CONFIG.brand;
             } else if (staticFnNames.some((n) => fnCall.includes(n))) {
               brand = STATIC_CONFIG.brand;
-            } else if (handleFnNames.some((n) => fnCall.includes(n))) {
-              brand = "handle";
             }
             stubBindings.push({ ...b, brand });
           }
