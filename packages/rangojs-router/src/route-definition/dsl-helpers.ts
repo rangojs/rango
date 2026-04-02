@@ -664,11 +664,15 @@ const loadingFn: RouteHelpers<any, any>["loading"] = (component, options) => {
     invariant(false, "No parent entry available for loading()");
   }
 
+  // Unwrap function form: loading(() => <Skeleton />) → loading(<Skeleton />)
+  const resolved =
+    typeof component === "function" ? (component as () => any)() : component;
+
   // If ssr: false and we're in SSR, set loading to false
   if (options?.ssr === false && ctx.isSSR) {
     parent.loading = false;
   } else {
-    parent.loading = component;
+    parent.loading = resolved;
   }
 
   const name = `$${store.getNextIndex("loading")}`;

@@ -72,6 +72,7 @@ import { SlowProductLocationState } from "./location-states.js";
 import { Modal } from "./components/Modal.js";
 import { QuantityControl } from "./components/QuantityControl.js";
 import { SlowModalSkeleton } from "./components/SlowModalSkeleton.js";
+import { LoadingFnSkeleton } from "./components/LoadingFnSkeleton.js";
 import {
   StreamingActionButton,
   StreamingActionStatus,
@@ -553,6 +554,47 @@ export const urlpatterns = urls(
 
       // handler.use composable defaults test patterns
       include("/handler-use", handlerUsePatterns, { name: "handlerUse" }),
+
+      // loading() function form tests
+      path(
+        "/loading-fn-test",
+        async () => {
+          await new Promise((r) => setTimeout(r, 200));
+          return <div data-testid="loading-fn-page">Loaded content</div>;
+        },
+        { name: "loadingFnTest" },
+        () => [
+          loading(() => (
+            <div data-testid="loading-fn-skeleton">Loading skeleton</div>
+          )),
+        ],
+      ),
+      path(
+        "/loading-fn-client-test",
+        async () => {
+          await new Promise((r) => setTimeout(r, 200));
+          return (
+            <div data-testid="loading-fn-client-page">
+              Loaded client content
+            </div>
+          );
+        },
+        { name: "loadingFnClientTest" },
+        () => [loading(() => <LoadingFnSkeleton />)],
+      ),
+      path(
+        "/loading-element-client-test",
+        async () => {
+          await new Promise((r) => setTimeout(r, 200));
+          return (
+            <div data-testid="loading-element-client-page">
+              Loaded element client content
+            </div>
+          );
+        },
+        { name: "loadingElementClientTest" },
+        () => [loading(<LoadingFnSkeleton />)],
+      ),
 
       // Skip test patterns (prerender + static skip/error handling)
       include("/build-skip", buildSkipPatterns, { name: "buildSkip" }),

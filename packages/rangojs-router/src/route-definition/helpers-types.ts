@@ -255,7 +255,10 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param options - Configuration options
    * @param options.ssr - If false, skip showing loading on document requests (SSR)
    */
-  loading: (component: ReactNode, options?: { ssr?: boolean }) => LoadingItem;
+  loading: (
+    component: ReactNode | (() => ReactNode),
+    options?: { ssr?: boolean },
+  ) => LoadingItem;
   /**
    * Attach an error boundary to catch errors in this segment and children
    * ```typescript
