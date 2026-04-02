@@ -319,18 +319,37 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
     const childBelongsToRoute = belongsToRoute || entry.type === "route";
     for (const layoutEntry of entry.layout) {
       await collectEntryLoaders(layoutEntry, childBelongsToRoute);
-      // Inherit route loaders for orphan layouts with parallels
+      // Inherit route loaders for orphan layouts with parallels.
+      // Resolve directly — do NOT re-enter collectEntryLoaders with the
+      // route entry, as that would re-iterate route.layout and loop.
       if (
         entry.type === "route" &&
         entry.loader &&
         entry.loader.length > 0 &&
         Object.keys(layoutEntry.parallel).length > 0
       ) {
-        await collectEntryLoaders(
+        const inherited = await resolveLoadersWithRevalidation(
           entry,
+          context,
           childBelongsToRoute,
+          clientSegmentIds,
+          prevParams,
+          request,
+          prevUrl,
+          nextUrl,
+          routeKey,
+          deps,
+          actionContext,
           layoutEntry.shortCode,
+          stale,
         );
+        for (const seg of inherited.segments) {
+          if (!seenIds.has(seg.id)) {
+            seenIds.add(seg.id);
+            allLoaderSegments.push(seg);
+          }
+        }
+        allMatchedIds.push(...inherited.matchedIds);
       }
     }
   }
