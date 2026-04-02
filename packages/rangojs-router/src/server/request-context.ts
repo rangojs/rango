@@ -798,16 +798,11 @@ export function createRequestContext<TEnv>(
     reverse: createReverseFunction(getGlobalRouteMap(), undefined, {}),
   };
 
-  // Create deferred render barrier. Phase 1: non-streaming only, so all handlers
-  // complete synchronously during resolveAllSegments. The barrier is a simple
-  // deferred promise resolved after segment resolution (or after handle replay
-  // on cache/prerender paths). No HandleStore sealing here — that stays in the
-  // existing lifecycle (rsc-rendering.ts, cache-scope.ts, etc.).
+  // Lazy render barrier: only allocate the Promise when a loader actually
+  // calls rendered(). Requests that don't use rendered() pay zero cost.
   let barrierResolved = false;
-  let resolveBarrier: () => void;
-  ctx._renderBarrier = new Promise<void>((resolve) => {
-    resolveBarrier = resolve;
-  });
+  let resolveBarrier: (() => void) | undefined;
+  ctx._renderBarrier = null as any; // lazy — created on first access
   ctx._resolveRenderBarrier = (
     segments: Array<{ type: string; id: string }>,
   ) => {
@@ -816,11 +811,27 @@ export function createRequestContext<TEnv>(
     ctx._renderBarrierSegmentOrder = segments
       .filter((s) => s.type !== "loader")
       .map((s) => s.id);
-    // Clear deadlock detection set — once the barrier resolves, the loaders
-    // waiting on it will settle and the deadlock window is closed.
     ctx._renderBarrierWaiters = undefined;
-    resolveBarrier();
+    if (resolveBarrier) resolveBarrier();
   };
+  Object.defineProperty(ctx, "_renderBarrier", {
+    get() {
+      // Already resolved before any loader asked — return settled promise
+      if (barrierResolved) return Promise.resolve();
+      // Lazy-create the deferred promise on first access
+      const p = new Promise<void>((resolve) => {
+        resolveBarrier = resolve;
+      });
+      // Replace the getter with the concrete promise for subsequent reads
+      Object.defineProperty(ctx, "_renderBarrier", {
+        value: p,
+        writable: false,
+        configurable: false,
+      });
+      return p;
+    },
+    configurable: true,
+  });
 
   // Now create use() with access to ctx
   ctx.use = createUseFunction({
