@@ -20,10 +20,11 @@ import type {
   ErrorInfo,
 } from "../types";
 import type { LoaderRevalidationResult, ActionContext } from "./types";
-import { isHandle, type Handle } from "../handle.js";
-import type { HandleStore } from "../server/handle-store.js";
+import { isHandle, collectHandleData, type Handle } from "../handle.js";
+import type { HandleStore, HandleData } from "../server/handle-store.js";
 import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import { _getRequestContext } from "../server/request-context.js";
+import { isInsideLoaderScope } from "../server/context.js";
 import { debugLog } from "./logging.js";
 
 /**
@@ -243,6 +244,15 @@ function createLoaderExecutor<TEnv>(
 
     const currentLoaderId = loader.$$id;
     const variables = (ctx as InternalHandlerContext<any, TEnv>)._variables;
+
+    // Capture whether this loader is being started from a DSL loader scope
+    // (runInsideLoaderScope in fresh.ts). Handler-invoked loaders are NOT
+    // inside loader scope. This determines whether rendered() is allowed.
+    const isDslLoader = isInsideLoaderScope();
+
+    let renderedResolved = false;
+    let renderedPromise: Promise<void> | null = null;
+
     // Loader functions are always fresh (never cached), so they get an
     // unguarded get that bypasses non-cacheable read guards. This applies
     // to ALL loaders — DSL and handler-called — because the loader
@@ -259,14 +269,74 @@ function createLoaderExecutor<TEnv>(
       env: ctx.env,
       get: ((keyOrVar: any) =>
         contextGet(variables, keyOrVar)) as typeof ctx.get,
-      use: <TDep, TDepParams = any>(
-        dep: LoaderDefinition<TDep, TDepParams>,
-      ): Promise<TDep> => {
-        return useLoader(dep, currentLoaderId);
-      },
+      use: ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
+        if (isHandle(item)) {
+          if (!renderedResolved) {
+            throw new Error(
+              `ctx.use(handle) in a loader requires "await ctx.rendered()" first. ` +
+                `Handle "${item.$$id}" cannot be read until the render tree has settled.`,
+            );
+          }
+          const reqCtx = reqCtxRef ?? _getRequestContext();
+          if (!reqCtx) {
+            throw new Error(
+              `ctx.use(handle) failed: request context not available.`,
+            );
+          }
+          const segmentOrder = reqCtx._renderBarrierSegmentOrder ?? [];
+          const snapshot = buildHandleSnapshot(
+            reqCtx._handleStore,
+            segmentOrder,
+          );
+          return collectHandleData(item, snapshot, segmentOrder);
+        }
+
+        // Loader case
+        return useLoader(item as LoaderDefinition<any, any>, currentLoaderId);
+      }) as LoaderContext["use"],
       method: "GET",
       body: undefined,
       reverse: ctx.reverse as LoaderContext["reverse"],
+      rendered: (): Promise<void> => {
+        // Guard: only DSL loaders may use rendered()
+        if (!isDslLoader) {
+          throw new Error(
+            `ctx.rendered() is only available in DSL loaders (registered via loader() in urls()). ` +
+              `Handler-invoked loaders (ctx.use(Loader) inside a handler) cannot use rendered().`,
+          );
+        }
+
+        // Guard: reject streaming trees
+        const reqCtx = reqCtxRef ?? _getRequestContext();
+        if (reqCtx?._treeHasStreaming) {
+          throw new Error(
+            `ctx.rendered() is not supported when the matched route tree uses loading(). ` +
+              `Streaming handlers may not have settled when rendered() resolves. ` +
+              `Remove loading() from the route tree or restructure to avoid rendered().`,
+          );
+        }
+
+        if (renderedPromise) return renderedPromise;
+
+        if (!reqCtx) {
+          throw new Error(
+            `ctx.rendered() failed: request context not available.`,
+          );
+        }
+
+        // Register this loader as waiting for the barrier so that
+        // setupLoaderAccess can detect deadlocks when a handler
+        // tries to await the same loader via ctx.use().
+        if (!reqCtx._renderBarrierWaiters) {
+          reqCtx._renderBarrierWaiters = new Set();
+        }
+        reqCtx._renderBarrierWaiters.add(currentLoaderId);
+
+        renderedPromise = reqCtx._renderBarrier.then(() => {
+          renderedResolved = true;
+        });
+        return renderedPromise;
+      },
     };
 
     const doneLoader = track(`loader:${loader.$$id}`, 2);
@@ -282,6 +352,25 @@ function createLoaderExecutor<TEnv>(
   }
 
   return useLoader;
+}
+
+/**
+ * Build a HandleData snapshot from the HandleStore using segment ordering.
+ * Reads data directly from the store for each segment in order.
+ */
+function buildHandleSnapshot(
+  handleStore: HandleStore,
+  segmentOrder: string[],
+): HandleData {
+  const data: HandleData = {};
+  for (const segmentId of segmentOrder) {
+    const segData = handleStore.getDataForSegment(segmentId);
+    for (const handleName in segData) {
+      if (!data[handleName]) data[handleName] = {};
+      data[handleName][segmentId] = segData[handleName];
+    }
+  }
+  return data;
 }
 
 /**
@@ -334,7 +423,23 @@ export function setupLoaderAccess<TEnv>(
       };
     }
 
-    return useLoader(item as LoaderDefinition<any, any>, null);
+    // Deadlock guard: if a HANDLER awaits a loader that called rendered(),
+    // the handler blocks segment resolution which blocks the barrier.
+    // Skip this check when inside a DSL loader scope (resolveLoaderData
+    // also calls ctx.use() but that's DSL-to-DSL, not handler-to-loader).
+    const loader = item as LoaderDefinition<any, any>;
+    if (loaderPromises.has(loader.$$id) && !isInsideLoaderScope()) {
+      const reqCtx = _getRequestContext();
+      if (reqCtx?._renderBarrierWaiters?.has(loader.$$id)) {
+        throw new Error(
+          `Deadlock: handler is awaiting loader "${loader.$$id}" which called ctx.rendered(). ` +
+            `The loader is waiting for segment resolution, but the handler blocks resolution. ` +
+            `Move the data dependency to a loader-to-loader pattern instead.`,
+        );
+      }
+    }
+
+    return useLoader(loader, null);
   }) as typeof ctx.use;
 }
 

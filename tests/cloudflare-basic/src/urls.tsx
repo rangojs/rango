@@ -59,6 +59,7 @@ import {
 import { CookieOverlayPage } from "./pages/cookie-overlay.js";
 import { buildEnvPatterns } from "./pages/build-env-handler.js";
 import { ActionLocationStatePage } from "./pages/action-location-state.js";
+import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
 
@@ -375,6 +376,11 @@ export const urlpatterns = urls(
         // Handler-first execution order test
         include("/handler-first", handlerFirstPatterns, {
           name: "handlerFirst",
+        }),
+
+        // Rendered barrier: loader reads handle data after ctx.rendered()
+        include("/rendered-barrier", renderedBarrierPatterns, {
+          name: "renderedBarrier",
         }),
 
         // Prerender manifest introspection for e2e tests

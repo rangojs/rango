@@ -699,6 +699,15 @@ export function isInsideCacheScope(): boolean {
 }
 
 /**
+ * Check if the current execution is inside a DSL loader scope
+ * (wrapped by runInsideLoaderScope). Used by rendered() barrier
+ * to distinguish DSL loaders from handler-invoked loaders.
+ */
+export function isInsideLoaderScope(): boolean {
+  return loaderScopeALS.getStore()?.active === true;
+}
+
+/**
  * Run `fn` inside a loader scope. While active, cache-scope guards
  * are bypassed because loaders are always fresh (never cached) and
  * their side effects (setCookie, header, etc.) are safe.
