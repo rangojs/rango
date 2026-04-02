@@ -319,6 +319,19 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
     const childBelongsToRoute = belongsToRoute || entry.type === "route";
     for (const layoutEntry of entry.layout) {
       await collectEntryLoaders(layoutEntry, childBelongsToRoute);
+      // Inherit route loaders for orphan layouts with parallels
+      if (
+        entry.type === "route" &&
+        entry.loader &&
+        entry.loader.length > 0 &&
+        Object.keys(layoutEntry.parallel).length > 0
+      ) {
+        await collectEntryLoaders(
+          entry,
+          childBelongsToRoute,
+          layoutEntry.shortCode,
+        );
+      }
     }
   }
 
@@ -840,6 +853,7 @@ export async function resolveSegmentWithRevalidation<TEnv>(
         deps,
         actionContext,
         stale,
+        entry,
       );
       segments.push(...orphanResult.segments);
       matchedIds.push(...orphanResult.matchedIds);
@@ -951,6 +965,8 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   deps: SegmentResolutionDeps<TEnv>,
   actionContext?: ActionContext,
   stale?: boolean,
+  /** Parent route entry — its loaders are inherited so parallel slots can access them. */
+  parentRouteEntry?: EntryData,
 ): Promise<SegmentRevalidationResult> {
   invariant(
     orphan.type === "layout" || orphan.type === "cache",
@@ -977,6 +993,33 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   );
   segments.push(...loaderResult.segments);
   matchedIds.push(...loaderResult.matchedIds);
+
+  // Inherit parent route's loaders so parallel slots inside this layout
+  // can access them via useLoader(). See resolveOrphanLayout in fresh.ts.
+  if (
+    parentRouteEntry &&
+    parentRouteEntry.loader &&
+    parentRouteEntry.loader.length > 0 &&
+    Object.keys(orphan.parallel).length > 0
+  ) {
+    const inheritedResult = await resolveLoadersWithRevalidation(
+      parentRouteEntry,
+      context,
+      belongsToRoute,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      deps,
+      actionContext,
+      orphan.shortCode,
+      stale,
+    );
+    segments.push(...inheritedResult.segments);
+    matchedIds.push(...inheritedResult.matchedIds);
+  }
 
   // Handler-first: resolve orphan layout handler before its parallels
   // so ctx.set() values are visible to parallel children.

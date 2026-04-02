@@ -284,7 +284,10 @@ export type PathHelpers<TEnv> = {
   /**
    * Attach a loading component to the current route/layout
    */
-  loading: (component: ReactNode, options?: { ssr?: boolean }) => LoadingItem;
+  loading: (
+    component: ReactNode | (() => ReactNode),
+    options?: { ssr?: boolean },
+  ) => LoadingItem;
 
   /**
    * Attach an error boundary to catch errors in this segment

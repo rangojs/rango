@@ -35,6 +35,7 @@ import { responseCachePatterns } from "./urls/response-cache.js";
 import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
 import { handlerFirstPatterns } from "./urls/handler-first.js";
 import { handlerUsePatterns } from "./urls/handler-use.js";
+import { parallelLoaderInheritPatterns } from "./urls/parallel-loader-inherit.js";
 import { buildSkipPatterns } from "./urls/prerender-build-skip.js";
 import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
@@ -73,6 +74,7 @@ import { SlowProductLocationState } from "./location-states.js";
 import { Modal } from "./components/Modal.js";
 import { QuantityControl } from "./components/QuantityControl.js";
 import { SlowModalSkeleton } from "./components/SlowModalSkeleton.js";
+import { LoadingFnSkeleton } from "./components/LoadingFnSkeleton.js";
 import {
   StreamingActionButton,
   StreamingActionStatus,
@@ -554,6 +556,50 @@ export const urlpatterns = urls(
 
       // handler.use composable defaults test patterns
       include("/handler-use", handlerUsePatterns, { name: "handlerUse" }),
+
+      // loading() function form tests
+      path(
+        "/loading-fn-test",
+        async () => {
+          await new Promise((r) => setTimeout(r, 200));
+          return <div data-testid="loading-fn-page">Loaded content</div>;
+        },
+        { name: "loadingFnTest" },
+        () => [
+          loading(() => (
+            <div data-testid="loading-fn-skeleton">Loading skeleton</div>
+          )),
+        ],
+      ),
+      path(
+        "/loading-fn-client-test",
+        async () => {
+          await new Promise((r) => setTimeout(r, 200));
+          return (
+            <div data-testid="loading-fn-client-page">
+              Loaded client content
+            </div>
+          );
+        },
+        { name: "loadingFnClientTest" },
+        () => [loading(() => <LoadingFnSkeleton />)],
+      ),
+      path(
+        "/loading-element-client-test",
+        async () => {
+          await new Promise((r) => setTimeout(r, 200));
+          return (
+            <div data-testid="loading-element-client-page">
+              Loaded element client content
+            </div>
+          );
+        },
+        { name: "loadingElementClientTest" },
+        () => [loading(<LoadingFnSkeleton />)],
+      ),
+
+      // parallel loader inheritance regression test
+      include("/", parallelLoaderInheritPatterns),
 
       // Skip test patterns (prerender + static skip/error handling)
       include("/build-skip", buildSkipPatterns, { name: "buildSkip" }),

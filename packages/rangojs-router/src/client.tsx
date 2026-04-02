@@ -13,7 +13,6 @@ import {
   type ClientErrorBoundaryFallbackProps,
   type ErrorInfo,
   type LoaderDefinition,
-  type LoaderFn,
   type ResolvedSegment,
 } from "./types";
 import {
@@ -314,57 +313,6 @@ export {
 } from "./use-loader.js";
 
 /**
- * Client-safe createLoader factory
- *
- * Creates a loader definition that can be used with useLoader().
- * This is the client-side version that only stores the $$id - the function
- * is ignored since loaders only execute on the server.
- *
- * The $$id is injected by the exposeLoaderId Vite plugin. In most cases,
- * you should import the loader directly from the server file rather than
- * creating a reference manually.
- *
- * @param fn - Loader function (ignored on client, kept for API compatibility)
- * @param _fetchable - Optional fetchable flag (ignored on client)
- * @param __injectedId - $$id injected by Vite plugin
- *
- * @example
- * ```tsx
- * "use client";
- * import { useLoader } from "rsc-router/client";
- * import { CartLoader } from "../loaders/cart"; // Import from server file
- *
- * export function CartIcon() {
- *   const cart = useLoader(CartLoader);
- *   return <span>Cart ({cart?.items.length ?? 0})</span>;
- * }
- * ```
- */
-// Overload 1: With function only (not fetchable)
-export function createLoader<T>(
-  fn: LoaderFn<T, Record<string, string | undefined>, any>,
-): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
-
-// Overload 2: With function and fetchable flag
-export function createLoader<T>(
-  fn: LoaderFn<T, Record<string, string | undefined>, any>,
-  fetchable: true,
-): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
-
-// Implementation - function is ignored at runtime on client
-// The $$id is injected by Vite plugin as hidden third parameter
-export function createLoader(
-  _fn: LoaderFn<any, Record<string, string | undefined>, any>,
-  _fetchable?: true,
-  __injectedId?: string,
-): LoaderDefinition<any, Record<string, string | undefined>> {
-  return {
-    __brand: "loader",
-    $$id: __injectedId || "",
-  };
-}
-
-/**
  * Props for the ErrorBoundary component
  */
 export interface ErrorBoundaryProps {
@@ -534,10 +482,8 @@ export {
   type ScrollRestorationProps,
 } from "./browser/react/ScrollRestoration.js";
 
-// Handle API - for accumulating data across route segments
-export { createHandle, isHandle, type Handle } from "./handle.js";
-
-// Handle data hook
+// Handle data hook (client-side only — createHandle/isHandle are server APIs from the root export)
+export { type Handle } from "./handle.js";
 export { useHandle } from "./browser/react/use-handle.js";
 
 // Built-in handles
