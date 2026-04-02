@@ -462,5 +462,33 @@ describe("rendered barrier", () => {
       mockInsideLoaderScope = false;
       expect(() => ctx.use(loader)).toThrow("Deadlock");
     });
+
+    it("does NOT throw when DSL resolves a rendered() loader from another segment", async () => {
+      mockInsideLoaderScope = true;
+      mockRequestContext = createMockRequestContext();
+      const ctx = createMockContext();
+      const loaderPromises = new Map<string, Promise<any>>();
+
+      const Products = createHandle<string>(undefined, "test#DedupProducts");
+
+      const loader = createLoader("dedupLoader", async (loaderCtx) => {
+        await loaderCtx.rendered();
+        return loaderCtx.use(Products);
+      });
+
+      setupLoaderAccess(ctx, loaderPromises);
+
+      // First DSL segment starts the loader — calls rendered(), registers waiter
+      const firstPromise = ctx.use(loader);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // Second DSL segment resolves the same loader (still inside loader scope)
+      // This should NOT throw — it's DSL-to-DSL memoization, not a handler deadlock
+      expect(() => ctx.use(loader)).not.toThrow();
+
+      // Both get the same memoized promise
+      const secondPromise = ctx.use(loader);
+      expect(firstPromise).toBe(secondPromise);
+    });
   });
 });

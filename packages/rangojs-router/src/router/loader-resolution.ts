@@ -423,11 +423,12 @@ export function setupLoaderAccess<TEnv>(
       };
     }
 
-    // Deadlock guard: if the loader has called rendered(), it is waiting
-    // for segment resolution to complete. A handler awaiting that loader
-    // blocks segment resolution, creating a deadlock.
+    // Deadlock guard: if a HANDLER awaits a loader that called rendered(),
+    // the handler blocks segment resolution which blocks the barrier.
+    // Skip this check when inside a DSL loader scope (resolveLoaderData
+    // also calls ctx.use() but that's DSL-to-DSL, not handler-to-loader).
     const loader = item as LoaderDefinition<any, any>;
-    if (loaderPromises.has(loader.$$id)) {
+    if (loaderPromises.has(loader.$$id) && !isInsideLoaderScope()) {
       const reqCtx = _getRequestContext();
       if (reqCtx?._renderBarrierWaiters?.has(loader.$$id)) {
         throw new Error(
