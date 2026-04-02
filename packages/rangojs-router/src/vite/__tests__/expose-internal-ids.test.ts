@@ -1130,7 +1130,22 @@ export const MyLoader = createLoader(async () => ({ ok: true }));
 export const Nav = Static(() => <nav />);
 `;
 
-  it("injects loader $$id in client env despite colocated Prerender", () => {
+  // Mixed file with server-only imports (simulates commerce SDK with node:fs)
+  const MIXED_WITH_SERVER_IMPORTS = `import { createLoader, createHandle, Prerender } from "@rangojs/router";
+import { readFileSync } from "node:fs";
+export const MyLoader = createLoader(async () => ({ data: readFileSync("x") }));
+export const MyHandle = createHandle();
+export const MyPage = Prerender(() => <div>page</div>);
+`;
+
+  // Mixed file with non-recognized export (helper function)
+  const MIXED_WITH_HELPER = `import { createLoader, Prerender } from "@rangojs/router";
+export const MyLoader = createLoader(async () => ({ ok: true }));
+export const MyPage = Prerender(() => <div>page</div>);
+export const PAGE_TITLE = "docs";
+`;
+
+  it("replaces entire file with stubs in client env (loader + handle + Prerender)", () => {
     const plugin = createPlugin();
     initDev(plugin);
 
@@ -1140,38 +1155,18 @@ export const Nav = Static(() => <nav />);
       FILE_ID,
     );
     expect(result).toBeDefined();
-    expect(result.code).toContain("MyLoader.$$id");
-  });
-
-  it("injects handle $$id in client env despite colocated Prerender", () => {
-    const plugin = createPlugin();
-    initDev(plugin);
-
-    const result = plugin.transform.call(
-      clientCtx(),
-      MIXED_LOADER_PRERENDER,
-      FILE_ID,
-    );
-    expect(result).toBeDefined();
-    expect(result.code).toContain("MyHandle.$$id");
-  });
-
-  it("stubs Prerender call in client env for mixed file", () => {
-    const plugin = createPlugin();
-    initDev(plugin);
-
-    const result = plugin.transform.call(
-      clientCtx(),
-      MIXED_LOADER_PRERENDER,
-      FILE_ID,
-    );
-    expect(result).toBeDefined();
-    // Prerender call replaced with stub object
-    expect(result.code).toContain('"prerenderHandler"');
+    // All exports are stubs with $$id
+    expect(result.code).toContain('__brand: "loader"');
+    expect(result.code).toContain('__brand: "handle"');
+    expect(result.code).toContain('__brand: "prerenderHandler"');
+    // No original code remains
+    expect(result.code).not.toContain("createLoader(");
+    expect(result.code).not.toContain("createHandle(");
     expect(result.code).not.toContain("Prerender(");
+    expect(result.code).not.toContain("import");
   });
 
-  it("injects loader $$id in client env despite colocated Static", () => {
+  it("replaces entire file with stubs in client env (loader + Static)", () => {
     const plugin = createPlugin();
     initDev(plugin);
 
@@ -1181,24 +1176,50 @@ export const Nav = Static(() => <nav />);
       FILE_ID,
     );
     expect(result).toBeDefined();
+    expect(result.code).toContain('__brand: "loader"');
+    expect(result.code).toContain('__brand: "staticHandler"');
+    expect(result.code).not.toContain("createLoader(");
+    expect(result.code).not.toContain("Static(");
+    expect(result.code).not.toContain("import");
+  });
+
+  it("strips server-only imports (node:fs) from mixed file stubs", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const result = plugin.transform.call(
+      clientCtx(),
+      MIXED_WITH_SERVER_IMPORTS,
+      FILE_ID,
+    );
+    expect(result).toBeDefined();
+    // Server-only imports must not appear in the stub output
+    expect(result.code).not.toContain("node:fs");
+    expect(result.code).not.toContain("readFileSync");
+    // Stubs are present
+    expect(result.code).toContain('__brand: "loader"');
+    expect(result.code).toContain('__brand: "prerenderHandler"');
+  });
+
+  it("falls through to unified pipeline when file has non-recognized exports", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const result = plugin.transform.call(
+      clientCtx(),
+      MIXED_WITH_HELPER,
+      FILE_ID,
+    );
+    expect(result).toBeDefined();
+    // Non-recognized export preserved (not a whole-file stub)
+    expect(result.code).toContain("PAGE_TITLE");
+    // Prerender still gets stubbed via unified pipeline
+    expect(result.code).toContain('"prerenderHandler"');
+    // Loader still gets $$id via unified pipeline
     expect(result.code).toContain("MyLoader.$$id");
   });
 
-  it("stubs Static call in client env for mixed file", () => {
-    const plugin = createPlugin();
-    initDev(plugin);
-
-    const result = plugin.transform.call(
-      clientCtx(),
-      MIXED_LOADER_STATIC,
-      FILE_ID,
-    );
-    expect(result).toBeDefined();
-    expect(result.code).toContain('"staticHandler"');
-    expect(result.code).not.toContain("Static(");
-  });
-
-  it("returns sourcemap with segment-level detail for mixed Prerender file", () => {
+  it("each stub has correct $$id in dev mode", () => {
     const plugin = createPlugin();
     initDev(plugin);
 
@@ -1208,48 +1229,25 @@ export const Nav = Static(() => <nav />);
       FILE_ID,
     );
     expect(result).toBeDefined();
-    expect(result.map).toBeDefined();
-    expect(result.map.sources).toContain(FILE_ID);
-
-    // The mapping line for the stubbed Prerender export must have multiple
-    // segments (commas). A degraded line-only map would have at most one
-    // segment per line, which is what we want to guard against.
-    const outputLines = result.code.split("\n");
-    const stubLineIdx = outputLines.findIndex((l: string) =>
-      l.includes('"prerenderHandler"'),
-    );
-    expect(stubLineIdx).toBeGreaterThanOrEqual(0);
-
-    // mappings is semicolon-delimited (one entry per output line)
-    const mappingLines = result.map.mappings.split(";");
-    const stubMapping = mappingLines[stubLineIdx];
-    // A proper boundary-level map puts segments at each overwrite edge,
-    // producing at least one comma (two segments) on the stub line.
-    expect(stubMapping).toContain(",");
+    expect(result.code).toContain("src/urls.tsx#MyLoader");
+    expect(result.code).toContain("src/urls.tsx#MyHandle");
+    expect(result.code).toContain("src/urls.tsx#MyPage");
   });
 
-  it("returns sourcemap with segment-level detail for mixed Static file", () => {
-    const plugin = createPlugin();
+  it("each stub has hashed $$id in build mode", () => {
+    const plugin = createPlugin({ forceBuild: true });
     initDev(plugin);
 
     const result = plugin.transform.call(
       clientCtx(),
-      MIXED_LOADER_STATIC,
+      MIXED_LOADER_PRERENDER,
       FILE_ID,
     );
     expect(result).toBeDefined();
-    expect(result.map).toBeDefined();
-    expect(result.map.sources).toContain(FILE_ID);
-
-    const outputLines = result.code.split("\n");
-    const stubLineIdx = outputLines.findIndex((l: string) =>
-      l.includes('"staticHandler"'),
-    );
-    expect(stubLineIdx).toBeGreaterThanOrEqual(0);
-
-    const mappingLines = result.map.mappings.split(";");
-    const stubMapping = mappingLines[stubLineIdx];
-    expect(stubMapping).toContain(",");
+    // Build mode uses hashed IDs
+    expect(result.code).toMatch(/[0-9a-f]{8}#MyLoader/);
+    expect(result.code).toMatch(/[0-9a-f]{8}#MyHandle/);
+    expect(result.code).toMatch(/[0-9a-f]{8}#MyPage/);
   });
 
   it("all transforms work together in RSC env for mixed file", () => {

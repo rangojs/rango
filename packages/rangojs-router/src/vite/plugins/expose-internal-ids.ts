@@ -23,6 +23,7 @@ import {
   getImportedFnNames,
   collectCreateExportBindings,
   buildUnsupportedShapeWarning,
+  isExportOnlyFile,
 } from "./expose-ids/export-analysis.js";
 import {
   hasCreateLoaderImport,
@@ -462,7 +463,6 @@ ${lazyImports.join(",\n")}
 
       // --- StaticHandler: non-RSC whole-file stub replacement ---
       // When ALL exports are Static() calls, replace the entire file.
-      // Mixed-export files are handled in the unified pipeline below.
       if (hasStaticHandlerCode && !isRscEnv) {
         const fnNames = getFnNames(STATIC_CONFIG.fnName);
         const bindings = getBindings(code, fnNames);
@@ -474,6 +474,83 @@ ${lazyImports.join(",\n")}
           isBuild,
         );
         if (wholeFile) return wholeFile;
+      }
+
+      // --- Mixed-type whole-file stub replacement (non-RSC) ---
+      // When the individual whole-file checks above fail (each only checks
+      // one type), the file has mixed exports (e.g. createLoader + Prerender).
+      // Gather ALL recognized bindings and check if they cover every export.
+      // If yes, replace the entire file with stubs — this strips server-only
+      // imports (node:fs, DB clients, etc.) that would crash in the browser.
+      //
+      // Only applies when the file contains Prerender/Static (the handler
+      // types that bring server-only code). Files with only loaders, handles,
+      // or locationState are handled correctly by the unified pipeline below.
+      if (!isRscEnv && (hasPrerenderHandlerCode || hasStaticHandlerCode)) {
+        const allBindings: CreateExportBinding[] = [];
+        if (hasLoaderCode) {
+          allBindings.push(...getBindings(code, getFnNames("createLoader")));
+        }
+        if (hasHandleCode) {
+          allBindings.push(...getBindings(code, getFnNames("createHandle")));
+        }
+        if (hasLocationStateCode) {
+          allBindings.push(
+            ...getBindings(code, getFnNames("createLocationState")),
+          );
+        }
+        if (hasPrerenderHandlerCode) {
+          allBindings.push(
+            ...getBindings(code, getFnNames(PRERENDER_CONFIG.fnName)),
+          );
+        }
+        if (hasStaticHandlerCode) {
+          allBindings.push(
+            ...getBindings(code, getFnNames(STATIC_CONFIG.fnName)),
+          );
+        }
+        if (allBindings.length > 0 && isExportOnlyFile(code, allBindings)) {
+          const stubs: string[] = [];
+          for (const binding of allBindings) {
+            const name = binding.exportNames[0];
+            const stubId = isBuild
+              ? hashId(filePath, name)
+              : `${filePath}#${name}`;
+            // Determine brand from which type this binding belongs to
+            const fnCall = code.slice(
+              binding.callExprStart,
+              binding.callOpenParenPos + 1,
+            );
+            let brand = "loader";
+            if (
+              hasPrerenderHandlerCode &&
+              getFnNames(PRERENDER_CONFIG.fnName).some((n) =>
+                fnCall.includes(n),
+              )
+            ) {
+              brand = PRERENDER_CONFIG.brand;
+            } else if (
+              hasStaticHandlerCode &&
+              getFnNames(STATIC_CONFIG.fnName).some((n) => fnCall.includes(n))
+            ) {
+              brand = STATIC_CONFIG.brand;
+            } else if (
+              hasHandleCode &&
+              getFnNames("createHandle").some((n) => fnCall.includes(n))
+            ) {
+              brand = "handle";
+            } else if (
+              hasLocationStateCode &&
+              getFnNames("createLocationState").some((n) => fnCall.includes(n))
+            ) {
+              brand = "locationState";
+            }
+            stubs.push(
+              `export const ${name} = { __brand: "${brand}", $$id: "${stubId}" };`,
+            );
+          }
+          return { code: stubs.join("\n") + "\n", map: null };
+        }
       }
 
       // --- StaticHandler: RSC build module tracking ---
