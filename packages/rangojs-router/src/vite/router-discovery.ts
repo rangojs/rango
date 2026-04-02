@@ -480,9 +480,31 @@ export function createRouterDiscoveryPlugin(
           return;
         }
 
-        // Prefer the main server's registry (Node.js preset: module runner available).
-        // Fall back to a temp server for Cloudflare where the main RSC env uses workerd.
-        let registry = mainRegistry;
+        // Import the user's entry module to force re-evaluation of any
+        // HMR-invalidated modules in the chain (entry → router → urls → handlers).
+        // This ensures createRouter() re-runs with updated handler code before
+        // we read RouterRegistry. Without this, edits to prerender handler files
+        // produce stale content because the old router instance remains registered.
+        const rscEnv = (server.environments as any)?.rsc;
+        let registry: Map<string, any> | null = null;
+        if (rscEnv?.runner && s.resolvedEntryPath) {
+          try {
+            await rscEnv.runner.import(s.resolvedEntryPath);
+            const serverMod = await rscEnv.runner.import(
+              "@rangojs/router/server",
+            );
+            registry = serverMod.RouterRegistry ?? null;
+          } catch (err: any) {
+            console.warn(
+              `[rsc-router] Dev prerender module refresh failed: ${err.message}`,
+            );
+            res.statusCode = 500;
+            res.end(`Prerender handler error: ${err.message}`);
+            return;
+          }
+        } else {
+          registry = mainRegistry;
+        }
 
         if (!registry) {
           // No main registry: the RSC env has no module runner (Cloudflare dev).
