@@ -705,3 +705,11 @@ export const MwChainInterceptLoader = createLoader(
   },
   true, // fetchable
 );
+
+// ============================================================================
+// Parallel loader inheritance test
+// ============================================================================
+
+export const ParallelInheritLoader = createLoader(async () => {
+  return { source: "route-level", value: "inherited-data" };
+});
