@@ -1111,3 +1111,163 @@ export const cartLoader = createLoader(() => fetch("/api/cart"));
     expect(buildId).toMatch(/^[0-9a-f]{8}#cartLoader$/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Mixed handler files: colocated createLoader/createHandle + Prerender/Static
+// ---------------------------------------------------------------------------
+
+describe("exposeInternalIds - mixed handler files (non-RSC)", () => {
+  // Source with createLoader + createHandle + Prerender in the same file
+  const MIXED_LOADER_PRERENDER = `import { createLoader, createHandle, Prerender } from "@rangojs/router";
+export const MyLoader = createLoader(async () => ({ ok: true }));
+export const MyHandle = createHandle();
+export const MyPage = Prerender(() => <div>page</div>);
+`;
+
+  // Source with createLoader + Static in the same file
+  const MIXED_LOADER_STATIC = `import { createLoader, Static } from "@rangojs/router";
+export const MyLoader = createLoader(async () => ({ ok: true }));
+export const Nav = Static(() => <nav />);
+`;
+
+  it("injects loader $$id in client env despite colocated Prerender", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const result = plugin.transform.call(
+      clientCtx(),
+      MIXED_LOADER_PRERENDER,
+      FILE_ID,
+    );
+    expect(result).toBeDefined();
+    expect(result.code).toContain("MyLoader.$$id");
+  });
+
+  it("injects handle $$id in client env despite colocated Prerender", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const result = plugin.transform.call(
+      clientCtx(),
+      MIXED_LOADER_PRERENDER,
+      FILE_ID,
+    );
+    expect(result).toBeDefined();
+    expect(result.code).toContain("MyHandle.$$id");
+  });
+
+  it("stubs Prerender call in client env for mixed file", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const result = plugin.transform.call(
+      clientCtx(),
+      MIXED_LOADER_PRERENDER,
+      FILE_ID,
+    );
+    expect(result).toBeDefined();
+    // Prerender call replaced with stub object
+    expect(result.code).toContain('"prerenderHandler"');
+    expect(result.code).not.toContain("Prerender(");
+  });
+
+  it("injects loader $$id in client env despite colocated Static", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const result = plugin.transform.call(
+      clientCtx(),
+      MIXED_LOADER_STATIC,
+      FILE_ID,
+    );
+    expect(result).toBeDefined();
+    expect(result.code).toContain("MyLoader.$$id");
+  });
+
+  it("stubs Static call in client env for mixed file", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const result = plugin.transform.call(
+      clientCtx(),
+      MIXED_LOADER_STATIC,
+      FILE_ID,
+    );
+    expect(result).toBeDefined();
+    expect(result.code).toContain('"staticHandler"');
+    expect(result.code).not.toContain("Static(");
+  });
+
+  it("returns sourcemap with segment-level detail for mixed Prerender file", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const result = plugin.transform.call(
+      clientCtx(),
+      MIXED_LOADER_PRERENDER,
+      FILE_ID,
+    );
+    expect(result).toBeDefined();
+    expect(result.map).toBeDefined();
+    expect(result.map.sources).toContain(FILE_ID);
+
+    // The mapping line for the stubbed Prerender export must have multiple
+    // segments (commas). A degraded line-only map would have at most one
+    // segment per line, which is what we want to guard against.
+    const outputLines = result.code.split("\n");
+    const stubLineIdx = outputLines.findIndex((l: string) =>
+      l.includes('"prerenderHandler"'),
+    );
+    expect(stubLineIdx).toBeGreaterThanOrEqual(0);
+
+    // mappings is semicolon-delimited (one entry per output line)
+    const mappingLines = result.map.mappings.split(";");
+    const stubMapping = mappingLines[stubLineIdx];
+    // A proper boundary-level map puts segments at each overwrite edge,
+    // producing at least one comma (two segments) on the stub line.
+    expect(stubMapping).toContain(",");
+  });
+
+  it("returns sourcemap with segment-level detail for mixed Static file", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const result = plugin.transform.call(
+      clientCtx(),
+      MIXED_LOADER_STATIC,
+      FILE_ID,
+    );
+    expect(result).toBeDefined();
+    expect(result.map).toBeDefined();
+    expect(result.map.sources).toContain(FILE_ID);
+
+    const outputLines = result.code.split("\n");
+    const stubLineIdx = outputLines.findIndex((l: string) =>
+      l.includes('"staticHandler"'),
+    );
+    expect(stubLineIdx).toBeGreaterThanOrEqual(0);
+
+    const mappingLines = result.map.mappings.split(";");
+    const stubMapping = mappingLines[stubLineIdx];
+    expect(stubMapping).toContain(",");
+  });
+
+  it("all transforms work together in RSC env for mixed file", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const result = plugin.transform.call(
+      rscCtx(),
+      MIXED_LOADER_PRERENDER,
+      FILE_ID,
+    );
+    expect(result).toBeDefined();
+    // RSC: loader gets $$id
+    expect(result.code).toContain("MyLoader.$$id");
+    // RSC: handle gets $$id
+    expect(result.code).toContain("MyHandle.$$id");
+    // RSC: Prerender gets $$id (not stubbed)
+    expect(result.code).toContain("MyPage.$$id");
+    expect(result.code).toContain("Prerender(");
+  });
+});

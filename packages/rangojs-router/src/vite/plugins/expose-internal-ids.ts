@@ -34,6 +34,7 @@ import {
   transformLocationState,
   generateWholeFileStubs,
   generateExprStubs,
+  stubHandlerExprs,
   transformHandlerIds,
 } from "./expose-ids/handler-transform.js";
 
@@ -385,7 +386,9 @@ ${lazyImports.join(",\n")}
         if (stubResult) return stubResult;
       }
 
-      // --- PrerenderHandler: non-RSC stub replacement ---
+      // --- PrerenderHandler: non-RSC whole-file stub replacement ---
+      // When ALL exports are Prerender() calls, replace the entire file.
+      // Mixed-export files are handled in the unified pipeline below.
       if (hasPrerenderHandlerCode && !isRscEnv) {
         const fnNames = getFnNames(PRERENDER_CONFIG.fnName);
         const bindings = getBindings(code, fnNames);
@@ -397,16 +400,6 @@ ${lazyImports.join(",\n")}
           isBuild,
         );
         if (wholeFile) return wholeFile;
-
-        const exprStubs = generateExprStubs(
-          PRERENDER_CONFIG,
-          bindings,
-          code,
-          filePath,
-          id,
-          isBuild,
-        );
-        if (exprStubs) return exprStubs;
       }
 
       // --- PrerenderHandler: RSC build module tracking ---
@@ -467,7 +460,9 @@ ${lazyImports.join(",\n")}
         }
       }
 
-      // --- StaticHandler: non-RSC stub replacement ---
+      // --- StaticHandler: non-RSC whole-file stub replacement ---
+      // When ALL exports are Static() calls, replace the entire file.
+      // Mixed-export files are handled in the unified pipeline below.
       if (hasStaticHandlerCode && !isRscEnv) {
         const fnNames = getFnNames(STATIC_CONFIG.fnName);
         const bindings = getBindings(code, fnNames);
@@ -479,16 +474,6 @@ ${lazyImports.join(",\n")}
           isBuild,
         );
         if (wholeFile) return wholeFile;
-
-        const exprStubs = generateExprStubs(
-          STATIC_CONFIG,
-          bindings,
-          code,
-          filePath,
-          id,
-          isBuild,
-        );
-        if (exprStubs) return exprStubs;
       }
 
       // --- StaticHandler: RSC build module tracking ---
@@ -535,27 +520,48 @@ ${lazyImports.join(",\n")}
             isBuild,
           ) || changed;
       }
-      if (hasPrerenderHandlerCode && isRscEnv) {
+      if (hasPrerenderHandlerCode) {
         const fnNames = getFnNames(PRERENDER_CONFIG.fnName);
-        changed =
-          transformHandlerIds(
-            PRERENDER_CONFIG,
-            getBindings(code, fnNames),
-            s,
-            filePath,
-            isBuild,
-          ) || changed;
+        const bindings = getBindings(code, fnNames);
+        if (isRscEnv) {
+          changed =
+            transformHandlerIds(
+              PRERENDER_CONFIG,
+              bindings,
+              s,
+              filePath,
+              isBuild,
+            ) || changed;
+        } else {
+          // Non-RSC mixed-export file: replace Prerender() calls with stubs
+          // on the shared MagicString so sourcemaps stay accurate.
+          changed =
+            stubHandlerExprs(
+              PRERENDER_CONFIG,
+              bindings,
+              s,
+              filePath,
+              isBuild,
+            ) || changed;
+        }
       }
-      if (hasStaticHandlerCode && isRscEnv) {
+      if (hasStaticHandlerCode) {
         const fnNames = getFnNames(STATIC_CONFIG.fnName);
-        changed =
-          transformHandlerIds(
-            STATIC_CONFIG,
-            getBindings(code, fnNames),
-            s,
-            filePath,
-            isBuild,
-          ) || changed;
+        const bindings = getBindings(code, fnNames);
+        if (isRscEnv) {
+          changed =
+            transformHandlerIds(
+              STATIC_CONFIG,
+              bindings,
+              s,
+              filePath,
+              isBuild,
+            ) || changed;
+        } else {
+          changed =
+            stubHandlerExprs(STATIC_CONFIG, bindings, s, filePath, isBuild) ||
+            changed;
+        }
       }
 
       if (!changed) return;

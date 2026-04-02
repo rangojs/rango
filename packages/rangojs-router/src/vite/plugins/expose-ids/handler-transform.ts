@@ -139,6 +139,36 @@ export function generateExprStubs(
 }
 
 /**
+ * Replace handler call expressions with lightweight stub objects on an
+ * existing MagicString. Unlike generateExprStubs (which creates its own
+ * MagicString and returns the full result), this integrates into the
+ * unified transform pipeline so all transforms share one sourcemap.
+ */
+export function stubHandlerExprs(
+  cfg: HandlerTransformConfig,
+  bindings: CreateExportBinding[],
+  s: MagicString,
+  filePath: string,
+  isBuild: boolean,
+): boolean {
+  let hasChanges = false;
+  for (const binding of bindings) {
+    const exportName = binding.exportNames[0];
+    const handlerId = isBuild
+      ? hashId(filePath, exportName)
+      : `${filePath}#${exportName}`;
+
+    s.overwrite(
+      binding.callExprStart,
+      binding.callCloseParenPos + 1,
+      `{ __brand: "${cfg.brand}", $$id: "${handlerId}" }`,
+    );
+    hasChanges = true;
+  }
+  return hasChanges;
+}
+
+/**
  * Inject $$id into export const handler calls in RSC environments.
  */
 export function transformHandlerIds(

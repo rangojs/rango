@@ -62,6 +62,7 @@ import { contextDedupPatterns } from "./urls/context-dedup.js";
 import { parallelMetaPatterns } from "./urls/parallel-meta.js";
 import { renderedBarrierPatterns } from "./urls/rendered-barrier.js";
 import { cacheScopeGuardPatterns } from "./urls/cache-scope-guard.js";
+import { colocatedLoaderPrerenderPatterns } from "./urls/colocated-loader-prerender.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -1029,6 +1030,11 @@ export const urlpatterns = urls(
       // rendered() barrier tests (loader reads handle data after handlers settle)
       include("/rendered-barrier", renderedBarrierPatterns, {
         name: "renderedBarrier",
+      }),
+
+      // Colocated loader + handle + prerender in same file (client import test)
+      include("/colocated-lp", colocatedLoaderPrerenderPatterns, {
+        name: "colocatedLp",
       }),
 
       ...(import.meta.env.DEV
