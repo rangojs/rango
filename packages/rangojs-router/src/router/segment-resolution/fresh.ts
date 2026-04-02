@@ -327,6 +327,7 @@ export async function resolveSegment<TEnv>(
         deps,
         options,
         routeKey,
+        entry,
       );
       segments.push(...orphanSegments);
     }
@@ -382,6 +383,9 @@ export async function resolveOrphanLayout<TEnv>(
   deps: SegmentResolutionDeps<TEnv>,
   options?: ResolveSegmentOptions,
   routeKey?: string,
+  /** Parent route entry — its loaders are inherited by the layout so
+   *  parallel slots inside this layout can access them via useLoader(). */
+  parentRouteEntry?: EntryData,
 ): Promise<ResolvedSegment[]> {
   invariant(
     orphan.type === "layout" || orphan.type === "cache",
@@ -397,6 +401,26 @@ export async function resolveOrphanLayout<TEnv>(
       deps,
     );
     segments.push(...loaderSegments);
+
+    // Inherit parent route's loaders so parallel slots inside this layout
+    // can access them via useLoader(). Without this, the route's loaders
+    // are only in the route's OutletProvider (rendered as <Outlet /> content),
+    // which is a child — not a parent — of the layout's context.
+    if (
+      parentRouteEntry &&
+      parentRouteEntry.loader &&
+      parentRouteEntry.loader.length > 0 &&
+      Object.keys(orphan.parallel).length > 0
+    ) {
+      const inheritedLoaders = await resolveLoaders(
+        parentRouteEntry,
+        context,
+        belongsToRoute,
+        deps,
+        orphan.shortCode,
+      );
+      segments.push(...inheritedLoaders);
+    }
   }
 
   // Handler-first: orphan layout handler executes before its parallels
@@ -685,6 +709,19 @@ export async function resolveLoadersOnly<TEnv>(
     const childBelongsToRoute = belongsToRoute || entry.type === "route";
     for (const layoutEntry of entry.layout) {
       await collectEntryLoaders(layoutEntry, childBelongsToRoute);
+      // Inherit route loaders for orphan layouts with parallels
+      if (
+        entry.type === "route" &&
+        entry.loader &&
+        entry.loader.length > 0 &&
+        Object.keys(layoutEntry.parallel).length > 0
+      ) {
+        await collectEntryLoaders(
+          entry,
+          childBelongsToRoute,
+          layoutEntry.shortCode,
+        );
+      }
     }
   }
 
