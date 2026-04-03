@@ -2,6 +2,7 @@
 
 import {
   isValidElement,
+  startTransition,
   useCallback,
   useContext,
   useEffect,
@@ -284,7 +285,9 @@ function useLoaderInternal<T>(
 
         const result = payload.loaderResult;
         if (requestId === requestIdRef.current) {
-          setFetchedData(result);
+          startTransition(() => {
+            setFetchedData(result);
+          });
         }
         return result;
       } catch (e) {
