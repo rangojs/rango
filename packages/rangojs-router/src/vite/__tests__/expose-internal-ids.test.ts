@@ -1396,6 +1396,24 @@ export const MyPage = Prerender(() => <div>page</div>);
     expect(result.code).toContain('"prerenderHandler"');
   });
 
+  it("bails out of whole-file stub when preserved call references an imported helper", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createHandle, createLoader, Prerender } from "@rangojs/router";
+import { dedupe } from "./helpers";
+export const MyHandle = createHandle((segments) => dedupe(segments));
+export const MyLoader = createLoader(async () => ({ ok: true }));
+export const MyPage = Prerender(() => <div>page</div>);
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    // Falls through — imported `dedupe` preserved
+    expect(result.code).toContain("dedupe");
+    expect(result.code).toContain("MyHandle.$$id");
+    expect(result.code).toContain('"prerenderHandler"');
+  });
+
   it("whole-file stubs when preserved calls are self-contained (no local refs)", () => {
     const plugin = createPlugin();
     initDev(plugin);

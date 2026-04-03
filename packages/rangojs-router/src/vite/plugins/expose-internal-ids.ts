@@ -532,17 +532,40 @@ ${lazyImports.join(",\n")}
           (handleFnNames.length > 0 || lsFnNames.length > 0)
         ) {
           const exportedLocals = new Set(allBindings.map((b) => b.localName));
+          // Collect all bindings that would be stripped: local declarations
+          // AND imported bindings (except @rangojs/router which we re-import).
+          const strippedBindings: string[] = [];
+
+          // Local declarations: const/let/var/function
           const localDeclPattern =
             /(?:^|;|\n)\s*(?:const|let|var|function)\s+(\w+)/g;
-          const nonExportedLocals: string[] = [];
           let declMatch: RegExpExecArray | null;
           while ((declMatch = localDeclPattern.exec(code)) !== null) {
             if (!exportedLocals.has(declMatch[1])) {
-              nonExportedLocals.push(declMatch[1]);
+              strippedBindings.push(declMatch[1]);
             }
           }
 
-          if (nonExportedLocals.length > 0) {
+          // Imported bindings from non-@rangojs/router modules
+          const importPattern =
+            /import\s*\{([^}]*)\}\s*from\s*["'](?!@rangojs\/router)[^"']*["']/g;
+          let importMatch: RegExpExecArray | null;
+          while ((importMatch = importPattern.exec(code)) !== null) {
+            for (const spec of importMatch[1].split(",")) {
+              const m = spec
+                .trim()
+                .match(/^[A-Za-z_$][\w$]*(?:\s+as\s+([A-Za-z_$][\w$]*))?$/);
+              if (m) strippedBindings.push(m[1] || m[0].trim().split(/\s/)[0]);
+            }
+          }
+          // Default imports from non-@rangojs/router modules
+          const defaultImportPattern =
+            /import\s+([A-Za-z_$][\w$]*)\s+from\s*["'](?!@rangojs\/router)[^"']*["']/g;
+          while ((importMatch = defaultImportPattern.exec(code)) !== null) {
+            strippedBindings.push(importMatch[1]);
+          }
+
+          if (strippedBindings.length > 0) {
             const preservedBindings = allBindings.filter((b) => {
               const fc = code.slice(b.callExprStart, b.callOpenParenPos + 1);
               return (
@@ -552,8 +575,8 @@ ${lazyImports.join(",\n")}
             });
             canStubWholeFile = !preservedBindings.some((b) => {
               const expr = code.slice(b.callExprStart, b.callCloseParenPos + 1);
-              return nonExportedLocals.some((local) =>
-                new RegExp(`\\b${local}\\b`).test(expr),
+              return strippedBindings.some((name) =>
+                new RegExp(`\\b${name}\\b`).test(expr),
               );
             });
           }
