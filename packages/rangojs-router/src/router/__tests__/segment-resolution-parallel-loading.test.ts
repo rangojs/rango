@@ -381,4 +381,52 @@ describe("segment-resolution parallel loading", () => {
     ]);
     expect(result.segments[1]?.id).toBe("L0D0.test#ParallelLoader");
   });
+
+  it("orphan layout revalidation uses parent shortCode for parallel loader IDs", async () => {
+    const context = createContext();
+    const orphan = {
+      id: "store.layout",
+      type: "layout",
+      shortCode: "L1",
+      handler: "layout",
+      loader: [],
+      layout: [],
+      parallel: [
+        {
+          ...createParallelEntry(() => "recently-viewed"),
+          loader: [{ loader: TestParallelLoader, revalidate: [] }],
+        },
+      ],
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+    } as any;
+
+    const result = await resolveOrphanLayoutWithRevalidation(
+      orphan,
+      {},
+      context,
+      new Set<string>(),
+      {},
+      context.request,
+      context.url,
+      context.url,
+      "/shop",
+      new Map(),
+      false,
+      {
+        wrapLoaderPromise: vi.fn((promise: Promise<any>) => promise),
+        trackHandler: vi.fn((p: any) => p),
+      } as any,
+    );
+
+    const loaderSegment = result.segments.find((s) => s.type === "loader");
+    expect(loaderSegment).toBeDefined();
+    // Must use orphan.shortCode (L1), NOT parallelEntry.shortCode (L0P0)
+    // Using P0 would produce "L0P0D0.test#ParallelLoader" which the client
+    // can't match in segmentTreeWalk, causing useLoader to fail.
+    expect(loaderSegment?.id).toBe("L1D0.test#ParallelLoader");
+  });
 });

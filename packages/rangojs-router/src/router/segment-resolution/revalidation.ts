@@ -1126,6 +1126,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     );
 
     if (!resolvedParallelEntries.has(parallelEntry.id)) {
+      // shortCodeOverride must match the parent layout, not the parallel entry.
       const loaderResult = await resolveLoadersWithRevalidation(
         parallelEntry,
         context,
@@ -1138,7 +1139,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         routeKey,
         deps,
         actionContext,
-        undefined,
+        orphan.shortCode,
         stale,
       );
       segments.push(...loaderResult.segments);

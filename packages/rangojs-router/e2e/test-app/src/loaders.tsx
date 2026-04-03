@@ -713,3 +713,11 @@ export const MwChainInterceptLoader = createLoader(
 export const ParallelInheritLoader = createLoader(async () => {
   return { source: "route-level", value: "inherited-data" };
 });
+
+// ============================================================================
+// Parallel loader revalidation (orphan layout) test
+// ============================================================================
+
+export const ParallelRevalLoader = createLoader(async () => {
+  return { count: Date.now() };
+});

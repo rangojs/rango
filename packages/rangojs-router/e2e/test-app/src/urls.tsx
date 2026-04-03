@@ -63,6 +63,7 @@ import { parallelMetaPatterns } from "./urls/parallel-meta.js";
 import { renderedBarrierPatterns } from "./urls/rendered-barrier.js";
 import { cacheScopeGuardPatterns } from "./urls/cache-scope-guard.js";
 import { colocatedLoaderPrerenderPatterns } from "./urls/colocated-loader-prerender.js";
+import { parallelLoaderRevalPatterns } from "./urls/parallel-loader-reval.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -601,6 +602,9 @@ export const urlpatterns = urls(
 
       // parallel loader inheritance regression test
       include("/", parallelLoaderInheritPatterns),
+
+      // parallel loader revalidation on orphan layout regression test
+      include("/", parallelLoaderRevalPatterns),
 
       // Skip test patterns (prerender + static skip/error handling)
       include("/build-skip", buildSkipPatterns, { name: "buildSkip" }),
