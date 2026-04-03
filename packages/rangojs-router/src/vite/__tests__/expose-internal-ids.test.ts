@@ -1375,6 +1375,47 @@ export const MyPage = Prerender(() => <div>page</div>);
     expect(result.code).not.toContain("createLoader(");
   });
 
+  it("bails out of whole-file stub when preserved call references a local", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    // createHandle references local `dedupe` — can't stub whole file
+    const code = `import { createHandle, createLoader, Prerender } from "@rangojs/router";
+const dedupe = (xs) => [...new Set(xs.flat())];
+export const MyHandle = createHandle((segments) => dedupe(segments));
+export const MyLoader = createLoader(async () => ({ ok: true }));
+export const MyPage = Prerender(() => <div>page</div>);
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    // Falls through to unified pipeline — local `dedupe` preserved
+    expect(result.code).toContain("dedupe");
+    // Handle gets $$id via unified pipeline
+    expect(result.code).toContain("MyHandle.$$id");
+    // Prerender stubbed via unified pipeline
+    expect(result.code).toContain('"prerenderHandler"');
+  });
+
+  it("whole-file stubs when preserved calls are self-contained (no local refs)", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    // createHandle uses only inline function — safe to stub
+    const code = `import { createHandle, createLoader, Prerender } from "@rangojs/router";
+export const MyHandle = createHandle((segments) => segments.flat().length);
+export const MyLoader = createLoader(async () => ({ ok: true }));
+export const MyPage = Prerender(() => <div>page</div>);
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    // Whole-file stub: createHandle call preserved, others stubbed
+    expect(result.code).toContain("createHandle(");
+    expect(result.code).toContain('__brand: "loader"');
+    expect(result.code).toContain('__brand: "prerenderHandler"');
+    expect(result.code).not.toContain("createLoader(");
+    expect(result.code).not.toContain("Prerender(");
+  });
+
   it("all transforms work together in RSC env for mixed file", () => {
     const plugin = createPlugin();
     initDev(plugin);

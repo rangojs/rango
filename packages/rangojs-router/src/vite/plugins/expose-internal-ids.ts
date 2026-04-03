@@ -520,7 +520,46 @@ ${lazyImports.join(",\n")}
           }
         }
 
-        if (allBindings.length > 0 && isExportOnlyFile(code, allBindings)) {
+        // Check if preserved createHandle/createLocationState calls
+        // reference non-exported locals (e.g. helper functions, constants).
+        // If so, the whole-file stub would strip those locals, breaking
+        // the call. Fall through to the unified pipeline instead.
+        let canStubWholeFile =
+          allBindings.length > 0 && isExportOnlyFile(code, allBindings);
+
+        if (
+          canStubWholeFile &&
+          (handleFnNames.length > 0 || lsFnNames.length > 0)
+        ) {
+          const exportedLocals = new Set(allBindings.map((b) => b.localName));
+          const localDeclPattern =
+            /(?:^|;|\n)\s*(?:const|let|var|function)\s+(\w+)/g;
+          const nonExportedLocals: string[] = [];
+          let declMatch: RegExpExecArray | null;
+          while ((declMatch = localDeclPattern.exec(code)) !== null) {
+            if (!exportedLocals.has(declMatch[1])) {
+              nonExportedLocals.push(declMatch[1]);
+            }
+          }
+
+          if (nonExportedLocals.length > 0) {
+            const preservedBindings = allBindings.filter((b) => {
+              const fc = code.slice(b.callExprStart, b.callOpenParenPos + 1);
+              return (
+                handleFnNames.some((n) => fc.includes(n)) ||
+                lsFnNames.some((n) => fc.includes(n))
+              );
+            });
+            canStubWholeFile = !preservedBindings.some((b) => {
+              const expr = code.slice(b.callExprStart, b.callCloseParenPos + 1);
+              return nonExportedLocals.some((local) =>
+                new RegExp(`\\b${local}\\b`).test(expr),
+              );
+            });
+          }
+        }
+
+        if (canStubWholeFile) {
           const lines: string[] = [];
 
           // Determine which @rangojs/router imports are needed
