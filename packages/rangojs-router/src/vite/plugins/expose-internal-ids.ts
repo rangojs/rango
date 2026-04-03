@@ -544,12 +544,16 @@ ${lazyImports.join(",\n")}
           // default+named imports) since those rarely appear in route files.
           const strippedBindings: string[] = [];
 
+          // Skip React Fast Refresh temporaries (_c, _c2, ...) which are
+          // injected by @vitejs/plugin-react in the client environment and
+          // would falsely trigger the bailout.
           const localDeclPattern =
             /(?:^|;|\n)\s*(?:const|let|var|function)\s+(\w+)/g;
           let declMatch: RegExpExecArray | null;
           while ((declMatch = localDeclPattern.exec(code)) !== null) {
-            if (!exportedLocals.has(declMatch[1])) {
-              strippedBindings.push(declMatch[1]);
+            const name = declMatch[1];
+            if (!exportedLocals.has(name) && !/^_c\d*$/.test(name)) {
+              strippedBindings.push(name);
             }
           }
 
@@ -619,10 +623,11 @@ ${lazyImports.join(",\n")}
             if (isHandle || isLocationState) {
               // Rewrite alias to canonical name since the stub file only
               // imports canonical names from @rangojs/router.
-              const rawArgs = code.slice(
-                binding.callOpenParenPos + 1,
-                binding.callCloseParenPos,
-              );
+              // Strip React Fast Refresh `_c = ` wrappers from args
+              // (e.g. `_c = (segments) => ...` → `(segments) => ...`)
+              const rawArgs = code
+                .slice(binding.callOpenParenPos + 1, binding.callCloseParenPos)
+                .replace(/\b_c\d*\s*=\s*/g, "");
               const canonicalName = isHandle
                 ? "createHandle"
                 : "createLocationState";

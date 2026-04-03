@@ -10,7 +10,9 @@ export const ColocatedLoader = createLoader(async () => {
   return { message: "colocated-loader-data", ts: Date.now() };
 });
 
-export const ColocatedHandle = createHandle<string>();
+export const ColocatedHandle = createHandle<string, string[]>((segments) =>
+  segments.flat(),
+);
 
 export const ColocatedStatic = Static(() => {
   return (

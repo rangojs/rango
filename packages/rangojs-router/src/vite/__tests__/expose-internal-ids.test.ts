@@ -1452,6 +1452,34 @@ export const MyPage = Prerender(() => <div>page</div>);
     expect(result.code).not.toContain("Prerender(");
   });
 
+  it("whole-file stubs survive React Fast Refresh _c wrappers in client env", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    // Simulates what @vitejs/plugin-react injects in the client environment:
+    // var _c declarations and _c = wrapper around function expressions
+    const code = `import { createHandle, createLoader, Prerender } from "@rangojs/router";
+var _c, _c2;
+export const MyHandle = createHandle(_c = (segments) => segments.flat());
+_c2 = MyHandle;
+export const MyLoader = createLoader(_c = async () => ({ ok: true }));
+export const MyPage = Prerender(() => <div>page</div>);
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    // Whole-file stub fires despite _c wrappers
+    expect(result.code).toContain("createHandle(");
+    expect(result.code).toContain('__brand: "loader"');
+    expect(result.code).toContain('__brand: "prerenderHandler"');
+    // _c wrappers are stripped from the preserved call
+    expect(result.code).not.toContain("_c =");
+    expect(result.code).not.toContain("_c2");
+    expect(result.code).not.toContain("var _c");
+    // No original code leaks
+    expect(result.code).not.toContain("createLoader(");
+    expect(result.code).not.toContain("Prerender(");
+  });
+
   it("all transforms work together in RSC env for mixed file", () => {
     const plugin = createPlugin();
     initDev(plugin);
