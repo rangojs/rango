@@ -619,25 +619,42 @@ ${lazyImports.join(",\n")}
             if (isHandle || isLocationState) {
               // Rewrite alias to canonical name since the stub file only
               // imports canonical names from @rangojs/router.
-              const rawCallExpr = code.slice(
-                binding.callExprStart,
-                binding.callCloseParenPos + 1,
+              const rawArgs = code.slice(
+                binding.callOpenParenPos + 1,
+                binding.callCloseParenPos,
               );
               const canonicalName = isHandle
                 ? "createHandle"
                 : "createLocationState";
               const activeFnNames = isHandle ? handleFnNames : lsFnNames;
-              let callExpr = rawCallExpr;
+
+              // Reconstruct the function name (handling aliases + generics)
+              let rawCallee = code.slice(
+                binding.callExprStart,
+                binding.callOpenParenPos,
+              );
               for (const alias of activeFnNames) {
-                if (alias !== canonicalName && callExpr.startsWith(alias)) {
-                  callExpr = canonicalName + callExpr.slice(alias.length);
+                if (alias !== canonicalName && rawCallee.startsWith(alias)) {
+                  rawCallee = canonicalName + rawCallee.slice(alias.length);
                   break;
                 }
               }
-              lines.push(`export const ${primaryName} = ${callExpr};`);
+
               if (isHandle) {
+                // createHandle checks __injectedId DURING the call, so $$id
+                // must be a parameter, not a post-call property assignment.
+                const idParam =
+                  binding.argCount === 0
+                    ? `undefined, "${stubId}"`
+                    : `, "${stubId}"`;
+                lines.push(
+                  `export const ${primaryName} = ${rawCallee}(${rawArgs}${idParam});`,
+                );
                 lines.push(`${primaryName}.$$id = "${stubId}";`);
               } else {
+                lines.push(
+                  `export const ${primaryName} = ${rawCallee}(${rawArgs});`,
+                );
                 lines.push(
                   `${primaryName}.__rsc_ls_key = "__rsc_ls_${stubId}";`,
                 );
