@@ -419,6 +419,10 @@ export async function resolveOrphanLayout<TEnv>(
         deps,
         orphan.shortCode,
       );
+      // Tag as inherited so buildMatchResult can deduplicate when safe
+      for (const s of inheritedLoaders) {
+        s._inherited = true;
+      }
       segments.push(...inheritedLoaders);
     }
   }
@@ -728,6 +732,7 @@ export async function resolveLoadersOnly<TEnv>(
         for (const seg of inherited) {
           if (!seenIds.has(seg.id)) {
             seenIds.add(seg.id);
+            seg._inherited = true;
             loaderSegments.push(seg);
           }
         }

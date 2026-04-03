@@ -126,6 +126,69 @@ export async function collectSegments(
 }
 
 /**
+ * Deduplicate inherited loader segments by loaderId.
+ *
+ * When a route has loaders and a child layout has parallel slots, the same
+ * loader is resolved twice: once for the route and once inherited into the
+ * layout (tagged with `_inherited`). The inherited copy is only needed when
+ * the route uses `loading()` — in that case, the loader data is inside a
+ * LoaderBoundary/Suspense that parallel slots can't reach through. Without
+ * loading(), useLoader() traverses parent contexts and finds the data.
+ */
+function deduplicateLoaderSegments(
+  segments: ResolvedSegment[],
+  logPrefix: string,
+): ResolvedSegment[] {
+  // First pass: collect loaderIds of original (non-inherited) segments
+  // and whether their parent entry uses loading()
+  const originalLoaders = new Set<string>();
+  const loadersWithLoading = new Set<string>();
+  for (const s of segments) {
+    if (s.type === "loader" && s.loaderId && !s._inherited) {
+      originalLoaders.add(s.loaderId);
+      // If the segment has a sibling with loading, the parent uses loading()
+      // We detect this by checking if any non-loader segment in the same
+      // namespace has loading defined
+    }
+  }
+  // Check if any layout/route segment has loading — if a loader's namespace
+  // matches a segment with loading, the inherited copy is needed
+  for (const s of segments) {
+    if (s.type !== "loader" && s.loading !== undefined && s.loading !== false) {
+      // Find loaders in this namespace
+      for (const l of segments) {
+        if (l.type === "loader" && l.namespace === s.namespace && l.loaderId) {
+          loadersWithLoading.add(l.loaderId);
+        }
+      }
+    }
+  }
+
+  const result: ResolvedSegment[] = [];
+  let dedupCount = 0;
+
+  for (const s of segments) {
+    if (
+      s.type === "loader" &&
+      s.loaderId &&
+      s._inherited &&
+      originalLoaders.has(s.loaderId) &&
+      !loadersWithLoading.has(s.loaderId)
+    ) {
+      dedupCount++;
+      continue;
+    }
+    result.push(s);
+  }
+
+  if (dedupCount > 0) {
+    debugLog(logPrefix, `deduped ${dedupCount} inherited loader segment(s)`);
+  }
+
+  return result;
+}
+
+/**
  * Build the final MatchResult from collected segments and context
  */
 export function buildMatchResult<TEnv>(
@@ -181,6 +244,11 @@ export function buildMatchResult<TEnv>(
     );
   }
 
+  const dedupedSegments = deduplicateLoaderSegments(
+    segmentsToRender,
+    logPrefix,
+  );
+
   debugLog(logPrefix, "all segments", {
     segments: allSegments.map((s) => ({
       id: s.id,
@@ -189,13 +257,23 @@ export function buildMatchResult<TEnv>(
     })),
   });
   debugLog(logPrefix, "segments to render", {
-    segmentIds: segmentsToRender.map((s) => s.id),
+    segmentIds: dedupedSegments.map((s) => s.id),
   });
 
+  // Remove deduped loader IDs from matched so the client doesn't treat
+  // them as missing segments and trigger a fallback refetch.
+  const removedIds = new Set(
+    segmentsToRender
+      .filter((s) => !dedupedSegments.includes(s))
+      .map((s) => s.id),
+  );
+  const matchedIds =
+    removedIds.size > 0 ? allIds.filter((id) => !removedIds.has(id)) : allIds;
+
   return {
-    segments: segmentsToRender,
-    matched: allIds,
-    diff: segmentsToRender.map((s) => s.id),
+    segments: dedupedSegments,
+    matched: matchedIds,
+    diff: dedupedSegments.map((s) => s.id),
     params: ctx.matched.params,
     routeName: ctx.routeKey,
     slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,

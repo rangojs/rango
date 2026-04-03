@@ -346,6 +346,7 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
         for (const seg of inherited.segments) {
           if (!seenIds.has(seg.id)) {
             seenIds.add(seg.id);
+            seg._inherited = true;
             allLoaderSegments.push(seg);
           }
         }
@@ -1036,6 +1037,10 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       orphan.shortCode,
       stale,
     );
+    // Tag as inherited so buildMatchResult can deduplicate when safe
+    for (const s of inheritedResult.segments) {
+      s._inherited = true;
+    }
     segments.push(...inheritedResult.segments);
     matchedIds.push(...inheritedResult.matchedIds);
   }
