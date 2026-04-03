@@ -564,6 +564,12 @@ ${lazyImports.join(",\n")}
           while ((importMatch = defaultImportPattern.exec(code)) !== null) {
             strippedBindings.push(importMatch[1]);
           }
+          // Namespace imports from non-@rangojs/router modules
+          const nsImportPattern =
+            /import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*["'](?!@rangojs\/router)[^"']*["']/g;
+          while ((importMatch = nsImportPattern.exec(code)) !== null) {
+            strippedBindings.push(importMatch[1]);
+          }
 
           if (strippedBindings.length > 0) {
             const preservedBindings = allBindings.filter((b) => {
