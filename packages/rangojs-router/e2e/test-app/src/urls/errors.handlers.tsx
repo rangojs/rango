@@ -61,3 +61,24 @@ export const ErrorsStreamingErrorHandler: Handler<
   );
   return <div data-testid="streaming-error-page">This should never render</div>;
 };
+
+/**
+ * Async server component that throws during RSC serialization.
+ * The handler below returns JSX containing this component — the handler
+ * itself succeeds, but React's renderToReadableStream hits the error
+ * when it tries to serialize this async component.
+ */
+async function ThrowDuringSerialization() {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  throw new Error("RSC serialization error for onError test");
+}
+
+export function ErrorsRenderingErrorHandler() {
+  return (
+    <div data-testid="rendering-error-page">
+      <h1>Rendering Error Test</h1>
+      {/* @ts-expect-error async server component */}
+      <ThrowDuringSerialization />
+    </div>
+  );
+}

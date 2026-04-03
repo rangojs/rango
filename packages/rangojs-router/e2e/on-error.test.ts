@@ -81,6 +81,27 @@ function onErrorTests(f: ReturnType<typeof useFixture>) {
     expect(error.message).toBe("Action error for onError test");
   });
 
+  test("streaming rendering error reports phase='rendering'", async ({
+    page,
+  }) => {
+    // Clear any previous errors
+    await page.request.get(f.url("/__test/clear-error-log"));
+
+    // Navigate to a page whose handler returns JSX containing an async
+    // server component that throws during RSC serialization.
+    // The handler itself succeeds — the error happens in renderToReadableStream.
+    await page.goto(f.url("/errors/rendering-error"));
+
+    const error = await waitForOnError(
+      page,
+      f.url("/__test/last-error"),
+      "rendering",
+    );
+
+    expect(error.phase).toBe("rendering");
+    expect(error.message).toContain("RSC serialization error for onError test");
+  });
+
   test("handler error reports phase='handler'", async ({ page }) => {
     // Clear any previous errors
     await page.request.get(f.url("/__test/clear-error-log"));
