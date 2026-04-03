@@ -75,6 +75,7 @@ export const NamedRoutes = {
   "docs.article": "/docs/:slug",
   "errors.clientError": "/errors/client-error",
   "errors.index": "/errors",
+  "errors.renderingError": "/errors/rendering-error",
   "errors.serverError": "/errors/server-error",
   "errors.streamingError": "/errors/streaming-error",
   "factoryHmr.alpha": "/factory-hmr/alpha",

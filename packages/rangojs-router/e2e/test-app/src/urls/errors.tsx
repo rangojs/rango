@@ -4,6 +4,7 @@ import {
   ErrorsClientErrorHandler,
   ErrorsServerErrorHandler,
   ErrorsStreamingErrorHandler,
+  ErrorsRenderingErrorHandler,
 } from "./errors.handlers.js";
 
 /**
@@ -30,4 +31,7 @@ export const errorsPatterns = urls(({ path, loading }) => [
       ),
     ],
   ),
+  path("/errors/rendering-error", ErrorsRenderingErrorHandler, {
+    name: "errors.renderingError",
+  }),
 ]);
