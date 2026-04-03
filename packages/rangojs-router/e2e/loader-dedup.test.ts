@@ -29,6 +29,9 @@ test.describe("loader-dedup (dev)", () => {
   test("non-loading route deduplicates inherited loader", async ({ page }) => {
     using _ = expectNoPageError(page);
 
+    // Snapshot stdout before navigation so we only assert on new output
+    const before = f.proc().stdout().length;
+
     await page.goto(f.url("/parallel-loader-inherit"));
     await waitForHydration(page);
 
@@ -37,15 +40,18 @@ test.describe("loader-dedup (dev)", () => {
       "route-level:inherited-data",
     );
 
-    // Server logs should contain the dedup message
-    const stdout = f.proc().stdout();
-    expect(stdout).toContain("deduped 1 inherited loader segment");
+    // Poll for the dedup log in the new stdout slice
+    await expect
+      .poll(() => f.proc().stdout().slice(before), { timeout: 5000 })
+      .toContain("deduped 1 inherited loader segment");
   });
 
   test("loading() route keeps inherited loader (no dedup)", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
+
+    const before = f.proc().stdout().length;
 
     await page.goto(f.url("/parallel-loader-inherit-loading"));
     await waitForHydration(page);
@@ -55,12 +61,10 @@ test.describe("loader-dedup (dev)", () => {
       "route-level:inherited-data",
     );
 
-    // Dedup should NOT fire for loading() routes — inherited loader is needed
-    const stdout = f.proc().stdout();
-    const dedupMatches = stdout.match(/deduped \d+ inherited loader/g) || [];
-    // Only the non-loading route (previous test) should have deduped
-    // The loading variant should not produce an additional dedup message
-    expect(dedupMatches.length).toBeLessThanOrEqual(1);
+    // Give the server a moment to flush logs, then verify no dedup fired
+    await page.waitForTimeout(500);
+    const newOutput = f.proc().stdout().slice(before);
+    expect(newOutput).not.toContain("deduped");
   });
 });
 
