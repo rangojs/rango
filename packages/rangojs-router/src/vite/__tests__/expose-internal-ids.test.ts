@@ -1346,6 +1346,35 @@ export const MyPage = Prerender(() => <div>page</div>);
     expect(result.code).not.toContain("createLoader(");
   });
 
+  it("rewrites aliased createHandle/createLocationState in whole-file stubs", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createHandle as ch, createLocationState as cls, createLoader, Prerender } from "@rangojs/router";
+export const MyHandle = ch((segments) => segments.flat().length);
+export const Flash = cls({ flash: true });
+export const MyLoader = createLoader(async () => ({ ok: true }));
+export const MyPage = Prerender(() => <div>page</div>);
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    // Canonical names used in the stub (not aliases)
+    expect(result.code).toContain("createHandle(");
+    expect(result.code).toContain("createLocationState(");
+    expect(result.code).not.toContain("ch(");
+    expect(result.code).not.toContain("cls(");
+    // Import uses canonical names
+    expect(result.code).toContain(
+      'import { createHandle, createLocationState } from "@rangojs/router"',
+    );
+    // IDs injected
+    expect(result.code).toContain("MyHandle.$$id");
+    expect(result.code).toContain("Flash.__rsc_ls_key");
+    // No server-only code
+    expect(result.code).not.toContain("Prerender(");
+    expect(result.code).not.toContain("createLoader(");
+  });
+
   it("all transforms work together in RSC env for mixed file", () => {
     const plugin = createPlugin();
     initDev(plugin);

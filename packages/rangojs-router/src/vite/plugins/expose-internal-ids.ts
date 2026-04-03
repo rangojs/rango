@@ -549,11 +549,24 @@ ${lazyImports.join(",\n")}
               : `${filePath}#${primaryName}`;
 
             if (isHandle || isLocationState) {
-              // Preserve the original call expression so create*() executes
-              const callExpr = code.slice(
+              // Preserve the original call expression so create*() executes.
+              // Replace the alias (if any) with the canonical name since the
+              // stub file imports canonical names from @rangojs/router.
+              const rawCallExpr = code.slice(
                 binding.callExprStart,
                 binding.callCloseParenPos + 1,
               );
+              const canonicalName = isHandle
+                ? "createHandle"
+                : "createLocationState";
+              const activeFnNames = isHandle ? handleFnNames : lsFnNames;
+              let callExpr = rawCallExpr;
+              for (const alias of activeFnNames) {
+                if (alias !== canonicalName && callExpr.startsWith(alias)) {
+                  callExpr = canonicalName + callExpr.slice(alias.length);
+                  break;
+                }
+              }
               lines.push(`export const ${primaryName} = ${callExpr};`);
               if (isHandle) {
                 lines.push(`${primaryName}.$$id = "${stubId}";`);
