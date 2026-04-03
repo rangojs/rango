@@ -2,7 +2,12 @@ import type { Plugin, ResolvedConfig } from "vite";
 import { parseAst } from "vite";
 import MagicString from "magic-string";
 import path from "node:path";
-import { normalizePath, hashId, detectImports } from "./expose-id-utils.js";
+import {
+  normalizePath,
+  hashId,
+  makeStubId,
+  detectImports,
+} from "./expose-id-utils.js";
 import {
   transformInlineHandlers,
   type VirtualHandlerEntry,
@@ -532,11 +537,13 @@ ${lazyImports.join(",\n")}
           (handleFnNames.length > 0 || lsFnNames.length > 0)
         ) {
           const exportedLocals = new Set(allBindings.map((b) => b.localName));
-          // Collect all bindings that would be stripped: local declarations
-          // AND imported bindings (except @rangojs/router which we re-import).
+          // Collect bindings that would be stripped by whole-file replacement:
+          // local declarations and imported bindings from non-@rangojs/router
+          // modules. This is a regex-based heuristic — it intentionally skips
+          // edge cases (class decls, destructured bindings, combined
+          // default+named imports) since those rarely appear in route files.
           const strippedBindings: string[] = [];
 
-          // Local declarations: const/let/var/function
           const localDeclPattern =
             /(?:^|;|\n)\s*(?:const|let|var|function)\s+(\w+)/g;
           let declMatch: RegExpExecArray | null;
@@ -546,7 +553,6 @@ ${lazyImports.join(",\n")}
             }
           }
 
-          // Imported bindings from non-@rangojs/router modules
           const importPattern =
             /import\s*\{([^}]*)\}\s*from\s*["'](?!@rangojs\/router)[^"']*["']/g;
           let importMatch: RegExpExecArray | null;
@@ -558,13 +564,11 @@ ${lazyImports.join(",\n")}
               if (m) strippedBindings.push(m[1] || m[0].trim().split(/\s/)[0]);
             }
           }
-          // Default imports from non-@rangojs/router modules
           const defaultImportPattern =
             /import\s+([A-Za-z_$][\w$]*)\s+from\s*["'](?!@rangojs\/router)[^"']*["']/g;
           while ((importMatch = defaultImportPattern.exec(code)) !== null) {
             strippedBindings.push(importMatch[1]);
           }
-          // Namespace imports from non-@rangojs/router modules
           const nsImportPattern =
             /import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*["'](?!@rangojs\/router)[^"']*["']/g;
           while ((importMatch = nsImportPattern.exec(code)) !== null) {
@@ -579,19 +583,18 @@ ${lazyImports.join(",\n")}
                 lsFnNames.some((n) => fc.includes(n))
               );
             });
+            const strippedRe = new RegExp(
+              `\\b(?:${strippedBindings.join("|")})\\b`,
+            );
             canStubWholeFile = !preservedBindings.some((b) => {
               const expr = code.slice(b.callExprStart, b.callCloseParenPos + 1);
-              return strippedBindings.some((name) =>
-                new RegExp(`\\b${name}\\b`).test(expr),
-              );
+              return strippedRe.test(expr);
             });
           }
         }
 
         if (canStubWholeFile) {
           const lines: string[] = [];
-
-          // Determine which @rangojs/router imports are needed
           const neededImports: string[] = [];
           if (handleFnNames.length > 0) neededImports.push("createHandle");
           if (lsFnNames.length > 0) neededImports.push("createLocationState");
@@ -609,17 +612,13 @@ ${lazyImports.join(",\n")}
             const isHandle = handleFnNames.some((n) => fnCall.includes(n));
             const isLocationState = lsFnNames.some((n) => fnCall.includes(n));
 
-            // All aliases share the first export name's ID, matching
-            // the server transforms which key off exportNames[0].
+            // Aliases share the primary name's ID (matches server transforms).
             const primaryName = binding.exportNames[0];
-            const stubId = isBuild
-              ? hashId(filePath, primaryName)
-              : `${filePath}#${primaryName}`;
+            const stubId = makeStubId(filePath, primaryName, isBuild);
 
             if (isHandle || isLocationState) {
-              // Preserve the original call expression so create*() executes.
-              // Replace the alias (if any) with the canonical name since the
-              // stub file imports canonical names from @rangojs/router.
+              // Rewrite alias to canonical name since the stub file only
+              // imports canonical names from @rangojs/router.
               const rawCallExpr = code.slice(
                 binding.callExprStart,
                 binding.callCloseParenPos + 1,
@@ -643,12 +642,10 @@ ${lazyImports.join(",\n")}
                   `${primaryName}.__rsc_ls_key = "__rsc_ls_${stubId}";`,
                 );
               }
-              // Re-export aliases pointing to the same object
               for (const name of binding.exportNames.slice(1)) {
                 lines.push(`export const ${name} = ${primaryName};`);
               }
             } else {
-              // Loader, Prerender, Static → plain stub
               let brand = "loader";
               if (prerenderFnNames.some((n) => fnCall.includes(n))) {
                 brand = PRERENDER_CONFIG.brand;
