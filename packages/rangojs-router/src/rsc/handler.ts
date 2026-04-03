@@ -15,6 +15,7 @@ import {
   setRequestContextParams,
   requireRequestContext,
   getRequestContext,
+  _getRequestContext,
   createRequestContext,
 } from "../server/request-context.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
@@ -166,10 +167,13 @@ export function createRSCHandler<
     phase: ErrorPhase,
     context: Parameters<typeof invokeOnError<TEnv>>[3],
   ): void {
-    if (error != null && typeof error === "object") {
-      const reportedErrors = requireRequestContext()._reportedErrors;
-      if (reportedErrors.has(error)) return;
-      reportedErrors.add(error);
+    // Guard: abort signal handlers fire asynchronously outside the ALS
+    // request scope, so the context may be gone. Skip dedup in that
+    // case — the error is from a cancelled stream, not a real failure.
+    const reqCtx = _getRequestContext();
+    if (error != null && typeof error === "object" && reqCtx) {
+      if (reqCtx._reportedErrors.has(error)) return;
+      reqCtx._reportedErrors.add(error);
     }
     invokeOnError(router.onError, error, phase, context, "RSC");
   }
