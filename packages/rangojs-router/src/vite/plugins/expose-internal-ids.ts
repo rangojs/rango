@@ -541,22 +541,30 @@ ${lazyImports.join(",\n")}
             const isHandle = handleFnNames.some((n) => fnCall.includes(n));
             const isLocationState = lsFnNames.some((n) => fnCall.includes(n));
 
+            // All aliases share the first export name's ID, matching
+            // the server transforms which key off exportNames[0].
+            const primaryName = binding.exportNames[0];
+            const stubId = isBuild
+              ? hashId(filePath, primaryName)
+              : `${filePath}#${primaryName}`;
+
             if (isHandle || isLocationState) {
               // Preserve the original call expression so create*() executes
               const callExpr = code.slice(
                 binding.callExprStart,
                 binding.callCloseParenPos + 1,
               );
-              for (const name of binding.exportNames) {
-                const stubId = isBuild
-                  ? hashId(filePath, name)
-                  : `${filePath}#${name}`;
-                lines.push(`export const ${name} = ${callExpr};`);
-                if (isHandle) {
-                  lines.push(`${name}.$$id = "${stubId}";`);
-                } else {
-                  lines.push(`${name}.__rsc_ls_key = "__rsc_ls_${stubId}";`);
-                }
+              lines.push(`export const ${primaryName} = ${callExpr};`);
+              if (isHandle) {
+                lines.push(`${primaryName}.$$id = "${stubId}";`);
+              } else {
+                lines.push(
+                  `${primaryName}.__rsc_ls_key = "__rsc_ls_${stubId}";`,
+                );
+              }
+              // Re-export aliases pointing to the same object
+              for (const name of binding.exportNames.slice(1)) {
+                lines.push(`export const ${name} = ${primaryName};`);
               }
             } else {
               // Loader, Prerender, Static → plain stub
@@ -566,13 +574,11 @@ ${lazyImports.join(",\n")}
               } else if (staticFnNames.some((n) => fnCall.includes(n))) {
                 brand = STATIC_CONFIG.brand;
               }
-              for (const name of binding.exportNames) {
-                const stubId = isBuild
-                  ? hashId(filePath, name)
-                  : `${filePath}#${name}`;
-                lines.push(
-                  `export const ${name} = { __brand: "${brand}", $$id: "${stubId}" };`,
-                );
+              lines.push(
+                `export const ${primaryName} = { __brand: "${brand}", $$id: "${stubId}" };`,
+              );
+              for (const name of binding.exportNames.slice(1)) {
+                lines.push(`export const ${name} = ${primaryName};`);
               }
             }
           }

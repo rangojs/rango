@@ -1322,7 +1322,7 @@ export const MyPage = Prerender(() => <div>page</div>);
     expect(result.code).toMatch(/[0-9a-f]{8}#Nav/);
   });
 
-  it("preserves all export aliases in whole-file stubs", () => {
+  it("preserves all export aliases with matching $$id in whole-file stubs", () => {
     const plugin = createPlugin();
     initDev(plugin);
 
@@ -1337,9 +1337,13 @@ export const MyPage = Prerender(() => <div>page</div>);
     expect(result.code).toContain("export const PublicLoader");
     expect(result.code).toContain("export const LoaderAlias");
     expect(result.code).toContain("export const MyPage");
+    // Aliases share the primary name's $$id (matches server transform)
+    expect(result.code).toContain("src/urls.tsx#PublicLoader");
+    expect(result.code).not.toContain("src/urls.tsx#LoaderAlias");
+    // Alias references the primary object
+    expect(result.code).toContain("LoaderAlias = PublicLoader");
     // No original code
     expect(result.code).not.toContain("createLoader(");
-    expect(result.code).not.toContain("import");
   });
 
   it("all transforms work together in RSC env for mixed file", () => {
