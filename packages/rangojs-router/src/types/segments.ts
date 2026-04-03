@@ -50,6 +50,7 @@ export interface ResolvedSegment {
   parallelName?: string; // For parallels: the parallel group name (used to match with revalidations)
   // Loader-specific fields
   loaderId?: string; // For loaders: the loader $$id identifier
+  _inherited?: boolean; // For inherited loaders: dedup marker for buildMatchResult
   loaderData?: any; // For loaders: the resolved data from loader execution
   parallelLoading?: ReactNode; // For parallel-owned loaders: the parallel's loading fallback
   // Intercept loader fields (for streaming loader data in parallel segments)
