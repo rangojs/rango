@@ -243,6 +243,10 @@ export type {
   ReadonlyHeaders,
 } from "./server/cookie-store.js";
 
+// Built-in handles (universal — work on both server and client)
+export { Meta } from "./handles/meta.js";
+export { Breadcrumbs } from "./handles/breadcrumbs.js";
+
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 

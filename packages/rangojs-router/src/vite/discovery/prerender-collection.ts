@@ -51,102 +51,143 @@ export async function expandPrerenderRoutes(
     return substituteRouteParams(pattern, params);
   };
 
+  let resolvedRoutes = 0;
+  let totalDynamic = 0;
+
+  // Count dynamic routes upfront for progress reporting
   for (const { manifest } of allManifests) {
     if (!manifest.prerenderRoutes) continue;
-    const defs = manifest._prerenderDefs || {};
-    const passthroughSet = new Set(manifest.passthroughRoutes || []);
     for (const routeName of manifest.prerenderRoutes) {
       const pattern = manifest.routeManifest[routeName];
-      if (!pattern) continue;
-      const def = defs[routeName];
-      const isPassthroughRoute = passthroughSet.has(routeName);
-      const hasDynamic = pattern.includes(":") || pattern.includes("*");
-      if (!hasDynamic) {
-        // Static route: use pattern directly (strip trailing slash for URL)
-        entries.push({
-          urlPath: pattern.replace(/\/$/, "") || "/",
-          routeName,
-          concurrency: 1,
-          isPassthroughRoute,
-        });
-      } else {
-        // Dynamic route: call getParams() to enumerate param combinations
-        if (def?.getParams) {
-          try {
-            const buildVars: Record<string, any> = {};
-            const buildEnv = state.resolvedBuildEnv;
-            const getParamsCtx = {
-              build: true as const,
-              dev: !state.isBuildMode,
-              set: ((keyOrVar: any, value: any) => {
-                contextSet(buildVars, keyOrVar, value);
-              }) as any,
-              reverse: getParamsReverse,
-              get env() {
-                if (buildEnv !== undefined) return buildEnv;
-                throw new Error(
-                  "[rsc-router] ctx.env is not available during build-time getParams(). " +
-                    "Configure buildEnv in your rango() plugin options to enable build-time env access.",
-                );
-              },
-            };
-            const paramsList = await def.getParams(getParamsCtx);
-            const concurrency = def.options?.concurrency ?? 1;
-            const hasBuildVars =
-              Object.keys(buildVars).length > 0 ||
-              Object.getOwnPropertySymbols(buildVars).length > 0;
-            for (const params of paramsList) {
-              let url = substituteRouteParams(
-                pattern,
-                params as Record<string, string>,
-                encodePathParam,
-              );
-              // Anonymous wildcard fallback: use conventional keys if provided
-              if (url.includes("*")) {
-                const wildcardValue =
-                  (params as Record<string, string>)["*"] ??
-                  (params as Record<string, string>).splat;
-                if (wildcardValue !== undefined) {
-                  url = url.replace(/\*[^/]*$/, encodePathParam(wildcardValue));
-                }
-              }
-              entries.push({
-                urlPath: url.replace(/\/$/, "") || "/",
-                routeName,
-                concurrency,
-                ...(hasBuildVars ? { buildVars } : {}),
-                isPassthroughRoute,
-              });
-            }
-          } catch (err: any) {
-            // Skip in getParams() skips the entire route
-            if (err.name === "Skip") {
-              console.log(
-                `[rsc-router]   SKIP route "${routeName}" - ${err.message}`,
-              );
-              notifyOnError(
-                registry,
-                err,
-                "prerender",
-                routeName,
-                undefined,
-                true,
-              );
-              continue;
-            }
-            // Regular error: fail the build
-            console.error(
-              `[rsc-router] Failed to get params for prerender route "${routeName}": ${err.message}`,
-            );
-            notifyOnError(registry, err, "prerender", routeName);
-            throw err;
-          }
-        } else {
-          console.warn(
-            `[rsc-router] Dynamic prerender route "${routeName}" has no getParams(), skipping`,
+      if (pattern && (pattern.includes(":") || pattern.includes("*"))) {
+        totalDynamic++;
+      }
+    }
+  }
+
+  // Periodic progress log so long getParams() calls don't look stalled
+  const paramsStart = performance.now();
+  const progressInterval =
+    totalDynamic > 0
+      ? setInterval(() => {
+          const elapsed = ((performance.now() - paramsStart) / 1000).toFixed(1);
+          console.log(
+            `[rsc-router] Resolving prerender params... ${resolvedRoutes}/${totalDynamic} routes (${elapsed}s)`,
           );
+        }, 5000)
+      : undefined;
+
+  try {
+    for (const { manifest } of allManifests) {
+      if (!manifest.prerenderRoutes) continue;
+      const defs = manifest._prerenderDefs || {};
+      const passthroughSet = new Set(manifest.passthroughRoutes || []);
+      for (const routeName of manifest.prerenderRoutes) {
+        const pattern = manifest.routeManifest[routeName];
+        if (!pattern) continue;
+        const def = defs[routeName];
+        const isPassthroughRoute = passthroughSet.has(routeName);
+        const hasDynamic = pattern.includes(":") || pattern.includes("*");
+        if (!hasDynamic) {
+          // Static route: use pattern directly (strip trailing slash for URL)
+          entries.push({
+            urlPath: pattern.replace(/\/$/, "") || "/",
+            routeName,
+            concurrency: 1,
+            isPassthroughRoute,
+          });
+        } else {
+          // Dynamic route: call getParams() to enumerate param combinations
+          if (def?.getParams) {
+            try {
+              const buildVars: Record<string, any> = {};
+              const buildEnv = state.resolvedBuildEnv;
+              const getParamsCtx = {
+                build: true as const,
+                dev: !state.isBuildMode,
+                set: ((keyOrVar: any, value: any) => {
+                  contextSet(buildVars, keyOrVar, value);
+                }) as any,
+                reverse: getParamsReverse,
+                get env() {
+                  if (buildEnv !== undefined) return buildEnv;
+                  throw new Error(
+                    "[rsc-router] ctx.env is not available during build-time getParams(). " +
+                      "Configure buildEnv in your rango() plugin options to enable build-time env access.",
+                  );
+                },
+              };
+              const paramsList = await def.getParams(getParamsCtx);
+              const concurrency = def.options?.concurrency ?? 1;
+              const hasBuildVars =
+                Object.keys(buildVars).length > 0 ||
+                Object.getOwnPropertySymbols(buildVars).length > 0;
+              for (const params of paramsList) {
+                let url = substituteRouteParams(
+                  pattern,
+                  params as Record<string, string>,
+                  encodePathParam,
+                );
+                // Anonymous wildcard fallback: use conventional keys if provided
+                if (url.includes("*")) {
+                  const wildcardValue =
+                    (params as Record<string, string>)["*"] ??
+                    (params as Record<string, string>).splat;
+                  if (wildcardValue !== undefined) {
+                    url = url.replace(
+                      /\*[^/]*$/,
+                      encodePathParam(wildcardValue),
+                    );
+                  }
+                }
+                entries.push({
+                  urlPath: url.replace(/\/$/, "") || "/",
+                  routeName,
+                  concurrency,
+                  ...(hasBuildVars ? { buildVars } : {}),
+                  isPassthroughRoute,
+                });
+              }
+              resolvedRoutes++;
+            } catch (err: any) {
+              resolvedRoutes++;
+              // Skip in getParams() skips the entire route
+              if (err.name === "Skip") {
+                console.log(
+                  `[rsc-router]   SKIP route "${routeName}" - ${err.message}`,
+                );
+                notifyOnError(
+                  registry,
+                  err,
+                  "prerender",
+                  routeName,
+                  undefined,
+                  true,
+                );
+                continue;
+              }
+              // Regular error: fail the build
+              console.error(
+                `[rsc-router] Failed to get params for prerender route "${routeName}": ${err.message}`,
+              );
+              notifyOnError(registry, err, "prerender", routeName);
+              throw err;
+            }
+          } else {
+            console.warn(
+              `[rsc-router] Dynamic prerender route "${routeName}" has no getParams(), skipping`,
+            );
+          }
         }
       }
+    }
+  } finally {
+    if (progressInterval) {
+      clearInterval(progressInterval);
+      const elapsed = ((performance.now() - paramsStart) / 1000).toFixed(1);
+      console.log(
+        `[rsc-router] Resolved prerender params: ${resolvedRoutes}/${totalDynamic} routes (${elapsed}s)`,
+      );
     }
   }
 

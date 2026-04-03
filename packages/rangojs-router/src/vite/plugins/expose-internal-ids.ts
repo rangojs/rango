@@ -2,7 +2,12 @@ import type { Plugin, ResolvedConfig } from "vite";
 import { parseAst } from "vite";
 import MagicString from "magic-string";
 import path from "node:path";
-import { normalizePath, hashId, detectImports } from "./expose-id-utils.js";
+import {
+  normalizePath,
+  hashId,
+  makeStubId,
+  detectImports,
+} from "./expose-id-utils.js";
 import {
   transformInlineHandlers,
   type VirtualHandlerEntry,
@@ -23,6 +28,7 @@ import {
   getImportedFnNames,
   collectCreateExportBindings,
   buildUnsupportedShapeWarning,
+  isExportOnlyFile,
 } from "./expose-ids/export-analysis.js";
 import {
   hasCreateLoaderImport,
@@ -462,7 +468,6 @@ ${lazyImports.join(",\n")}
 
       // --- StaticHandler: non-RSC whole-file stub replacement ---
       // When ALL exports are Static() calls, replace the entire file.
-      // Mixed-export files are handled in the unified pipeline below.
       if (hasStaticHandlerCode && !isRscEnv) {
         const fnNames = getFnNames(STATIC_CONFIG.fnName);
         const bindings = getBindings(code, fnNames);
@@ -474,6 +479,212 @@ ${lazyImports.join(",\n")}
           isBuild,
         );
         if (wholeFile) return wholeFile;
+      }
+
+      // --- Mixed-type whole-file stub replacement (non-RSC) ---
+      // When the individual whole-file checks above fail (each only checks
+      // one type), the file has mixed exports (e.g. createLoader + Prerender).
+      // Gather ALL stub-safe bindings and check if they cover every export.
+      // If yes, replace the entire file with stubs — this strips server-only
+      // imports (node:fs, DB clients, etc.) that would crash in the browser.
+      //
+      // Only applies when the file contains Prerender/Static (the handler
+      // types that bring server-only code). Files with only loaders, handles,
+      // or locationState are handled correctly by the unified pipeline below.
+      //
+      // Loader, Prerender, and Static exports become plain { __brand, $$id }
+      // stubs. createHandle and createLocationState need their create*()
+      // functions to execute (collect registration / __rsc_ls_key), so their
+      // call expressions are preserved with only a @rangojs/router import.
+      // This strips all server-only imports while keeping the correct
+      // client contract for every export type.
+      if (!isRscEnv && (hasPrerenderHandlerCode || hasStaticHandlerCode)) {
+        const prerenderFnNames = hasPrerenderHandlerCode
+          ? getFnNames(PRERENDER_CONFIG.fnName)
+          : [];
+        const staticFnNames = hasStaticHandlerCode
+          ? getFnNames(STATIC_CONFIG.fnName)
+          : [];
+        const loaderFnNames = hasLoaderCode ? getFnNames("createLoader") : [];
+        const handleFnNames = hasHandleCode ? getFnNames("createHandle") : [];
+        const lsFnNames = hasLocationStateCode
+          ? getFnNames("createLocationState")
+          : [];
+
+        // Collect ALL recognized bindings to check export coverage
+        const allBindings: CreateExportBinding[] = [];
+        for (const fnNames of [
+          prerenderFnNames,
+          staticFnNames,
+          loaderFnNames,
+          handleFnNames,
+          lsFnNames,
+        ]) {
+          if (fnNames.length > 0) {
+            allBindings.push(...getBindings(code, fnNames));
+          }
+        }
+
+        // Check if preserved createHandle/createLocationState calls
+        // reference non-exported locals (e.g. helper functions, constants).
+        // If so, the whole-file stub would strip those locals, breaking
+        // the call. Fall through to the unified pipeline instead.
+        let canStubWholeFile =
+          allBindings.length > 0 && isExportOnlyFile(code, allBindings);
+
+        if (
+          canStubWholeFile &&
+          (handleFnNames.length > 0 || lsFnNames.length > 0)
+        ) {
+          const exportedLocals = new Set(allBindings.map((b) => b.localName));
+          // Collect bindings that would be stripped by whole-file replacement:
+          // local declarations and imported bindings from non-@rangojs/router
+          // modules. This is a regex-based heuristic — it intentionally skips
+          // edge cases (class decls, destructured bindings, combined
+          // default+named imports) since those rarely appear in route files.
+          const strippedBindings: string[] = [];
+
+          // Skip React Fast Refresh temporaries (_c, _c2, ...) which are
+          // injected by @vitejs/plugin-react in the client environment and
+          // would falsely trigger the bailout.
+          const localDeclPattern =
+            /(?:^|;|\n)\s*(?:const|let|var|function)\s+(\w+)/g;
+          let declMatch: RegExpExecArray | null;
+          while ((declMatch = localDeclPattern.exec(code)) !== null) {
+            const name = declMatch[1];
+            if (!exportedLocals.has(name) && !/^_c\d*$/.test(name)) {
+              strippedBindings.push(name);
+            }
+          }
+
+          const importPattern =
+            /import\s*\{([^}]*)\}\s*from\s*["'](?!@rangojs\/router)[^"']*["']/g;
+          let importMatch: RegExpExecArray | null;
+          while ((importMatch = importPattern.exec(code)) !== null) {
+            for (const spec of importMatch[1].split(",")) {
+              const m = spec
+                .trim()
+                .match(/^[A-Za-z_$][\w$]*(?:\s+as\s+([A-Za-z_$][\w$]*))?$/);
+              if (m) strippedBindings.push(m[1] || m[0].trim().split(/\s/)[0]);
+            }
+          }
+          const defaultImportPattern =
+            /import\s+([A-Za-z_$][\w$]*)\s+from\s*["'](?!@rangojs\/router)[^"']*["']/g;
+          while ((importMatch = defaultImportPattern.exec(code)) !== null) {
+            strippedBindings.push(importMatch[1]);
+          }
+          const nsImportPattern =
+            /import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*["'](?!@rangojs\/router)[^"']*["']/g;
+          while ((importMatch = nsImportPattern.exec(code)) !== null) {
+            strippedBindings.push(importMatch[1]);
+          }
+
+          if (strippedBindings.length > 0) {
+            const preservedBindings = allBindings.filter((b) => {
+              const fc = code.slice(b.callExprStart, b.callOpenParenPos + 1);
+              return (
+                handleFnNames.some((n) => fc.includes(n)) ||
+                lsFnNames.some((n) => fc.includes(n))
+              );
+            });
+            const strippedRe = new RegExp(
+              `\\b(?:${strippedBindings.join("|")})\\b`,
+            );
+            canStubWholeFile = !preservedBindings.some((b) => {
+              const expr = code.slice(b.callExprStart, b.callCloseParenPos + 1);
+              return strippedRe.test(expr);
+            });
+          }
+        }
+
+        if (canStubWholeFile) {
+          const lines: string[] = [];
+          const neededImports: string[] = [];
+          if (handleFnNames.length > 0) neededImports.push("createHandle");
+          if (lsFnNames.length > 0) neededImports.push("createLocationState");
+          if (neededImports.length > 0) {
+            lines.push(
+              `import { ${neededImports.join(", ")} } from "@rangojs/router";`,
+            );
+          }
+
+          for (const binding of allBindings) {
+            const fnCall = code.slice(
+              binding.callExprStart,
+              binding.callOpenParenPos + 1,
+            );
+            const isHandle = handleFnNames.some((n) => fnCall.includes(n));
+            const isLocationState = lsFnNames.some((n) => fnCall.includes(n));
+
+            // Aliases share the primary name's ID (matches server transforms).
+            const primaryName = binding.exportNames[0];
+            const stubId = makeStubId(filePath, primaryName, isBuild);
+
+            if (isHandle || isLocationState) {
+              // Rewrite alias to canonical name since the stub file only
+              // imports canonical names from @rangojs/router.
+              // Strip React Fast Refresh `_c = ` wrappers from args
+              // (e.g. `_c = (segments) => ...` → `(segments) => ...`)
+              const rawArgs = code
+                .slice(binding.callOpenParenPos + 1, binding.callCloseParenPos)
+                .replace(/\b_c\d*\s*=\s*/g, "");
+              const canonicalName = isHandle
+                ? "createHandle"
+                : "createLocationState";
+              const activeFnNames = isHandle ? handleFnNames : lsFnNames;
+
+              // Reconstruct the function name (handling aliases + generics)
+              let rawCallee = code.slice(
+                binding.callExprStart,
+                binding.callOpenParenPos,
+              );
+              for (const alias of activeFnNames) {
+                if (alias !== canonicalName && rawCallee.startsWith(alias)) {
+                  rawCallee = canonicalName + rawCallee.slice(alias.length);
+                  break;
+                }
+              }
+
+              if (isHandle) {
+                // createHandle checks __injectedId DURING the call, so $$id
+                // must be a parameter, not a post-call property assignment.
+                const idParam =
+                  binding.argCount === 0
+                    ? `undefined, "${stubId}"`
+                    : `, "${stubId}"`;
+                lines.push(
+                  `export const ${primaryName} = ${rawCallee}(${rawArgs}${idParam});`,
+                );
+                lines.push(`${primaryName}.$$id = "${stubId}";`);
+              } else {
+                lines.push(
+                  `export const ${primaryName} = ${rawCallee}(${rawArgs});`,
+                );
+                lines.push(
+                  `${primaryName}.__rsc_ls_key = "__rsc_ls_${stubId}";`,
+                );
+              }
+              for (const name of binding.exportNames.slice(1)) {
+                lines.push(`export const ${name} = ${primaryName};`);
+              }
+            } else {
+              let brand = "loader";
+              if (prerenderFnNames.some((n) => fnCall.includes(n))) {
+                brand = PRERENDER_CONFIG.brand;
+              } else if (staticFnNames.some((n) => fnCall.includes(n))) {
+                brand = STATIC_CONFIG.brand;
+              }
+              lines.push(
+                `export const ${primaryName} = { __brand: "${brand}", $$id: "${stubId}" };`,
+              );
+              for (const name of binding.exportNames.slice(1)) {
+                lines.push(`export const ${name} = ${primaryName};`);
+              }
+            }
+          }
+
+          return { code: lines.join("\n") + "\n", map: null };
+        }
       }
 
       // --- StaticHandler: RSC build module tracking ---
