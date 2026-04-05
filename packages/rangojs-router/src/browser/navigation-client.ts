@@ -101,9 +101,15 @@ export function createNavigationClient(
       //
       const canUsePrefetch = !staleRevalidation && !hmr && !interceptSourceUrl;
       const cacheKey = buildPrefetchKey(previousUrl, fetchUrl);
-      const cachedResponse = canUsePrefetch ? consumePrefetch(cacheKey) : null;
+      // Wildcard key matches prefetch entries stored with a custom prefetchKey
+      // (Link's prefetchKey prop stores under "*" instead of the source URL).
+      const wildcardKey = "*\0" + fetchUrl.pathname + fetchUrl.search;
+      const cachedResponse = canUsePrefetch
+        ? (consumePrefetch(cacheKey) ?? consumePrefetch(wildcardKey))
+        : null;
       const inflightResponsePromise = canUsePrefetch
-        ? consumeInflightPrefetch(cacheKey)
+        ? (consumeInflightPrefetch(cacheKey) ??
+          consumeInflightPrefetch(wildcardKey))
         : null;
       // Track when the stream completes
       let resolveStreamComplete: () => void;

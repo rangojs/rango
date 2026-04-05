@@ -61,13 +61,23 @@ const inflightPromises = new Map<string, Promise<Response | null>>();
 let generation = 0;
 
 /**
- * Build a source-dependent cache key.
- * Includes the source page href so the same target prefetched from
- * different pages gets separate entries — the server response varies
- * based on the source page context (diff-based rendering).
+ * Build a cache key for prefetched responses.
+ *
+ * By default the key includes the source page href so the same target
+ * prefetched from different pages gets separate entries (the server's
+ * diff response depends on the source page context).
+ *
+ * When `prefetchKey` is provided, the source portion is replaced with
+ * a `*` sentinel so all custom-keyed entries share one cache slot per
+ * target — enabling source-agnostic cache reuse.
  */
-export function buildPrefetchKey(sourceHref: string, targetUrl: URL): string {
-  return sourceHref + "\0" + targetUrl.pathname + targetUrl.search;
+export function buildPrefetchKey(
+  sourceHref: string,
+  targetUrl: URL,
+  prefetchKey?: string | ((from: string) => string),
+): string {
+  const source = prefetchKey != null ? "*" : sourceHref;
+  return source + "\0" + targetUrl.pathname + targetUrl.search;
 }
 
 /**

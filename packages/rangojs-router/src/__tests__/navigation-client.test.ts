@@ -220,7 +220,8 @@ describe("navigation-client", () => {
       });
 
       expect(fetchMock).not.toHaveBeenCalled();
-      expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
+      // Called twice: exact key (miss) + wildcard key (miss)
+      expect(consumePrefetchMock).toHaveBeenCalledTimes(2);
       expect(consumeInflightPrefetchMock).toHaveBeenCalledTimes(1);
       expect(result.payload.metadata).toMatchObject({
         matched: [],
@@ -252,12 +253,45 @@ describe("navigation-client", () => {
       });
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
+      // Called twice: exact key (miss) + wildcard key (miss)
+      expect(consumePrefetchMock).toHaveBeenCalledTimes(2);
       expect(consumeInflightPrefetchMock).toHaveBeenCalledTimes(1);
       expect(result.payload.metadata).toMatchObject({
         matched: [],
         diff: [],
         body: "fresh-payload",
+      });
+    });
+
+    it("falls back to wildcard key when exact key misses", async () => {
+      const cachedBody = "wildcard-cached";
+      // Return null for exact key, response for wildcard key
+      consumePrefetchMock.mockImplementation((key: string) => {
+        if (key.startsWith("*\0")) return new Response(cachedBody);
+        return null;
+      });
+
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+      const client = createNavigationClient({
+        createFromFetch: async (responsePromise: Promise<Response>) => {
+          const response = await responsePromise;
+          const text = await response.clone().text();
+          return { metadata: { matched: [], diff: [], body: text } };
+        },
+      } as any);
+
+      const result = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(consumePrefetchMock).toHaveBeenCalledTimes(2);
+      expect(result.payload.metadata).toMatchObject({
+        body: "wildcard-cached",
       });
     });
 

@@ -223,3 +223,118 @@ describe("prefetch dedup source-page context", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("prefetchKey source-agnostic caching", () => {
+  afterEach(() => {
+    clearPrefetchCache();
+    resetPrefetchPolicy();
+    vi.unstubAllGlobals();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+    restoreGlobalProperty("navigator", originalNavigatorDescriptor);
+  });
+
+  it("same target with prefetchKey from different source pages is deduped", () => {
+    setupBrowser();
+    const fetchMock = vi.fn((_url: string) =>
+      Promise.resolve({ ok: false, body: null } as unknown as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    // Prefetch /product/2 from /product/1 with prefetchKey
+    window.location.href = "http://localhost:4173/product/1";
+    (window.location as any).pathname = "/product/1";
+    prefetchDirect(
+      "/product/2",
+      ["A0", "A0.route"],
+      undefined,
+      undefined,
+      "products",
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Navigate to /product/3 and prefetch same target — should be deduped
+    window.location.href = "http://localhost:4173/product/3";
+    (window.location as any).pathname = "/product/3";
+    prefetchDirect(
+      "/product/2",
+      ["A0", "A0.route"],
+      undefined,
+      undefined,
+      "products",
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("callback prefetchKey also dedupes across source pages", () => {
+    setupBrowser();
+    const fetchMock = vi.fn((_url: string) =>
+      Promise.resolve({ ok: false, body: null } as unknown as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const normalize = (from: string) => from.replace(/\/\d+$/, "");
+
+    window.location.href = "http://localhost:4173/product/1";
+    (window.location as any).pathname = "/product/1";
+    prefetchDirect("/product/2", ["A0"], undefined, undefined, normalize);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    window.location.href = "http://localhost:4173/product/5";
+    (window.location as any).pathname = "/product/5";
+    prefetchDirect("/product/2", ["A0"], undefined, undefined, normalize);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("without prefetchKey, different source pages are NOT deduped (baseline)", () => {
+    setupBrowser();
+    const fetchMock = vi.fn((_url: string) =>
+      Promise.resolve({ ok: false, body: null } as unknown as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/product/1";
+    (window.location as any).pathname = "/product/1";
+    prefetchDirect("/product/2", ["A0"]);
+
+    window.location.href = "http://localhost:4173/product/3";
+    (window.location as any).pathname = "/product/3";
+    prefetchDirect("/product/2", ["A0"]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("prefetchQueued also supports prefetchKey dedup", () => {
+    setupBrowser();
+    const fetchMock = vi.fn((_url: string) =>
+      Promise.resolve({ ok: false, body: null } as unknown as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/page/1";
+    (window.location as any).pathname = "/page/1";
+    const key1 = prefetchQueued(
+      "/page/2",
+      ["A0"],
+      undefined,
+      undefined,
+      "pages",
+    );
+
+    window.location.href = "http://localhost:4173/page/5";
+    (window.location as any).pathname = "/page/5";
+    const key2 = prefetchQueued(
+      "/page/2",
+      ["A0"],
+      undefined,
+      undefined,
+      "pages",
+    );
+
+    // Same wildcard key — second call is deduped
+    expect(key1).toBe(key2);
+  });
+});

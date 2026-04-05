@@ -98,6 +98,26 @@ export interface LinkProps extends Omit<
    */
   prefetch?: PrefetchStrategy;
   /**
+   * Custom prefetch cache key for source-agnostic cache reuse.
+   * When set, prefetch responses are cached independently of the current
+   * page URL, so navigating to the same target from different source pages
+   * reuses the cached prefetch.
+   *
+   * - String: static group name (e.g., `"pages"`)
+   * - Function: receives current URL (`window.location.href`), returns a
+   *   normalized source key
+   *
+   * @example
+   * ```tsx
+   * // Static group — all "pages" links share one cache entry per target
+   * <Link to="/page/3" prefetch="hover" prefetchKey="pages" />
+   *
+   * // Normalize — strip trailing page number from source URL
+   * <Link to="/page/3" prefetch="hover" prefetchKey={(from) => from.replace(/\/\d+$/, '')} />
+   * ```
+   */
+  prefetchKey?: string | ((from: string) => string);
+  /**
    * State to pass to history.pushState/replaceState.
    * Accessible via useLocationState() hook.
    *
@@ -184,6 +204,7 @@ export const Link: ForwardRefExoticComponent<
     reloadDocument = false,
     revalidate,
     prefetch = "none",
+    prefetchKey,
     state,
     children,
     onClick,
@@ -320,9 +341,10 @@ export const Link: ForwardRefExoticComponent<
         segmentState.currentSegmentIds,
         getAppVersion(),
         ctx.store.getRouterId?.(),
+        prefetchKey,
       );
     }
-  }, [resolvedStrategy, resolvedTo, isExternal, ctx]);
+  }, [resolvedStrategy, resolvedTo, isExternal, ctx, prefetchKey]);
 
   // Viewport/render prefetch: waits for idle before starting,
   // uses concurrency-limited queue to avoid flooding.
@@ -344,6 +366,7 @@ export const Link: ForwardRefExoticComponent<
         segmentState.currentSegmentIds,
         getAppVersion(),
         ctx.store.getRouterId?.(),
+        prefetchKey,
       );
     };
 
@@ -383,7 +406,7 @@ export const Link: ForwardRefExoticComponent<
         unobserveForPrefetch(observedElement);
       }
     };
-  }, [resolvedStrategy, resolvedTo, isExternal, ctx]);
+  }, [resolvedStrategy, resolvedTo, isExternal, ctx, prefetchKey]);
 
   return (
     <a

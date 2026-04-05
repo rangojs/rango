@@ -113,12 +113,13 @@ export function prefetchDirect(
   segmentIds: string[],
   version?: string,
   routerId?: string,
+  prefetchKey?: string | ((from: string) => string),
 ): void {
   if (!shouldPrefetch()) return;
 
   const targetUrl = buildPrefetchUrl(url, segmentIds, version, routerId);
   if (!targetUrl) return;
-  const key = buildPrefetchKey(window.location.href, targetUrl);
+  const key = buildPrefetchKey(window.location.href, targetUrl, prefetchKey);
   if (hasPrefetch(key)) return;
   executePrefetchFetch(key, targetUrl.toString());
 }
@@ -133,11 +134,12 @@ export function prefetchQueued(
   segmentIds: string[],
   version?: string,
   routerId?: string,
+  prefetchKey?: string | ((from: string) => string),
 ): string {
   if (!shouldPrefetch()) return "";
   const targetUrl = buildPrefetchUrl(url, segmentIds, version, routerId);
   if (!targetUrl) return "";
-  const key = buildPrefetchKey(window.location.href, targetUrl);
+  const key = buildPrefetchKey(window.location.href, targetUrl, prefetchKey);
   if (hasPrefetch(key)) return key;
   const fetchUrlStr = targetUrl.toString();
   enqueuePrefetch(key, (signal) => {
