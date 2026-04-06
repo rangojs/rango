@@ -23,6 +23,24 @@ import {
 import { getRangoState } from "../rango-state.js";
 import { enqueuePrefetch } from "./queue.js";
 import { shouldPrefetch } from "./policy.js";
+import { debugLog } from "../logging.js";
+
+/**
+ * Check if a URL resolves to the current page (same pathname + search).
+ * Used to prevent same-page prefetching with prefetchKey, which would
+ * produce a trivial diff that corrupts the wildcard cache.
+ */
+function isSamePage(url: string): boolean {
+  try {
+    const target = new URL(url, window.location.origin);
+    return (
+      target.pathname + target.search ===
+      window.location.pathname + window.location.search
+    );
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Build an RSC partial URL for prefetching.
@@ -113,13 +131,32 @@ export function prefetchDirect(
   segmentIds: string[],
   version?: string,
   routerId?: string,
+  prefetchKey?: string | ((from: string) => string),
 ): void {
   if (!shouldPrefetch()) return;
 
   const targetUrl = buildPrefetchUrl(url, segmentIds, version, routerId);
   if (!targetUrl) return;
-  const key = buildPrefetchKey(window.location.href, targetUrl);
-  if (hasPrefetch(key)) return;
+  // Skip same-page prefetch with prefetchKey — a same-page diff is trivial
+  // and would corrupt the wildcard cache entry for cross-page navigation.
+  if (prefetchKey != null && isSamePage(url)) {
+    return;
+  }
+  const key = buildPrefetchKey(window.location.href, targetUrl, prefetchKey);
+  if (hasPrefetch(key)) {
+    debugLog("[prefetch] direct dedup (key already exists)", {
+      url,
+      key,
+      prefetchKey: prefetchKey != null ? String(prefetchKey) : undefined,
+    });
+    return;
+  }
+  debugLog("[prefetch] direct fetch", {
+    url,
+    key,
+    source: window.location.href,
+    prefetchKey: prefetchKey != null ? String(prefetchKey) : undefined,
+  });
   executePrefetchFetch(key, targetUrl.toString());
 }
 
@@ -133,17 +170,36 @@ export function prefetchQueued(
   segmentIds: string[],
   version?: string,
   routerId?: string,
+  prefetchKey?: string | ((from: string) => string),
 ): string {
   if (!shouldPrefetch()) return "";
   const targetUrl = buildPrefetchUrl(url, segmentIds, version, routerId);
   if (!targetUrl) return "";
-  const key = buildPrefetchKey(window.location.href, targetUrl);
-  if (hasPrefetch(key)) return key;
+  // Skip same-page prefetch with prefetchKey — a same-page diff is trivial
+  // and would corrupt the wildcard cache entry for cross-page navigation.
+  if (prefetchKey != null && isSamePage(url)) {
+    return "";
+  }
+  const key = buildPrefetchKey(window.location.href, targetUrl, prefetchKey);
+  if (hasPrefetch(key)) {
+    debugLog("[prefetch] queued dedup (key already exists)", {
+      url,
+      key,
+      prefetchKey: prefetchKey != null ? String(prefetchKey) : undefined,
+    });
+    return key;
+  }
   const fetchUrlStr = targetUrl.toString();
   enqueuePrefetch(key, (signal) => {
     // Re-check at execution time: a hover-triggered prefetchDirect may
     // have started or completed this key while the item sat in the queue.
     if (hasPrefetch(key)) return Promise.resolve();
+    // By execution time, the user may have navigated to the target page.
+    // A same-page prefetch produces a trivial diff that would overwrite
+    // the useful cross-page entry in the wildcard cache.
+    if (prefetchKey != null && isSamePage(url)) {
+      return Promise.resolve();
+    }
     return executePrefetchFetch(key, fetchUrlStr, signal).then(() => {});
   });
   return key;
