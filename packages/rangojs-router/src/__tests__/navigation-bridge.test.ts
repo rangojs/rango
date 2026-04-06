@@ -501,3 +501,111 @@ describe("navigation-bridge redirect validation", () => {
     expect(createNavigationTransactionMock).not.toHaveBeenCalled();
   });
 });
+
+describe("navigation-bridge stale cache handling", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    fetchPartialUpdateMock.mockReset();
+    createNavigationTransactionMock.mockReset();
+  });
+
+  it("sets skipLoadingState: false when cache is stale", async () => {
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/",
+        origin: "http://localhost",
+      },
+      history: {
+        state: {},
+        pushState: vi.fn(),
+        replaceState: vi.fn(),
+      },
+    });
+
+    const store = createStore();
+    // Cache exists but is marked stale (server action invalidated it)
+    store.getCachedSegments.mockReturnValue({
+      segments: [{ id: "L0", type: "layout" }] as any,
+      stale: true,
+      handleData: {},
+    });
+
+    function makeTx() {
+      return {
+        handle: { signal: new AbortController().signal },
+        commit: vi.fn(),
+        with: vi.fn(() => ({})),
+        [Symbol.dispose]: vi.fn(),
+      };
+    }
+
+    const tx = makeTx();
+    createNavigationTransactionMock.mockReturnValue(tx);
+    fetchPartialUpdateMock.mockResolvedValue(undefined);
+
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: createEventController() as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+
+    await bridge.navigate("/details");
+
+    // Stale cache: skipLoadingState must be false so useNavigation shows loading
+    expect(createNavigationTransactionMock).toHaveBeenCalled();
+    const options = createNavigationTransactionMock.mock.calls[0][3];
+    expect(options.skipLoadingState).toBe(false);
+  });
+
+  it("sets skipLoadingState: false even when cache is fresh (forward nav always waits)", async () => {
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/",
+        origin: "http://localhost",
+      },
+      history: {
+        state: {},
+        pushState: vi.fn(),
+        replaceState: vi.fn(),
+      },
+    });
+
+    const store = createStore();
+    store.getCachedSegments.mockReturnValue({
+      segments: [{ id: "L0", type: "layout" }] as any,
+      stale: false,
+      handleData: {},
+    });
+
+    function makeTx() {
+      return {
+        handle: { signal: new AbortController().signal },
+        commit: vi.fn(),
+        with: vi.fn(() => ({})),
+        [Symbol.dispose]: vi.fn(),
+      };
+    }
+
+    const tx = makeTx();
+    createNavigationTransactionMock.mockReturnValue(tx);
+    fetchPartialUpdateMock.mockResolvedValue(undefined);
+
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: createEventController() as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+
+    await bridge.navigate("/details");
+
+    // Forward nav always waits on fetch — loading state must be shown
+    expect(createNavigationTransactionMock).toHaveBeenCalled();
+    const options = createNavigationTransactionMock.mock.calls[0][3];
+    expect(options.skipLoadingState).toBe(false);
+  });
+});

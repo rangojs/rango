@@ -261,18 +261,24 @@ export function createNavigationBridge(
       // 2. routes that CAN be intercepted - we don't know if this navigation will intercept
       // 3. when leaving intercept - we need fresh non-intercept segments from server
       // 4. redirect-with-state - force re-render so hooks read fresh state
+      // 5. stale cache - server action invalidated it, need fresh data with loading state
       const hasUsableCache =
         cachedSegments &&
         cachedSegments.length > 0 &&
         !isInterceptOnlyCache(cachedSegments) &&
         !hasInterceptCache &&
         !isLeavingIntercept &&
+        !cached?.stale &&
         !options?._skipCache;
 
+      // Forward navigations always await fetchPartialUpdate before rendering,
+      // so useNavigation should always report "loading". skipLoadingState is
+      // only used for popstate background revalidation (line ~526) where
+      // cached content renders instantly without a network wait.
       const tx = createNavigationTransaction(store, eventController, url, {
         ...options,
         state: resolvedState,
-        skipLoadingState: hasUsableCache,
+        skipLoadingState: false,
       });
 
       // REVALIDATE: Fetch fresh data from server
