@@ -188,6 +188,11 @@ export function createPartialUpdater(
       targetCache && targetCache.length > 0
         ? targetCache
         : getCurrentCachedSegments();
+    const cachedSegsSource =
+      targetCache && targetCache.length > 0 ? "history-cache" : "current-page";
+    debugLog(
+      `[Browser] cachedSegs source: ${cachedSegsSource} (${cachedSegs.length} segments: ${cachedSegs.map((s) => s.id).join(", ")})`,
+    );
 
     // Fetch partial payload (no abort signal - RSC doesn't support it well)
     let fetchResult: Awaited<ReturnType<NavigationClient["fetchPartial"]>>;
