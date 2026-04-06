@@ -9,12 +9,20 @@ vi.mock("../../internal-debug.js", () => ({
   INTERNAL_RANGO_DEBUG: true,
 }));
 
+// Hoisted mocks so tests can inspect calls and control behavior
+const { mockEvaluateRevalidation, mockRevalidateRules } = vi.hoisted(() => ({
+  mockEvaluateRevalidation: vi.fn(async () => false),
+  // When set, buildEntryRevalidateMap returns these rules for matching segments
+  mockRevalidateRules: { value: null as Map<string, any> | null },
+}));
+
 // Mock router-context to provide evaluateRevalidation and buildEntryRevalidateMap
 vi.mock("../router-context.js", () => ({
   getRouterContext: () => ({
-    evaluateRevalidation: vi.fn(async () => false),
-    buildEntryRevalidateMap: (entries: any[]) => {
-      // Return empty map — all segments get "cached-no-rules"
+    evaluateRevalidation: mockEvaluateRevalidation,
+    buildEntryRevalidateMap: () => {
+      if (mockRevalidateRules.value) return mockRevalidateRules.value;
+      // Default: empty map — all segments get "cached-no-rules"
       return new Map();
     },
     resolveLoadersOnlyWithRevalidation: vi.fn(async () => ({
@@ -227,6 +235,49 @@ describe("cache-hit trace entries", () => {
     expect(trace!.entries[1].segmentId).toBe("R0");
     expect(trace!.entries[1].reason).toBe("cached-no-rules");
 
+    consoleSpy.mockRestore();
+  });
+
+  it("forwards ctx.stale to evaluateRevalidation for cached segments with rules", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    mockEvaluateRevalidation.mockClear();
+    mockEvaluateRevalidation.mockResolvedValue(false);
+
+    // Provide revalidation rules for L0 so evaluateRevalidation is called
+    const rules = new Map();
+    rules.set("L0", { revalidate: [() => true] });
+    mockRevalidateRules.value = rules;
+
+    const seg = makeSegment("L0", "layout");
+    const ctx = makeCtx(["L0"], [seg]);
+    // Mark the request as stale (simulating _rsc_stale=true from client)
+    ctx.stale = true;
+    const state = makeState();
+
+    await runWithRouterLogContext(
+      { request: ctx.request, transaction: "test" },
+      async () => {
+        startRevalidationTrace({
+          method: "GET",
+          prevUrl: "http://localhost/a",
+          nextUrl: "http://localhost/b",
+          routeKey: "test.route",
+          isAction: false,
+          stale: true,
+        });
+
+        const middleware = withCacheLookup(ctx, state);
+        await collect(middleware(empty()));
+      },
+    );
+
+    // evaluateRevalidation must receive stale: true from ctx.stale
+    expect(mockEvaluateRevalidation).toHaveBeenCalledTimes(1);
+    expect(mockEvaluateRevalidation).toHaveBeenCalledWith(
+      expect.objectContaining({ stale: true }),
+    );
+
+    mockRevalidateRules.value = null;
     consoleSpy.mockRestore();
   });
 });
