@@ -251,6 +251,7 @@ async function* yieldFromStore<TEnv>(
           ctx.url,
           ctx.routeKey,
           ctx.actionContext,
+          ctx.stale || undefined,
         ),
       );
       state.matchedIds = [
