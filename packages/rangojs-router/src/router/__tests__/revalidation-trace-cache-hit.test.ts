@@ -10,10 +10,18 @@ vi.mock("../../internal-debug.js", () => ({
 }));
 
 // Hoisted mocks so tests can inspect calls and control behavior
-const { mockEvaluateRevalidation, mockRevalidateRules } = vi.hoisted(() => ({
+const {
+  mockEvaluateRevalidation,
+  mockRevalidateRules,
+  mockResolveLoadersOnlyWithRevalidation,
+} = vi.hoisted(() => ({
   mockEvaluateRevalidation: vi.fn(async () => false),
   // When set, buildEntryRevalidateMap returns these rules for matching segments
   mockRevalidateRules: { value: null as Map<string, any> | null },
+  mockResolveLoadersOnlyWithRevalidation: vi.fn(async () => ({
+    segments: [],
+    matchedIds: [],
+  })),
 }));
 
 // Mock router-context to provide evaluateRevalidation and buildEntryRevalidateMap
@@ -25,10 +33,7 @@ vi.mock("../router-context.js", () => ({
       // Default: empty map — all segments get "cached-no-rules"
       return new Map();
     },
-    resolveLoadersOnlyWithRevalidation: vi.fn(async () => ({
-      segments: [],
-      matchedIds: [],
-    })),
+    resolveLoadersOnlyWithRevalidation: mockResolveLoadersOnlyWithRevalidation,
     resolveLoadersOnly: vi.fn(async () => []),
   }),
   runWithRouterContext: (_ctx: any, fn: any) => fn(),
@@ -278,6 +283,46 @@ describe("cache-hit trace entries", () => {
     );
 
     mockRevalidateRules.value = null;
+    consoleSpy.mockRestore();
+  });
+
+  it("forwards ctx.stale to resolveLoadersOnlyWithRevalidation on store-hit path", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    mockResolveLoadersOnlyWithRevalidation.mockClear();
+    mockResolveLoadersOnlyWithRevalidation.mockResolvedValue({
+      segments: [],
+      matchedIds: [],
+    });
+
+    // No cached segments with rules — the middleware takes the
+    // resolveLoadersOnlyWithRevalidation early-exit path (line ~242)
+    const seg = makeSegment("L0", "layout");
+    const ctx = makeCtx(["L0"], [seg]);
+    ctx.stale = true;
+    const state = makeState();
+
+    await runWithRouterLogContext(
+      { request: ctx.request, transaction: "test" },
+      async () => {
+        startRevalidationTrace({
+          method: "GET",
+          prevUrl: "http://localhost/a",
+          nextUrl: "http://localhost/b",
+          routeKey: "test.route",
+          isAction: false,
+          stale: true,
+        });
+
+        const middleware = withCacheLookup(ctx, state);
+        await collect(middleware(empty()));
+      },
+    );
+
+    // resolveLoadersOnlyWithRevalidation must receive stale as last arg
+    expect(mockResolveLoadersOnlyWithRevalidation).toHaveBeenCalledTimes(1);
+    const lastArg = mockResolveLoadersOnlyWithRevalidation.mock.calls[0].at(-1);
+    expect(lastArg).toBe(true);
+
     consoleSpy.mockRestore();
   });
 });
