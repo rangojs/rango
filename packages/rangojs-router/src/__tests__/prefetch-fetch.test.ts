@@ -391,3 +391,188 @@ describe("prefetchKey source-agnostic caching", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * Regression: prefetchKey same-page cache poisoning
+ *
+ * When using prefetchKey, after navigating to a prefetched target, the page's
+ * viewport/render prefetch would re-fetch the current page (same URL) and store
+ * a trivial same-page diff under the wildcard key. Future cross-page navigations
+ * to that URL would then get the trivial diff (1 segment) instead of the full
+ * diff (8+ segments), causing the UI to not update properly.
+ *
+ * The fix: skip prefetching when the target pathname matches the current page
+ * pathname and prefetchKey is set.
+ */
+describe("prefetchKey same-page cache poisoning regression", () => {
+  afterEach(() => {
+    clearPrefetchCache();
+    resetPrefetchPolicy();
+    vi.unstubAllGlobals();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+    restoreGlobalProperty("navigator", originalNavigatorDescriptor);
+  });
+
+  it("after consuming a prefetch, same-page re-prefetch does not overwrite wildcard cache", async () => {
+    setupBrowser();
+
+    // Mock fetch to return a response with a tee-able body
+    const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+      Promise.resolve(
+        new Response("full-diff-payload", {
+          status: 200,
+          headers: { "X-Test": "1" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    // Step 1: On /page/list, prefetch /page/1 with prefetchKey
+    window.location.href = "http://localhost:4173/page/list";
+    (window.location as any).pathname = "/page/list";
+    prefetchDirect("/page/1", ["A0"], "v1", undefined, "pages");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Wait for the fetch to complete and store in cache
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    // Step 2: Simulate navigating to /page/1 — the entry is consumed
+    const { consumePrefetch } = await import("../browser/prefetch/cache");
+    const wildcardKey =
+      "*\0/page/1?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const consumed = consumePrefetch(wildcardKey);
+    expect(consumed).not.toBeNull();
+
+    // Step 3: Now on /page/1, try to re-prefetch /page/1 (self-link)
+    window.location.href = "http://localhost:4173/page/1";
+    (window.location as any).pathname = "/page/1";
+
+    prefetchDirect("/page/1", ["A0"], "v1", undefined, "pages");
+
+    // No new fetch — same-page skip prevents cache poisoning
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Also verify queued path is blocked
+    const key = prefetchQueued("/page/1", ["A0"], "v1", undefined, "pages");
+    expect(key).toBe("");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Step 4: Verify wildcard cache is empty (consumed, not re-poisoned)
+    const recheck = consumePrefetch(wildcardKey);
+    expect(recheck).toBeNull();
+  });
+
+  it("after consuming a prefetch, cross-page re-prefetch IS allowed", async () => {
+    setupBrowser();
+
+    const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+      Promise.resolve(
+        new Response("diff-payload", {
+          status: 200,
+          headers: { "X-Test": "1" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    // Step 1: On /page/list, prefetch /page/1
+    window.location.href = "http://localhost:4173/page/list";
+    (window.location as any).pathname = "/page/list";
+    prefetchDirect("/page/1", ["A0"], "v1", undefined, "pages");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    // Step 2: Consume the entry
+    const { consumePrefetch } = await import("../browser/prefetch/cache");
+    const wildcardKey =
+      "*\0/page/1?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    consumePrefetch(wildcardKey);
+
+    // Step 3: Navigate to /page/2 (NOT /page/1), re-prefetch /page/1
+    window.location.href = "http://localhost:4173/page/2";
+    (window.location as any).pathname = "/page/2";
+
+    prefetchDirect("/page/1", ["A0"], "v1", undefined, "pages");
+
+    // Cross-page re-prefetch IS allowed — different pathname
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("full pagination flow: forward through /1→/2→/3 then back to /1 uses correct entry", async () => {
+    setupBrowser();
+
+    let fetchCount = 0;
+    const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) => {
+      fetchCount++;
+      return Promise.resolve(
+        new Response(`payload-${fetchCount}`, {
+          status: 200,
+          headers: { "X-Test": "1" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const { consumePrefetch } = await import("../browser/prefetch/cache");
+
+    const key1 = "*\0/page/1?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const key2 = "*\0/page/2?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+    const key3 = "*\0/page/3?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+
+    // Step 1: On /page/list, prefetch /page/1, /page/2, /page/3
+    window.location.href = "http://localhost:4173/page/list";
+    (window.location as any).pathname = "/page/list";
+
+    prefetchDirect("/page/1", ["A0"], "v1", undefined, "pages");
+    prefetchDirect("/page/2", ["A0"], "v1", undefined, "pages");
+    prefetchDirect("/page/3", ["A0"], "v1", undefined, "pages");
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    // Flush microtasks so storePrefetch/clearPrefetchInflight complete
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Step 2: Navigate to /page/1 — consume entry
+    const res1 = consumePrefetch(key1);
+    expect(res1).not.toBeNull();
+
+    // "On /page/1" — self-link prefetch should be blocked
+    window.location.href = "http://localhost:4173/page/1";
+    (window.location as any).pathname = "/page/1";
+    prefetchDirect("/page/1", ["A0"], "v1", undefined, "pages");
+    prefetchQueued("/page/1", ["A0"], "v1", undefined, "pages");
+    // No new fetches — self-link blocked
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    // Step 3: Navigate to /page/2 — consume entry
+    const res2 = consumePrefetch(key2);
+    expect(res2).not.toBeNull();
+
+    window.location.href = "http://localhost:4173/page/2";
+    (window.location as any).pathname = "/page/2";
+    prefetchDirect("/page/2", ["A0"], "v1", undefined, "pages");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    // Step 4: Navigate to /page/3 — consume entry
+    const res3 = consumePrefetch(key3);
+    expect(res3).not.toBeNull();
+
+    window.location.href = "http://localhost:4173/page/3";
+    (window.location as any).pathname = "/page/3";
+    prefetchDirect("/page/3", ["A0"], "v1", undefined, "pages");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    // Step 5: Go back to /page/1 — no wildcard entry (consumed, not re-poisoned)
+    const staleEntry = consumePrefetch(key1);
+    expect(staleEntry).toBeNull();
+
+    // A cross-page re-prefetch from /page/3 to /page/1 IS allowed
+    prefetchDirect("/page/1", ["A0"], "v1", undefined, "pages");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+});
