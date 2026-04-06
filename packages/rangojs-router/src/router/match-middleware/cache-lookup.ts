@@ -251,6 +251,7 @@ async function* yieldFromStore<TEnv>(
           ctx.url,
           ctx.routeKey,
           ctx.actionContext,
+          ctx.stale || undefined,
         ),
       );
       state.matchedIds = [
@@ -598,7 +599,7 @@ export function withCacheLookup<TEnv>(
         routeKey: ctx.routeKey,
         context: ctx.handlerContext,
         actionContext: ctx.actionContext,
-        stale: cacheResult.shouldRevalidate || undefined,
+        stale: cacheResult.shouldRevalidate || ctx.stale || undefined,
         traceSource: "cache-hit",
       });
 
