@@ -51,6 +51,7 @@ function setupBrowser({
         origin: "http://localhost:4173",
         href: "http://localhost:4173/current",
         pathname: "/current",
+        search: "",
       },
       matchMedia: vi.fn(() => createMediaQueryList(reducedData)),
     },
@@ -373,6 +374,26 @@ describe("prefetchKey source-agnostic caching", () => {
     // Returns empty — skipped entirely
     expect(key).toBe("");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("allows prefetch when only search params differ with prefetchKey", () => {
+    setupBrowser();
+    const fetchMock = vi.fn((_url: string) =>
+      Promise.resolve({ ok: false, body: null } as unknown as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    // On /search?q=a, prefetching /search?q=b — different search, should NOT skip
+    window.location.href = "http://localhost:4173/search?q=a";
+    (window.location as any).pathname = "/search";
+    (window.location as any).search = "?q=a";
+    prefetchDirect("/search?q=b", ["A0"], undefined, undefined, "search");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Same search — SHOULD skip
+    prefetchDirect("/search?q=a", ["A0"], undefined, undefined, "search");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT skip same-page prefetch without prefetchKey", () => {

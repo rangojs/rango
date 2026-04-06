@@ -26,6 +26,23 @@ import { shouldPrefetch } from "./policy.js";
 import { debugLog } from "../logging.js";
 
 /**
+ * Check if a URL resolves to the current page (same pathname + search).
+ * Used to prevent same-page prefetching with prefetchKey, which would
+ * produce a trivial diff that corrupts the wildcard cache.
+ */
+function isSamePage(url: string): boolean {
+  try {
+    const target = new URL(url, window.location.origin);
+    return (
+      target.pathname + target.search ===
+      window.location.pathname + window.location.search
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Build an RSC partial URL for prefetching.
  * Includes _rsc_segments so the server can diff against currently mounted
  * segments, and _rsc_v for version mismatch detection.
@@ -122,7 +139,7 @@ export function prefetchDirect(
   if (!targetUrl) return;
   // Skip same-page prefetch with prefetchKey — a same-page diff is trivial
   // and would corrupt the wildcard cache entry for cross-page navigation.
-  if (prefetchKey != null && targetUrl.pathname === window.location.pathname) {
+  if (prefetchKey != null && isSamePage(url)) {
     return;
   }
   const key = buildPrefetchKey(window.location.href, targetUrl, prefetchKey);
@@ -160,7 +177,7 @@ export function prefetchQueued(
   if (!targetUrl) return "";
   // Skip same-page prefetch with prefetchKey — a same-page diff is trivial
   // and would corrupt the wildcard cache entry for cross-page navigation.
-  if (prefetchKey != null && targetUrl.pathname === window.location.pathname) {
+  if (prefetchKey != null && isSamePage(url)) {
     return "";
   }
   const key = buildPrefetchKey(window.location.href, targetUrl, prefetchKey);
@@ -173,7 +190,6 @@ export function prefetchQueued(
     return key;
   }
   const fetchUrlStr = targetUrl.toString();
-  const targetPathname = targetUrl.pathname;
   enqueuePrefetch(key, (signal) => {
     // Re-check at execution time: a hover-triggered prefetchDirect may
     // have started or completed this key while the item sat in the queue.
@@ -181,7 +197,7 @@ export function prefetchQueued(
     // By execution time, the user may have navigated to the target page.
     // A same-page prefetch produces a trivial diff that would overwrite
     // the useful cross-page entry in the wildcard cache.
-    if (prefetchKey != null && targetPathname === window.location.pathname) {
+    if (prefetchKey != null && isSamePage(url)) {
       return Promise.resolve();
     }
     return executePrefetchFetch(key, fetchUrlStr, signal).then(() => {});
