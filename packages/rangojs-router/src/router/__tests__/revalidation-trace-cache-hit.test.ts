@@ -286,7 +286,13 @@ describe("cache-hit trace entries", () => {
     consoleSpy.mockRestore();
   });
 
-  it("forwards ctx.stale to resolveLoadersOnlyWithRevalidation on store-hit path", async () => {
+  // This exercises the runtime cache-hit loader path (cache-lookup.ts ~662),
+  // not the prerender store-hit path (~242) which requires full prerender
+  // infrastructure mocking. The store-hit stale forwarding is covered by
+  // the direct unit test in stale-propagation.test.ts which calls
+  // resolveLoadersOnlyWithRevalidation with stale=true and verifies it
+  // reaches evaluateRevalidation.
+  it("forwards ctx.stale to resolveLoadersOnlyWithRevalidation on runtime cache-hit", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     mockResolveLoadersOnlyWithRevalidation.mockClear();
     mockResolveLoadersOnlyWithRevalidation.mockResolvedValue({
@@ -294,8 +300,6 @@ describe("cache-hit trace entries", () => {
       matchedIds: [],
     });
 
-    // No cached segments with rules — the middleware takes the
-    // resolveLoadersOnlyWithRevalidation early-exit path (line ~242)
     const seg = makeSegment("L0", "layout");
     const ctx = makeCtx(["L0"], [seg]);
     ctx.stale = true;
@@ -318,7 +322,6 @@ describe("cache-hit trace entries", () => {
       },
     );
 
-    // resolveLoadersOnlyWithRevalidation must receive stale as last arg
     expect(mockResolveLoadersOnlyWithRevalidation).toHaveBeenCalledTimes(1);
     const lastArg = mockResolveLoadersOnlyWithRevalidation.mock.calls[0].at(-1);
     expect(lastArg).toBe(true);
