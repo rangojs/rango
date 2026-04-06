@@ -120,6 +120,11 @@ export function prefetchDirect(
 
   const targetUrl = buildPrefetchUrl(url, segmentIds, version, routerId);
   if (!targetUrl) return;
+  // Skip same-page prefetch with prefetchKey — a same-page diff is trivial
+  // and would corrupt the wildcard cache entry for cross-page navigation.
+  if (prefetchKey != null && targetUrl.pathname === window.location.pathname) {
+    return;
+  }
   const key = buildPrefetchKey(window.location.href, targetUrl, prefetchKey);
   if (hasPrefetch(key)) {
     debugLog("[prefetch] direct dedup (key already exists)", {
@@ -153,6 +158,11 @@ export function prefetchQueued(
   if (!shouldPrefetch()) return "";
   const targetUrl = buildPrefetchUrl(url, segmentIds, version, routerId);
   if (!targetUrl) return "";
+  // Skip same-page prefetch with prefetchKey — a same-page diff is trivial
+  // and would corrupt the wildcard cache entry for cross-page navigation.
+  if (prefetchKey != null && targetUrl.pathname === window.location.pathname) {
+    return "";
+  }
   const key = buildPrefetchKey(window.location.href, targetUrl, prefetchKey);
   if (hasPrefetch(key)) {
     debugLog("[prefetch] queued dedup (key already exists)", {
@@ -163,10 +173,17 @@ export function prefetchQueued(
     return key;
   }
   const fetchUrlStr = targetUrl.toString();
+  const targetPathname = targetUrl.pathname;
   enqueuePrefetch(key, (signal) => {
     // Re-check at execution time: a hover-triggered prefetchDirect may
     // have started or completed this key while the item sat in the queue.
     if (hasPrefetch(key)) return Promise.resolve();
+    // By execution time, the user may have navigated to the target page.
+    // A same-page prefetch produces a trivial diff that would overwrite
+    // the useful cross-page entry in the wildcard cache.
+    if (prefetchKey != null && targetPathname === window.location.pathname) {
+      return Promise.resolve();
+    }
     return executePrefetchFetch(key, fetchUrlStr, signal).then(() => {});
   });
   return key;

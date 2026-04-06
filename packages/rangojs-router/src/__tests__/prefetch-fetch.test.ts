@@ -337,4 +337,57 @@ describe("prefetchKey source-agnostic caching", () => {
     // Same wildcard key — second call is deduped
     expect(key1).toBe(key2);
   });
+
+  it("skips direct prefetch when target is current page with prefetchKey", () => {
+    setupBrowser();
+    const fetchMock = vi.fn((_url: string) =>
+      Promise.resolve({ ok: false, body: null } as unknown as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    // On /product/1, prefetching /product/1 with prefetchKey — skip
+    window.location.href = "http://localhost:4173/product/1";
+    (window.location as any).pathname = "/product/1";
+    prefetchDirect("/product/1", ["A0"], undefined, undefined, "products");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("skips queued prefetch when target is current page with prefetchKey", () => {
+    setupBrowser();
+    const fetchMock = vi.fn((_url: string) =>
+      Promise.resolve({ ok: false, body: null } as unknown as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/product/1";
+    (window.location as any).pathname = "/product/1";
+    const key = prefetchQueued(
+      "/product/1",
+      ["A0"],
+      undefined,
+      undefined,
+      "products",
+    );
+
+    // Returns empty — skipped entirely
+    expect(key).toBe("");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT skip same-page prefetch without prefetchKey", () => {
+    setupBrowser();
+    const fetchMock = vi.fn((_url: string) =>
+      Promise.resolve({ ok: false, body: null } as unknown as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    window.location.href = "http://localhost:4173/product/1";
+    (window.location as any).pathname = "/product/1";
+    prefetchDirect("/product/1", ["A0"]);
+
+    // Without prefetchKey, same-page prefetch is allowed (harmless —
+    // the source-dependent key won't be looked up cross-page)
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

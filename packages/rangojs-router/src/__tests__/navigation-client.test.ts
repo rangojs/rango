@@ -8,7 +8,7 @@ const {
   buildPrefetchKeyMock,
 } = vi.hoisted(() => ({
   getRangoStateMock: vi.fn(() => "v1:abc"),
-  consumePrefetchMock: vi.fn((): Response | null => null),
+  consumePrefetchMock: vi.fn((_key?: string): Response | null => null),
   consumeInflightPrefetchMock: vi.fn(
     (): Promise<Response | null> | null => null,
   ),
@@ -266,10 +266,12 @@ describe("navigation-client", () => {
     it("falls back to wildcard key when exact key misses", async () => {
       const cachedBody = "wildcard-cached";
       // Return null for exact key, response for wildcard key
-      consumePrefetchMock.mockImplementation((key: string) => {
-        if (key.startsWith("*\0")) return new Response(cachedBody);
-        return null;
-      });
+      consumePrefetchMock.mockImplementation(
+        (key?: string): Response | null => {
+          if (key?.startsWith("*\0")) return new Response(cachedBody);
+          return null;
+        },
+      );
 
       const fetchMock = vi.fn();
       vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
