@@ -1,6 +1,6 @@
 {
   "name": "@rangojs/router",
-  "version": "0.0.0-experimental.72",
+  "version": "0.0.0-experimental.73",
   "description": "Django-inspired RSC router with composable URL patterns",
   "keywords": [
     "react",
