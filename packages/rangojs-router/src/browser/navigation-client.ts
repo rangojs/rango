@@ -104,13 +104,29 @@ export function createNavigationClient(
       // Wildcard key matches prefetch entries stored with a custom prefetchKey
       // (Link's prefetchKey prop stores under "*" instead of the source URL).
       const wildcardKey = "*\0" + fetchUrl.pathname + fetchUrl.search;
-      const cachedResponse = canUsePrefetch
-        ? (consumePrefetch(cacheKey) ?? consumePrefetch(wildcardKey))
-        : null;
-      const inflightResponsePromise = canUsePrefetch
-        ? (consumeInflightPrefetch(cacheKey) ??
-          consumeInflightPrefetch(wildcardKey))
-        : null;
+
+      let cachedResponse: Response | null = null;
+      let hitKey: string | null = null;
+      if (canUsePrefetch) {
+        cachedResponse = consumePrefetch(cacheKey);
+        if (cachedResponse) {
+          hitKey = cacheKey;
+        } else {
+          cachedResponse = consumePrefetch(wildcardKey);
+          if (cachedResponse) hitKey = wildcardKey;
+        }
+      }
+
+      let inflightResponsePromise: Promise<Response | null> | null = null;
+      if (canUsePrefetch && !cachedResponse) {
+        inflightResponsePromise = consumeInflightPrefetch(cacheKey);
+        if (inflightResponsePromise) {
+          hitKey = cacheKey;
+        } else {
+          inflightResponsePromise = consumeInflightPrefetch(wildcardKey);
+          if (inflightResponsePromise) hitKey = wildcardKey;
+        }
+      }
       // Track when the stream completes
       let resolveStreamComplete: () => void;
       const streamComplete = new Promise<void>((resolve) => {
@@ -203,7 +219,10 @@ export function createNavigationClient(
 
       if (cachedResponse) {
         if (tx) {
-          browserDebugLog(tx, "prefetch cache hit", { key: cacheKey });
+          browserDebugLog(tx, "prefetch cache hit", {
+            key: hitKey,
+            wildcard: hitKey === wildcardKey,
+          });
         }
         responsePromise = Promise.resolve(cachedResponse).then((response) => {
           const validated = validateRscHeaders(response, "prefetch cache");
@@ -220,7 +239,10 @@ export function createNavigationClient(
         });
       } else if (inflightResponsePromise) {
         if (tx) {
-          browserDebugLog(tx, "reusing inflight prefetch", { key: cacheKey });
+          browserDebugLog(tx, "reusing inflight prefetch", {
+            key: hitKey,
+            wildcard: hitKey === wildcardKey,
+          });
         }
         responsePromise = inflightResponsePromise.then(async (response) => {
           if (!response) {

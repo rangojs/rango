@@ -23,6 +23,7 @@ import {
 import { getRangoState } from "../rango-state.js";
 import { enqueuePrefetch } from "./queue.js";
 import { shouldPrefetch } from "./policy.js";
+import { debugLog } from "../logging.js";
 
 /**
  * Build an RSC partial URL for prefetching.
@@ -120,7 +121,20 @@ export function prefetchDirect(
   const targetUrl = buildPrefetchUrl(url, segmentIds, version, routerId);
   if (!targetUrl) return;
   const key = buildPrefetchKey(window.location.href, targetUrl, prefetchKey);
-  if (hasPrefetch(key)) return;
+  if (hasPrefetch(key)) {
+    debugLog("[prefetch] direct dedup (key already exists)", {
+      url,
+      key,
+      prefetchKey: prefetchKey != null ? String(prefetchKey) : undefined,
+    });
+    return;
+  }
+  debugLog("[prefetch] direct fetch", {
+    url,
+    key,
+    source: window.location.href,
+    prefetchKey: prefetchKey != null ? String(prefetchKey) : undefined,
+  });
   executePrefetchFetch(key, targetUrl.toString());
 }
 
@@ -140,7 +154,14 @@ export function prefetchQueued(
   const targetUrl = buildPrefetchUrl(url, segmentIds, version, routerId);
   if (!targetUrl) return "";
   const key = buildPrefetchKey(window.location.href, targetUrl, prefetchKey);
-  if (hasPrefetch(key)) return key;
+  if (hasPrefetch(key)) {
+    debugLog("[prefetch] queued dedup (key already exists)", {
+      url,
+      key,
+      prefetchKey: prefetchKey != null ? String(prefetchKey) : undefined,
+    });
+    return key;
+  }
   const fetchUrlStr = targetUrl.toString();
   enqueuePrefetch(key, (signal) => {
     // Re-check at execution time: a hover-triggered prefetchDirect may
