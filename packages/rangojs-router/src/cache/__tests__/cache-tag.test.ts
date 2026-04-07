@@ -50,6 +50,21 @@ describe("cacheTag", () => {
     expect(tags2).toEqual(new Set(["second"]));
   });
 
+  it("throws on tags containing commas in dev", () => {
+    expect(() =>
+      runWithCacheTagScope(() => {
+        cacheTag("a,b");
+      }),
+    ).toThrow("contains a comma");
+  });
+
+  it("skips empty and whitespace-only tags", () => {
+    const { tags } = runWithCacheTagScope(() => {
+      cacheTag("real", "", "   ", "ok");
+    });
+    expect(tags).toEqual(new Set(["real", "ok"]));
+  });
+
   it("captures tags added after an async boundary", async () => {
     const { result, tags } = runWithCacheTagScope(() => {
       cacheTag("before");
