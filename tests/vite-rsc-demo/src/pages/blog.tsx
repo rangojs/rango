@@ -13,6 +13,9 @@ import {
   getAuthor,
   getPostAuthor,
 } from "../handlers/blog/data/mock-data.js";
+import { getBlogActionProbe } from "../handlers/blog/data/action-probe.js";
+import { submitBlogProbeAction } from "../handlers/blog/actions/probe.js";
+import { ActionProbeForm } from "../handlers/blog/components/ActionProbeForm.js";
 import { href } from "@rangojs/router/client";
 
 export function BlogLayout() {
@@ -127,6 +130,7 @@ export function BlogPostPage(ctx: HandlerContext<{ slug: string }>) {
     ctx.searchParams.entries(),
   );
   const previousClientUrl = ctx.request.headers.get("X-RSC-Router-Client-Path");
+  const actionProbe = getBlogActionProbe(ctx.params.slug);
 
   return (
     <DebugSegmentWrapper type="route" name="Blog Post">
@@ -194,6 +198,36 @@ export function BlogPostPage(ctx: HandlerContext<{ slug: string }>) {
           style={{
             marginTop: "1rem",
             padding: "1rem",
+            background: "#f8fafc",
+            borderRadius: "8px",
+            border: "1px solid #cbd5e1",
+          }}
+        >
+          <h4 style={{ marginTop: 0 }}>Server Action Snapshot</h4>
+          <div style={{ fontSize: "0.9rem", color: "#334155" }}>
+            <div>
+              <strong>Action count for this post:</strong> {actionProbe.count}
+            </div>
+            <div>
+              <strong>Last submitted at:</strong>{" "}
+              {actionProbe.lastSubmittedAt ?? "No action yet"}
+            </div>
+            <div>
+              <strong>Last message:</strong>{" "}
+              {actionProbe.lastMessage ?? "No action yet"}
+            </div>
+          </div>
+        </div>
+
+        <ActionProbeForm
+          slug={ctx.params.slug}
+          action={submitBlogProbeAction}
+        />
+
+        <div
+          style={{
+            marginTop: "1rem",
+            padding: "1rem",
             background: "#f8f9fa",
             borderRadius: "4px",
           }}
@@ -251,14 +285,23 @@ export const blogLoggerMiddleware: Middleware[] = [
   },
 ];
 
-// Post revalidation
+// Post revalidation - only revalidate when slug changes, not on search param changes
 export const postRevalidation: Revalidate<{ slug: string }, RSCRouter.Env> = ({
   currentParams,
   nextParams,
+  actionId,
   defaultShouldRevalidate,
 }) => {
   console.log(
     `[Blog] Checking revalidation: ${currentParams.slug} → ${nextParams.slug}`,
+    {
+      actionId,
+      defaultShouldRevalidate,
+    },
   );
-  return defaultShouldRevalidate;
+  // Actions: defer to framework default (revalidate route segments after mutations).
+  // Navigation: only revalidate when slug changes, not on search-only changes
+  // (e.g., ?tab=1 → ?tab=2) because the handler doesn't use search params.
+  if (actionId) return defaultShouldRevalidate;
+  return currentParams.slug !== nextParams.slug;
 };

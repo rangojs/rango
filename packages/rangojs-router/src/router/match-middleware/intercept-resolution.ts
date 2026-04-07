@@ -123,7 +123,6 @@ export function withInterceptResolution<TEnv>(
   return async function* (
     source: AsyncGenerator<ResolvedSegment>,
   ): AsyncGenerator<ResolvedSegment> {
-    const pipelineStart = performance.now();
     const ms = ctx.metricsStore;
 
     // First, yield all segments from the source (main segment resolution or cache)
@@ -133,13 +132,16 @@ export function withInterceptResolution<TEnv>(
       yield segment;
     }
 
+    // Measure own work only (after source iteration completes)
+    const ownStart = performance.now();
+
     // Skip intercept resolution for full match (document requests don't have intercepts)
     if (ctx.isFullMatch) {
       if (ms) {
         ms.metrics.push({
           label: "pipeline:intercept",
-          duration: performance.now() - pipelineStart,
-          startTime: pipelineStart - ms.requestStart,
+          duration: performance.now() - ownStart,
+          startTime: ownStart - ms.requestStart,
         });
       }
       return;
@@ -163,8 +165,8 @@ export function withInterceptResolution<TEnv>(
       if (ms) {
         ms.metrics.push({
           label: "pipeline:intercept",
-          duration: performance.now() - pipelineStart,
-          startTime: pipelineStart - ms.requestStart,
+          duration: performance.now() - ownStart,
+          startTime: ownStart - ms.requestStart,
         });
       }
       return;
@@ -216,8 +218,8 @@ export function withInterceptResolution<TEnv>(
     if (ms) {
       ms.metrics.push({
         label: "pipeline:intercept",
-        duration: performance.now() - pipelineStart,
-        startTime: pipelineStart - ms.requestStart,
+        duration: performance.now() - ownStart,
+        startTime: ownStart - ms.requestStart,
       });
     }
   };

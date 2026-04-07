@@ -14,10 +14,11 @@ route was pre-rendered.
 
 - **Prerender handler** - `Prerender(getParams, handler, opts)` API
 - **Build-time segment resolution** - `matchForPrerender()` resolves segments with BuildContext
-- **Flight payload storage** - Serialized segments stored in `__PRERENDER_MANIFEST`
+- **Flight payload storage** - Serialized segments stored in lazily-loaded prerender manifest
 - **Runtime cache-lookup** - Prerender store checked before segment resolution
-- **Handler eviction** - Non-passthrough handlers stubbed in production bundles
-- **Passthrough mode** - Handler kept in bundle for unknown params (live fallback)
+- **Handler eviction** - All Prerender handlers stubbed in production bundles
+- **Passthrough wrapper** - `Passthrough(prerenderDef, liveHandler)` provides a separate live handler for unknown params
+- **ctx.passthrough()** - Build handler can skip a param set's artifact, deferring to the live handler
 - **Sub-use semantics** - Child layouts, parallels inside path are pre-rendered
 - **Handle data** - `ctx.use()` data baked into Flight payloads
 - **Loader freshness** - Loaders always run at request time (never pre-rendered)
@@ -26,7 +27,7 @@ route was pre-rendered.
 
 ### Remaining
 
-- **Revalidation with passthrough** - Background re-render of stale prerender data
+- **Revalidation with Passthrough** - Background re-render of stale prerender data
 - **ISR-style revalidation** - Time-based or on-demand re-rendering without full rebuild
 
 ---
@@ -47,9 +48,9 @@ route was pre-rendered.
        c. Serialize segments via RSC Flight protocol
        d. Walk manifest for intercepts targeting this route
        e. If found: resolve intercept handler, serialize intercept segments
-       f. Store entries in __PRERENDER_MANIFEST:
-          - "routeName/paramHash"     -> main segments + handles
-          - "routeName/paramHash/i"   -> main + intercept segments + handles  (if intercepts exist)
+       f. Store entries in prerender manifest (lazy-loaded module):
+          - "routeName/paramHash"     -> asset specifier (main segments + handles)
+          - "routeName/paramHash/i"   -> asset specifier (main + intercept segments + handles)
 ```
 
 ### Runtime
@@ -93,8 +94,8 @@ route was pre-rendered.
   |    |    return
   |    |
   |    v
-  |    Passthrough? -> handler runs live
-  |    No passthrough? -> handler stubbed, no render
+  |    Passthrough route? -> live handler runs
+  |    No Passthrough? -> handler stubbed, no render
   |
   v
   Normal segment resolution
@@ -119,19 +120,29 @@ IS caching, just at build time instead of runtime.
 
 ## Prerender Store
 
-### Production (`__PRERENDER_MANIFEST`)
+### Production (`__loadPrerenderManifestModule`)
 
-Injected by the Vite `closeBundle` hook. Map of string keys to dynamic imports:
+Injected by the Vite `closeBundle` hook. The RSC entry sets a lazy loader:
 
-```typescript
-globalThis.__PRERENDER_MANIFEST = {
-  "blog.post/a1b2c3": () => import("./assets/__pr-blog.post-a1b2c3.js"),
-  "blog.post/a1b2c3/i": () => import("./assets/__pr-blog.post-a1b2c3-i.js"),
-  "about/_": () => import("./assets/__pr-about-_.js"),
-};
+```javascript
+globalThis.__loadPrerenderManifestModule = () =>
+  import("./__prerender-manifest.js");
 ```
 
-Each module default-exports a `PrerenderEntry`:
+The manifest module (`__prerender-manifest.js`) exports:
+
+```javascript
+// Key→specifier map, parsed from JSON for fast startup
+const m = JSON.parse('{"blog.post/a1b2c3":"./assets/__pr-a1b2c3.js",...}');
+// Asset loader anchored at manifest file location for correct relative resolution
+export function loadPrerenderAsset(s) {
+  return import(s);
+}
+export default m;
+```
+
+The manifest is loaded lazily on first prerender store `get()`. Each asset
+module default-exports a `PrerenderEntry`:
 
 ```typescript
 interface PrerenderEntry {
@@ -166,13 +177,21 @@ with request-dependent fields replaced by descriptive error throwers:
 ```typescript
 interface BuildContext<TParams> {
   params: TParams;
+  build: true; // Always true at build time
+  dev: boolean; // true in Vite dev mode, false during production build
   use: <T>(handle: Handle<T>) => (data: T) => void;
   url: URL; // Synthetic: pattern + params
   pathname: string;
-  // These throw descriptive errors if accessed:
-  // req, headers, cookies, env, request, ctx.redirect, etc.
+  env: DefaultEnv; // Available when buildEnv is configured in rango() (throws otherwise)
+  // These always throw descriptive errors:
+  // request, headers, cookies, ctx.redirect, etc.
 }
 ```
+
+When `buildEnv` is configured in the rango() Vite plugin options, `ctx.env`
+provides the build-time bindings (e.g., KV, D1). This is NOT the live request
+env — it is shared across all prerender invocations for the build. Without
+`buildEnv`, accessing `ctx.env` throws with a clear error message.
 
 ---
 
@@ -184,17 +203,68 @@ In production builds, `Prerender` exports are replaced with stubs:
 // Original
 export const BlogPost = Prerender(getParams, handler);
 
-// Stubbed (passthrough: false)
+// Stubbed (all Prerender handlers are evicted)
 export const BlogPost = {
   __brand: "prerenderHandler",
   $$id: "abc123#BlogPost",
 };
 ```
 
-The entire original module and its imports are excluded from the RSC server
-bundle. With `passthrough: true`, handler code stays in the bundle.
+All Prerender handlers are evicted in production. The live handler for
+`Passthrough()` routes lives in the urls module and is not evicted.
 
-Client and SSR environments always receive stubs regardless of passthrough mode.
+Client and SSR environments always receive stubs.
+
+---
+
+## Passthrough Wrapper
+
+`Passthrough(prerenderDef, liveHandler)` wraps a `Prerender` definition with
+a separate handler for runtime fallback. The build handler runs at build time,
+the live handler runs at request time for params not in the prerender cache.
+
+```typescript
+export const BlogPostDef = Prerender(
+  async () => [{ slug: "a" }, { slug: "b" }],
+  async (ctx) => {
+    const post = await getPost(ctx.params.slug);
+    if (!post) return ctx.passthrough();
+    return <article>{post.content}</article>;
+  },
+);
+
+// In route definition:
+path("/blog/:slug", Passthrough(BlogPostDef, async (ctx) => {
+  const post = await ctx.env.DB.getPost(ctx.params.slug);
+  return <article>{post.content}</article>;
+}));
+```
+
+### Semantics
+
+- JSX or `null` from the build handler produces a normal prerender entry.
+- `ctx.passthrough()` returns a frozen sentinel (`PRERENDER_PASSTHROUGH`).
+  `matchForPrerender` detects it and returns `{ passthrough: true }` instead
+  of serialized segments. The build skips the manifest entry for that param set.
+- `ctx.passthrough()` on a route not wrapped with `Passthrough()` throws.
+- `getParams()` still enumerates the param set; the build handler decides
+  per-param whether to produce an artifact or defer to the live handler.
+
+### Build-time flow
+
+1. `getParams()` returns param sets (including ones that may passthrough).
+2. For each param set, `matchForPrerender` creates a `BuildContext` with
+   `passthrough()` wired (when `isPassthroughRoute` is true).
+3. Build handler returns `ctx.passthrough()` for a given param set.
+4. `matchForPrerender` detects the sentinel in resolved segments and returns
+   `{ passthrough: true }`.
+5. `expandPrerenderRoutes` logs `PASS` and skips `collectedData` insertion.
+
+### Runtime flow
+
+No stored entry exists for that param set. The runtime cache-lookup sees
+`pr + pt + miss` and falls through to the Passthrough live handler, which
+runs with full `HandlerContext` (`ctx.build === false`).
 
 ---
 
@@ -276,8 +346,8 @@ time for loader resolution and any live handler execution.
 ### Actions
 
 Actions do not re-render pre-rendered segments. The frozen handler output
-stays. Loaders can be revalidated by actions. With `passthrough: true` and
-`revalidate()`, the handler itself can re-render live.
+stays. Loaders can be revalidated by actions. With `Passthrough()` routes and
+`revalidate()`, the live handler can re-render.
 
 ### Handle Data
 
@@ -292,7 +362,7 @@ payload. They are replayed into the HandleStore on cache hit via
 Pre-rendered routes set flags on the route trie leaf at build time:
 
 - `pr: true` -- route has pre-rendered segment data
-- `pt: true` -- passthrough mode (handler available for live fallback)
+- `pt: true` -- route wrapped with `Passthrough()` (live handler available)
 
 At runtime, the cache-lookup middleware uses these flags:
 

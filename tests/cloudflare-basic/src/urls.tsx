@@ -1,8 +1,9 @@
-import { urls, type ResponseHandlerContext } from "@rangojs/router";
+import { urls, cookies, type ResponseHandlerContext } from "@rangojs/router";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
 import { FeatureLoading } from "./components/FeatureLoading.js";
 import { BlogSidebarLoader } from "./loaders/blog.js";
+import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
 import { apiPatterns } from "./api/urls.js";
 
 // Page handlers
@@ -42,6 +43,7 @@ import { transformCasesPatterns } from "./pages/transform-cases.js";
 import { compositionPatterns } from "./pages/composition.js";
 import { buildSkipPatterns } from "./pages/build-skip.js";
 import { prerenderCtxPatterns } from "./pages/prerender-ctx.js";
+import { handlerFirstPatterns } from "./pages/handler-first.js";
 import { createDocsPatterns } from "@shared/docs";
 import { docsArticles } from "./docs-content.js";
 import {
@@ -50,6 +52,14 @@ import {
   ProductReviewsPage,
   CatchAllPage,
 } from "./pages/trie-routing-test.js";
+import {
+  ShopProductPage,
+  ShopCategoryPage,
+} from "./pages/suffix-params-test.js";
+import { CookieOverlayPage } from "./pages/cookie-overlay.js";
+import { buildEnvPatterns } from "./pages/build-env-handler.js";
+import { ActionLocationStatePage } from "./pages/action-location-state.js";
+import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
 
@@ -57,7 +67,7 @@ const docsPatterns = createDocsPatterns({ articles: docsArticles });
  * Main URL patterns - Django-style routing API
  */
 export const urlpatterns = urls(
-  ({ path, layout, parallel, loader, loading, cache, include }) => [
+  ({ path, layout, parallel, loader, loading, cache, include, middleware }) => [
     // API routes (response routes - skip RSC pipeline)
     include("/api", apiPatterns, { name: "api" }),
 
@@ -100,6 +110,30 @@ export const urlpatterns = urls(
       () => ({ source: "uncached-json", ts: Date.now() }),
       { name: "testUncachedJson" },
     ),
+
+    // KV L2 test: read KV directly to verify cache writes land in L2
+    path.json(
+      "/test/kv-l2-check",
+      async (ctx) => {
+        const kv = ctx.env.KV;
+        // List all keys with cache version prefix to check KV was populated
+        const list = await kv.list({ limit: 50 });
+        return {
+          kvKeyCount: list.keys.length,
+          kvKeys: list.keys.map((k: { name: string }) => k.name),
+        };
+      },
+      { name: "testKvL2Check" },
+    ),
+
+    // KV L2 test: cached route with unique path for isolated testing
+    cache({ ttl: 600 }, () => [
+      path.json(
+        "/test/kv-cached-json",
+        () => ({ source: "kv-cached", ts: Date.now() }),
+        { name: "testKvCachedJson" },
+      ),
+    ]),
 
     // Content negotiation test routes (same URL, different response types)
     path.json(
@@ -197,12 +231,17 @@ export const urlpatterns = urls(
       },
       { name: "testMimeAny" },
     ),
+    // Suffix param test routes (e.g. /shop/:productId.html)
+    path("/shop/:productId.html", ShopProductPage, { name: "shopProduct" }),
+    path("/shop/:categoryId", ShopCategoryPage, { name: "shopCategory" }),
+
     // Trie routing bug test routes (constraint fallback + param name collision)
     path("/:locale(en|fr)/info", LocaleInfoPage, { name: "localeInfo" }),
     path("/item/:itemId/detail", ItemDetailPage, { name: "itemDetail" }),
     path("/item/:productId/reviews", ProductReviewsPage, {
       name: "productReviews",
     }),
+    include("/build-env", buildEnvPatterns, { name: "buildEnv" }),
     path("/*", CatchAllPage, { name: "catchAll" }),
 
     layout(<RootLayout />, () => [
@@ -234,6 +273,13 @@ export const urlpatterns = urls(
           ]),
 
           cache({ ttl: 60, swr: 300 }, () => [
+            middleware((ctx, next) => {
+              ctx.header(
+                "Cache-Control",
+                "s-maxage=60, stale-while-revalidate=300",
+              );
+              return next();
+            }),
             path("/blog", BlogIndexPage, { name: "blog" }),
             path("/blog/:slug", BlogPostPage, { name: "blogPost" }),
           ]),
@@ -263,6 +309,25 @@ export const urlpatterns = urls(
 
         // Theme route
         path("/theme", ThemePage, { name: "theme" }),
+
+        // Cookie overlay test route
+        path(
+          "/cookie-overlay",
+          CookieOverlayPage,
+          { name: "cookieOverlay" },
+          () => [
+            middleware(async (ctx, next) => {
+              cookies().set("mw-overlay", "from-middleware", { path: "/" });
+              return next();
+            }),
+            loader(CookieOverlayLoader),
+          ],
+        ),
+
+        // Action location state test route (non-redirect flow)
+        path("/action-location-state", ActionLocationStatePage, {
+          name: "actionLocationState",
+        }),
 
         // Slow routes for navigation progress demo
         // /slow/1 uses handler pattern (blocks) - for testing
@@ -307,6 +372,33 @@ export const urlpatterns = urls(
         include("/prerender-ctx", prerenderCtxPatterns, {
           name: "prerenderCtx",
         }),
+
+        // Handler-first execution order test
+        include("/handler-first", handlerFirstPatterns, {
+          name: "handlerFirst",
+        }),
+
+        // Rendered barrier: loader reads handle data after ctx.rendered()
+        include("/rendered-barrier", renderedBarrierPatterns, {
+          name: "renderedBarrier",
+        }),
+
+        // Prerender manifest introspection for e2e tests
+        path.json(
+          "/__test/prerender-manifest-entries",
+          async (ctx) => {
+            const routeName = ctx.searchParams.get("route");
+            if (!routeName) return { error: "missing route param" };
+            if (!globalThis.__loadPrerenderManifestModule)
+              return { available: false, count: 0 };
+            const mod = await globalThis.__loadPrerenderManifestModule();
+            const keys = Object.keys(mod.default).filter((k) =>
+              k.startsWith(routeName + "/"),
+            );
+            return { available: true, count: keys.length };
+          },
+          { name: "testPrerenderManifestEntries" },
+        ),
       ]),
     ]),
   ],

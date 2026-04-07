@@ -149,7 +149,20 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
         return finalHandler();
       }
 
-      return mw(request, input, next);
+      // Guard against double next() calls — a second call would
+      // re-enter the downstream chain and run handlers/side-effects twice.
+      let nextCalled = false;
+      const guardedNext = (): Promise<Response> => {
+        if (nextCalled) {
+          throw new Error(
+            `[HostRouter] Middleware called next() more than once.`,
+          );
+        }
+        nextCalled = true;
+        return next();
+      };
+
+      return mw(request, input, guardedNext);
     }
 
     return next();

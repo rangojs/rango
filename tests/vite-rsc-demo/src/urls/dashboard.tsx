@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { urls, Meta } from "@rangojs/router";
 import {
   DashboardLayout,
   DashboardIndexPage,
@@ -9,44 +9,52 @@ import {
 
 export const dashboardPatterns = urls(
   ({ path, layout, parallel, middleware, revalidate }) => [
-    layout(<DashboardLayout />, () => [
-      middleware(
-        (ctx, next) => {
-          console.log("[Dashboard Middleware] Rate limit check");
-          const requestCount = ctx.get("requestCount") || 0;
-          ctx.set("requestCount", requestCount + 1);
-          if (requestCount > 100) {
-            console.warn("[Dashboard Middleware] Rate limit exceeded");
-          } else {
-            console.log(
-              `[Dashboard Middleware] Request ${requestCount + 1}/100`,
-            );
-          }
-          next();
-        },
-        (ctx, next) => {
-          console.log(`[Dashboard Middleware] Analytics: ${ctx.pathname}`);
-          next();
-        },
-      ),
-      revalidate(({ currentUrl, nextUrl }) => {
-        console.log("[Dashboard] Context-based revalidation");
-        return currentUrl.search !== nextUrl.search;
-      }),
-
-      path("/", DashboardIndexPage, { name: "index" }, () => [
-        parallel({
-          "@sidebar": DashboardSidebar,
-          "@footer": DashboardFooter,
+    layout(
+      (ctx) => {
+        ctx.use(Meta)({
+          title: { template: "%s | Dashboard", default: "Dashboard" },
+        });
+        return <DashboardLayout />;
+      },
+      () => [
+        middleware(
+          (ctx, next) => {
+            console.log("[Dashboard Middleware] Rate limit check");
+            const requestCount = ctx.get("requestCount") || 0;
+            ctx.set("requestCount", requestCount + 1);
+            if (requestCount > 100) {
+              console.warn("[Dashboard Middleware] Rate limit exceeded");
+            } else {
+              console.log(
+                `[Dashboard Middleware] Request ${requestCount + 1}/100`,
+              );
+            }
+            next();
+          },
+          (ctx, next) => {
+            console.log(`[Dashboard Middleware] Analytics: ${ctx.pathname}`);
+            next();
+          },
+        ),
+        revalidate(({ currentUrl, nextUrl }) => {
+          console.log("[Dashboard] Context-based revalidation");
+          return currentUrl.search !== nextUrl.search;
         }),
-      ]),
 
-      path("/settings", DashboardSettingsPage, { name: "settings" }, () => [
-        middleware((ctx, next) => {
-          console.log("[Dashboard Middleware] Settings validation");
-          next();
-        }),
-      ]),
-    ]),
+        path("/", DashboardIndexPage, { name: "index" }, () => [
+          parallel({
+            "@sidebar": DashboardSidebar,
+            "@footer": DashboardFooter,
+          }),
+        ]),
+
+        path("/settings", DashboardSettingsPage, { name: "settings" }, () => [
+          middleware((ctx, next) => {
+            console.log("[Dashboard Middleware] Settings validation");
+            next();
+          }),
+        ]),
+      ],
+    ),
   ],
 );

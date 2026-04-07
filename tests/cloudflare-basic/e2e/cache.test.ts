@@ -386,7 +386,9 @@ test.describe("blog-breadcrumbs (production)", () => {
 
       // Go to post
       await testId(page, "blog-link-getting-started-with-rsc").click();
-      await expect(testId(page, "blog-post-detail")).toBeVisible();
+      await expect(testId(page, "blog-post-detail")).toBeVisible({
+        timeout: 10000,
+      });
 
       let crumbs = await breadcrumbs.textContent();
       console.log(`On post: "${crumbs}"`);

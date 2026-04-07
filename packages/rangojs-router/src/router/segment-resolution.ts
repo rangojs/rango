@@ -1,12 +1,11 @@
 // Barrel re-export -- see segment-resolution/ for implementations.
+export { handleHandlerResult } from "./segment-resolution/helpers.js";
 export {
-  handleHandlerResult,
   resolveLoaders,
   type ResolveSegmentOptions,
   resolveSegment,
   resolveOrphanLayout,
   resolveParallelEntry,
-  resolveWithErrorHandling,
   resolveAllSegments,
   resolveLoadersOnly,
 } from "./segment-resolution/fresh.js";
@@ -18,6 +17,5 @@ export {
   resolveEntryHandlerWithRevalidation,
   resolveSegmentWithRevalidation,
   resolveOrphanLayoutWithRevalidation,
-  resolveWithRevalidationErrorHandling,
   resolveAllSegmentsWithRevalidation,
 } from "./segment-resolution/revalidation.js";

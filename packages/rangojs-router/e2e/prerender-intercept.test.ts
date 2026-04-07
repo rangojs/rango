@@ -31,7 +31,7 @@ test.describe("prerender-intercept (dev mode)", () => {
     const handlerTime = await page
       .locator('[data-testid="pri-handler-time"]')
       .textContent();
-    expect(handlerTime).toBeTruthy();
+    expect(handlerTime).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
     // Modal must NOT be visible on direct navigation
     await expect(page.locator('[data-testid="pri-modal"]')).not.toBeVisible();
@@ -64,7 +64,7 @@ test.describe("prerender-intercept (dev mode)", () => {
     const modalTime = await page
       .locator('[data-testid="pri-modal-render-time"]')
       .textContent();
-    expect(modalTime).toBeTruthy();
+    expect(modalTime).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   test("back navigation from modal returns to index", async ({ page }) => {
@@ -181,7 +181,7 @@ test.describe("prerender-intercept (production build)", () => {
     const handlerTime = await page
       .locator('[data-testid="pri-handler-time"]')
       .textContent();
-    expect(handlerTime).toBeTruthy();
+    expect(handlerTime).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
     // No modal on direct navigation
     await expect(page.locator('[data-testid="pri-modal"]')).not.toBeVisible();
@@ -218,7 +218,7 @@ test.describe("prerender-intercept (production build)", () => {
     // This is the definitive proof that content comes from the prerender store,
     // not from live handler execution.
     expect(handlerTime1).toBe(handlerTime2);
-    expect(handlerTime1).toBeTruthy();
+    expect(handlerTime1).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
     // Loader timestamp differs -- loaders are never cached, always fresh.
     expect(Number(loaderTs1)).toBeGreaterThan(0);
@@ -250,7 +250,7 @@ test.describe("prerender-intercept (production build)", () => {
     const modalTime = await page
       .locator('[data-testid="pri-modal-render-time"]')
       .textContent();
-    expect(modalTime).toBeTruthy();
+    expect(modalTime).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   test("modal content is frozen across intercept navigations (proves prerender store)", async ({
@@ -281,7 +281,7 @@ test.describe("prerender-intercept (production build)", () => {
     // Modal render time is baked at build time -- identical across navigations.
     // This proves the intercept variant is served from the prerender store.
     expect(modalTime1).toBe(modalTime2);
-    expect(modalTime1).toBeTruthy();
+    expect(modalTime1).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   test("back navigation from modal returns to index", async ({ page }) => {
@@ -332,8 +332,8 @@ test.describe("prerender-intercept (production build)", () => {
 
     // Both have frozen handler times (from build), but they can differ
     // because alpha and beta are built as separate prerender entries
-    expect(alphaTime).toBeTruthy();
-    expect(betaTime).toBeTruthy();
+    expect(alphaTime).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(betaTime).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   test("intercept works for both alpha and beta params", async ({ page }) => {

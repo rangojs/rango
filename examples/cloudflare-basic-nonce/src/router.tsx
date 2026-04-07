@@ -41,7 +41,7 @@ const cspMiddleware: Middleware = async (ctx, next) => {
   await next();
 
   // Only add CSP to HTML responses
-  const contentType = ctx.res.headers.get("content-type") || "";
+  const contentType = ctx.headers.get("content-type") || "";
   if (!contentType.includes("text/html")) {
     return;
   }
@@ -58,7 +58,7 @@ const cspMiddleware: Middleware = async (ctx, next) => {
     ? "Content-Security-Policy-Report-Only"
     : "Content-Security-Policy";
 
-  ctx.res.headers.set(cspHeaderName, buildCSPHeader(nonceValue));
+  ctx.headers.set(cspHeaderName, buildCSPHeader(nonceValue));
 };
 
 // Create the router with document component

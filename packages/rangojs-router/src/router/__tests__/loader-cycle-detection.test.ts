@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 // Mock dependencies before importing the module under test
 vi.mock("../../server/context", () => ({
   track: () => () => {},
+  isInsideLoaderScope: () => false,
 }));
 
 vi.mock("../../server/request-context.js", () => ({
@@ -34,7 +35,7 @@ import type {
 function createMockContext(): HandlerContext<any, any> {
   const url = new URL("http://localhost/test");
   return {
-    params: {},
+    params: { slug: "from-route", tenant: "acme" },
     request: new Request(url.href),
     searchParams: new URLSearchParams(),
     pathname: "/test",
@@ -72,6 +73,27 @@ function createLoader(
 
 describe("loader cycle detection", () => {
   describe("setupLoaderAccess", () => {
+    it("exposes trusted routeParams alongside params", async () => {
+      const ctx = createMockContext();
+      const loaderPromises = new Map<string, Promise<any>>();
+
+      const loader: LoaderDefinition<any, any> = createLoader(
+        "routeParamsLoader",
+        async (loaderCtx) => ({
+          params: loaderCtx.params,
+          routeParams: loaderCtx.routeParams,
+        }),
+      );
+
+      setupLoaderAccess(ctx, loaderPromises);
+
+      const result = await ctx.use(loader);
+      expect(result).toEqual({
+        params: { slug: "from-route", tenant: "acme" },
+        routeParams: { slug: "from-route", tenant: "acme" },
+      });
+    });
+
     it("should detect direct circular dependency (A -> B -> A)", async () => {
       const ctx = createMockContext();
       const loaderPromises = new Map<string, Promise<any>>();
@@ -296,6 +318,27 @@ describe("loader cycle detection", () => {
   });
 
   describe("setupLoaderAccessSilent", () => {
+    it("exposes trusted routeParams in silent mode", async () => {
+      const ctx = createMockContext();
+      const loaderPromises = new Map<string, Promise<any>>();
+
+      const loader: LoaderDefinition<any, any> = createLoader(
+        "silentRouteParamsLoader",
+        async (loaderCtx) => ({
+          params: loaderCtx.params,
+          routeParams: loaderCtx.routeParams,
+        }),
+      );
+
+      setupLoaderAccessSilent(ctx, loaderPromises);
+
+      const result = await ctx.use(loader);
+      expect(result).toEqual({
+        params: { slug: "from-route", tenant: "acme" },
+        routeParams: { slug: "from-route", tenant: "acme" },
+      });
+    });
+
     it("should detect circular dependency in silent mode", async () => {
       const ctx = createMockContext();
       const loaderPromises = new Map<string, Promise<any>>();

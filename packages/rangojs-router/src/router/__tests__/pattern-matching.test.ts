@@ -118,6 +118,51 @@ describe("compilePattern", () => {
     });
   });
 
+  describe("suffix params", () => {
+    it("should match param with inline suffix (.html)", () => {
+      const { regex, paramNames } = compilePattern("/shop/:productId.html");
+      expect(regex.test("/shop/widget.html")).toBe(true);
+      expect(regex.test("/shop/123.html")).toBe(true);
+      expect(regex.test("/shop/electronics")).toBe(false);
+      expect(regex.test("/shop/.html")).toBe(false);
+      expect(paramNames).toEqual(["productId"]);
+    });
+
+    it("should capture only the param portion, not the suffix", () => {
+      const { regex } = compilePattern("/shop/:productId.html");
+      const match = regex.exec("/shop/widget.html");
+      expect(match).not.toBeNull();
+      expect(match![1]).toBe("widget");
+    });
+
+    it("should handle multi-dot values before suffix", () => {
+      const { regex } = compilePattern("/shop/:productId.html");
+      const match = regex.exec("/shop/widget.v2.html");
+      expect(match).not.toBeNull();
+      expect(match![1]).toBe("widget.v2");
+    });
+
+    it("should match param with .json suffix", () => {
+      const { regex, paramNames } = compilePattern("/api/:resource.json");
+      expect(regex.test("/api/users.json")).toBe(true);
+      expect(regex.test("/api/users")).toBe(false);
+      expect(paramNames).toEqual(["resource"]);
+
+      const match = regex.exec("/api/users.json");
+      expect(match![1]).toBe("users");
+    });
+
+    it("should match suffix param followed by more segments", () => {
+      const { regex, paramNames } = compilePattern("/files/:name.txt/meta");
+      expect(regex.test("/files/readme.txt/meta")).toBe(true);
+      expect(regex.test("/files/readme/meta")).toBe(false);
+      expect(paramNames).toEqual(["name"]);
+
+      const match = regex.exec("/files/readme.txt/meta");
+      expect(match![1]).toBe("readme");
+    });
+  });
+
   describe("wildcard patterns", () => {
     it("should match catch-all wildcard", () => {
       const { regex, paramNames } = compilePattern("/*");
@@ -200,6 +245,27 @@ describe("findMatch", () => {
       const result = findMatch("/product/my-product/reviews/42", entries);
       expect(result).not.toBeNull();
       expect(result!.params).toEqual({ slug: "my-product", reviewId: "42" });
+    });
+
+    it("should extract suffix param correctly", () => {
+      const entries = [
+        createRouteEntry("", {
+          "shop.product": "/shop/:productId.html",
+          "shop.category": "/shop/:categoryId",
+        }),
+      ];
+
+      // .html URL matches the suffix route with correct param
+      const product = findMatch("/shop/widget.html", entries);
+      expect(product).not.toBeNull();
+      expect(product!.routeKey).toBe("shop.product");
+      expect(product!.params).toEqual({ productId: "widget" });
+
+      // plain URL matches the plain param route
+      const category = findMatch("/shop/electronics", entries);
+      expect(category).not.toBeNull();
+      expect(category!.routeKey).toBe("shop.category");
+      expect(category!.params).toEqual({ categoryId: "electronics" });
     });
   });
 
@@ -397,6 +463,28 @@ describe("constrained parameters", () => {
       expect(regex.test("/comment/edit")).toBe(true);
       expect(regex.test("/user/edit")).toBe(false);
     });
+
+    it("should escape regex metacharacters in constraint values", () => {
+      const { regex } = compilePattern("/:version(v1.0|v2.0)");
+      expect(regex.test("/v1.0")).toBe(true);
+      expect(regex.test("/v2.0")).toBe(true);
+      expect(regex.test("/v1x0")).toBe(false);
+      expect(regex.test("/v2X0")).toBe(false);
+    });
+
+    it("should escape plus and hash in constraint values", () => {
+      const { regex } = compilePattern("/:lang(c++|c#)");
+      expect(regex.test("/c++")).toBe(true);
+      expect(regex.test("/c#")).toBe(true);
+      expect(regex.test("/cxx")).toBe(false);
+    });
+
+    it("should escape metacharacters in optional constrained params", () => {
+      const { regex } = compilePattern("/:version(v1.0|v2.0)?/docs");
+      expect(regex.test("/v1.0/docs")).toBe(true);
+      expect(regex.test("/docs")).toBe(true);
+      expect(regex.test("/v1x0/docs")).toBe(false);
+    });
   });
 
   describe("findMatch param extraction", () => {
@@ -423,6 +511,25 @@ describe("constrained parameters", () => {
       expect(result).not.toBeNull();
       expect(result!.params).toEqual({ locale: "" });
       expect(result!.optionalParams.has("locale")).toBe(true);
+    });
+
+    it("should match constraint with regex metacharacters literally", () => {
+      const entries = [
+        createRouteEntry("", { versioned: "/:version(v1.0|v2.0)/docs" }),
+      ];
+      expect(findMatch("/v1.0/docs", entries)).not.toBeNull();
+      expect(findMatch("/v2.0/docs", entries)).not.toBeNull();
+      expect(findMatch("/v1.0/docs", entries)!.params).toEqual({
+        version: "v1.0",
+      });
+    });
+
+    it("should reject values where dots would match as regex wildcards", () => {
+      const entries = [
+        createRouteEntry("", { versioned: "/:version(v1.0|v2.0)/docs" }),
+      ];
+      expect(findMatch("/v1x0/docs", entries)).toBeNull();
+      expect(findMatch("/v2X0/docs", entries)).toBeNull();
     });
   });
 });

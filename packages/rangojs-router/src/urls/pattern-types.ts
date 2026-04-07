@@ -7,6 +7,18 @@ import type {
 } from "../route-types.js";
 import type { SearchSchema } from "../search-params.js";
 import { RESPONSE_TYPE } from "./response-types.js";
+import type { DefaultEnv } from "../types.js";
+import type { PathHelpers } from "./path-helper-types.js";
+
+/**
+ * Builder function accepted by urls() and as a shorthand for routes()/urls option.
+ * When passed directly to routes() or createRouter({ urls }), it is wrapped in urls() automatically.
+ */
+export type UrlBuilder<
+  TEnv = DefaultEnv,
+  TItems extends readonly (AllUseItems | readonly AllUseItems[])[] =
+    readonly AllUseItems[],
+> = (helpers: PathHelpers<TEnv>) => TItems;
 
 /**
  * Sentinel type for unnamed routes.
@@ -14,6 +26,16 @@ import { RESPONSE_TYPE } from "./response-types.js";
  * widening array type inference when mixing named and unnamed routes.
  */
 export type UnnamedRoute = "$unnamed";
+
+/**
+ * Sentinel type for include() mounts that stay local to the mounted module.
+ * This keeps child route names out of the parent/global type map while still
+ * allowing the mounted module to use its own local route names internally.
+ *
+ * Branded with a symbol key so it cannot be accidentally produced by user code.
+ */
+declare const LOCAL_ONLY_BRAND: unique symbol;
+export type LocalOnlyInclude = string & { [LOCAL_ONLY_BRAND]: void };
 
 /**
  * Options for path() function
@@ -70,6 +92,16 @@ export interface UrlPatterns<
  * Options for include()
  */
 export interface IncludeOptions<TNamePrefix extends string = string> {
-  /** Name prefix for all routes in this pattern set */
+  /**
+   * Name prefix for all routes in this pattern set.
+   *
+   * - `{ name: "blog" }` — children become `blog.index`, `blog.detail`, etc.
+   *   Visible in generated route types and resolvable globally via `reverse("blog.index")`.
+   * - `{ name: "" }` — children merge into the parent namespace with no prefix.
+   *   Equivalent to defining the routes inline at the include site.
+   * - Omitted — children live in a private local scope, hidden from the
+   *   generated route map and global reverse resolution. Only dot-local
+   *   reverse (e.g. `reverse(".child")`) works from inside the module.
+   */
   name?: TNamePrefix;
 }

@@ -18,21 +18,12 @@ import {
 } from "../server/request-context.js";
 import { serializeSegments, deserializeSegments } from "./segment-codec.js";
 import { captureHandles, restoreHandles } from "./handle-snapshot.js";
-
-// Re-export codec functions for backwards compatibility.
-// Existing call sites import these from cache-scope.ts via dynamic import.
-export {
-  deserializeComponent,
-  serializeSegments,
-  deserializeSegments,
-} from "./segment-codec.js";
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-/** Default TTL when no explicit value or store defaults are configured */
-const DEFAULT_TTL_SECONDS = 60;
+import { sortedSearchString, sortedRouteParams } from "./cache-key-utils.js";
+import {
+  DEFAULT_ROUTE_TTL,
+  resolveCacheKey,
+  resolveCacheStore,
+} from "./cache-policy.js";
 
 /**
  * Resolve tags from cache config.
@@ -58,27 +49,31 @@ function debugCacheLog(message: string): void {
 // ============================================================================
 
 /**
- * Generate cache key base from pathname and params.
- * Params are sorted alphabetically for consistent key generation.
+ * Generate cache key base from host, pathname, route params, and search params.
+ * Host is included to prevent cross-host cache collisions on shared stores.
+ * Route params and search params are sorted alphabetically for deterministic keys.
+ * Internal _rsc* and __* query params are excluded.
  * @internal
  */
 function getCacheKeyBase(
+  host: string,
   pathname: string,
   params?: Record<string, string>,
+  searchParams?: URLSearchParams,
 ): string {
-  const paramStr = params
-    ? Object.entries(params)
-        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-        .join("&")
-    : "";
+  const paramStr = sortedRouteParams(params);
+  const searchStr = searchParams ? sortedSearchString(searchParams) : "";
 
-  return paramStr ? `${pathname}:${paramStr}` : pathname;
+  let key = `${host}${pathname}`;
+  if (paramStr) key += `:${paramStr}`;
+  if (searchStr) key += `?${searchStr}`;
+  return key;
 }
 
 /**
  * Generate default cache key for a route request.
- * Single cache entry per route - uses pathname as the key.
+ * Includes pathname, route params, and user-facing search params for
+ * correct scoping. Internal _rsc* params are excluded.
  * Includes request type prefix since they produce different segment sets:
  * - doc: document requests (full page load)
  * - partial: navigation requests (client-side navigation)
@@ -91,12 +86,14 @@ function getDefaultRouteCacheKey(
   isIntercept?: boolean,
 ): string {
   const ctx = getRequestContext();
-  const isPartial = ctx?.url.searchParams.has("_rsc_partial") ?? false;
+  const isPartial = ctx?.originalUrl?.searchParams.has("_rsc_partial") ?? false;
+  const searchParams = ctx?.url.searchParams;
+  const host = ctx?.url.host ?? "localhost";
 
   // Intercept navigations get their own cache namespace
   const prefix = isIntercept ? "intercept" : isPartial ? "partial" : "doc";
 
-  return `${prefix}:${getCacheKeyBase(pathname, params)}`;
+  return `${prefix}:${getCacheKeyBase(host, pathname, params, searchParams)}`;
 }
 
 // ============================================================================
@@ -161,7 +158,7 @@ export class CacheScope {
     }
 
     // Hardcoded fallback
-    return DEFAULT_TTL_SECONDS;
+    return DEFAULT_ROUTE_TTL;
   }
 
   /**
@@ -196,23 +193,11 @@ export class CacheScope {
    * 2. App-level store from request context
    */
   getStore(): SegmentCacheStore | null {
-    // Explicit store from cache() options takes precedence
-    if (this.explicitStore) {
-      return this.explicitStore;
-    }
-    // Fall back to app-level store from request context
-    const ctx = getRequestContext();
-    return ctx?._cacheStore ?? null;
+    return resolveCacheStore(this.explicitStore);
   }
 
   /**
-   * Resolve the cache key using custom key functions or default generation.
-   *
-   * Resolution priority:
-   * 1. Route-level `key` function (full override)
-   * 2. Store-level `keyGenerator` (modifies default key)
-   * 3. Default key generation (prefix:pathname:params)
-   *
+   * Resolve the cache key using the shared 3-tier priority.
    * @internal
    */
   private async resolveKey(
@@ -220,46 +205,9 @@ export class CacheScope {
     params: Record<string, string>,
     isIntercept?: boolean,
   ): Promise<string> {
-    const requestCtx = getRequestContext();
-    if (!requestCtx) {
-      // Fallback to default key if no request context
-      return getDefaultRouteCacheKey(pathname, params, isIntercept);
-    }
-
-    // Priority 1: Route-level key function (full override)
-    if (this.config !== false && this.config.key) {
-      try {
-        const customKey = await this.config.key(requestCtx);
-        return customKey;
-      } catch (error) {
-        console.error(
-          `[CacheScope] Custom key function failed, using default:`,
-          error,
-        );
-        return getDefaultRouteCacheKey(pathname, params, isIntercept);
-      }
-    }
-
-    // Generate default key
     const defaultKey = getDefaultRouteCacheKey(pathname, params, isIntercept);
-
-    // Priority 2: Store-level keyGenerator (modifies default key)
-    const store = this.getStore();
-    if (store?.keyGenerator) {
-      try {
-        const modifiedKey = await store.keyGenerator(requestCtx, defaultKey);
-        return modifiedKey;
-      } catch (error) {
-        console.error(
-          `[CacheScope] Store keyGenerator failed, using default:`,
-          error,
-        );
-        return defaultKey;
-      }
-    }
-
-    // Priority 3: Default key
-    return defaultKey;
+    const keyFn = this.config !== false ? this.config.key : undefined;
+    return resolveCacheKey(keyFn, this.getStore(), defaultKey, "CacheScope");
   }
 
   /**
@@ -279,6 +227,27 @@ export class CacheScope {
     shouldRevalidate: boolean;
   } | null> {
     if (!this.enabled) return null;
+
+    // Evaluate condition — skip cache read when condition returns false
+    if (this.config !== false && this.config.condition) {
+      const requestCtx = getRequestContext();
+      if (requestCtx) {
+        try {
+          if (!this.config.condition(requestCtx)) {
+            debugCacheLog(
+              `[CacheScope] condition returned false, skipping cache read`,
+            );
+            return null;
+          }
+        } catch (error) {
+          console.error(
+            `[CacheScope] condition function threw, skipping cache read:`,
+            error,
+          );
+          return null;
+        }
+      }
+    }
 
     const store = this.getStore();
     if (!store) return null;
@@ -339,6 +308,27 @@ export class CacheScope {
   ): Promise<void> {
     if (!this.enabled || segments.length === 0) return;
 
+    // Evaluate condition — skip cache write when condition returns false
+    if (this.config !== false && this.config.condition) {
+      const conditionCtx = getRequestContext();
+      if (conditionCtx) {
+        try {
+          if (!this.config.condition(conditionCtx)) {
+            debugCacheLog(
+              `[CacheScope] condition returned false, skipping cache write`,
+            );
+            return;
+          }
+        } catch (error) {
+          console.error(
+            `[CacheScope] condition function threw, skipping cache write:`,
+            error,
+          );
+          return;
+        }
+      }
+    }
+
     const store = this.getStore();
     if (!store) return;
 
@@ -370,24 +360,61 @@ export class CacheScope {
     }
 
     // Check if this is a partial request (navigation) vs document request
-    const isPartial = requestCtx.url.searchParams.has("_rsc_partial");
+    const isPartial = requestCtx.originalUrl.searchParams.has("_rsc_partial");
+
+    if (INTERNAL_RANGO_DEBUG) {
+      debugCacheLog(
+        `[CacheScope] cacheRoute: scheduling waitUntil for ${key} (${nonLoaderSegments.length} segments, isPartial=${isPartial})`,
+      );
+    }
 
     requestCtx.waitUntil(async () => {
+      if (INTERNAL_RANGO_DEBUG) {
+        debugCacheLog(
+          `[CacheScope] waitUntil: awaiting handleStore.settled for ${key}`,
+        );
+      }
+
       await handleStore.settled;
 
-      // For document requests: only cache if ALL segments have components (complete render)
-      // For partial requests: null components are expected (client already has them)
+      if (INTERNAL_RANGO_DEBUG) {
+        debugCacheLog(`[CacheScope] waitUntil: handleStore settled for ${key}`);
+      }
+
+      // For document requests: only cache if layout segments have components
+      // (complete render). Parallel and route segments may legitimately have
+      // null components — UI-less @meta parallels return null, and void route
+      // handlers produce null when the UI lives in parallel slots/layouts.
+      // Partial requests always allow null components (client already has them).
       if (!isPartial) {
-        const hasAllComponents = nonLoaderSegments.every(
-          (s) => s.component !== null,
+        const hasIncompleteLayouts = nonLoaderSegments.some(
+          (s) => s.component === null && s.type === "layout",
         );
-        if (!hasAllComponents) return;
+        if (hasIncompleteLayouts) {
+          const nullSegments = nonLoaderSegments
+            .filter((s) => s.component === null && s.type === "layout")
+            .map((s) => s.id);
+          const error = new Error(
+            `[CacheScope] Cache write skipped: layout segments have null components ` +
+              `(${nullSegments.join(", ")}). This indicates an incomplete render — ` +
+              `layout handlers must return JSX for document requests to be cacheable.`,
+          );
+          error.name = "CacheScopeInvariantError";
+          console.error(error.message);
+          return;
+        }
       }
 
       // Collect handle data for non-loader segments only
       const handles = captureHandles(nonLoaderSegments, handleStore);
 
       try {
+        if (INTERNAL_RANGO_DEBUG) {
+          debugCacheLog(
+            `[CacheScope] waitUntil: serializing ${nonLoaderSegments.length} segments for ${key}`,
+          );
+        }
+
         // Serialize non-loader segments only
         const serializedSegments = await serializeSegments(nonLoaderSegments);
 
@@ -397,6 +424,10 @@ export class CacheScope {
           expiresAt: Date.now() + ttl * 1000,
           tags,
         };
+
+        if (INTERNAL_RANGO_DEBUG) {
+          debugCacheLog(`[CacheScope] waitUntil: calling store.set for ${key}`);
+        }
 
         await store.set(key, data, ttl, swr);
 

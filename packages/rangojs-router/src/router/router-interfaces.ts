@@ -2,6 +2,7 @@ import type { ComponentType, ReactNode } from "react";
 import type { SerializedManifest } from "../debug.js";
 import type { ReverseFunction } from "../reverse.js";
 import type { UrlPatterns } from "../urls.js";
+import type { UrlBuilder } from "../urls/pattern-types.js";
 import type { EntryData } from "../server/context";
 import type { ErrorInfo, MatchResult } from "../types";
 import type { NonceProvider } from "../rsc/types.js";
@@ -14,6 +15,7 @@ import type { MiddlewareEntry, MiddlewareFn } from "./middleware.js";
 import { RSC_ROUTER_BRAND } from "./router-registry.js";
 import type { RSCRouterOptions, RootLayoutProps } from "./router-options.js";
 import type { DefaultVars } from "../types/global-namespace.js";
+import type { ResolvedTimeouts, OnTimeoutCallback } from "./timeout.js";
 
 /**
  * Options passed to router.fetch(), router.match(), and other request entrypoints.
@@ -47,19 +49,19 @@ type MergeRoutesWithResponses<
 };
 
 /**
- * RSC Router interface
- * TRoutes accumulates all registered route types through the builder chain
+ * Public RSC Router interface — the user-facing API surface.
+ *
+ * Users interact with this type when building and using routers.
+ * Internal framework code uses RSCRouterInternal (via toInternal()) to access
+ * matching, build-time, and configuration members that are not part of the
+ * public contract.
+ *
+ * TRoutes accumulates all registered route types through the builder chain.
  */
 export interface RSCRouter<
   TEnv = any,
   TRoutes extends Record<string, unknown> = Record<string, string>,
 > {
-  /**
-   * Brand marker for build-time discovery.
-   * The Vite plugin uses this to identify router instances in module exports.
-   */
-  readonly __brand: typeof RSC_ROUTER_BRAND;
-
   /**
    * Unique identifier for this router instance.
    * Used to namespace static output and isolate route maps between routers.
@@ -67,12 +69,24 @@ export interface RSCRouter<
   readonly id: string;
 
   /**
-   * Register routes using URL patterns from urls()
+   * URL prefix applied to all routes. Undefined when no basename is configured.
+   */
+  readonly basename: string | undefined;
+
+  /**
+   * Register routes using URL patterns from urls() or a builder function
    *
    * @example
    * ```typescript
-   * createRouter({})
-   *   .routes(urlpatterns)
+   * // With urls()
+   * createRouter({}).routes(urlpatterns)
+   *
+   * // With builder function (urls() is implicit)
+   * createRouter({}).routes(({ path, layout }) => [
+   *   layout(RootLayout, () => [
+   *     path("/", HomePage),
+   *   ]),
+   * ])
    * ```
    */
   routes<T extends UrlPatterns<TEnv, any>>(
@@ -84,6 +98,7 @@ export interface RSCRouter<
         ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
         : Record<string, string>)
   >;
+  routes(builder: UrlBuilder<TEnv>): RSCRouter<TEnv, TRoutes>;
 
   /**
    * Add global middleware that runs on all routes
@@ -135,6 +150,94 @@ export interface RSCRouter<
   readonly routeMap: TRoutes;
 
   /**
+   * Handle an RSC request.
+   *
+   * Uses the router's configuration (nonce, version, cache) automatically.
+   * The handler is lazily created on first call.
+   *
+   * @example Cloudflare Workers
+   * ```tsx
+   * import { router } from "./router";
+   *
+   * export default { fetch: router.fetch };
+   * ```
+   *
+   * @example Direct export
+   * ```tsx
+   * const router = createRouter({
+   *   document: Document,
+   *   urls: urlpatterns,
+   *   nonce: () => true,
+   * });
+   *
+   * export const fetch = router.fetch;
+   * ```
+   */
+  fetch(request: Request, input?: RouterRequestInput<TEnv>): Promise<Response>;
+}
+
+/**
+ * Internal RSC Router interface — the full framework-facing API.
+ *
+ * This type includes all members used by the Vite plugin, RSC handler,
+ * pre-rendering pipeline, and other framework internals. It is NOT exported
+ * from the public package API.
+ *
+ * Use toInternal(router) to assert a public RSCRouter into this type
+ * at the boundary where framework code receives a user-provided router.
+ */
+export interface RSCRouterInternal<
+  TEnv = any,
+  TRoutes extends Record<string, unknown> = Record<string, string>,
+> {
+  /**
+   * Brand marker for build-time discovery.
+   * The Vite plugin uses this to identify router instances in module exports.
+   */
+  readonly __brand: typeof RSC_ROUTER_BRAND;
+
+  /**
+   * Unique identifier for this router instance.
+   * Used to namespace static output and isolate route maps between routers.
+   */
+  readonly id: string;
+
+  /** URL prefix applied to all routes. */
+  readonly basename: string | undefined;
+
+  /**
+   * Register routes using URL patterns from urls() or a builder function
+   */
+  routes<T extends UrlPatterns<TEnv, any>>(
+    patterns: T,
+  ): RSCRouter<
+    TEnv,
+    TRoutes &
+      (NonNullable<T["_routes"]> extends Record<string, unknown>
+        ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
+        : Record<string, string>)
+  >;
+  routes(builder: UrlBuilder<TEnv>): RSCRouter<TEnv, TRoutes>;
+
+  /**
+   * Add global middleware that runs on all routes
+   */
+  use(
+    patternOrMiddleware: string | MiddlewareFn<TEnv>,
+    middleware?: MiddlewareFn<TEnv>,
+  ): RSCRouter<TEnv, TRoutes>;
+
+  /**
+   * Type-safe URL builder for registered routes
+   */
+  reverse: ReverseFunction<TRoutes>;
+
+  /**
+   * Accumulated route map for typeof extraction
+   */
+  readonly routeMap: TRoutes;
+
+  /**
    * Root layout component that wraps the entire application
    * Access this to pass to renderSegments
    */
@@ -147,12 +250,12 @@ export interface RSCRouter<
   readonly onError?: RSCRouterOptions<TEnv>["onError"];
 
   /**
-   * Cache configuration (for internal use by RSC handler)
+   * Cache configuration
    */
   readonly cache?: RSCRouterOptions<TEnv>["cache"];
 
   /**
-   * Not found component to render when no route matches (for internal use by RSC handler)
+   * Not found component to render when no route matches
    */
   readonly notFound?: RSCRouterOptions<TEnv>["notFound"];
 
@@ -163,10 +266,26 @@ export interface RSCRouter<
   readonly themeConfig: import("../theme/types.js").ResolvedThemeConfig | null;
 
   /**
+   * Cache profiles for "use cache" per-request resolution.
+   * Always includes at least the "default" profile.
+   */
+  readonly cacheProfiles: Record<
+    string,
+    import("../cache/profile-registry.js").CacheProfile
+  >;
+
+  /**
    * Cache-Control header value for prefetch responses.
-   * False means no browser caching of prefetch responses.
+   * False means no caching of prefetch responses.
+   * Derived from prefetchCacheTTL.
    */
   readonly prefetchCacheControl: string | false;
+
+  /**
+   * TTL in milliseconds for the client-side in-memory prefetch cache.
+   * 0 means caching is disabled.
+   */
+  readonly prefetchCacheTTL: number;
 
   /**
    * Whether connection warmup is enabled.
@@ -176,41 +295,69 @@ export interface RSCRouter<
   readonly warmupEnabled: boolean;
 
   /**
+   * Whether router-wide performance debugging is enabled.
+   * Used by the request handler to create metrics before middleware runs.
+   */
+  readonly debugPerformance?: boolean;
+
+  /**
    * Whether ?__debug_manifest is allowed in production.
    * Always enabled in development.
-   * @internal
    */
   readonly allowDebugManifest: boolean;
 
   /**
-   * App-level middleware entries (for internal use by RSC handler)
+   * Resolved timeout configuration (merged from shorthand + structured).
+   */
+  readonly timeouts: ResolvedTimeouts;
+
+  /**
+   * Custom timeout response handler.
+   */
+  readonly onTimeout?: OnTimeoutCallback<TEnv>;
+
+  /**
+   * App-level middleware entries
    * These wrap the entire request/response cycle
    */
   readonly middleware: MiddlewareEntry<TEnv>[];
 
   /**
-   * Nonce provider for CSP (for internal use by createHandler)
+   * Nonce provider for CSP
    */
   readonly nonce?: NonceProvider<TEnv>;
 
   /**
-   * RSC version string (for internal use by createHandler)
+   * RSC version string
    */
   readonly version?: string;
 
   /**
    * URL patterns reference for build-time manifest generation
-   * @internal
    */
   readonly urlpatterns?: UrlPatterns<TEnv, any>;
+
+  /**
+   * SSR configuration. resolveStreaming determines stream vs allReady
+   * per HTML request (undefined = always stream).
+   */
+  readonly ssr?: import("./router-options.js").SSROptions<TEnv>;
+
+  /**
+   * Cross-origin request protection configuration.
+   * Default: true (enabled).
+   */
+  readonly originCheck: import("../rsc/origin-guard.js").OriginCheckConfig<TEnv>;
 
   /**
    * Source file path where createRouter() was called.
    * Set via Error.stack parsing at construction time.
    * Used by the Vite plugin to write per-router named-routes.gen.ts files.
-   * @internal
    */
   readonly __sourceFile?: string;
+
+  /** @internal basename for runtime manifest generation */
+  readonly __basename?: string;
 
   match(
     request: Request,
@@ -221,12 +368,14 @@ export interface RSCRouter<
    * Build-time pre-render match. Resolves segments with a BuildContext
    * (no request/env/headers/cookies), skipping middleware and loaders.
    * Used by the Vite plugin to collect pre-render data at build time.
-   * @internal
    */
   matchForPrerender(
     pathname: string,
     params: Record<string, string>,
     buildVars?: Record<string, any>,
+    isPassthroughRoute?: boolean,
+    buildEnv?: any,
+    devMode?: boolean,
   ): Promise<{
     segments: SerializedSegmentData[];
     handles: Record<string, SegmentHandleData>;
@@ -234,17 +383,19 @@ export interface RSCRouter<
     params: Record<string, string>;
     interceptSegments?: SerializedSegmentData[];
     interceptHandles?: Record<string, SegmentHandleData>;
+    passthrough?: true;
   } | null>;
 
   /**
    * Render a single Static handler at build time.
    * Returns the RSC-serialized component string and handle data, or null on failure.
-   * @internal
    */
   renderStaticSegment(
     handler: Function,
     handlerId: string,
     routeName?: string,
+    buildEnv?: any,
+    devMode?: boolean,
   ): Promise<{ encoded: string; handles: Record<string, unknown[]> } | null>;
 
   /**
@@ -299,7 +450,13 @@ export interface RSCRouter<
   ): Promise<MatchResult | null>;
 
   /**
-   * @internal
+   * Low-level route matching function.
+   * Used by classifyRequest() for request classification without
+   * entering the full match pipeline.
+   */
+  findMatch(pathname: string, metricsStore?: any): any;
+
+  /**
    * Debug utility to serialize the manifest for inspection
    * Returns a JSON-friendly representation of all routes and layouts
    */
@@ -307,27 +464,21 @@ export interface RSCRouter<
 
   /**
    * Handle an RSC request.
-   *
-   * Uses the router's configuration (nonce, version, cache) automatically.
-   * The handler is lazily created on first call.
-   *
-   * @example Cloudflare Workers
-   * ```tsx
-   * import { router } from "./router";
-   *
-   * export default { fetch: router.fetch };
-   * ```
-   *
-   * @example Direct export
-   * ```tsx
-   * const router = createRouter({
-   *   document: Document,
-   *   urls: urlpatterns,
-   *   nonce: () => true,
-   * });
-   *
-   * export const fetch = router.fetch;
-   * ```
    */
   fetch(request: Request, input?: RouterRequestInput<TEnv>): Promise<Response>;
+}
+
+/**
+ * Assert a public RSCRouter into the internal type.
+ *
+ * Use this at the boundary where framework code receives a user-provided
+ * router and needs access to internal members (match, config, build-time).
+ * The cast is safe because createRouter() always produces an object that
+ * satisfies RSCRouterInternal; the public type is just a narrower view.
+ */
+export function toInternal<
+  TEnv = any,
+  TRoutes extends Record<string, unknown> = Record<string, string>,
+>(router: RSCRouter<TEnv, TRoutes>): RSCRouterInternal<TEnv, TRoutes> {
+  return router as RSCRouterInternal<TEnv, TRoutes>;
 }

@@ -325,6 +325,13 @@ function buildRouteMapFromBlock(
       );
     }
 
+    // Includes without a name keep their child names private to the mounted
+    // module. They remain active at runtime via an internal scope prefix, but
+    // they are intentionally omitted from generated public route maps.
+    if (namePrefix === null) {
+      continue;
+    }
+
     // Apply prefixes
     for (const [name, pattern] of Object.entries(childResult.routes)) {
       const prefixedName = namePrefix ? `${namePrefix}.${name}` : name;
@@ -350,12 +357,17 @@ function buildRouteMapFromBlock(
 /**
  * Build route map and search schemas together.
  * Internal helper used by the include resolution path.
+ *
+ * @param inlineBlock - Optional pre-extracted code block (e.g. from an inline
+ *   builder function). When provided, variableName is ignored and the block
+ *   is parsed directly for path()/include() calls.
  */
 export function buildCombinedRouteMapWithSearch(
   filePath: string,
   variableName?: string,
   visited?: Set<string>,
   diagnosticsOut?: UnresolvableInclude[],
+  inlineBlock?: string,
 ): {
   routes: Record<string, string>;
   searchSchemas: Record<string, Record<string, string>>;
@@ -377,7 +389,9 @@ export function buildCombinedRouteMapWithSearch(
   }
 
   let block: string;
-  if (variableName) {
+  if (inlineBlock) {
+    block = inlineBlock;
+  } else if (variableName) {
     const extracted = extractUrlsBlockForVariable(source, variableName);
     if (!extracted) return { routes: {}, searchSchemas: {} };
     block = extracted;
@@ -394,5 +408,11 @@ export function buildCombinedRouteMapWithSearch(
     searchSchemas,
     diagnosticsOut,
   );
+
+  // Remove from visited so sibling branches can include the same variable
+  // without false circular-include detection. Only ancestors in the current
+  // recursion path should trigger the cycle guard.
+  visited.delete(key);
+
   return { routes, searchSchemas };
 }

@@ -5,6 +5,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   type ForwardRefExoticComponent,
   type RefAttributes,
@@ -12,31 +13,33 @@ import React, {
 import { NavigationStoreContext } from "./context.js";
 import { LinkContext } from "./use-link-status.js";
 import type { NavigateOptions } from "../types.js";
+import { isHashOnlyNavigation } from "../link-interceptor.js";
 import {
-  type LocationStateEntry,
   isLocationStateEntry,
+  type LocationStateEntry,
   resolveLocationStateEntries,
 } from "./location-state.js";
 
 /**
- * State value or getter function for just-in-time state resolution (legacy)
+ * State prop type for Link component.
+ * - LocationStateEntry[]: Type-safe state entries via createLocationState()
+ * - StateOrGetter: Plain state object or click-time getter function
+ * - Record<string, unknown>: Plain state object passed to history.pushState
  */
 export type StateOrGetter<T = unknown> = T | (() => T);
 
-/**
- * State prop type for Link component
- * - LocationStateEntry[]: Type-safe state entries (always lazy)
- * - StateOrGetter: Legacy format for backwards compatibility
- */
-export type LinkState = LocationStateEntry[] | StateOrGetter;
+export type LinkState =
+  | LocationStateEntry[]
+  | StateOrGetter<Record<string, unknown>>;
 
-import { prefetchDirect, prefetchQueued } from "../prefetch-fetch.js";
+import { prefetchDirect, prefetchQueued } from "../prefetch/fetch.js";
+import { getAppVersion } from "../app-version.js";
 import {
   observeForPrefetch,
   unobserveForPrefetch,
-} from "../prefetch-observer.js";
+} from "../prefetch/observer.js";
 
-// Touch device detection for hybrid strategy.
+// Touch device detection for adaptive strategy.
 // Checked once at module load (Link.tsx is "use client", runs only in browser).
 const isTouchDevice =
   typeof window !== "undefined" && window.matchMedia("(hover: none)").matches;
@@ -46,14 +49,14 @@ const isTouchDevice =
  * - "hover": Prefetch on mouse enter (direct, no queue)
  * - "viewport": Prefetch when link enters viewport (queued, waits for idle)
  * - "render": Prefetch on component mount regardless of visibility (queued, waits for idle)
- * - "hybrid": Hover on pointer devices, viewport on touch devices
+ * - "adaptive": Hover on pointer devices, viewport on touch devices
  * - "none": No prefetching (default)
  */
 export type PrefetchStrategy =
   | "hover"
   | "viewport"
   | "render"
-  | "hybrid"
+  | "adaptive"
   | "none";
 
 /**
@@ -80,10 +83,40 @@ export interface LinkProps extends Omit<
    */
   reloadDocument?: boolean;
   /**
+   * Whether to revalidate server data on navigation.
+   * Set to `false` to skip the RSC server fetch and only update the URL.
+   *
+   * Only takes effect when the pathname stays the same (search param / hash changes).
+   * If the pathname changes, this option is ignored and a full navigation occurs.
+   *
+   * @default true
+   */
+  revalidate?: boolean;
+  /**
    * Prefetch strategy for the link destination
    * @default "none"
    */
   prefetch?: PrefetchStrategy;
+  /**
+   * Custom prefetch cache key for source-agnostic cache reuse.
+   * When set, prefetch responses are cached independently of the current
+   * page URL, so navigating to the same target from different source pages
+   * reuses the cached prefetch.
+   *
+   * - String: static group name (e.g., `"pages"`)
+   * - Function: receives current URL (`window.location.href`), returns a
+   *   normalized source key
+   *
+   * @example
+   * ```tsx
+   * // Static group — all "pages" links share one cache entry per target
+   * <Link to="/page/3" prefetch="hover" prefetchKey="pages" />
+   *
+   * // Normalize — strip trailing page number from source URL
+   * <Link to="/page/3" prefetch="hover" prefetchKey={(from) => from.replace(/\/\d+$/, '')} />
+   * ```
+   */
+  prefetchKey?: string | ((from: string) => string);
   /**
    * State to pass to history.pushState/replaceState.
    * Accessible via useLocationState() hook.
@@ -91,16 +124,29 @@ export interface LinkProps extends Omit<
    * @example
    * ```tsx
    * // Type-safe state with createLocationState (recommended)
-   * const ProductState = createLocationState((p: Product) => ({ name: p.name }));
-   * <Link to="/product" state={[ProductState(product)]}>View</Link>
+   * const ProductState = createLocationState<{ name: string; price: number }>();
+   * <Link to="/product" state={[ProductState({ name: product.name, price: product.price })]}>
+   *   View
+   * </Link>
+   *
+   * // Type-safe just-in-time state (getter called at click time, not render time).
+   * // Must be in a client component -- getter can't cross the RSC boundary.
+   * <Link
+   *   to="/product"
+   *   state={[ProductState(() => ({ name: product.name, price: product.price }))]}
+   * >
+   *   View
+   * </Link>
    *
    * // Multiple typed states
-   * <Link to="/checkout" state={[ProductState(p), CartState(c)]}>Checkout</Link>
+   * <Link to="/checkout" state={[ProductState({ name: p.name, price: p.price }), CartState(c)]}>
+   *   Checkout
+   * </Link>
    *
-   * // Legacy: static state
+   * // Plain static state
    * <Link to="/product" state={{ from: "list" }}>View</Link>
    *
-   * // Legacy: dynamic state (called at click time)
+   * // Plain just-in-time state (called at click time, requires client component)
    * <Link to="/product" state={() => ({ scrollY: window.scrollY })}>View</Link>
    * ```
    */
@@ -156,7 +202,9 @@ export const Link: ForwardRefExoticComponent<
     replace = false,
     scroll = true,
     reloadDocument = false,
+    revalidate,
     prefetch = "none",
+    prefetchKey,
     state,
     children,
     onClick,
@@ -167,9 +215,19 @@ export const Link: ForwardRefExoticComponent<
   const ctx = useContext(NavigationStoreContext);
   const isExternal = isExternalUrl(to);
 
-  // Resolve hybrid: viewport on touch devices, hover on pointer devices
+  // Auto-prefix with basename for app-local paths.
+  // Skip if external, already prefixed, or not a root-relative path.
+  const resolvedTo = useMemo(() => {
+    if (isExternal) return to;
+    const bn = ctx?.basename;
+    if (!bn || !to.startsWith("/") || to.startsWith(bn + "/") || to === bn)
+      return to;
+    return to === "/" ? bn : bn + to;
+  }, [to, isExternal, ctx?.basename]);
+
+  // Resolve adaptive: viewport on touch devices, hover on pointer devices
   const resolvedStrategy =
-    prefetch === "hybrid" ? (isTouchDevice ? "viewport" : "hover") : prefetch;
+    prefetch === "adaptive" ? (isTouchDevice ? "viewport" : "hover") : prefetch;
 
   // Internal ref for viewport observation; merge with forwarded ref
   const internalRef = useRef<HTMLAnchorElement | null>(null);
@@ -216,45 +274,77 @@ export const Link: ForwardRefExoticComponent<
       const target = (e.currentTarget as HTMLAnchorElement).target;
       if (target && target !== "_self") return;
 
+      // Hash-only navigation: let the browser handle anchor scrolling natively.
+      if (isHashOnlyNavigation(e.currentTarget as HTMLAnchorElement)) {
+        return;
+      }
+
+      // No navigation context (outside provider): fall back to native navigation.
+      if (!ctx?.navigate) {
+        return;
+      }
+
       // Prevent default and use SPA navigation
       e.preventDefault();
       // Stop propagation to prevent link-interceptor from also handling this
       e.stopPropagation();
 
-      if (ctx?.navigate) {
-        // Resolve state just-in-time based on format
-        let resolvedState: unknown;
-        const currentState = stateRef.current;
+      const currentState = stateRef.current;
+      let resolvedState: unknown;
 
-        if (
-          Array.isArray(currentState) &&
-          currentState.length > 0 &&
-          isLocationStateEntry(currentState[0])
-        ) {
-          // Type-safe LocationStateEntry[] - resolve each entry into keyed object
-          resolvedState = resolveLocationStateEntries(
-            currentState as LocationStateEntry[],
-          );
-        } else if (typeof currentState === "function") {
-          // Legacy getter function
-          resolvedState = currentState();
-        } else {
-          // Legacy static value
-          resolvedState = currentState;
-        }
-
-        ctx.navigate(to, { replace, scroll, state: resolvedState });
+      if (
+        Array.isArray(currentState) &&
+        currentState.length > 0 &&
+        isLocationStateEntry(currentState[0])
+      ) {
+        resolvedState = resolveLocationStateEntries(
+          currentState as LocationStateEntry[],
+        );
+      } else if (typeof currentState === "function") {
+        resolvedState = currentState();
+      } else if (currentState != null) {
+        resolvedState = currentState;
       }
+
+      ctx.navigate(resolvedTo, {
+        replace,
+        scroll,
+        state: resolvedState,
+        revalidate,
+      });
     },
-    [to, isExternal, reloadDocument, replace, scroll, ctx, onClick],
+    [
+      resolvedTo,
+      isExternal,
+      reloadDocument,
+      replace,
+      scroll,
+      revalidate,
+      ctx,
+      onClick,
+    ],
   );
 
   const handleMouseEnter = useCallback(() => {
-    if (resolvedStrategy === "hover" && !isExternal && ctx?.store) {
+    if (
+      (resolvedStrategy === "hover" || resolvedStrategy === "viewport") &&
+      !isExternal &&
+      ctx?.store
+    ) {
+      // For "hover", this is the primary prefetch trigger.
+      // For "viewport", this upgrades/prioritizes a potentially queued
+      // prefetch — prefetchDirect bypasses the queue, and hasPrefetch
+      // deduplicates if the viewport prefetch already completed.
       const segmentState = ctx.store.getSegmentState();
-      prefetchDirect(to, segmentState.currentSegmentIds, ctx.version);
+      prefetchDirect(
+        resolvedTo,
+        segmentState.currentSegmentIds,
+        getAppVersion(),
+        ctx.store.getRouterId?.(),
+        prefetchKey,
+      );
     }
-  }, [resolvedStrategy, to, isExternal, ctx]);
+  }, [resolvedStrategy, resolvedTo, isExternal, ctx, prefetchKey]);
 
   // Viewport/render prefetch: waits for idle before starting,
   // uses concurrency-limited queue to avoid flooding.
@@ -266,11 +356,18 @@ export const Link: ForwardRefExoticComponent<
 
     let cancelled = false;
     let unsubIdle: (() => void) | undefined;
+    let observedElement: Element | null = null;
 
     const triggerPrefetch = () => {
       if (cancelled) return;
       const segmentState = ctx.store.getSegmentState();
-      prefetchQueued(to, segmentState.currentSegmentIds, ctx.version);
+      prefetchQueued(
+        resolvedTo,
+        segmentState.currentSegmentIds,
+        getAppVersion(),
+        ctx.store.getRouterId?.(),
+        prefetchKey,
+      );
     };
 
     // Schedule prefetch only when the app is idle (no navigation/streaming).
@@ -296,6 +393,7 @@ export const Link: ForwardRefExoticComponent<
     } else if (isViewport) {
       const element = internalRef.current;
       if (!element) return;
+      observedElement = element;
       observeForPrefetch(element, () => {
         scheduleWhenIdle(triggerPrefetch);
       });
@@ -304,25 +402,26 @@ export const Link: ForwardRefExoticComponent<
     return () => {
       cancelled = true;
       unsubIdle?.();
-      if (isViewport && internalRef.current) {
-        unobserveForPrefetch(internalRef.current);
+      if (isViewport && observedElement) {
+        unobserveForPrefetch(observedElement);
       }
     };
-  }, [resolvedStrategy, to, isExternal, ctx]);
+  }, [resolvedStrategy, resolvedTo, isExternal, ctx, prefetchKey]);
 
   return (
     <a
       ref={setRef}
-      href={to}
+      href={resolvedTo}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       data-link-component
       data-external={isExternal ? "" : undefined}
       data-scroll={scroll === false ? "false" : undefined}
       data-replace={replace ? "true" : undefined}
+      data-revalidate={revalidate === false ? "false" : undefined}
       {...props}
     >
-      <LinkContext.Provider value={to}>{children}</LinkContext.Provider>
+      <LinkContext.Provider value={resolvedTo}>{children}</LinkContext.Provider>
     </a>
   );
 });

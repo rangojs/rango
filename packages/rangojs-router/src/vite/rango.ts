@@ -1,20 +1,19 @@
 import type { PluginOption } from "vite";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { exposeActionId } from "./plugins/expose-action-id.js";
 import {
   exposeInternalIds,
   exposeRouterId,
 } from "./plugins/expose-internal-ids.js";
 import { useCacheTransform } from "./plugins/use-cache-transform.js";
+import { clientRefDedup } from "./plugins/client-ref-dedup.js";
 import { VIRTUAL_IDS } from "./plugins/virtual-entries.js";
 import {
   getExcludeDeps,
   getPackageAliases,
 } from "./utils/package-resolution.js";
-import {
-  createScanFilter,
-  findRouterFiles,
-} from "../build/generate-route-types.js";
+import { findRouterFiles } from "../build/generate-route-types.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
 import {
   sharedEsbuildOptions,
@@ -22,15 +21,12 @@ import {
   onwarn,
   getManualChunks,
 } from "./utils/shared-utils.js";
-import type {
-  RangoOptions,
-  RangoNodeOptions,
-  RscPluginOptions,
-} from "./plugin-types.js";
+import type { RangoOptions } from "./plugin-types.js";
 import { printBanner, rangoVersion } from "./utils/banner.js";
 import { createVersionInjectorPlugin } from "./plugins/version-injector.js";
 import { createCjsToEsmPlugin } from "./plugins/cjs-to-esm.js";
 import { createRouterDiscoveryPlugin } from "./router-discovery.js";
+import { performanceTracksPlugin } from "./plugins/performance-tracks.js";
 
 /**
  * Vite plugin for @rangojs/router.
@@ -41,7 +37,7 @@ import { createRouterDiscoveryPlugin } from "./router-discovery.js";
  * @example Node.js (default)
  * ```ts
  * export default defineConfig({
- *   plugins: [react(), rango({ router: './src/router.tsx' })],
+ *   plugins: [react(), rango()],
  * });
  * ```
  *
@@ -65,13 +61,21 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
 
   // Get package resolution info (workspace vs npm install)
   const rangoAliases = getPackageAliases();
-  const excludeDeps = getExcludeDeps();
+  const excludeDeps = [
+    ...getExcludeDeps(),
+    // The public browser entry re-exports the RSDW browser client.
+    // Excluding both keeps Vite from freezing the unpatched bundle into
+    // .vite/deps before our source transforms run.
+    "@vitejs/plugin-rsc/browser",
+    // Keep the browser RSDW client out of Vite's dep optimizer so our
+    // cjs-to-esm transform can patch the real file.
+    "@vitejs/plugin-rsc/vendor/react-server-dom/client.browser",
+  ];
 
-  // Track RSC entry path for version injection
-  let rscEntryPath: string | null = null;
-
-  // Resolved router path (node preset only, may be auto-discovered)
-  let routerPath: string | undefined;
+  // Mutable ref for router path (node preset only).
+  // Set immediately when user-specified, or populated by the auto-discover
+  // config() hook using Vite's resolved root.
+  const routerRef: { path: string | undefined } = { path: undefined };
 
   // Build-time prerendering is enabled for both presets.
   // Collection runs in-process via the RSC dev environment runner during discoverRouters().
@@ -188,6 +192,9 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
 
     plugins.push(createVirtualEntriesPlugin(finalEntries));
 
+    // Dev-only: RSDW client patch for React Performance Tracks
+    plugins.push(performanceTracksPlugin());
+
     // Add RSC plugin with cloudflare-specific options
     // Note: loadModuleDevProxy should NOT be used with childEnvironments
     // since SSR runs in workerd alongside RSC
@@ -197,191 +204,162 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
         serverHandler: false,
       }) as PluginOption,
     );
+
+    // Deduplicate client references from third-party packages in dev mode.
+    // Prevents module duplication when server components import "use client"
+    // packages that are also imported directly by client components.
+    plugins.push(clientRefDedup());
   } else {
-    // Node preset: full RSC plugin integration
-    const nodeOptions = resolvedOptions as RangoNodeOptions;
-    routerPath = nodeOptions.router;
+    // Auto-discover router using Vite's resolved root (not process.cwd())
+    plugins.push({
+      name: "@rangojs/router:auto-discover",
+      config(userConfig) {
+        if (routerRef.path) return;
+        const root = userConfig.root
+          ? resolve(process.cwd(), userConfig.root)
+          : process.cwd();
+        const candidates = findRouterFiles(root);
+        if (candidates.length === 1) {
+          const abs = candidates[0];
+          routerRef.path = (
+            abs.startsWith(root) ? "./" + abs.slice(root.length + 1) : abs
+          ).replaceAll("\\", "/");
+        } else if (candidates.length > 1) {
+          const list = candidates
+            .map(
+              (f) =>
+                "  - " + (f.startsWith(root) ? f.slice(root.length + 1) : f),
+            )
+            .join("\n");
+          throw new Error(`[rsc-router] Multiple routers found:\n${list}`);
+        }
+        // 0 found: routerRef.path stays undefined, warn at startup via discovery plugin
+      },
+    });
 
-    // Auto-discover router when not specified
-    if (!routerPath) {
-      const earlyFilter = createScanFilter(process.cwd(), {
-        include: resolvedOptions.include,
-        exclude: resolvedOptions.exclude,
-      });
-      const candidates = findRouterFiles(process.cwd(), earlyFilter);
-      if (candidates.length === 1) {
-        // Convert absolute path to relative ./path
-        const abs = candidates[0];
-        const rel = abs.startsWith(process.cwd())
-          ? "./" + abs.slice(process.cwd().length + 1)
-          : abs;
-        routerPath = rel;
-      } else if (candidates.length > 1) {
-        const cwd = process.cwd();
-        const list = candidates
-          .map(
-            (f) => "  - " + (f.startsWith(cwd) ? f.slice(cwd.length + 1) : f),
-          )
-          .join("\n");
-        throw new Error(
-          `[rsc-router] Multiple routers found. Specify \`router\` to choose one:\n${list}`,
-        );
-      }
-      // 0 found: routerPath stays undefined, warn at startup via discovery plugin
-    }
+    // Always use virtual entries for client, ssr, and rsc
+    const finalEntries = {
+      client: VIRTUAL_IDS.browser,
+      ssr: VIRTUAL_IDS.ssr,
+      rsc: VIRTUAL_IDS.rsc,
+    };
 
-    const rscOption = nodeOptions.rsc ?? true;
+    // Dynamically import @vitejs/plugin-rsc
+    const { default: rsc } = await import("@vitejs/plugin-rsc");
 
-    // Add RSC plugin by default (can be disabled with rsc: false)
-    if (rscOption !== false) {
-      // Dynamically import @vitejs/plugin-rsc
-      const { default: rsc } = await import("@vitejs/plugin-rsc");
+    let hasWarnedDuplicate = false;
 
-      // Resolve entry paths: use explicit config or virtual modules
-      const userEntries =
-        typeof rscOption === "boolean" ? {} : rscOption.entries || {};
-      const finalEntries = {
-        client: userEntries.client ?? VIRTUAL_IDS.browser,
-        ssr: userEntries.ssr ?? VIRTUAL_IDS.ssr,
-        rsc: userEntries.rsc ?? VIRTUAL_IDS.rsc,
-      };
+    plugins.push({
+      name: "@rangojs/router:rsc-integration",
+      enforce: "pre",
 
-      // Track RSC entry for version injection (only if custom entry provided)
-      rscEntryPath = userEntries.rsc ?? null;
-
-      // Create wrapper plugin that checks for duplicates
-      let hasWarnedDuplicate = false;
-
-      plugins.push({
-        name: "@rangojs/router:rsc-integration",
-        enforce: "pre",
-
-        config() {
-          // Configure environments for RSC
-          // When using virtual entries, we need to explicitly configure optimizeDeps
-          // so Vite pre-bundles React before processing the virtual modules.
-          // Without this, the dep optimizer may run multiple times with different hashes,
-          // causing React instance mismatches.
-          const useVirtualClient = finalEntries.client === VIRTUAL_IDS.browser;
-          const useVirtualSSR = finalEntries.ssr === VIRTUAL_IDS.ssr;
-          const useVirtualRSC = finalEntries.rsc === VIRTUAL_IDS.rsc;
-
-          return {
-            // Exclude rsc-router modules from optimization to prevent module duplication
-            // This ensures the same Context instance is used by both browser entry and RSC proxy modules
-            optimizeDeps: {
-              exclude: excludeDeps,
-              esbuildOptions: sharedEsbuildOptions,
-            },
-            build: {
-              rollupOptions: { onwarn },
-            },
-            resolve: {
-              alias: rangoAliases,
-            },
-            environments: {
-              client: {
-                build: {
-                  rollupOptions: {
-                    output: {
-                      manualChunks: getManualChunks,
-                    },
+      config() {
+        return {
+          optimizeDeps: {
+            exclude: excludeDeps,
+            esbuildOptions: sharedEsbuildOptions,
+          },
+          build: {
+            rollupOptions: { onwarn },
+          },
+          resolve: {
+            alias: rangoAliases,
+          },
+          environments: {
+            client: {
+              build: {
+                rollupOptions: {
+                  output: {
+                    manualChunks: getManualChunks,
                   },
-                },
-                // Always exclude rsc-router modules, conditionally add virtual entry
-                optimizeDeps: {
-                  // Pre-bundle React and rsc-html-stream to prevent late discovery
-                  // triggering ERR_OUTDATED_OPTIMIZED_DEP on cold starts
-                  include: [
-                    "react",
-                    "react-dom",
-                    "react/jsx-runtime",
-                    "react/jsx-dev-runtime",
-                    "rsc-html-stream/client",
-                  ],
-                  exclude: excludeDeps,
-                  esbuildOptions: sharedEsbuildOptions,
-                  ...(useVirtualClient && {
-                    // Tell Vite to scan the virtual entry for dependencies
-                    entries: [VIRTUAL_IDS.browser],
-                  }),
                 },
               },
-              ...(useVirtualSSR && {
-                ssr: {
-                  optimizeDeps: {
-                    entries: [VIRTUAL_IDS.ssr],
-                    // Pre-bundle all SSR deps to prevent late discovery triggering ERR_OUTDATED_OPTIMIZED_DEP
-                    include: [
-                      "react",
-                      "react-dom",
-                      "react-dom/server.edge",
-                      "react-dom/static.edge",
-                      "react/jsx-runtime",
-                      "react/jsx-dev-runtime",
-                      "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
-                    ],
-                    exclude: excludeDeps,
-                    esbuildOptions: sharedEsbuildOptions,
-                  },
-                },
-              }),
-              ...(useVirtualRSC && {
-                rsc: {
-                  optimizeDeps: {
-                    entries: [VIRTUAL_IDS.rsc],
-                    // Pre-bundle all RSC deps to prevent late discovery triggering ERR_OUTDATED_OPTIMIZED_DEP
-                    include: [
-                      "react",
-                      "react/jsx-runtime",
-                      "react/jsx-dev-runtime",
-                      "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
-                    ],
-                    esbuildOptions: sharedEsbuildOptions,
-                  },
-                },
-              }),
+              optimizeDeps: {
+                include: [
+                  "react",
+                  "react-dom",
+                  "react/jsx-runtime",
+                  "react/jsx-dev-runtime",
+                  "rsc-html-stream/client",
+                ],
+                exclude: excludeDeps,
+                esbuildOptions: sharedEsbuildOptions,
+                entries: [VIRTUAL_IDS.browser],
+              },
             },
-          };
-        },
+            ssr: {
+              optimizeDeps: {
+                entries: [VIRTUAL_IDS.ssr],
+                include: [
+                  "react",
+                  "react-dom",
+                  "react-dom/server.edge",
+                  "react-dom/static.edge",
+                  "react/jsx-runtime",
+                  "react/jsx-dev-runtime",
+                  "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
+                ],
+                exclude: excludeDeps,
+                esbuildOptions: sharedEsbuildOptions,
+              },
+            },
+            rsc: {
+              optimizeDeps: {
+                entries: [VIRTUAL_IDS.rsc],
+                include: [
+                  "react",
+                  "react/jsx-runtime",
+                  "react/jsx-dev-runtime",
+                  "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
+                ],
+                esbuildOptions: sharedEsbuildOptions,
+              },
+            },
+          },
+        };
+      },
 
-        configResolved(config) {
-          if (showBanner) {
-            const mode =
-              config.command === "serve"
-                ? process.argv.includes("preview")
-                  ? "preview"
-                  : "dev"
-                : "build";
-            printBanner(mode, "node", rangoVersion);
-          }
+      configResolved(config) {
+        if (showBanner) {
+          const mode =
+            config.command === "serve"
+              ? process.argv.includes("preview")
+                ? "preview"
+                : "dev"
+              : "build";
+          printBanner(mode, "node", rangoVersion);
+        }
 
-          // Count how many RSC base plugins there are (rsc:minimal is the main one)
-          const rscMinimalCount = config.plugins.filter(
-            (p) => p.name === "rsc:minimal",
-          ).length;
+        const rscMinimalCount = config.plugins.filter(
+          (p) => p.name === "rsc:minimal",
+        ).length;
 
-          if (rscMinimalCount > 1 && !hasWarnedDuplicate) {
-            hasWarnedDuplicate = true;
-            console.warn(
-              "[rsc-router] Duplicate @vitejs/plugin-rsc detected. " +
-                "Remove rsc() from your config or use rango({ rsc: false }) for manual configuration.",
-            );
-          }
-        },
-      });
+        if (rscMinimalCount > 1 && !hasWarnedDuplicate) {
+          hasWarnedDuplicate = true;
+          console.warn(
+            "[rsc-router] Duplicate @vitejs/plugin-rsc detected. " +
+              "Remove rsc() from your vite config — rango() includes it automatically.",
+          );
+        }
+      },
+    });
 
-      // Add virtual entries plugin
-      plugins.push(createVirtualEntriesPlugin(finalEntries, routerPath));
+    // Add virtual entries plugin (RSC entry generated lazily from routerRef)
+    plugins.push(createVirtualEntriesPlugin(finalEntries, routerRef));
 
-      // Add the RSC plugin directly
-      // Cast to PluginOption to handle type differences between bundled vite types
-      plugins.push(
-        rsc({
-          entries: finalEntries,
-        }) as PluginOption,
-      );
-    }
+    // Dev-only: RSDW client patch for React Performance Tracks
+    plugins.push(performanceTracksPlugin());
+
+    plugins.push(
+      rsc({
+        entries: finalEntries,
+      }) as PluginOption,
+    );
+
+    // Deduplicate client references from third-party packages in dev mode.
+    // Prevents module duplication when server components import "use client"
+    // packages that are also imported directly by client components.
+    plugins.push(clientRefDedup());
   }
 
   // Fix HMR for "use client" components.
@@ -449,19 +427,19 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   // Add version virtual module plugin for cache invalidation
   plugins.push(createVersionPlugin());
 
-  // Entry path for discovery and version injection.
-  // Node preset: uses the (possibly auto-discovered) router path.
+  // Entry path for discovery: user-specified value (if any) or undefined.
+  // Auto-discovered path is passed separately via routerRef.
   // Cloudflare preset: deferred to configResolved (read from resolved Vite env config).
-  const discoveryEntryPath = preset !== "cloudflare" ? routerPath : undefined;
+  const discoveryEntryPath =
+    preset !== "cloudflare" ? routerRef.path : undefined;
+  // Ref for deferred auto-discovery (node preset only, undefined for cloudflare)
+  const discoveryRouterRef = preset !== "cloudflare" ? routerRef : undefined;
 
-  // Version injector: auto-injects VERSION and routes-manifest into custom entry.rsc files.
-  // Only applies when there's an explicit rscEntryPath or for cloudflare preset (resolved
-  // lazily in configResolved). For node preset without a custom entry, the router file
-  // must NOT be transformed — injecting routes-manifest there creates a circular dependency.
-  const injectorEntryPath =
-    rscEntryPath ?? (preset === "cloudflare" ? undefined : null);
-  if (injectorEntryPath !== null) {
-    plugins.push(createVersionInjectorPlugin(injectorEntryPath));
+  // Version injector: auto-injects VERSION and routes-manifest into the RSC entry.
+  // For cloudflare preset, the entry is resolved lazily in configResolved.
+  // For node preset, the virtual entry already includes these imports.
+  if (preset === "cloudflare") {
+    plugins.push(createVersionInjectorPlugin(undefined));
   }
 
   // Transform CJS vendor files to ESM for browser compatibility
@@ -470,12 +448,13 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
 
   // Router discovery plugin for build-time manifest generation.
   // For cloudflare, the entry is resolved lazily in configResolved from the RSC environment.
+  // For node, discoveryRouterRef provides the auto-discovered path when not user-specified.
   plugins.push(
     createRouterDiscoveryPlugin(discoveryEntryPath, {
+      routerPathRef: discoveryRouterRef,
       enableBuildPrerender: prerenderEnabled,
-      staticRouteTypesGeneration: resolvedOptions.staticRouteTypesGeneration,
-      include: resolvedOptions.include,
-      exclude: resolvedOptions.exclude,
+      buildEnv: options?.buildEnv,
+      preset,
     }),
   );
 

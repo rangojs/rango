@@ -1,7 +1,8 @@
-import { urls, Meta } from "@rangojs/router";
+import { urls, cookies, Meta, Breadcrumbs, notFound } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { RootLayout } from "./components/layouts/index.js";
 import { blogPatterns } from "./urls/blog.js";
+import { createFactoryHmrPatterns } from "./urls/factory-hmr.js";
 import { slowPatternsWithoutDetail } from "./urls/slow.js";
 import { errorsPatterns } from "./urls/errors.js";
 import {
@@ -17,6 +18,11 @@ import { middlewarePatterns } from "./urls/middleware.js";
 import { cachePatterns } from "./urls/cache.js";
 import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
+import { unnamedIncludeReversePatterns } from "./urls/unnamed-include-reverse.js";
+import {
+  flattenedIncludePatterns,
+  namedIncludePatterns,
+} from "./urls/include-scoping-reverse.js";
 import { searchPatterns } from "./urls/search.js";
 import { refTestPatterns } from "./urls/ref-test.js";
 import { prerenderPatterns } from "./urls/prerender.js";
@@ -28,6 +34,8 @@ import { locationStatePatterns } from "./urls/location-state.js";
 import { responseCachePatterns } from "./urls/response-cache.js";
 import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
 import { handlerFirstPatterns } from "./urls/handler-first.js";
+import { handlerUsePatterns } from "./urls/handler-use.js";
+import { parallelLoaderInheritPatterns } from "./urls/parallel-loader-inherit.js";
 import { buildSkipPatterns } from "./urls/prerender-build-skip.js";
 import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
@@ -35,8 +43,27 @@ import { useCachePatterns } from "./urls/use-cache.js";
 import { prerenderLocalePatterns } from "./urls/prerender-locale.js";
 import { loaderReversePatterns } from "./urls/loader-reverse.js";
 import { loaderCookiePatterns } from "./urls/loader-cookie.js";
+import { mwChainPatterns } from "./urls/mw-chain.js";
+import { revalidationContractPatterns } from "./urls/revalidation-contract.js";
 import { ctxCleanPatterns } from "./urls/ctx-clean.js";
 import { actionRedirectRevalidationPatterns } from "./urls/action-redirect-revalidation.js";
+import { hashNavigationPatterns } from "./urls/hash-navigation.js";
+import { linkBehaviorPatterns } from "./urls/link-behavior.js";
+import { delayedBreadcrumbPatterns } from "./urls/delayed-breadcrumbs.js";
+import { breadcrumbTrailPatterns } from "./urls/breadcrumb-trail.js";
+import { manifestCacheTestPatterns } from "./urls/manifest-cache-test.js";
+import { authBoundaryPatterns } from "./urls/auth-boundary.js";
+import { contentOwnershipPatterns } from "./urls/content-ownership.js";
+import { cacheIsolationPatterns } from "./urls/cache-isolation.js";
+import { alsScopePatterns } from "./urls/als-scope.js";
+import { streamModePatterns } from "./urls/stream-mode.js";
+import { devDebugPatterns, devInfoHandler } from "./urls/dev-routes.js";
+import { contextDedupPatterns } from "./urls/context-dedup.js";
+import { parallelMetaPatterns } from "./urls/parallel-meta.js";
+import { renderedBarrierPatterns } from "./urls/rendered-barrier.js";
+import { cacheScopeGuardPatterns } from "./urls/cache-scope-guard.js";
+import { colocatedLoaderPrerenderPatterns } from "./urls/colocated-loader-prerender.js";
+import { parallelLoaderRevalPatterns } from "./urls/parallel-loader-reval.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -46,10 +73,10 @@ import {
   SlowProductDetailLoader,
 } from "./loaders.js";
 import { SlowProductLocationState } from "./location-states.js";
-import { Breadcrumbs } from "./handles.js";
 import { Modal } from "./components/Modal.js";
 import { QuantityControl } from "./components/QuantityControl.js";
 import { SlowModalSkeleton } from "./components/SlowModalSkeleton.js";
+import { LoadingFnSkeleton } from "./components/LoadingFnSkeleton.js";
 import {
   StreamingActionButton,
   StreamingActionStatus,
@@ -57,6 +84,10 @@ import {
 import { AddToCartButton } from "./components/AddToCartButton.js";
 import { LinkPendingBadge } from "./components/LinkStatusDisplay.js";
 import { RevalidateButton } from "./components/RevalidateButton.js";
+import {
+  interceptIndicatorText,
+  shouldInterceptProduct,
+} from "./intercept-hmr-config.js";
 
 /**
  * Main URL patterns - Django-style routing API
@@ -339,7 +370,9 @@ export const urlpatterns = urls(
           return (
             <Modal testId="product-modal">
               <div data-testid="modal-header">
-                <span data-testid="intercept-indicator">Intercepted</span>
+                <span data-testid="intercept-indicator">
+                  {interceptIndicatorText}
+                </span>
                 <h2 data-testid="modal-product-name">{product.name}</h2>
               </div>
               <p data-testid="modal-product-price">${product.price}</p>
@@ -372,7 +405,7 @@ export const urlpatterns = urls(
           );
         },
         () => [
-          when(({ from }) => from.pathname === "/"),
+          when(({ from }) => shouldInterceptProduct(from.pathname)),
           loader(ProductDetailLoader),
           loader(CartQuantityLoader),
         ],
@@ -426,7 +459,7 @@ export const urlpatterns = urls(
           middleware(async (ctx, next) => {
             await next();
             ctx.header("X-Intercept-Middleware", "applied");
-            ctx.setCookie("intercept-visited", "true", { path: "/" });
+            cookies().set("intercept-visited", "true", { path: "/" });
           }),
         ],
       ),
@@ -436,11 +469,16 @@ export const urlpatterns = urls(
       // Blog patterns
       include("/blog", blogPatterns, { name: "blog" }),
 
+      // Factory-generated patterns (static parser can't resolve the function call)
+      include("/factory-hmr", createFactoryHmrPatterns(), {
+        name: "factoryHmr",
+      }),
+
       // Slow/streaming patterns (without slowProduct.detail which is inline above)
-      include("/", slowPatternsWithoutDetail),
+      include("/", slowPatternsWithoutDetail, { name: "" }),
 
       // Error patterns - already has /errors prefix in paths
-      include("/", errorsPatterns),
+      include("/", errorsPatterns, { name: "" }),
 
       // Meta patterns - already have their prefixes in paths
       include("/meta-template", metaTemplatePatterns, { name: "metaTemplate" }),
@@ -448,14 +486,16 @@ export const urlpatterns = urls(
       include("/meta-merge", metaMergePatterns, { name: "metaMerge" }),
 
       // Handle passthrough and hydration patterns
-      include("/", handlePatterns),
-      include("/", hydrationPatterns),
+      include("/", handlePatterns, { name: "" }),
+      include("/", hydrationPatterns, { name: "" }),
+      include("/", delayedBreadcrumbPatterns, { name: "" }),
+      include("/", breadcrumbTrailPatterns, { name: "" }),
 
       // Trailing slash patterns
-      include("/", trailingSlashPatterns),
+      include("/", trailingSlashPatterns, { name: "" }),
 
       // Hook test patterns - already have their prefixes in paths
-      include("/", hooksPatterns),
+      include("/", hooksPatterns, { name: "" }),
 
       // Middleware test patterns
       include("/middleware-test", middlewarePatterns, {
@@ -463,13 +503,18 @@ export const urlpatterns = urls(
       }),
 
       // Cache test patterns (includes intercepts with layouts)
-      include("/", cachePatterns),
+      include("/", cachePatterns, { name: "" }),
 
       // Theme patterns
       include("/theme", themePatterns, { name: "theme" }),
 
       // Href test patterns
       include("/href", hrefPatterns, { name: "href" }),
+
+      // Include scoping reverse behavior probes
+      include("/unnamed-reverse", unnamedIncludeReversePatterns),
+      include("/flat-reverse", flattenedIncludePatterns, { name: "" }),
+      include("/ns-reverse", namedIncludePatterns, { name: "ns" }),
 
       // Search params test patterns
       include("/search", searchPatterns, { name: "search" }),
@@ -478,7 +523,7 @@ export const urlpatterns = urls(
       include("/ref-test", refTestPatterns, { name: "refTest" }),
 
       // Pre-render handler test patterns
-      include("/", prerenderPatterns),
+      include("/", prerenderPatterns, { name: "" }),
 
       // Pre-render complex test patterns (layout + parallel + fresh loader)
       include("/prerender-complex", prerenderComplexPatterns, {
@@ -511,6 +556,56 @@ export const urlpatterns = urls(
       // Handler-first execution order + cache scope tests
       include("/handler-first", handlerFirstPatterns, { name: "handlerFirst" }),
 
+      // handler.use composable defaults test patterns
+      include("/handler-use", handlerUsePatterns, { name: "handlerUse" }),
+
+      // loading() function form tests
+      path(
+        "/loading-fn-test",
+        async () => {
+          await new Promise((r) => setTimeout(r, 200));
+          return <div data-testid="loading-fn-page">Loaded content</div>;
+        },
+        { name: "loadingFnTest" },
+        () => [
+          loading(() => (
+            <div data-testid="loading-fn-skeleton">Loading skeleton</div>
+          )),
+        ],
+      ),
+      path(
+        "/loading-fn-client-test",
+        async () => {
+          await new Promise((r) => setTimeout(r, 200));
+          return (
+            <div data-testid="loading-fn-client-page">
+              Loaded client content
+            </div>
+          );
+        },
+        { name: "loadingFnClientTest" },
+        () => [loading(() => <LoadingFnSkeleton />)],
+      ),
+      path(
+        "/loading-element-client-test",
+        async () => {
+          await new Promise((r) => setTimeout(r, 200));
+          return (
+            <div data-testid="loading-element-client-page">
+              Loaded element client content
+            </div>
+          );
+        },
+        { name: "loadingElementClientTest" },
+        () => [loading(<LoadingFnSkeleton />)],
+      ),
+
+      // parallel loader inheritance regression test
+      include("/", parallelLoaderInheritPatterns),
+
+      // parallel loader revalidation on orphan layout regression test
+      include("/", parallelLoaderRevalPatterns),
+
       // Skip test patterns (prerender + static skip/error handling)
       include("/build-skip", buildSkipPatterns, { name: "buildSkip" }),
 
@@ -538,6 +633,33 @@ export const urlpatterns = urls(
         name: "loaderCookie",
       }),
 
+      // Middleware chain integration test (global mw + action + route mw + layout + loader)
+      include("/mw-chain", mwChainPatterns, { name: "mwChain" }),
+
+      // Auth boundary test (route mw vs global mw, actions, response routes)
+      include("/auth-boundary", authBoundaryPatterns, {
+        name: "authBoundary",
+      }),
+
+      // Content ownership / negotiation edge cases
+      include("/content-ownership", contentOwnershipPatterns, {
+        name: "contentOwnership",
+      }),
+
+      // Cache isolation tests (query, auth, condition)
+      include("/cache-isolation", cacheIsolationPatterns, {
+        name: "cacheIsolation",
+      }),
+
+      // ALS scope propagation tests (request, render, intercept scopes)
+      include("/als-scope", alsScopePatterns, { name: "alsScope" }),
+
+      // Revalidation contract fixture: consumer reruns without producer rerun,
+      // so upstream ctx.set() data is missing on the action follow-up.
+      include("/revalidation-contract", revalidationContractPatterns, {
+        name: "",
+      }),
+
       // Action redirect revalidation test patterns
       include(
         "/action-redirect-revalidation",
@@ -546,6 +668,16 @@ export const urlpatterns = urls(
           name: "actionRedirectRevalidation",
         },
       ),
+
+      // Hash navigation test patterns (hash-only links bypass SPA router)
+      include("/hash-navigation", hashNavigationPatterns, {
+        name: "hashNavigation",
+      }),
+
+      // Link behavior test patterns (interception, prefetch strategies)
+      include("/link-behavior", linkBehaviorPatterns, {
+        name: "linkBehavior",
+      }),
 
       // Prerender with parent route params (locale in include prefix)
       include("/:locale", prerenderLocalePatterns, { name: "locale" }),
@@ -607,17 +739,85 @@ export const urlpatterns = urls(
         },
       ),
 
-      // Test utils: read and reset last onError call for e2e verification
+      // Test utils: read onError log (non-destructive)
       path.json(
         "/__test/last-error",
         async () => {
-          const { lastOnErrorCall, resetLastOnErrorCall } =
-            await import("./router.js");
-          const result = lastOnErrorCall;
-          resetLastOnErrorCall();
-          return result;
+          const { onErrorLog } = await import("./router.js");
+          return onErrorLog.length > 0 ? [...onErrorLog] : null;
         },
         { name: "testLastError" },
+      ),
+      // Test utils: clear onError log
+      path.json(
+        "/__test/clear-error-log",
+        async () => {
+          const { clearOnErrorLog } = await import("./router.js");
+          clearOnErrorLog();
+          return { cleared: true };
+        },
+        { name: "testClearErrorLog" },
+      ),
+
+      // Test utils: response route that throws to trigger onError with phase="handler"
+      path.json(
+        "/__test/throw-handler-error",
+        () => {
+          throw new Error("Handler error for onError test");
+        },
+        { name: "testThrowHandlerError" },
+      ),
+
+      // Test utils: expose loader $$id values for e2e fetchable guard tests.
+      // Production builds hash IDs, so tests need to discover them at runtime.
+      path.json(
+        "/__test/loader-ids",
+        async () => {
+          const { FetchableTestLoader, ProductsLoader, ProtectedLoader } =
+            await import("./loaders.js");
+          return {
+            fetchable: (FetchableTestLoader as any).$$id,
+            nonFetchable: (ProductsLoader as any).$$id,
+            withMiddleware: (ProtectedLoader as any).$$id,
+          };
+        },
+        { name: "testLoaderIds" },
+      ),
+
+      // Manifest cache test route (its DSL handler increments a counter)
+      include("/manifest-cache-test", manifestCacheTestPatterns, {
+        name: "manifestCacheTest",
+      }),
+
+      // Manifest cache test: read the handler execution counter.
+      // The DSL handler in manifestCacheTestPatterns increments a counter
+      // each time loadManifest() runs it. After the first request the
+      // manifest is cached, so subsequent requests should NOT increment it.
+      path.json(
+        "/__test/manifest-cache-counter",
+        async () => {
+          const mod = await import("./manifest-cache-probe.js");
+          return { handlerExecutions: mod.handlerExecutions };
+        },
+        { name: "testManifestCacheCounter" },
+      ),
+
+      // Prerender manifest introspection: returns entry count for a given
+      // route name so e2e tests can verify which params were prerendered.
+      path.json(
+        "/__test/prerender-manifest-entries",
+        async (ctx) => {
+          const routeName = ctx.searchParams.get("route");
+          if (!routeName) return { error: "missing route param" };
+          if (!globalThis.__loadPrerenderManifestModule)
+            return { available: false, count: 0 };
+          const mod = await globalThis.__loadPrerenderManifestModule();
+          const keys = Object.keys(mod.default).filter((k) =>
+            k.startsWith(routeName + "/"),
+          );
+          return { available: true, count: keys.length };
+        },
+        { name: "testPrerenderManifestEntries" },
       ),
 
       // Content negotiation test: RSC + JSON + MD on same URL
@@ -643,7 +843,7 @@ export const urlpatterns = urls(
         { name: "negotiateTestMd" },
       ),
 
-      // Response handler auto-wrap + ctx.header()/ctx.setCookie() tests
+      // Response handler auto-wrap + ctx.header()/cookies().set() tests
       path.md(
         "/response-wrap/auto",
         (ctx) => {
@@ -656,7 +856,7 @@ export const urlpatterns = urls(
         (ctx) => {
           ctx.header("X-Custom", "from-md-handler");
           ctx.header("Cache-Control", "public, max-age=3600");
-          ctx.setCookie("md-visited", "true", { path: "/", maxAge: 86400 });
+          cookies().set("md-visited", "true", { path: "/", maxAge: 86400 });
           return `# With Headers\n\nHeaders set via ctx.header().`;
         },
         { name: "responseWrapWithHeaders" },
@@ -665,7 +865,7 @@ export const urlpatterns = urls(
         "/response-wrap/json-headers",
         (ctx) => {
           ctx.header("X-Api-Version", "v2");
-          ctx.setCookie("api-session", "abc123", { httpOnly: true, path: "/" });
+          cookies().set("api-session", "abc123", { httpOnly: true, path: "/" });
           return { source: "json", version: 2 };
         },
         { name: "responseWrapJsonHeaders" },
@@ -733,7 +933,7 @@ export const urlpatterns = urls(
         () => [
           middleware(async (ctx, next) => {
             ctx.set("role", "admin");
-            ctx.setCookie("mw-role", "admin", { path: "/" });
+            cookies().set("mw-role", "admin", { path: "/" });
             await next();
           }),
         ],
@@ -774,6 +974,79 @@ export const urlpatterns = urls(
         ),
         { name: "negotiateJsonFirstRsc" },
       ),
+
+      // Content negotiation + variant-specific middleware test:
+      // Each variant has its own middleware that sets a distinct header.
+      path(
+        "/negotiate-mw-test",
+        () => (
+          <div data-testid="negotiate-mw-rsc-page">
+            <h1>Negotiate MW RSC</h1>
+          </div>
+        ),
+        { name: "negotiateMwRsc" },
+        () => [
+          middleware(async (ctx, next) => {
+            await next();
+            ctx.header("X-Variant-Mw", "html");
+          }),
+        ],
+      ),
+      path.json(
+        "/negotiate-mw-test",
+        () => ({ source: "json" }),
+        { name: "negotiateMwJson" },
+        () => [
+          middleware(async (ctx, next) => {
+            await next();
+            ctx.header("X-Variant-Mw", "json");
+          }),
+        ],
+      ),
+
+      // SSR stream mode test route
+      include("/", streamModePatterns, { name: "" }),
+
+      // Context dedup test (third-party package with "use client" + createContext)
+      include("/context-dedup", contextDedupPatterns, {
+        name: "contextDedup",
+      }),
+
+      // @meta parallel slot pattern (handles from parallel slots)
+      include("/parallel-meta", parallelMetaPatterns, {
+        name: "parallelMeta",
+      }),
+
+      // notFound() without a notFoundBoundary — should render 404, not error
+      path(
+        "/not-found-no-boundary",
+        () => {
+          notFound("This item does not exist");
+        },
+        { name: "notFoundNoBoundary" },
+      ),
+
+      // cache() scope guard tests (header/cookie/status blocked, set allowed)
+      include("/cache-scope-guard", cacheScopeGuardPatterns, {
+        name: "cacheScopeGuard",
+      }),
+
+      // rendered() barrier tests (loader reads handle data after handlers settle)
+      include("/rendered-barrier", renderedBarrierPatterns, {
+        name: "renderedBarrier",
+      }),
+
+      // Colocated loader + handle + prerender in same file (client import test)
+      include("/colocated-lp", colocatedLoaderPrerenderPatterns, {
+        name: "colocatedLp",
+      }),
+
+      ...(import.meta.env.DEV
+        ? [
+            path("/__dev/info", devInfoHandler),
+            include("/__dev/debug", devDebugPatterns),
+          ]
+        : []),
     ]),
   ],
 );

@@ -55,50 +55,23 @@ Global persistent key-value storage with edge caching. Higher latency for cold r
 Implement `CFCacheStore` using the Cache API as the primary storage.
 
 ```typescript
-interface CFCacheStoreOptions<TEnv = unknown> {
-  ctx: ExecutionContext;
+interface CFCacheStoreOptions {
+  /** Cache namespace (default: 'rsc-segments') */
   namespace?: string;
+  /** Base URL for cache keys (default: 'https://cache.internal/') */
   baseUrl?: string;
+  /** Default cache options */
   defaults?: CacheDefaults;
-  version?: string;
-  keyGenerator?: (
-    ctx: RequestContext<TEnv>,
-    defaultKey: string,
-  ) => string | Promise<string>;
-  onRevalidateTag?: (tags: string[]) => Promise<void>;
-  tagInvalidationStore?: CFTagInvalidationStore;
 }
 
 class CFCacheStore implements SegmentCacheStore {
   readonly defaults?: CacheDefaults;
 
-  constructor(options: CFCacheStoreOptions);
+  constructor(options?: CFCacheStoreOptions);
 
-  get(key: string): Promise<CacheGetResult | null>;
-  set(
-    key: string,
-    data: CachedEntryData,
-    ttl: number,
-    swr?: number,
-  ): Promise<void>;
+  get(key: string): Promise<CachedEntryData | null>;
+  set(key: string, data: CachedEntryData, ttl: number): Promise<void>;
   delete(key: string): Promise<boolean>;
-  getResponse(
-    key: string,
-  ): Promise<{ response: Response; shouldRevalidate: boolean } | null>;
-  putResponse(
-    key: string,
-    response: Response,
-    ttl: number,
-    swr?: number,
-    tags?: string[],
-  ): Promise<void>;
-  getItem(key: string): Promise<CacheItemResult | null>;
-  setItem(
-    key: string,
-    value: string,
-    options?: CacheItemOptions,
-  ): Promise<void>;
-  revalidateTag(tag: string): Promise<void>;
 }
 ```
 
@@ -143,88 +116,71 @@ class CFCacheStore implements SegmentCacheStore {
    }
    ```
 
-### Phase 2: KV Sub-store (CFEdgeKVCacheStore)
+### Phase 2: KV Sub-store (Implemented)
 
-`CFEdgeKVCacheStore` is a hybrid store with Cache API as L1 and Workers KV as L2.
+Optional KV backing for cross-colo persistence. Edge Cache checks first, falls back to KV on miss, promotes KV hits back to L1.
 
 ```typescript
-interface CFEdgeKVCacheStoreOptions {
-  ctx: ExecutionContext;
-  kv: KVNamespaceLike;
-  defaults?: CacheDefaults;
-  dataPrefix?: string; // default: "__rango_data__:"
-  tagInvalidationStore?: CFTagInvalidationStore; // default: CFKVTagInvalidationStore over same KV
-  tagInvalidationOptions?: CFKVTagInvalidationStoreOptions;
-  // ... inherits CFCacheStoreOptions (namespace, baseUrl, version, keyGenerator, onRevalidateTag)
+interface CFCacheStoreOptions {
+  // ... existing options ...
+
+  /** Optional KV namespace for L2 persistence */
+  kv?: KVNamespace;
 }
+
+// Usage
+new CFCacheStore({ ctx, kv: env.CACHE_KV, defaults: { ttl: 60, swr: 300 } });
 ```
 
 **Layered Read Strategy:**
 
 ```
-1. Check Edge Cache (Cache API)
-   └─ HIT → check taggedAt vs tag invalidation store → return or treat as miss
+1. Check Edge Cache (L1)
+   └─ HIT → return immediately
    └─ MISS → continue
 
-2. Check KV
-   └─ HIT → check taggedAt vs tag invalidation store
-           → populate Edge Cache with remaining TTL → return
-   └─ MISS → return null
-
-3. (Caller handles cache miss, stores fresh data to both tiers)
+2. Check KV (L2, if configured)
+   └─ HIT → serve + promote to L1 via waitUntil
+   └─ MISS → return null (caller renders fresh)
 ```
 
 **Write Strategy:**
 
 ```
-1. Write to Edge Cache and KV in parallel
-2. KV entries include staleAt/expiresAt for SWR on fallback reads
-3. Tagged entries include taggedAt timestamp in both tiers
+1. Write to Edge Cache (L1, via waitUntil)
+2. Write to KV (L2, via separate waitUntil — only if totalTtl >= 60s)
 ```
 
-**KV Key Structure:**
-
-```
-{dataPrefix}v/{version}/{kind}:{key}
-  kind = "seg" (segments), "doc" (responses), "fn" (function results)
-```
-
-**KV Entry Formats:**
-
-- Segments: `{ data: CachedEntryData, staleAt, expiresAt }`
-- Responses: `{ bodyBase64, status, statusText, headers, tags?, taggedAt?, staleAt, expiresAt }`
-- Functions: `{ value, handles?, tags?, taggedAt?, staleAt, expiresAt }`
+**KV envelopes** store staleness metadata (staleAt, expiresAt) alongside the data. Document cache bodies are base64-encoded for binary safety. SWR stampede protection stays on L1 only (KV can't do atomic compare-and-swap).
 
 ## Usage
 
 ### Basic Setup (Edge Cache Only)
 
 ```typescript
-import { CFCacheStore } from "@rangojs/router/rsc";
+import { createRSCHandler } from "rsc-router/rsc";
+import { CFCacheStore } from "rsc-router/cf";
 
-const router = createRouter<Env>({
-  document: Document,
-  urls: urlpatterns,
-  cache: (env, ctx) => ({
+export default createRSCHandler({
+  router,
+  cache: {
     store: new CFCacheStore({
-      ctx,
       defaults: { ttl: 60, swr: 300 },
     }),
-  }),
+  },
 });
 ```
 
-### With KV Persistence
+### With KV Persistence (Phase 2)
 
 ```typescript
-import { CFEdgeKVCacheStore } from "@rangojs/router/rsc";
+import { createRSCHandler } from "rsc-router/rsc";
+import { CFCacheStore } from "rsc-router/cf";
 
-const router = createRouter<Env>({
-  document: Document,
-  urls: urlpatterns,
-  cache: (env, ctx) => ({
-    store: new CFEdgeKVCacheStore({
-      ctx,
+export default createRSCHandler({
+  router,
+  cache: (env) => ({
+    store: new CFCacheStore({
       kv: env.CACHE_KV,
       defaults: { ttl: 60, swr: 300 },
     }),
@@ -356,12 +312,33 @@ cacheRoute(pathname: string, params: Record<string, string>, segments: ResolvedS
 
 The CF store itself doesn't need direct `waitUntil` access - it's handled at the `CacheScope` level.
 
-### KV Async Writes
+### KV Async Writes (Phase 2)
 
-`CFEdgeKVCacheStore` writes to both Cache API and KV in parallel. The store
-receives `ctx` (ExecutionContext) and uses `ctx.waitUntil()` for non-blocking
-cache writes via the internal `CFCacheStore`. KV writes happen inline within
-the same `waitUntil` scope managed by `CacheScope`.
+For Phase 2 with KV persistence, we have two options:
+
+**Option A: Store receives waitUntil (more complex)**
+
+```typescript
+interface CFCacheStoreOptions {
+  kv?: KVNamespace;
+  waitUntil?: (fn: () => Promise<void>) => void;
+}
+```
+
+**Option B: KV writes inline, caller uses waitUntil (simpler)**
+
+```typescript
+// CacheScope already wraps set() in waitUntil
+// Store just does both writes synchronously
+async set(key: string, data: CachedEntryData, ttl: number): Promise<void> {
+  await this.edgeCache.put(request, response);
+  if (this.kv) {
+    await this.kv.put(key, JSON.stringify(data), { expirationTtl: ttl });
+  }
+}
+```
+
+**Recommendation**: Option B - keep the store simple. The `CacheScope` already handles `waitUntil`, so KV writes happen in the background naturally.
 
 ---
 
@@ -381,13 +358,16 @@ Action:   |  serve   | serve+reval   |  miss       |
 
 ### Key Insight: Use Headers, Not JSON Parsing
 
-Response headers track staleness and tag metadata:
+Reference implementation (`cache/cf/cache.ts`) uses response headers for staleness:
 
-- `x-edge-cache-stale-at`: Timestamp (ms) when entry becomes stale
-- `Cache-Tag`: Comma-separated cache tags
-- `x-edge-cache-tagged-at`: Timestamp (ms) when tags were attached
+- `x-edge-cache-stale-at`: Timestamp when entry becomes stale
+- `x-edge-cache-status`: HIT | MISS | REVALIDATING
 
-Staleness is determined by comparing `Date.now()` against `x-edge-cache-stale-at`.
+**Benefits:**
+
+- No JSON parsing needed to check staleness
+- Can check headers before reading body
+- Matches CF Cache API patterns
 
 ### Extended Cache TTL
 
@@ -411,8 +391,7 @@ CF Cache keeps entry for full 360s, but we know it's stale after 60s.
 
 ```typescript
 const CACHE_STALE_AT_HEADER = "x-edge-cache-stale-at";
-const CACHE_TAGS_HEADER = "Cache-Tag";
-const CACHE_TAGGED_AT_HEADER = "x-edge-cache-tagged-at";
+const CACHE_STATUS_HEADER = "x-edge-cache-status";
 
 interface CacheGetResult {
   data: CachedEntryData;
@@ -420,43 +399,30 @@ interface CacheGetResult {
 }
 
 async get(key: string): Promise<CacheGetResult | null> {
-  const cache = await this.getCache();
+  const cache = await caches.open(this.namespace);
   const response = await cache.match(this.keyToRequest(key));
   if (!response) return null;
 
-  // Parse body and check tag invalidation
+  // Check staleness from header (no JSON parse needed)
+  const staleAt = Number(response.headers.get(CACHE_STALE_AT_HEADER));
+  const shouldRevalidate = Date.now() > staleAt;
+
+  // Parse body for actual data
   const data = await response.json() as CachedEntryData;
-  if (await isGloballyInvalidated(this.tagInvalidationStore, data.tags, data.taggedAt)) {
-    await cache.delete(request).catch(() => false);
-    return null;
-  }
 
-  // Check staleness
-  const staleAt = Number(response.headers.get(CACHE_STALE_AT_HEADER) ?? "0");
-  const isStale = staleAt > 0 && Date.now() > staleAt;
-
-  if (!isStale) return { data, shouldRevalidate: false };
-
-  // Stale: check revalidation lock before claiming
-  if (await this.isRevalidating(cache, key)) {
-    return { data, shouldRevalidate: false };
-  }
-  await this.markRevalidating(cache, key);
-  return { data, shouldRevalidate: true };
+  return { data, shouldRevalidate };
 }
 
 async set(key: string, data: CachedEntryData, ttl: number, swr?: number): Promise<void> {
-  const cache = await this.getCache();
+  const cache = await caches.open(this.namespace);
   const totalTtl = ttl + (swr ?? 0);
-  const taggedAt = data.taggedAt ?? getTaggedAt(data.tags);
 
-  const response = new Response(JSON.stringify(taggedAt ? { ...data, taggedAt } : data), {
+  const response = new Response(JSON.stringify(data), {
     headers: {
       'Content-Type': 'application/json',
       'Cache-Control': `public, max-age=${totalTtl}`,
       [CACHE_STALE_AT_HEADER]: String(Date.now() + ttl * 1000),
-      ...(data.tags?.length ? { [CACHE_TAGS_HEADER]: data.tags.join(",") } : {}),
-      ...(taggedAt ? { [CACHE_TAGGED_AT_HEADER]: String(taggedAt) } : {}),
+      [CACHE_STATUS_HEADER]: 'HIT',
     },
   });
 
@@ -557,122 +523,120 @@ The router already has all the context needed for revalidation - no need to stor
 
 ### Thundering Herd Prevention
 
-Uses a separate **revalidation lock key** in the Cache API:
+Reference implementation uses a clever approach: **store REVALIDATING status in the cache itself**.
 
-```
-__revalidation:{key}     — for segment entries
-__revalidation:fn:{key}  — for function entries
+```typescript
+const shouldRevalidate = (response: Response): boolean => {
+  const status = response.headers.get(CACHE_STATUS_HEADER);
+  const age = Number(response.headers.get("age") ?? "0");
+
+  // Already revalidating and recent - skip
+  if (status === "REVALIDATING" && age < MAX_REVALIDATION_INTERVAL) {
+    return false;
+  }
+
+  // Check if stale
+  const staleAt = Number(response.headers.get(CACHE_STALE_AT_HEADER));
+  return Date.now() > staleAt;
+};
+
+// Before triggering revalidation, mark entry as REVALIDATING
+async markRevalidating(key: string, response: Response): Promise<void> {
+  const [b1, b2] = response.body!.tee();
+  const cache = await caches.open(this.namespace);
+
+  // Update cache with REVALIDATING status
+  await cache.put(
+    this.keyToRequest(key),
+    new Response(b1, {
+      headers: {
+        ...Object.fromEntries(response.headers),
+        [CACHE_STATUS_HEADER]: "REVALIDATING",
+      },
+    })
+  );
+
+  // Return b2 for reading data
+  return b2;
+}
 ```
 
 **How it works:**
 
-1. First request sees stale entry → checks for lock key via `isRevalidating()`
-2. No lock (or lock expired > 30s) → writes lock via `markRevalidating()` → returns `shouldRevalidate: true`
-3. Subsequent requests see lock exists → return `shouldRevalidate: false`, serve stale
-4. Background refresh completes → writes fresh data → deletes lock key
+1. First request sees stale entry → marks it REVALIDATING → triggers background refresh
+2. Subsequent requests see REVALIDATING status → skip revalidation, serve stale
+3. Background refresh completes → updates cache with fresh data + HIT status
 
 **Benefits:**
 
 - Works across all workers in same datacenter (shared edge cache)
 - No separate in-memory state needed
-- Self-healing: lock has a 30s TTL (`REVALIDATION_LOCK_TTL`)
-- Lock is cleaned up on successful cache write
+- Self-healing: if revalidation fails, age eventually exceeds threshold
 
-**Note**: Multiple CF datacenters may still revalidate simultaneously (edge cache is per-DC).
+**Note**: Multiple CF datacenters may still revalidate simultaneously (edge cache is per-DC). For true global coordination, use KV or Durable Objects (Phase 3).
 
 ---
 
 ## Cache Tags (Phase 3)
 
-Tag-based invalidation uses a distributed timestamp approach: tagged entries
-carry a `taggedAt` timestamp, and a `CFTagInvalidationStore` records when each
-tag was last invalidated. On read, if `invalidatedAt > taggedAt` for any of the
-entry's tags, the entry is treated as a miss and lazily deleted from cache.
+Reference implementation supports cache tags for bulk invalidation.
 
 ### Headers
 
 ```typescript
-const CACHE_TAGS_HEADER = "Cache-Tag"; // comma-separated tags
-const CACHE_TAGGED_AT_HEADER = "x-edge-cache-tagged-at"; // ms since epoch
+const CACHE_TAGS_HEADER = "Cache-Tag";
+const MAX_CACHE_TAGS = 30;
+const MAX_CACHE_TAG_LENGTH_HEADER = 10000; // 10kb max
 ```
 
-### Distributed Tag Invalidation Store
+### Storing Tags
 
 ```typescript
-interface CFTagInvalidationStore {
-  getLatestInvalidation(tags: string[]): Promise<number | null>;
-  revalidateTag(tag: string, invalidatedAt: number): Promise<void>;
-}
-```
+const tagsHeader = sanitizeCacheTags([
+  hostname, // e.g., "mydomain.com"
+  "document", // content type
+  ...defaultTags, // e.g., ["products", "catalog"]
+  ...contentTags, // e.g., ["product:123"]
+]).join(",");
 
-Built-in KV implementation:
-
-```typescript
-import { CFKVTagInvalidationStore } from "@rangojs/router/rsc";
-
-const tagStore = new CFKVTagInvalidationStore(env.CACHE_KV, {
-  prefix: "__rango_tag__:", // default
-  ttl: undefined, // keep indefinitely by default
-});
-```
-
-### CFCacheStore with Tag Invalidation
-
-```typescript
-new CFCacheStore({
-  ctx,
-  tagInvalidationStore: new CFKVTagInvalidationStore(env.CACHE_KV),
-  onRevalidateTag: async (tags) => {
-    // Optional: also purge via CF API for immediate local eviction
-    await fetch(
-      `https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/purge_cache`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${API_TOKEN}` },
-        body: JSON.stringify({ tags }),
-      },
-    );
+const response = new Response(body, {
+  headers: {
+    [CACHE_TAGS_HEADER]: tagsHeader,
   },
 });
 ```
 
-`CFEdgeKVCacheStore` creates a `CFKVTagInvalidationStore` automatically
-from the same KV namespace, so tag invalidation works out of the box.
-
-### How It Works
-
-1. **Write**: Tagged entries store `taggedAt = Date.now()` in both the cached
-   response body/headers and the KV payload.
-2. **Invalidation**: `revalidateTag("products")` writes `invalidatedAt` to the
-   tag store (via `waitUntil`), optionally calls `onRevalidateTag`.
-3. **Read**: Before returning a hit, `isGloballyInvalidated()` checks
-   `tagInvalidationStore.getLatestInvalidation(tags)`. If the result is newer
-   than `taggedAt`, the entry is treated as a miss and lazily deleted.
-
-This avoids the impossible task of enumerating Cache API keys across colos.
-Stale entries remain until natural TTL expiry but are never served.
-
-### RSC Router Integration
+### Integration with Cloudflare Cache Purge API
 
 ```typescript
-// Tag routes in urls
-cache({ ttl: 300, tags: ["products"] }, () => [
-  path("/products", ProductList, { name: "products" }),
-  path("/products/:id", ProductDetail, { name: "product" }),
-]);
-
-// Invalidate from server actions
-import { revalidateTag } from "@rangojs/router";
-
-async function updateProduct(formData: FormData) {
-  "use server";
-  await db.products.update(formData);
-  revalidateTag("products");
-}
+// Purge by tag via CF API
+await fetch(
+  `https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`,
+  {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiToken}` },
+    body: JSON.stringify({ tags: ["product:123"] }),
+  },
+);
 ```
 
-`revalidateTag()` invalidates across the app-level store and any explicit
-per-scope stores (`cache({ store })`) registered by the current handler.
+### RSC Router Integration (Future)
+
+```typescript
+cache(
+  {
+    ttl: 300,
+    tags: (ctx) => [`product:${ctx.params.id}`, "products"],
+  },
+  () => [route("product/:id")],
+);
+
+// Server action
+async function updateProduct(id: string) {
+  await db.products.update(id, data);
+  await invalidateTags([`product:${id}`]);
+}
+```
 
 ---
 
@@ -769,29 +733,22 @@ packages/rsc-router/src/cache/
 - [x] Route-level caching with `lookupRoute()` and `cacheRoute()`
 - [x] Loaders excluded from cache by default (opt-in with own `cache()`)
 - [x] Partial request caching with null component support
-- [x] Thundering herd prevention via revalidation lock keys
+- [x] Thundering herd prevention via cache status headers
 - [x] Tests for SWR behavior (stale serving, background refresh)
 
-### Phase 2: KV Sub-store (CFEdgeKVCacheStore)
+### Phase 2: KV Sub-store
 
-- [x] Design KV schema and key structure (versioned, kind-prefixed)
-- [x] Implement layered read (Edge Cache -> KV -> repopulate edge)
-- [x] Implement parallel write to Edge Cache + KV
-- [x] Handle KV-specific TTL and SWR (staleAt/expiresAt in KV payload)
-- [x] Response serialization/deserialization (base64 body encoding)
-- [x] Tests for layered caching behavior
+- [x] Design KV schema and key structure (envelope types: KVSegmentEnvelope, KVItemEnvelope, KVResponseEnvelope)
+- [x] Implement layered read (Edge Cache -> KV -> promote to L1 via waitUntil)
+- [x] Implement async write to KV (parallel waitUntil alongside L1 write)
+- [x] Handle KV-specific TTL configuration (expirationTtl >= 60s guard, version-keyed)
+- [x] Binary-safe response body encoding (base64 for document cache)
+- [x] Tests for layered caching behavior (28 tests covering all three cache levels)
 
-### Phase 3: Tag-based Invalidation
+### Phase 3: Advanced (Future)
 
-- [x] Distributed tag invalidation via taggedAt timestamps
-- [x] CFTagInvalidationStore interface
-- [x] CFKVTagInvalidationStore (KV-backed implementation)
-- [x] isGloballyInvalidated() check on all read paths (segments, responses, functions)
-- [x] Lazy cache deletion on invalidated hits
-- [x] revalidateTag() support on both CFCacheStore and CFEdgeKVCacheStore
-- [x] onRevalidateTag callback for CF Cache Purge API integration
-- [x] Handler-scoped tag store registry for multi-router isolation
-- [x] Tests for distributed invalidation across all entry types
+- [ ] Global revalidation coordination via KV/Durable Objects
+- [ ] Cache tags for bulk invalidation
 - [ ] Proactive sibling segment caching
 
 ## References

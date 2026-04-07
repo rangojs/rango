@@ -63,6 +63,24 @@ export const HrefIndexHandler: Handler<"href.index"> = (ctx) => {
           <Link to="/href/nested" data-testid="goto-nested-link">
             Go to Nested
           </Link>
+          {" | "}
+          <Link to="/href/null-handler" data-testid="goto-null-handler-link">
+            Go to Null Handler
+          </Link>
+          {" | "}
+          <Link
+            to="/href/null-handler-cached"
+            data-testid="goto-null-handler-cached-link"
+          >
+            Go to Null Handler (cached)
+          </Link>
+          {" | "}
+          <Link
+            to="/href/null-handler-use-cache"
+            data-testid="goto-null-handler-use-cache-link"
+          >
+            Go to Null Handler (use cache)
+          </Link>
         </div>
       </section>
     </div>

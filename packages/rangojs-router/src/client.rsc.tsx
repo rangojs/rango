@@ -17,7 +17,6 @@ export {
   OutletProvider,
   useOutlet,
   useLoader,
-  useLoaderData,
   ErrorBoundary,
   type ErrorBoundaryProps,
 } from "./client.js";
@@ -64,6 +63,8 @@ export { Meta } from "./handles/meta.js";
 // MetaTags is a "use client" component that can be imported from RSC
 export { MetaTags } from "./handles/MetaTags.js";
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
+// Breadcrumbs handle works in RSC context
+export { Breadcrumbs, type BreadcrumbItem } from "./handles/breadcrumbs.js";
 
 // Location state - createLocationState works in RSC (just creates definition)
 // useLocationState is NOT exported here as it uses client hooks

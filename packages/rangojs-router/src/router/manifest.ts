@@ -9,6 +9,7 @@ import { createRouteHelpers } from "../route-definition";
 import {
   getContext,
   runWithPrefixes,
+  getIsolatedLazyParent,
   type EntryData,
   type MetricsStore,
 } from "../server/context";
@@ -65,7 +66,9 @@ export async function loadManifest(
   const mountIndex = entry.mountIndex;
 
   // Check module-level cache (persists across requests within same isolate)
-  const cacheKey = `${VERSION}:${mountIndex ?? ""}:${routeKey}:${isSSR ? 1 : 0}`;
+  // Include routerId so multi-router setups (host routing) don't share cached
+  // EntryData across routers with overlapping mountIndex + routeKey combinations.
+  const cacheKey = `${VERSION}:${entry.routerId ?? ""}:${mountIndex ?? ""}:${routeKey}:${isSSR ? 1 : 0}`;
   const cached = manifestModuleCache.get(cacheKey);
   if (cached) {
     const cacheStart = performance.now();
@@ -112,8 +115,11 @@ export async function loadManifest(
     // This ensures routes are registered under the correct layout hierarchy
     const lazyContext =
       entry.lazy && entry.lazyPatterns ? entry.lazyContext : null;
-    const parentForContext =
-      (lazyContext?.parent as EntryData | null) ?? Store.parent;
+    const parentForContext = lazyContext
+      ? getIsolatedLazyParent(
+          (lazyContext.parent as EntryData | null) ?? Store.parent,
+        )
+      : Store.parent;
 
     // For lazy entries, merge captured counters from include() so the
     // handler's entries get shortCode indices after sibling entries that
@@ -125,6 +131,22 @@ export async function loadManifest(
       for (const [key, value] of Object.entries(captured)) {
         Store.counters[key] = Math.max(Store.counters[key] ?? 0, value);
       }
+    }
+
+    // Propagate cache profiles for DSL-time cache("profileName") resolution.
+    // Non-lazy entries carry profiles directly; lazy entries carry them
+    // in the captured lazyContext from include() time.
+    const entryProfiles =
+      entry.cacheProfiles ?? (lazyContext as any)?.cacheProfiles;
+    if (entryProfiles) {
+      Store.cacheProfiles = entryProfiles;
+    }
+
+    // Propagate rootScoped from lazyContext so that routes inside
+    // nested { name: "sub" } under { name: "" } keep inherited root scope
+    // when the manifest is rebuilt on each request.
+    if (lazyContext && (lazyContext as any).rootScoped !== undefined) {
+      Store.rootScoped = (lazyContext as any).rootScoped;
     }
 
     const handlerExecStart = performance.now();
@@ -178,15 +200,28 @@ export async function loadManifest(
             "default" in load
           ) {
             // Promise<{ default: () => Array }> - e.g., dynamic import
-            // Lazy-loaded handlers may need helpers (passed as optional arg)
+            if (typeof load.default !== "function") {
+              throw new Error(
+                `[@rangojs/router] Unsupported async handler: { default } must be a function, ` +
+                  `got ${typeof load.default}. Use () => import('./urls') for lazy loading.`,
+              );
+            }
             return (load.default as (h?: any) => any)(helpers);
           }
           if (typeof load === "function") {
             // Promise<() => Array>
             return (load as (h?: any) => any)(helpers);
           }
-          // Promise<Array> - direct array from async handler
-          return load;
+          // Reject unsupported async handler results. Supported shapes are:
+          //   Promise<{ default: fn }> — dynamic import
+          //   Promise<fn> — lazy function
+          // Direct Promise<Array> is not supported; use a function wrapper.
+          throw new Error(
+            `[@rangojs/router] Unsupported async handler result (${typeof load}). ` +
+              `Lazy route handlers must resolve to a function or { default: fn }, ` +
+              `not a direct array. Wrap your handler: () => import('./urls') or ` +
+              `() => Promise.resolve((h) => [...])`,
+          );
         }
 
         // Inline handler - routes were registered with correct parent inside layout

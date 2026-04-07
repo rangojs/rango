@@ -9,7 +9,8 @@ import {
   startTransition,
 } from "react";
 import { NavigationStoreContext } from "./context.js";
-import type { TrackedActionState, ActionLifecycleState } from "../types.js";
+import { shallowEqual } from "./shallow-equal.js";
+import type { TrackedActionState } from "../types.js";
 import { invariant } from "../../errors.js";
 
 /**
@@ -126,6 +127,11 @@ export type ServerActionFunction = ((...args: any[]) => Promise<any>) & {
  * const error = useAction(addToCart, state => state.error);
  * ```
  *
+ * @note The selector is expected to be stable for a given hook instance.
+ * This hook tracks one projection of one action. Changing selector semantics
+ * for the same action ID without a new action event is not a supported pattern;
+ * use separate useAction() subscriptions if you need different projections.
+ *
  * @note Actions passed as props from server components lose their metadata
  * during RSC serialization. Use a string action name or import directly.
  */
@@ -161,13 +167,27 @@ export function useAction<T>(
     T | TrackedActionState
   >(null!);
 
-  // Memoize the selector to avoid unnecessary re-subscriptions
+  // Ref keeps the latest selector for subscription callbacks without
+  // re-subscribing on every render. Selector changes themselves are not
+  // treated as a reactive input; this hook expects a stable selector and
+  // represents one subscription/projection for one action.
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 
   // Subscribe to action state changes from event controller
   useEffect(() => {
     if (!ctx) return;
+
+    // Sync current state for the (possibly new) actionId so that switching
+    // actions on an idle page doesn't leave stale data from the old action.
+    const currentState = ctx.eventController.getActionState(actionId);
+    const currentSelected = selectorRef.current
+      ? selectorRef.current(currentState)
+      : currentState;
+    if (!shallowEqual(currentSelected, prevSelected.current)) {
+      prevSelected.current = currentSelected;
+      setBaseState(currentSelected);
+    }
 
     // Subscribe to action-specific updates
     const unsubscribe = ctx.eventController.subscribeToAction(
@@ -177,7 +197,7 @@ export function useAction<T>(
           ? selectorRef.current(state)
           : state;
 
-        if (!isShallowEqual(selectedState, prevSelected.current)) {
+        if (!shallowEqual(selectedState, prevSelected.current)) {
           prevSelected.current = selectedState;
           setBaseState(selectedState);
           startTransition(() => {
@@ -193,48 +213,6 @@ export function useAction<T>(
   }, [actionId]);
 
   return (optimisticState ?? baseState) as T | TrackedActionState;
-}
-
-function isShallowEqual<T, U>(selectedState: T, baseState: U): boolean {
-  // If references are equal, they're shallow equal
-  //@ts-expect-error -- TS doesn't like comparing generics
-  if (selectedState === baseState) {
-    return true;
-  }
-
-  // If either is null/undefined and they're not equal, they're not shallow equal
-  if (selectedState == null || baseState == null) {
-    return false;
-  }
-
-  // If types are different, they're not shallow equal
-  if (typeof selectedState !== typeof baseState) {
-    return false;
-  }
-
-  // For primitives, === comparison is sufficient (already checked above)
-  if (typeof selectedState !== "object") {
-    return false;
-  }
-
-  // For objects, compare keys and values shallowly
-  const keysA = Object.keys(selectedState as object);
-  const keysB = Object.keys(baseState as object);
-
-  if (keysA.length !== keysB.length) {
-    return false;
-  }
-
-  for (const key of keysA) {
-    if (
-      !Object.prototype.hasOwnProperty.call(baseState, key) ||
-      (selectedState as any)[key] !== (baseState as any)[key]
-    ) {
-      return false;
-    }
-  }
-
-  return true;
 }
 
 export type { TrackedActionState };

@@ -23,11 +23,11 @@ ${dim} ╱${reset}    ${bold}╔═╗${reset}${dim}      *      ╱            
 ${dim}      ${reset}${bold}║ ║${reset} ${bold}╔═╗${reset}${dim}                    *                ✧.   ╱${reset}
 ${dim}   ${reset}${bold}╔╗ ║ ║ ║ ║${reset}${dim}                          *               ╱${reset}
 ${dim}   ${reset}${bold}║║ ║ ║ ║ ║  ╦═╗╔═╗╔╗╔╔═╗╔═╗${reset}${dim}             ✧              ✦${reset}
-${dim}  ${reset}${bold}═╣║ ║ ╠═╝ ║  ╠╦╝╠═╣║║║║ ╦║ ║${reset}${dim}        *           ✧${reset}
+${dim}   ${reset}${bold}║║ ║ ╠═╝ ║  ╠╦╝╠═╣║║║║ ╦║ ║${reset}${dim}        *           ✧${reset}
 ${dim}   ${reset}${bold}║╚═╝ ╔═══╝  ╩╚═╩ ╩╝╚╝╚═╝╚═╝${reset}${dim}            ✦          .      *${reset}
 ${dim}   ${reset}${bold}╚══╗ ║${reset}${dim} *      RSC Wrangler         ✧                ✦${reset}
-${dim}  *   ${reset}${bold}║ ╠═${reset}${dim}                         *            ✧.    ╱${reset}
-${bold}══════╝ ╚═════════╩═══${reset}${dim}                  ✦            *${reset}
+${dim}  *   ${reset}${bold}║ ║${reset}${dim}                          *            ✧.    ╱${reset}
+${dim}   ${reset}${bold}═══╝ ╚════${reset}${dim}                           ✦            *${reset}
 
    v${version} · ${preset} · ${mode}
 `;

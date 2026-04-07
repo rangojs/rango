@@ -58,7 +58,9 @@ test.describe("search params", () => {
     await waitForHydration(page);
 
     await expect(testId(page, "search-q")).toContainText("q: ");
-    await expect(testId(page, "search-q-type")).toContainText("q-type: string");
+    await expect(testId(page, "search-q-type")).toContainText(
+      "q-type: undefined",
+    );
   });
 
   test("should generate next page URL with search params", async ({ page }) => {

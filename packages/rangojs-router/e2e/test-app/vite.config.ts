@@ -1,18 +1,13 @@
 import { defineConfig } from "vite";
 import path from "path";
 import react from "@vitejs/plugin-react";
-import { rango } from "@rangojs/router/vite";
+import { rango, poke } from "@rangojs/router/vite";
 import devtoolsJson from "vite-plugin-devtools-json";
 
 export default defineConfig({
-  plugins: [
-    react(),
-    rango({
-      router: "./src/router.tsx",
-      // Using virtual entries (no explicit entries specified)
-    }),
-    devtoolsJson(),
-  ],
+  cacheDir:
+    process.env.RANGO_E2E_VITE_CACHE_DIR ?? "node_modules/.vite-e2e-test-app",
+  plugins: [react(), rango(), devtoolsJson(), poke()],
   esbuild: {
     target: "es2022",
   },

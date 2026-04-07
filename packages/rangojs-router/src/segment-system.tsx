@@ -20,6 +20,61 @@ import { RootErrorBoundary } from "./root-error-boundary.js";
 const ReactViewTransition: any =
   "ViewTransition" in React ? (React as any).ViewTransition : null;
 
+function restoreParallelLoaderMarkers(
+  segments: ResolvedSegment[],
+): ResolvedSegment[] {
+  const parallelLoadingByNamespace = new Map<string, ReactNode>();
+  let nextSegments: ResolvedSegment[] | null = null;
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+
+    if (segment.type === "parallel") {
+      if (
+        segment.namespace &&
+        segment.loading !== undefined &&
+        segment.loading !== null &&
+        segment.loading !== false
+      ) {
+        parallelLoadingByNamespace.set(segment.namespace, segment.loading);
+      }
+      continue;
+    }
+
+    if (segment.type !== "loader" || segment.parallelLoading !== undefined) {
+      continue;
+    }
+
+    const parallelLoading = segment.namespace
+      ? parallelLoadingByNamespace.get(segment.namespace)
+      : undefined;
+    if (parallelLoading === undefined) {
+      continue;
+    }
+
+    if (!nextSegments) {
+      nextSegments = segments.slice();
+    }
+    nextSegments[i] = { ...segment, parallelLoading };
+  }
+
+  return nextSegments ?? segments;
+}
+
+function hasSameReferences(a: unknown[] | undefined, b: unknown[]): boolean {
+  if (!a || a.length !== b.length) {
+    return false;
+  }
+
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 /**
  * Resolve loader data from raw results, unwrapping LoaderDataResult wrappers
  */
@@ -143,6 +198,10 @@ export async function renderSegments(
   } = options || {};
 
   const temporalLazyRefs: Promise<any>[] = [];
+  const normalizedSegments = restoreParallelLoaderMarkers(segments);
+  const normalizedInterceptSegments = interceptSegments
+    ? restoreParallelLoaderMarkers(interceptSegments)
+    : undefined;
 
   /**
    * Registers promises from lazy/async components for awaiting.
@@ -167,7 +226,7 @@ export async function renderSegments(
     );
   }
   // Separate segments by type, passing intercept segments for explicit injection
-  const tree = segmentTreeWalk(segments, interceptSegments);
+  const tree = segmentTreeWalk(normalizedSegments, normalizedInterceptSegments);
   // Render content segments as siblings
   let content: ReactNode = null;
   for (const node of tree) {
@@ -284,12 +343,89 @@ export async function renderSegments(
         children: nodeContent,
       });
     } else {
-      // Has loaders but no loading skeleton - await loaders and render directly
-      const resolvedData = await loaderDataPromise;
+      // Has loaders but no loading skeleton.
+      // Split: parallel-owned loaders stream (their parallel has loading()),
+      // layout-owned loaders are awaited (they gate the layout content).
+      const layoutLoaders = loaderEntries.filter((l) => !l.parallelLoading);
+      const parallelOwnedLoaders = loaderEntries.filter(
+        (l) => !!l.parallelLoading,
+      );
+
+      // Await only layout-owned loaders
+      const layoutLoaderIds = layoutLoaders.map((l) => l.loaderId!);
+      const layoutLoaderDataPromise =
+        layoutLoaders.length > 0
+          ? Promise.all(
+              layoutLoaders.map((l) =>
+                l.loaderData instanceof Promise
+                  ? l.loaderData
+                  : Promise.resolve(l.loaderData),
+              ),
+            )
+          : Promise.resolve([]);
+      const resolvedData = await layoutLoaderDataPromise;
       const { loaderData, errorFallback } = resolveLoaderData(
         resolvedData,
-        loaderIds,
+        layoutLoaderIds,
       );
+
+      // Parallel-owned loaders: attach to their owning parallel segment
+      // as loaderDataPromise so ParallelOutlet wraps in LoaderBoundary
+      if (parallelOwnedLoaders.length > 0) {
+        const loadersByParallelNamespace = new Map<string, ResolvedSegment[]>();
+
+        for (const loader of parallelOwnedLoaders) {
+          if (!loader.namespace) {
+            continue;
+          }
+          const existing = loadersByParallelNamespace.get(loader.namespace);
+          if (existing) {
+            existing.push(loader);
+          } else {
+            loadersByParallelNamespace.set(loader.namespace, [loader]);
+          }
+        }
+
+        for (const p of node.parallel) {
+          if (!p.loading || !p.namespace) {
+            continue;
+          }
+
+          const ownedLoaders = loadersByParallelNamespace.get(p.namespace);
+          if (!ownedLoaders || ownedLoaders.length === 0) {
+            continue;
+          }
+
+          const parallelLoaderIds = ownedLoaders.map((l) => l.loaderId!);
+          const parallelLoaderSources = ownedLoaders.map((l) => l.loaderData);
+          p.loaderIds = parallelLoaderIds;
+
+          const shouldReuseParallelPromise =
+            p.loaderDataPromise !== undefined &&
+            hasSameReferences(p.parallelLoaderSources, parallelLoaderSources);
+
+          const parallelLoaderDataPromise = shouldReuseParallelPromise
+            ? p.loaderDataPromise
+            : forceAwait || isAction
+              ? await Promise.all(
+                  ownedLoaders.map((l) =>
+                    l.loaderData instanceof Promise
+                      ? l.loaderData
+                      : Promise.resolve(l.loaderData),
+                  ),
+                )
+              : Promise.all(
+                  ownedLoaders.map((l) =>
+                    l.loaderData instanceof Promise
+                      ? l.loaderData
+                      : Promise.resolve(l.loaderData),
+                  ),
+                );
+
+          p.loaderDataPromise = parallelLoaderDataPromise;
+          p.parallelLoaderSources = parallelLoaderSources;
+        }
+      }
 
       content = createElement(OutletProvider, {
         key,

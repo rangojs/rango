@@ -52,11 +52,19 @@ export function createLoader<T>(
   // For fetchable loaders, __injectedId is also passed as a parameter
   const loaderId = __injectedId || "";
 
-  // If not fetchable, store fn in registry and return a plain object.
-  // Server-side code looks up fn via getFetchableLoader($$id).
+  if (!loaderId && process.env.NODE_ENV === "development") {
+    throw new Error(
+      "[rsc-router] Loader is missing $$id. " +
+        "Make sure the exposeInternalIds Vite plugin is enabled and " +
+        "the loader is exported with: export const MyLoader = createLoader(...)",
+    );
+  }
+
+  // If not fetchable, store fn in registry (for SSR ctx.use() resolution)
+  // but mark fetchable=false so the _rsc_loader endpoint rejects it.
   if (fetchable === undefined) {
     if (fn && loaderId) {
-      registerFetchableLoader(loaderId, fn, []);
+      registerFetchableLoader(loaderId, fn, [], false);
     }
     return {
       __brand: "loader",
@@ -71,7 +79,7 @@ export function createLoader<T>(
   // Register the function in the internal registry by $$id (server-side only)
   // The loader fetch handler looks it up by $$id when load() is called from the client.
   if (fn && loaderId) {
-    registerFetchableLoader(loaderId, fn, middleware);
+    registerFetchableLoader(loaderId, fn, middleware, true);
   }
 
   return {

@@ -1,7 +1,6 @@
-import { Meta } from "@rangojs/router";
+import { Meta, Breadcrumbs } from "@rangojs/router";
 import type { Handler } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
-import { Breadcrumbs } from "../handles.js";
 import { ChildMetaSetter } from "../components/ChildMetaSetter.js";
 import { AsyncChildMetaSetter } from "../components/AsyncChildMetaSetter.js";
 

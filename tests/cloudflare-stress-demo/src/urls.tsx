@@ -14,7 +14,10 @@
  * - 404s for non-prefixed paths skip ~10,000 routes
  */
 import { urls, type Handler } from "@rangojs/router";
-import { enableMatchDebug, getMatchDebugStats } from "@rangojs/router";
+import {
+  enableMatchDebug,
+  getMatchDebugStats,
+} from "@rangojs/router/__internal";
 import { includedPatterns } from "./included-patterns.js";
 import { localizedPatterns } from "./localized-patterns.js";
 import { shopPatterns } from "./shop-patterns.js";
@@ -28,7 +31,7 @@ enableMatchDebug(true);
 // Benchmark handler - bypasses RSC, returns raw JSON with debug stats
 const BenchmarkHandler: Handler<"benchFirst"> = async (ctx) => {
   const now = Date.now();
-  const start = ctx.var.dateStart ?? 0;
+  const start = ctx.get("dateStart") ?? 0;
   const elapsed = now - start;
   const matchStats = getMatchDebugStats();
 

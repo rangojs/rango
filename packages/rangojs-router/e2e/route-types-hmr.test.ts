@@ -46,30 +46,90 @@ test.describe.serial("route-types-hmr", () => {
   const handlersPath = path.resolve(
     "./e2e/test-app/src/urls/blog.handlers.tsx",
   );
+  const factoryHmrPath = path.resolve(
+    "./e2e/test-app/src/urls/factory-hmr.tsx",
+  );
 
   let originalBlogContent: string;
   let originalMainUrlsContent: string;
+  let originalHandlersContent: string;
+  let originalFactoryHmrContent: string;
+  let originalGenContent: string;
+  let dirtyGuardMessage = "";
 
   test.beforeAll(async () => {
-    // Restore git-tracked versions in case a prior timed-out test left
-    // modified files on disk (afterEach does not run when workers crash).
+    // Check for uncommitted changes BEFORE touching files. If a developer
+    // has local edits in the target files, bail out rather than overwriting.
     try {
-      execSync(
-        `git checkout -- "${blogUrlsPath}" "${mainUrlsPath}" "${handlersPath}"`,
-        {
-          stdio: "ignore",
-        },
-      );
-    } catch {}
-    originalBlogContent = await fs.readFile(blogUrlsPath, "utf-8");
-    originalMainUrlsContent = await fs.readFile(mainUrlsPath, "utf-8");
+      const dirty = execSync(
+        `git diff --name-only -- "${blogUrlsPath}" "${mainUrlsPath}" "${handlersPath}" "${factoryHmrPath}" "${genFilePath}"`,
+        { encoding: "utf-8" },
+      ).trim();
+      if (dirty) {
+        dirtyGuardMessage =
+          `Source files have uncommitted changes (${dirty.replace(/\n/g, ", ")}). ` +
+          `Restore them first: git checkout -- ${dirty.replace(/\n/g, " ")}`;
+        return;
+      }
+    } catch {
+      // Not a git repo or git not available — proceed anyway
+    }
+
+    // Read baselines from git object store (non-destructive) so that even
+    // if a prior crashed run left modified files, we get the canonical
+    // tracked versions without `git checkout --`.
+    const repoRoot = execSync("git rev-parse --show-toplevel", {
+      encoding: "utf-8",
+    }).trim();
+
+    function gitBaseline(absPath: string): string {
+      const rel = path.relative(repoRoot, absPath);
+      return execSync(`git show HEAD:${rel}`, { encoding: "utf-8" });
+    }
+
+    originalBlogContent = gitBaseline(blogUrlsPath);
+    originalMainUrlsContent = gitBaseline(mainUrlsPath);
+    originalHandlersContent = gitBaseline(handlersPath);
+    originalFactoryHmrContent = gitBaseline(factoryHmrPath);
+    originalGenContent = gitBaseline(genFilePath);
+
+    // Write baselines to disk in case a prior crash left stale modifications.
+    await fs.writeFile(blogUrlsPath, originalBlogContent);
+    await fs.writeFile(mainUrlsPath, originalMainUrlsContent);
+    await fs.writeFile(handlersPath, originalHandlersContent);
+    await fs.writeFile(factoryHmrPath, originalFactoryHmrContent);
+    await fs.writeFile(genFilePath, originalGenContent);
+  });
+
+  // Deferred skip: test.skip() cannot be called from beforeAll, so we
+  // check the guard flag here and skip each test individually.
+  test.beforeEach(() => {
+    test.skip(dirtyGuardMessage.length > 0, dirtyGuardMessage);
   });
 
   test.afterEach(async () => {
+    if (dirtyGuardMessage) return;
     await fs.writeFile(blogUrlsPath, originalBlogContent);
     await fs.writeFile(mainUrlsPath, originalMainUrlsContent);
-    // Wait for HMR + re-discovery to process the restore
-    await new Promise((r) => setTimeout(r, isCI ? 5000 : 2000));
+    await fs.writeFile(handlersPath, originalHandlersContent);
+    await fs.writeFile(factoryHmrPath, originalFactoryHmrContent);
+    // Wait for HMR + re-discovery to regenerate the gen file.
+    // Verify the gen file is restored to avoid stale modifications
+    // leaking when the dev server shuts down before the watcher fires.
+    await expect(async () => {
+      const gen = await fs.readFile(genFilePath, "utf-8");
+      expect(gen).toContain('"blog.post"');
+      expect(gen).not.toContain('"blog.article"');
+      expect(gen).not.toContain('"blog.comments"');
+    }).toPass({ timeout: isCI ? 15000 : 10000 });
+  });
+
+  // Force-restore the gen file when the test suite exits, even if
+  // afterEach couldn't wait long enough for the watcher to regenerate.
+  // Prevents the dirty gen file from failing typecheck in subsequent runs.
+  test.afterAll(async () => {
+    if (dirtyGuardMessage || !originalGenContent) return;
+    await fs.writeFile(genFilePath, originalGenContent);
   });
 
   test("should regenerate route types when a new route is added", async () => {
@@ -120,6 +180,22 @@ test.describe.serial("route-types-hmr", () => {
   });
 
   test("should not overwrite when routes have not changed", async () => {
+    // Wait for gen file mtime to stabilize after the previous test's
+    // afterEach restoration — the debounced re-discovery may still be
+    // writing when we enter this test.
+    let lastMtime = 0;
+    let stableChecks = 0;
+    while (stableChecks < 3) {
+      const s = await fs.stat(genFilePath);
+      if (s.mtimeMs === lastMtime) {
+        stableChecks++;
+      } else {
+        stableChecks = 0;
+        lastMtime = s.mtimeMs;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+
     // Get the initial mtime of the gen file
     const statBefore = await fs.stat(genFilePath);
 
@@ -393,5 +469,83 @@ test.describe.serial("route-types-hmr", () => {
       const after = await queryReverse(["blog.index"]);
       expect(after["blog.index"]).toBe("/blog");
     }).toPass({ timeout: RUNTIME_TIMEOUT });
+  });
+
+  // -- Factory-generated route HMR tests --
+  // These test routes that the static parser cannot resolve (the include()
+  // second arg is a function call, classified as "factory-call"). They only
+  // appear after runtime discovery via discoverRouters() + module evaluation.
+  // Verifies the full watcher -> refreshRuntimeDiscovery() ->
+  // discoverRouters() -> propagateDiscoveryState() pipeline.
+
+  test("factory routes should appear in runtime manifest after discovery", async () => {
+    // Factory routes (factoryHmr.alpha, factoryHmr.beta) should be in the
+    // runtime manifest after initial discovery, even though the static parser
+    // can't resolve them.
+    await expect(async () => {
+      const result = await queryReverse([
+        "factoryHmr.alpha",
+        "factoryHmr.beta",
+      ]);
+      expect(result["factoryHmr.alpha"]).toBe("/factory-hmr/alpha");
+      expect(result["factoryHmr.beta"]).toBe("/factory-hmr/beta");
+    }).toPass({ timeout: RUNTIME_TIMEOUT });
+  });
+
+  test("adding a factory route should update runtime manifest via re-discovery", async () => {
+    // Add a new route to the factory
+    const modified = originalFactoryHmrContent.replace(
+      'path("/beta", BetaHandler, { name: "beta" }),',
+      `path("/beta", BetaHandler, { name: "beta" }),
+    path("/gamma", AlphaHandler, { name: "gamma" }),`,
+    );
+    expect(modified).not.toBe(originalFactoryHmrContent);
+    await fs.writeFile(factoryHmrPath, modified);
+
+    // The static parser can't see factory routes, so we skip the gen file
+    // check and go straight to the runtime manifest which is updated by
+    // refreshRuntimeDiscovery().
+    await expect(async () => {
+      const result = await queryReverse([
+        "factoryHmr.alpha",
+        "factoryHmr.beta",
+        "factoryHmr.gamma",
+      ]);
+      expect(result["factoryHmr.alpha"]).toBe("/factory-hmr/alpha");
+      expect(result["factoryHmr.beta"]).toBe("/factory-hmr/beta");
+      expect(result["factoryHmr.gamma"]).toBe("/factory-hmr/gamma");
+    }).toPass({ timeout: WATCHER_TIMEOUT });
+  });
+
+  test("removing a factory route should update runtime manifest via re-discovery", async () => {
+    // Start with all three routes
+    const withGamma = originalFactoryHmrContent.replace(
+      'path("/beta", BetaHandler, { name: "beta" }),',
+      `path("/beta", BetaHandler, { name: "beta" }),
+    path("/gamma", AlphaHandler, { name: "gamma" }),`,
+    );
+    await fs.writeFile(factoryHmrPath, withGamma);
+
+    await expect(async () => {
+      const result = await queryReverse(["factoryHmr.gamma"]);
+      expect(result["factoryHmr.gamma"]).toBe("/factory-hmr/gamma");
+    }).toPass({ timeout: WATCHER_TIMEOUT });
+
+    // Remove gamma by restoring original
+    await fs.writeFile(factoryHmrPath, originalFactoryHmrContent);
+
+    // Verify gamma is purged from the runtime manifest.
+    // This exercises: clearAllRouterData() in propagateDiscoveryState()
+    // and the full re-import pipeline that re-evaluates the factory module.
+    await expect(async () => {
+      const result = await queryReverse([
+        "factoryHmr.alpha",
+        "factoryHmr.beta",
+        "factoryHmr.gamma",
+      ]);
+      expect(result["factoryHmr.alpha"]).toBe("/factory-hmr/alpha");
+      expect(result["factoryHmr.beta"]).toBe("/factory-hmr/beta");
+      expect(result["factoryHmr.gamma"]).toBeNull();
+    }).toPass({ timeout: WATCHER_TIMEOUT });
   });
 });

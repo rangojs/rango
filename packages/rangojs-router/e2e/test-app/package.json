@@ -7,11 +7,11 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "extract": "npx rango extract-names ./",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@rangojs/router": "workspace:*",
+    "fake-context-lib": "file:__test_packages__/fake-context-lib",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

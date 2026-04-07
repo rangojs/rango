@@ -32,7 +32,6 @@ Django-inspired RSC router with composable URL patterns, type-safe href, and ser
 | `/response-routes` | JSON/text/HTML/XML/stream endpoints with `path.json()`, `path.text()`      |
 | `/mime-routes`     | Content negotiation — same URL, different response types via Accept header |
 | `/fonts`           | Load web fonts with preload hints                                          |
-| `/testing`         | Unit test route trees with `buildRouteTree()`                              |
 
 ## Quick Start
 
@@ -51,7 +50,7 @@ export const urlpatterns = urls(({ path, layout }) => [
 import { createRouter } from "@rangojs/router";
 import { urlpatterns } from "./urls";
 
-export default createRouter({ document: Document }).urls(urlpatterns);
+export default createRouter({ document: Document }).routes(urlpatterns);
 ```
 
 Use `/typesafety` for type-safe href and environment setup.

@@ -155,18 +155,48 @@ Each `createRouter()` gets isolated data:
 Per-router virtual modules (`virtual:rsc-router/routes-manifest/<routerId>`) are loaded lazily
 via `registerRouterManifestLoader()` / `ensureRouterManifest()` on first request.
 
+Router roots must be sibling app roots. Nested router roots are not supported:
+if a router source file lives under another router's directory, Vite runtime
+discovery and `rango generate` fail with an explicit error. This keeps static
+route-type generation scoped to the nearest router root and avoids deep
+redundant filesystem scans in large projects.
+
+## Static vs Runtime Generation Boundary
+
+The CLI (`rango generate`) has two modes for producing `.named-routes.gen.ts`:
+
+| Mode             | Flag        | Discovery                                                        | Coverage                                  |
+| ---------------- | ----------- | ---------------------------------------------------------------- | ----------------------------------------- |
+| Static (default) | (none)      | AST-only, no Vite server                                         | Named routes visible to the static parser |
+| Runtime          | `--runtime` | Spins up a temp Vite server, imports entry via RSC module runner | 100% of registered routes                 |
+
+**Design rule:** when the static parser encounters route tree structures it
+cannot reconstruct (factory function calls, dynamic expressions, conditional
+registrations), it must **fail fast with a clear diagnostic** pointing the
+user to `--runtime`. It must never silently emit incomplete or wrong output
+in default mode.
+
+Concretely:
+
+- `detectUnresolvableIncludes()` scans router files for `include()` calls
+  whose second argument is a function call or expression the parser cannot
+  resolve. These are classified as `"factory-call"` or `"unresolvable"`.
+- In default mode, any unresolvable include causes a hard error with the
+  list of unresolvable prefixes and the suggestion to use `--runtime`.
+- In `--static` mode, partial output is accepted with a warning.
+- In `--runtime` mode, the Vite server evaluates the actual module graph,
+  so factory functions execute and all routes are discovered.
+
+This is intentional: "hard runtime augmentation parity" is not a goal of
+the static parser. The static parser is a fast, dependency-free path for
+the common case. When the route tree is too dynamic for static analysis,
+the correct answer is `--runtime`, not a best-effort guess.
+
 ## Configuration
 
 ```typescript
-rscRouter({
-  // Disable gen file creation and the file watcher.
-  // Use when gen files are managed externally (e.g., npx rango extract-names).
-  // Default: true
-  staticRouteTypesGeneration: false,
-
-  // Glob patterns to include/exclude from scanning.
-  include: ["src/**"],
-  exclude: ["src/legacy/**"],
+rango({
+  preset: "cloudflare",
 });
 ```
 

@@ -9,16 +9,18 @@
 import { contextSet } from "../../context-var.js";
 import {
   encodePathParam,
-  escapeRegExp,
+  substituteRouteParams,
   runWithConcurrency,
   groupByConcurrency,
   notifyOnError,
+  stageBuildAssetModule,
 } from "../utils/prerender-utils.js";
 import type { DiscoveryState } from "./state.js";
 
 /**
  * Expand prerender routes into concrete URLs and render them via the
- * RSC runner. Stores collected data in state.prerenderCollectedData.
+ * RSC runner. Stages asset modules and stores key-to-file entries in
+ * state.prerenderManifestEntries.
  */
 export async function expandPrerenderRoutes(
   state: DiscoveryState,
@@ -33,6 +35,7 @@ export async function expandPrerenderRoutes(
     routeName: string;
     concurrency: number;
     buildVars?: Record<string, any>;
+    isPassthroughRoute?: boolean;
   };
   const entries: PrerenderEntry[] = [];
 
@@ -44,112 +47,147 @@ export async function expandPrerenderRoutes(
   const getParamsReverse = (name: string, params?: Record<string, string>) => {
     const pattern = allRoutes[name];
     if (!pattern) throw new Error(`Unknown route: "${name}"`);
-    let result = pattern;
-    if (params) {
-      for (const [key, value] of Object.entries(params)) {
-        // Strip constraint syntax: :param(a|b) -> value
-        const escaped = escapeRegExp(key);
-        result = result.replace(
-          new RegExp(`:${escaped}(\\([^)]*\\))?`),
-          encodeURIComponent(value),
-        );
-        result = result.replace(`*${key}`, encodeURIComponent(value));
-      }
-    }
-    return result;
+    if (!params) return pattern;
+    return substituteRouteParams(pattern, params);
   };
 
+  let resolvedRoutes = 0;
+  let totalDynamic = 0;
+
+  // Count dynamic routes upfront for progress reporting
   for (const { manifest } of allManifests) {
     if (!manifest.prerenderRoutes) continue;
-    const defs = manifest._prerenderDefs || {};
     for (const routeName of manifest.prerenderRoutes) {
       const pattern = manifest.routeManifest[routeName];
-      if (!pattern) continue;
-      const hasDynamic = pattern.includes(":") || pattern.includes("*");
-      if (!hasDynamic) {
-        // Static route: use pattern directly (strip trailing slash for URL)
-        entries.push({
-          urlPath: pattern.replace(/\/$/, "") || "/",
-          routeName,
-          concurrency: 1,
-        });
-      } else {
-        // Dynamic route: call getParams() to enumerate param combinations
-        const def = defs[routeName];
-        if (def?.getParams) {
-          try {
-            const buildVars: Record<string, any> = {};
-            const getParamsCtx = {
-              build: true as const,
-              set: ((keyOrVar: any, value: any) => {
-                contextSet(buildVars, keyOrVar, value);
-              }) as any,
-              reverse: getParamsReverse,
-            };
-            const paramsList = await def.getParams(getParamsCtx);
-            const concurrency = def.options?.concurrency ?? 1;
-            const hasBuildVars =
-              Object.keys(buildVars).length > 0 ||
-              Object.getOwnPropertySymbols(buildVars).length > 0;
-            for (const params of paramsList) {
-              let url = pattern;
-              for (const [key, value] of Object.entries(
-                params as Record<string, string>,
-              )) {
-                const encoded = encodePathParam(value);
-                // Strip constraint syntax: :param(a|b) -> value
-                const escaped = escapeRegExp(key);
-                url = url.replace(
-                  new RegExp(`:${escaped}(\\([^)]*\\))?`),
-                  encoded,
-                );
-                url = url.replace(`*${key}`, encoded);
-              }
-              // Anonymous wildcard fallback: use conventional keys if provided
-              if (url.includes("*")) {
-                const wildcardValue =
-                  (params as Record<string, string>)["*"] ??
-                  (params as Record<string, string>).splat;
-                if (wildcardValue !== undefined) {
-                  url = url.replace(/\*[^/]*$/, encodePathParam(wildcardValue));
-                }
-              }
-              entries.push({
-                urlPath: url.replace(/\/$/, "") || "/",
-                routeName,
-                concurrency,
-                ...(hasBuildVars ? { buildVars } : {}),
-              });
-            }
-          } catch (err: any) {
-            // Skip in getParams() skips the entire route
-            if (err.name === "Skip") {
-              console.log(
-                `[rsc-router]   SKIP route "${routeName}" - ${err.message}`,
-              );
-              notifyOnError(
-                registry,
-                err,
-                "prerender",
-                routeName,
-                undefined,
-                true,
-              );
-              continue;
-            }
-            // Regular error: fail the build
-            console.error(
-              `[rsc-router] Failed to get params for prerender route "${routeName}": ${err.message}`,
-            );
-            notifyOnError(registry, err, "prerender", routeName);
-            throw err;
-          }
-        } else {
-          console.warn(
-            `[rsc-router] Dynamic prerender route "${routeName}" has no getParams(), skipping`,
+      if (pattern && (pattern.includes(":") || pattern.includes("*"))) {
+        totalDynamic++;
+      }
+    }
+  }
+
+  // Periodic progress log so long getParams() calls don't look stalled
+  const paramsStart = performance.now();
+  const progressInterval =
+    totalDynamic > 0
+      ? setInterval(() => {
+          const elapsed = ((performance.now() - paramsStart) / 1000).toFixed(1);
+          console.log(
+            `[rsc-router] Resolving prerender params... ${resolvedRoutes}/${totalDynamic} routes (${elapsed}s)`,
           );
+        }, 5000)
+      : undefined;
+
+  try {
+    for (const { manifest } of allManifests) {
+      if (!manifest.prerenderRoutes) continue;
+      const defs = manifest._prerenderDefs || {};
+      const passthroughSet = new Set(manifest.passthroughRoutes || []);
+      for (const routeName of manifest.prerenderRoutes) {
+        const pattern = manifest.routeManifest[routeName];
+        if (!pattern) continue;
+        const def = defs[routeName];
+        const isPassthroughRoute = passthroughSet.has(routeName);
+        const hasDynamic = pattern.includes(":") || pattern.includes("*");
+        if (!hasDynamic) {
+          // Static route: use pattern directly (strip trailing slash for URL)
+          entries.push({
+            urlPath: pattern.replace(/\/$/, "") || "/",
+            routeName,
+            concurrency: 1,
+            isPassthroughRoute,
+          });
+        } else {
+          // Dynamic route: call getParams() to enumerate param combinations
+          if (def?.getParams) {
+            try {
+              const buildVars: Record<string, any> = {};
+              const buildEnv = state.resolvedBuildEnv;
+              const getParamsCtx = {
+                build: true as const,
+                dev: !state.isBuildMode,
+                set: ((keyOrVar: any, value: any) => {
+                  contextSet(buildVars, keyOrVar, value);
+                }) as any,
+                reverse: getParamsReverse,
+                get env() {
+                  if (buildEnv !== undefined) return buildEnv;
+                  throw new Error(
+                    "[rsc-router] ctx.env is not available during build-time getParams(). " +
+                      "Configure buildEnv in your rango() plugin options to enable build-time env access.",
+                  );
+                },
+              };
+              const paramsList = await def.getParams(getParamsCtx);
+              const concurrency = def.options?.concurrency ?? 1;
+              const hasBuildVars =
+                Object.keys(buildVars).length > 0 ||
+                Object.getOwnPropertySymbols(buildVars).length > 0;
+              for (const params of paramsList) {
+                let url = substituteRouteParams(
+                  pattern,
+                  params as Record<string, string>,
+                  encodePathParam,
+                );
+                // Anonymous wildcard fallback: use conventional keys if provided
+                if (url.includes("*")) {
+                  const wildcardValue =
+                    (params as Record<string, string>)["*"] ??
+                    (params as Record<string, string>).splat;
+                  if (wildcardValue !== undefined) {
+                    url = url.replace(
+                      /\*[^/]*$/,
+                      encodePathParam(wildcardValue),
+                    );
+                  }
+                }
+                entries.push({
+                  urlPath: url.replace(/\/$/, "") || "/",
+                  routeName,
+                  concurrency,
+                  ...(hasBuildVars ? { buildVars } : {}),
+                  isPassthroughRoute,
+                });
+              }
+              resolvedRoutes++;
+            } catch (err: any) {
+              resolvedRoutes++;
+              // Skip in getParams() skips the entire route
+              if (err.name === "Skip") {
+                console.log(
+                  `[rsc-router]   SKIP route "${routeName}" - ${err.message}`,
+                );
+                notifyOnError(
+                  registry,
+                  err,
+                  "prerender",
+                  routeName,
+                  undefined,
+                  true,
+                );
+                continue;
+              }
+              // Regular error: fail the build
+              console.error(
+                `[rsc-router] Failed to get params for prerender route "${routeName}": ${err.message}`,
+              );
+              notifyOnError(registry, err, "prerender", routeName);
+              throw err;
+            }
+          } else {
+            console.warn(
+              `[rsc-router] Dynamic prerender route "${routeName}" has no getParams(), skipping`,
+            );
+          }
         }
       }
+    }
+  } finally {
+    if (progressInterval) {
+      clearInterval(progressInterval);
+      const elapsed = ((performance.now() - paramsStart) / 1000).toFixed(1);
+      console.log(
+        `[rsc-router] Resolved prerender params: ${resolvedRoutes}/${totalDynamic} routes (${elapsed}s)`,
+      );
     }
   }
 
@@ -165,7 +203,7 @@ export async function expandPrerenderRoutes(
 
   const { hashParams } = await rscEnv.runner.import("@rangojs/router/build");
 
-  const collectedData: Record<string, any> = {};
+  const manifestEntries: Record<string, string> = {};
   let doneCount = 0;
   let skipCount = 0;
   const startTotal = performance.now();
@@ -187,21 +225,46 @@ export async function expandPrerenderRoutes(
               entry.urlPath,
               {},
               entry.buildVars,
+              entry.isPassthroughRoute,
+              state.resolvedBuildEnv,
             );
             if (!result) continue;
+
+            // Handler returned ctx.passthrough() — skip manifest entry
+            if (result.passthrough) {
+              const elapsed = (performance.now() - startUrl).toFixed(0);
+              console.log(
+                `[rsc-router]   PASS ${entry.urlPath.padEnd(40)} (${elapsed}ms) - live fallback`,
+              );
+              doneCount++;
+              break;
+            }
+
             const paramHash = hashParams(result.params || {});
-            collectedData[`${result.routeName}/${paramHash}`] = {
+            const mainKey = `${result.routeName}/${paramHash}`;
+            const mainValue = JSON.stringify({
               segments: result.segments,
               handles: result.handles,
-            };
+            });
+            manifestEntries[mainKey] = stageBuildAssetModule(
+              state.projectRoot,
+              "__pr",
+              mainValue,
+            );
             if (result.interceptSegments?.length) {
-              collectedData[`${result.routeName}/${paramHash}/i`] = {
+              const interceptKey = `${result.routeName}/${paramHash}/i`;
+              const interceptValue = JSON.stringify({
                 segments: [...result.segments, ...result.interceptSegments],
                 handles: {
                   ...result.handles,
                   ...(result.interceptHandles || {}),
                 },
-              };
+              });
+              manifestEntries[interceptKey] = stageBuildAssetModule(
+                state.projectRoot,
+                "__pr",
+                interceptValue,
+              );
             }
             const elapsed = (performance.now() - startUrl).toFixed(0);
             console.log(
@@ -247,7 +310,7 @@ export async function expandPrerenderRoutes(
 
   const totalElapsed = (performance.now() - startTotal).toFixed(0);
   if (doneCount > 0) {
-    state.prerenderCollectedData = collectedData;
+    state.prerenderManifestEntries = manifestEntries;
   }
   const parts = [`${doneCount} done`];
   if (skipCount > 0) parts.push(`${skipCount} skipped`);
@@ -259,7 +322,8 @@ export async function expandPrerenderRoutes(
 /**
  * Render Static handlers at build time. Each Static handler is called
  * with a synthetic BuildContext and its output is RSC-serialized.
- * Stores collected data in state.staticCollectedData.
+ * Stages asset modules and stores handlerId-to-file entries in
+ * state.staticManifestEntries.
  */
 export async function renderStaticHandlers(
   state: DiscoveryState,
@@ -273,10 +337,7 @@ export async function renderStaticHandlers(
   )
     return;
 
-  const collected: Record<
-    string,
-    { encoded: string; handles: Record<string, unknown[]> }
-  > = {};
+  const manifestEntries: Record<string, string> = {};
   let staticDone = 0;
   let staticSkip = 0;
   let totalStaticCount = 0;
@@ -317,9 +378,19 @@ export async function renderStaticHandlers(
             def.handler,
             def.$$id,
             (def as any).$$routePrefix,
+            state.resolvedBuildEnv,
+            !state.isBuildMode,
           );
           if (result) {
-            collected[def.$$id] = result;
+            const hasHandles = Object.keys(result.handles).length > 0;
+            const exportValue = hasHandles
+              ? JSON.stringify(result)
+              : JSON.stringify(result.encoded);
+            manifestEntries[def.$$id] = stageBuildAssetModule(
+              state.projectRoot,
+              "__st",
+              exportValue,
+            );
             const elapsed = (performance.now() - startHandler).toFixed(0);
             console.log(
               `[rsc-router]   OK   ${name.padEnd(40)} (${elapsed}ms)`,
@@ -358,7 +429,7 @@ export async function renderStaticHandlers(
 
   const totalStaticElapsed = (performance.now() - startStatic).toFixed(0);
   if (staticDone > 0) {
-    state.staticCollectedData = collected;
+    state.staticManifestEntries = manifestEntries;
   }
   const staticParts = [`${staticDone} done`];
   if (staticSkip > 0) staticParts.push(`${staticSkip} skipped`);

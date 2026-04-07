@@ -8,7 +8,9 @@ import type {
   ResolvedSegment,
   RscMetadata,
   HandleData,
+  StreamingToken,
 } from "./types.js";
+import { filterSegmentOrder } from "./react/filter-segment-order.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -77,6 +79,8 @@ export interface DerivedNavigationState {
   state: "idle" | "loading";
   /** Whether any operation is streaming */
   isStreaming: boolean;
+  /** Whether a navigation is active (fetching or streaming, before commit) */
+  isNavigating: boolean;
   /** Current committed location */
   location: NavigationLocation;
   /** URL being navigated to (null if idle) */
@@ -114,15 +118,6 @@ export type HandleListener = () => void;
 export interface HandleState {
   data: HandleData;
   segmentOrder: string[];
-}
-
-/**
- * Token for tracking an active stream
- * Call end() when the stream completes
- */
-export interface StreamingToken {
-  /** End this streaming operation */
-  end(): void;
 }
 
 /**
@@ -165,8 +160,8 @@ export interface ActionHandle extends Disposable {
   readonly settled: boolean;
   /** Check if any concurrent actions were started */
   hadConcurrentActions: boolean;
-  /** Get segments to consolidate (only valid when this is the last action) */
-  getConsolidationSegments(): string[] | null;
+  /** Get raw set of segments revalidated by concurrent actions */
+  getRevalidatedSegments(): Set<string>;
   /** Clear consolidation tracking */
   clearConsolidation(): void;
 }
@@ -189,6 +184,7 @@ export interface EventController {
   // State access
   getState(): DerivedNavigationState;
   getActionState(actionId: string): TrackedActionState;
+  getLocation(): NavigationLocation;
 
   // Location updates (for popstate where navigation doesn't go through startNavigation)
   setLocation(location: NavigationLocation): void;
@@ -216,6 +212,8 @@ export interface EventController {
   // Direct state access for advanced use
   getCurrentNavigation(): NavigationEntry | null;
   getInflightActions(): Map<string, ActionEntry>;
+  /** Whether any concurrent actions have occurred (shared across all handles) */
+  hadAnyConcurrentActions(): boolean;
 }
 
 // ============================================================================
@@ -393,9 +391,12 @@ export function createEventController(
     return {
       state,
       isStreaming,
+      // True when a navigation is active (fetching or streaming, before
+      // commit). Broader than pendingUrl which clears during streaming.
+      isNavigating: currentNavigation !== null,
       location,
-      // pendingUrl only during fetching phase - once streaming starts (URL changed), not pending
-      // Background revalidations don't expose a pending URL
+      // pendingUrl only during fetching phase - once streaming starts (URL changed), not pending.
+      // Background revalidations (skipLoadingState) don't expose a pending URL.
       pendingUrl:
         currentNavigation?.phase === "fetching" &&
         !currentNavigation.options?.skipLoadingState
@@ -488,6 +489,7 @@ export function createEventController(
 
       startStreaming(): StreamingToken {
         let ended = false;
+        entry.phase = "streaming";
         activeStreamCount++;
         notify();
 
@@ -675,24 +677,8 @@ export function createEventController(
         // If streaming is in progress, tryFinalize() will be called when streaming ends
       },
 
-      getConsolidationSegments(): string[] | null {
-        // Only consolidate if all actions have at least received their response
-        // We don't need to wait for streaming to complete since we're refetching anyway
-        // Count actions that are still fetching (waiting for server response)
-        const stillFetchingCount = [...inflightActions.values()].filter(
-          (a) => a.phase === "fetching",
-        ).length;
-
-        if (stillFetchingCount > 0) {
-          return null; // Some actions still waiting for server response
-        }
-        if (!hadAnyConcurrentActions) {
-          return null; // No concurrent actions occurred
-        }
-        if (concurrentRevalidatedSegments.size === 0) {
-          return null; // No segments to consolidate
-        }
-        return Array.from(concurrentRevalidatedSegments);
+      getRevalidatedSegments(): Set<string> {
+        return concurrentRevalidatedSegments;
       },
 
       clearConsolidation() {
@@ -727,34 +713,32 @@ export function createEventController(
   }
 
   function abortAllActions() {
-    for (const entry of inflightActions.values()) {
+    for (const [id, entry] of inflightActions) {
+      // Preserve settling entries — they have already been handled by
+      // fail()/complete() and will self-cleanup via the settlement timeout.
+      // Clearing them here would prevent debounced notifications from
+      // delivering the error/result state to subscribers.
+      if (entry.phase === "settling") continue;
       entry.abort.abort();
+      inflightActions.delete(id);
     }
-    inflightActions.clear();
     hadAnyConcurrentActions = false;
     concurrentRevalidatedSegments.clear();
     notify();
-    // Notify all action listeners
-    for (const actionId of actionListeners.keys()) {
-      notifyAction(actionId);
+    // Notify all action listeners directly by subscription ID.
+    // actionListeners keys are subscription IDs (possibly short names like
+    // "addToCart"), not full entry actionIds. Passing them to notifyAction
+    // would fail the suffix matcher — instead, notify each subscriber with
+    // its own state.
+    for (const [subscriptionId, listeners] of actionListeners) {
+      const state = getActionState(subscriptionId);
+      listeners.forEach((listener) => listener(state));
     }
   }
 
   // ========================================================================
   // Handle Operations
   // ========================================================================
-
-  /**
-   * Filter segment IDs to only include routes and layouts.
-   * Excludes parallels (contain .@) and loaders (contain D followed by digit).
-   */
-  function filterSegmentOrder(matched: string[]): string[] {
-    return matched.filter((id) => {
-      if (id.includes(".@")) return false;
-      if (/D\d+\./.test(id)) return false;
-      return true;
-    });
-  }
 
   function setHandleData(
     data: HandleData,
@@ -859,6 +843,7 @@ export function createEventController(
     // State
     getState,
     getActionState,
+    getLocation: () => location,
     setLocation,
 
     // Handles
@@ -877,6 +862,7 @@ export function createEventController(
     // Direct access
     getCurrentNavigation: () => currentNavigation,
     getInflightActions: () => inflightActions,
+    hadAnyConcurrentActions: () => hadAnyConcurrentActions,
   };
 }
 

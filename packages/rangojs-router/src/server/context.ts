@@ -11,6 +11,7 @@ import type {
   TransitionConfig,
 } from "../types";
 import { invariant } from "../errors";
+import type { DefaultRouteName } from "../types/global-namespace.js";
 
 // ============================================================================
 //  Performance Metrics Types
@@ -25,6 +26,7 @@ export interface PerformanceMetric {
   label: string; // e.g., "route-matching", "loader:UserLoader"
   duration: number; // milliseconds
   startTime: number; // relative to request start
+  depth?: number; // nesting level for hierarchical display (0 = top-level)
 }
 
 /**
@@ -120,6 +122,8 @@ export type InterceptSelectorContext<TEnv = any> = {
   request: Request; // The HTTP request object
   env: TEnv; // Platform bindings (Cloudflare env, etc.)
   segments: InterceptSegmentsState; // Client's current segments (where navigating FROM)
+  fromRouteName?: DefaultRouteName; // Named route being navigated away from (undefined for unnamed routes)
+  toRouteName?: DefaultRouteName; // Named route being navigated to (undefined for unnamed routes)
 };
 
 /**
@@ -153,10 +157,24 @@ export type InterceptEntry = {
   when: InterceptWhenFn[]; // Selector conditions - all must return true to intercept
 };
 
+export interface ParallelEntryData
+  extends EntryPropCommon, EntryPropDatas, EntryPropSegments {
+  type: "parallel";
+  handler: Record<`@${string}`, Handler<any, any, any> | ReactNode>;
+  loading?: ReactNode | false;
+  transition?: TransitionConfig;
+  /** Set when any parallel slot is a Static definition */
+  isStaticPrerender?: true;
+  /** Per-slot static handler $$ids for build-time store lookup */
+  staticHandlerIds?: Record<string, string>;
+}
+
+export type ParallelEntries = Partial<Record<`@${string}`, ParallelEntryData>>;
+
 export type EntryPropSegments = {
   loader: LoaderEntry[];
   layout: EntryData[];
-  parallel: EntryData[]; // type: "parallel" entries with their own loaders/revalidate/loading
+  parallel: ParallelEntries; // slot -> parallel entry (same entry may back multiple slots)
   intercept: InterceptEntry[]; // intercept definitions for soft navigation
 };
 
@@ -173,8 +191,12 @@ export type EntryData =
       /** Original PrerenderHandlerDefinition (for build-time getParams access) */
       prerenderDef?: {
         getParams?: (ctx: any) => Promise<any[]> | any[];
-        options?: { passthrough?: boolean };
+        options?: { concurrency?: number };
       };
+      /** Set when route is wrapped with Passthrough() — has a separate live handler */
+      isPassthrough?: true;
+      /** Live handler for runtime fallback (only set on Passthrough routes) */
+      liveHandler?: Handler<any, any, any>;
       /** Set when handler is a Static definition (build-time only) */
       isStaticPrerender?: true;
       /** Static handler $$id for build-time store lookup */
@@ -196,18 +218,7 @@ export type EntryData =
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
-  | ({
-      type: "parallel";
-      handler: Record<`@${string}`, Handler<any, any, any> | ReactNode>;
-      loading?: ReactNode | false;
-      transition?: TransitionConfig;
-      /** Set when any parallel slot is a Static definition */
-      isStaticPrerender?: true;
-      /** Per-slot static handler $$ids for build-time store lookup */
-      staticHandlerIds?: Record<string, string>;
-    } & EntryPropCommon &
-      EntryPropDatas &
-      EntryPropSegments)
+  | ParallelEntryData
   | ({
       type: "cache";
       /** Cache entries create cache boundaries and render like layouts (with Outlet) */
@@ -254,10 +265,21 @@ interface HelperContext {
   urlPrefix?: string;
   /** Name prefix from include() - applied to all named routes */
   namePrefix?: string;
+  /** True when this scope is at root level (no named include boundary above).
+   *  Routes at root scope allow dot-local reverse to fall back to bare names. */
+  rootScoped?: boolean;
   /** Run helper for cleaner middleware code */
   run?: <T>(fn: () => T | Promise<T>) => T | Promise<T>;
   /** Tracked includes for build-time manifest generation */
   trackedIncludes?: TrackedInclude[];
+  /** Cache profiles for DSL-time cache("profileName") resolution */
+  cacheProfiles?: Record<
+    string,
+    import("../cache/profile-registry.js").CacheProfile
+  >;
+  /** True when resolving handlers inside a cache() DSL boundary.
+   *  Read by ctx.get() to guard non-cacheable variable reads. */
+  insideCacheScope?: boolean;
 }
 // Use a global symbol key so the AsyncLocalStorage instance survives HMR
 // module re-evaluation. Without this, Vite's RSC module runner may create
@@ -399,7 +421,9 @@ export const getContext = (): {
           searchSchemas: store.searchSchemas,
           urlPrefix: store.urlPrefix,
           namePrefix: store.namePrefix,
+          rootScoped: store.rootScoped,
           trackedIncludes: store.trackedIncludes,
+          cacheProfiles: store.cacheProfiles,
         },
         callback,
       );
@@ -436,7 +460,9 @@ export const getContext = (): {
           searchSchemas,
           urlPrefix: store?.urlPrefix,
           namePrefix: store?.namePrefix,
+          rootScoped: store?.rootScoped,
           trackedIncludes: store?.trackedIncludes,
+          cacheProfiles: store?.cacheProfiles,
         },
         callback,
       );
@@ -469,17 +495,41 @@ export function runWithPrefixes<T>(
   } else {
     combinedUrlPrefix = urlPrefix;
   }
-  const combinedNamePrefix = namePrefix
-    ? store.namePrefix
-      ? `${store.namePrefix}.${namePrefix}`
-      : namePrefix
-    : store.namePrefix;
+  const combinedNamePrefix =
+    namePrefix !== undefined
+      ? namePrefix === ""
+        ? store.namePrefix
+        : store.namePrefix
+          ? `${store.namePrefix}.${namePrefix}`
+          : namePrefix
+      : store.namePrefix;
+
+  // Track root scope for dot-local reverse resolution.
+  //
+  // The flag answers: "can this route reach bare names at root scope?"
+  // It propagates through the include chain:
+  //
+  //   { name: "" }    — transparent: inherit parent, default true
+  //   { name: "foo" } — inherit parent if already set, else create boundary (false)
+  //   no name          — inherit parent unchanged
+  //
+  // This means { name: "" } + nested { name: "sub" } keeps rootScoped=true
+  // (the outer transparent include establishes root access, and the inner
+  // named include inherits it). But a direct { name: "sub" } at root gets
+  // rootScoped=false (no prior root-access grant, so it creates a boundary).
+  const combinedRootScoped =
+    namePrefix === ""
+      ? (store.rootScoped ?? true)
+      : namePrefix !== undefined
+        ? (store.rootScoped ?? false)
+        : store.rootScoped;
 
   return RSCRouterContext.run(
     {
       ...store,
       urlPrefix: combinedUrlPrefix,
       namePrefix: combinedNamePrefix,
+      rootScoped: combinedRootScoped,
     },
     callback,
   );
@@ -501,8 +551,91 @@ export function getNamePrefix(): string | undefined {
   return store?.namePrefix;
 }
 
+/**
+ * Get whether the current scope is at root level (no named include boundary above).
+ * Returns true at root or inside { name: "" } includes, false inside named includes.
+ */
+export function getRootScoped(): boolean {
+  const store = RSCRouterContext.getStore();
+  return store?.rootScoped ?? true;
+}
+
 // Export HelperContext type for use in other modules
 export type { HelperContext };
+
+/**
+ * Return an isolated copy of a lazy include's captured parent entry.
+ *
+ * DSL helpers (loader(), middleware(), etc.) mutate ctx.parent in place.
+ * Multiple include() scopes capture the *same* syntheticMapRoot as their
+ * parent, so without isolation one include's loaders/middleware leak into
+ * every other route that shares that root.
+ *
+ * The clone is shallow: only the mutable arrays are copied so each
+ * include pushes to its own list. The rest of the entry (id, shortCode,
+ * parent pointer, handler) stays shared, which is correct and cheap.
+ */
+export function getIsolatedLazyParent(
+  captured: EntryData | null | undefined,
+): EntryData | null {
+  if (!captured) return null;
+  return {
+    ...captured,
+    loader: [...captured.loader],
+    middleware: [...captured.middleware],
+    revalidate: [...captured.revalidate],
+    errorBoundary: [...captured.errorBoundary],
+    notFoundBoundary: [...captured.notFoundBoundary],
+    layout: [...captured.layout],
+    parallel: { ...captured.parallel },
+    intercept: [...captured.intercept],
+  };
+}
+
+export function getParallelEntries(
+  parallels: ParallelEntries | EntryData[] | undefined,
+): ParallelEntryData[] {
+  if (!parallels) return [];
+  if (Array.isArray(parallels)) {
+    return parallels.filter(
+      (entry): entry is ParallelEntryData => entry.type === "parallel",
+    );
+  }
+  return Object.values(parallels).filter(
+    (entry): entry is ParallelEntryData => !!entry,
+  );
+}
+
+export function getParallelSlotEntries(
+  parallels: ParallelEntries | EntryData[] | undefined,
+): Array<{ slot: `@${string}`; entry: ParallelEntryData }> {
+  if (!parallels) return [];
+
+  if (Array.isArray(parallels)) {
+    return getParallelEntries(parallels).flatMap((entry) =>
+      (Object.keys(entry.handler) as `@${string}`[]).map((slot) => ({
+        slot,
+        entry,
+      })),
+    );
+  }
+
+  return Object.entries(parallels)
+    .filter(([, entry]) => !!entry)
+    .map(([slot, entry]) => ({
+      slot: slot as `@${string}`,
+      entry: entry!,
+    }));
+}
+
+export function getParallelSlotCount(
+  parallels: ParallelEntries | EntryData[] | undefined,
+): number {
+  if (!parallels) return 0;
+  return Array.isArray(parallels)
+    ? parallels.filter((entry) => entry?.type === "parallel").length
+    : Object.keys(parallels).length;
+}
 
 // ============================================================================
 //  Performance Metrics Helpers
@@ -519,7 +652,7 @@ export type { HelperContext };
  * done(); // Records duration
  * ```
  */
-export function track(label: string): () => void {
+export function track(label: string, depth?: number): () => void {
   const store = RSCRouterContext.getStore();
 
   // No-op if context unavailable or metrics not enabled
@@ -532,6 +665,53 @@ export function track(label: string): () => void {
   return () => {
     const duration =
       performance.now() - store.metrics!.requestStart - startTime;
-    store.metrics!.metrics.push({ label, duration, startTime });
+    store.metrics!.metrics.push({
+      label,
+      duration,
+      startTime,
+      ...(depth != null ? { depth } : {}),
+    });
   };
+}
+
+/**
+ * Separate ALS for tracking loader execution scope.
+ * Uses a dedicated ALS (not RSCRouterContext) to avoid issues with
+ * nested RSCRouterContext.run() calls in Vite's module runner.
+ */
+const LOADER_SCOPE_KEY = Symbol.for("rangojs-router:loader-scope");
+const loaderScopeALS: AsyncLocalStorage<{ active: true }> = ((
+  globalThis as any
+)[LOADER_SCOPE_KEY] ??= new AsyncLocalStorage<{ active: true }>());
+
+/**
+ * Check if the current execution is inside a cache() DSL boundary.
+ * Returns false inside loader execution — loaders are always fresh
+ * (never cached), so non-cacheable reads are safe.
+ */
+export function isInsideCacheScope(): boolean {
+  if (RSCRouterContext.getStore()?.insideCacheScope !== true) return false;
+  // Loaders are always fresh — even inside a cache() boundary, the loader
+  // function re-executes on every request. Skip the guard when running
+  // inside a loader.
+  if (loaderScopeALS.getStore()?.active) return false;
+  return true;
+}
+
+/**
+ * Check if the current execution is inside a DSL loader scope
+ * (wrapped by runInsideLoaderScope). Used by rendered() barrier
+ * to distinguish DSL loaders from handler-invoked loaders.
+ */
+export function isInsideLoaderScope(): boolean {
+  return loaderScopeALS.getStore()?.active === true;
+}
+
+/**
+ * Run `fn` inside a loader scope. While active, cache-scope guards
+ * are bypassed because loaders are always fresh (never cached) and
+ * their side effects (setCookie, header, etc.) are safe.
+ */
+export function runInsideLoaderScope<T>(fn: () => T): T {
+  return loaderScopeALS.run({ active: true }, fn);
 }

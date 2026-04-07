@@ -17,8 +17,7 @@ import { urlpatterns } from "./urls";
 
 const router = createRouter<AppBindings>({
   document: Document,
-  urls: urlpatterns,
-});
+}).routes(urlpatterns);
 
 // Server-side named-route reverse (type-safe via routeMap)
 export const reverse = router.reverse;
@@ -172,8 +171,7 @@ import type { AppBindings, AppVariables } from "./env";
 
 const router = createRouter<AppBindings>({
   document: Document,
-  urls: urlpatterns,
-});
+}).routes(urlpatterns);
 
 // Register bindings and variables globally for implicit typing
 declare global {
@@ -196,7 +194,7 @@ export const authMiddleware: Middleware = async (ctx, next) => {
 };
 
 // loaders - typed context
-export const UserLoader = createLoader("user", async (ctx) => {
+export const UserLoader = createLoader(async (ctx) => {
   const db = ctx.env.DB; // D1Database (plain bindings)
   const userId = ctx.get("user")?.id; // from RSCRouter.Vars
   return db.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
@@ -221,7 +219,7 @@ Now handlers have typed context without explicit imports:
 
 ```typescript
 // In loaders
-export const DashboardLoader = createLoader("dashboard", async (ctx) => {
+export const DashboardLoader = createLoader(async (ctx) => {
   // ctx.env.DB is typed from global RSCRouter.Env
   // ctx.get("user") is typed from global RSCRouter.Vars
   const user = ctx.get("user");
@@ -283,7 +281,7 @@ import type { RouteSearchParams, RouteParams } from "@rangojs/router";
 
 // RouteSearchParams<"name"> resolves the search schema to a typed object
 type SP = RouteSearchParams<"search">;
-// { q: string; page?: number; sort?: string }
+// { q: string | undefined; page?: number; sort?: string }
 
 // RouteParams<"name"> resolves URL params from the route pattern
 type P = RouteParams<"blogPost">;
@@ -327,7 +325,7 @@ Loaders have typed return values:
 
 ```typescript
 // loaders/product.ts
-export const ProductLoader = createLoader("product", async (ctx) => {
+export const ProductLoader = createLoader(async (ctx) => {
   return {
     id: ctx.params.slug,
     name: "Widget",
@@ -336,7 +334,7 @@ export const ProductLoader = createLoader("product", async (ctx) => {
 });
 
 // In server component - type is inferred
-import { useLoader } from "@rangojs/router";
+import { useLoader } from "@rangojs/router/client";
 
 async function ProductPage() {
   const product = await useLoader(ProductLoader);
@@ -346,11 +344,12 @@ async function ProductPage() {
 
 // In client component - same type
 "use client";
-import { useLoaderData } from "@rangojs/router/client";
+import { useLoader } from "@rangojs/router/client";
 
 function ProductPrice() {
-  const { product } = useLoaderData(ProductLoader);
-  // product: { id: string; name: string; price: number }
+  const { data } = useLoader(ProductLoader);
+  // data: { id: string; name: string; price: number }
+  const product = data;
   return <span>${product.price}</span>;
 }
 ```
@@ -370,7 +369,17 @@ interface PaginationData {
   perPage: number;
 }
 export const Pagination = createVar<PaginationData>();
+
+// Non-cacheable var — reading inside cache() or "use cache" throws at runtime
+const Session = createVar<SessionData>({ cache: false });
 ```
+
+`createVar` accepts an optional options object. The `cache` option (default
+`true`) controls whether the var's values can be read inside cache scopes.
+Write-level escalation is also supported: `ctx.set(Var, value, { cache: false })`
+marks a specific write as non-cacheable even if the var itself is cacheable.
+"Least cacheable wins" — if either says `cache: false`, the value throws on
+read inside `cache()` or `"use cache"`.
 
 ### Producer (handler or middleware)
 
@@ -415,26 +424,30 @@ Both approaches coexist: `ctx.get("user")` (global via Vars) and
 Handles have typed data:
 
 ```typescript
-// handles/breadcrumbs.ts
-import { createHandle } from "@rangojs/router";
+// Built-in Breadcrumbs handle — import from "@rangojs/router"
+import { Breadcrumbs } from "@rangojs/router";
+// Type: Handle<BreadcrumbItem, BreadcrumbItem[]>
+// BreadcrumbItem: { label: string; href: string; content?: ReactNode | Promise<ReactNode> }
 
-// All export patterns work: export const, const + export { X }, export { X as Y }
-export const Breadcrumbs = createHandle<{ label: string; href: string }>();
+// In route handler — push is fully typed
+path("/shop/product/:slug", (ctx) => {
+  const breadcrumb = ctx.use(Breadcrumbs);
+  breadcrumb({ label: "Products", href: "/shop/products" });
+  return <ProductPage />;
+}, { name: "product" });
 
-// In route definition - use handle() DSL
-import { urls } from "@rangojs/router";
-
-export const urlpatterns = urls(({ path, handle }) => [
-  path("/shop/product/:slug", ProductPage, { name: "product" }, () => [
-    handle(Breadcrumbs, { label: "Products", href: "/shop/products" }),
-  ]),
-]);
-
-// In client - typed array
+// In client — typed array
+import { useHandle, Breadcrumbs } from "@rangojs/router/client";
 function BreadcrumbNav() {
   const crumbs = useHandle(Breadcrumbs);
-  // crumbs: Array<{ label: string; href: string }>
+  // crumbs: BreadcrumbItem[]
 }
+
+// Custom handles also work the same way
+import { createHandle } from "@rangojs/router";
+export const PageTitle = createHandle<string, string>(
+  (segments) => segments.flat().at(-1) ?? "Default Title"
+);
 ```
 
 ## Ref Prop Type Safety (Loaders & Handles)
@@ -448,14 +461,12 @@ export const ProductLoader = createLoader(async (ctx) => {
   return { product: await fetchProduct(ctx.params.slug) };
 });
 
-// handles.ts
-export const Breadcrumbs = createHandle<{ label: string; href: string }>();
+// Built-in Breadcrumbs — or any custom handle created with createHandle()
 
 // Client component — typeof infers all generics
 ("use client");
-import { useLoader, useHandle } from "@rangojs/router/client";
+import { useLoader, useHandle, type Breadcrumbs } from "@rangojs/router/client";
 import type { ProductLoader } from "../loaders";
-import type { Breadcrumbs } from "../handles";
 
 function MyComponent({
   loader,
@@ -603,7 +614,7 @@ export default router;
 //    No manual RegisteredRoutes declaration needed.
 
 // 5. loaders/*.ts - Type-safe loaders
-export const ProductLoader = createLoader("product", async (ctx) => {
+export const ProductLoader = createLoader(async (ctx) => {
   // ctx.params: { slug: string }
   // ctx.get("user"): User | undefined  (from RSCRouter.Vars)
   // ctx.env.DB: D1Database  (plain bindings from RSCRouter.Env)

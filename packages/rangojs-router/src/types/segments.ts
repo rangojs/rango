@@ -50,10 +50,13 @@ export interface ResolvedSegment {
   parallelName?: string; // For parallels: the parallel group name (used to match with revalidations)
   // Loader-specific fields
   loaderId?: string; // For loaders: the loader $$id identifier
+  _inherited?: boolean; // For inherited loaders: dedup marker for buildMatchResult
   loaderData?: any; // For loaders: the resolved data from loader execution
+  parallelLoading?: ReactNode; // For parallel-owned loaders: the parallel's loading fallback
   // Intercept loader fields (for streaming loader data in parallel segments)
   loaderDataPromise?: Promise<any[]> | any[]; // Loader data promise or resolved array
   loaderIds?: string[]; // IDs ($$id) of loaders for this segment
+  parallelLoaderSources?: any[]; // Internal: preserves stable aggregate promise across renders
   // Error-specific fields
   error?: ErrorInfo; // For error segments: the error information
   // NotFound-specific fields
@@ -124,11 +127,6 @@ export interface MatchResult {
    * Used by ctx.reverse() for local name resolution.
    */
   routeName?: string;
-  /**
-   * Server-Timing header value (only present when debugPerformance is enabled)
-   * Can be added to response headers for DevTools integration
-   */
-  serverTiming?: string;
   /**
    * State of named slots for this route match
    * Key is slot name (e.g., "@modal"), value is slot state

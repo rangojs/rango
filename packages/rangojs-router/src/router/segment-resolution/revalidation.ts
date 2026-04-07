@@ -7,23 +7,18 @@
  */
 
 import type { ReactNode } from "react";
-import { DataNotFoundError, invariant } from "../../errors";
-import {
-  createErrorInfo,
-  createErrorSegment,
-  createNotFoundInfo,
-  createNotFoundSegment,
-} from "../error-handling.js";
+import { invariant } from "../../errors";
 import { revalidate } from "../loader-resolution.js";
 import { evaluateRevalidation } from "../revalidation.js";
-import { getRequestContext } from "../../server/request-context.js";
-import { DefaultErrorFallback } from "../../default-error-boundary.js";
-import type { EntryData } from "../../server/context";
+import {
+  getParallelEntries,
+  getParallelSlotEntries,
+  type EntryData,
+} from "../../server/context";
 import type {
   HandlerContext,
   InternalHandlerContext,
   ResolvedSegment,
-  ErrorInfo,
   ShouldRevalidateFn,
 } from "../../types";
 import type {
@@ -31,10 +26,102 @@ import type {
   SegmentRevalidationResult,
   ActionContext,
 } from "../types.js";
-import { debugLog } from "../logging.js";
-import { tryStaticLookup } from "./static-store.js";
-import { handleHandlerResult } from "./fresh.js";
+import {
+  debugLog,
+  pushRevalidationTraceEntry,
+  isTraceActive,
+} from "../logging.js";
 import { resolveLoaderData } from "./loader-cache.js";
+import {
+  handleHandlerResult,
+  tryStaticHandler,
+  tryStaticSlot,
+  resolveLayoutComponent,
+  resolveWithErrorBoundary,
+} from "./helpers.js";
+import { getRouterContext } from "../router-context.js";
+import { resolveSink, safeEmit } from "../telemetry.js";
+import {
+  track,
+  RSCRouterContext,
+  runInsideLoaderScope,
+} from "../../server/context.js";
+
+// ---------------------------------------------------------------------------
+// Telemetry helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Attach a fire-and-forget rejection observer to a streamed handler promise.
+ * Silently no-ops when called outside RouterContext (e.g. in unit tests).
+ */
+function observeStreamedHandler(
+  promise: Promise<ReactNode>,
+  segmentId: string,
+  segmentType: string,
+  pathname?: string,
+  routeKey?: string,
+  params?: Record<string, string>,
+): void {
+  let routerCtx;
+  try {
+    routerCtx = getRouterContext();
+  } catch {
+    return;
+  }
+  if (!routerCtx?.telemetry) return;
+  const sink = resolveSink(routerCtx.telemetry);
+  const reqId = routerCtx.requestId;
+  promise.catch((err: unknown) => {
+    const errorObj = err instanceof Error ? err : new Error(String(err));
+    safeEmit(sink, {
+      type: "handler.error",
+      timestamp: performance.now(),
+      requestId: reqId,
+      segmentId,
+      segmentType,
+      error: errorObj,
+      handledByBoundary: true,
+      pathname,
+      routeKey,
+      params,
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Revalidation telemetry helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Emit revalidation.decision telemetry for a segment if a sink is configured.
+ * Called after evaluateRevalidation returns to capture the decision.
+ * Silently no-ops when called outside RouterContext (e.g. in unit tests).
+ */
+function emitRevalidationDecision(
+  segmentId: string,
+  pathname: string,
+  routeKey: string,
+  shouldRevalidate: boolean,
+): void {
+  let routerCtx;
+  try {
+    routerCtx = getRouterContext();
+  } catch {
+    return;
+  }
+  if (routerCtx?.telemetry) {
+    safeEmit(resolveSink(routerCtx.telemetry), {
+      type: "revalidation.decision",
+      timestamp: performance.now(),
+      requestId: routerCtx.requestId,
+      segmentId,
+      pathname,
+      routeKey,
+      shouldRevalidate,
+    });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Revalidation path (partial match)
@@ -85,7 +172,20 @@ export async function resolveLoadersWithRevalidation<TEnv>(
       }) => {
         const shouldRun = await revalidate(
           async () => {
-            if (!clientSegmentIds.has(segmentId)) return true;
+            if (!clientSegmentIds.has(segmentId)) {
+              if (isTraceActive()) {
+                pushRevalidationTraceEntry({
+                  segmentId,
+                  segmentType: "loader",
+                  belongsToRoute,
+                  source: "loader",
+                  defaultShouldRevalidate: true,
+                  finalShouldRevalidate: true,
+                  reason: "new-segment",
+                });
+              }
+              return true;
+            }
 
             const dummySegment: ResolvedSegment = {
               id: segmentId,
@@ -113,11 +213,13 @@ export async function resolveLoadersWithRevalidation<TEnv>(
               context: ctx,
               actionContext,
               stale,
+              traceSource: "loader",
             });
           },
           async () => true,
           () => false,
         );
+        emitRevalidationDecision(segmentId, ctx.pathname, routeKey, shouldRun);
         return { shouldRun, loaderEntry, loader, segmentId, index };
       },
     ),
@@ -134,7 +236,9 @@ export async function resolveLoadersWithRevalidation<TEnv>(
       params: ctx.params,
       loaderId: loader.$$id,
       loaderData: deps.wrapLoaderPromise(
-        resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+        runInsideLoaderScope(() =>
+          resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+        ),
         entry,
         segmentId,
         ctx.pathname,
@@ -160,27 +264,99 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
   routeKey: string,
   deps: SegmentResolutionDeps<TEnv>,
   actionContext?: ActionContext,
+  stale?: boolean,
 ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
   const allLoaderSegments: ResolvedSegment[] = [];
   const allMatchedIds: string[] = [];
+  const seenIds = new Set<string>();
+
+  async function collectEntryLoaders(
+    entry: EntryData,
+    belongsToRoute: boolean,
+    shortCodeOverride?: string,
+  ): Promise<void> {
+    // Skip if all loaders from this entry have already been resolved
+    // via a parent (e.g., cache boundary wrapping a layout with shared loaders).
+    const loaderEntries = entry.loader ?? [];
+    const sc = shortCodeOverride ?? entry.shortCode;
+    const allAlreadySeen =
+      loaderEntries.length > 0 &&
+      loaderEntries.every((le, i) =>
+        seenIds.has(`${sc}D${i}.${le.loader.$$id}`),
+      );
+    if (!allAlreadySeen) {
+      const { segments, matchedIds } = await resolveLoadersWithRevalidation(
+        entry,
+        context,
+        belongsToRoute,
+        clientSegmentIds,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey,
+        deps,
+        actionContext,
+        shortCodeOverride,
+        stale,
+      );
+      for (const seg of segments) {
+        if (!seenIds.has(seg.id)) {
+          seenIds.add(seg.id);
+          allLoaderSegments.push(seg);
+        }
+      }
+      allMatchedIds.push(...matchedIds);
+    }
+
+    const seenParallelEntryIds = new Set<string>();
+    for (const parallelEntry of getParallelEntries(entry.parallel)) {
+      if (seenParallelEntryIds.has(parallelEntry.id)) continue;
+      seenParallelEntryIds.add(parallelEntry.id);
+      await collectEntryLoaders(parallelEntry, belongsToRoute, entry.shortCode);
+    }
+
+    const childBelongsToRoute = belongsToRoute || entry.type === "route";
+    for (const layoutEntry of entry.layout) {
+      await collectEntryLoaders(layoutEntry, childBelongsToRoute);
+      // Inherit route loaders for orphan layouts with parallels.
+      // Resolve directly — do NOT re-enter collectEntryLoaders with the
+      // route entry, as that would re-iterate route.layout and loop.
+      if (
+        entry.type === "route" &&
+        entry.loader &&
+        entry.loader.length > 0 &&
+        Object.keys(layoutEntry.parallel).length > 0
+      ) {
+        const inherited = await resolveLoadersWithRevalidation(
+          entry,
+          context,
+          childBelongsToRoute,
+          clientSegmentIds,
+          prevParams,
+          request,
+          prevUrl,
+          nextUrl,
+          routeKey,
+          deps,
+          actionContext,
+          layoutEntry.shortCode,
+          stale,
+        );
+        for (const seg of inherited.segments) {
+          if (!seenIds.has(seg.id)) {
+            seenIds.add(seg.id);
+            seg._inherited = true;
+            allLoaderSegments.push(seg);
+          }
+        }
+        allMatchedIds.push(...inherited.matchedIds);
+      }
+    }
+  }
 
   for (const entry of entries) {
-    const belongsToRoute = entry.type === "route";
-    const { segments, matchedIds } = await resolveLoadersWithRevalidation(
-      entry,
-      context,
-      belongsToRoute,
-      clientSegmentIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      routeKey,
-      deps,
-      actionContext,
-    );
-    allLoaderSegments.push(...segments);
-    allMatchedIds.push(...matchedIds);
+    await collectEntryLoaders(entry, entry.type === "route");
   }
 
   return { segments: allLoaderSegments, matchedIds: allMatchedIds };
@@ -204,22 +380,20 @@ export function buildEntryRevalidateMap(
     map.set(entry.shortCode, { entry, revalidate: entry.revalidate });
 
     if (entry.type !== "parallel") {
-      for (const parallelEntry of entry.parallel) {
-        if (parallelEntry.type === "parallel") {
-          const slots = Object.keys(parallelEntry.handler) as `@${string}`[];
-          for (const slot of slots) {
-            const parallelId = `${parallelEntry.shortCode}.${slot}`;
-            map.set(parallelId, {
-              entry: parallelEntry,
-              revalidate: parallelEntry.revalidate,
-            });
-          }
-        }
+      for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
+        entry.parallel,
+      )) {
+        const parallelParentShortCode = parentShortCode ?? entry.shortCode;
+        const parallelId = `${parallelParentShortCode}.${slot}`;
+        map.set(parallelId, {
+          entry: parallelEntry,
+          revalidate: parallelEntry.revalidate,
+        });
       }
     }
 
     for (const layoutEntry of entry.layout) {
-      processEntry(layoutEntry);
+      processEntry(layoutEntry, entry.shortCode);
     }
   }
 
@@ -251,7 +425,10 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
   const segments: ResolvedSegment[] = [];
   const matchedIds: string[] = [];
 
-  for (const parallelEntry of entry.parallel) {
+  const resolvedParallelEntries = new Set<string>();
+  for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
+    entry.parallel,
+  )) {
     invariant(
       parallelEntry.type === "parallel",
       `Expected parallel entry, got: ${parallelEntry.type}`,
@@ -262,94 +439,61 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>)
       | ReactNode
     >;
+    // In production, static handler bodies are evicted and the slot value
+    // may be undefined. The static store holds the pre-rendered component.
+    // We defer the handler check until after tryStaticSlot.
+    const handler = slots[slot];
 
-    for (const [slot, handler] of Object.entries(slots)) {
-      const parallelId = `${entry.shortCode}.${slot}`;
+    const parallelId = `${entry.shortCode}.${slot}`;
 
-      const isFullRefetch = clientSegmentIds.size === 0;
-      // When the parent layout is new (not in client's segment set),
-      // all its parallel children must be resolved and tracked.
-      // Without this, navigating to a new layout with parallels
-      // (e.g., BlogLayout with @sidebar) from a different route
-      // would silently drop those parallel segments.
-      const isNewParent = !clientSegmentIds.has(entry.shortCode);
-      if (
-        isFullRefetch ||
-        clientSegmentIds.has(parallelId) ||
-        belongsToRoute ||
-        isNewParent
-      ) {
-        matchedIds.push(parallelId);
-      }
+    const isFullRefetch = clientSegmentIds.size === 0;
+    const isNewParent = !clientSegmentIds.has(entry.shortCode);
+    if (
+      isFullRefetch ||
+      clientSegmentIds.has(parallelId) ||
+      belongsToRoute ||
+      isNewParent
+    ) {
+      matchedIds.push(parallelId);
+    }
 
-      const shouldResolve = await (async () => {
-        if (isFullRefetch) return true;
-        if (!clientSegmentIds.has(parallelId))
-          return belongsToRoute || isNewParent;
-
-        const dummySegment: ResolvedSegment = {
-          id: parallelId,
-          namespace: parallelEntry.id,
-          type: "parallel",
-          index: 0,
-          component: null as any,
-          params,
-          slot,
-          belongsToRoute,
-          parallelName: `${parallelEntry.id}.${slot}`,
-          ...(parallelEntry.mountPath
-            ? { mountPath: parallelEntry.mountPath }
-            : {}),
-        };
-
-        return await evaluateRevalidation({
-          segment: dummySegment,
-          prevParams,
-          getPrevSegment: null,
-          request,
-          prevUrl,
-          nextUrl,
-          revalidations: parallelEntry.revalidate.map((fn, i) => ({
-            name: `revalidate${i}`,
-            fn,
-          })),
-          routeKey,
-          context,
-          actionContext,
-          stale,
-        });
-      })();
-
-      let component: ReactNode | undefined;
-      // Static handler interception for individual parallel slots
-      const slotStaticId = (parallelEntry as any).staticHandlerIds?.[slot];
-      if (slotStaticId && shouldResolve) {
-        component = await tryStaticLookup(slotStaticId, parallelId);
-      }
-      if (component === undefined) {
-        const hasLoadingFallback =
-          parallelEntry.loading !== undefined &&
-          parallelEntry.loading !== false;
-        if (!shouldResolve) {
-          component = null;
-        } else if (hasLoadingFallback) {
-          component = (
-            typeof handler === "function" ? handler(context) : handler
-          ) as ReactNode;
-        } else {
-          component =
-            typeof handler === "function" ? await handler(context) : handler;
+    const shouldResolve = await (async () => {
+      if (isFullRefetch) {
+        if (isTraceActive()) {
+          pushRevalidationTraceEntry({
+            segmentId: parallelId,
+            segmentType: "parallel",
+            belongsToRoute,
+            source: "parallel",
+            defaultShouldRevalidate: true,
+            finalShouldRevalidate: true,
+            reason: "full-refetch",
+          });
         }
+        return true;
+      }
+      if (!clientSegmentIds.has(parallelId)) {
+        const result = belongsToRoute || isNewParent;
+        if (isTraceActive()) {
+          pushRevalidationTraceEntry({
+            segmentId: parallelId,
+            segmentType: "parallel",
+            belongsToRoute,
+            source: "parallel",
+            defaultShouldRevalidate: result,
+            finalShouldRevalidate: result,
+            reason: result ? "new-segment" : "skip-parent-chain",
+          });
+        }
+        return result;
       }
 
-      segments.push({
+      const dummySegment: ResolvedSegment = {
         id: parallelId,
         namespace: parallelEntry.id,
         type: "parallel",
         index: 0,
-        component,
-        loading: parallelEntry.loading === false ? null : parallelEntry.loading,
-        transition: parallelEntry.transition,
+        component: null as any,
         params,
         slot,
         belongsToRoute,
@@ -357,28 +501,111 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         ...(parallelEntry.mountPath
           ? { mountPath: parallelEntry.mountPath }
           : {}),
-      });
-    }
+      };
 
-    if (!parallelEntry.loading) {
-      const loaderResult = await resolveLoadersWithRevalidation(
-        parallelEntry,
-        context,
-        belongsToRoute,
-        clientSegmentIds,
+      return await evaluateRevalidation({
+        segment: dummySegment,
         prevParams,
+        getPrevSegment: null,
         request,
         prevUrl,
         nextUrl,
+        revalidations: parallelEntry.revalidate.map((fn, i) => ({
+          name: `revalidate${i}`,
+          fn,
+        })),
         routeKey,
-        deps,
+        context,
         actionContext,
-        entry.shortCode,
         stale,
-      );
-      segments.push(...loaderResult.segments);
-      matchedIds.push(...loaderResult.matchedIds);
+        traceSource: "parallel",
+      });
+    })();
+    emitRevalidationDecision(
+      parallelId,
+      context.pathname,
+      routeKey,
+      shouldResolve,
+    );
+
+    let component: ReactNode | undefined;
+    if (shouldResolve) {
+      component = await tryStaticSlot(parallelEntry, slot, parallelId);
     }
+    if (component === undefined) {
+      const hasLoadingFallback =
+        parallelEntry.loading !== undefined && parallelEntry.loading !== false;
+      if (!shouldResolve) {
+        component = null;
+      } else if (handler === undefined) {
+        // Handler evicted (production static slot) but static lookup missed.
+        // Nothing to render — use null so the client keeps its cached version.
+        component = null;
+      } else if (hasLoadingFallback) {
+        const result =
+          typeof handler === "function" ? handler(context) : handler;
+        if (result instanceof Promise) {
+          const tracked = deps.trackHandler(result, {
+            segmentId: parallelId,
+            segmentType: "parallel",
+          });
+          observeStreamedHandler(
+            tracked,
+            parallelId,
+            "parallel",
+            context.pathname,
+            routeKey,
+            params,
+          );
+          component = tracked as ReactNode;
+        } else {
+          component = result as ReactNode;
+        }
+      } else {
+        component =
+          typeof handler === "function" ? await handler(context) : handler;
+      }
+    }
+
+    segments.push({
+      id: parallelId,
+      namespace: parallelEntry.id,
+      type: "parallel",
+      index: 0,
+      component,
+      loading: parallelEntry.loading === false ? null : parallelEntry.loading,
+      transition: parallelEntry.transition,
+      params,
+      slot,
+      belongsToRoute,
+      parallelName: `${parallelEntry.id}.${slot}`,
+      ...(parallelEntry.mountPath
+        ? { mountPath: parallelEntry.mountPath }
+        : {}),
+    });
+
+    if (resolvedParallelEntries.has(parallelEntry.id)) {
+      continue;
+    }
+
+    const loaderResult = await resolveLoadersWithRevalidation(
+      parallelEntry,
+      context,
+      belongsToRoute,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      deps,
+      actionContext,
+      entry.shortCode,
+      stale,
+    );
+    segments.push(...loaderResult.segments);
+    matchedIds.push(...loaderResult.matchedIds);
+    resolvedParallelEntries.add(parallelEntry.id);
   }
 
   return { segments, matchedIds };
@@ -413,7 +640,24 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         clientHasSegment: hasSegment,
         belongsToRoute,
       });
-      if (!hasSegment) return true;
+      if (!hasSegment) {
+        if (isTraceActive()) {
+          const segType =
+            entry.type === "cache"
+              ? "layout"
+              : (entry.type as "layout" | "route");
+          pushRevalidationTraceEntry({
+            segmentId: entry.shortCode,
+            segmentType: segType,
+            belongsToRoute,
+            source: "segment-resolution",
+            defaultShouldRevalidate: true,
+            finalShouldRevalidate: true,
+            reason: "new-segment",
+          });
+        }
+        return true;
+      }
 
       const dummySegment: ResolvedSegment = {
         id: entry.shortCode,
@@ -447,7 +691,15 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         context,
         actionContext,
         stale,
+        traceSource:
+          entry.type === "route" ? "route-handler" : "layout-handler",
       });
+      emitRevalidationDecision(
+        entry.shortCode,
+        context.pathname,
+        routeKey,
+        shouldRevalidate,
+      );
       debugLog("segment.revalidate", "entry revalidation decision", {
         segmentId: entry.shortCode,
         shouldRevalidate,
@@ -455,49 +707,71 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       return shouldRevalidate;
     },
     async () => {
+      const doneHandler = track(`handler:${entry.id}`, 2);
       (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
         entry.shortCode;
-      // Static handler interception: use pre-rendered component from build-time store
-      const entryAny = entry as any;
-      if (entryAny.isStaticPrerender && entryAny.staticHandlerId) {
-        const staticComponent = await tryStaticLookup(
-          entryAny.staticHandlerId,
-          entry.shortCode,
-        );
-        if (staticComponent !== undefined) return staticComponent;
-      }
       if (entry.type === "layout" || entry.type === "cache") {
-        return typeof entry.handler === "function"
-          ? handleHandlerResult(await entry.handler(context))
-          : entry.handler;
+        const layoutComponent = await resolveLayoutComponent(entry, context);
+        doneHandler();
+        return layoutComponent;
+      }
+      const staticComponent = await tryStaticHandler(entry, entry.shortCode);
+      if (staticComponent !== undefined) {
+        doneHandler();
+        return staticComponent;
       }
       const routeEntry = entry as Extract<EntryData, { type: "route" }>;
+      // For Passthrough routes at runtime, use the live handler instead of
+      // the build handler. At build time (context.build === true), always
+      // use the build handler from routeEntry.handler.
+      const handler =
+        !context.build && routeEntry.liveHandler
+          ? routeEntry.liveHandler
+          : routeEntry.handler;
       if (!routeEntry.loading) {
-        return handleHandlerResult(await routeEntry.handler(context));
+        const result = handleHandlerResult(await handler(context));
+        doneHandler();
+        return result;
       }
       if (!actionContext) {
-        const result = handleHandlerResult(routeEntry.handler(context));
-        return {
-          content:
-            result instanceof Promise ? deps.trackHandler(result) : result,
-        };
+        const result = handleHandlerResult(handler(context));
+        if (result instanceof Promise) {
+          result.finally(doneHandler).catch(() => {});
+          const tracked = deps.trackHandler(result, {
+            segmentId: entry.shortCode,
+            segmentType: entry.type,
+          });
+          observeStreamedHandler(
+            tracked,
+            entry.shortCode,
+            entry.type,
+            context.pathname,
+            routeKey,
+            params,
+          );
+          return { content: tracked };
+        }
+        doneHandler();
+        return { content: result };
       }
       debugLog("segment.action", "resolving action route with awaited value", {
         entryId: entry.id,
       });
+      const actionResult = handleHandlerResult(await handler(context));
+      doneHandler();
       return {
-        content: Promise.resolve(
-          handleHandlerResult(await routeEntry.handler(context)),
-        ),
+        content: Promise.resolve(actionResult),
       };
     },
     () => null,
   );
 
+  // Normalize void handlers (undefined) to null so the reconciler's
+  // component === null checks work consistently for both void and explicit null.
   const resolvedComponent =
     component && typeof component === "object" && "content" in component
-      ? (component as { content: ReactNode }).content
-      : component;
+      ? ((component as { content: ReactNode }).content ?? null)
+      : (component ?? null);
 
   const segment: ResolvedSegment = {
     id: entry.shortCode,
@@ -599,37 +873,39 @@ export async function resolveSegmentWithRevalidation<TEnv>(
         deps,
         actionContext,
         stale,
+        entry,
       );
       segments.push(...orphanResult.segments);
       matchedIds.push(...orphanResult.matchedIds);
     }
   }
 
-  const parallelResult = await resolveParallelSegmentsWithRevalidation(
-    entry,
-    params,
-    context,
-    belongsToRoute,
-    clientSegmentIds,
-    prevParams,
-    request,
-    prevUrl,
-    nextUrl,
-    routeKey,
-    deps,
-    actionContext,
-    stale,
-  );
-  segments.push(...parallelResult.segments);
-  matchedIds.push(...parallelResult.matchedIds);
-
-  // Push handler BEFORE orphan layouts for layout/cache entries (matching SSR
-  // order in resolveSegment). Route handler was already executed and is pushed
-  // after children for tree composition.
   if (routeHandlerResult) {
+    // Route entry: handler already executed above; resolve parallels
+    // (handler data visible) then push handler segment last for tree order.
+    const parallelResult = await resolveParallelSegmentsWithRevalidation(
+      entry,
+      params,
+      context,
+      belongsToRoute,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      deps,
+      actionContext,
+      stale,
+    );
+    segments.push(...parallelResult.segments);
+    matchedIds.push(...parallelResult.matchedIds);
+
     segments.push(routeHandlerResult.segment);
     matchedIds.push(routeHandlerResult.matchedId);
   } else {
+    // Layout/cache entry: handler-first — resolve handler before parallels
+    // so ctx.set() values are visible to parallel children.
     const handlerResult = await resolveEntryHandlerWithRevalidation(
       entry,
       params,
@@ -647,9 +923,25 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     );
     segments.push(handlerResult.segment);
     matchedIds.push(handlerResult.matchedId);
-  }
 
-  if (entry.type === "layout" || entry.type === "cache") {
+    const parallelResult = await resolveParallelSegmentsWithRevalidation(
+      entry,
+      params,
+      context,
+      belongsToRoute,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      deps,
+      actionContext,
+      stale,
+    );
+    segments.push(...parallelResult.segments);
+    matchedIds.push(...parallelResult.matchedIds);
+
     for (const orphan of entry.layout) {
       const orphanResult = await resolveOrphanLayoutWithRevalidation(
         orphan,
@@ -693,6 +985,8 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   deps: SegmentResolutionDeps<TEnv>,
   actionContext?: ActionContext,
   stale?: boolean,
+  /** Parent route entry — its loaders are inherited so parallel slots can access them. */
+  parentRouteEntry?: EntryData,
 ): Promise<SegmentRevalidationResult> {
   invariant(
     orphan.type === "layout" || orphan.type === "cache",
@@ -720,14 +1014,16 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   segments.push(...loaderResult.segments);
   matchedIds.push(...loaderResult.matchedIds);
 
-  for (const parallelEntry of orphan.parallel) {
-    invariant(
-      parallelEntry.type === "parallel",
-      `Expected parallel entry, got: ${parallelEntry.type}`,
-    );
-
-    const loaderResult = await resolveLoadersWithRevalidation(
-      parallelEntry,
+  // Inherit parent route's loaders so parallel slots inside this layout
+  // can access them via useLoader(). See resolveOrphanLayout in fresh.ts.
+  if (
+    parentRouteEntry &&
+    parentRouteEntry.loader &&
+    parentRouteEntry.loader.length > 0 &&
+    Object.keys(orphan.parallel).length > 0
+  ) {
+    const inheritedResult = await resolveLoadersWithRevalidation(
+      parentRouteEntry,
       context,
       belongsToRoute,
       clientSegmentIds,
@@ -738,107 +1034,37 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       routeKey,
       deps,
       actionContext,
-      undefined,
+      orphan.shortCode,
       stale,
     );
-    segments.push(...loaderResult.segments);
-    matchedIds.push(...loaderResult.matchedIds);
-
-    const slots = parallelEntry.handler as Record<
-      `@${string}`,
-      | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>)
-      | ReactNode
-    >;
-
-    for (const [slot, handler] of Object.entries(slots)) {
-      // Use orphan.shortCode (the parent layout) to match the SSR path
-      // (resolveParallelEntry receives parentShortCode = orphan.shortCode).
-      // Using parallelEntry.shortCode would generate IDs the client doesn't know about.
-      const parallelId = `${orphan.shortCode}.${slot}`;
-      matchedIds.push(parallelId);
-
-      const shouldResolve = await (async () => {
-        if (!clientSegmentIds.has(parallelId)) return true;
-
-        const dummySegment: ResolvedSegment = {
-          id: parallelId,
-          namespace: parallelEntry.id,
-          type: "parallel",
-          index: 0,
-          component: null as any,
-          params,
-          slot,
-          belongsToRoute,
-          parallelName: `${parallelEntry.id}.${slot}`,
-          ...(parallelEntry.mountPath
-            ? { mountPath: parallelEntry.mountPath }
-            : {}),
-        };
-
-        return await evaluateRevalidation({
-          segment: dummySegment,
-          prevParams,
-          getPrevSegment: null,
-          request,
-          prevUrl,
-          nextUrl,
-          revalidations: parallelEntry.revalidate.map((fn, i) => ({
-            name: `revalidate${i}`,
-            fn,
-          })),
-          routeKey,
-          context,
-          actionContext,
-          stale,
-        });
-      })();
-
-      let component: ReactNode | undefined;
-      // Static handler interception for individual parallel slots
-      const slotStaticId = (parallelEntry as any).staticHandlerIds?.[slot];
-      if (slotStaticId && shouldResolve) {
-        component = await tryStaticLookup(slotStaticId, parallelId);
-      }
-      if (component === undefined) {
-        const hasLoadingFallback =
-          parallelEntry.loading !== undefined &&
-          parallelEntry.loading !== false;
-        if (!shouldResolve) {
-          component = null;
-        } else if (hasLoadingFallback) {
-          component = (
-            typeof handler === "function" ? handler(context) : handler
-          ) as ReactNode;
-        } else {
-          component =
-            typeof handler === "function" ? await handler(context) : handler;
-        }
-      }
-
-      segments.push({
-        id: parallelId,
-        namespace: parallelEntry.id,
-        type: "parallel",
-        index: 0,
-        component,
-        loading: parallelEntry.loading === false ? null : parallelEntry.loading,
-        transition: parallelEntry.transition,
-        params,
-        slot,
-        belongsToRoute,
-        parallelName: `${parallelEntry.id}.${slot}`,
-        ...(parallelEntry.mountPath
-          ? { mountPath: parallelEntry.mountPath }
-          : {}),
-      });
+    // Tag as inherited so buildMatchResult can deduplicate when safe
+    for (const s of inheritedResult.segments) {
+      s._inherited = true;
     }
+    segments.push(...inheritedResult.segments);
+    matchedIds.push(...inheritedResult.matchedIds);
   }
 
+  // Handler-first: resolve orphan layout handler before its parallels
+  // so ctx.set() values are visible to parallel children.
   matchedIds.push(orphan.shortCode);
 
   const component = await revalidate(
     async () => {
-      if (!clientSegmentIds.has(orphan.shortCode)) return true;
+      if (!clientSegmentIds.has(orphan.shortCode)) {
+        if (isTraceActive()) {
+          pushRevalidationTraceEntry({
+            segmentId: orphan.shortCode,
+            segmentType: "layout",
+            belongsToRoute,
+            source: "orphan-layout",
+            defaultShouldRevalidate: true,
+            finalShouldRevalidate: true,
+            reason: "new-segment",
+          });
+        }
+        return true;
+      }
 
       const dummySegment: ResolvedSegment = {
         id: orphan.shortCode,
@@ -852,7 +1078,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
       };
 
-      return await evaluateRevalidation({
+      const shouldRevalidate = await evaluateRevalidation({
         segment: dummySegment,
         prevParams,
         getPrevSegment: null,
@@ -867,22 +1093,17 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         context,
         actionContext,
         stale,
+        traceSource: "orphan-layout",
       });
+      emitRevalidationDecision(
+        orphan.shortCode,
+        context.pathname,
+        routeKey,
+        shouldRevalidate,
+      );
+      return shouldRevalidate;
     },
-    async () => {
-      // Static handler interception for orphan layouts
-      const orphanAny = orphan as any;
-      if (orphanAny.isStaticPrerender && orphanAny.staticHandlerId) {
-        const staticComponent = await tryStaticLookup(
-          orphanAny.staticHandlerId,
-          orphan.shortCode,
-        );
-        if (staticComponent !== undefined) return staticComponent;
-      }
-      return typeof orphan.handler === "function"
-        ? handleHandlerResult(await orphan.handler(context))
-        : orphan.handler;
-    },
+    async () => resolveLayoutComponent(orphan, context),
     () => null,
   );
 
@@ -900,136 +1121,164 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
   });
 
-  return { segments, matchedIds };
-}
-
-/**
- * Wrapper for segment resolution with revalidation that adds error boundary handling.
- */
-export async function resolveWithRevalidationErrorHandling<TEnv>(
-  entry: EntryData,
-  params: Record<string, string>,
-  resolveFn: () => Promise<SegmentRevalidationResult>,
-  deps: SegmentResolutionDeps<TEnv>,
-  pathname?: string,
-  errorContext?: {
-    request: Request;
-    url: URL;
-    routeKey?: string;
-    env?: TEnv;
-    isPartial?: boolean;
-    requestStartTime?: number;
-  },
-): Promise<SegmentRevalidationResult> {
-  try {
-    return await resolveFn();
-  } catch (error) {
-    if (error instanceof Response) {
-      throw error;
-    }
-
-    if (error instanceof DataNotFoundError) {
-      const notFoundFallback = deps.findNearestNotFoundBoundary(entry);
-
-      if (notFoundFallback) {
-        const notFoundInfo = createNotFoundInfo(
-          error,
-          entry.shortCode,
-          entry.type,
-          pathname,
-        );
-
-        if (errorContext) {
-          deps.callOnError(error, "handler", {
-            request: errorContext.request,
-            url: errorContext.url,
-            routeKey: errorContext.routeKey,
-            params,
-            segmentId: entry.shortCode,
-            segmentType: entry.type as any,
-            env: errorContext.env,
-            isPartial: errorContext.isPartial,
-            handledByBoundary: true,
-            metadata: { notFound: true, message: notFoundInfo.message },
-            requestStartTime: errorContext.requestStartTime,
-          });
-        }
-
-        debugLog("segment", "notFound boundary handled error", {
-          segmentId: entry.shortCode,
-          message: notFoundInfo.message,
-        });
-
-        const reqCtx = getRequestContext();
-        if (reqCtx) {
-          reqCtx.res = new Response(null, {
-            status: 404,
-            headers: reqCtx.res.headers,
-          });
-        }
-
-        const notFoundSegment = createNotFoundSegment(
-          notFoundInfo,
-          notFoundFallback,
-          entry,
-          params,
-        );
-
-        return {
-          segments: [notFoundSegment],
-          matchedIds: [notFoundSegment.id],
-        };
-      }
-    }
-
-    const fallback = deps.findNearestErrorBoundary(entry);
-    const segmentType: ErrorInfo["segmentType"] = entry.type;
-    const errorInfo = createErrorInfo(error, entry.shortCode, segmentType);
-    const effectiveFallback = fallback ?? DefaultErrorFallback;
-
-    if (errorContext) {
-      deps.callOnError(error, "handler", {
-        request: errorContext.request,
-        url: errorContext.url,
-        routeKey: errorContext.routeKey,
-        params,
-        segmentId: entry.shortCode,
-        segmentType: entry.type as any,
-        env: errorContext.env,
-        isPartial: errorContext.isPartial,
-        handledByBoundary: !!fallback,
-        requestStartTime: errorContext.requestStartTime,
-      });
-    }
-
-    debugLog("segment", "error boundary handled error", {
-      segmentId: entry.shortCode,
-      boundary: fallback ? "custom" : "default",
-      message: errorInfo.message,
-    });
-
-    {
-      const reqCtx = getRequestContext();
-      if (reqCtx) {
-        reqCtx.res = new Response(null, {
-          status: 500,
-          headers: reqCtx.res.headers,
-        });
-      }
-    }
-
-    const errorSegment = createErrorSegment(
-      errorInfo,
-      effectiveFallback,
-      entry,
-      params,
+  const resolvedParallelEntries = new Set<string>();
+  for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
+    orphan.parallel,
+  )) {
+    invariant(
+      parallelEntry.type === "parallel",
+      `Expected parallel entry, got: ${parallelEntry.type}`,
     );
 
-    return {
-      segments: [errorSegment],
-      matchedIds: [errorSegment.id],
-    };
+    if (!resolvedParallelEntries.has(parallelEntry.id)) {
+      // shortCodeOverride must match the parent layout, not the parallel entry.
+      const loaderResult = await resolveLoadersWithRevalidation(
+        parallelEntry,
+        context,
+        belongsToRoute,
+        clientSegmentIds,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey,
+        deps,
+        actionContext,
+        orphan.shortCode,
+        stale,
+      );
+      segments.push(...loaderResult.segments);
+      matchedIds.push(...loaderResult.matchedIds);
+      resolvedParallelEntries.add(parallelEntry.id);
+    }
+
+    const slots = parallelEntry.handler as Record<
+      `@${string}`,
+      | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>)
+      | ReactNode
+    >;
+    // Handler may be undefined in production after static handler eviction.
+    const handler = slots[slot];
+
+    // Use orphan.shortCode (the parent layout) to match the SSR path
+    // (resolveParallelEntry receives parentShortCode = orphan.shortCode).
+    // Using parallelEntry.shortCode would generate IDs the client doesn't know about.
+    const parallelId = `${orphan.shortCode}.${slot}`;
+    matchedIds.push(parallelId);
+
+    const shouldResolve = await (async () => {
+      if (!clientSegmentIds.has(parallelId)) {
+        if (isTraceActive()) {
+          pushRevalidationTraceEntry({
+            segmentId: parallelId,
+            segmentType: "parallel",
+            belongsToRoute,
+            source: "parallel",
+            defaultShouldRevalidate: true,
+            finalShouldRevalidate: true,
+            reason: "new-segment",
+          });
+        }
+        return true;
+      }
+
+      const dummySegment: ResolvedSegment = {
+        id: parallelId,
+        namespace: parallelEntry.id,
+        type: "parallel",
+        index: 0,
+        component: null as any,
+        params,
+        slot,
+        belongsToRoute,
+        parallelName: `${parallelEntry.id}.${slot}`,
+        ...(parallelEntry.mountPath
+          ? { mountPath: parallelEntry.mountPath }
+          : {}),
+      };
+
+      return await evaluateRevalidation({
+        segment: dummySegment,
+        prevParams,
+        getPrevSegment: null,
+        request,
+        prevUrl,
+        nextUrl,
+        revalidations: parallelEntry.revalidate.map((fn, i) => ({
+          name: `revalidate${i}`,
+          fn,
+        })),
+        routeKey,
+        context,
+        actionContext,
+        stale,
+        traceSource: "parallel",
+      });
+    })();
+    emitRevalidationDecision(
+      parallelId,
+      context.pathname,
+      routeKey,
+      shouldResolve,
+    );
+
+    let component: ReactNode | undefined;
+    if (shouldResolve) {
+      component = await tryStaticSlot(parallelEntry, slot, parallelId);
+    }
+    if (component === undefined) {
+      const hasLoadingFallback =
+        parallelEntry.loading !== undefined && parallelEntry.loading !== false;
+      if (!shouldResolve) {
+        component = null;
+      } else if (handler === undefined) {
+        // Handler evicted (production static slot) but static lookup missed.
+        component = null;
+      } else if (hasLoadingFallback) {
+        const result =
+          typeof handler === "function" ? handler(context) : handler;
+        if (result instanceof Promise) {
+          const tracked = deps.trackHandler(result, {
+            segmentId: parallelId,
+            segmentType: "parallel",
+          });
+          observeStreamedHandler(
+            tracked,
+            parallelId,
+            "parallel",
+            context.pathname,
+            routeKey,
+            params,
+          );
+          component = tracked as ReactNode;
+        } else {
+          component = result as ReactNode;
+        }
+      } else {
+        component =
+          typeof handler === "function" ? await handler(context) : handler;
+      }
+    }
+
+    segments.push({
+      id: parallelId,
+      namespace: parallelEntry.id,
+      type: "parallel",
+      index: 0,
+      component,
+      loading: parallelEntry.loading === false ? null : parallelEntry.loading,
+      transition: parallelEntry.transition,
+      params,
+      slot,
+      belongsToRoute,
+      parallelName: `${parallelEntry.id}.${slot}`,
+      ...(parallelEntry.mountPath
+        ? { mountPath: parallelEntry.mountPath }
+        : {}),
+    });
   }
+
+  return { segments, matchedIds };
 }
 
 /**
@@ -1051,11 +1300,14 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
   localRouteName: string,
   pathname: string,
   deps: SegmentResolutionDeps<TEnv>,
+  stale?: boolean,
 ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
   const allSegments: ResolvedSegment[] = [];
   const matchedIds: string[] = [];
   const seenSegIds = new Set<string>();
   const seenMatchIds = new Set<string>();
+
+  const telemetry = getRouterContext()?.telemetry;
 
   for (const entry of entries) {
     if (entry.type === "route" && interceptResult) {
@@ -1075,7 +1327,12 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
     }
 
     const nonParallelEntry = entry as Exclude<EntryData, { type: "parallel" }>;
-    const resolved = await resolveWithRevalidationErrorHandling(
+    if (entry.type === "cache") {
+      const store = RSCRouterContext.getStore();
+      if (store) store.insideCacheScope = true;
+    }
+    const doneEntry = track(`segment:${entry.id}`, 1);
+    const resolved = await resolveWithErrorBoundary(
       nonParallelEntry,
       params,
       () =>
@@ -1092,11 +1349,14 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
           loaderPromises,
           deps,
           actionContext,
-          false,
+          stale,
         ),
+      (seg) => ({ segments: [seg], matchedIds: [seg.id] }),
       deps,
+      { request, url: context.url, routeKey, isPartial: true, telemetry },
       pathname,
     );
+    doneEntry();
 
     // Deduplicate segments and matchedIds by ID, matching resolveAllSegments.
     // include() scopes can produce entries that resolve the same shared

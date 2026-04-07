@@ -25,7 +25,7 @@ The base context is created once per request right after route matching. It hold
 - `search` -- typed search params from route schema, `{}` when no schema defined
 - `params` -- route parameters from pattern matching
 - `method` -- HTTP method
-- `env` -- platform bindings (typed via `RouterEnv`)
+- `env` -- platform bindings (typed via `createRouter<TBindings>()`)
 
 ### Middleware variables
 
@@ -37,8 +37,8 @@ The base context is created once per request right after route matching. It hold
 - `res` -- stub response, headers merged into final response
 - `headers` -- alias for `res.headers`
 - `header(name, value)` -- shorthand for `res.headers.set()`
-- `cookie(name)`, `cookies()` -- read request cookies
-- `setCookie(name, value, opts)`, `deleteCookie(name, opts)` -- modify response cookies
+- `cookies()` -- standalone API: `cookies().get(name)`, `cookies().set(name, value, opts)`, `cookies().delete(name, opts)`
+- `headers()` -- standalone API: read-only view of request headers
 
 ## Capability Matrix
 
@@ -96,6 +96,7 @@ Handles are keyed by segment identity. Actions are standalone `"use server"` fun
 
 Intercepts only run on client-side navigation, not on SSR. If an intercept pushes handle data, that data is present on client nav but absent on initial page load. The capability matrix currently allows it (intercepts are segments in the tree), but this inconsistency may warrant restricting it.
 
-### `ctx.var` retention
+### `ctx.var` removal
 
-Whether to keep `ctx.var` as a direct property alongside `get`/`set`, or remove it entirely in favour of function-only access.
+Decision: remove `ctx.var` from public contexts and keep variable access on
+`ctx.get()` / `ctx.set()` only. The shared backing store remains internal.

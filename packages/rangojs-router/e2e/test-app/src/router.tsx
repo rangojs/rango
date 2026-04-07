@@ -1,10 +1,11 @@
 import {
+  cookies,
   createRouter,
-  type RouterEnv,
+  getRequestContext,
   redirect,
   type Middleware,
 } from "@rangojs/router";
-import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
 
 // App-level cache store with defaults
@@ -18,9 +19,9 @@ export interface OnErrorRecord {
   message: string;
   actionId?: string;
 }
-export let lastOnErrorCall: OnErrorRecord | null = null;
-export function resetLastOnErrorCall() {
-  lastOnErrorCall = null;
+export const onErrorLog: OnErrorRecord[] = [];
+export function clearOnErrorLog() {
+  onErrorLog.length = 0;
 }
 
 /**
@@ -52,13 +53,27 @@ export interface AppVariables {
   sharedFromGetParams?: string;
   // Prerender locale test variable
   localeContent?: string;
+  // Middleware chain integration test variables
+  chainGlobal?: string;
+  chainAction?: string;
+  chainRouteReport?: string;
+  chainIntercept?: string;
+  // ALS scope propagation test variables
+  alsRequestId?: string;
+  alsActionProbe?: string;
+  alsActionCustomProbe?: string;
+  // Middleware ctx parity test variable
+  mwVarTest?: string;
+  // use-cache parent-child set test variable
+  childData?: string;
 }
 
-export type AppEnv = RouterEnv<AppBindings, AppVariables>;
+export type AppEnv = AppBindings;
 
 declare global {
   namespace RSCRouter {
-    interface Env extends AppEnv {}
+    interface Env extends AppBindings {}
+    interface Vars extends AppVariables {}
   }
 }
 
@@ -79,7 +94,7 @@ const timingMiddleware: Middleware = async (ctx, next) => {
   const start = Date.now();
   await next();
   const duration = Date.now() - start;
-  ctx.res.headers.set("X-Request-Duration", String(duration));
+  ctx.headers.set("X-Request-Duration", String(duration));
 };
 
 /**
@@ -87,7 +102,7 @@ const timingMiddleware: Middleware = async (ctx, next) => {
  * Checks for auth cookie, redirects to /middleware-test if not authenticated
  */
 const authMiddleware: Middleware = async (ctx, next) => {
-  const authToken = ctx.cookie("auth-token");
+  const authToken = cookies().get("auth-token")?.value;
   if (!authToken) {
     // Set a header to indicate redirect happened (for test verification)
     return redirect("/middleware-test?auth=required", 302);
@@ -106,8 +121,8 @@ const errorMiddleware: Middleware = async (ctx, next) => {
     await next();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    ctx.res.headers.set("X-Error-Caught", "true");
-    ctx.res.headers.set("X-Error-Message", message);
+    ctx.headers.set("X-Error-Caught", "true");
+    ctx.headers.set("X-Error-Message", message);
     return new Response(`Error caught by middleware: ${message}`, {
       status: 500,
       headers: { "X-Error-Caught": "true", "X-Error-Message": message },
@@ -120,11 +135,12 @@ const errorMiddleware: Middleware = async (ctx, next) => {
  * Only applies to /middleware-test/cookies
  */
 const cookieMiddleware: Middleware = async (ctx, next) => {
+  const jar = cookies();
   // Read existing cookie
-  const visitCount = parseInt(ctx.cookie("visit-count") || "0", 10);
+  const visitCount = parseInt(jar.get("visit-count")?.value || "0", 10);
 
   // Set updated cookie
-  ctx.setCookie("visit-count", String(visitCount + 1), {
+  jar.set("visit-count", String(visitCount + 1), {
     path: "/",
     maxAge: 60 * 60 * 24, // 1 day
   });
@@ -158,8 +174,9 @@ export const router = createRouter<AppEnv>({
   cache: { store: cacheStore },
   cacheProfiles: {
     short: { ttl: 10, swr: 20 },
+    "swr-test": { ttl: 2, swr: 60 },
   },
-  prefetchCacheControl: "private, max-age=60",
+  prefetchCacheTTL: 60,
   theme: {
     defaultTheme: "light",
     themes: ["light", "dark", "system"],
@@ -168,18 +185,48 @@ export const router = createRouter<AppEnv>({
     enableSystem: true,
     enableColorScheme: true,
   },
+  ssr: {
+    resolveStreaming: ({ request }) => {
+      const ua = request.headers.get("user-agent") ?? "";
+      if (ua.includes("StreamBot")) return "allReady";
+      return "stream";
+    },
+  },
   onError: (context) => {
-    lastOnErrorCall = {
+    onErrorLog.push({
       phase: context.phase,
       message: context.error.message,
       actionId: context.actionId,
-    };
+    });
   },
 })
+  // Bug-repro: cookies set AFTER await next() in the outermost middleware.
+  // Registered before globalMiddleware so no outer early-return merge can mask the bug.
+  .use("/middleware-test/cookies-after-next", async (_ctx, next) => {
+    await next();
+    cookies().set("session_id", "abc123", { path: "/", httpOnly: true });
+    cookies().set("post-next-marker", "applied", { path: "/" });
+  })
   // Global middleware - applied to ALL routes
   .use(globalMiddleware)
   .use(timingMiddleware)
   .use(headerShorthandMiddleware)
+  // Stub-header and onResponse test: sets a header before next() and registers
+  // an onResponse callback. Verifies these survive when authMiddleware
+  // short-circuits with a redirect (returns Response without calling next()).
+  .use("/middleware-test/protected/*", async (ctx, next) => {
+    ctx.header("X-Stub-Before-Next", "applied");
+    const reqCtx = getRequestContext();
+    reqCtx?.onResponse((response) => {
+      const headers = new Headers(response.headers);
+      headers.set("X-OnResponse-Applied", "yes");
+      return new Response(response.body, {
+        status: response.status,
+        headers,
+      });
+    });
+    await next();
+  })
   // Pattern-based middleware for protected routes
   .use("/middleware-test/protected/*", authMiddleware)
   // Pattern-based middleware for error handling routes
@@ -188,6 +235,52 @@ export const router = createRouter<AppEnv>({
   .use("/middleware-test/cookies", cookieMiddleware)
   // Pattern-based middleware with params
   .use("/middleware-test/params/:id", paramsMiddleware)
+  // Middleware chain integration test: global layer sets var, header, cookie
+  .use("/mw-chain/*", async (ctx, next) => {
+    ctx.set("chainGlobal", "from-global");
+    ctx.header("X-Chain-Global", "applied");
+    cookies().set("chain-global", "gv", { path: "/", maxAge: 86400 });
+    await next();
+  })
+  // ALS scope propagation test: global middleware sets request-scoped bindings
+  // and runs next() inside a custom AsyncLocalStorage to prove user-owned ALS
+  // propagates through the framework's render pipeline.
+  .use("/als-scope/*", async (ctx, next) => {
+    const { AlsGlobalMark, customGlobalAls } =
+      await import("./urls/als-scope.js");
+    const requestId = crypto.randomUUID();
+    ctx.set("alsRequestId", requestId);
+    ctx.set(AlsGlobalMark, "applied");
+    return customGlobalAls.run(`top-mw:${requestId}`, () => next());
+  })
+  // Auth boundary test: global middleware guards BOTH actions and renders.
+  // Rejects unauthenticated requests with a redirect and a marker cookie.
+  .use("/auth-boundary/global-protected/*", async (ctx, next) => {
+    if (!cookies().get("auth-boundary-token")?.value) {
+      cookies().set("auth-boundary-rejected-by", "global-mw", {
+        path: "/",
+        maxAge: 60,
+      });
+      return redirect("/auth-boundary?rejected=global-mw", 302);
+    }
+    ctx.header("X-Auth-Global-MW", "passed");
+    await next();
+  })
+  // Pre-handler onResponse callback for response cache callback tests.
+  // Registers a callback via getRequestContext().onResponse() which lands
+  // in savedCallbacks (before the cache block), so it runs on every serve.
+  .use("/response-cache/cb-test/*", async (_ctx, next) => {
+    const reqCtx = getRequestContext();
+    reqCtx?.onResponse((response) => {
+      const headers = new Headers(response.headers);
+      headers.set("X-Pre-Handler-Ts", String(Date.now()));
+      return new Response(response.body, {
+        status: response.status,
+        headers,
+      });
+    });
+    await next();
+  })
   .routes(urlpatterns);
 
 export const reverse = router.reverse;

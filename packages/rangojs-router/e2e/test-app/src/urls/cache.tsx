@@ -4,6 +4,8 @@ import {
   NonCachedTestLoader,
   CachedTestLoader,
   InterceptCacheTestLoader,
+  ReactNodeTestLoader,
+  NullTestLoader,
 } from "../loaders.js";
 import {
   CacheTestModal,
@@ -29,6 +31,10 @@ import {
   CacheStatusServerErrorHandler,
   CacheStatusRedirectHandler,
   CacheStatusRedirectTargetHandler,
+  CacheReactNodeCachedHandler,
+  CacheReactNodeNonCachedHandler,
+  CacheNullCachedHandler,
+  CacheNullNonCachedHandler,
 } from "./cache.handlers.js";
 
 /**
@@ -179,6 +185,32 @@ export const cachePatterns = urls(
       ),
     ]),
 
+    // ReactNode and null loader return type tests
+    path(
+      "/cache-test/react-node-cached",
+      CacheReactNodeCachedHandler,
+      { name: "cacheTest.reactNodeCached" },
+      () => [loader(ReactNodeTestLoader, () => [cache({ ttl: 600 })])],
+    ),
+    path(
+      "/cache-test/react-node-non-cached",
+      CacheReactNodeNonCachedHandler,
+      { name: "cacheTest.reactNodeNonCached" },
+      () => [loader(ReactNodeTestLoader)],
+    ),
+    path(
+      "/cache-test/null-cached",
+      CacheNullCachedHandler,
+      { name: "cacheTest.nullCached" },
+      () => [loader(NullTestLoader, () => [cache({ ttl: 600 })])],
+    ),
+    path(
+      "/cache-test/null-non-cached",
+      CacheNullNonCachedHandler,
+      { name: "cacheTest.nullNonCached" },
+      () => [loader(NullTestLoader)],
+    ),
+
     // Non-200 status caching test: verify isCacheableStatus behavior.
     // 404 responses are cacheable, 500 responses are not.
     cache({ ttl: 600 }, () => [
@@ -211,6 +243,39 @@ export const cachePatterns = urls(
           );
         },
         { name: "cacheTest.statusJson500" },
+      ),
+    ]),
+
+    // Search-params cache isolation: same path + different ?page must produce
+    // separate cache entries. Verifies that cache keys include search params.
+    cache({ ttl: 600 }, () => [
+      path(
+        "/cache-test/search-params",
+        (ctx) => {
+          const page = ctx.searchParams.get("page") ?? "none";
+          return (
+            <div>
+              <h1 data-testid="search-page-title">Search Params Cache Test</h1>
+              <p data-testid="search-page-value">page:{page}</p>
+              <p data-testid="search-page-ts">{Date.now()}</p>
+              <nav>
+                <Link
+                  to="/cache-test/search-params?page=1"
+                  data-testid="page-link-1"
+                >
+                  Page 1
+                </Link>
+                <Link
+                  to="/cache-test/search-params?page=2"
+                  data-testid="page-link-2"
+                >
+                  Page 2
+                </Link>
+              </nav>
+            </div>
+          );
+        },
+        { name: "cacheTest.searchParams" },
       ),
     ]),
 

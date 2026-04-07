@@ -1,9 +1,8 @@
 import React from "react";
 import { renderSegments } from "../segment-system.js";
-import { initHandleDataSync } from "../browser/react/use-handle.js";
-import { initSegmentsSync } from "../browser/react/use-segments.js";
-import { initThemeConfigSync } from "../theme/theme-context.js";
+import { filterSegmentOrder } from "../browser/react/filter-segment-order.js";
 import { ThemeProvider } from "../theme/ThemeProvider.js";
+import { NonceContext } from "../browser/react/nonce-context.js";
 import { NavigationStoreContext } from "../browser/react/context.js";
 import type { NavigationStoreContextValue } from "../browser/react/context.js";
 import type { HandleData } from "../browser/types.js";
@@ -35,6 +34,13 @@ interface RenderToReadableStreamOptions {
 }
 
 /**
+ * ReadableStream with the allReady promise added by react-dom/server.edge.
+ */
+interface ReactDOMReadableStream extends ReadableStream<Uint8Array> {
+  allReady: Promise<void>;
+}
+
+/**
  * Options for the renderHTML function
  */
 export interface SSRRenderOptions {
@@ -50,6 +56,14 @@ export interface SSRRenderOptions {
    * Nonce for Content Security Policy (CSP)
    */
   nonce?: string;
+
+  /**
+   * SSR stream mode.
+   *
+   * - `"stream"` (default) — start flushing HTML immediately.
+   * - `"allReady"` — await `stream.allReady` before returning.
+   */
+  streamMode?: import("../router/router-options.js").SSRStreamMode;
 }
 
 /**
@@ -69,7 +83,7 @@ export interface SSRDependencies<TEnv = unknown> {
   renderToReadableStream: (
     element: React.ReactNode,
     options?: RenderToReadableStreamOptions,
-  ) => Promise<ReadableStream<Uint8Array>>;
+  ) => Promise<ReactDOMReadableStream>;
 
   /**
    * injectRSCPayload from rsc-html-stream/server
@@ -115,6 +129,7 @@ interface RscPayload {
     matched?: string[];
     pathname?: string;
     params?: Record<string, string>;
+    basename?: string;
     themeConfig?: ResolvedThemeConfig | null;
     initialTheme?: Theme;
     version?: string;
@@ -139,11 +154,22 @@ async function consumeAsyncGenerator(
  * Create a minimal event controller for SSR.
  * This provides the correct pathname so useNavigation returns the right value during SSR.
  */
-function createSsrEventController(pathname: string): EventController {
-  const location = new URL(pathname, "http://localhost");
+function createSsrEventController(opts: {
+  pathname: string;
+  params?: Record<string, string>;
+  handleData?: HandleData;
+  matched?: string[];
+}): EventController {
+  const location = new URL(opts.pathname, "http://localhost");
+  let params = opts.params ?? {};
+  const handleState = {
+    data: opts.handleData ?? {},
+    segmentOrder: filterSegmentOrder(opts.matched ?? []),
+  };
   const state: DerivedNavigationState = {
     state: "idle",
     isStreaming: false,
+    isNavigating: false,
     location,
     pendingUrl: null,
     inflightActions: [],
@@ -151,6 +177,7 @@ function createSsrEventController(pathname: string): EventController {
 
   return {
     getState: () => state,
+    getLocation: () => location,
     subscribe: () => () => {},
     getActionState: () => ({
       state: "idle",
@@ -162,9 +189,11 @@ function createSsrEventController(pathname: string): EventController {
     subscribeToAction: () => () => {},
     subscribeToHandles: () => () => {},
     setHandleData: () => {},
-    getHandleState: () => ({ data: {}, segmentOrder: [] }),
-    setParams: () => {},
-    getParams: () => ({}),
+    getHandleState: () => handleState,
+    setParams: (nextParams) => {
+      params = nextParams;
+    },
+    getParams: () => params,
     setLocation: () => {},
     startNavigation: () => {
       throw new Error("Navigation not supported during SSR");
@@ -176,6 +205,7 @@ function createSsrEventController(pathname: string): EventController {
     abortAllActions: () => {},
     getCurrentNavigation: () => null,
     getInflightActions: () => new Map(),
+    hadAnyConcurrentActions: () => false,
   };
 }
 
@@ -217,7 +247,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
     rscStream: ReadableStream<Uint8Array>,
     options?: SSRRenderOptions,
   ): Promise<ReadableStream<Uint8Array>> {
-    const { nonce, formState } = options ?? {};
+    const { nonce, formState, streamMode } = options ?? {};
 
     try {
       // Tee the stream:
@@ -233,35 +263,32 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         payload ??= createFromReadableStream<RscPayload>(rscStream1);
         const resolved = React.use(payload);
 
-        // Initialize segments state before children render (for useSegments hook)
-        initSegmentsSync(
-          resolved.metadata?.matched,
-          resolved.metadata?.pathname,
-          resolved.metadata?.params,
-        );
-
-        // Initialize theme config for MetaTags to render theme script
         const themeConfig = resolved.metadata?.themeConfig ?? null;
-        initThemeConfigSync(themeConfig);
+        const pathname = resolved.metadata?.pathname ?? "/";
 
-        // Await handles and initialize state before children render
+        // Await handles before creating SSR event controller so hooks can
+        // read request-local handle data via NavigationStoreContext.
         // The handles property is an async generator that yields on each push
         // Memoize the promise since async generators can only be iterated once
+        let handleData: HandleData = {};
         if (resolved.metadata?.handles) {
           handlesPromise ??= consumeAsyncGenerator(resolved.metadata.handles);
-          const handleData = React.use(handlesPromise);
-          initHandleDataSync(handleData, resolved.metadata.matched);
+          handleData = React.use(handlesPromise);
         }
 
-        // Create SSR context with correct pathname for useNavigation
+        // Create SSR context with request-local pathname/params/handles.
         ssrContextValue ??= {
           store: null as any,
-          eventController: createSsrEventController(
-            resolved.metadata?.pathname ?? "/",
-          ),
+          eventController: createSsrEventController({
+            pathname,
+            params: resolved.metadata?.params,
+            handleData,
+            matched: resolved.metadata?.matched,
+          }),
           navigate: async () => {},
           refresh: async () => {},
           version: resolved.metadata?.version,
+          basename: resolved.metadata?.basename,
         };
 
         // Build content tree from segments.
@@ -289,6 +316,13 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
           );
         }
 
+        // Wrap with NonceContext so client components (e.g. MetaTags) can
+        // apply CSP nonces to inline scripts during SSR. Always present to
+        // match the browser-side NavigationProvider tree shape for hydration.
+        content = (
+          <NonceContext.Provider value={nonce}>{content}</NonceContext.Provider>
+        );
+
         // Wrap with NavigationStoreContext for useNavigation hook
         return (
           <NavigationStoreContext.Provider value={ssrContextValue!}>
@@ -308,6 +342,13 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         formState,
         nonce,
       });
+
+      // Wait for all Suspense boundaries to resolve when streamMode is "allReady".
+      // This buffers the entire HTML before flushing — used for bots that
+      // cannot process streamed HTML.
+      if (streamMode === "allReady") {
+        await htmlStream.allReady;
+      }
 
       // Inject RSC payload into HTML as <script nonce="...">__FLIGHT_DATA__</script>
       return htmlStream.pipeThrough(injectRSCPayload(rscStream2, { nonce }));

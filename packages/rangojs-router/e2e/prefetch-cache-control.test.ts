@@ -5,7 +5,7 @@ import { useFixture } from "./fixture";
  * Tests for prefetch Cache-Control and Vary headers.
  *
  * The test-app router is configured with:
- *   prefetchCacheControl: "private, max-age=60"
+ *   prefetchCacheTTL: 60
  *
  * Prefetch uses fetch() with X-Rango-State + X-Rango-Prefetch headers.
  * Server responds with Vary on custom headers so navigation fetch
@@ -50,6 +50,8 @@ test.describe("prefetch-cache-control (dev)", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBeNull();
+    // Navigation responses include X-RSC-Router-Client-Path in Vary
+    // (source-dependent diff), unlike prefetch which omits it
     expect(res.headers.get("vary")).toBe(
       "accept, X-Rango-State, X-RSC-Router-Client-Path",
     );
@@ -80,6 +82,40 @@ test.describe("prefetch-cache-control (dev)", () => {
     expect(res.headers.get("content-type")).toContain("text/x-component");
     // Not partial, so no Cache-Control even with X-Rango-Prefetch
     expect(res.headers.get("cache-control")).toBeNull();
+  });
+
+  test("partial navigation RSC payload includes prefetchCacheTTL", async () => {
+    const url = new URL("/blog", f.url("/"));
+    url.searchParams.set("_rsc_partial", "true");
+
+    const res = await fetch(url, {
+      headers: {
+        "X-Rango-State": "test:1",
+        "X-RSC-Router-Client-Path": "/",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    // Router is configured with prefetchCacheTTL: 60 (seconds),
+    // which becomes 60000 ms in the metadata payload.
+    expect(body).toContain("prefetchCacheTTL");
+  });
+
+  test("initial page load RSC payload includes prefetchCacheTTL", async () => {
+    const url = new URL("/", f.url("/"));
+    // Full RSC request (not partial, not HTML)
+    url.searchParams.set("__rsc", "1");
+
+    const res = await fetch(url, {
+      headers: {
+        "X-Rango-State": "test:1",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("prefetchCacheTTL");
   });
 });
 
@@ -136,5 +172,36 @@ test.describe("prefetch-cache-control (production)", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
     expect(res.headers.get("cache-control")).toBeNull();
+  });
+
+  test("partial navigation RSC payload includes prefetchCacheTTL", async () => {
+    const url = new URL("/blog", f.url("/"));
+    url.searchParams.set("_rsc_partial", "true");
+
+    const res = await fetch(url, {
+      headers: {
+        "X-Rango-State": "test:1",
+        "X-RSC-Router-Client-Path": "/",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("prefetchCacheTTL");
+  });
+
+  test("initial page load RSC payload includes prefetchCacheTTL", async () => {
+    const url = new URL("/", f.url("/"));
+    url.searchParams.set("__rsc", "1");
+
+    const res = await fetch(url, {
+      headers: {
+        "X-Rango-State": "test:1",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("prefetchCacheTTL");
   });
 });

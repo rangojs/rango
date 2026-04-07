@@ -6,13 +6,14 @@
  * RSC rendering) so they can be standalone modules without closure coupling.
  */
 
-import type { RSCRouter } from "../router.js";
+import type { RSCRouterInternal } from "../router/router-interfaces.js";
 import type { ErrorPhase } from "../types.js";
 import type { InvokeOnErrorContext } from "../router/error-handling.js";
 import type { RSCDependencies, LoadSSRModule } from "./types.js";
+import type { SSRStreamMode } from "../router/router-options.js";
 
 export interface HandlerContext<TEnv = unknown> {
-  router: RSCRouter<TEnv, any>;
+  router: RSCRouterInternal<TEnv, any>;
   version: string;
   renderToReadableStream: RSCDependencies["renderToReadableStream"];
   decodeReply: RSCDependencies["decodeReply"];
@@ -31,4 +32,14 @@ export interface HandlerContext<TEnv = unknown> {
     redirectUrl: string,
     locationState?: Record<string, unknown>,
   ) => Response;
+
+  /**
+   * Resolve the SSR stream mode for a given request.
+   * Returns "stream" when no resolveStreaming callback is configured.
+   */
+  resolveStreamMode: (
+    request: Request,
+    env: TEnv,
+    url: URL,
+  ) => Promise<SSRStreamMode>;
 }

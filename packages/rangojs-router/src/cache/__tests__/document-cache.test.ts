@@ -60,19 +60,35 @@ function createMockRequestContext(
 // Mock Middleware Context
 // ============================================================================
 
+/**
+ * Create a mock middleware context that mirrors production behavior:
+ * - ctx.request.url: raw URL with all params (including _rsc*)
+ * - ctx.url: stripped URL without _rsc* params (as stripInternalParams does)
+ *
+ * The document cache middleware must use ctx.request.url for _rsc* detection
+ * since ctx.url has them stripped by the middleware pipeline.
+ */
 function createMockMiddlewareContext(
   url: string,
   options: { method?: string; headers?: Record<string, string> } = {},
 ): MiddlewareContext<any> {
-  const parsedUrl = new URL(url, "http://localhost");
-  const request = new Request(parsedUrl.toString(), {
+  const rawUrl = new URL(url, "http://localhost");
+  const request = new Request(rawUrl.toString(), {
     method: options.method ?? "GET",
     headers: options.headers,
   });
 
+  // Simulate stripInternalParams: remove _rsc* params from ctx.url
+  const strippedUrl = new URL(rawUrl);
+  for (const key of [...strippedUrl.searchParams.keys()]) {
+    if (key.startsWith("_rsc")) {
+      strippedUrl.searchParams.delete(key);
+    }
+  }
+
   return {
     request,
-    url: parsedUrl,
+    url: strippedUrl,
     env: {},
     var: {},
     get: vi.fn(),
@@ -138,6 +154,36 @@ describe("createDocumentCacheMiddleware", () => {
 
       // Verify cached
       expect(mockStore.cache.has("/page:html")).toBe(true);
+    });
+
+    it("should handle cacheable response with null body without throwing", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      // A 200 response with cache headers but null body (e.g., from a redirect proxy)
+      const nullBodyResponse = new Response(null, {
+        status: 200,
+        headers: { "Cache-Control": "s-maxage=60" },
+      });
+
+      const next = vi.fn().mockResolvedValue(nullBodyResponse);
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      // Must not throw even though body is null
+      const response = (await middleware(ctx, next)) as Response;
+
+      expect(next).toHaveBeenCalledTimes(1);
+      // Returns the original response as-is (no caching attempted)
+      expect(response).toBe(nullBodyResponse);
+      // No cache entry written
+      expect(mockStore.cache.size).toBe(0);
     });
 
     it("should not cache response without s-maxage", async () => {
@@ -293,6 +339,61 @@ describe("createDocumentCacheMiddleware", () => {
       expect(response.headers.has("x-document-cache-status")).toBe(false);
     });
 
+    it("should skip non-GET requests", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+
+      for (const method of ["POST", "PUT", "DELETE", "PATCH"]) {
+        const ctx = createMockMiddlewareContext("http://localhost/page", {
+          method,
+        });
+
+        const next = vi
+          .fn()
+          .mockResolvedValue(new Response("Mutation response"));
+
+        const response = (await middleware(ctx, next)) as Response;
+
+        expect(next).toHaveBeenCalledTimes(1);
+        expect(response.headers.has("x-document-cache-status")).toBe(false);
+      }
+    });
+
+    it("should not serve cached response for POST request", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      // Pre-populate cache for the path
+      const cachedResponse = new Response("Cached GET", {
+        headers: { "Cache-Control": "s-maxage=60" },
+      });
+      mockStore.cache.set("/page:html", {
+        response: cachedResponse,
+        staleAt: Date.now() + 60 * 1000,
+      });
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page", {
+        method: "POST",
+      });
+
+      const next = vi.fn().mockResolvedValue(new Response("POST result"));
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const response = (await middleware(ctx, next)) as Response;
+
+      // Must call next() and NOT return the cached GET response
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(await response.text()).toBe("POST result");
+      expect(response.headers.has("x-document-cache-status")).toBe(false);
+    });
+
     it("should skip when isEnabled returns false", async () => {
       const { createDocumentCacheMiddleware } =
         await import("../document-cache.js");
@@ -382,6 +483,46 @@ describe("createDocumentCacheMiddleware", () => {
       expect(response.headers.get("x-document-cache-status")).toBe("MISS");
     });
 
+    it("should differentiate Accept-based RSC requests from HTML document requests", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const rscCtx = createMockMiddlewareContext("http://localhost/page", {
+        headers: { Accept: "text/x-component" },
+      });
+      const rscNext = vi.fn().mockResolvedValue(
+        new Response("RSC", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+
+      await middleware(rscCtx, rscNext);
+      await vi.runAllTimersAsync();
+
+      const htmlCtx = createMockMiddlewareContext("http://localhost/page", {
+        headers: { Accept: "text/html" },
+      });
+      const htmlNext = vi.fn().mockResolvedValue(
+        new Response("HTML", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+
+      const response = (await middleware(htmlCtx, htmlNext)) as Response;
+
+      expect(htmlNext).toHaveBeenCalledTimes(1);
+      expect(response.headers.get("x-document-cache-status")).toBe("MISS");
+      expect(mockStore.cache.has("/page:rsc")).toBe(true);
+      expect(mockStore.cache.has("/page:html")).toBe(true);
+    });
+
     it("should include segment hash in cache key for partial requests", async () => {
       const { createDocumentCacheMiddleware } =
         await import("../document-cache.js");
@@ -421,6 +562,74 @@ describe("createDocumentCacheMiddleware", () => {
       // Should be a MISS because different segments = different cache key
       expect(next2).toHaveBeenCalledTimes(1);
       expect(response2.headers.get("x-document-cache-status")).toBe("MISS");
+    });
+
+    it("should scope default cache key by user-facing search params", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      // Cache page=1
+      const ctx1 = createMockMiddlewareContext("http://localhost/page?page=1");
+      const next1 = vi.fn().mockResolvedValue(
+        new Response("Page 1", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+      await middleware(ctx1, next1);
+      await vi.runAllTimersAsync();
+
+      // page=2 should be a MISS (different key)
+      const ctx2 = createMockMiddlewareContext("http://localhost/page?page=2");
+      const next2 = vi.fn().mockResolvedValue(
+        new Response("Page 2", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+      const response2 = (await middleware(ctx2, next2)) as Response;
+      expect(next2).toHaveBeenCalledTimes(1);
+      expect(response2.headers.get("x-document-cache-status")).toBe("MISS");
+    });
+
+    it("should ignore internal _rsc* and __* query params in default key", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      // Cache entry with internal query params present
+      const withInternal = createMockMiddlewareContext(
+        "http://localhost/page?tab=all&__debug_manifest=1&_rsc_v=abc",
+      );
+      const next1 = vi.fn().mockResolvedValue(
+        new Response("Tabbed", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+      await middleware(withInternal, next1);
+      await vi.runAllTimersAsync();
+
+      // Same user-facing query, without internal params, should HIT same key
+      const withoutInternal = createMockMiddlewareContext(
+        "http://localhost/page?tab=all",
+      );
+      const next2 = vi.fn();
+      const response2 = (await middleware(withoutInternal, next2)) as Response;
+
+      expect(next2).not.toHaveBeenCalled();
+      expect(response2.headers.get("x-document-cache-status")).toBe("HIT");
+      expect(await response2.text()).toBe("Tabbed");
     });
   });
 
@@ -479,18 +688,14 @@ describe("createDocumentCacheMiddleware", () => {
   });
 
   describe("error handling", () => {
-    it("should fall through to handler on cache error", async () => {
+    it("should fall through to handler on cache lookup failure", async () => {
       const { createDocumentCacheMiddleware } =
         await import("../document-cache.js");
 
-      // Create a store that throws on getResponse
-      const brokenStore = {
-        async getResponse() {
-          throw new Error("Cache unavailable");
-        },
-        async putResponse() {},
-      };
-      const brokenCtx = createMockRequestContext(brokenStore as any);
+      // Cache lookup fails before the handler runs
+      vi.spyOn(mockStore, "getResponse").mockRejectedValue(
+        new Error("Cache unavailable"),
+      );
 
       const middleware = createDocumentCacheMiddleware();
       const ctx = createMockMiddlewareContext("http://localhost/page");
@@ -499,13 +704,178 @@ describe("createDocumentCacheMiddleware", () => {
 
       const originalModule = await import("../../server/request-context.js");
       vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
-        brokenCtx as any,
+        mockRequestCtx as any,
+      );
+
+      const response = (await middleware(ctx, next)) as Response;
+
+      // Handler called exactly once as graceful fallback
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(await response.text()).toBe("Fallback");
+    });
+
+    it("should re-throw post-handler errors without calling next() again", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      // Handler returns a response whose body.tee() will throw
+      const badResponse = new Response("ok", {
+        headers: { "Cache-Control": "s-maxage=60" },
+      });
+      // Consume the body so .tee() throws
+      await badResponse.text();
+
+      const next = vi.fn().mockResolvedValue(badResponse);
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      await expect(middleware(ctx, next)).rejects.toThrow();
+      // next() was called once (the handler ran), must not be called again
+      expect(next).toHaveBeenCalledTimes(1);
+    });
+
+    it("should fall through to handler when keyGenerator throws", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware({
+        keyGenerator: () => {
+          throw new Error("key generation failed");
+        },
+      });
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+
+      const next = vi.fn().mockResolvedValue(new Response("Origin"));
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
       );
 
       const response = (await middleware(ctx, next)) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
-      expect(await response.text()).toBe("Fallback");
+      expect(await response.text()).toBe("Origin");
+    });
+  });
+
+  describe("onResponse callbacks", () => {
+    it("should fire onResponse callbacks on fresh cache HIT", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      // Pre-populate cache
+      const cachedResponse = new Response("Cached", {
+        headers: { "Cache-Control": "s-maxage=60" },
+      });
+      mockStore.cache.set("/page:html", {
+        response: cachedResponse,
+        staleAt: Date.now() + 60 * 1000,
+      });
+
+      const callback = vi.fn((r: Response) => {
+        const headers = new Headers(r.headers);
+        headers.set("x-custom", "from-callback");
+        return new Response(r.body, { status: r.status, headers });
+      });
+      mockRequestCtx._onResponseCallbacks.push(callback);
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+      const next = vi.fn();
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const response = (await middleware(ctx, next)) as Response;
+
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(response.headers.get("x-custom")).toBe("from-callback");
+      expect(response.headers.get("x-document-cache-status")).toBe("HIT");
+    });
+
+    it("should fire onResponse callbacks on stale cache HIT", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      // Pre-populate cache with stale entry
+      const staleResponse = new Response("Stale", {
+        headers: {
+          "Cache-Control": "s-maxage=60, stale-while-revalidate=300",
+        },
+      });
+      mockStore.cache.set("/page:html", {
+        response: staleResponse,
+        staleAt: Date.now() - 1000,
+      });
+
+      const callback = vi.fn((r: Response) => {
+        const headers = new Headers(r.headers);
+        headers.set("x-custom", "stale-callback");
+        return new Response(r.body, { status: r.status, headers });
+      });
+      mockRequestCtx._onResponseCallbacks.push(callback);
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+      const next = vi.fn().mockResolvedValue(
+        new Response("Fresh", {
+          headers: {
+            "Cache-Control": "s-maxage=60, stale-while-revalidate=300",
+          },
+        }),
+      );
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      const response = (await middleware(ctx, next)) as Response;
+
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(response.headers.get("x-custom")).toBe("stale-callback");
+      expect(response.headers.get("x-document-cache-status")).toBe("STALE");
+    });
+
+    it("should drain callbacks so they do not fire twice", async () => {
+      const { createDocumentCacheMiddleware } =
+        await import("../document-cache.js");
+
+      // Pre-populate cache
+      const cachedResponse = new Response("Cached", {
+        headers: { "Cache-Control": "s-maxage=60" },
+      });
+      mockStore.cache.set("/page:html", {
+        response: cachedResponse,
+        staleAt: Date.now() + 60 * 1000,
+      });
+
+      const callback = vi.fn((r: Response) => r);
+      mockRequestCtx._onResponseCallbacks.push(callback);
+
+      const middleware = createDocumentCacheMiddleware();
+      const ctx = createMockMiddlewareContext("http://localhost/page");
+      const next = vi.fn();
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      await middleware(ctx, next);
+
+      expect(callback).toHaveBeenCalledTimes(1);
+      // Callbacks array should be drained
+      expect(mockRequestCtx._onResponseCallbacks).toHaveLength(0);
     });
   });
 

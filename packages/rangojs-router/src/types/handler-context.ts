@@ -10,6 +10,7 @@ import type {
   DefaultEnv,
   DefaultHandlerRouteMap,
   DefaultReverseRouteMap,
+  DefaultRouteName,
   DefaultVars,
 } from "./global-namespace.js";
 import type {
@@ -18,6 +19,7 @@ import type {
   ResolvedRouteMap,
 } from "./route-config.js";
 import type { LoaderDefinition } from "./loader-types.js";
+import type { UseItems, HandlerUseItem } from "../route-types.js";
 
 // Re-export MiddlewareFn for internal/advanced use
 export type { MiddlewareFn } from "../router/middleware.js";
@@ -134,7 +136,7 @@ export type Handler<
     | Record<string, any> = {},
   TRouteMap extends {} = DefaultHandlerRouteMap,
   TEnv = DefaultEnv,
-> = (
+> = ((
   ctx: HandlerContext<
     T extends `.${infer Local}`
       ? Local extends keyof TRouteMap
@@ -159,31 +161,32 @@ export type Handler<
       : ExtractSearchFromEntry<DefaultHandlerRouteMap, T>,
     TRouteMap extends DefaultHandlerRouteMap ? never : TRouteMap
   >,
-) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
+) => ReactNode | Promise<ReactNode> | Response | Promise<Response>) & {
+  /** Composable default DSL items merged when the handler is mounted. */
+  use?: () => UseItems<HandlerUseItem>;
+};
 
 /**
  * Context passed to handlers (Hono-inspired type-safe context)
  *
  * Provides type-safe access to:
  * - Route params (from URL pattern)
- * - Request data (request, searchParams, pathname, url)
+ * - Cleaned route URL (`url`, `searchParams`, `pathname` — no `_rsc*` params)
+ * - Original request (`request` — raw transport URL, headers, method, body)
  * - Platform bindings (env.DB, env.KV, env.SECRETS)
- * - Middleware variables (var.user, var.permissions)
+ * - Middleware variables (`get("user")`, `get("permissions")`)
  * - Getter/setter for variables (get('user'), set('user', ...))
- *
- * **Note:** System parameters (query params starting with `_rsc`) are automatically
- * filtered from `url`, `searchParams`, and `request.url` for cleaner access.
  *
  * @example
  * ```typescript
  * const handler = (ctx: HandlerContext<{ slug: string }, AppEnv>) => {
  *   ctx.params.slug        // Route param (string)
  *   ctx.env.DB             // Binding (D1Database)
- *   ctx.var.user           // Variable (User | undefined)
- *   ctx.get('user')        // Alternative getter
+ *   ctx.get('user')        // Variable (User | undefined)
  *   ctx.set('user', {...}) // Setter
  *   ctx.url                // Clean URL (no _rsc* params)
  *   ctx.searchParams       // Clean params (no _rsc* params)
+ *   ctx.request            // Raw transport request (original URL intact)
  * }
  * ```
  */
@@ -202,13 +205,21 @@ export type HandlerContext<
   readonly _paramCheck?: (params: TParams) => TParams;
   /**
    * True during build-time pre-rendering, false at runtime.
-   * In dev mode, Prerender handlers run live so build is false.
-   * In production passthrough (live fallback), build is also false.
+   * Build-time collection and dev on-demand prerender use `true`.
+   * Live request rendering, including passthrough fallback, uses `false`.
    */
   build: boolean;
   /**
-   * The incoming Request object.
-   * System params (`_rsc*`) are filtered from the URL for cleaner access.
+   * True when running in Vite dev mode, false during production build or
+   * live request rendering. Use this to branch on runtime mode without
+   * changing build semantics (e.g., skip expensive operations in dev).
+   */
+  dev: boolean;
+  /**
+   * The original incoming Request object (transport URL intact).
+   * Use `ctx.url` / `ctx.searchParams` for application logic — those have
+   * internal `_rsc*` params stripped. `ctx.request` preserves the raw URL
+   * for cases where you need original headers, method, or body.
    */
   request: Request;
   /**
@@ -226,22 +237,25 @@ export type HandlerContext<
    */
   pathname: string;
   /**
-   * The full URL object (with system params filtered).
+   * The full URL object (with internal `_rsc*` params stripped).
+   * Use this for application logic — routing, link generation, display.
    */
   url: URL;
+  /**
+   * The original request URL with all parameters intact, including
+   * internal `_rsc*` transport params. Use `ctx.url` for application
+   * logic — this is only needed for advanced cases like debugging
+   * or custom cache keying.
+   */
+  originalUrl: URL;
   /**
    * Platform bindings (DB, KV, secrets, etc.).
    * Access resources like `ctx.env.DB`, `ctx.env.KV`.
    */
   env: TEnv;
   /**
-   * Middleware-injected variables.
-   * Access values like `ctx.var.user`, `ctx.var.permissions`.
-   */
-  var: DefaultVars;
-  /**
    * Type-safe getter for middleware variables.
-   * Alternative to `ctx.var.key` with better autocomplete.
+   * Preferred way to read middleware-injected variables.
    *
    * @example
    * ```typescript
@@ -262,24 +276,18 @@ export type HandlerContext<
    * ```
    */
   set: {
-    <T>(contextVar: ContextVar<T>, value: T): void;
-  } & (<K extends keyof DefaultVars>(key: K, value: DefaultVars[K]) => void);
+    <T>(
+      contextVar: ContextVar<T>,
+      value: T,
+      options?: { cache?: boolean },
+    ): void;
+  } & (<K extends keyof DefaultVars>(
+    key: K,
+    value: DefaultVars[K],
+    options?: { cache?: boolean },
+  ) => void);
   /**
-   * Stub response for setting headers/cookies.
-   * Headers set here are merged into the final response.
-   *
-   * @example
-   * ```typescript
-   * route("product", (ctx) => {
-   *   ctx.res.headers.set("Cache-Control", "s-maxage=60");
-   *   return <ProductPage />;
-   * });
-   * ```
-   */
-  res: Response;
-  /**
-   * Shorthand for ctx.res.headers - response headers.
-   * Headers set here are merged into the final response.
+   * Response headers. Headers set here are merged into the final response.
    *
    * @example
    * ```typescript
@@ -293,8 +301,15 @@ export type HandlerContext<
   /**
    * Access loader data or push handle data.
    *
+   * Available in route handlers, layout handlers, middleware, server actions,
+   * and server components rendered within the request context.
+   *
    * For loaders: Returns a promise that resolves to the loader data.
    * Loaders are executed in parallel and memoized per request.
+   * Prefer DSL `loader()` + client `useLoader()` over `ctx.use(Loader)` —
+   * DSL loaders are always fresh and cache-safe. Use `ctx.use(Loader)` only
+   * when you need loader data in the handler itself (e.g., to set context
+   * variables or make routing decisions).
    *
    * For handles: Returns a push function to add data for this segment.
    * Handle data accumulates across all matched route segments.
@@ -302,10 +317,11 @@ export type HandlerContext<
    *
    * @example
    * ```typescript
-   * // Loader usage
-   * route("cart", async (ctx) => {
-   *   const cart = await ctx.use(CartLoader);
-   *   return <CartPage cart={cart} />;
+   * // Loader escape hatch — use when handler needs the data directly
+   * route("product", async (ctx) => {
+   *   const { product } = await ctx.use(ProductLoader);
+   *   ctx.set(Product, product); // make available to children
+   *   return <ProductPage />;
    * });
    *
    * // Handle usage - direct value
@@ -379,12 +395,26 @@ export type HandlerContext<
    * @example
    * ```typescript
    * route("product", (ctx) => {
-   *   ctx.setLocationState([ServerInfo({ data: "value" })]);
+   *   ctx.setLocationState(ServerInfo({ data: "value" }));
    *   return <ProductPage />;
    * });
    * ```
    */
-  setLocationState(entries: LocationStateEntry[]): void;
+  setLocationState(entries: LocationStateEntry | LocationStateEntry[]): void;
+  /**
+   * The matched route name, if the route has an explicit name.
+   * Undefined for unnamed routes (those without a `name` option in path()).
+   * Includes the namespace prefix from include() (e.g., "blog.post").
+   *
+   * @example
+   * ```typescript
+   * route("product", (ctx) => {
+   *   ctx.routeName // "product"
+   *   return <ProductPage />;
+   * });
+   * ```
+   */
+  routeName?: DefaultRouteName;
   /**
    * Generate URLs from route names.
    *
@@ -420,12 +450,18 @@ export type InternalHandlerContext<
   TEnv = DefaultEnv,
   TSearch extends SearchSchema = {},
 > = HandlerContext<TParams, TEnv, TSearch> & {
-  /** Raw request with all system parameters intact. */
-  _originalRequest: Request;
+  /** @internal Stub response for collecting headers/cookies. */
+  res: Response;
+  /** @internal Shared variable backing store for ctx.get()/ctx.set(). */
+  _variables: Record<string, any>;
+  /** Prerender-only control flow helper, attached when the runtime context supports it. */
+  passthrough?: () => unknown;
   /** Current segment ID for handle data attribution. */
   _currentSegmentId?: string;
   /** Response type tag (json, text, html, etc.) for cache key differentiation. */
   _responseType?: string;
+  /** Route name for cache key scoping (prevents cross-route collisions). */
+  _routeName?: string;
 };
 
 /**
@@ -505,26 +541,112 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
  * })
  * ```
  */
+/**
+ * Revalidation function called during client-side navigation to decide whether
+ * a segment (layout, route, parallel slot, or loader) should be re-rendered.
+ *
+ * Return `true` to re-render, `false` to skip (keep client's current version),
+ * or `{ defaultShouldRevalidate: boolean }` to override the default for
+ * downstream segments.
+ *
+ * @example
+ * ```ts
+ * // Re-render only when a cart action happened or browser signals staleness
+ * revalidate(({ actionId, stale }) =>
+ *   actionId?.includes("cart") || stale || false
+ * )
+ *
+ * // Always re-render when params change (default behavior made explicit)
+ * revalidate(({ defaultShouldRevalidate }) => defaultShouldRevalidate)
+ * ```
+ */
 export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
+  /** Route params from the page being navigated away from. */
   currentParams: TParams;
+  /** Full URL of the page being navigated away from. */
   currentUrl: URL;
+  /** Route params for the navigation target. */
   nextParams: TParams;
+  /** Full URL of the navigation target. */
   nextUrl: URL;
+  /**
+   * The router's default revalidation decision for this segment.
+   * `true` when params changed or the segment is new to the client.
+   * Return this when you want default behavior plus your own conditions.
+   */
   defaultShouldRevalidate: boolean;
+  /** Full handler context — access to `ctx.use()`, `ctx.env`, `ctx.params`, etc. */
   context: HandlerContext<TParams, TEnv>;
-  // Segment metadata (which segment is being evaluated):
+
+  // ── Segment metadata (which segment is being evaluated) ──────────────
+
+  /** The type of segment being revalidated. */
   segmentType: "layout" | "route" | "parallel";
-  layoutName?: string; // Layout name (e.g., "root", "shop", "auth") - only for layouts
-  slotName?: string; // Slot name (e.g., "@sidebar", "@modal") - only for parallels
-  // Action context (populated when revalidation triggered by server action):
-  actionId?: string; // Action identifier (e.g., "src/actions.ts#addToCart")
-  actionUrl?: URL; // URL where action was executed
-  actionResult?: any; // Return value from action execution
-  formData?: FormData; // FormData from action request
-  method?: string; // Request method: 'GET' for navigation, 'POST' for actions
-  routeName?: string; // Route name where action was executed (e.g., "products.detail")
-  // Stale cache revalidation (SWR pattern):
-  stale?: boolean; // True if this is a stale cache revalidation request
+  /** Layout name (e.g., `"root"`, `"shop"`, `"auth"`). Only set for layout segments. */
+  layoutName?: string;
+  /** Slot name (e.g., `"@sidebar"`, `"@modal"`). Only set for parallel segments. */
+  slotName?: string;
+
+  // ── Action context (populated when revalidation is triggered by a server action) ──
+
+  /**
+   * Identifier of the server action that triggered revalidation.
+   * `undefined` during normal navigation (no action involved).
+   *
+   * Format: `"src/<path>#<exportName>"` — the file path is the source path
+   * relative to the project root, followed by `#` and the exported function name.
+   *
+   * This is stable and can be used for path-based matching to revalidate
+   * when any action in a module or directory fires:
+   *
+   * @example
+   * ```ts
+   * // Match a specific action
+   * revalidate(({ actionId }) => actionId === "src/actions/cart.ts#addToCart")
+   *
+   * // Match any action in the cart module
+   * revalidate(({ actionId }) => actionId?.includes("cart") ?? false)
+   *
+   * // Match any action under src/apps/store/actions/
+   * revalidate(({ actionId }) => actionId?.startsWith("src/apps/store/actions/") ?? false)
+   * ```
+   */
+  actionId?: string;
+  /** URL where the action was executed (the page the user was on when they triggered the action). */
+  actionUrl?: URL;
+  /** Return value from the action execution. Can be used to conditionally revalidate based on the action's outcome. */
+  actionResult?: any;
+  /** FormData from the action request body. Only set for form-based actions (not inline `"use server"` actions). */
+  formData?: FormData;
+  /** HTTP method: `"GET"` for navigation, `"POST"` for server actions. */
+  method?: string;
+
+  // ── Route identity ───────────────────────────────────────────────────
+
+  /** Route name of the navigation target. Alias for `toRouteName`. */
+  routeName?: DefaultRouteName;
+  /**
+   * Route name being navigated away from.
+   * `undefined` for unnamed internal routes (those without a `name` option).
+   */
+  fromRouteName?: DefaultRouteName;
+  /**
+   * Route name being navigated to.
+   * `undefined` for unnamed internal routes (those without a `name` option).
+   */
+  toRouteName?: DefaultRouteName;
+
+  // ── Staleness signal ─────────────────────────────────────────────────
+
+  /**
+   * `true` when the browser signals that data may be stale — typically because
+   * a server action was executed in this or another tab (`_rsc_stale` header).
+   *
+   * This is NOT segment cache staleness (loaders are never segment-cached).
+   * Use this to decide whether loader data should be re-fetched after an
+   * action that may have mutated backend state.
+   */
+  stale?: boolean;
 }) => boolean | { defaultShouldRevalidate: boolean };
 
 // MiddlewareFn is imported from "../router/middleware.js" and re-exported

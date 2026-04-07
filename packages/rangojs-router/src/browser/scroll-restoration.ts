@@ -8,6 +8,17 @@
  * - Supports hash link scrolling
  */
 
+import { debugLog } from "./logging.js";
+
+/**
+ * Defers a callback to the next animation frame.
+ * Falls back to setTimeout(0) in environments without requestAnimationFrame.
+ */
+const deferToNextPaint: (fn: () => void) => void =
+  typeof requestAnimationFrame === "function"
+    ? requestAnimationFrame
+    : (fn) => setTimeout(fn, 0);
+
 const SCROLL_STORAGE_KEY = "rsc-router-scroll-positions";
 
 /**
@@ -139,12 +150,13 @@ export function initScrollRestoration(options?: {
 
   window.addEventListener("pagehide", handlePageHide);
 
-  console.log(
+  debugLog(
     "[Scroll] Initialized, loaded positions:",
     Object.keys(savedScrollPositions).length,
   );
 
   return () => {
+    cancelScrollRestorationPolling();
     window.removeEventListener("pagehide", handlePageHide);
     window.history.scrollRestoration = "auto";
     initialized = false;
@@ -261,51 +273,35 @@ export function restoreScrollPosition(options?: {
     return false;
   }
 
-  // Check if page is tall enough to scroll to saved position
-  const maxScrollY = document.documentElement.scrollHeight - window.innerHeight;
-  const canScrollToPosition = savedY <= maxScrollY;
-
-  if (canScrollToPosition) {
-    window.scrollTo(0, savedY);
-    console.log("[Scroll] Restored position:", savedY, "for key:", key);
-    return true;
-  }
-
-  // Scroll as far as we can for now
-  window.scrollTo(0, maxScrollY);
-  console.log("[Scroll] Partial restore to:", maxScrollY, "target:", savedY);
-
-  // Poll while streaming until we can scroll to target position
+  // If streaming, poll until streaming ends then scroll to saved position
   if (options?.retryIfStreaming && options?.isStreaming?.()) {
     const startTime = Date.now();
 
     pendingPollInterval = setInterval(() => {
-      // Stop if we've exceeded the timeout
       if (Date.now() - startTime > SCROLL_POLL_TIMEOUT_MS) {
-        console.log("[Scroll] Polling timeout, giving up");
+        debugLog("[Scroll] Polling timeout, giving up");
         cancelScrollRestorationPolling();
         return;
       }
 
-      // Stop if streaming ended
       if (!options.isStreaming?.()) {
-        console.log("[Scroll] Streaming ended, stopping poll");
-        cancelScrollRestorationPolling();
-        return;
-      }
-
-      // Check if we can now scroll to the target position
-      const currentMaxScrollY =
-        document.documentElement.scrollHeight - window.innerHeight;
-      if (savedY <= currentMaxScrollY) {
         window.scrollTo(0, savedY);
-        console.log("[Scroll] Poll restored position:", savedY);
+        debugLog("[Scroll] Restored after streaming:", savedY);
         cancelScrollRestorationPolling();
       }
     }, SCROLL_POLL_INTERVAL_MS);
+
+    return true;
   }
 
-  return false;
+  // Not streaming — scroll after React commits and browser paints.
+  // startTransition defers the DOM commit, so scrolling synchronously
+  // would be overwritten when React replaces the content.
+  deferToNextPaint(() => {
+    window.scrollTo(0, savedY);
+    debugLog("[Scroll] Restored position:", savedY, "for key:", key);
+  });
+  return true;
 }
 
 /**
@@ -322,7 +318,7 @@ export function scrollToHash(): boolean {
     const element = document.getElementById(id);
     if (element) {
       element.scrollIntoView();
-      console.log("[Scroll] Scrolled to hash element:", id);
+      debugLog("[Scroll] Scrolled to hash element:", id);
       return true;
     }
   } catch (e) {
@@ -360,32 +356,38 @@ export function handleNavigationEnd(options: {
   scroll?: boolean;
   isStreaming?: () => boolean;
 }): void {
-  if (!initialized) {
-    return;
-  }
-
   const { restore = false, scroll = true, isStreaming } = options;
 
-  // Don't scroll if explicitly disabled
-  if (scroll === false) {
+  // Don't scroll if explicitly disabled or not in a browser
+  if (scroll === false || typeof window === "undefined") {
     return;
   }
 
-  // For back/forward (restore), try to restore saved position
-  if (restore) {
+  // Save/restore requires initialization (sessionStorage, history state).
+  // But basic scroll-to-top and hash scrolling work without it — this
+  // matters during cross-app navigation where ScrollRestoration unmounts
+  // and remounts, creating a brief window where initialized is false.
+  if (restore && initialized) {
     if (restoreScrollPosition({ retryIfStreaming: true, isStreaming })) {
       return;
     }
     // Fall through to hash or top if no saved position
   }
 
-  // Try hash scrolling first
-  if (scrollToHash()) {
-    return;
-  }
+  // Defer hash and scroll-to-top to after React paints the new content,
+  // so the user doesn't see the current page jump before the new route appears.
+  deferToNextPaint(() => {
+    // Re-check: the deferred callback may fire after environment teardown
+    if (typeof window === "undefined") return;
 
-  // Default: scroll to top
-  scrollToTop();
+    // Try hash scrolling first
+    if (scrollToHash()) {
+      return;
+    }
+
+    // Default: scroll to top
+    scrollToTop();
+  });
 }
 
 /**

@@ -11,8 +11,6 @@
 
 // Re-export all universal exports from index.ts
 export {
-  // Universal rendering utilities
-  renderSegments,
   // Error classes
   RouteNotFoundError,
   DataNotFoundError,
@@ -21,9 +19,6 @@ export {
   HandlerError,
   BuildError,
   InvalidHandlerError,
-  NetworkError,
-  isNetworkError,
-  sanitizeError,
   RouterError,
   Skip,
   isSkip,
@@ -33,7 +28,6 @@ export {
 export type {
   // Configuration types
   DocumentProps,
-  RouterEnv,
   DefaultEnv,
   RouteDefinition,
   RouteConfig,
@@ -41,7 +35,6 @@ export type {
   TrailingSlashMode,
   // Handler types
   Handler,
-  ScopedRouteMap,
   HandlerContext,
   ExtractParams,
   GenericParams,
@@ -73,7 +66,12 @@ export type {
 } from "./types.js";
 
 // Router options type (server-only, so import directly)
-export type { RSCRouterOptions } from "./router.js";
+export type {
+  RSCRouterOptions,
+  SSRStreamMode,
+  SSROptions,
+  ResolveStreamingContext,
+} from "./router.js";
 
 // Server-side createLoader and redirect
 export {
@@ -102,6 +100,7 @@ export type {
   LayoutUseItem,
   AllUseItems,
   UseItems,
+  HandlerUseItem,
 } from "./route-types.js";
 
 // Handle API
@@ -116,9 +115,9 @@ export { nonce } from "./rsc/nonce.js";
 // Pre-render handler API
 export {
   Prerender,
-  isPrerenderHandler,
+  Passthrough,
   type PrerenderHandlerDefinition,
-  type PrerenderPassthroughContext,
+  type PassthroughHandlerDefinition,
   type PrerenderOptions,
   type BuildContext,
   type StaticBuildContext,
@@ -126,16 +125,11 @@ export {
 } from "./prerender.js";
 
 // Static handler API
-export {
-  Static,
-  isStaticHandler,
-  type StaticHandlerDefinition,
-} from "./static-handler.js";
+export { Static, type StaticHandlerDefinition } from "./static-handler.js";
 
 // Django-style URL patterns (RSC/server context)
 export {
   urls,
-  RESPONSE_TYPE,
   type PathHelpers,
   type PathOptions,
   type UrlPatterns,
@@ -167,13 +161,29 @@ export type { HandlerCacheConfig } from "./rsc/types.js";
 
 // Built-in handles (server-side)
 export { Meta } from "./handles/meta.js";
+export { Breadcrumbs, type BreadcrumbItem } from "./handles/breadcrumbs.js";
 
-// Request context (for accessing request data in server actions/components)
+// Request context (for accessing request data in server actions/components).
+// Re-exported with a narrowed return type so that public consumers only see
+// public members. Internal code imports from "./server/request-context.js"
+// directly and gets the full type.
+import { getRequestContext as _getRequestContextInternal } from "./server/request-context.js";
+export type { PublicRequestContext as RequestContext } from "./server/request-context.js";
+import type { PublicRequestContext } from "./server/request-context.js";
+import type { DefaultEnv } from "./types/global-namespace.js";
+
+export const getRequestContext: <
+  TEnv = DefaultEnv,
+>() => PublicRequestContext<TEnv> = _getRequestContextInternal;
+
+// Request-scoped shorthands
 export {
-  getRequestContext,
-  requireRequestContext,
-  type RequestContext,
-} from "./server/request-context.js";
+  cookies,
+  headers,
+  type CookieStore,
+  type Cookie,
+  type ReadonlyHeaders,
+} from "./server/cookie-store.js";
 
 // Cache tag APIs (server-only)
 export { cacheTag } from "./cache/cache-tag.js";
@@ -191,8 +201,6 @@ export type {
   ReverseFunction,
   ExtractLocalRoutes,
   ParamsFor,
-  SanitizePrefix,
-  MergeRoutes,
 } from "./reverse.js";
 export { scopedReverse, createReverse } from "./reverse.js";
 
@@ -205,15 +213,6 @@ export type {
   RouteParams,
 } from "./search-params.js";
 
-// Performance tracking (server-only)
-export { track } from "./server/context.js";
-
-// Debug utilities for route matching (development only)
-export {
-  enableMatchDebug,
-  getMatchDebugStats,
-} from "./router/pattern-matching.js";
-
 // Location state (universal)
 export {
   createLocationState,
@@ -224,3 +223,17 @@ export {
 
 // Path-based response type lookup from RegisteredRoutes
 export type { PathResponse } from "./href-client.js";
+
+// Telemetry sink
+export { createConsoleSink } from "./router/telemetry.js";
+export { createOTelSink } from "./router/telemetry-otel.js";
+export type { OTelTracer, OTelSpan } from "./router/telemetry-otel.js";
+export type { TelemetrySink, TelemetryEvent } from "./router/telemetry.js";
+
+// Timeout types and error class
+export { RouterTimeoutError } from "./router/timeout.js";
+export type {
+  RouterTimeouts,
+  TimeoutPhase,
+  TimeoutContext,
+} from "./router/timeout.js";

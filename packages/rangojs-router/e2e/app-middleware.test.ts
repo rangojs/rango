@@ -1,6 +1,49 @@
-import { expect, test } from "@playwright/test";
+import crypto from "node:crypto";
+import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
+
+/**
+ * Assert that a response contains exactly the expected Set-Cookie entries.
+ * Uses headersArray() to preserve individual entries (allHeaders flattens them,
+ * hiding duplicates). Each entry in `expected` is matched as a substring
+ * against exactly one Set-Cookie header — no duplicates allowed.
+ */
+async function expectSetCookies(
+  page: Page,
+  url: string,
+  expected: string[],
+): Promise<void> {
+  const responsePromise = page.waitForResponse(
+    (response) => response.url().includes(url) && response.status() === 200,
+  );
+
+  await page.goto(url);
+  const response = await responsePromise;
+
+  const headers = await response.headersArray();
+  const setCookies = headers
+    .filter((h) => h.name.toLowerCase() === "set-cookie")
+    .map((h) => h.value);
+
+  for (const fragment of expected) {
+    const matches = setCookies.filter((c) => c.includes(fragment));
+    expect(
+      matches,
+      `Expected exactly 1 Set-Cookie matching "${fragment}", got ${matches.length}: ${JSON.stringify(setCookies)}`,
+    ).toHaveLength(1);
+  }
+}
+
+// Mirrors the build-time hashId from expose-id-utils.ts so production loader
+// tests stay in sync with the build output without hardcoding hash values.
+function productionLoaderId(filePath: string, exportName: string): string {
+  const hash = crypto
+    .createHash("sha256")
+    .update(`${filePath}#${exportName}`)
+    .digest("hex");
+  return `${hash.slice(0, 8)}#${exportName}`;
+}
 
 /**
  * E2E tests for app-level middleware:
@@ -554,6 +597,46 @@ test.describe("app-middleware (dev)", () => {
     });
   });
 
+  test.describe("middleware-shortcircuit-headers", () => {
+    test("global middleware short-circuit should preserve stub headers and onResponse callbacks", async ({
+      page,
+    }) => {
+      // Hit protected route without auth cookie — authMiddleware short-circuits
+      // with redirect. The upstream middleware set a stub header and registered
+      // an onResponse callback; both must survive the short-circuit.
+      const responsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/middleware-test/protected") &&
+          !response.url().includes("auth=required"),
+      );
+
+      await page.goto(f.url("/middleware-test/protected"));
+      const response = await responsePromise;
+
+      // Stub header set before next() should survive the short-circuit
+      expect(response.headers()["x-stub-before-next"]).toBe("applied");
+      // onResponse callback should have fired via finalizeResponse()
+      expect(response.headers()["x-onresponse-applied"]).toBe("yes");
+    });
+
+    test("route middleware short-circuit should preserve onResponse callbacks", async ({
+      page,
+    }) => {
+      // Second route-level middleware short-circuits with 403; first middleware
+      // registered an onResponse callback that should still fire.
+      const responsePromise = page.waitForResponse((response) =>
+        response.url().includes("/middleware-test/route-shortcircuit"),
+      );
+
+      await page.goto(f.url("/middleware-test/route-shortcircuit"));
+      const response = await responsePromise;
+
+      expect(response.status()).toBe(403);
+      // onResponse callback from first middleware should have fired
+      expect(response.headers()["x-route-onresponse"]).toBe("applied");
+    });
+  });
+
   test.describe("intercept-middleware", () => {
     test("intercept middleware should set header on modal navigation", async ({
       page,
@@ -613,13 +696,69 @@ test.describe("app-middleware (dev)", () => {
     });
   });
 
+  test.describe("ctx-parity", () => {
+    test("ctx.headers sets headers before and after next()", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const responsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/middleware-test/ctx-parity") &&
+          response.status() === 200,
+      );
+      await page.goto(f.url("/middleware-test/ctx-parity"));
+      const response = await responsePromise;
+
+      expect(response.headers()["x-mw-headers-before"]).toBe("set-before-next");
+      expect(response.headers()["x-mw-headers-after"]).toBe("set-after-next");
+    });
+
+    test("ctx.set shares variables with handler", async ({ page }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/middleware-test/ctx-parity"));
+      await waitForHydration(page);
+
+      await expect(
+        page.locator('[data-testid="ctx-parity-var-value"]'),
+      ).toContainText("from-ctx-set");
+    });
+
+    test("ctx.theme and ctx.setTheme work in middleware", async ({ page }) => {
+      using _ = expectNoPageError(page);
+      const responsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/middleware-test/ctx-parity") &&
+          response.status() === 200,
+      );
+      await page.goto(f.url("/middleware-test/ctx-parity"));
+      const response = await responsePromise;
+
+      expect(response.headers()["x-mw-theme-before"]).toBe("light");
+      expect(response.headers()["x-mw-theme-after"]).toBe("dark");
+
+      await waitForHydration(page);
+      await expect(
+        page.locator('[data-testid="ctx-parity-theme"]'),
+      ).toContainText("dark");
+    });
+
+    test("ctx.setLocationState does not throw", async ({ page }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/middleware-test/ctx-parity"));
+      await waitForHydration(page);
+      await expect(
+        page.locator('[data-testid="ctx-parity-title"]'),
+      ).toBeVisible();
+    });
+  });
+
   test.describe("loader-middleware", () => {
     test("loader middleware should reject unauthorized requests", async ({
       request,
     }) => {
       // Try to fetch protected loader without auth token
       const response = await request.get(
-        f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader"),
+        f.url("/fetch-loader?_rsc_loader=src/loaders.tsx%23ProtectedLoader"),
         {
           headers: { Accept: "text/x-component" },
         },
@@ -637,7 +776,7 @@ test.describe("app-middleware (dev)", () => {
       // Fetch protected loader with valid auth token
       const response = await request.get(
         f.url(
-          "/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader&_rsc_loader_params=" +
+          "/fetch-loader?_rsc_loader=src/loaders.tsx%23ProtectedLoader&_rsc_loader_params=" +
             encodeURIComponent(JSON.stringify({ authToken: "valid-token" })),
         ),
         {
@@ -656,7 +795,7 @@ test.describe("app-middleware (dev)", () => {
       // Fetch protected loader with invalid auth token
       const response = await request.get(
         f.url(
-          "/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader&_rsc_loader_params=" +
+          "/fetch-loader?_rsc_loader=src/loaders.tsx%23ProtectedLoader&_rsc_loader_params=" +
             encodeURIComponent(JSON.stringify({ authToken: "invalid-token" })),
         ),
         {
@@ -668,6 +807,33 @@ test.describe("app-middleware (dev)", () => {
       const text = await response.text();
       expect(text).toContain("Unauthorized");
     });
+  });
+});
+
+test.describe("cookies-after-next (dev)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test("top-level middleware: cookies set after await next() should appear in the response", async ({
+    page,
+  }) => {
+    await expectSetCookies(page, f.url("/middleware-test/cookies-after-next"), [
+      "session_id=abc123",
+      "HttpOnly",
+      "post-next-marker=applied",
+    ]);
+  });
+
+  test("route-level middleware: cookies set after await next() should appear in the response", async ({
+    page,
+  }) => {
+    await expectSetCookies(
+      page,
+      f.url("/middleware-test/route-cookies-after-next"),
+      ["route_session=xyz789", "HttpOnly", "route-post-next=applied"],
+    );
   });
 });
 
@@ -733,6 +899,36 @@ test.describe("app-middleware (production)", () => {
     ).toBeVisible();
   });
 
+  test("global middleware short-circuit should preserve stub headers and onResponse callbacks in production", async ({
+    page,
+  }) => {
+    const responsePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes("/middleware-test/protected") &&
+        !response.url().includes("auth=required"),
+    );
+
+    await page.goto(f.url("/middleware-test/protected"));
+    const response = await responsePromise;
+
+    expect(response.headers()["x-stub-before-next"]).toBe("applied");
+    expect(response.headers()["x-onresponse-applied"]).toBe("yes");
+  });
+
+  test("route middleware short-circuit should preserve onResponse callbacks in production", async ({
+    page,
+  }) => {
+    const responsePromise = page.waitForResponse((response) =>
+      response.url().includes("/middleware-test/route-shortcircuit"),
+    );
+
+    await page.goto(f.url("/middleware-test/route-shortcircuit"));
+    const response = await responsePromise;
+
+    expect(response.status()).toBe(403);
+    expect(response.headers()["x-route-onresponse"]).toBe("applied");
+  });
+
   test("global middleware should still apply even when route has errors in production", async ({
     page,
   }) => {
@@ -746,5 +942,265 @@ test.describe("app-middleware (production)", () => {
     // Global middleware headers should still be present
     expect(response.headers()["x-global-middleware"]).toBe("applied");
     expect(response.headers()["x-header-shorthand"]).toBe("works");
+  });
+
+  test("cookie middleware should set and increment visit count in production", async ({
+    page,
+  }) => {
+    // First visit
+    const response1Promise = page.waitForResponse(
+      (response) =>
+        response.url().includes("/middleware-test/cookies") &&
+        response.status() === 200,
+    );
+
+    await page.goto(f.url("/middleware-test/cookies"));
+    const response1 = await response1Promise;
+
+    const allHeaders1 = await response1.allHeaders();
+    const setCookie1 = allHeaders1["set-cookie"];
+    expect(setCookie1).toBeDefined();
+    expect(setCookie1).toContain("visit-count=1");
+
+    await waitForHydration(page);
+    await expect(page.locator('[data-testid="visit-count"]')).toContainText(
+      "1",
+    );
+
+    // Second visit - cookie should be incremented
+    const response2Promise = page.waitForResponse(
+      (response) =>
+        response.url().includes("/middleware-test/cookies") &&
+        response.status() === 200,
+    );
+
+    await page.reload();
+    const response2 = await response2Promise;
+
+    const allHeaders2 = await response2.allHeaders();
+    const setCookie2 = allHeaders2["set-cookie"];
+    expect(setCookie2).toContain("visit-count=2");
+
+    await waitForHydration(page);
+    await expect(page.locator('[data-testid="visit-count"]')).toContainText(
+      "2",
+    );
+  });
+
+  test("auth middleware should allow access with cookie in production", async ({
+    page,
+    context,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await context.addCookies([
+      {
+        name: "auth-token",
+        value: "valid-token",
+        domain: "localhost",
+        path: "/",
+      },
+    ]);
+
+    await page.goto(f.url("/middleware-test/protected"));
+    await expect(page).toHaveURL(/\/middleware-test\/protected$/);
+
+    await waitForHydration(page);
+    await expect(page.locator('[data-testid="protected-title"]')).toBeVisible();
+    await expect(page.locator('[data-testid="user-id"]')).toContainText("123");
+    await expect(page.locator('[data-testid="user-name"]')).toContainText(
+      "TestUser",
+    );
+  });
+
+  test.describe("intercept-middleware", () => {
+    test("intercept middleware should set header on modal navigation", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      const responsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/slow-product/") &&
+          response.status() === 200,
+      );
+
+      await page.click('[data-testid="slow-product-link"]');
+      const response = await responsePromise;
+
+      expect(response.headers()["x-intercept-middleware"]).toBe("applied");
+
+      await expect(
+        page.locator('[data-testid="slow-modal-product-name"]'),
+      ).toBeVisible({ timeout: 10000 });
+    });
+
+    test("intercept middleware should set cookie", async ({
+      page,
+      context,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      await page.click('[data-testid="slow-product-link"]');
+
+      await expect(
+        page.locator('[data-testid="slow-modal-product-name"]'),
+      ).toBeVisible({ timeout: 10000 });
+
+      const cookies = await context.cookies();
+      const interceptCookie = cookies.find(
+        (c) => c.name === "intercept-visited",
+      );
+      expect(interceptCookie).toBeDefined();
+      expect(interceptCookie?.value).toBe("true");
+    });
+  });
+
+  test.describe("loader-middleware", () => {
+    const protectedId = productionLoaderId(
+      "src/loaders.tsx",
+      "ProtectedLoader",
+    );
+
+    test("loader middleware should reject unauthorized requests", async ({
+      request,
+    }) => {
+      const response = await request.get(
+        f.url(`/fetch-loader?_rsc_loader=${encodeURIComponent(protectedId)}`),
+        {
+          headers: { Accept: "text/x-component" },
+        },
+      );
+
+      expect(response.status()).toBe(500);
+      const text = await response.text();
+      // Production sanitizes error messages; verify the error structure
+      expect(text).toContain("loaderError");
+    });
+
+    test("loader middleware should allow authorized requests", async ({
+      request,
+    }) => {
+      const response = await request.get(
+        f.url(
+          `/fetch-loader?_rsc_loader=${encodeURIComponent(protectedId)}&_rsc_loader_params=` +
+            encodeURIComponent(JSON.stringify({ authToken: "valid-token" })),
+        ),
+        {
+          headers: { Accept: "text/x-component" },
+        },
+      );
+
+      expect(response.status()).toBe(200);
+      const text = await response.text();
+      expect(text).toContain("protected");
+    });
+
+    test("loader middleware should reject invalid auth token", async ({
+      request,
+    }) => {
+      const response = await request.get(
+        f.url(
+          `/fetch-loader?_rsc_loader=${encodeURIComponent(protectedId)}&_rsc_loader_params=` +
+            encodeURIComponent(JSON.stringify({ authToken: "invalid-token" })),
+        ),
+        {
+          headers: { Accept: "text/x-component" },
+        },
+      );
+
+      expect(response.status()).toBe(500);
+      const text = await response.text();
+      // Production sanitizes error messages; verify the error structure
+      expect(text).toContain("loaderError");
+    });
+  });
+
+  test("top-level middleware: cookies set after await next() (production)", async ({
+    page,
+  }) => {
+    await expectSetCookies(page, f.url("/middleware-test/cookies-after-next"), [
+      "session_id=abc123",
+      "HttpOnly",
+      "post-next-marker=applied",
+    ]);
+  });
+
+  test("route-level middleware: cookies set after await next() (production)", async ({
+    page,
+  }) => {
+    await expectSetCookies(
+      page,
+      f.url("/middleware-test/route-cookies-after-next"),
+      ["route_session=xyz789", "HttpOnly", "route-post-next=applied"],
+    );
+  });
+
+  test.describe("ctx-parity (production)", () => {
+    test("ctx.headers sets headers before and after next() in production", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const responsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/middleware-test/ctx-parity") &&
+          response.status() === 200,
+      );
+      await page.goto(f.url("/middleware-test/ctx-parity"));
+      const response = await responsePromise;
+
+      expect(response.headers()["x-mw-headers-before"]).toBe("set-before-next");
+      expect(response.headers()["x-mw-headers-after"]).toBe("set-after-next");
+    });
+
+    test("ctx.set shares variables with handler in production", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/middleware-test/ctx-parity"));
+      await waitForHydration(page);
+
+      await expect(
+        page.locator('[data-testid="ctx-parity-var-value"]'),
+      ).toContainText("from-ctx-set");
+    });
+
+    test("ctx.theme and ctx.setTheme work in middleware in production", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const responsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/middleware-test/ctx-parity") &&
+          response.status() === 200,
+      );
+      await page.goto(f.url("/middleware-test/ctx-parity"));
+      const response = await responsePromise;
+
+      expect(response.headers()["x-mw-theme-before"]).toBe("light");
+      expect(response.headers()["x-mw-theme-after"]).toBe("dark");
+
+      await waitForHydration(page);
+      await expect(
+        page.locator('[data-testid="ctx-parity-theme"]'),
+      ).toContainText("dark");
+    });
+
+    test("ctx.setLocationState does not throw in production", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(f.url("/middleware-test/ctx-parity"));
+      await waitForHydration(page);
+      await expect(
+        page.locator('[data-testid="ctx-parity-title"]'),
+      ).toBeVisible();
+    });
   });
 });

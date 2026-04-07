@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { urls, Meta } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
 import {
   KanbanLayout,
@@ -18,30 +18,39 @@ export const kanbanPatterns = urls(
     // Passthrough layout for error boundary
     layout(<Outlet />, () => [
       errorBoundary(kanbanErrorBoundary),
-      layout(<KanbanLayout />, () => [
-        // Action counter layout with loader for tracking revalidation
-        layout(<ActionCounterLayout />, () => [
-          loader(ActionCounterLoader, () => [
-            revalidate(({ actionId, stale }) => {
-              return actionId?.includes("kanban/actions") ?? stale ?? false;
+      layout(
+        (ctx) => {
+          ctx.use(Meta)({ title: "Kanban" });
+          return <KanbanLayout />;
+        },
+        () => [
+          // Action counter layout with loader for tracking revalidation
+          layout(<ActionCounterLayout />, () => [
+            loader(ActionCounterLoader, () => [
+              revalidate(({ actionId, stale }) => {
+                return actionId?.includes("kanban/actions") ?? stale ?? false;
+              }),
+            ]),
+          ]),
+
+          // Board loader
+          loader(KanbanLoader, () => [
+            revalidate(({ actionId, defaultShouldRevalidate }) => {
+              const isKanbanAction = actionId?.includes("kanban/actions");
+              console.log("[Kanban] Revalidation", {
+                actionId,
+                isKanbanAction,
+              });
+              return isKanbanAction ?? defaultShouldRevalidate;
             }),
           ]),
-        ]),
 
-        // Board loader
-        loader(KanbanLoader, () => [
-          revalidate(({ actionId, defaultShouldRevalidate }) => {
-            const isKanbanAction = actionId?.includes("kanban/actions");
-            console.log("[Kanban] Revalidation", { actionId, isKanbanAction });
-            return isKanbanAction ?? defaultShouldRevalidate;
-          }),
-        ]),
-
-        path("/", KanbanIndexPage, { name: "index" }),
-        path("/card/:cardId", KanbanCardPage, { name: "card" }, () => [
-          loader(CardDetailLoader),
-        ]),
-      ]),
+          path("/", KanbanIndexPage, { name: "index" }),
+          path("/card/:cardId", KanbanCardPage, { name: "card" }, () => [
+            loader(CardDetailLoader),
+          ]),
+        ],
+      ),
     ]),
   ],
 );

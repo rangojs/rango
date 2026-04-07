@@ -8,7 +8,60 @@ import type {
 import type { NonceProvider } from "../rsc/types.js";
 import type { ExecutionContext } from "../server/request-context.js";
 import type { UrlPatterns } from "../urls.js";
+import type { UrlBuilder } from "../urls/pattern-types.js";
 import type { NamedRouteEntry } from "./content-negotiation.js";
+import type { TelemetrySink } from "./telemetry.js";
+import type { RouterTimeouts, OnTimeoutCallback } from "./timeout.js";
+
+/**
+ * SSR stream mode returned by resolveStreaming.
+ *
+ * - `"stream"` — start flushing HTML as soon as the shell is ready
+ *   (default React SSR behavior via `renderToReadableStream`).
+ * - `"allReady"` — wait for every Suspense boundary to resolve before
+ *   sending any bytes (equivalent to awaiting `stream.allReady`).
+ */
+export type SSRStreamMode = "stream" | "allReady";
+
+/**
+ * Context passed to the resolveStreaming callback.
+ */
+export interface ResolveStreamingContext<TEnv = unknown> {
+  request: Request;
+  env: TEnv;
+  url: URL;
+}
+
+/**
+ * SSR configuration options.
+ */
+export interface SSROptions<TEnv = unknown> {
+  /**
+   * Determine whether an HTML response should stream progressively or
+   * wait for full readiness before flushing.
+   *
+   * Called once per HTML request, before the HTML response is produced.
+   * Does NOT apply to RSC responses (`__rsc`, partial navigation, prefetch).
+   *
+   * Return `"stream"` (default) for progressive streaming or `"allReady"`
+   * to buffer the complete HTML before sending.
+   *
+   * @example Bot detection
+   * ```ts
+   * createRouter({
+   *   ssr: {
+   *     resolveStreaming: async ({ request, env }) => {
+   *       const bot = await detectBot(request, env);
+   *       return bot.isBot && !bot.supportsStreaming ? "allReady" : "stream";
+   *     },
+   *   },
+   * });
+   * ```
+   */
+  resolveStreaming?: (
+    context: ResolveStreamingContext<TEnv>,
+  ) => SSRStreamMode | Promise<SSRStreamMode>;
+}
 
 /**
  * Props passed to the root layout component
@@ -42,6 +95,28 @@ export interface RSCRouterOptions<TEnv = any> {
    * @internal
    */
   $$sourceFile?: string;
+
+  /**
+   * URL prefix applied to all routes registered with this router.
+   *
+   * Useful when the app is served under a sub-path (e.g. `/admin` or `/v2`).
+   * All `path()` patterns are automatically prefixed and `reverse()` returns
+   * full paths including the basename. Route names are NOT prefixed.
+   *
+   * @example
+   * ```typescript
+   * const router = createRouter({
+   *   basename: "/admin",
+   * }).routes(({ path }) => [
+   *   path("/", Dashboard, { name: "home" }),       // matches /admin
+   *   path("/users", Users, { name: "users" }),     // matches /admin/users
+   * ]);
+   *
+   * router.reverse("home");   // "/admin"
+   * router.reverse("users");  // "/admin/users"
+   * ```
+   */
+  basename?: string;
 
   /**
    * Enable performance metrics collection
@@ -187,7 +262,7 @@ export interface RSCRouterOptions<TEnv = any> {
    *
    * @example Static config
    * ```typescript
-   * import { MemorySegmentCacheStore } from "rsc-router/rsc";
+   * import { MemorySegmentCacheStore } from "@rangojs/router/cache";
    *
    * const router = createRouter({
    *   cache: {
@@ -285,25 +360,28 @@ export interface RSCRouterOptions<TEnv = any> {
   /**
    * URL patterns to register with the router.
    *
-   * Alternative to calling `.routes()` method - allows passing patterns
-   * directly in the config for a more concise setup.
+   * Accepts either a `UrlPatterns` object from `urls()` or a builder function
+   * directly (urls() is called implicitly).
    *
    * @example
    * ```typescript
-   * import { urls } from "@rangojs/router/server";
-   *
-   * const urlpatterns = urls(({ path, layout }) => [
-   *   path("/", HomePage, { name: "home" }),
-   *   path("/about", AboutPage, { name: "about" }),
-   * ]);
-   *
-   * const router = createRouter<AppEnv>({
+   * // With urls()
+   * createRouter<AppEnv>({
    *   document: Document,
    *   urls: urlpatterns,
    * });
+   *
+   * // With builder function
+   * createRouter<AppEnv>({
+   *   document: Document,
+   *   urls: ({ path }) => [
+   *     path("/", HomePage, { name: "home" }),
+   *     path("/about", AboutPage, { name: "about" }),
+   *   ],
+   * });
    * ```
    */
-  urls?: UrlPatterns<TEnv, any>;
+  urls?: UrlPatterns<TEnv, any> | UrlBuilder<TEnv>;
 
   /**
    * Injected by the Vite transform at compile time.
@@ -363,16 +441,21 @@ export interface RSCRouterOptions<TEnv = any> {
   version?: string;
 
   /**
-   * Cache-Control header value for prefetch responses.
-   * Only applied to non-intercept partial responses that include the
-   * `X-Rango-Prefetch` header (sent by the Link component's prefetch fetch).
-   * Navigation responses are never cached by the browser.
+   * TTL (in seconds) for the in-memory prefetch cache and the
+   * Cache-Control header on prefetch responses.
    *
-   * Set to `false` to disable browser caching of prefetch responses entirely.
+   * Controls how long prefetch responses are kept in the client-side
+   * in-memory cache and sets `Cache-Control: private, max-age=<ttl>`
+   * on server responses for CDN/edge caching.
    *
-   * @default "private, max-age=300"
+   * The cache is automatically invalidated on server actions regardless
+   * of TTL, so this is primarily a staleness safety net.
+   *
+   * Set to `false` to disable prefetch caching entirely.
+   *
+   * @default 300 (5 minutes)
    */
-  prefetchCacheControl?: string | false;
+  prefetchCacheTTL?: number | false;
 
   /**
    * Enable connection warmup to keep TCP+TLS alive after idle periods.
@@ -384,4 +467,152 @@ export interface RSCRouterOptions<TEnv = any> {
    * @default true
    */
   warmup?: boolean;
+
+  /**
+   * Shorthand timeout (ms) applied to both action execution and render start.
+   * Does NOT apply to streamIdleMs.
+   * Overridden by individual values in `timeouts`.
+   *
+   * @example
+   * ```typescript
+   * createRouter({ timeout: 10_000 });
+   * ```
+   */
+  timeout?: number;
+
+  /**
+   * Structured timeout configuration per phase.
+   * Values here override the `timeout` shorthand.
+   *
+   * @example
+   * ```typescript
+   * createRouter({
+   *   timeouts: {
+   *     actionMs: 10_000,
+   *     renderStartMs: 8_000,
+   *   },
+   * });
+   * ```
+   */
+  timeouts?: RouterTimeouts;
+
+  /**
+   * Custom handler invoked when a timeout occurs.
+   * Receives context about which phase timed out and must return a Response.
+   * If not provided, returns a plain 504 with "Request timed out" body
+   * and X-Rango-Timeout-Phase header.
+   *
+   * If the callback throws, the default 504 response is used as fallback.
+   *
+   * @example
+   * ```typescript
+   * createRouter({
+   *   timeout: 10_000,
+   *   onTimeout: (ctx) => {
+   *     return new Response(
+   *       JSON.stringify({ error: "timeout", phase: ctx.phase }),
+   *       { status: 504, headers: { "Content-Type": "application/json" } },
+   *     );
+   *   },
+   * });
+   * ```
+   */
+  onTimeout?: OnTimeoutCallback<TEnv>;
+
+  /**
+   * Telemetry sink for structured lifecycle events.
+   *
+   * When provided, the router emits events for request start/end,
+   * loader start/end/error, handler errors, cache decisions, and
+   * revalidation decisions.
+   *
+   * No-op when not configured (zero overhead).
+   *
+   * @example Console logging
+   * ```typescript
+   * import { createConsoleSink } from "@rangojs/router";
+   *
+   * const router = createRouter({
+   *   telemetry: createConsoleSink(),
+   * });
+   * ```
+   *
+   * @example Custom sink
+   * ```typescript
+   * const router = createRouter({
+   *   telemetry: {
+   *     emit(event) {
+   *       myTracer.record(event);
+   *     },
+   *   },
+   * });
+   * ```
+   */
+  telemetry?: TelemetrySink;
+
+  /**
+   * SSR configuration options.
+   *
+   * @example
+   * ```typescript
+   * createRouter({
+   *   ssr: {
+   *     resolveStreaming: async ({ request, env }) => {
+   *       const bot = await detectBot(request, env);
+   *       return bot.isBot ? "allReady" : "stream";
+   *     },
+   *   },
+   * });
+   * ```
+   */
+  ssr?: SSROptions<TEnv>;
+
+  /**
+   * Cross-origin request protection for server actions, loader fetches,
+   * and progressive enhancement form submissions.
+   *
+   * When enabled, the router validates that the request's Origin header
+   * (or Referer fallback) matches the Host before executing actions,
+   * loaders, or PE submissions. Requests without Origin/Referer are
+   * allowed (same-origin navigations, non-browser clients).
+   *
+   * The built-in check compares Origin against the Host header and
+   * url.protocol. It does NOT trust X-Forwarded-Host/Proto headers
+   * (they are client-controllable without a trusted proxy). On standard
+   * deployments (Cloudflare Workers, Node behind nginx/caddy) the Host
+   * header is already set to the public-facing host by the platform or
+   * proxy. For non-standard proxy setups where Host differs from the
+   * public origin, use a custom function that reads the appropriate
+   * forwarded headers from your trusted proxy.
+   *
+   * - `true` (default) -- enable built-in origin validation
+   * - `false` -- disable
+   * - function -- full custom control with access to env, phase,
+   *   and the built-in check via `ctx.defaultCheck()`
+   *
+   * The callback receives `OriginCheckContext` with `request`, `url`,
+   * `env`, `routerId`, `phase` ("action" | "loader" | "pe-form"),
+   * and `defaultCheck()`. Return `true` to allow, `false` for default
+   * 403 rejection, or a `Response` for custom rejection.
+   *
+   * @default true
+   *
+   * @example Trusted proxy with X-Forwarded-Host
+   * ```ts
+   * createRouter({
+   *   originCheck({ request, url, env, defaultCheck }) {
+   *     if (env.TRUST_PROXY) {
+   *       const origin = request.headers.get("origin");
+   *       if (!origin) return true;
+   *       if (origin === "null") return false;
+   *       const host = request.headers.get("x-forwarded-host")
+   *         ?? request.headers.get("host") ?? url.host;
+   *       return origin.toLowerCase() === `${url.protocol}//${host}`.toLowerCase();
+   *     }
+   *     return defaultCheck();
+   *   },
+   * });
+   * ```
+   */
+  originCheck?: import("../rsc/origin-guard.js").OriginCheckConfig<TEnv>;
 }

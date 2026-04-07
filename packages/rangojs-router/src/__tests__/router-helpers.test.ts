@@ -479,6 +479,82 @@ describe("createReverse", () => {
       'Missing param "slug"',
     );
   });
+
+  it("substitutes constrained required param", () => {
+    const r = createReverse({
+      "i18n.blog": "/:locale(en|gb)/blog",
+    });
+    expect(r("i18n.blog" as any, { locale: "en" })).toBe("/en/blog");
+    expect(r("i18n.blog" as any, { locale: "gb" })).toBe("/gb/blog");
+  });
+
+  it("substitutes constrained optional param when provided", () => {
+    const r = createReverse({
+      "i18n.blog": "/:locale(en|gb)?/blog",
+    });
+    expect(r("i18n.blog" as any, { locale: "gb" })).toBe("/gb/blog");
+  });
+
+  it("throws with stripped key name for missing constrained param", () => {
+    const r = createReverse({
+      "checkout.step": "/:step(shipping|payment)/checkout",
+    });
+    expect(() => r("checkout.step" as any, {} as any)).toThrow(
+      'Missing param "step"',
+    );
+  });
+
+  it("omits optional param segment when not provided", () => {
+    const r = createReverse({
+      "shop.category": "/category/:name/:page?",
+    });
+    expect(r("shop.category" as any, { name: "shoes" })).toBe(
+      "/category/shoes",
+    );
+  });
+
+  it("includes optional param when provided", () => {
+    const r = createReverse({
+      "shop.category": "/category/:name/:page?",
+    });
+    expect(r("shop.category" as any, { name: "shoes", page: "2" })).toBe(
+      "/category/shoes/2",
+    );
+  });
+
+  it("omits optional constrained param when not provided", () => {
+    const r = createReverse({
+      "i18n.blog": "/:locale(en|gb)?/blog",
+    });
+    expect(r("i18n.blog" as any, {})).toBe("/blog");
+  });
+
+  it("still throws for missing required param when optional params exist", () => {
+    const r = createReverse({
+      "shop.category": "/category/:name/:page?",
+    });
+    expect(() => r("shop.category" as any, {} as any)).toThrow(
+      'Missing param "name"',
+    );
+  });
+
+  it("preserves intentional trailing slash on non-optional patterns", () => {
+    const r = createReverse({
+      trailing: "/blog/",
+    });
+    expect(r("trailing" as any)).toBe("/blog/");
+  });
+
+  it("preserves trailing slash when optional param is omitted from slash-terminated pattern", () => {
+    const r = createReverse({
+      "i18n.blog": "/:locale(en|gb)?/blog/",
+      "shop.category": "/category/:name/:page?/",
+    });
+    expect(r("i18n.blog" as any, {})).toBe("/blog/");
+    expect(r("shop.category" as any, { name: "shoes" })).toBe(
+      "/category/shoes/",
+    );
+  });
 });
 
 // ========================================================================
@@ -548,6 +624,19 @@ describe("resolveRouteName (via createHandlerContext.reverse)", () => {
   it("should throw for dot-prefixed names without a route context", async () => {
     const reverse = await makeReverse(routeMap);
     expect(() => reverse(".index" as any)).toThrow("Unknown route");
+  });
+
+  it("should resolve dot-local names through the hidden scope of an unnamed include", async () => {
+    const reverse = await makeReverse(
+      {
+        "$prefix_0.index": "/admin",
+        "$prefix_0.users": "/admin/users",
+      },
+      "$prefix_0.users",
+    );
+
+    expect(reverse(".index" as any)).toBe("/admin");
+    expect(() => reverse("index" as any)).toThrow("Unknown route");
   });
 
   // Unprefixed = global resolution (named-routes definition)

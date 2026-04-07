@@ -4,6 +4,7 @@ import { urls } from "../urls.js";
 import { createLoader } from "../loader.js";
 import { buildRouteTree } from "./helpers/route-tree.js";
 import type { MiddlewareFn } from "../router/middleware.js";
+import { getParallelSlotCount } from "../server/context.js";
 
 // Dummy components
 const RootLayout = (<div>root</div>) as React.ReactNode;
@@ -30,9 +31,17 @@ const authMiddleware: MiddlewareFn = async (_ctx, next) => next();
 const logMiddleware: MiddlewareFn = async (_ctx, next) => next();
 const rateLimitMiddleware: MiddlewareFn = async (_ctx, next) => next();
 
-// Dummy loaders
-const PostLoader = createLoader(async () => ({ title: "Post" }));
-const UserLoader = createLoader(async () => ({ name: "User" }));
+// Dummy loaders (3rd arg = injected $$id, normally set by Vite plugin)
+const PostLoader = (createLoader as Function)(
+  async () => ({ title: "Post" }),
+  undefined,
+  "test#PostLoader",
+);
+const UserLoader = (createLoader as Function)(
+  async () => ({ name: "User" }),
+  undefined,
+  "test#UserLoader",
+);
 
 describe("route tree inspection", () => {
   // -------------------------------------------------------------------------
@@ -389,17 +398,54 @@ describe("route tree inspection", () => {
 
     const homeEntry = tree.entry("home")!;
     const layoutEntry = homeEntry.parent!;
-    expect(layoutEntry.parallel).toHaveLength(1);
-    expect(layoutEntry.parallel[0].type).toBe("parallel");
+    expect(getParallelSlotCount(layoutEntry.parallel)).toBe(2);
+    expect(layoutEntry.parallel["@sidebar"]!.type).toBe("parallel");
+    expect(layoutEntry.parallel["@main"]!.type).toBe("parallel");
+    expect(
+      Object.keys(
+        layoutEntry.parallel["@sidebar"]!.handler as Record<string, unknown>,
+      ),
+    ).toEqual(["@sidebar"]);
+    expect(
+      Object.keys(
+        layoutEntry.parallel["@main"]!.handler as Record<string, unknown>,
+      ),
+    ).toEqual(["@main"]);
+  });
 
-    // Parallel slot names are on the layout entry's parallel array
-    const parallelHandler = layoutEntry.parallel[0].handler as Record<
-      string,
-      unknown
-    >;
-    const slotNames = Object.keys(parallelHandler);
-    expect(slotNames).toContain("@sidebar");
-    expect(slotNames).toContain("@main");
+  it("uses last parallel definition for duplicate slot names", () => {
+    const OverrideSidebar = (<div>override-sidebar</div>) as React.ReactNode;
+
+    const tree = buildRouteTree(
+      urls(({ path, layout, parallel }) => [
+        layout(RootLayout, () => [
+          path("/", HomePage, { name: "home" }),
+          parallel({ "@sidebar": Sidebar, "@main": MainContent }),
+          parallel({ "@sidebar": OverrideSidebar }),
+        ]),
+      ]),
+    );
+
+    const homeEntry = tree.entry("home")!;
+    const layoutEntry = homeEntry.parent!;
+
+    expect(getParallelSlotCount(layoutEntry.parallel)).toBe(2);
+
+    const sidebarEntry = layoutEntry.parallel["@sidebar"]!;
+    const mainEntry = layoutEntry.parallel["@main"]!;
+
+    expect(
+      Object.keys(sidebarEntry.handler as Record<string, unknown>),
+    ).toEqual(["@sidebar"]);
+    expect(Object.keys(mainEntry.handler as Record<string, unknown>)).toEqual([
+      "@main",
+    ]);
+    expect((sidebarEntry.handler as Record<string, unknown>)["@sidebar"]).toBe(
+      OverrideSidebar,
+    );
+    expect((mainEntry.handler as Record<string, unknown>)["@main"]).toBe(
+      MainContent,
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -628,7 +674,11 @@ describe("route tree inspection", () => {
   it("parallel slots with loaders and loading", () => {
     const FeedContent = (<div>feed</div>) as React.ReactNode;
     const TrendingSidebar = (<div>trending</div>) as React.ReactNode;
-    const FeedLoader = createLoader(async () => ({ items: [] }));
+    const FeedLoader = (createLoader as Function)(
+      async () => ({ items: [] }),
+      undefined,
+      "test#FeedLoader",
+    );
 
     const tree = buildRouteTree(
       urls(({ path, layout, parallel, loader, loading }) => [
@@ -646,8 +696,8 @@ describe("route tree inspection", () => {
     const layoutEntry = feedEntry.parent!;
 
     // Parallel slot is on the layout
-    expect(layoutEntry.parallel).toHaveLength(1);
-    const parallelEntry = layoutEntry.parallel[0];
+    expect(getParallelSlotCount(layoutEntry.parallel)).toBe(2);
+    const parallelEntry = layoutEntry.parallel["@sidebar"]!;
     expect(parallelEntry.type).toBe("parallel");
 
     // Parallel has its own loader and loading
@@ -657,9 +707,12 @@ describe("route tree inspection", () => {
 
     // Slot names
     const handler = parallelEntry.handler as Record<string, unknown>;
-    expect(Object.keys(handler)).toEqual(
-      expect.arrayContaining(["@sidebar", "@content"]),
-    );
+    expect(Object.keys(handler)).toEqual(["@sidebar"]);
+    expect(
+      Object.keys(
+        layoutEntry.parallel["@content"]!.handler as Record<string, unknown>,
+      ),
+    ).toEqual(["@content"]);
 
     // Parallel gets a P prefix shortCode
     expect(parallelEntry.shortCode).toMatch(/^M0L0L0P/);
@@ -1145,8 +1198,16 @@ describe("route tree inspection", () => {
     const PanelA = (<div>panel-a</div>) as React.ReactNode;
     const PanelB = (<div>panel-b</div>) as React.ReactNode;
     const InnerLoading = (<div>inner-loading</div>) as React.ReactNode;
-    const ComplexLoader = createLoader(async () => ({ data: "complex" }));
-    const DeepLoader = createLoader(async () => ({ nested: true }));
+    const ComplexLoader = (createLoader as Function)(
+      async () => ({ data: "complex" }),
+      undefined,
+      "test#ComplexLoader",
+    );
+    const DeepLoader = (createLoader as Function)(
+      async () => ({ nested: true }),
+      undefined,
+      "test#DeepLoader",
+    );
 
     const tree = buildRouteTree(
       urls(({ path, layout, loader, loading, parallel, middleware }) => [
@@ -1193,13 +1254,12 @@ describe("route tree inspection", () => {
     expect(innerLayout.loader[0].loader).toBe(DeepLoader);
 
     // InnerLayout has parallel slots
-    expect(innerLayout.parallel).toHaveLength(1);
-    const parallelEntry = innerLayout.parallel[0];
+    expect(getParallelSlotCount(innerLayout.parallel)).toBe(2);
+    const parallelEntry = innerLayout.parallel["@panelA"]!;
     expect(parallelEntry.type).toBe("parallel");
-    const slots = parallelEntry.handler as Record<string, unknown>;
-    expect(Object.keys(slots)).toEqual(
-      expect.arrayContaining(["@panelA", "@panelB"]),
-    );
+    expect(
+      Object.keys(parallelEntry.handler as Record<string, unknown>),
+    ).toEqual(["@panelA"]);
 
     // DeepLayout carries middleware (no nested orphan layouts)
     expect(innerLayout.layout).toHaveLength(0);
@@ -1226,8 +1286,16 @@ describe("route tree inspection", () => {
     const DetailPage = (<div>detail</div>) as React.ReactNode;
     const ModalView = (<div>modal</div>) as React.ReactNode;
     const SidebarNav = (<div>sidebar-nav</div>) as React.ReactNode;
-    const DetailLoader = createLoader(async () => ({ item: {} }));
-    const ListLoader = createLoader(async () => ({ items: [] }));
+    const DetailLoader = (createLoader as Function)(
+      async () => ({ item: {} }),
+      undefined,
+      "test#DetailLoader",
+    );
+    const ListLoader = (createLoader as Function)(
+      async () => ({ items: [] }),
+      undefined,
+      "test#ListLoader",
+    );
 
     const tree = buildRouteTree(
       urls(
@@ -1329,8 +1397,8 @@ describe("route tree inspection", () => {
     const homeEntry = tree.entry("home")!;
     const navLayout = homeEntry.parent!;
     expect(navLayout.type).toBe("layout"); // NavLayout
-    expect(navLayout.parallel).toHaveLength(1);
-    const sidebarSlot = navLayout.parallel[0];
+    expect(getParallelSlotCount(navLayout.parallel)).toBe(1);
+    const sidebarSlot = navLayout.parallel["@sidebar"]!;
     expect(sidebarSlot.type).toBe("parallel");
     const sidebarHandler = sidebarSlot.handler as Record<string, unknown>;
     expect(Object.keys(sidebarHandler)).toContain("@sidebar");
@@ -1344,5 +1412,57 @@ describe("route tree inspection", () => {
     expect(cacheEntry.intercept[0].when).toHaveLength(1);
     expect(cacheEntry.intercept[0].loader).toHaveLength(1);
     expect(cacheEntry.intercept[0].loader[0].loader).toBe(DetailLoader);
+  });
+
+  // -------------------------------------------------------------------------
+  // Cross-include isolation
+  // -------------------------------------------------------------------------
+
+  it("does not leak loaders/middleware from one include into another", () => {
+    const ShopLoader = (createLoader as Function)(
+      async () => ({ items: [] }),
+      undefined,
+      "test#ShopLoader",
+    );
+    const shopMiddleware: MiddlewareFn = async (_ctx, next) => next();
+
+    const shopPatterns = urls<any>(({ path, layout, loader, middleware }) => [
+      middleware(shopMiddleware),
+      loader(ShopLoader),
+      layout(ShopLayout, () => [
+        path("/", ProductList, { name: "index" }),
+        path("/:slug", ProductDetail, { name: "detail" }),
+      ]),
+    ]);
+
+    const dashboardPatterns = urls<any>(({ path }) => [
+      path("/", Dashboard, { name: "index" }),
+    ]);
+
+    const tree = buildRouteTree(
+      urls(({ path, include }) => [
+        path("/", HomePage, { name: "home" }),
+        include("/shop", shopPatterns, { name: "shop" }),
+        include("/dashboard", dashboardPatterns, { name: "dashboard" }),
+      ]),
+    );
+
+    // Shop route should have the shop loader in its parent chain
+    const shopEntry = tree.entry("shop.index")!;
+    const shopParent = shopEntry.parent!; // shop layout
+    const shopRoot = shopParent.parent!; // cloned synthetic root
+    expect(shopRoot.loader).toHaveLength(1);
+    expect(shopRoot.loader[0].loader).toBe(ShopLoader);
+    expect(shopRoot.middleware).toHaveLength(1);
+    expect(shopRoot.middleware[0]).toBe(shopMiddleware);
+
+    // Dashboard route must NOT have shop loaders/middleware in its parent chain
+    const dashEntry = tree.entry("dashboard.index")!;
+    let current = dashEntry.parent;
+    while (current) {
+      expect(current.loader).toHaveLength(0);
+      expect(current.middleware).toHaveLength(0);
+      current = current.parent;
+    }
   });
 });

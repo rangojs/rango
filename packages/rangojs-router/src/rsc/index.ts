@@ -29,18 +29,10 @@ export type {
   NonceProvider,
 } from "./types.js";
 
-// Re-export HandleStore types for consumers who need custom handling
-export {
-  createHandleStore,
-  type HandleStore,
-  type HandleData,
-} from "../server/handle-store.js";
-
 // Re-export request context utilities for server-side access to env/request/params
 export {
   getRequestContext,
   requireRequestContext,
-  setRequestContextParams,
 } from "../server/request-context.js";
 
 // Re-export cache store types and implementations

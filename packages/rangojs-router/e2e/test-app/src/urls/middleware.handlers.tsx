@@ -163,6 +163,14 @@ export const MiddlewareSharedVarsHandler: Handler<
   </div>
 );
 
+export const MiddlewareRouteShortcircuitHandler: Handler<
+  "middlewareTest.routeShortcircuit"
+> = () => (
+  <div data-testid="middleware-test-route-shortcircuit">
+    <h1>This should never render (middleware short-circuits)</h1>
+  </div>
+);
+
 export const MiddlewareRouteLevelHandler: Handler<
   "middlewareTest.routeLevel"
 > = (ctx) => {
@@ -180,6 +188,45 @@ export const MiddlewareRouteLevelHandler: Handler<
       <div data-testid="route-middleware-value">
         {routeMiddlewareValue || "No middleware value"}
       </div>
+    </div>
+  );
+};
+
+export const MiddlewareCookiesAfterNextHandler: Handler<
+  "middlewareTest.cookiesAfterNext"
+> = () => (
+  <div data-testid="middleware-test-cookies-after-next">
+    <h1 data-testid="cookies-after-next-title">Cookies After Next() Test</h1>
+    <p>
+      This route tests that cookies set after await next() appear in the
+      response.
+    </p>
+  </div>
+);
+
+export const MiddlewareRouteCookiesAfterNextHandler: Handler<
+  "middlewareTest.routeCookiesAfterNext"
+> = () => (
+  <div data-testid="middleware-test-route-cookies-after-next">
+    <h1 data-testid="route-cookies-after-next-title">
+      Route-Level Cookies After Next() Test
+    </h1>
+    <p>
+      This route tests that cookies set after await next() in route-level
+      middleware appear in the response.
+    </p>
+  </div>
+);
+
+export const MiddlewareCtxParityHandler: Handler<"middlewareTest.ctxParity"> = (
+  ctx,
+) => {
+  const varValue = ctx.get("mwVarTest");
+  return (
+    <div data-testid="middleware-test-ctx-parity">
+      <h1 data-testid="ctx-parity-title">Middleware Context Parity Test</h1>
+      <div data-testid="ctx-parity-var-value">{varValue || "not set"}</div>
+      <div data-testid="ctx-parity-theme">{ctx.theme ?? "no-theme"}</div>
     </div>
   );
 };

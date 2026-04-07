@@ -8,9 +8,12 @@
 import type { ContextVar } from "../context-var.js";
 import type {
   DefaultReverseRouteMap,
+  DefaultRouteName,
   DefaultVars,
 } from "../types/global-namespace.js";
 import type { ScopedReverseFunction } from "../reverse.js";
+import type { Theme } from "../theme/types.js";
+import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
 
 /**
  * Get variable function type
@@ -24,8 +27,12 @@ type GetVariableFn = {
  * Set variable function type
  */
 type SetVariableFn = {
-  <T>(contextVar: ContextVar<T>, value: T): void;
-  <K extends keyof DefaultVars>(key: K, value: DefaultVars[K]): void;
+  <T>(contextVar: ContextVar<T>, value: T, options?: { cache?: boolean }): void;
+  <K extends keyof DefaultVars>(
+    key: K,
+    value: DefaultVars[K],
+    options?: { cache?: boolean },
+  ): void;
 };
 
 /**
@@ -54,8 +61,14 @@ export interface MiddlewareContext<
   /** Original request */
   request: Request;
 
-  /** Parsed URL */
+  /** Parsed URL (with internal `_rsc*` params stripped) */
   url: URL;
+
+  /**
+   * The original request URL with all parameters intact, including
+   * internal `_rsc*` transport params.
+   */
+  originalUrl: URL;
 
   /** URL pathname */
   pathname: string;
@@ -70,41 +83,11 @@ export interface MiddlewareContext<
   params: TParams;
 
   /**
-   * Response object - available immediately via stub, real response after `await next()`
-   *
-   * Headers set before `next()` are merged into the final response.
-   * Can be used to modify headers directly like Hono's `c.res`.
-   *
-   * @example
-   * ```typescript
-   * middleware(async (ctx, next) => {
-   *   // Set headers BEFORE next() - will be merged into final response
-   *   ctx.res.headers.set('X-Request-Id', generateId());
-   *
-   *   await next();
-   *
-   *   // Set headers AFTER next() - applied directly
-   *   ctx.res.headers.set('X-Custom', 'value');
-   *   // No return needed!
-   * });
-   * ```
+   * Response headers.
+   * Before `next()`, returns headers from the shared response stub.
+   * After `next()`, returns headers from the downstream response.
    */
-  res: Response;
-
-  /** Get a cookie value */
-  cookie(name: string): string | undefined;
-
-  /** Get all cookies as object */
-  cookies(): Record<string, string>;
-
-  /** Set a cookie on the response */
-  setCookie(name: string, value: string, options?: CookieOptions): void;
-
-  /** Delete a cookie */
-  deleteCookie(
-    name: string,
-    options?: Pick<CookieOptions, "domain" | "path">,
-  ): void;
+  readonly headers: Headers;
 
   /** Get a context variable (shared with route handlers) */
   get: GetVariableFn;
@@ -113,13 +96,50 @@ export interface MiddlewareContext<
   set: SetVariableFn;
 
   /**
-   * Set a response header - can be called before or after `next()`
+   * Set a response header - can be called before or after `next()`.
    *
    * When called before `next()`, headers are queued and merged into the final response.
    * When called after `next()`, headers are set directly on the response.
-   * Shorthand for `ctx.res.headers.set()`.
    */
   header(name: string, value: string): void;
+
+  /**
+   * The matched route name, if available and the route has an explicit name.
+   * Undefined for global middleware (runs before route matching) or unnamed routes.
+   */
+  routeName?: DefaultRouteName;
+
+  /**
+   * Enable performance metrics for this request.
+   * When called, granular timing breakdown is logged to console and
+   * included in the Server-Timing response header, regardless of the
+   * router-level `debugPerformance` option.
+   *
+   * Call **before** `await next()` so the metrics store exists when
+   * downstream phases (route matching, rendering, SSR) record their
+   * spans. Calling after `next()` returns still emits `handler:total`
+   * but misses all upstream metrics.
+   */
+  debugPerformance(): void;
+
+  /**
+   * Current theme (from cookie or default).
+   * Only available when theme is enabled in router config.
+   */
+  theme?: Theme;
+
+  /**
+   * Set the theme (only available when theme is enabled in router config).
+   * Sets a cookie with the new theme value.
+   */
+  setTheme?: (theme: Theme) => void;
+
+  /**
+   * Attach location state entries to this response.
+   * State is delivered to the client via history.pushState and accessible
+   * through the useLocationState() hook.
+   */
+  setLocationState(entries: LocationStateEntry | LocationStateEntry[]): void;
 
   /**
    * Generate URLs from route names.
@@ -176,7 +196,7 @@ export interface MiddlewareEntry<TEnv = any> {
 }
 
 /**
- * Mutable response holder - allows ctx.res to be updated after next() is called
+ * Mutable response holder - tracks the current response through the middleware chain.
  */
 export interface ResponseHolder {
   response: Response | null;

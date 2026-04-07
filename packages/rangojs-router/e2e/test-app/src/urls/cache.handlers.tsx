@@ -5,6 +5,8 @@ import {
   NonCachedTestLoader,
   CachedTestLoader,
   InterceptCacheTestLoader,
+  ReactNodeTestLoader,
+  NullTestLoader,
 } from "../loaders.js";
 import {
   CacheTestModal,
@@ -55,6 +57,7 @@ export const CacheInterceptIndexHandler: Handler<
       <li>
         <Link
           to="/cache-test/intercept/item-a"
+          prefetch="none"
           data-testid="cache-intercept-link-a"
         >
           Item A
@@ -63,6 +66,7 @@ export const CacheInterceptIndexHandler: Handler<
       <li>
         <Link
           to="/cache-test/intercept/item-b"
+          prefetch="none"
           data-testid="cache-intercept-link-b"
         >
           Item B
@@ -76,13 +80,20 @@ export const CacheInterceptDetailHandler: Handler<
   "cacheTest.interceptDetail"
 > = async (ctx) => {
   const data = await ctx.use(InterceptCacheTestLoader);
+  const otherItem = ctx.params.itemId === "item-a" ? "item-b" : "item-a";
   return (
     <div data-testid="cache-intercept-detail">
       <Link to="/cache-test/intercept" data-testid="back-to-intercept-index">
         Back
       </Link>
-      <h1>Item Detail: {ctx.params.itemId}</h1>
+      <h1 data-testid="detail-item-id">Item Detail: {ctx.params.itemId}</h1>
       <p>This is the full detail page (direct navigation)</p>
+      <Link
+        to={`/cache-test/intercept/${otherItem}`}
+        data-testid={`detail-link-${otherItem}`}
+      >
+        Go to {otherItem}
+      </Link>
       <CacheTestModal data={data} testId="detail-loader-data" />
     </div>
   );
@@ -205,3 +216,61 @@ export const CacheStatusRedirectTargetHandler: Handler<
     </p>
   </div>
 );
+
+// ReactNode loader handler (cached variant — route attaches cache())
+export const CacheReactNodeCachedHandler: Handler<
+  "cacheTest.reactNodeCached"
+> = async (ctx) => {
+  const node = await ctx.use(ReactNodeTestLoader);
+  return (
+    <div data-testid="react-node-cached-page">
+      <h1>ReactNode Cached Loader</h1>
+      <div data-testid="react-node-content">{node}</div>
+    </div>
+  );
+};
+
+// ReactNode loader handler (non-cached variant)
+export const CacheReactNodeNonCachedHandler: Handler<
+  "cacheTest.reactNodeNonCached"
+> = async (ctx) => {
+  const node = await ctx.use(ReactNodeTestLoader);
+  return (
+    <div data-testid="react-node-non-cached-page">
+      <h1>ReactNode Non-Cached Loader</h1>
+      <div data-testid="react-node-content">{node}</div>
+    </div>
+  );
+};
+
+// Null loader handler (cached variant — route attaches cache())
+export const CacheNullCachedHandler: Handler<"cacheTest.nullCached"> = async (
+  ctx,
+) => {
+  const data = await ctx.use(NullTestLoader);
+  return (
+    <div data-testid="null-cached-page">
+      <h1>Null Cached Loader</h1>
+      <p data-testid="null-value">
+        {data.value === null ? "null" : "not-null"}
+      </p>
+      <p data-testid="null-count">{data.count}</p>
+    </div>
+  );
+};
+
+// Null loader handler (non-cached variant)
+export const CacheNullNonCachedHandler: Handler<
+  "cacheTest.nullNonCached"
+> = async (ctx) => {
+  const data = await ctx.use(NullTestLoader);
+  return (
+    <div data-testid="null-non-cached-page">
+      <h1>Null Non-Cached Loader</h1>
+      <p data-testid="null-value">
+        {data.value === null ? "null" : "not-null"}
+      </p>
+      <p data-testid="null-count">{data.count}</p>
+    </div>
+  );
+};

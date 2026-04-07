@@ -1,4 +1,4 @@
-import type { Handler } from "@rangojs/router";
+import { Meta, type Handler } from "@rangojs/router";
 import { Breadcrumbs } from "@/handles/breadcrumbs.js";
 import { ProductsCategoryRoute, ProductsDetailRoute } from "./product.js";
 
@@ -26,6 +26,7 @@ export const CategoryRouteWithBreadcrumbs: Handler<"/products/:category"> = (
     label: title,
     href: `/shop/products/${ctx.params.category}`,
   });
+  ctx.use(Meta)({ title });
   return ProductsCategoryRoute(ctx);
 };
 
@@ -39,5 +40,6 @@ export const ProductDetailRouteWithBreadcrumbs: Handler<"/product/:slug"> = (
   const push = ctx.use(Breadcrumbs);
   const title = slugToTitle(ctx.params.slug);
   push({ label: title, href: `/shop/product/${ctx.params.slug}` });
+  ctx.use(Meta)({ title });
   return ProductsDetailRoute(ctx);
 };

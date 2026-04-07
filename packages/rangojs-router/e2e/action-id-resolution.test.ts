@@ -24,12 +24,12 @@ test.describe("action-id-resolution (production)", () => {
       const distPath = path.join(f.root, "dist/rsc");
       const files = fs.readdirSync(distPath, { recursive: true }) as string[];
 
-      // Find action files in assets
+      // Find JS files in the RSC bundle (assets/ and entry files)
       const actionFiles = files.filter(
         (file) =>
           typeof file === "string" &&
-          file.includes("assets/") &&
-          file.endsWith(".js"),
+          file.endsWith(".js") &&
+          !file.endsWith(".map"),
       );
 
       let foundFilePathInServerBundle = false;

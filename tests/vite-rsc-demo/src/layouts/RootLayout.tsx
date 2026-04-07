@@ -1,7 +1,12 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Link, ScrollRestoration, href } from "@rangojs/router/client";
+import {
+  Link,
+  ScrollRestoration,
+  href,
+  MetaTags,
+} from "@rangojs/router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { BreadcrumbNav } from "../components/BreadcrumbNav.js";
 import { LinkStatusIndicator } from "../components/LinkStatusIndicator.js";
@@ -10,9 +15,8 @@ export function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <meta charSet="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>RSC Router Demo</title>
+        <MetaTags />
         <style>{`
           body {
             font-family: system-ui, -apple-system, sans-serif;

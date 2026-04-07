@@ -182,7 +182,9 @@ export type ValidPaths<TRoutes = GetRegisteredRoutes> =
  */
 export function href<T extends ValidPaths>(path: T, mount?: string): string {
   if (mount && mount !== "/") {
-    return mount + path;
+    // Strip trailing slash from mount to avoid double-slash when joining
+    const normalizedMount = mount.endsWith("/") ? mount.slice(0, -1) : mount;
+    return normalizedMount + path;
   }
   return path;
 }

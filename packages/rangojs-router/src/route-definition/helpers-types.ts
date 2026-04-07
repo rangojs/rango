@@ -228,11 +228,12 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
    * ])
    *
-   * // Access loader data in handlers via ctx.use()
-   * route("products.detail", async (ctx) => {
-   *   const product = await ctx.use(ProductLoader);
-   *   return <ProductPage product={product} />;
-   * })
+   * // Consume in client components with useLoader()
+   * // (preferred — cache-safe, always fresh)
+   * function ProductDetails() {
+   *   const { data } = useLoader(ProductLoader);
+   *   return <div>{data.name}</div>;
+   * }
    * ```
    * @param loaderDef - Loader created with createLoader()
    * @param use - Optional callback for loader-specific revalidation rules
@@ -254,7 +255,10 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param options - Configuration options
    * @param options.ssr - If false, skip showing loading on document requests (SSR)
    */
-  loading: (component: ReactNode, options?: { ssr?: boolean }) => LoadingItem;
+  loading: (
+    component: ReactNode | (() => ReactNode),
+    options?: { ssr?: boolean },
+  ) => LoadingItem;
   /**
    * Attach an error boundary to catch errors in this segment and children
    * ```typescript

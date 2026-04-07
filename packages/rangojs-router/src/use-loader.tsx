@@ -1,8 +1,70 @@
 "use client";
 
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import {
+  isValidElement,
+  startTransition,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import type { LoaderDefinition, LoadOptions } from "./types.js";
+
+/**
+ * Extract a specific loader's data from a content ReactNode.
+ *
+ * When a route registers loaders via loader(), the resolved data lives in
+ * the route's OutletProvider (rendered as <Outlet /> content). Parallel
+ * slots are siblings of <Outlet />, so they can't find it by walking
+ * the parent context chain. This helper traverses wrapper elements
+ * (MountContextProvider, ViewTransition, etc.) to reach the OutletProvider
+ * and extract the loader data directly.
+ */
+const NOT_FOUND = Symbol("not-found");
+
+function extractContentLoaderData(
+  node: ReactNode,
+  loaderId: string,
+): unknown | typeof NOT_FOUND {
+  if (!isValidElement(node)) return NOT_FOUND;
+  const props = node.props as Record<string, any> | undefined;
+  if (!props) return NOT_FOUND;
+
+  // Direct OutletProvider with loaderData
+  if (props.loaderData && loaderId in props.loaderData) {
+    return props.loaderData[loaderId];
+  }
+
+  // LoaderBoundary: loaderIds + loaderDataPromise (already resolved array).
+  // When the segment has loading(), loaderData is resolved inside
+  // LoaderBoundary via use(). If the promise was pre-awaited (forceAwait
+  // or isAction), the prop is a raw array we can index into.
+  if (
+    props.loaderIds &&
+    Array.isArray(props.loaderIds) &&
+    props.loaderDataPromise &&
+    !(props.loaderDataPromise instanceof Promise)
+  ) {
+    const idx = (props.loaderIds as string[]).indexOf(loaderId);
+    if (idx !== -1) {
+      const data = (props.loaderDataPromise as any[])[idx];
+      // loaderDataPromise entries may be { ok, data } result objects
+      if (data && typeof data === "object" && "ok" in data) {
+        return data.ok ? data.data : NOT_FOUND;
+      }
+      return data;
+    }
+  }
+
+  // Traverse into wrapper elements (MountContextProvider, ViewTransition,
+  // Suspense wrappers, etc.)
+  if (props.children) return extractContentLoaderData(props.children, loaderId);
+  return NOT_FOUND;
+}
 
 /**
  * Payload returned by loader RSC requests
@@ -71,23 +133,32 @@ function useLoaderInternal<T>(
   const context = useContext(OutletContext);
 
   // Get data from context (SSR/navigation)
-  const getContextData = useCallback((): T | undefined => {
+  const contextData = useMemo((): T | undefined => {
     let current: OutletContextValue | null | undefined = context;
     while (current) {
       if (current.loaderData && loader.$$id in current.loaderData) {
         return current.loaderData[loader.$$id] as T;
+      }
+      // Check content element — the route's OutletProvider is rendered as
+      // <Outlet /> content (a child), so its loaderData isn't in the parent
+      // chain. Parallel slots need to reach into it to find route-level loaders.
+      const contentData = extractContentLoaderData(
+        current.content,
+        loader.$$id,
+      );
+      if (contentData !== NOT_FOUND) {
+        return contentData as T;
       }
       current = current.parent;
     }
     return undefined;
   }, [context, loader.$$id]);
 
-  const contextData = getContextData();
-
   // Local state for fetched data (from load() calls)
   const [fetchedData, setFetchedData] = useState<T | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const requestIdRef = useRef(0);
 
   // Track context data changes to reset fetched data on navigation
   const prevContextDataRef = useRef(contextData);
@@ -105,12 +176,23 @@ function useLoaderInternal<T>(
 
   const throwOnError = options?.throwOnError ?? true;
 
+  // Refs for values used inside load() that should NOT cause callback identity
+  // churn. loader.$$id can change if a reusable component receives a different
+  // loader without remounting; data changes on every navigation. Refs keep the
+  // callback stable while always reading the latest values.
+  const loaderIdRef = useRef(loader.$$id);
+  loaderIdRef.current = loader.$$id;
+  const dataRef = useRef(data);
+  dataRef.current = data;
+
   // Load function for fetching data via the ?_rsc_loader endpoint.
   // Supports GET (data fetching) and POST/PUT/PATCH/DELETE (mutations).
   const load = useCallback(
     async (loadOptions?: LoadOptions): Promise<T> => {
+      const requestId = ++requestIdRef.current;
+      const loaderId = loaderIdRef.current;
       // Verify the loader has $$id
-      if (!loader.$$id) {
+      if (!loaderId) {
         throw new Error(
           `Loader is missing $$id. Make sure the exposeLoaderId Vite plugin is enabled.`,
         );
@@ -120,8 +202,8 @@ function useLoaderInternal<T>(
       setError(null);
 
       try {
-        const url = new URL(window.location.pathname, window.location.origin);
-        url.searchParams.set("_rsc_loader", loader.$$id);
+        const url = new URL(window.location.href);
+        url.searchParams.set("_rsc_loader", loaderId);
 
         const method = loadOptions?.method ?? "GET";
         const isBodyMethod = method !== "GET";
@@ -202,19 +284,27 @@ function useLoaderInternal<T>(
         }
 
         const result = payload.loaderResult;
-        setFetchedData(result);
+        if (requestId === requestIdRef.current) {
+          startTransition(() => {
+            setFetchedData(result);
+          });
+        }
         return result;
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
-        setError(err);
+        if (requestId === requestIdRef.current) {
+          setError(err);
+        }
         if (throwOnError) {
           throw err;
         }
-        // When throwOnError is false, return the current data (previous successful
-        // value or undefined). Caller should check error state for error handling.
-        return data as T;
+        // When throwOnError is false, return the latest data snapshot (previous
+        // successful value or undefined). Caller should check error state.
+        return dataRef.current as T;
       } finally {
-        setIsLoading(false);
+        if (requestId === requestIdRef.current) {
+          setIsLoading(false);
+        }
       }
     },
     [throwOnError],

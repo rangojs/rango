@@ -40,7 +40,8 @@ export function generateThemeScript(config: ResolvedThemeConfig): string {
     for (var i = 0; i < cookies.length; i++) {
       var cookie = cookies[i].trim();
       if (cookie.indexOf(storageKey + '=') === 0) {
-        return decodeURIComponent(cookie.substring(storageKey.length + 1));
+        try { return decodeURIComponent(cookie.substring(storageKey.length + 1)); }
+        catch (e) { return cookie.substring(storageKey.length + 1); }
       }
     }
     // Fall back to localStorage

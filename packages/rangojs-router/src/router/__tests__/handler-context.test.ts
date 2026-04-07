@@ -1,4 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { getSearchSchemaMock, isRouteRootScopedMock } = vi.hoisted(() => ({
+  getSearchSchemaMock: vi.fn(() => undefined),
+  isRouteRootScopedMock: vi.fn((): boolean | undefined => undefined),
+}));
 
 // Mock dependencies before importing the module under test
 vi.mock("../../server/request-context.js", () => ({
@@ -7,14 +12,24 @@ vi.mock("../../server/request-context.js", () => ({
 }));
 
 vi.mock("../../route-map-builder.js", () => ({
-  getSearchSchema: () => undefined,
+  getSearchSchema: getSearchSchemaMock,
+  isRouteRootScoped: isRouteRootScopedMock,
 }));
 
 import {
   createHandlerContext,
+  createPrerenderContext,
+  createStaticContext,
   createReverseFunction,
   stripInternalParams,
 } from "../handler-context";
+
+beforeEach(() => {
+  getSearchSchemaMock.mockReset();
+  getSearchSchemaMock.mockReturnValue(undefined);
+  isRouteRootScopedMock.mockReset();
+  isRouteRootScopedMock.mockReturnValue(undefined);
+});
 
 /**
  * Helper to build a minimal HandlerContext for testing search param behavior.
@@ -60,6 +75,28 @@ describe("createHandlerContext", () => {
       expect(ctx.url.searchParams.get("page")).toBe("1");
     });
   });
+
+  describe("passthrough()", () => {
+    it("throws at runtime even for passthrough prerender routes", () => {
+      const url = new URL("http://localhost/guides/routing");
+      const ctx = createHandlerContext(
+        { slug: "routing" },
+        new Request(url.href),
+        url.searchParams,
+        "/guides/routing",
+        url,
+        {},
+        { "guides.detail": "/guides/:slug" },
+        "guides.detail",
+        undefined,
+        true,
+      );
+
+      expect(() => (ctx as any).passthrough()).toThrow(
+        "ctx.passthrough() can only be called during build-time prerendering.",
+      );
+    });
+  });
 });
 
 describe("stripInternalParams", () => {
@@ -103,6 +140,192 @@ describe("stripInternalParams", () => {
     expect(clean.origin).toBe("http://example.com");
     expect(clean.pathname).toBe("/path/to/page");
     expect(clean.searchParams.get("q")).toBe("test");
+  });
+
+  it("should strip _rsc_loader transport params and preserve user search", () => {
+    const url = new URL(
+      "http://localhost/products?tab=pricing&_rsc_loader=myLoader&_rsc_loader_params=%7B%7D",
+    );
+    const clean = stripInternalParams(url);
+    expect(clean.searchParams.get("tab")).toBe("pricing");
+    expect(clean.searchParams.has("_rsc_loader")).toBe(false);
+    expect(clean.searchParams.has("_rsc_loader_params")).toBe(false);
+  });
+});
+
+describe("createHandlerContext routeName", () => {
+  it("should set routeName for a named route", () => {
+    const url = new URL("http://localhost/blog/hello");
+    const ctx = createHandlerContext(
+      { slug: "hello" },
+      new Request(url.href),
+      url.searchParams,
+      "/blog/hello",
+      url,
+      {},
+      { "blog.post": "/blog/:slug" },
+      "blog.post",
+    );
+    expect(ctx.routeName).toBe("blog.post");
+  });
+
+  it("should set routeName to undefined for an unnamed route", () => {
+    const url = new URL("http://localhost/health");
+    const ctx = createHandlerContext(
+      {},
+      new Request(url.href),
+      url.searchParams,
+      "/health",
+      url,
+      {},
+      {},
+      "$path__health",
+    );
+    expect(ctx.routeName).toBeUndefined();
+  });
+
+  it("should set routeName to undefined for a namespaced unnamed route", () => {
+    const url = new URL("http://localhost/docs/faq");
+    const ctx = createHandlerContext(
+      {},
+      new Request(url.href),
+      url.searchParams,
+      "/docs/faq",
+      url,
+      {},
+      {},
+      "docs.$path__faq",
+    );
+    expect(ctx.routeName).toBeUndefined();
+  });
+
+  it("should set routeName to undefined for a route inside a hidden include scope", () => {
+    const url = new URL("http://localhost/admin/users");
+    const ctx = createHandlerContext(
+      {},
+      new Request(url.href),
+      url.searchParams,
+      "/admin/users",
+      url,
+      {},
+      {},
+      "$prefix_0.users",
+    );
+    expect(ctx.routeName).toBeUndefined();
+  });
+
+  it("should set routeName to undefined when no routeName is provided", () => {
+    const url = new URL("http://localhost/test");
+    const ctx = createHandlerContext(
+      {},
+      new Request(url.href),
+      url.searchParams,
+      "/test",
+      url,
+    );
+    expect(ctx.routeName).toBeUndefined();
+  });
+
+  it("should include the full namespace prefix for named routes under include()", () => {
+    const url = new URL("http://localhost/magazine/article/1");
+    const ctx = createHandlerContext(
+      { id: "1" },
+      new Request(url.href),
+      url.searchParams,
+      "/magazine/article/1",
+      url,
+      {},
+      { "magazine.article": "/magazine/article/:id" },
+      "magazine.article",
+    );
+    expect(ctx.routeName).toBe("magazine.article");
+  });
+
+  it("captures rootScoped eagerly so same route names stay isolated across routers", () => {
+    const url = new URL("http://localhost/flat/sub/42");
+    const routeMap = {
+      flatIndex: "/flat",
+      "sub.detail": "/flat/sub/:id",
+      "sub.index": "/flat/sub",
+    };
+
+    // Simulate two routers reusing the same route name with different scope
+    // semantics. The first one is root-scoped (flattened mount), the second
+    // one is not (named mount boundary).
+    isRouteRootScopedMock.mockReturnValueOnce(true).mockReturnValueOnce(false);
+
+    const rootScopedCtx = createHandlerContext(
+      { id: "42" },
+      new Request(url.href),
+      url.searchParams,
+      "/flat/sub/42",
+      url,
+      {},
+      routeMap,
+      "sub.detail",
+    );
+    const namedScopedCtx = createHandlerContext(
+      { id: "42" },
+      new Request(url.href),
+      url.searchParams,
+      "/flat/sub/42",
+      url,
+      {},
+      routeMap,
+      "sub.detail",
+    );
+
+    expect(isRouteRootScopedMock).toHaveBeenCalledTimes(2);
+
+    // Changing the global registry afterward must not affect the already
+    // constructed reverse functions.
+    isRouteRootScopedMock.mockReturnValue(undefined);
+
+    expect(rootScopedCtx.reverse(".flatIndex")).toBe("/flat");
+    expect(() => namedScopedCtx.reverse(".flatIndex")).toThrow("Unknown route");
+    expect(isRouteRootScopedMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("createPrerenderContext routeName", () => {
+  it("should set routeName for a named route", () => {
+    const ctx = createPrerenderContext(
+      { slug: "hello" },
+      "/blog/hello",
+      { "blog.post": "/blog/:slug" },
+      "blog.post",
+    );
+    expect(ctx.routeName).toBe("blog.post");
+  });
+
+  it("should set routeName to undefined for an unnamed route", () => {
+    const ctx = createPrerenderContext({}, "/health", {}, "$path__health");
+    expect(ctx.routeName).toBeUndefined();
+  });
+
+  it("should set routeName to undefined when no routeName is provided", () => {
+    const ctx = createPrerenderContext({}, "/test", {});
+    expect(ctx.routeName).toBeUndefined();
+  });
+});
+
+describe("createStaticContext routeName", () => {
+  it("should set routeName for a named route", () => {
+    const ctx = createStaticContext(
+      { "blog.post": "/blog/:slug" },
+      "blog.post",
+    );
+    expect(ctx.routeName).toBe("blog.post");
+  });
+
+  it("should set routeName to undefined for an unnamed route", () => {
+    const ctx = createStaticContext({}, "$path__health");
+    expect(ctx.routeName).toBeUndefined();
+  });
+
+  it("should set routeName to undefined when no routeName is provided", () => {
+    const ctx = createStaticContext({});
+    expect(ctx.routeName).toBeUndefined();
   });
 });
 
@@ -198,6 +421,143 @@ describe("createReverseFunction", () => {
         tenantId: "hello world",
       });
       expect(reverse(".settings")).toBe("/tenant/hello%20world/settings");
+    });
+  });
+
+  describe('dot-local reverse with { name: "" } (root-scope fallback)', () => {
+    // Simulates include("/flat", patterns, { name: "" })
+    // Children are registered with bare names at root scope.
+    const flatRouteMap: Record<string, string> = {
+      flatIndex: "/flat",
+      flatDetail: "/flat/:id",
+      otherRoute: "/other",
+    };
+
+    it("should resolve dot-local name to root-scope sibling", () => {
+      const reverse = createReverseFunction(flatRouteMap, "flatIndex");
+      expect(reverse(".flatDetail", { id: "42" })).toBe("/flat/42");
+    });
+
+    it("should resolve dot-local back to index from sibling", () => {
+      const reverse = createReverseFunction(flatRouteMap, "flatDetail", {
+        id: "42",
+      });
+      expect(reverse(".flatIndex")).toBe("/flat");
+    });
+
+    it("should resolve dot-local to any root-scope route", () => {
+      const reverse = createReverseFunction(flatRouteMap, "flatIndex");
+      expect(reverse(".otherRoute")).toBe("/other");
+    });
+
+    it("should throw for unknown dot-local name at root scope", () => {
+      const reverse = createReverseFunction(flatRouteMap, "flatIndex");
+      expect(() => reverse(".nonExistent")).toThrow(
+        'Unknown route: ".nonExistent"',
+      );
+    });
+  });
+
+  describe('dot-local reverse with { name: "" } + nested { name: "sub" }', () => {
+    // Simulates include("/flat", patterns, { name: "" }) where patterns
+    // contain a nested include("/sub", subPatterns, { name: "sub" }).
+    // Routes from the nested include get dotted names (sub.detail, sub.index)
+    // but are still at root scope because the outer include is { name: "" }.
+    const flatWithNestedMap: Record<string, string> = {
+      flatIndex: "/flat",
+      "sub.detail": "/flat/sub/:id",
+      "sub.index": "/flat/sub",
+    };
+
+    it("should resolve dot-local from dotted route to bare sibling at root", () => {
+      // From sub.detail, .flatIndex should resolve — both are at root scope.
+      // rootScoped=true because the outer include is { name: "" }.
+      const reverse = createReverseFunction(
+        flatWithNestedMap,
+        "sub.detail",
+        {},
+        true,
+      );
+      expect(reverse(".flatIndex")).toBe("/flat");
+    });
+
+    it("should resolve dot-local from dotted route to dotted sibling", () => {
+      // From sub.detail, .index resolves via prefixed lookup (sub.index)
+      const reverse = createReverseFunction(flatWithNestedMap, "sub.detail");
+      expect(reverse(".index")).toBe("/flat/sub");
+    });
+
+    it("should resolve dot-local from bare route to dotted sibling", () => {
+      // From flatIndex, .sub.detail resolves via root fallback
+      const reverse = createReverseFunction(
+        flatWithNestedMap,
+        "flatIndex",
+        {},
+        true,
+      );
+      expect(reverse(".sub.detail", { id: "42" })).toBe("/flat/sub/42");
+    });
+
+    it("should NOT resolve cross-scope from a named mount", () => {
+      // Same route map, but rootScoped=false (simulates { name: "magazine" })
+      const reverse = createReverseFunction(
+        flatWithNestedMap,
+        "sub.detail",
+        {},
+        false,
+      );
+      expect(() => reverse(".flatIndex")).toThrow("Unknown route");
+    });
+  });
+
+  describe("optional params", () => {
+    const optionalMap: Record<string, string> = {
+      "shop.category": "/category/:name/:page?",
+      "i18n.blog": "/:locale(en|gb)?/blog",
+      trailing: "/blog/",
+    };
+
+    it("omits optional param when not provided", () => {
+      const reverse = createReverseFunction(optionalMap, "shop.category");
+      expect(reverse("shop.category", { name: "shoes" })).toBe(
+        "/category/shoes",
+      );
+    });
+
+    it("includes optional param when provided", () => {
+      const reverse = createReverseFunction(optionalMap, "shop.category");
+      expect(reverse("shop.category", { name: "shoes", page: "2" })).toBe(
+        "/category/shoes/2",
+      );
+    });
+
+    it("omits optional constrained param when not provided", () => {
+      const reverse = createReverseFunction(optionalMap, "i18n.blog");
+      expect(reverse("i18n.blog", {})).toBe("/blog");
+    });
+
+    it("throws for missing required param when optional params exist", () => {
+      const reverse = createReverseFunction(optionalMap, "shop.category");
+      expect(() => reverse("shop.category", {})).toThrow(
+        'Missing param "name"',
+      );
+    });
+
+    it("preserves intentional trailing slash on non-optional patterns", () => {
+      const reverse = createReverseFunction(optionalMap, "trailing");
+      expect(reverse("trailing")).toBe("/blog/");
+    });
+
+    it("preserves trailing slash when optional param is omitted from slash-terminated pattern", () => {
+      const trailingOptMap: Record<string, string> = {
+        "i18n.blog": "/:locale(en|gb)?/blog/",
+        "shop.category": "/category/:name/:page?/",
+      };
+      const r1 = createReverseFunction(trailingOptMap, "i18n.blog");
+      expect(r1("i18n.blog", {})).toBe("/blog/");
+
+      const r2 = createReverseFunction(trailingOptMap, "shop.category");
+      expect(r2("shop.category", { name: "shoes" })).toBe("/category/shoes/");
     });
   });
 });

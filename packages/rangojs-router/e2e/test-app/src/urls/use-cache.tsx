@@ -1,4 +1,4 @@
-import { urls, Meta } from "@rangojs/router";
+import { urls, Meta, Breadcrumbs } from "@rangojs/router";
 import { isCachedFunction } from "@rangojs/router/cache-runtime";
 import { Link, Outlet } from "@rangojs/router/client";
 import { getBasicTimestamp, getDataForCategory } from "./use-cache-data.js";
@@ -9,10 +9,55 @@ import {
   getCachedReactNode,
   CachedWithSlots,
   getCachedActionData,
+  cachedReadsCookies,
+  cachedReadsHeaders,
+  cachedCallsCtxSet,
+  cachedCallsCtxHeadersSet,
+  getSwrTestData,
 } from "./use-cache-fn.js";
 import { InterleaveActionButton } from "../components/InterleaveActionButton.js";
-import { Breadcrumbs } from "../handles.js";
-import { UseCacheTestLoader } from "../loaders.js";
+import { RevalidateButton } from "../components/RevalidateButton.js";
+import { UseCacheTestLoader, LayoutCountLoader } from "../loaders.js";
+
+// Included routes for loader segment tracking test.
+// Mirrors real setup: handler calls a 'use cache' function internally.
+const loaderSegmentPages = urls(({ path }) => [
+  path(
+    "/:pageId",
+    async (ctx) => {
+      const page = ctx.url.searchParams.get("page") || "1";
+      // Call a cached function internally (like the real app)
+      const data = await getBasicTimestamp();
+      return (
+        <div data-testid="loader-segments-page">
+          <span data-testid="loader-segments-current-page">{page}</span>
+          <span data-testid="loader-segments-ts">{data.ts}</span>
+          <nav>
+            <Link
+              to="/use-cache-test/loader-segments/items?page=1"
+              data-testid="loader-segments-link-1"
+            >
+              Page 1
+            </Link>
+            <Link
+              to="/use-cache-test/loader-segments/items?page=2"
+              data-testid="loader-segments-link-2"
+            >
+              Page 2
+            </Link>
+            <Link
+              to="/use-cache-test/loader-segments/items?page=3"
+              data-testid="loader-segments-link-3"
+            >
+              Page 3
+            </Link>
+          </nav>
+        </div>
+      );
+    },
+    { name: "loaderSegmentPage", search: { page: "number?" } },
+  ),
+]);
 
 /**
  * "use cache" test routes.
@@ -22,7 +67,7 @@ import { UseCacheTestLoader } from "../loaders.js";
  * and inline "use cache" in handlers and layouts with handle data.
  */
 export const useCachePatterns = urls(
-  ({ path, layout, loading, intercept, loader, when }) => [
+  ({ path, layout, loading, intercept, loader, when, revalidate, include }) => [
     // Basic: file-level "use cache", no args
     path(
       "/basic",
@@ -91,6 +136,26 @@ export const useCachePatterns = urls(
         );
       },
       { name: "useCacheTest.withHandles" },
+    ),
+
+    // SWR: stale-while-revalidate test with very short TTL (2s).
+    // On stale hit, returns cached value and revalidates in background.
+    // Third visit should see fresh value from background revalidation.
+    path(
+      "/swr",
+      async (ctx) => {
+        const data = await getSwrTestData(ctx);
+        const serverNow = Date.now();
+        return (
+          <div data-testid="use-cache-swr-page">
+            <h1>SWR Cache Test</h1>
+            <span data-testid="use-cache-swr-ts">{data.ts}</span>
+            <span data-testid="use-cache-swr-rand">{data.rand}</span>
+            <span data-testid="use-cache-swr-server-ts">{serverNow}</span>
+          </div>
+        );
+      },
+      { name: "useCacheTest.swr" },
     ),
 
     // Streaming: slow cached data function rendered via loading() boundary.
@@ -393,5 +458,135 @@ export const useCachePatterns = urls(
       },
       { name: "useCacheTest.jsonCached" },
     ),
+
+    // Guard: cookies() throws inside "use cache" when tainted ctx is passed.
+    path.json(
+      "/guard-cookies",
+      async (ctx) => {
+        try {
+          await cachedReadsCookies(ctx);
+          return { threw: false, message: null };
+        } catch (e) {
+          return {
+            threw: true,
+            message: e instanceof Error ? e.message : String(e),
+          };
+        }
+      },
+      { name: "useCacheTest.guardCookies" },
+    ),
+
+    // Guard: headers() throws inside "use cache" when tainted ctx is passed.
+    path.json(
+      "/guard-headers",
+      async (ctx) => {
+        try {
+          await cachedReadsHeaders(ctx);
+          return { threw: false, message: null };
+        } catch (e) {
+          return {
+            threw: true,
+            message: e instanceof Error ? e.message : String(e),
+          };
+        }
+      },
+      { name: "useCacheTest.guardHeaders" },
+    ),
+
+    // Guard: ctx.set() throws inside "use cache" when handler ctx is passed.
+    // Uses regular path() (not path.json()) because path.json() uses a
+    // lightweight responseHandlerCtx that doesn't have ctx.set().
+    path(
+      "/guard-ctx-set",
+      async (ctx) => {
+        let threw = false;
+        let message: string | null = null;
+        try {
+          await cachedCallsCtxSet(ctx);
+        } catch (e) {
+          threw = true;
+          message = e instanceof Error ? e.message : String(e);
+        }
+        return (
+          <div>
+            <span data-testid="guard-ctx-set-threw">{String(threw)}</span>
+            <span data-testid="guard-ctx-set-message">{message}</span>
+          </div>
+        );
+      },
+      { name: "useCacheTest.guardCtxSet" },
+    ),
+
+    // Guard: ctx.headers.set() throws inside "use cache" when handler ctx is passed.
+    path(
+      "/guard-ctx-headers-set",
+      async (ctx) => {
+        let threw = false;
+        let message: string | null = null;
+        try {
+          await cachedCallsCtxHeadersSet(ctx);
+        } catch (e) {
+          threw = true;
+          message = e instanceof Error ? e.message : String(e);
+        }
+        return (
+          <div>
+            <span data-testid="guard-ctx-headers-set-threw">
+              {String(threw)}
+            </span>
+            <span data-testid="guard-ctx-headers-set-message">{message}</span>
+          </div>
+        );
+      },
+      { name: "useCacheTest.guardCtxHeadersSet" },
+    ),
+    // Repro: cached layout with child handler that calls ctx.set().
+    // During revalidation the shared request context is stamped by the
+    // cached layout, which must NOT block the child's ctx.set().
+    layout(
+      async () => {
+        "use cache";
+        return (
+          <div data-testid="cached-layout-with-child-set">
+            <Outlet />
+          </div>
+        );
+      },
+      () => [
+        path(
+          "/cached-parent-child-set",
+          (ctx) => {
+            ctx.set("childData", "from-child");
+            const val = ctx.get("childData");
+            return (
+              <div data-testid="child-set-page">
+                <span data-testid="child-set-value">{val}</span>
+                <span data-testid="child-set-ts">{Date.now()}</span>
+                <RevalidateButton testId="child-set-revalidate" />
+              </div>
+            );
+          },
+          { name: "useCacheTest.cachedParentChildSet" },
+          () => [revalidate(() => true)],
+        ),
+      ],
+    ),
+
+    // Repro: layout loader disappears from _rsc_segments after navigation.
+    // Mirrors real-world setup: top-level layout with loader (revalidate
+    // returns false for non-cart actions), routes via include() with
+    // 'use cache' handler. After navigating between pages with different
+    // search params, the loader segment should persist in _rsc_segments.
+    layout(
+      () => (
+        <div data-testid="loader-segments-layout">
+          <Outlet />
+        </div>
+      ),
+      () => [loader(LayoutCountLoader, () => [revalidate(() => false)])],
+    ),
+    include("/loader-segments", loaderSegmentPages, {
+      name: "loaderSegmentPages",
+    }),
   ],
 );

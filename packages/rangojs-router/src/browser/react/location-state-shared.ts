@@ -4,11 +4,14 @@
  */
 
 /**
- * Internal entry representing a state value with its unique key
+ * Internal entry representing a state value with its unique key.
+ * When __rsc_ls_lazy is true, __rsc_ls_value holds a getter function
+ * that is called at navigation time (not at entry creation time).
  */
 export interface LocationStateEntry {
   readonly __rsc_ls_key: string;
   readonly __rsc_ls_value: unknown;
+  readonly __rsc_ls_lazy?: boolean;
 }
 
 /**
@@ -55,6 +58,13 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
  * // Use in Link
  * <Link to="/product/123" state={[ProductState({ name: "Widget", price: 9.99 })]}>
  *
+ * // Just-in-time typed state (getter called at click time, not render time).
+ * // Must be in a client component — the getter function can't cross the RSC boundary.
+ * <Link
+ *   to="/product/123"
+ *   state={[ProductState(() => ({ name: product.name, price: product.price }))]}
+ * >
+ *
  * // Read with hook (reactive)
  * const product = useLocationState(ProductState);
  *
@@ -69,7 +79,7 @@ export function createLocationState<TState>(
   let _key: string | undefined;
 
   function getKey(): string {
-    if (!_key && process.env.NODE_ENV !== "production") {
+    if (!_key && process.env.NODE_ENV === "development") {
       throw new Error(
         "[rsc-router] createLocationState key not set. " +
           "Make sure the exposeInternalIds Vite plugin is enabled and " +
@@ -79,14 +89,20 @@ export function createLocationState<TState>(
     return _key!;
   }
 
-  const fn = (stateOrGetter: TState | (() => TState)): LocationStateEntry => ({
-    __rsc_ls_key: getKey(),
-    // Resolve getter immediately - lazy evaluation happens via Link's stateRef pattern
-    __rsc_ls_value:
-      typeof stateOrGetter === "function"
-        ? (stateOrGetter as () => TState)()
-        : stateOrGetter,
-  });
+  const fn = (stateOrGetter: TState | (() => TState)): LocationStateEntry => {
+    if (typeof stateOrGetter === "function") {
+      // Store getter as-is; resolved at navigation time by resolveLocationStateEntries()
+      return {
+        __rsc_ls_key: getKey(),
+        __rsc_ls_value: stateOrGetter,
+        __rsc_ls_lazy: true,
+      };
+    }
+    return {
+      __rsc_ls_key: getKey(),
+      __rsc_ls_value: stateOrGetter,
+    };
+  };
 
   // Use defineProperty for __rsc_ls_key to avoid Object.assign evaluating
   // the getter during construction (before the Vite plugin sets the key).
@@ -138,7 +154,9 @@ export function resolveLocationStateEntries(
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const entry of entries) {
-    result[entry.__rsc_ls_key] = entry.__rsc_ls_value;
+    result[entry.__rsc_ls_key] = entry.__rsc_ls_lazy
+      ? (entry.__rsc_ls_value as () => unknown)()
+      : entry.__rsc_ls_value;
   }
   return result;
 }

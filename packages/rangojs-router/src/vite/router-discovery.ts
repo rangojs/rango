@@ -10,9 +10,12 @@ import type { Plugin } from "vite";
 import { createServer as createViteServer } from "vite";
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import {
+  formatNestedRouterConflictError,
+  findNestedRouterConflict,
   findRouterFiles,
-  createScanFilter,
 } from "../build/generate-route-types.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
 import { createVirtualStubPlugin } from "./plugins/virtual-stub-plugin.js";
@@ -25,6 +28,7 @@ import { extractHandlerExportsFromChunk } from "./utils/bundle-analysis.js";
 import {
   createDiscoveryState,
   VIRTUAL_ROUTES_MANIFEST_ID,
+  type DiscoveryState,
   type PluginOptions,
 } from "./discovery/state.js";
 import { consumeSelfGenWrite } from "./discovery/self-gen-tracking.js";
@@ -39,8 +43,157 @@ import {
   generatePerRouterModule,
 } from "./discovery/virtual-module-codegen.js";
 import { postprocessBundle } from "./discovery/bundle-postprocess.js";
+import { resetStagedBuildAssets } from "./utils/prerender-utils.js";
 
 export { VIRTUAL_ROUTES_MANIFEST_ID };
+
+// ============================================================================
+// Temp Server Factory
+// ============================================================================
+
+/**
+ * Create a minimal Vite server for router discovery.
+ *
+ * Both dev-mode prerender and build-mode discovery need a temp RSC server
+ * to import user router files via module runner. This factory centralizes
+ * the shared config and the mode-specific differences:
+ * - Dev: path-based IDs (no forceBuild), separate cacheDir
+ * - Build: hashed IDs (forceBuild), hashClientRefs for production bundles
+ *
+ * Returns the ViteDevServer instance. Callers access .environments.rsc as needed.
+ */
+async function createTempRscServer(
+  state: DiscoveryState,
+  options: { forceBuild?: boolean; cacheDir?: string } = {},
+) {
+  const { default: rsc } = await import("@vitejs/plugin-rsc");
+  return createViteServer({
+    root: state.projectRoot,
+    configFile: false,
+    server: { middlewareMode: true },
+    appType: "custom",
+    logLevel: "silent",
+    resolve: { alias: state.userResolveAlias },
+    esbuild: { jsx: "automatic", jsxImportSource: "react" },
+    ...(options.cacheDir && { cacheDir: options.cacheDir }),
+    plugins: [
+      rsc({
+        entries: {
+          client: "virtual:entry-client",
+          ssr: "virtual:entry-ssr",
+          rsc: state.resolvedEntryPath!,
+        },
+      }),
+      // hashClientRefs only in build mode — production bundles need hashed refs
+      ...(options.forceBuild ? [hashClientRefs(state.projectRoot)] : []),
+      createVersionPlugin(),
+      createVirtualStubPlugin(),
+      // Dev prerender must use dev-mode IDs (path-based) to match the workerd
+      // runtime. forceBuild produces hashed IDs for production bundle consistency.
+      exposeInternalIds(options.forceBuild ? { forceBuild: true } : undefined),
+      exposeRouterId(),
+    ],
+  });
+}
+
+// ============================================================================
+// Build-Time Env Resolution
+// ============================================================================
+
+import type {
+  BuildEnvOption,
+  BuildEnvFactoryContext,
+  BuildEnvResult,
+} from "./plugin-types.js";
+
+/**
+ * Resolve the buildEnv option into a concrete { env, dispose? } result.
+ * Handles all four input shapes: false, "auto", factory, plain object.
+ */
+async function resolveBuildEnv(
+  option: BuildEnvOption | undefined,
+  factoryCtx: BuildEnvFactoryContext,
+): Promise<BuildEnvResult | null> {
+  if (!option) return null;
+
+  if (option === "auto") {
+    if (factoryCtx.preset !== "cloudflare") {
+      throw new Error(
+        '[rsc-router] buildEnv: "auto" is only supported with preset: "cloudflare". ' +
+          "Use a factory function or plain object for other presets.",
+      );
+    }
+    try {
+      // Resolve wrangler from the user's project root (not the router package)
+      const userRequire = createRequire(
+        resolve(factoryCtx.root, "package.json"),
+      );
+      const wranglerPath = userRequire.resolve("wrangler");
+      const { getPlatformProxy } = (await import(
+        pathToFileURL(wranglerPath).href
+      )) as {
+        getPlatformProxy: (opts?: any) => Promise<any>;
+      };
+      const proxy = await getPlatformProxy();
+      return {
+        env: proxy.env as Record<string, unknown>,
+        dispose: proxy.dispose,
+      };
+    } catch (err: any) {
+      throw new Error(
+        '[rsc-router] buildEnv: "auto" requires wrangler to be installed.\n' +
+          `Install it with: pnpm add -D wrangler\n${err.message}`,
+      );
+    }
+  }
+
+  if (typeof option === "function") {
+    return await option(factoryCtx);
+  }
+
+  // Plain object
+  return { env: option };
+}
+
+/**
+ * Acquire build-time env bindings and store on discovery state.
+ * Returns true if env was acquired, false if buildEnv is disabled.
+ */
+async function acquireBuildEnv(
+  s: DiscoveryState,
+  command: "serve" | "build",
+  mode: string,
+): Promise<boolean> {
+  const option = s.opts?.buildEnv;
+  if (!option) return false;
+
+  const result = await resolveBuildEnv(option, {
+    root: s.projectRoot,
+    mode,
+    command,
+    preset: s.opts?.preset ?? "node",
+  });
+  if (!result) return false;
+
+  s.resolvedBuildEnv = result.env;
+  s.buildEnvDispose = result.dispose ?? null;
+  return true;
+}
+
+/**
+ * Release build-time env resources and clear state.
+ */
+async function releaseBuildEnv(s: DiscoveryState): Promise<void> {
+  if (s.buildEnvDispose) {
+    try {
+      await s.buildEnvDispose();
+    } catch (err: any) {
+      console.warn(`[rsc-router] buildEnv dispose failed: ${err.message}`);
+    }
+    s.buildEnvDispose = null;
+  }
+  s.resolvedBuildEnv = undefined;
+}
 
 /**
  * Plugin that discovers router instances at dev/build time via the RSC environment.
@@ -59,6 +212,8 @@ export function createRouterDiscoveryPlugin(
   opts?: PluginOptions,
 ): Plugin {
   const s = createDiscoveryState(entryPath, opts);
+  let viteCommand: "serve" | "build" = "build";
+  let viteMode = "production";
 
   return {
     name: "@rangojs/router:discovery",
@@ -69,34 +224,28 @@ export function createRouterDiscoveryPlugin(
           __RANGO_DEBUG__: JSON.stringify(!!process.env.INTERNAL_RANGO_DEBUG),
         },
       };
-      if (opts?.enableBuildPrerender) {
-        config.environments = {
-          rsc: {
-            build: {
-              rollupOptions: {
-                output: {
-                  manualChunks(id: string) {
-                    if (s.resolvedPrerenderModules?.has(id)) {
-                      return "__prerender-handlers";
-                    }
-                    if (s.resolvedStaticModules?.has(id)) {
-                      return "__static-handlers";
-                    }
-                  },
-                },
-              },
-            },
-          },
-        };
-      }
+      // Prerender/static handler modules are bundled naturally with the
+      // rest of the RSC entry.  A previous design forced them into dedicated
+      // __prerender-handlers / __static-handlers chunks via manualChunks,
+      // but Rollup hoisted all shared dependencies into those chunks,
+      // inflating them to ~1 MB with active runtime code.  Handler code is
+      // evicted in closeBundle regardless of which chunk it lands in.
       return config;
     },
 
     configResolved(config) {
       s.projectRoot = config.root;
       s.isBuildMode = config.command === "build";
+      viteCommand = config.command as "serve" | "build";
+      viteMode = config.mode;
       // Capture user's resolve aliases for the temp server
       s.userResolveAlias = config.resolve.alias;
+      // Node preset: pick up auto-discovered router path from the config() hook.
+      // The auto-discover plugin runs in config() using Vite's resolved root,
+      // populating the mutable ref before configResolved fires.
+      if (!s.resolvedEntryPath && opts?.routerPathRef?.path) {
+        s.resolvedEntryPath = opts.routerPathRef.path;
+      }
       // Cloudflare preset: read entry from resolved environment config.
       // The @cloudflare/vite-plugin reads wrangler config (toml/json/jsonc)
       // and sets optimizeDeps.entries on the RSC environment.
@@ -108,13 +257,6 @@ export function createRouterDiscoveryPlugin(
         } else if (Array.isArray(entries) && entries.length > 0) {
           s.resolvedEntryPath = entries[0];
         }
-      }
-      // Compile include/exclude patterns into a scan filter
-      if (opts?.include || opts?.exclude) {
-        s.scanFilter = createScanFilter(s.projectRoot, {
-          include: opts.include,
-          exclude: opts.exclude,
-        });
       }
       // Generate combined named-routes.gen.ts from static source parsing.
       // Runs before the dev server starts so the gen file exists immediately for IDE.
@@ -166,12 +308,13 @@ export function createRouterDiscoveryPlugin(
       let prerenderTempServer: any = null;
       let prerenderNodeRegistry: Map<string, any> | null = null;
 
-      // Clean up the temporary server when the dev server shuts down
+      // Clean up the temporary server and build env when the dev server shuts down
       server.httpServer?.on("close", () => {
         if (prerenderTempServer) {
           prerenderTempServer.close().catch(() => {});
           prerenderTempServer = null;
         }
+        releaseBuildEnv(s).catch(() => {});
       });
 
       async function getOrCreateTempServer(): Promise<any | null> {
@@ -179,32 +322,8 @@ export function createRouterDiscoveryPlugin(
           return (prerenderTempServer.environments as any)?.rsc ?? null;
         }
         try {
-          const { default: rsc } = await import("@vitejs/plugin-rsc");
-          prerenderTempServer = await createViteServer({
-            root: s.projectRoot,
-            configFile: false,
-            server: { middlewareMode: true },
-            appType: "custom",
-            logLevel: "silent",
+          prerenderTempServer = await createTempRscServer(s, {
             cacheDir: "node_modules/.vite_prerender",
-            resolve: { alias: s.userResolveAlias },
-            esbuild: { jsx: "automatic", jsxImportSource: "react" },
-            plugins: [
-              rsc({
-                entries: {
-                  client: "virtual:entry-client",
-                  ssr: "virtual:entry-ssr",
-                  rsc: s.resolvedEntryPath!,
-                },
-              }),
-              createVersionPlugin(),
-              createVirtualStubPlugin(),
-              // Dev prerender must use dev-mode IDs (path-based) to match the
-              // workerd runtime. forceBuild would produce hashed IDs causing
-              // handle data key mismatches when replayed into the runtime store.
-              exposeInternalIds(),
-              exposeRouterId(),
-            ],
           });
 
           const tempRscEnv = (prerenderTempServer.environments as any)?.rsc;
@@ -235,6 +354,9 @@ export function createRouterDiscoveryPlugin(
           // Create a temp Node.js server to run runtime discovery and generate
           // named route types (static parser can't resolve factory calls).
           try {
+            // Acquire build-time env bindings for dev prerender
+            await acquireBuildEnv(s, viteCommand, viteMode);
+
             const tempRscEnv = await getOrCreateTempServer();
             if (tempRscEnv) {
               await discoverRouters(s, tempRscEnv);
@@ -251,6 +373,9 @@ export function createRouterDiscoveryPlugin(
         }
 
         try {
+          // Acquire build-time env bindings for dev prerender (Node.js path)
+          await acquireBuildEnv(s, viteCommand, viteMode);
+
           // Set the readiness gate BEFORE discovery so early requests
           // block until manifest is populated
           const serverMod = await rscEnv.runner.import(
@@ -260,10 +385,7 @@ export function createRouterDiscoveryPlugin(
             serverMod.setManifestReadyPromise(discoveryPromise);
           }
 
-          const serverModAfterDiscovery = await discoverRouters(s, rscEnv);
-
-          // Save registry for the /__rsc_prerender endpoint (avoids creating a temp server)
-          mainRegistry = serverModAfterDiscovery?.RouterRegistry ?? null;
+          await discoverRouters(s, rscEnv);
 
           // Store server origin for dev prerender endpoint (virtual module injection)
           s.devServerOrigin = getDevServerOrigin();
@@ -275,37 +397,8 @@ export function createRouterDiscoveryPlugin(
           // won't cause unnecessary HMR triggers.
           writeRouteTypesFiles(s);
 
-          // Populate the route map in the RSC env
-          if (s.mergedRouteManifest && serverMod?.setCachedManifest) {
-            serverMod.setCachedManifest(s.mergedRouteManifest);
-          }
-          if (
-            s.mergedPrecomputedEntries &&
-            s.mergedPrecomputedEntries.length > 0 &&
-            serverMod?.setPrecomputedEntries
-          ) {
-            serverMod.setPrecomputedEntries(s.mergedPrecomputedEntries);
-          }
-          if (s.mergedRouteTrie && serverMod?.setRouteTrie) {
-            serverMod.setRouteTrie(s.mergedRouteTrie);
-          }
-          // Populate per-router isolated data eagerly in dev (HMR).
-          // In production builds, per-router data is loaded lazily via import().
-          if (serverMod?.setRouterManifest) {
-            for (const [routerId, manifest] of s.perRouterManifestDataMap) {
-              serverMod.setRouterManifest(routerId, manifest);
-            }
-          }
-          if (serverMod?.setRouterTrie) {
-            for (const [routerId, trie] of s.perRouterTrieMap) {
-              serverMod.setRouterTrie(routerId, trie);
-            }
-          }
-          if (serverMod?.setRouterPrecomputedEntries) {
-            for (const [routerId, entries] of s.perRouterPrecomputedMap) {
-              serverMod.setRouterPrecomputedEntries(routerId, entries);
-            }
-          }
+          // Populate the route map and per-router data in the RSC env
+          await propagateDiscoveryState(rscEnv);
         } catch (err: any) {
           console.warn(
             `[rsc-router] Router discovery failed: ${err.message}\n${err.stack}`,
@@ -333,6 +426,49 @@ export function createRouterDiscoveryPlugin(
       // Registry from the main server's RSC environment (populated by discoverRouters)
       let mainRegistry: Map<string, any> | null = null;
 
+      // Push discovery state (manifest, trie, precomputed entries) to the
+      // server module so runtime request handling uses the current routes.
+      // Shared by initial discovery and HMR-triggered re-discovery.
+      const propagateDiscoveryState = async (rscEnv: any) => {
+        const serverMod = await rscEnv.runner.import("@rangojs/router/server");
+        if (!serverMod) return;
+        // Clear stale per-router and global route data before repopulating.
+        // Without this, removed routers/routes survive in the per-router maps
+        // and shrunk precomputed entries or tries are never purged.
+        if (serverMod.clearAllRouterData) {
+          serverMod.clearAllRouterData();
+        }
+        mainRegistry = serverMod.RouterRegistry ?? null;
+        if (s.mergedRouteManifest && serverMod.setCachedManifest) {
+          serverMod.setCachedManifest(s.mergedRouteManifest);
+        }
+        if (
+          s.mergedPrecomputedEntries &&
+          s.mergedPrecomputedEntries.length > 0 &&
+          serverMod.setPrecomputedEntries
+        ) {
+          serverMod.setPrecomputedEntries(s.mergedPrecomputedEntries);
+        }
+        if (s.mergedRouteTrie && serverMod.setRouteTrie) {
+          serverMod.setRouteTrie(s.mergedRouteTrie);
+        }
+        if (serverMod.setRouterManifest) {
+          for (const [routerId, manifest] of s.perRouterManifestDataMap) {
+            serverMod.setRouterManifest(routerId, manifest);
+          }
+        }
+        if (serverMod.setRouterTrie) {
+          for (const [routerId, trie] of s.perRouterTrieMap) {
+            serverMod.setRouterTrie(routerId, trie);
+          }
+        }
+        if (serverMod.setRouterPrecomputedEntries) {
+          for (const [routerId, entries] of s.perRouterPrecomputedMap) {
+            serverMod.setRouterPrecomputedEntries(routerId, entries);
+          }
+        }
+      };
+
       server.middlewares.use("/__rsc_prerender", async (req: any, res: any) => {
         if (s.discoveryDone) await s.discoveryDone;
 
@@ -344,9 +480,31 @@ export function createRouterDiscoveryPlugin(
           return;
         }
 
-        // Prefer the main server's registry (Node.js preset: module runner available).
-        // Fall back to a temp server for Cloudflare where the main RSC env uses workerd.
-        let registry = mainRegistry;
+        // Import the user's entry module to force re-evaluation of any
+        // HMR-invalidated modules in the chain (entry → router → urls → handlers).
+        // This ensures createRouter() re-runs with updated handler code before
+        // we read RouterRegistry. Without this, edits to prerender handler files
+        // produce stale content because the old router instance remains registered.
+        const rscEnv = (server.environments as any)?.rsc;
+        let registry: Map<string, any> | null = null;
+        if (rscEnv?.runner && s.resolvedEntryPath) {
+          try {
+            await rscEnv.runner.import(s.resolvedEntryPath);
+            const serverMod = await rscEnv.runner.import(
+              "@rangojs/router/server",
+            );
+            registry = serverMod.RouterRegistry ?? null;
+          } catch (err: any) {
+            console.warn(
+              `[rsc-router] Dev prerender module refresh failed: ${err.message}`,
+            );
+            res.statusCode = 500;
+            res.end(`Prerender handler error: ${err.message}`);
+            return;
+          }
+        } else {
+          registry = mainRegistry;
+        }
 
         if (!registry) {
           // No main registry: the RSC env has no module runner (Cloudflare dev).
@@ -364,12 +522,26 @@ export function createRouterDiscoveryPlugin(
         }
 
         const wantIntercept = url.searchParams.get("intercept") === "1";
+        const wantRouteName = url.searchParams.get("routeName");
+        const wantPassthrough = url.searchParams.get("passthrough") === "1";
 
         for (const [, routerInstance] of registry) {
           if (!routerInstance.matchForPrerender) continue;
           try {
-            const result = await routerInstance.matchForPrerender(pathname, {});
+            const result = await routerInstance.matchForPrerender(
+              pathname,
+              {},
+              undefined,
+              wantPassthrough,
+              s.resolvedBuildEnv,
+              true, // devMode: check getParams for passthrough routes
+            );
             if (!result) continue;
+            if (result.passthrough) continue;
+            // When routeName is specified, only accept a match for that route.
+            // This prevents returning the wrong entry when multiple routers
+            // have prerenderable routes sharing the same pathname.
+            if (wantRouteName && result.routeName !== wantRouteName) continue;
             res.setHeader("content-type", "application/json");
             let payload: Record<string, unknown>;
             if (wantIntercept && result.interceptSegments?.length) {
@@ -417,6 +589,13 @@ export function createRouterDiscoveryPlugin(
         ): boolean => {
           if (!isGeneratedRouteFile(filePath)) return false;
           if (consumeSelfGenWrite(s, filePath)) return true;
+          // In Cloudflare dev (no module runner), perRouterManifests is never
+          // refreshed after HMR so regenerateGeneratedRouteFiles() would use
+          // stale data and revert user edits. Source files own route state;
+          // gen files are derived output. Skip regeneration and let the next
+          // source-file change rebuild them from the static parser.
+          const hasRunner = !!(server.environments as any)?.rsc?.runner;
+          if (!hasRunner) return true;
           regenerateGeneratedRouteFiles();
           return true;
         };
@@ -426,6 +605,26 @@ export function createRouterDiscoveryPlugin(
         // scanFilter, content sniff) run synchronously to gate non-route files;
         // only the expensive regeneration is debounced.
         let routeChangeTimer: ReturnType<typeof setTimeout> | undefined;
+
+        // Re-run runtime discovery so factory-generated routes that the
+        // static parser cannot see are refreshed after source changes.
+        let runtimeRediscoveryInProgress = false;
+        const refreshRuntimeDiscovery = async () => {
+          const rscEnv = (server.environments as any)?.rsc;
+          if (!rscEnv?.runner || runtimeRediscoveryInProgress) return;
+          runtimeRediscoveryInProgress = true;
+          try {
+            await discoverRouters(s, rscEnv);
+            writeRouteTypesFiles(s);
+            await propagateDiscoveryState(rscEnv);
+          } catch (err: any) {
+            console.warn(
+              `[rsc-router] Runtime re-discovery failed: ${err.message}`,
+            );
+          } finally {
+            runtimeRediscoveryInProgress = false;
+          }
+        };
 
         const scheduleRouteRegeneration = () => {
           clearTimeout(routeChangeTimer);
@@ -440,6 +639,15 @@ export function createRouterDiscoveryPlugin(
               console.error(
                 `[rsc-router] Route regeneration error: ${err.message}`,
               );
+            }
+            // Async: re-run runtime discovery to refresh factory-generated
+            // routes that the static parser cannot resolve.
+            if (s.perRouterManifests.length > 0) {
+              refreshRuntimeDiscovery().catch((err: any) => {
+                console.warn(
+                  `[rsc-router] Runtime re-discovery error: ${err.message}`,
+                );
+              });
             }
           }, 100);
         };
@@ -468,6 +676,16 @@ export function createRouterDiscoveryPlugin(
             if (!hasUrls && !hasCreateRouter) return;
             // Invalidate cache when a router file changes (new router added/removed)
             if (hasCreateRouter) {
+              const nestedRouterConflict = findNestedRouterConflict([
+                ...(s.cachedRouterFiles ?? []),
+                resolve(filePath),
+              ]);
+              if (nestedRouterConflict) {
+                server.config.logger.error(
+                  formatNestedRouterConflictError(nestedRouterConflict),
+                );
+                return;
+              }
               s.cachedRouterFiles = undefined;
             }
             scheduleRouteRegeneration();
@@ -483,8 +701,12 @@ export function createRouterDiscoveryPlugin(
         server.watcher.on("change", handleRouteFileChange);
 
         // Regenerate gen files when they are deleted (e.g. manual cleanup).
+        // Same no-runner guard as change/add: stale perRouterManifests would
+        // reintroduce reverted content.
         server.watcher.on("unlink", (filePath) => {
           if (!isGeneratedRouteFile(filePath)) return;
+          const hasRunner = !!(server.environments as any)?.rsc?.runner;
+          if (!hasRunner) return;
           regenerateGeneratedRouteFiles();
         });
       }
@@ -497,6 +719,12 @@ export function createRouterDiscoveryPlugin(
       if (!s.isBuildMode) return;
       // Only run once across environment builds
       if (s.mergedRouteManifest !== null) return;
+      resetStagedBuildAssets(s.projectRoot);
+      s.prerenderManifestEntries = null;
+      s.staticManifestEntries = null;
+
+      // Acquire build-time env bindings if configured
+      await acquireBuildEnv(s, viteCommand, viteMode);
 
       let tempServer: any = null;
       // Signal to user-space code (e.g. reverse.ts) that build-time discovery
@@ -505,45 +733,7 @@ export function createRouterDiscoveryPlugin(
       // between the vite plugin and user code loaded via runner.import().
       (globalThis as any).__rscRouterDiscoveryActive = true;
       try {
-        // Create a minimal Vite server with just the RSC plugin.
-        // We bypass the user's config file because:
-        // - Custom environments (e.g., CloudflareDevEnvironment) may not expose
-        //   a module runner compatible with runner.import()
-        // - The temp server only needs RSC conditions to import the router
-        const { default: rsc } = await import("@vitejs/plugin-rsc");
-        tempServer = await createViteServer({
-          root: s.projectRoot,
-          configFile: false,
-          server: { middlewareMode: true },
-          appType: "custom",
-          logLevel: "silent",
-          // Use the resolved aliases from the real config (includes user's path aliases
-          // like @/ -> src/ AND package aliases from rsc-router)
-          resolve: { alias: s.userResolveAlias },
-          // Enable automatic JSX runtime so .tsx files don't need `import React`.
-          // Without this, esbuild defaults to classic mode (React.createElement)
-          // which fails when lazy host-router handlers load sub-app modules with JSX.
-          esbuild: { jsx: "automatic", jsxImportSource: "react" },
-          plugins: [
-            rsc({
-              entries: {
-                client: "virtual:entry-client",
-                ssr: "virtual:entry-ssr",
-                rsc: s.resolvedEntryPath!,
-              },
-            }),
-            hashClientRefs(s.projectRoot),
-            createVersionPlugin(),
-            // Stub virtual modules that the RSC entry may import
-            // (e.g., virtual:rsc-router/routes-manifest, virtual:rsc-router/loader-manifest)
-            createVirtualStubPlugin(),
-            // Inject handle + router IDs so prerender-collected handle data uses
-            // the same hashed keys as the production client/SSR bundles, and
-            // build-time router IDs match runtime IDs across environments.
-            exposeInternalIds({ forceBuild: true }),
-            exposeRouterId(),
-          ],
-        });
+        tempServer = await createTempRscServer(s, { forceBuild: true });
 
         const rscEnv = (tempServer.environments as any)?.rsc;
         if (!rscEnv?.runner) {
@@ -594,6 +784,7 @@ export function createRouterDiscoveryPlugin(
         if (tempServer) {
           await tempServer.close();
         }
+        await releaseBuildEnv(s);
       }
     },
 
@@ -654,33 +845,40 @@ export function createRouterDiscoveryPlugin(
       if (!s.resolvedPrerenderModules?.size && !s.resolvedStaticModules?.size)
         return;
 
+      // Clear maps at the start of each RSC generateBundle pass.
+      // Vite 6 multi-environment builds run RSC twice (analysis + production);
+      // clearing prevents stale/duplicate records from the analysis pass.
+      s.handlerChunkInfoMap.clear();
+      s.staticHandlerChunkInfoMap.clear();
+
       for (const [fileName, chunk] of Object.entries(bundle) as [
         string,
         any,
       ][]) {
         if (chunk.type !== "chunk") continue;
 
-        // Prerender handlers chunk
-        if (
-          fileName.includes("__prerender-handlers") &&
-          s.resolvedPrerenderModules?.size
-        ) {
+        // Scan all chunks for handler exports (handlers may land in any chunk)
+        if (s.resolvedPrerenderModules?.size) {
           const handlers = extractHandlerExportsFromChunk(
             chunk.code,
             s.resolvedPrerenderModules,
             "Prerender",
-            true,
+            false,
           );
           if (handlers.length > 0) {
-            s.handlerChunkInfo = { fileName, exports: handlers };
+            const existing = s.handlerChunkInfoMap.get(fileName);
+            if (existing) {
+              existing.exports.push(...handlers);
+            } else {
+              s.handlerChunkInfoMap.set(fileName, {
+                fileName,
+                exports: handlers,
+              });
+            }
           }
         }
 
-        // Static handlers chunk
-        if (
-          fileName.includes("__static-handlers") &&
-          s.resolvedStaticModules?.size
-        ) {
+        if (s.resolvedStaticModules?.size) {
           const handlers = extractHandlerExportsFromChunk(
             chunk.code,
             s.resolvedStaticModules,
@@ -688,7 +886,15 @@ export function createRouterDiscoveryPlugin(
             false,
           );
           if (handlers.length > 0) {
-            s.staticHandlerChunkInfo = { fileName, exports: handlers };
+            const existing = s.staticHandlerChunkInfoMap.get(fileName);
+            if (existing) {
+              existing.exports.push(...handlers);
+            } else {
+              s.staticHandlerChunkInfoMap.set(fileName, {
+                fileName,
+                exports: handlers,
+              });
+            }
           }
         }
       }

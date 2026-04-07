@@ -1,4 +1,4 @@
-import { Breadcrumbs } from "../handles.js";
+import { cookies, headers, Breadcrumbs } from "@rangojs/router";
 
 // Function-level "use cache" — each function has its own directive.
 
@@ -114,4 +114,62 @@ export async function getCachedActionData(): Promise<{
 }> {
   "use cache";
   return { ts: Date.now(), rand: Math.random() };
+}
+
+/**
+ * SWR test function with very short TTL (2s) and wide SWR window (60s).
+ * Receives tainted ctx and pushes breadcrumbs to verify handle capture
+ * through the stale-while-revalidate background path.
+ */
+export async function getSwrTestData(
+  ctx: any,
+): Promise<{ ts: number; rand: number }> {
+  "use cache: swr-test";
+  const pushBreadcrumb = ctx.use(Breadcrumbs);
+  pushBreadcrumb({
+    label: "SWR Cached Page",
+    href: "/use-cache-test/swr",
+  });
+  return { ts: Date.now(), rand: Math.random() };
+}
+
+/**
+ * Guard test: cookies() is called inside "use cache".
+ * Receives tainted ctx so registerCachedFunction stamps INSIDE_CACHE_EXEC,
+ * which causes cookies() to throw before reading anything.
+ */
+export async function cachedReadsCookies(ctx: any): Promise<string> {
+  "use cache";
+  cookies().get("test");
+  return "no-throw";
+}
+
+/**
+ * Guard test: headers() is called inside "use cache".
+ * Same taint mechanism as cachedReadsCookies.
+ */
+export async function cachedReadsHeaders(ctx: any): Promise<string> {
+  "use cache";
+  headers().get("x-test");
+  return "no-throw";
+}
+
+/**
+ * Guard test: ctx.set() is called inside "use cache".
+ * The handler-context set() should throw because side effects are lost on cache hit.
+ */
+export async function cachedCallsCtxSet(ctx: any): Promise<string> {
+  "use cache";
+  ctx.set("test-key", "test-value");
+  return "no-throw";
+}
+
+/**
+ * Guard test: ctx.headers.set() is called inside "use cache".
+ * The guarded Headers proxy should throw on mutating methods.
+ */
+export async function cachedCallsCtxHeadersSet(ctx: any): Promise<string> {
+  "use cache";
+  ctx.headers.set("X-Test", "test-value");
+  return "no-throw";
 }

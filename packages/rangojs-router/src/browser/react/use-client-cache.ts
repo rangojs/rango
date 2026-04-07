@@ -46,10 +46,12 @@ export interface ClientCacheControls {
 export function useClientCache(): ClientCacheControls {
   const ctx = useContext(NavigationStoreContext);
 
+  if (!ctx) {
+    throw new Error("useClientCache must be used within NavigationProvider");
+  }
+
   const clear = useCallback(() => {
-    if (ctx?.store) {
-      ctx.store.clearHistoryCache();
-    }
+    ctx.store.clearHistoryCache();
   }, [ctx]);
 
   return { clear };

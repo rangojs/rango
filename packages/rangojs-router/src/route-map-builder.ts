@@ -128,15 +128,23 @@ const perRouterPrecomputedEntriesMap: Map<
 > = new Map();
 
 /**
- * Clear all per-router cached data (manifest, trie, precomputed entries).
+ * Clear all cached route data (global and per-router).
  * Called during HMR when route definitions change so the handler rebuilds
  * the trie from the updated router.urlpatterns on the next request.
+ *
+ * The virtual module calls this before repopulating with fresh data,
+ * preventing stale entries from removed routes from accumulating.
  */
 export function clearAllRouterData(): void {
+  globalRouteMap = {};
+  cachedManifest = null;
+  cachedPrecomputedEntries = null;
+  cachedRouteTrie = null;
+  rootScopeRoutes.clear();
+  globalSearchSchemas.clear();
   perRouterManifestMap.clear();
   perRouterTrieMap.clear();
   perRouterPrecomputedEntriesMap.clear();
-  cachedRouteTrie = null;
 }
 
 export function setRouterManifest(
@@ -191,7 +199,13 @@ export function registerRouterManifestLoader(
 }
 
 export async function ensureRouterManifest(routerId: string): Promise<void> {
-  if (perRouterManifestMap.has(routerId)) return;
+  // Check both manifest AND trie. The virtual module's setRouterManifest()
+  // pre-sets the manifest at startup, but the per-router trie is only
+  // available from the lazy loader. Without this, the lazy loader never
+  // runs and findMatch falls back to the global merged trie — which
+  // contains routes from ALL routers and breaks multi-router setups.
+  if (perRouterManifestMap.has(routerId) && perRouterTrieMap.has(routerId))
+    return;
   const loader = routerManifestLoaders.get(routerId);
   if (loader) {
     const mod = await loader();
@@ -215,6 +229,34 @@ export function setManifestReadyPromise(promise: Promise<void>): void {
 
 export function waitForManifestReady(): Promise<void> | null {
   return manifestReadyPromise;
+}
+
+// ============================================================================
+// Route Scope Registry
+// ============================================================================
+
+// Tracks whether each route is at root scope (no named include boundary above).
+// Used by dot-local reverse resolution to decide whether bare-name fallback
+// is allowed after scoped lookups are exhausted.
+const rootScopeRoutes: Map<string, boolean> = new Map();
+
+/**
+ * Register whether a route is at root scope.
+ * Called by path() during route evaluation.
+ */
+export function registerRouteRootScope(
+  routeName: string,
+  rootScoped: boolean,
+): void {
+  rootScopeRoutes.set(routeName, rootScoped);
+}
+
+/**
+ * Check if a route is at root scope.
+ * Returns undefined if the route has not been registered (e.g. in unit tests).
+ */
+export function isRouteRootScoped(routeName: string): boolean | undefined {
+  return rootScopeRoutes.get(routeName);
 }
 
 // ============================================================================

@@ -8,6 +8,20 @@ import { x } from "tinyexec";
 // On warm starts (reuseExistingServer) no build has run yet, so we build here.
 test("build test-app", async () => {
   const cwd = path.resolve("./e2e/test-app");
+  const genFilePath = path.join(cwd, "src", "router.named-routes.gen.ts");
+
+  const hasStalePublicRouteTypes = () => {
+    try {
+      const content = fs.readFileSync(genFilePath, "utf-8");
+      return (
+        content.includes('"$prefix_') ||
+        content.includes("/__dev/info") ||
+        content.includes("/__dev/debug/routes")
+      );
+    } catch {
+      return true;
+    }
+  };
 
   // Check for a recent build. The webServer command runs `pnpm build` before
   // starting the dev server on cold starts. Rebuilding here would overwrite
@@ -15,7 +29,7 @@ test("build test-app", async () => {
   const markerPath = path.join(cwd, "dist", "ssr", "index.js");
   if (fs.existsSync(markerPath)) {
     const ageMs = Date.now() - fs.statSync(markerPath).mtimeMs;
-    if (ageMs < 5 * 60 * 1000) {
+    if (ageMs < 5 * 60 * 1000 && !hasStalePublicRouteTypes()) {
       return;
     }
   }

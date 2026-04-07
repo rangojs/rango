@@ -11,6 +11,12 @@
 // Router registry (used by Vite plugin for build-time discovery)
 export { RSC_ROUTER_BRAND, RouterRegistry } from "./router.js";
 
+// Host router registry (used by Vite plugin for host-router lazy discovery)
+export {
+  HostRouterRegistry,
+  type HostRouterRegistryEntry,
+} from "./host/router.js";
+
 // Route map builder (Vite plugin injects these via virtual modules)
 export {
   registerRouteMap,

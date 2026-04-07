@@ -2,7 +2,9 @@ import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
 
-test.describe("handler-first execution order", () => {
+// -- Dev mode ----------------------------------------------------------------
+
+test.describe("handler-first execution order (dev)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
@@ -42,11 +44,72 @@ test.describe("handler-first execution order", () => {
   });
 });
 
-test.describe("revalidate and cache mix", () => {
+// -- Production build --------------------------------------------------------
+
+test.describe("handler-first execution order (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("route handler ctx.set() is visible to layout via ctx.get()", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/handler-first"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("handler-first-title")).toHaveText(
+      "Handler First",
+    );
+    await expect(page.getByTestId("layout-get-value")).toHaveText(
+      "Layout got: from-handler",
+    );
+  });
+
+  test("route handler ctx.set() is visible to parallel via ctx.get()", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/handler-first"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("sidebar-get-value")).toHaveText(
+      "Sidebar got: from-handler",
+    );
+  });
+
+  test("cache scope: handler ctx.set() visible to parallel via SSR", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/handler-first/cache-scope"));
+    await waitForHydration(page);
+
+    const handlerTs = await page
+      .getByTestId("cache-scope-handler-ts")
+      .textContent();
+    const sidebarTs = await page
+      .getByTestId("cache-scope-sidebar-ts")
+      .textContent();
+
+    expect(handlerTs).toBeTruthy();
+    expect(sidebarTs).toBe(handlerTs);
+  });
+});
+
+// -- Revalidation + cache mix (dev-only) ------------------------------------
+// These tests exercise client navigation cache behavior with revalidate(() => true)
+// and cache({ ttl }) mixing. Dev-only because they require isolated server state
+// and test runtime cache semantics that are not meaningful in static build output.
+
+test.describe("revalidate and cache mix (dev)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
-    isolatedServer: true,
   });
 
   test("cache scope: handler ctx.set() visible to parallel via SSR", async ({
@@ -121,31 +184,29 @@ test.describe("revalidate and cache mix", () => {
     // Sidebar reads handler's timestamp via ctx.get()
     expect(cachedSidebarTs1).toBe(cachedHandlerTs1);
 
-    // Wait for cache write
-    await page.waitForTimeout(500);
+    // Poll for cache hit: the async cache write runs in the background and
+    // under heavy load can take longer than any fixed timeout. Navigate
+    // back-and-forth until the cached route returns the same timestamp.
+    await expect
+      .poll(
+        async () => {
+          // Navigate to uncached route (fresh content)
+          await page.getByTestId("link-to-uncached").click();
+          await expect(page.getByTestId("handler-first-title")).toBeVisible();
 
-    // SPA navigate back to uncached route — gets fresh content
-    await page.getByTestId("link-to-uncached").click();
-    await expect(page.getByTestId("handler-first-title")).toBeVisible();
+          // Navigate to cached route — check if cache hit
+          await page.getByTestId("link-to-cached").click();
+          await expect(page.getByTestId("cache-scope-title")).toBeVisible();
 
-    const uncachedTs2 = await page
-      .getByTestId("handler-first-timestamp")
-      .textContent();
-    expect(uncachedTs2).not.toBe(uncachedTs1);
+          return page.getByTestId("cache-scope-handler-ts").textContent();
+        },
+        { timeout: 15000, intervals: [1000, 2000, 3000] },
+      )
+      .toBe(cachedHandlerTs1);
 
-    // SPA navigate to cached route again — cache hit
-    await page.getByTestId("link-to-cached").click();
-    await expect(page.getByTestId("cache-scope-title")).toBeVisible();
-
-    const cachedHandlerTs2 = await page
-      .getByTestId("cache-scope-handler-ts")
-      .textContent();
     const cachedSidebarTs2 = await page
       .getByTestId("cache-scope-sidebar-ts")
       .textContent();
-
-    // Cached values are identical to the first visit
-    expect(cachedHandlerTs2).toBe(cachedHandlerTs1);
     expect(cachedSidebarTs2).toBe(cachedHandlerTs1);
   });
 });

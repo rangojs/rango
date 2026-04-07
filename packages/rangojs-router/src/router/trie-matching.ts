@@ -114,7 +114,25 @@ function walkTrie(
     if (result) return result;
   }
 
-  // Priority 2: Param match
+  // Priority 2: Suffix-param match (e.g., :productId.html)
+  if (node.xp) {
+    for (const suffix in node.xp) {
+      if (segment.endsWith(suffix) && segment.length > suffix.length) {
+        const paramValue = segment.slice(0, -suffix.length);
+        paramValues.push(paramValue);
+        const result = walkTrie(
+          node.xp[suffix].c,
+          segments,
+          index + 1,
+          paramValues,
+        );
+        paramValues.pop();
+        if (result) return result;
+      }
+    }
+  }
+
+  // Priority 3: Param match
   if (node.p) {
     paramValues.push(segment);
     const result = walkTrie(node.p.c, segments, index + 1, paramValues);
@@ -122,7 +140,7 @@ function walkTrie(
     if (result) return result;
   }
 
-  // Priority 3: Wildcard match (consumes rest)
+  // Priority 4: Wildcard match (consumes rest)
   if (node.w) {
     const rest = joinRemainingSegments(segments, index);
     return {

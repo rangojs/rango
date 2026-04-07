@@ -192,25 +192,39 @@ test.describe("bundle-analysis", () => {
     test("handle $$id references SHOULD exist in client bundle", async () => {
       const clientBundle = getClientBundleContent();
 
-      // Breadcrumbs handle $$id must be present for useHandle to resolve data
-      expect(clientBundle).toMatch(/\$\$id.*Breadcrumbs/);
+      // Built-in Breadcrumbs handle uses a stable manual tag (not plugin-generated)
+      // because the source lives in node_modules and the exposeInternalIds plugin
+      // skips node_modules. The manual tag must be present for useHandle to work.
+      expect(clientBundle).toContain("__rsc_router_breadcrumbs__");
     });
 
-    test("handle $$id format should be hash#ExportName", async () => {
+    test("built-in handle tag in client bundle should not leak file paths", async () => {
       const clientBundle = getClientBundleContent();
 
-      // Extract the Breadcrumbs $$id value
-      const match = clientBundle.match(
-        /\$\$id\s*=\s*"([^"]+Breadcrumbs[^"]*)"/,
+      // Built-in handles live in node_modules and are NOT processed by
+      // exposeInternalIds. They use stable manual tags passed as the second
+      // argument to createHandle(). Extract ALL string literals near the
+      // breadcrumbs tag and verify none contain file paths.
+      //
+      // In the minified bundle the tag appears as a createHandle argument:
+      //   Kt(Ir,"__rsc_router_breadcrumbs__")
+      // If the plugin accidentally processed the file, there'd also be a
+      //   Wt.$$id = "src/handles/breadcrumbs.ts#Breadcrumbs"
+      // which we want to catch.
+      const breadcrumbsContext = clientBundle.match(
+        /.{0,200}__rsc_router_breadcrumbs__.{0,200}/,
       );
-      expect(match).toBeTruthy();
+      expect(breadcrumbsContext).toBeTruthy();
 
-      const id = match![1];
-      // Should be hex hash followed by #ExportName
-      expect(id).toMatch(/^[0-9a-f]+#[A-Za-z]\w*$/);
-      // Should NOT contain file paths
-      expect(id).not.toContain("/");
-      expect(id).not.toContain("src");
+      // The surrounding context should not contain source file paths
+      const context = breadcrumbsContext![0];
+      expect(context).not.toMatch(/src\/handles/);
+      expect(context).not.toMatch(/breadcrumbs\.ts/);
+
+      // There should be no $$id assignment with a file path for this handle
+      expect(clientBundle).not.toMatch(
+        /\$\$id\s*=\s*"[^"]*breadcrumbs\.ts[^"]*"/,
+      );
     });
   });
 
@@ -323,7 +337,6 @@ test.describe("bundle-analysis", () => {
 
   test.describe("version-virtual-module", () => {
     test("VERSION should be in RSC bundle as hex string", async () => {
-      // VERSION may be in index.js or an RSC asset chunk (e.g. __prerender-handlers)
       const rscBundle = getRscBundleContent();
 
       // VERSION should be defined as const VERSION = "hexstring"
@@ -374,33 +387,42 @@ test.describe("bundle-analysis", () => {
   });
 
   test.describe("prerender-handler-eviction", () => {
-    function getPrerenderHandlersContent(): string | null {
-      const files = readdirSync(RSC_ASSETS_DIR).filter(
-        (f) => f.startsWith("__prerender-handlers") && f.endsWith(".js"),
-      );
-      if (files.length === 0) return null;
-      return files
-        .map((file) => readFileSync(join(RSC_ASSETS_DIR, file), "utf-8"))
-        .join("\n");
-    }
-
     function getRscIndexContent(): string {
       return existsSync(RSC_INDEX) ? readFileSync(RSC_INDEX, "utf-8") : "";
     }
 
-    test("__prerender-handlers chunk exists in RSC bundle", async () => {
-      const content = getPrerenderHandlersContent();
-      expect(content).not.toBeNull();
-      expect(content!.length).toBeGreaterThan(0);
+    test("no separate __prerender-handlers or __static-handlers chunks in RSC bundle", async () => {
+      // Handler code is bundled into index.js and evicted there;
+      // no dedicated prerender or static chunk should exist.
+      const prerenderChunks = readdirSync(RSC_ASSETS_DIR).filter(
+        (f) => f.startsWith("__prerender-handlers") && f.endsWith(".js"),
+      );
+      const staticChunks = readdirSync(RSC_ASSETS_DIR).filter(
+        (f) => f.startsWith("__static-handlers") && f.endsWith(".js"),
+      );
+      expect(prerenderChunks.length).toBe(0);
+      expect(staticChunks.length).toBe(0);
     });
 
-    test("handler implementation strings evicted from prerender-handlers chunk", async () => {
-      const content = getPrerenderHandlersContent();
-      expect(content).not.toBeNull();
+    test("handler implementation strings evicted from RSC bundle", async () => {
+      // Check only runtime code (index.js + non-data asset chunks),
+      // not __pr-*/__st-* data assets which contain rendered output.
+      const rscIndex = getRscIndexContent();
+      const runtimeAssets = readdirSync(RSC_ASSETS_DIR)
+        .filter(
+          (f) =>
+            f.endsWith(".js") &&
+            !f.startsWith("__pr-") &&
+            !f.startsWith("__st-"),
+        )
+        .map((file) => readFileSync(join(RSC_ASSETS_DIR, file), "utf-8"))
+        .join("\n");
+      const rscRuntime = rscIndex + "\n" + runtimeAssets;
 
-      // Non-passthrough handler body strings should be replaced with stubs
-      expect(content).not.toContain("pre-rendered documentation");
-      expect(content).not.toContain("Content for");
+      // Non-passthrough handler body strings should be replaced with stubs.
+      // Use strings unique to prerender handlers (not general route handlers).
+      expect(rscRuntime).not.toContain("pre-rendered documentation");
+      expect(rscRuntime).not.toContain("docs-article-content");
     });
 
     test("handler implementation strings NOT in client bundle", async () => {
@@ -415,19 +437,18 @@ test.describe("bundle-analysis", () => {
       expect(ssrBundle).not.toContain("pre-rendered documentation");
     });
 
-    test("evicted handlers have stub shape", async () => {
-      const content = getPrerenderHandlersContent();
-      expect(content).not.toBeNull();
+    test("evicted handlers have stub shape in RSC bundle", async () => {
+      const rscBundle = getRscBundleContent();
 
       // Evicted handlers are replaced with: { __brand: "prerenderHandler", $$id: "..." }
-      expect(content).toMatch(/__brand.*prerenderHandler/);
+      expect(rscBundle).toMatch(/__brand.*prerenderHandler/);
     });
 
-    test("__PRERENDER_MANIFEST imported into RSC entry", async () => {
+    test("__loadPrerenderManifestModule injected into RSC entry", async () => {
       const rscIndex = getRscIndexContent();
 
       expect(rscIndex).toContain("__prerender-manifest.js");
-      expect(rscIndex).toContain("__PRERENDER_MANIFEST");
+      expect(rscIndex).toContain("__loadPrerenderManifestModule");
     });
 
     test("__prerender-manifest.js has correct shape", async () => {
@@ -439,16 +460,30 @@ test.describe("bundle-analysis", () => {
 
       const manifestCode = readFileSync(manifestPath, "utf-8");
 
+      // Should use JSON.parse for the manifest data
+      expect(manifestCode).toContain("JSON.parse");
+
+      // Parse the manifest to verify its contents
+      const jsonMatch = manifestCode.match(/JSON\.parse\('(.+)'\)/);
+      expect(jsonMatch).toBeTruthy();
+      const manifest = JSON.parse(jsonMatch![1]);
+
       // Should contain docs routes (static route uses "_" param hash)
-      expect(manifestCode).toContain('"docs/_"');
+      expect(manifest).toHaveProperty("docs/_");
 
       // Should contain docs.article routes (dynamic with param hash)
-      expect(manifestCode).toMatch(/"docs\.article\/[a-f0-9]+"/);
-
-      // Should contain dynamic import references to __pr-*.js asset files
-      expect(manifestCode).toMatch(
-        /import\("\.\/assets\/__pr-[a-f0-9]+\.js"\)/,
+      const articleKeys = Object.keys(manifest).filter((k) =>
+        k.startsWith("docs.article/"),
       );
+      expect(articleKeys.length).toBeGreaterThan(0);
+
+      // Values should be relative asset specifiers (not import thunks)
+      for (const value of Object.values(manifest)) {
+        expect(value).toMatch(/^\.\/assets\/__pr-[a-f0-9]+\.js$/);
+      }
+
+      // Manifest module should export loadPrerenderAsset
+      expect(manifestCode).toContain("loadPrerenderAsset");
     });
 
     test("__pr-*.js asset files have correct shape", async () => {

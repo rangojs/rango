@@ -1,6 +1,9 @@
 import { type ReactNode } from "react";
 import { createCacheScope } from "./cache/cache-scope.js";
-import { setCacheProfiles } from "./cache/profile-registry.js";
+import {
+  setCacheProfiles,
+  resolveCacheProfiles,
+} from "./cache/profile-registry.js";
 import { isCachedFunction } from "./cache/taint.js";
 import { assertClientComponent } from "./component-utils.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
@@ -16,6 +19,8 @@ import {
 import MapRootLayout from "./server/root-layout.js";
 import type { AllUseItems } from "./route-types.js";
 import type { UrlPatterns } from "./urls.js";
+import type { UrlBuilder } from "./urls/pattern-types.js";
+import { urls } from "./urls.js";
 import {
   EntryData,
   InterceptSelectorContext,
@@ -68,12 +73,14 @@ import {
   extractStaticPrefix,
   traverseBack,
 } from "./router/pattern-matching.js";
+import { resolveSink, safeEmit, getRequestId } from "./router/telemetry.js";
 import { evaluateRevalidation } from "./router/revalidation.js";
 import {
   type RouterContext,
   runWithRouterContext,
 } from "./router/router-context.js";
 import { resolveThemeConfig } from "./theme/constants.js";
+import { resolveTimeouts } from "./router/timeout.js";
 
 // Extracted content negotiation utilities
 import { flattenNamedRoutes } from "./router/content-negotiation.js";
@@ -90,6 +97,7 @@ import type {
 } from "./router/router-options.js";
 import type {
   RSCRouter,
+  RSCRouterInternal,
   RouterRequestInput,
 } from "./router/router-interfaces.js";
 
@@ -110,11 +118,16 @@ export { RSC_ROUTER_BRAND, RouterRegistry } from "./router/router-registry.js";
 export type {
   RSCRouterOptions,
   RootLayoutProps,
+  SSRStreamMode,
+  SSROptions,
+  ResolveStreamingContext,
 } from "./router/router-options.js";
 export type {
   RSCRouter,
+  RSCRouterInternal,
   RouterRequestInput,
 } from "./router/router-interfaces.js";
+export { toInternal } from "./router/router-interfaces.js";
 
 export function createRouter<TEnv = any>(
   options: RSCRouterOptions<TEnv> = {},
@@ -122,6 +135,7 @@ export function createRouter<TEnv = any>(
   const {
     id: userProvidedId,
     $$id: injectedId,
+    basename: basenameOption,
     debugPerformance = false,
     document: documentOption,
     defaultErrorBoundary,
@@ -136,15 +150,32 @@ export function createRouter<TEnv = any>(
     $$sourceFile: injectedSourceFile,
     nonce,
     version,
-    prefetchCacheControl: prefetchCacheControlOption,
+    prefetchCacheTTL: prefetchCacheTTLOption,
     warmup: warmupOption,
     allowDebugManifest: allowDebugManifestOption = false,
+    telemetry: telemetrySink,
+    ssr: ssrOption,
+    timeout: timeoutShorthand,
+    timeouts: timeoutsOption,
+    onTimeout,
+    originCheck: originCheckOption,
   } = options;
 
-  // Set cache profiles for "use cache" directive
-  if (cacheProfilesOption) {
-    setCacheProfiles(cacheProfilesOption);
-  }
+  // Normalize basename: ensure leading slash, strip trailing slash.
+  // A bare "/" is equivalent to no basename.
+  const basename =
+    basenameOption && basenameOption.replace(/^\/+|\/+$/g, "")
+      ? "/" + basenameOption.replace(/^\/+|\/+$/g, "")
+      : undefined;
+
+  // Resolve telemetry sink (no-op when not configured)
+  const telemetry = resolveSink(telemetrySink);
+
+  // Resolve cache profiles: merge user config with guaranteed default profile.
+  // This resolved map is both stored on the router (for per-request context)
+  // and written to the global registry (for DSL-time cache("profileName")).
+  const resolvedCacheProfiles = resolveCacheProfiles(cacheProfilesOption);
+  setCacheProfiles(resolvedCacheProfiles);
 
   // Source file: prefer Vite-injected path (zero cost), fall back to
   // stack trace parsing for non-Vite environments (e.g. tests).
@@ -179,11 +210,17 @@ export function createRouter<TEnv = any>(
   const routerId =
     userProvidedId ?? injectedId ?? `router_${nextRouterAutoId()}`;
 
-  // Resolve prefetch cache control (default: 'private, max-age=300')
-  const prefetchCacheControl =
-    prefetchCacheControlOption !== undefined
-      ? prefetchCacheControlOption
-      : "private, max-age=300";
+  // Resolve prefetch cache TTL (default: 300 seconds / 5 minutes)
+  // Clamp to a non-negative integer for valid Cache-Control max-age.
+  const rawTTL =
+    prefetchCacheTTLOption !== undefined ? prefetchCacheTTLOption : 300;
+  const prefetchCacheTTLSeconds =
+    rawTTL === false ? 0 : Math.max(0, Math.floor(rawTTL));
+  const prefetchCacheTTL = prefetchCacheTTLSeconds * 1000;
+  const prefetchCacheControl: string | false =
+    prefetchCacheTTLSeconds === 0
+      ? false
+      : `private, max-age=${prefetchCacheTTLSeconds}`;
 
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;
@@ -193,15 +230,29 @@ export function createRouter<TEnv = any>(
     ? resolveThemeConfig(themeOption)
     : null;
 
+  // Resolve timeout config (merge shorthand + structured)
+  const resolvedTimeouts = resolveTimeouts(timeoutShorthand, timeoutsOption);
+
   /**
    * Wrapper for invokeOnError that binds the router's onError callback.
    * Uses the shared utility from router/error-handling.ts for consistent behavior.
+   *
+   * Deduplicates via per-request WeakSet stored on the ALS request context.
+   * A closure-level WeakSet would silently swallow errors if the same object
+   * instance is thrown across separate requests (e.g. a singleton error).
    */
   function callOnError(
     error: unknown,
     phase: ErrorPhase,
     context: Parameters<typeof invokeOnError<TEnv>>[3],
   ): void {
+    if (error != null && typeof error === "object") {
+      const reportedErrors = _getRequestContext()?._reportedErrors;
+      if (reportedErrors) {
+        if (reportedErrors.has(error)) return;
+        reportedErrors.add(error);
+      }
+    }
     invokeOnError(onError, error, phase, context, "Router");
   }
 
@@ -291,6 +342,11 @@ export function createRouter<TEnv = any>(
   const mergedRouteMap: Record<string, string> =
     flattenNamedRoutes(staticRouteNames);
 
+  // Track names that came from the static seed so we can silently overwrite
+  // them during routes() registration. The gen file may be stale during HMR,
+  // so conflicts between seeded and runtime-registered values are expected.
+  const seededNames = new Set(Object.keys(mergedRouteMap));
+
   // Lazy precomputed entries lookup: rebuilt when per-router data arrives.
   // In production multi-router setups, per-router data is loaded lazily via
   // ensureRouterManifest(). At createRouter() time the data isn't available yet,
@@ -317,8 +373,18 @@ export function createRouter<TEnv = any>(
     return precomputedByPrefix;
   }
 
-  // Wrapper to pass debugPerformance to external createMetricsStore
-  const getMetricsStore = () => createMetricsStore(debugPerformance);
+  // Wrapper to pass debugPerformance to external createMetricsStore.
+  // Also checks per-request flag set by ctx.debugPerformance() in middleware.
+  const getMetricsStore = () => {
+    const reqCtx = _getRequestContext();
+    const enabled = debugPerformance || !!reqCtx?._debugPerformance;
+    if (!enabled) return undefined;
+    if (!reqCtx) {
+      return createMetricsStore(true);
+    }
+    reqCtx._metricsStore ??= createMetricsStore(true);
+    return reqCtx._metricsStore;
+  };
 
   // Wrapper to pass defaults to error/notFound boundary finders
   const findNearestErrorBoundary = (entry: EntryData | null) =>
@@ -332,14 +398,43 @@ export function createRouter<TEnv = any>(
     return _getRequestContext()?._handleStore;
   };
 
-  // Track a pending handler promise (non-blocking)
-  const trackHandler = <T>(promise: Promise<T>): Promise<T> => {
+  // Track a pending handler promise (non-blocking).
+  // Attaches a side-effect .catch() to report streaming handler errors to onError
+  // without altering the rejection chain (React's streaming error boundary still handles it).
+  const trackHandler = <T>(
+    promise: Promise<T>,
+    errorContext?: {
+      segmentId?: string;
+      segmentType?: string;
+    },
+  ): Promise<T> => {
     const store = getHandleStore();
-    return store ? store.track(promise) : promise;
+    const tracked = store ? store.track(promise) : promise;
+
+    // Report streaming handler errors to onError as a side-effect.
+    // The rejection still propagates to the RSC stream for client error boundaries.
+    // Captures request context eagerly (closure) so the catch handler has full context.
+    const reqCtx = _getRequestContext();
+    if (reqCtx && onError) {
+      tracked.catch((error) => {
+        callOnError(error, "handler", {
+          request: reqCtx.request,
+          url: reqCtx.url,
+          routeKey: reqCtx._routeName,
+          params: reqCtx.params as Record<string, string>,
+          env: reqCtx.env as TEnv,
+          segmentId: errorContext?.segmentId,
+          segmentType: errorContext?.segmentType as any,
+          handledByBoundary: true,
+        });
+      });
+    }
+
+    return tracked;
   };
 
   // Wrapper for wrapLoaderWithErrorHandling that uses router's error boundary finder
-  // Includes onError callback for loader error notification
+  // Includes onError callback for loader error notification and telemetry emission.
   function wrapLoaderPromise<T>(
     promise: Promise<T>,
     entry: EntryData,
@@ -355,7 +450,25 @@ export function createRouter<TEnv = any>(
       requestStartTime?: number;
     },
   ): Promise<LoaderDataResult<T>> {
-    return wrapLoaderWithErrorHandling(
+    const loaderStart = telemetrySink ? performance.now() : 0;
+    const loaderRequestId = telemetrySink
+      ? errorContext?.request
+        ? getRequestId(errorContext.request)
+        : undefined
+      : undefined;
+    if (telemetrySink) {
+      const loaderName = segmentId.split(".").pop() || "unknown";
+      safeEmit(telemetry, {
+        type: "loader.start",
+        timestamp: loaderStart,
+        requestId: loaderRequestId,
+        segmentId,
+        loaderName,
+        pathname,
+      });
+    }
+
+    const result = wrapLoaderWithErrorHandling(
       promise,
       entry,
       segmentId,
@@ -378,9 +491,42 @@ export function createRouter<TEnv = any>(
               handledByBoundary: ctx.handledByBoundary,
               requestStartTime: errorContext.requestStartTime,
             });
+            if (telemetrySink) {
+              const errorObj =
+                error instanceof Error ? error : new Error(String(error));
+              safeEmit(telemetry, {
+                type: "loader.error",
+                timestamp: performance.now(),
+                requestId: loaderRequestId,
+                segmentId: ctx.segmentId,
+                loaderName: ctx.loaderName,
+                pathname,
+                error: errorObj,
+                handledByBoundary: ctx.handledByBoundary,
+              });
+            }
           }
         : undefined,
     );
+
+    // Emit loader.end after the promise settles (fire-and-forget)
+    if (telemetrySink) {
+      const loaderName = segmentId.split(".").pop() || "unknown";
+      result.then((r) => {
+        safeEmit(telemetry, {
+          type: "loader.end",
+          timestamp: performance.now(),
+          requestId: loaderRequestId,
+          segmentId,
+          loaderName,
+          pathname,
+          durationMs: performance.now() - loaderStart,
+          ok: r.ok,
+        });
+      });
+    }
+
+    return result;
   }
 
   // Dependencies object for extracted segment resolution functions.
@@ -390,6 +536,7 @@ export function createRouter<TEnv = any>(
     trackHandler,
     findNearestErrorBoundary,
     findNearestNotFoundBoundary,
+    notFoundComponent: notFound,
     callOnError,
   };
 
@@ -424,6 +571,7 @@ export function createRouter<TEnv = any>(
     mergedRouteMap,
     nextMountIndex: () => mountIndex++,
     getPrecomputedByPrefix,
+    routerId,
   };
 
   function evaluateLazyEntry(entry: RouteEntry<TEnv>): void {
@@ -460,6 +608,7 @@ export function createRouter<TEnv = any>(
       resolveLoadersOnlyWithRevalidation,
       resolveInterceptLoadersOnly,
       resolveLoadersOnly,
+      telemetry: telemetrySink,
     };
   }
 
@@ -475,20 +624,35 @@ export function createRouter<TEnv = any>(
     pathname: string,
     params: Record<string, string>,
     buildVars?: Record<string, any>,
+    isPassthroughRoute?: boolean,
+    buildEnv?: TEnv,
+    devMode?: boolean,
   ) {
-    return _matchForPrerender(pathname, params, prerenderDeps, buildVars);
+    return _matchForPrerender(
+      pathname,
+      params,
+      prerenderDeps,
+      buildVars,
+      isPassthroughRoute,
+      buildEnv,
+      devMode,
+    );
   }
 
   async function renderStaticSegment(
     handler: Function,
     handlerId: string,
     routeName?: string,
+    buildEnv?: TEnv,
+    devMode?: boolean,
   ) {
     return _renderStaticSegment<TEnv>(
       handler,
       handlerId,
       mergedRouteMap,
       routeName,
+      buildEnv,
+      devMode,
     );
   }
 
@@ -500,6 +664,7 @@ export function createRouter<TEnv = any>(
     defaultErrorBoundary,
     findMatch,
     findInterceptForRoute,
+    telemetry: telemetrySink,
   });
 
   const { match, matchPartial, matchError, previewMatch } = matchHandlers;
@@ -509,11 +674,18 @@ export function createRouter<TEnv = any>(
    * The type system tracks accumulated routes through the builder chain
    * Initial TRoutes is {} (empty) to avoid poisoning accumulated types with Record<string, string>
    */
-  const router: RSCRouter<TEnv, {}> = {
+  const router: RSCRouterInternal<TEnv, {}> = {
     __brand: RSC_ROUTER_BRAND,
     id: routerId,
+    basename,
 
-    routes(urlPatterns: UrlPatterns<TEnv>): any {
+    routes(patternsOrBuilder: UrlPatterns<TEnv> | UrlBuilder<TEnv>): any {
+      // Wrap builder functions in urls() automatically
+      const urlPatterns: UrlPatterns<TEnv> =
+        typeof patternsOrBuilder === "function"
+          ? (urls(patternsOrBuilder) as UrlPatterns<TEnv>)
+          : patternsOrBuilder;
+
       // Store reference for runtime manifest generation
       storedUrlPatterns = urlPatterns;
       const currentMountIndex = mountIndex++;
@@ -544,7 +716,7 @@ export function createRouter<TEnv = any>(
         errorBoundary: [],
         notFoundBoundary: [],
         layout: [],
-        parallel: [],
+        parallel: {},
         intercept: [],
         loader: [],
       };
@@ -560,6 +732,11 @@ export function createRouter<TEnv = any>(
           parent: syntheticMapRoot,
           counters: {},
           mountIndex: currentMountIndex,
+          cacheProfiles: resolvedCacheProfiles,
+          // basename sets the initial URL prefix so all path() patterns
+          // are registered with the prefix (e.g. "/admin" + "/users" = "/admin/users").
+          // No namePrefix — route names stay unprefixed.
+          ...(basename ? { urlPrefix: basename } : {}),
         },
         () => {
           handlerResult = urlPatterns.handler() as AllUseItems[];
@@ -574,10 +751,15 @@ export function createRouter<TEnv = any>(
 
       // Collect route keys that have prerender handlers (for non-trie match path)
       let prerenderRouteKeys: Set<string> | undefined;
+      let passthroughRouteKeys: Set<string> | undefined;
       for (const [name, entry] of manifest.entries()) {
         if (entry.type === "route" && entry.isPrerender) {
           if (!prerenderRouteKeys) prerenderRouteKeys = new Set();
           prerenderRouteKeys.add(name);
+          if (entry.isPassthrough === true) {
+            if (!passthroughRouteKeys) passthroughRouteKeys = new Set();
+            passthroughRouteKeys.add(name);
+          }
         }
       }
 
@@ -600,7 +782,10 @@ export function createRouter<TEnv = any>(
             trailingSlash: trailingSlashConfig,
             handler: urlPatterns.handler,
             mountIndex: currentMountIndex,
+            routerId,
+            cacheProfiles: resolvedCacheProfiles,
             ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
+            ...(passthroughRouteKeys ? { passthroughRouteKeys } : {}),
           });
         }
       } else {
@@ -617,21 +802,31 @@ export function createRouter<TEnv = any>(
           trailingSlash: trailingSlashConfig,
           handler: urlPatterns.handler,
           mountIndex: currentMountIndex,
+          routerId,
+          cacheProfiles: resolvedCacheProfiles,
           ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
+          ...(passthroughRouteKeys ? { passthroughRouteKeys } : {}),
         });
       }
 
       // Build route map from registered patterns
       for (const [name, pattern] of routePatterns.entries()) {
-        // Runtime validation: warn if key already exists with different pattern
+        // Runtime validation: warn if key already exists with different pattern.
+        // Skip warning for entries that came from the static seed — the gen file
+        // can be stale during HMR, so runtime registration is authoritative.
         const existingPattern = mergedRouteMap[name];
-        if (existingPattern !== undefined && existingPattern !== pattern) {
+        if (
+          existingPattern !== undefined &&
+          existingPattern !== pattern &&
+          !seededNames.has(name)
+        ) {
           console.warn(
             `[@rangojs/router] Route name conflict: "${name}" already maps to "${existingPattern}", ` +
               `overwriting with "${pattern}". Use unique route names to avoid this.`,
           );
         }
         mergedRouteMap[name] = pattern;
+        seededNames.delete(name);
       }
 
       // Detect lazy includes in handler result and create placeholder entries
@@ -651,6 +846,7 @@ export function createRouter<TEnv = any>(
           trailingSlash: trailingSlashConfig,
           handler: urlPatterns.handler,
           mountIndex: mountIndex++,
+          routerId,
           // Lazy evaluation fields
           lazy: true,
           lazyPatterns: lazyInclude.patterns,
@@ -689,8 +885,18 @@ export function createRouter<TEnv = any>(
       patternOrMiddleware: string | MiddlewareFn<TEnv>,
       middleware?: MiddlewareFn<TEnv>,
     ): any {
-      // Global middleware - no mount prefix
-      addMiddleware(patternOrMiddleware, middleware, null);
+      // Auto-prefix pattern with basename so router-level middleware
+      // patterns are router-relative (e.g. "/users/*" matches "/app/users/*").
+      if (basename && typeof patternOrMiddleware === "string") {
+        const pattern = patternOrMiddleware;
+        const prefixed =
+          pattern === "/*" || pattern === "*"
+            ? `${basename}/*`
+            : `${basename}${pattern}`;
+        addMiddleware(prefixed, middleware, null);
+      } else {
+        addMiddleware(patternOrMiddleware, middleware, null);
+      }
       return router;
     },
 
@@ -720,14 +926,31 @@ export function createRouter<TEnv = any>(
     // Expose resolved theme configuration for NavigationProvider and MetaTags
     themeConfig: resolvedThemeConfig,
 
-    // Expose prefetch cache control for RSC handler
+    // Expose resolved cache profiles for per-request resolution
+    cacheProfiles: resolvedCacheProfiles,
+
+    // Expose prefetch cache settings
     prefetchCacheControl,
+    prefetchCacheTTL,
 
     // Expose warmup enabled flag for handler and client
     warmupEnabled,
 
+    // Expose router-wide performance debugging for request-level metrics setup
+    debugPerformance,
+
     // Expose debug manifest flag for handler
     allowDebugManifest: allowDebugManifestOption,
+
+    // Expose origin check configuration for handler (default: enabled)
+    originCheck: originCheckOption ?? true,
+
+    // Expose SSR configuration for handler
+    ssr: ssrOption,
+
+    // Expose resolved timeouts for RSC handler
+    timeouts: resolvedTimeouts,
+    onTimeout,
 
     // Expose global middleware for RSC handler
     middleware: globalMiddleware,
@@ -774,6 +997,9 @@ export function createRouter<TEnv = any>(
     // Expose source file for per-router type generation
     __sourceFile,
 
+    // Expose basename for runtime manifest generation
+    __basename: basename,
+
     // RSC request handler (lazily created on first call)
     fetch: (() => {
       // Handler is created on first call and reused
@@ -807,6 +1033,10 @@ export function createRouter<TEnv = any>(
       };
     })(),
 
+    // Low-level route matching for request classification
+    findMatch: (pathname: string, metricsStore?: any) =>
+      findMatch(pathname, metricsStore),
+
     // Debug utility for manifest inspection
     debugManifest: () => buildDebugManifest<TEnv>(routesEntries),
   };
@@ -815,7 +1045,9 @@ export function createRouter<TEnv = any>(
   RouterRegistry.set(routerId, router);
 
   // If urls option was provided, auto-register them
-  if (urlsOption) {
+  if (typeof urlsOption === "function") {
+    return router.routes(urlsOption) as RSCRouter<TEnv, {}>;
+  } else if (urlsOption) {
     return router.routes(urlsOption) as RSCRouter<TEnv, {}>;
   }
 

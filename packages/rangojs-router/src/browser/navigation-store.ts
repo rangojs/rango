@@ -12,7 +12,7 @@ import type {
   ActionStateListener,
   HandleData,
 } from "./types.js";
-import { clearPrefetchCache } from "./prefetch-cache.js";
+import { clearPrefetchCache } from "./prefetch/cache.js";
 
 /**
  * Default action state (idle with no payload)
@@ -28,9 +28,15 @@ const DEFAULT_ACTION_STATE: TrackedActionState = {
 // Maximum number of history entries to cache (URLs visited)
 const HISTORY_CACHE_SIZE = 20;
 
-// Cache entry: [url-key, segments, stale, handleData?]
+// Cache entry: [url-key, segments, stale, handleData?, routerId?]
 // stale=true means the data may be outdated and should be revalidated on access
-type HistoryCacheEntry = [string, ResolvedSegment[], boolean, HandleData?];
+type HistoryCacheEntry = [
+  string,
+  ResolvedSegment[],
+  boolean,
+  HandleData?,
+  string?,
+];
 
 /**
  * Shallow clone handleData to avoid reference sharing between cache entries.
@@ -258,6 +264,11 @@ export function createNavigationStore(
   // Used to maintain intercept context during action revalidation
   let interceptSourceUrl: string | null = null;
 
+  // Router identity - tracks which router is currently active.
+  // When this changes on a partial response, the client forces a full
+  // tree replacement instead of reconciling with stale segments.
+  let currentRouterId: string | undefined;
+
   // Action state tracking (for useAction hook)
   // Maps action function ID to its tracked state
   const actionStates = new Map<string, TrackedActionState>();
@@ -338,7 +349,6 @@ export function createNavigationStore(
    * Clear the history cache and broadcast to other tabs
    */
   function clearCacheAndBroadcast(): void {
-    console.log("[Browser] Clearing cache and broadcasting to other tabs");
     clearCacheInternal();
     broadcastInvalidation();
   }
@@ -347,9 +357,6 @@ export function createNavigationStore(
    * Mark cache as stale and broadcast to other tabs
    */
   function markStaleAndBroadcast(): void {
-    console.log(
-      "[Browser] Marking cache as stale and broadcasting to other tabs",
-    );
     markCacheAsStaleInternal();
     broadcastInvalidation();
   }
@@ -372,14 +379,6 @@ export function createNavigationStore(
         path: currentPath,
         segmentIds: currentSegmentIds,
       });
-      console.log(
-        "[Browser] Broadcast sent for path:",
-        currentPath,
-        "segments:",
-        currentSegmentIds.join(", "),
-      );
-    } else {
-      console.warn("[Browser] No BroadcastChannel available");
     }
   }
 
@@ -404,34 +403,21 @@ export function createNavigationStore(
             return;
           }
 
-          console.log(
-            "[Browser] Cache marked stale by another tab, shared segments:",
-            mutatedSegmentIds
-              .filter((id) => currentSegmentIds.includes(id))
-              .join(", "),
-          );
           markCacheAsStaleInternal();
 
           // Auto-refresh if enabled and callback is registered
           if (crossTabAutoRefresh && crossTabRefreshCallback) {
             // If idle, refresh immediately. If loading, wait for idle then refresh.
             if (navState.state === "idle") {
-              console.log("[Browser] Cross-tab refresh triggered (idle)");
               crossTabRefreshCallback();
             } else if (!pendingCrossTabRefresh) {
               // Only queue one refresh, ignore subsequent events while loading
               pendingCrossTabRefresh = true;
-              console.log(
-                "[Browser] Navigation in progress, deferring cross-tab refresh",
-              );
               // Subscribe to state changes, refresh when idle
               const listener: StateListener = () => {
                 if (navState.state === "idle") {
                   stateListeners.delete(listener);
                   pendingCrossTabRefresh = false;
-                  console.log(
-                    "[Browser] Cross-tab refresh triggered (deferred)",
-                  );
                   crossTabRefreshCallback?.();
                 }
               };
@@ -596,10 +582,17 @@ export function createNavigationStore(
           segments,
           false,
           clonedHandleData,
+          currentRouterId,
         ];
       } else {
         // Add new entry at the end (not stale)
-        historyCache.push([historyKey, segments, false, clonedHandleData]);
+        historyCache.push([
+          historyKey,
+          segments,
+          false,
+          clonedHandleData,
+          currentRouterId,
+        ]);
         // Remove oldest entries if over limit
         while (historyCache.length > cacheSize) {
           historyCache.shift();
@@ -611,14 +604,22 @@ export function createNavigationStore(
      * Get cached segments for a history entry
      * Returns { segments, stale, handleData } or undefined if not cached
      */
-    getCachedSegments(
-      historyKey: string,
-    ):
-      | { segments: ResolvedSegment[]; stale: boolean; handleData?: HandleData }
+    getCachedSegments(historyKey: string):
+      | {
+          segments: ResolvedSegment[];
+          stale: boolean;
+          handleData?: HandleData;
+          routerId?: string;
+        }
       | undefined {
       const entry = historyCache.find(([key]) => key === historyKey);
       if (!entry) return undefined;
-      return { segments: entry[1], stale: entry[2], handleData: entry[3] };
+      return {
+        segments: entry[1],
+        stale: entry[2],
+        handleData: entry[3],
+        routerId: entry[4],
+      };
     },
 
     /**
@@ -646,6 +647,7 @@ export function createNavigationStore(
           entry[1],
           entry[2],
           clonedHandleData,
+          entry[4], // preserve routerId
         ];
       }
     },
@@ -656,11 +658,6 @@ export function createNavigationStore(
      */
     markCacheAsStale(): void {
       markCacheAsStaleInternal();
-      console.log(
-        "[Browser] Marked",
-        historyCache.length,
-        "cache entries as stale",
-      );
     },
 
     /**
@@ -715,6 +712,14 @@ export function createNavigationStore(
      */
     setInterceptSourceUrl(url: string | null): void {
       interceptSourceUrl = url;
+    },
+
+    getRouterId(): string | undefined {
+      return currentRouterId;
+    },
+
+    setRouterId(id: string): void {
+      currentRouterId = id;
     },
 
     // ========================================================================

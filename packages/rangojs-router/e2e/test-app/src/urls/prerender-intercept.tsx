@@ -12,12 +12,20 @@ const PrerenderInterceptIndex: Handler<"prerenderIntercept.index"> = () => (
     <h1 data-testid="pri-index-title">Pre-render Intercept Test</h1>
     <ul>
       <li>
-        <Link to="/prerender-intercept/alpha" data-testid="pri-link-alpha">
+        <Link
+          to="/prerender-intercept/alpha"
+          prefetch="none"
+          data-testid="pri-link-alpha"
+        >
           Alpha
         </Link>
       </li>
       <li>
-        <Link to="/prerender-intercept/beta" data-testid="pri-link-beta">
+        <Link
+          to="/prerender-intercept/beta"
+          prefetch="none"
+          data-testid="pri-link-beta"
+        >
           Beta
         </Link>
       </li>

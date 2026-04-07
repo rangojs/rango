@@ -2,6 +2,7 @@
 
 import { useContext, useState, useEffect, useRef } from "react";
 import { NavigationStoreContext } from "./context.js";
+import { shallowEqual } from "./shallow-equal.js";
 
 /**
  * Segments state returned by useSegments hook
@@ -13,86 +14,6 @@ export interface SegmentsState {
   segmentIds: readonly string[];
   /** Current URL location */
   location: URL;
-}
-
-/**
- * SSR module-level state.
- * Populated by initSegmentsSync before React renders.
- * Used by useState initializer during SSR.
- */
-let ssrSegmentOrder: string[] = [];
-let ssrPathname: string = "/";
-let ssrParams: Record<string, string> = {};
-
-/**
- * Filter segment IDs to only include routes and layouts.
- * Excludes parallels (contain .@) and loaders (contain D followed by digit).
- */
-function filterSegmentOrder(matched: string[]): string[] {
-  return matched.filter((id) => {
-    if (id.includes(".@")) return false;
-    if (/D\d+\./.test(id)) return false;
-    return true;
-  });
-}
-
-/**
- * Initialize segments data synchronously for SSR.
- * Called before rendering to populate state for useState initializer.
- *
- * @param matched - Segment order from RSC metadata
- * @param pathname - Current pathname
- * @param params - Merged route params
- */
-export function initSegmentsSync(
-  matched?: string[],
-  pathname?: string,
-  params?: Record<string, string>,
-): void {
-  ssrSegmentOrder = filterSegmentOrder(matched ?? []);
-  ssrPathname = pathname ?? "/";
-  ssrParams = params ?? {};
-}
-
-/**
- * Get SSR params for use-params hook initialization.
- */
-export function getSsrParams(): Record<string, string> {
-  return ssrParams;
-}
-
-/**
- * Get SSR pathname for use-pathname hook initialization.
- */
-export function getSsrPathname(): string {
-  return ssrPathname;
-}
-
-/**
- * Shallow equality check for selector results
- */
-function shallowEqual<T>(a: T, b: T): boolean {
-  if (Object.is(a, b)) return true;
-  if (
-    typeof a !== "object" ||
-    a === null ||
-    typeof b !== "object" ||
-    b === null
-  ) {
-    return false;
-  }
-  const keysA = Object.keys(a);
-  const keysB = Object.keys(b);
-  if (keysA.length !== keysB.length) return false;
-  for (const key of keysA) {
-    if (
-      !Object.hasOwn(b, key) ||
-      !Object.is((a as any)[key], (b as any)[key])
-    ) {
-      return false;
-    }
-  }
-  return true;
 }
 
 /**
@@ -113,18 +34,6 @@ function buildSegmentsState(
   return {
     path: parsePathname(location.pathname),
     segmentIds: segmentOrder,
-    location,
-  };
-}
-
-/**
- * Build SSR state from module-level variables
- */
-function buildSsrState(): SegmentsState {
-  const location = new URL(ssrPathname, "http://localhost");
-  return {
-    path: parsePathname(ssrPathname),
-    segmentIds: ssrSegmentOrder,
     location,
   };
 }
@@ -152,50 +61,99 @@ export function useSegments<T>(
 ): T | SegmentsState {
   const ctx = useContext(NavigationStoreContext);
 
-  // Build initial state from SSR module state or event controller
+  // Build initial state from event controller when context exists.
+  // Inlined rather than calling recompute() because the segmentsCache ref
+  // is not yet initialized during the useState initializer.
   const [state, setState] = useState<T | SegmentsState>(() => {
-    // During SSR or when no context, use module-level SSR state
-    if (typeof document === "undefined" || !ctx) {
-      const ssrState = buildSsrState();
-      return selector ? selector(ssrState) : ssrState;
+    if (!ctx) {
+      const fallbackLocation = new URL("/", "http://localhost");
+      const fallbackState = buildSegmentsState(fallbackLocation, []);
+      return selector ? selector(fallbackState) : fallbackState;
     }
-    // On client with context, use event controller state
-    const navState = ctx.eventController.getState();
+    const location = ctx.eventController.getLocation();
     const handleState = ctx.eventController.getHandleState();
     const segmentsState = buildSegmentsState(
-      navState.location as URL,
+      location as URL,
       handleState.segmentOrder,
     );
     return selector ? selector(segmentsState) : segmentsState;
   });
 
   const prevState = useRef(state);
+  const selectorRef = useRef(selector);
+  selectorRef.current = selector;
 
-  // Subscribe to both navigation state and handle state changes
+  // Track selector identity to detect when the selector function changes.
+  // Only then do we eagerly recompute during render to avoid staleness.
+  // Without this guard, no-selector mode causes infinite re-renders because
+  // buildSegmentsState creates fresh arrays that fail Object.is checks.
+  const prevSelectorIdentity = useRef(selector);
+
+  // Cache SegmentsState to stabilize nested references (path, segmentIds
+  // arrays) so selectors returning composite values don't cause spurious
+  // render-time setState calls.
+  const segmentsCache = useRef<{
+    location: URL;
+    segmentOrder: string[];
+    state: SegmentsState;
+  } | null>(null);
+
+  // Recompute selected value from current store state and apply selector.
+  // Shared by the render-time eager check and the subscription callback.
+  function recompute(
+    sel: ((state: SegmentsState) => T) | undefined,
+  ): T | SegmentsState {
+    const location = ctx!.eventController.getLocation();
+    const handleState = ctx!.eventController.getHandleState();
+
+    // Reuse cached state when inputs haven't changed by reference,
+    // keeping array/object references stable for composite selectors.
+    const cache = segmentsCache.current;
+    let segmentsState: SegmentsState;
+    if (
+      cache &&
+      cache.location === location &&
+      cache.segmentOrder === handleState.segmentOrder
+    ) {
+      segmentsState = cache.state;
+    } else {
+      segmentsState = buildSegmentsState(
+        location as URL,
+        handleState.segmentOrder,
+      );
+      segmentsCache.current = {
+        location: location as URL,
+        segmentOrder: handleState.segmentOrder,
+        state: segmentsState,
+      };
+    }
+    return sel ? sel(segmentsState) : segmentsState;
+  }
+
+  if (ctx && selector !== prevSelectorIdentity.current) {
+    prevSelectorIdentity.current = selector;
+    const nextSelected = recompute(selector);
+    if (!shallowEqual(nextSelected, prevState.current)) {
+      prevState.current = nextSelected;
+      setState(nextSelected);
+    }
+  }
+
+  // Subscribe to store changes. The eager block above handles selector
+  // changes and SSR drift, so no initial updateState() call is needed.
   useEffect(() => {
     if (!ctx) {
       return;
     }
 
     const updateState = () => {
-      const navState = ctx.eventController.getState();
-      const handleState = ctx.eventController.getHandleState();
-      const segmentsState = buildSegmentsState(
-        navState.location as URL,
-        handleState.segmentOrder,
-      );
-      const nextSelected = selector ? selector(segmentsState) : segmentsState;
-
+      const nextSelected = recompute(selectorRef.current);
       if (!shallowEqual(nextSelected, prevState.current)) {
         prevState.current = nextSelected;
         setState(nextSelected);
       }
     };
 
-    // Initial update in case SSR state differs from client state
-    updateState();
-
-    // Subscribe to both state sources
     const unsubscribeNav = ctx.eventController.subscribe(updateState);
     const unsubscribeHandles =
       ctx.eventController.subscribeToHandles(updateState);
@@ -204,7 +162,10 @@ export function useSegments<T>(
       unsubscribeNav();
       unsubscribeHandles();
     };
-  }, [selector]);
+    // Stable subscription: selector changes are handled via selectorRef,
+    // state comparison uses prevState ref. No re-subscribe needed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return state as T | SegmentsState;
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { generateManifest } from "../generate-manifest";
+import { generateManifestFull } from "../generate-manifest";
 import {
   buildRouteTrie,
   extractAncestryFromTrie,
@@ -88,8 +88,8 @@ const adminPatterns = urls(({ path }) => [
 
 describe("per-router manifest generation", () => {
   it("should generate disjoint route manifests for two routers", () => {
-    const siteManifest = generateManifest(sitePatterns, 0);
-    const adminManifest = generateManifest(adminPatterns, 1);
+    const siteManifest = generateManifestFull(sitePatterns, 0);
+    const adminManifest = generateManifestFull(adminPatterns, 1);
 
     // Site manifest should only contain site routes
     expect(siteManifest.routeManifest).toEqual({
@@ -110,8 +110,8 @@ describe("per-router manifest generation", () => {
   });
 
   it("should build per-router tries that only match own routes", () => {
-    const siteManifest = generateManifest(sitePatterns, 0);
-    const adminManifest = generateManifest(adminPatterns, 1);
+    const siteManifest = generateManifestFull(sitePatterns, 0);
+    const adminManifest = generateManifestFull(adminPatterns, 1);
 
     // Build per-router static prefix maps
     const siteStaticPrefix: Record<string, string> = {};
@@ -158,8 +158,8 @@ describe("per-router manifest generation", () => {
   });
 
   it("should produce isolated precomputed entries per router", () => {
-    const siteManifest = generateManifest(sitePatterns, 0);
-    const adminManifest = generateManifest(adminPatterns, 1);
+    const siteManifest = generateManifestFull(sitePatterns, 0);
+    const adminManifest = generateManifestFull(adminPatterns, 1);
 
     const sitePrecomputed: Array<{
       staticPrefix: string;
@@ -197,8 +197,8 @@ describe("per-router manifest generation", () => {
   });
 
   it("merged manifest should contain all routes from both routers", () => {
-    const siteManifest = generateManifest(sitePatterns, 0);
-    const adminManifest = generateManifest(adminPatterns, 1);
+    const siteManifest = generateManifestFull(sitePatterns, 0);
+    const adminManifest = generateManifestFull(adminPatterns, 1);
 
     const merged: Record<string, string> = {};
     Object.assign(merged, siteManifest.routeManifest);
@@ -213,8 +213,8 @@ describe("per-router manifest generation", () => {
   });
 
   it("merged trie should contain routes from all routers", () => {
-    const siteManifest = generateManifest(sitePatterns, 0);
-    const adminManifest = generateManifest(adminPatterns, 1);
+    const siteManifest = generateManifestFull(sitePatterns, 0);
+    const adminManifest = generateManifestFull(adminPatterns, 1);
 
     const mergedManifest: Record<string, string> = {};
     Object.assign(mergedManifest, siteManifest.routeManifest);
@@ -261,8 +261,8 @@ describe("per-router manifest with includes", () => {
   ]);
 
   it("should produce per-router precomputed entries for routers with includes", () => {
-    const siteManifest = generateManifest(siteWithIncludes, 0);
-    const adminManifest = generateManifest(adminWithIncludes, 1);
+    const siteManifest = generateManifestFull(siteWithIncludes, 0);
+    const adminManifest = generateManifestFull(adminWithIncludes, 1);
 
     // Site should have blog routes
     expect(siteManifest.routeManifest).toHaveProperty("blog.list", "/blog");
@@ -295,8 +295,8 @@ describe("per-router manifest with includes", () => {
   });
 
   it("per-router tries should resolve dynamic params independently", () => {
-    const siteManifest = generateManifest(siteWithIncludes, 0);
-    const adminManifest = generateManifest(adminWithIncludes, 1);
+    const siteManifest = generateManifestFull(siteWithIncludes, 0);
+    const adminManifest = generateManifestFull(adminWithIncludes, 1);
 
     const siteStaticPrefix: Record<string, string> = {};
     for (const name of Object.keys(siteManifest.routeManifest)) {
@@ -419,21 +419,40 @@ describe("ensureRouterManifest lazy loading", () => {
     );
   });
 
-  it("should not re-load if manifest is already set", async () => {
+  it("should not re-load if manifest AND trie are already set", async () => {
     let loadCount = 0;
     registerRouterManifestLoader("cached", () => {
       loadCount++;
       return Promise.resolve({ manifest: { x: "/x" } });
     });
 
-    // Pre-set the manifest
+    // Pre-set both manifest and trie
     setRouterManifest("cached", { y: "/y" });
+    setRouterTrie("cached", { type: "root", children: {} } as any);
 
     await ensureRouterManifest("cached");
 
-    // Loader was never called because manifest already existed
+    // Loader was never called because both manifest and trie already existed
     expect(loadCount).toBe(0);
     expect(getRouterManifest("cached")).toEqual({ y: "/y" });
+  });
+
+  it("should re-load if manifest is set but trie is missing", async () => {
+    let loadCount = 0;
+    const mockTrie = { type: "root", children: {} } as any;
+    registerRouterManifestLoader("manifest-only", () => {
+      loadCount++;
+      return Promise.resolve({ manifest: { x: "/x" }, trie: mockTrie });
+    });
+
+    // Pre-set only the manifest (trie missing — e.g. virtual module in dev mode)
+    setRouterManifest("manifest-only", { y: "/y" });
+
+    await ensureRouterManifest("manifest-only");
+
+    // Loader was called to load the missing trie
+    expect(loadCount).toBe(1);
+    expect(getRouterTrie("manifest-only")).toBe(mockTrie);
   });
 
   it("should remove loader after successful load", async () => {

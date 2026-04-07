@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   CFCacheStore,
   CACHE_STALE_AT_HEADER,
-  REVALIDATION_LOCK_TTL,
+  CACHE_STATUS_HEADER,
 } from "../cf-cache-store";
 import type { CachedEntryData } from "../../types";
 
@@ -245,7 +245,7 @@ describe("CFCacheStore", () => {
       expect(staleAt).toBe(expectedStaleAt);
     });
 
-    it("should not include status header on stored entries", async () => {
+    it("should set status header to HIT", async () => {
       const mockCtx = createMockCtx();
       const store = new CFCacheStore({ ctx: mockCtx });
       const data = createTestData();
@@ -257,8 +257,7 @@ describe("CFCacheStore", () => {
       const request = new Request("https://rsc-cache.internal.com/test-key");
       const response = await cache.match(request);
 
-      // Revalidation state is now tracked via separate lock keys, not on the entry itself
-      expect(response?.headers.has("x-edge-cache-status")).toBe(false);
+      expect(response?.headers.get(CACHE_STATUS_HEADER)).toBe("HIT");
     });
   });
 
@@ -305,11 +304,9 @@ describe("CFCacheStore", () => {
       );
       const lockResponse = await cache.match(lockRequest);
       expect(lockResponse).toBeDefined();
-      const lockTimestamp = Number(await lockResponse!.text());
-      expect(lockTimestamp).toBe(Date.now());
     });
 
-    it("should return shouldRevalidate=false when revalidation lock exists and is fresh", async () => {
+    it("should return shouldRevalidate=false when revalidation lock exists", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const mockCtx = createMockCtx();
@@ -326,37 +323,15 @@ describe("CFCacheStore", () => {
       const result1 = await store.get("test-key");
       expect(result1?.shouldRevalidate).toBe(true);
 
-      // Second get - lock exists and is fresh, skip revalidation
+      // Second get - lock exists, skip revalidation
       const result2 = await store.get("test-key");
       expect(result2?.shouldRevalidate).toBe(false);
     });
 
-    it("should allow revalidation after lock expires", async () => {
-      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
-
-      const mockCtx = createMockCtx();
-      const store = new CFCacheStore({ ctx: mockCtx });
-      const data = createTestData();
-
-      await store.set("test-key", data, 60, 300);
-      await mockCtx.waitUntil.mock.results[0].value;
-
-      // Make it stale
-      vi.advanceTimersByTime(120 * 1000);
-
-      // First get - writes the lock
-      const result1 = await store.get("test-key");
-      expect(result1?.shouldRevalidate).toBe(true);
-
-      // Advance past lock TTL (30s)
-      vi.advanceTimersByTime(REVALIDATION_LOCK_TTL * 1000 + 1);
-
-      // Lock expired - should allow revalidation again
-      const result2 = await store.get("test-key");
-      expect(result2?.shouldRevalidate).toBe(true);
-    });
-
     it("should prevent thundering herd with sequential requests", async () => {
+      // Note: Real thundering herd prevention relies on CF Cache API's atomic semantics.
+      // This test verifies sequential requests work correctly - first triggers revalidation
+      // and writes a lock, subsequent ones see the lock and don't trigger again.
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const mockCtx = createMockCtx();
@@ -369,7 +344,7 @@ describe("CFCacheStore", () => {
       // Make it stale
       vi.advanceTimersByTime(120 * 1000);
 
-      // First request triggers revalidation
+      // Sequential requests - first triggers revalidation and writes lock
       const result1 = await store.get("test-key");
       expect(result1?.shouldRevalidate).toBe(true);
       expect(result1?.data).toBeDefined();
@@ -459,74 +434,827 @@ describe("CFCacheStore", () => {
     });
   });
 
-  describe("getItem revalidation lock", () => {
-    it("should return shouldRevalidate=true for stale item and write lock", async () => {
-      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+  // ==========================================================================
+  // Function Cache Methods (getItem / setItem)
+  // ==========================================================================
 
+  describe("getItem/setItem", () => {
+    it("should return null for missing key", async () => {
+      const store = new CFCacheStore({ ctx: createMockCtx() });
+      const result = await store.getItem("missing");
+      expect(result).toBeNull();
+    });
+
+    it("should store and retrieve a value", async () => {
       const mockCtx = createMockCtx();
       const store = new CFCacheStore({ ctx: mockCtx });
 
-      await store.setItem("fn-key", "serialized-value", {
-        ttl: 60,
-        swr: 300,
-      });
+      await store.setItem("fn-key", "serialized-value", { ttl: 60 });
       await mockCtx.waitUntil.mock.results[0].value;
-
-      // Past TTL but within SWR window
-      vi.advanceTimersByTime(120 * 1000);
 
       const result = await store.getItem("fn-key");
-      expect(result?.shouldRevalidate).toBe(true);
-      expect(result?.value).toBe("serialized-value");
+      expect(result).not.toBeNull();
+      expect(result!.value).toBe("serialized-value");
+      expect(result!.shouldRevalidate).toBe(false);
     });
 
-    it("should return shouldRevalidate=false when lock exists for item", async () => {
+    it("should persist handles alongside value", async () => {
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      const handles = {
+        seg1: { breadcrumbs: ["Home", "Products"] },
+      };
+      await store.setItem("fn-handles", "value", { ttl: 60, handles });
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      const result = await store.getItem("fn-handles");
+      expect(result!.handles).toEqual(handles);
+    });
+
+    it("should set Cache-Control with TTL + SWR", async () => {
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.setItem("fn-ttl", "value", { ttl: 60, swr: 300 });
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      const cache = mockCaches.default;
+      const request = new Request(
+        "https://rsc-cache.internal.com/" + encodeURIComponent("fn:fn-ttl"),
+      );
+      const response = await cache.match(request);
+
+      expect(response?.headers.get("Cache-Control")).toBe(
+        "public, max-age=360",
+      );
+    });
+
+    it("should use store defaults for TTL and SWR", async () => {
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        defaults: { ttl: 120, swr: 600 },
+      });
+
+      await store.setItem("fn-defaults", "value");
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      const cache = mockCaches.default;
+      const request = new Request(
+        "https://rsc-cache.internal.com/" +
+          encodeURIComponent("fn:fn-defaults"),
+      );
+      const response = await cache.match(request);
+
+      // TTL 120 + SWR 600 = 720
+      expect(response?.headers.get("Cache-Control")).toBe(
+        "public, max-age=720",
+      );
+    });
+
+    it("should return shouldRevalidate=true for stale items", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const mockCtx = createMockCtx();
       const store = new CFCacheStore({ ctx: mockCtx });
 
-      await store.setItem("fn-key", "serialized-value", {
-        ttl: 60,
-        swr: 300,
-      });
+      await store.setItem("fn-stale", "stale-value", { ttl: 60, swr: 300 });
       await mockCtx.waitUntil.mock.results[0].value;
 
+      // Past TTL, within SWR window
       vi.advanceTimersByTime(120 * 1000);
 
-      // First get - writes the lock
-      const result1 = await store.getItem("fn-key");
-      expect(result1?.shouldRevalidate).toBe(true);
-
-      // Second get - lock exists, skip revalidation
-      const result2 = await store.getItem("fn-key");
-      expect(result2?.shouldRevalidate).toBe(false);
+      const result = await store.getItem("fn-stale");
+      expect(result!.shouldRevalidate).toBe(true);
+      expect(result!.value).toBe("stale-value");
     });
 
-    it("should allow item revalidation after lock expires", async () => {
+    it("should atomically mark REVALIDATING to prevent thundering herd", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const mockCtx = createMockCtx();
       const store = new CFCacheStore({ ctx: mockCtx });
 
-      await store.setItem("fn-key", "serialized-value", {
-        ttl: 60,
-        swr: 300,
-      });
+      await store.setItem("fn-herd", "value", { ttl: 60, swr: 300 });
       await mockCtx.waitUntil.mock.results[0].value;
 
       vi.advanceTimersByTime(120 * 1000);
 
-      // First get - writes lock
-      const result1 = await store.getItem("fn-key");
-      expect(result1?.shouldRevalidate).toBe(true);
+      // First get triggers revalidation
+      const result1 = await store.getItem("fn-herd");
+      expect(result1!.shouldRevalidate).toBe(true);
 
-      // Advance past lock TTL
-      vi.advanceTimersByTime(REVALIDATION_LOCK_TTL * 1000 + 1);
+      // Second get sees REVALIDATING status
+      const result2 = await store.getItem("fn-herd");
+      expect(result2!.shouldRevalidate).toBe(false);
+    });
 
-      // Lock expired - should allow revalidation again
-      const result2 = await store.getItem("fn-key");
-      expect(result2?.shouldRevalidate).toBe(true);
+    it("should return shouldRevalidate=false for fresh items", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.setItem("fn-fresh", "fresh-value", { ttl: 60, swr: 300 });
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      vi.advanceTimersByTime(30 * 1000);
+
+      const result = await store.getItem("fn-fresh");
+      expect(result!.shouldRevalidate).toBe(false);
+    });
+
+    it("should use fn: prefix in cache key", async () => {
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.setItem("my-key", "value", { ttl: 60 });
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      // Verify fn: prefix is used
+      const cache = mockCaches.default;
+      const request = new Request(
+        "https://rsc-cache.internal.com/" + encodeURIComponent("fn:my-key"),
+      );
+      const response = await cache.match(request);
+      expect(response).toBeDefined();
+    });
+
+    it("should use waitUntil for non-blocking writes", async () => {
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.setItem("fn-async", "value", { ttl: 60 });
+
+      expect(mockCtx.waitUntil).toHaveBeenCalledTimes(1);
+      expect(mockCtx.waitUntil).toHaveBeenCalledWith(expect.any(Promise));
+    });
+  });
+
+  // ==========================================================================
+  // Document Cache Methods (getResponse / putResponse)
+  // ==========================================================================
+
+  describe("getResponse/putResponse", () => {
+    it("should return null for missing key", async () => {
+      const store = new CFCacheStore({ ctx: createMockCtx() });
+      const result = await store.getResponse("missing");
+      expect(result).toBeNull();
+    });
+
+    it("should store and retrieve a response", async () => {
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      const response = new Response("hello world", {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      });
+
+      await store.putResponse("page-key", response, 60);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      const result = await store.getResponse("page-key");
+      expect(result).not.toBeNull();
+      expect(result!.response.status).toBe(200);
+      expect(await result!.response.text()).toBe("hello world");
+    });
+
+    it("should return shouldRevalidate=false for fresh responses", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.putResponse("doc-fresh", new Response("fresh"), 60, 300);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      vi.advanceTimersByTime(30 * 1000);
+      const result = await store.getResponse("doc-fresh");
+      expect(result!.shouldRevalidate).toBe(false);
+    });
+
+    it("should return shouldRevalidate=true for stale responses", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.putResponse("doc-stale", new Response("stale"), 60, 300);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      // Past TTL, within SWR
+      vi.advanceTimersByTime(120 * 1000);
+      const result = await store.getResponse("doc-stale");
+      expect(result!.shouldRevalidate).toBe(true);
+      expect(await result!.response.text()).toBe("stale");
+    });
+
+    it("should set Cache-Control with TTL + SWR", async () => {
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.putResponse("doc-cc", new Response("body"), 60, 300);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      const cache = mockCaches.default;
+      const request = new Request(
+        "https://rsc-cache.internal.com/" + encodeURIComponent("doc:doc-cc"),
+      );
+      const response = await cache.match(request);
+
+      expect(response?.headers.get("Cache-Control")).toBe(
+        "public, max-age=360",
+      );
+    });
+
+    it("should use store defaults for SWR", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx, defaults: { swr: 120 } });
+
+      await store.putResponse("doc-default", new Response("body"), 60);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      // Past TTL, within default SWR
+      vi.advanceTimersByTime(90 * 1000);
+      const result = await store.getResponse("doc-default");
+      expect(result!.shouldRevalidate).toBe(true);
+    });
+
+    it("should use doc: prefix in cache key", async () => {
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.putResponse("my-doc", new Response("body"), 60);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      const cache = mockCaches.default;
+      const request = new Request(
+        "https://rsc-cache.internal.com/" + encodeURIComponent("doc:my-doc"),
+      );
+      const response = await cache.match(request);
+      expect(response).toBeDefined();
+    });
+
+    it("should preserve response headers", async () => {
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      const response = new Response("body", {
+        headers: {
+          "Content-Type": "text/html",
+          "X-Custom": "value",
+        },
+      });
+
+      await store.putResponse("doc-headers", response, 60);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      const result = await store.getResponse("doc-headers");
+      expect(result!.response.headers.get("X-Custom")).toBe("value");
+    });
+
+    it("should use waitUntil for non-blocking writes", async () => {
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.putResponse("doc-async", new Response("body"), 60);
+
+      expect(mockCtx.waitUntil).toHaveBeenCalledTimes(1);
+      expect(mockCtx.waitUntil).toHaveBeenCalledWith(expect.any(Promise));
+    });
+  });
+
+  // ==========================================================================
+  // KV L2 Cache
+  // ==========================================================================
+
+  describe("KV L2 cache", () => {
+    class MockKV {
+      store = new Map<string, { value: string; expirationTtl?: number }>();
+
+      async get(key: string, options?: { type?: string }): Promise<any> {
+        const entry = this.store.get(key);
+        if (!entry) return null;
+        if (options?.type === "json") return JSON.parse(entry.value);
+        return entry.value;
+      }
+
+      async put(
+        key: string,
+        value: string,
+        options?: { expirationTtl?: number },
+      ): Promise<void> {
+        this.store.set(key, {
+          value,
+          expirationTtl: options?.expirationTtl,
+        });
+      }
+
+      async delete(key: string): Promise<void> {
+        this.store.delete(key);
+      }
+
+      clear(): void {
+        this.store.clear();
+      }
+    }
+
+    let mockKV: MockKV;
+
+    beforeEach(() => {
+      mockKV = new MockKV();
+    });
+
+    describe("segment cache (get/set)", () => {
+      it("should write to KV on set()", async () => {
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+        const data = createTestData();
+
+        await store.set("seg-key", data, 60, 300);
+        // Wait for all waitUntil calls (L1 write + KV write)
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        // KV should have the entry
+        const kvEntry = mockKV.store.get("seg-key");
+        expect(kvEntry).toBeDefined();
+        const envelope = JSON.parse(kvEntry!.value);
+        expect(envelope.d).toEqual(data);
+        expect(envelope.s).toBeGreaterThan(0);
+        expect(envelope.e).toBeGreaterThan(envelope.s);
+        expect(kvEntry!.expirationTtl).toBe(360); // 60 + 300
+      });
+
+      it("should not write to KV when kv is not configured", async () => {
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx });
+        const data = createTestData();
+
+        await store.set("seg-key", data, 60);
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        // Only 1 waitUntil call (L1 write), no KV write
+        expect(mockCtx.waitUntil).toHaveBeenCalledTimes(1);
+      });
+
+      it("should fall back to KV on L1 miss", async () => {
+        vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+        const data = createTestData();
+
+        // Write to both L1 and KV
+        await store.set("seg-key", data, 60, 300);
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        // Clear L1 to simulate cold colo
+        mockCaches.clear();
+
+        const result = await store.get("seg-key");
+        expect(result).not.toBeNull();
+        expect(result!.data).toEqual(data);
+        expect(result!.shouldRevalidate).toBe(false);
+      });
+
+      it("should skip KV write when totalTtl < 60s", async () => {
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+        const data = createTestData();
+
+        // TTL 30s, no SWR → totalTtl = 30 < 60
+        await store.set("short-ttl", data, 30);
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        // KV should NOT have the entry
+        expect(mockKV.store.has("short-ttl")).toBe(false);
+
+        // L1 should still have it
+        const result = await store.get("short-ttl");
+        expect(result).not.toBeNull();
+      });
+
+      it("should write to KV when totalTtl >= 60s", async () => {
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+        const data = createTestData();
+
+        await store.set("long-ttl", data, 60);
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        expect(mockKV.store.has("long-ttl")).toBe(true);
+      });
+
+      it("should return shouldRevalidate=true for stale KV entries", async () => {
+        vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+        const data = createTestData();
+
+        await store.set("seg-key", data, 60, 300);
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        // Clear L1 and advance past TTL but within SWR
+        mockCaches.clear();
+        vi.advanceTimersByTime(120 * 1000);
+
+        const result = await store.get("seg-key");
+        expect(result).not.toBeNull();
+        expect(result!.data).toEqual(data);
+        expect(result!.shouldRevalidate).toBe(true);
+      });
+
+      it("should return null for hard-expired KV entries", async () => {
+        vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+        const data = createTestData();
+
+        await store.set("seg-key", data, 60, 300);
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        // Clear L1 and advance past TTL + SWR
+        mockCaches.clear();
+        vi.advanceTimersByTime(400 * 1000);
+
+        const result = await store.get("seg-key");
+        expect(result).toBeNull();
+      });
+
+      it("should promote KV hit to L1", async () => {
+        vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+        const data = createTestData();
+
+        await store.set("seg-key", data, 60, 300);
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        // Clear L1
+        mockCaches.clear();
+
+        // Read from KV (promotes to L1)
+        const kvResult = await store.get("seg-key");
+        expect(kvResult).not.toBeNull();
+
+        // Wait for promote waitUntil
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        // Clear KV to prove L1 has the entry now
+        mockKV.clear();
+
+        // Should now hit L1
+        const l1Result = await store.get("seg-key");
+        expect(l1Result).not.toBeNull();
+        expect(l1Result!.data).toEqual(data);
+      });
+
+      it("should not check KV when L1 hits", async () => {
+        const mockCtx = createMockCtx();
+        const kvGetSpy = vi.spyOn(mockKV, "get");
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+        const data = createTestData();
+
+        await store.set("seg-key", data, 60);
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        await store.get("seg-key");
+        // KV.get should not have been called (L1 hit)
+        expect(kvGetSpy).not.toHaveBeenCalled();
+      });
+
+      it("should return null when both L1 and KV miss", async () => {
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+
+        const result = await store.get("missing-key");
+        expect(result).toBeNull();
+      });
+    });
+
+    describe("function cache (getItem/setItem)", () => {
+      it("should write to KV on setItem()", async () => {
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+
+        const handles = { seg1: { breadcrumbs: ["Home"] } };
+        await store.setItem("fn-key", "serialized-value", {
+          ttl: 60,
+          swr: 300,
+          handles,
+        });
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        const kvEntry = mockKV.store.get("fn:fn-key");
+        expect(kvEntry).toBeDefined();
+        const envelope = JSON.parse(kvEntry!.value);
+        expect(envelope.v).toBe("serialized-value");
+        expect(envelope.h).toEqual(handles);
+      });
+
+      it("should fall back to KV on L1 miss for getItem()", async () => {
+        vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+
+        await store.setItem("fn-key", "my-value", { ttl: 60 });
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        mockCaches.clear();
+
+        const result = await store.getItem("fn-key");
+        expect(result).not.toBeNull();
+        expect(result!.value).toBe("my-value");
+        expect(result!.shouldRevalidate).toBe(false);
+      });
+
+      it("should return shouldRevalidate=true for stale KV function entries", async () => {
+        vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+
+        await store.setItem("fn-key", "stale-value", { ttl: 60, swr: 300 });
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        mockCaches.clear();
+        vi.advanceTimersByTime(120 * 1000);
+
+        const result = await store.getItem("fn-key");
+        expect(result).not.toBeNull();
+        expect(result!.value).toBe("stale-value");
+        expect(result!.shouldRevalidate).toBe(true);
+      });
+
+      it("should promote KV item hit to L1", async () => {
+        vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+
+        await store.setItem("fn-key", "promote-value", { ttl: 60 });
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        mockCaches.clear();
+
+        // Read from KV (triggers promote)
+        await store.getItem("fn-key");
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        // Clear KV, L1 should have the promoted entry
+        mockKV.clear();
+
+        const l1Result = await store.getItem("fn-key");
+        expect(l1Result).not.toBeNull();
+        expect(l1Result!.value).toBe("promote-value");
+      });
+    });
+
+    describe("document cache (getResponse/putResponse)", () => {
+      it("should write to KV on putResponse()", async () => {
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+
+        const response = new Response("hello world", {
+          status: 200,
+          headers: { "Content-Type": "text/html", "X-Custom": "value" },
+        });
+
+        await store.putResponse("doc-key", response, 60, 300);
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        const kvEntry = mockKV.store.get("doc:doc-key");
+        expect(kvEntry).toBeDefined();
+        const envelope = JSON.parse(kvEntry!.value);
+        // Body is stored as base64
+        expect(envelope.b).toBe(btoa("hello world"));
+        expect(envelope.st).toBe(200);
+        expect(envelope.hd).toEqual(
+          expect.arrayContaining([
+            ["content-type", "text/html"],
+            ["x-custom", "value"],
+          ]),
+        );
+      });
+
+      it("should fall back to KV on L1 miss for getResponse()", async () => {
+        vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+
+        await store.putResponse(
+          "doc-key",
+          new Response("cached html", {
+            status: 200,
+            headers: { "Content-Type": "text/html" },
+          }),
+          60,
+          300,
+        );
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        mockCaches.clear();
+
+        const result = await store.getResponse("doc-key");
+        expect(result).not.toBeNull();
+        expect(result!.response.status).toBe(200);
+        expect(await result!.response.text()).toBe("cached html");
+        expect(result!.shouldRevalidate).toBe(false);
+      });
+
+      it("should preserve response headers from KV", async () => {
+        vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+
+        await store.putResponse(
+          "doc-headers",
+          new Response("body", {
+            headers: { "X-Custom": "preserved" },
+          }),
+          60,
+        );
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        mockCaches.clear();
+
+        const result = await store.getResponse("doc-headers");
+        expect(result!.response.headers.get("X-Custom")).toBe("preserved");
+      });
+
+      it("should preserve binary body through KV round-trip", async () => {
+        vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+
+        // Create binary payload with non-UTF8 bytes
+        const binaryData = new Uint8Array([
+          0x00, 0x01, 0x80, 0xff, 0xfe, 0x89, 0x50, 0x4e, 0x47,
+        ]);
+        const response = new Response(binaryData, {
+          status: 200,
+          headers: { "Content-Type": "image/png" },
+        });
+
+        await store.putResponse("binary-doc", response, 60, 300);
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        // Clear L1, read from KV
+        mockCaches.clear();
+
+        const result = await store.getResponse("binary-doc");
+        expect(result).not.toBeNull();
+
+        const roundTripped = new Uint8Array(
+          await result!.response.arrayBuffer(),
+        );
+        expect(roundTripped).toEqual(binaryData);
+        expect(result!.response.headers.get("Content-Type")).toBe("image/png");
+      });
+
+      it("should promote KV response hit to L1", async () => {
+        vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+
+        await store.putResponse("doc-promote", new Response("promote me"), 60);
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        mockCaches.clear();
+
+        // Read from KV (triggers promote)
+        await store.getResponse("doc-promote");
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        // Clear KV, L1 should have the promoted entry
+        mockKV.clear();
+
+        const l1Result = await store.getResponse("doc-promote");
+        expect(l1Result).not.toBeNull();
+        expect(await l1Result!.response.text()).toBe("promote me");
+      });
+    });
+
+    describe("delete", () => {
+      it("should delete from both L1 and KV", async () => {
+        const mockCtx = createMockCtx();
+        const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
+        const data = createTestData();
+
+        await store.set("del-key", data, 60);
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        expect(mockKV.store.has("del-key")).toBe(true);
+
+        await store.delete("del-key");
+        for (const result of mockCtx.waitUntil.mock.results) {
+          await result.value;
+        }
+
+        expect(mockKV.store.has("del-key")).toBe(false);
+
+        const result = await store.get("del-key");
+        expect(result).toBeNull();
+      });
+    });
+
+    describe("error handling", () => {
+      it("should return null when KV read fails", async () => {
+        const mockCtx = createMockCtx();
+        const failingKV = {
+          get: vi.fn().mockRejectedValue(new Error("KV unavailable")),
+          put: vi.fn(),
+          delete: vi.fn(),
+        };
+        const store = new CFCacheStore({
+          ctx: mockCtx,
+          kv: failingKV as any,
+        });
+
+        const result = await store.get("any-key");
+        expect(result).toBeNull();
+      });
+
+      it("should not break set() when KV write fails", async () => {
+        const mockCtx = createMockCtx();
+        const failingKV = {
+          get: vi.fn(),
+          put: vi.fn().mockRejectedValue(new Error("KV write failed")),
+          delete: vi.fn(),
+        };
+        const store = new CFCacheStore({
+          ctx: mockCtx,
+          kv: failingKV as any,
+        });
+        const data = createTestData();
+
+        // Should not throw
+        await store.set("seg-key", data, 60);
+        for (const result of mockCtx.waitUntil.mock.results) {
+          // KV waitUntil will fail but shouldn't propagate
+          await result.value.catch(() => {});
+        }
+
+        // L1 should still have the data
+        const result = await store.get("seg-key");
+        expect(result).not.toBeNull();
+      });
     });
   });
 });

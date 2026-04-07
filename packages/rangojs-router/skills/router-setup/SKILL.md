@@ -78,16 +78,21 @@ interface RSCRouterOptions<TEnv> {
   // Document component wrapping entire app
   document?: ComponentType<{ children: ReactNode }>;
 
-  // Enable performance metrics
+  // URL prefix for sub-path deployments (e.g. "/admin")
+  // All routes, reverse(), href(), Link, redirect(), and router.use()
+  // patterns are automatically prefixed. Route names stay unprefixed.
+  basename?: string;
+
+  // Enable per-request performance timeline (console waterfall + Server-Timing header)
   debugPerformance?: boolean;
 
   // Default error boundary
   defaultErrorBoundary?: ReactNode | ErrorBoundaryHandler;
 
-  // Default not-found boundary
+  // Default not-found boundary for notFound() thrown in handlers/loaders
   defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler;
 
-  // Component for 404 routes
+  // Component for 404 (no route match, or notFound() without a boundary)
   notFound?: ReactNode | ((props: { pathname: string }) => ReactNode);
 
   // Error logging callback
@@ -99,8 +104,19 @@ interface RSCRouterOptions<TEnv> {
   // Theme configuration
   theme?: ThemeConfig | true;
 
+  // SSR options (streaming policy)
+  ssr?: SSROptions<TEnv>;
+
+  // Telemetry sink for structured lifecycle events
+  telemetry?: TelemetrySink;
+
   // Connection warmup (default: true)
   warmup?: boolean;
+
+  // Prefetch cache TTL in seconds (default: 300)
+  // Controls in-memory cache duration and Cache-Control max-age for prefetch responses.
+  // Set to false to disable prefetch caching.
+  prefetchCacheTTL?: number | false;
 
   // CSP nonce provider (for router.fetch)
   nonce?: (
@@ -112,6 +128,36 @@ interface RSCRouterOptions<TEnv> {
   version?: string;
 }
 ```
+
+## Basename (Sub-Path Deployment)
+
+When your app is served under a sub-path (e.g. `/admin` or `/v2`), set `basename`:
+
+```typescript
+const router = createRouter({
+  basename: "/admin",
+  document: Document,
+}).routes(({ path, include }) => [
+  path("/", Dashboard, { name: "home" }), // matches /admin
+  path("/users", Users, { name: "users" }), // matches /admin/users
+  include("/api", apiPatterns, { name: "api" }), // matches /admin/api/*
+]);
+
+router.reverse("home"); // "/admin"
+router.reverse("users"); // "/admin/users"
+```
+
+Router-owned APIs are basename-aware:
+
+- `reverse()` returns prefixed paths
+- `<Link to="/users">` renders `<a href="/admin/users">`
+- `redirect("/login")` redirects to `"/admin/login"`
+- `router.use("/users/*", mw)` matches `/admin/users/*`
+- `useRouter().push("/users")` navigates to `/admin/users`
+- Route names stay unprefixed (`"home"`, not `"admin.home"`)
+
+Note: `href()` is a raw path helper and does **not** auto-prefix with basename.
+Use `reverse()` or `<Link>` for basename-aware URLs.
 
 ## Using the Request Handler
 
@@ -279,6 +325,56 @@ const router = createRouter({
 export default router;
 ```
 
+## Not Found Handling
+
+Two distinct 404 scenarios:
+
+**1. No route matches the URL** — the router renders the `notFound` component from `createRouter()` config. This is automatic.
+
+**2. A handler/loader calls `notFound()`** — signals that the route matched but the data doesn't exist (e.g., invalid product ID).
+
+```typescript
+import { notFound } from "@rangojs/router";
+
+// In a handler or loader
+path("/product/:slug", async (ctx) => {
+  const product = await db.getProduct(ctx.params.slug);
+  if (!product) notFound("Product not found");
+  return <ProductPage product={product} />;
+});
+```
+
+### Fallback chain for `notFound()`
+
+When `notFound()` is thrown, the router looks for a fallback in this order:
+
+1. **`notFoundBoundary()`** — nearest boundary in the route tree (route-level)
+2. **`defaultNotFoundBoundary`** — from `createRouter()` config (app-level)
+3. **`notFound`** — from `createRouter()` config (same component used for no-route-match)
+4. **Default `<h1>Not Found</h1>`** — built-in fallback
+
+All cases set HTTP 404 status.
+
+### notFoundBoundary
+
+Wrap routes with `notFoundBoundary()` for route-specific not-found UI:
+
+```typescript
+urls(({ path, layout }) => [
+  layout(ShopLayout, () => [
+    notFoundBoundary(({ notFound: info }) => (
+      <div>
+        <h1>Not Found</h1>
+        <p>{info.message}</p>
+      </div>
+    )),
+    path("/product/:slug", ProductPage),
+  ]),
+]);
+```
+
+`notFoundBoundary` receives `{ notFound: NotFoundInfo }` where `NotFoundInfo` contains `message`, `segmentId`, `segmentType`, and `pathname`.
+
 ## Including Sub-patterns
 
 ```typescript
@@ -291,10 +387,10 @@ export const shopPatterns = urls(({ path, layout }) => [
 ]);
 
 // src/urls.tsx
-import { urls, include } from "@rangojs/router";
+import { urls } from "@rangojs/router";
 import { shopPatterns } from "./urls/shop";
 
-export const urlpatterns = urls(({ path }) => [
+export const urlpatterns = urls(({ path, include }) => [
   path("/", HomePage, { name: "home" }),
   include("/shop", shopPatterns, { name: "shop" }),
 ]);
@@ -355,3 +451,74 @@ const router = createRouter({
 
 The warmup request is relative to the current page path, so it works correctly
 with subpath deployments (reverse proxy, base path).
+
+## Telemetry
+
+The router emits structured lifecycle events through a pluggable telemetry sink.
+Zero overhead when not configured.
+
+```typescript
+// Console sink for development
+import { createRouter, createConsoleSink } from "@rangojs/router";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  telemetry: createConsoleSink(),
+});
+```
+
+```typescript
+// OpenTelemetry for production
+import { createRouter, createOTelSink } from "@rangojs/router";
+import { trace } from "@opentelemetry/api";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  telemetry: createOTelSink(trace.getTracer("my-app")),
+});
+```
+
+```typescript
+// Custom sink
+const router = createRouter({
+  telemetry: {
+    emit(event) {
+      // Send to any observability backend
+      myTracer.record(event);
+    },
+  },
+});
+```
+
+Events emitted: `request.start/end/error`, `loader.start/end/error`,
+`handler.error`, `cache.decision`, `revalidation.decision`.
+
+## SSR Streaming Policy
+
+Control whether HTML SSR responses stream progressively or wait for all content:
+
+```typescript
+import { createRouter, type SSRStreamMode } from "@rangojs/router";
+
+const router = createRouter({
+  ssr: {
+    resolveStreaming: ({ request }) => {
+      const ua = request.headers.get("user-agent") ?? "";
+      // Bots that can't process streamed HTML get a fully resolved page
+      if (/Googlebot|bingbot/i.test(ua)) return "allReady";
+      return "stream";
+    },
+  },
+});
+```
+
+`SSRStreamMode` is `"stream" | "allReady"`:
+
+- `"stream"` (default) — flush HTML as React renders. Suspense fallbacks appear first, then resolved content streams in. Best for real users (fastest TTFB).
+- `"allReady"` — await `stream.allReady` before flushing. The full page arrives in one shot. Use for bots that cannot execute JavaScript or process chunked HTML.
+
+The resolver receives `{ request, env, url }` and may be sync or async. It only runs on HTML SSR paths — RSC partials, `__rsc` requests, and response routes are unaffected.
+
+When `resolveStreaming` is not configured, the default is `"stream"`.

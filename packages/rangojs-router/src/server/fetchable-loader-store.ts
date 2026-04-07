@@ -12,21 +12,26 @@
 import type { LoaderFn } from "../types.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 
-const fetchableLoaderRegistry = new Map<
-  string,
-  { fn: LoaderFn<any, any, any>; middleware: MiddlewareFn[] }
->();
+export interface LoaderRegistryEntry {
+  fn: LoaderFn<any, any, any>;
+  middleware: MiddlewareFn[];
+  /** Whether this loader is fetchable via the _rsc_loader endpoint. */
+  fetchable: boolean;
+}
+
+const fetchableLoaderRegistry = new Map<string, LoaderRegistryEntry>();
 
 export function registerFetchableLoader(
   id: string,
   fn: LoaderFn<any, any, any>,
   middleware: MiddlewareFn[],
+  fetchable: boolean,
 ): void {
-  fetchableLoaderRegistry.set(id, { fn, middleware });
+  fetchableLoaderRegistry.set(id, { fn, middleware, fetchable });
 }
 
 export function getFetchableLoader(
   id: string,
-): { fn: LoaderFn<any, any, any>; middleware: MiddlewareFn[] } | undefined {
+): LoaderRegistryEntry | undefined {
   return fetchableLoaderRegistry.get(id);
 }

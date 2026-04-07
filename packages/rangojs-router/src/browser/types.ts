@@ -32,6 +32,9 @@ export type HandleData = Record<string, Record<string, unknown[]>>;
 export interface RscMetadata {
   pathname: string;
   segments: ResolvedSegment[];
+  /** Router instance ID. When this changes between navigations, the client
+   *  forces a full tree replacement (app switch via host router). */
+  routerId?: string;
   isPartial?: boolean;
   isError?: boolean;
   matched?: string[];
@@ -56,6 +59,11 @@ export interface RscMetadata {
    */
   version?: string;
   /**
+   * TTL in milliseconds for the client-side in-memory prefetch cache.
+   * Sent on initial render so the browser can configure its cache duration.
+   */
+  prefetchCacheTTL?: number;
+  /**
    * Theme configuration from router.
    * Included when theme is enabled in router config.
    */
@@ -65,6 +73,8 @@ export interface RscMetadata {
    * Included when theme is enabled in router config.
    */
   initialTheme?: Theme;
+  /** URL prefix for all routes (from createRouter({ basename })). */
+  basename?: string;
   /** Whether connection warmup is enabled */
   warmupEnabled?: boolean;
   /** Server-side redirect with optional state (for partial requests) */
@@ -121,7 +131,7 @@ export interface NavigationState {
   /** Whether RSC data is currently streaming (initial load or navigation) */
   isStreaming: boolean;
 
-  /** Current location (updated optimistically) */
+  /** Current location */
   location: NavigationLocation;
 
   /** URL being navigated to (null when idle) */
@@ -210,12 +220,21 @@ export interface SegmentState {
 export interface NavigationUpdate {
   root: ReactNode | Promise<ReactNode>;
   metadata: RscMetadata;
+  /** Scroll behavior to apply after React commits this update */
+  scroll?: {
+    /** For back/forward: restore saved position */
+    restore?: boolean;
+    /** Set to false to disable scrolling entirely */
+    enabled?: boolean;
+    /** Function to check if streaming is in progress */
+    isStreaming?: () => boolean;
+  };
 }
 
 /**
  * State value for navigate/Link
  * - LocationStateEntry[]: Type-safe state entries (recommended)
- * - unknown: Legacy format for backwards compatibility
+ * - unknown: Plain state format (object or getter function)
  */
 export type HistoryState =
   | import("./react/location-state-shared.js").LocationStateEntry[]
@@ -228,20 +247,47 @@ export interface NavigateOptions {
   replace?: boolean;
   scroll?: boolean;
   /**
+   * Whether to revalidate server data on navigation.
+   * Set to `false` to skip the RSC server fetch and only update the URL.
+   *
+   * Only takes effect when the pathname stays the same (search param / hash changes).
+   * If the pathname changes, this option is ignored and a full navigation occurs.
+   *
+   * All location-aware hooks (`useSearchParams`, `useNavigation`, etc.) still update.
+   * Server components do not re-render.
+   *
+   * @default true
+   *
+   * @example
+   * ```tsx
+   * router.push("/products?color=blue", { revalidate: false });
+   * router.replace("/products?page=3", { revalidate: false });
+   * ```
+   */
+  revalidate?: boolean;
+  /**
    * State to pass to history.pushState/replaceState
    * Accessible via useLocationState() hook.
    *
    * @example
    * ```tsx
    * // Type-safe state (recommended)
-   * const ProductState = createLocationState<{ name: string }>("product");
+   * const ProductState = createLocationState<{ name: string }>();
    * navigate("/product/123", { state: [ProductState({ name: "Widget" })] });
+   *
+   * // Type-safe just-in-time state (getter called at navigation time)
+   * navigate("/product/123", {
+   *   state: [ProductState(() => ({ name: computeName() }))],
+   * });
    *
    * // Multiple states
    * navigate("/checkout", { state: [ProductState(p), CartState(c)] });
    *
-   * // Legacy format (backwards compatible)
+   * // Plain static state
    * navigate("/product", { state: { from: "list" } });
+   *
+   * // Plain just-in-time state
+   * navigate("/product", { state: () => ({ from: window.location.pathname }) });
    * ```
    */
   state?: HistoryState;
@@ -300,7 +346,13 @@ export type ReadonlyURLSearchParams = Omit<
 export interface RscBrowserDependencies {
   createFromFetch: <T>(
     response: Promise<Response>,
-    options?: { temporaryReferences?: any },
+    options?: {
+      temporaryReferences?: any;
+      findSourceMapURL?: (
+        filename: string,
+        environmentName: string,
+      ) => string | null;
+    },
   ) => Promise<T>;
   createFromReadableStream: <T>(stream: ReadableStream) => Promise<T>;
   encodeReply: (
@@ -362,10 +414,13 @@ export interface NavigationStore {
     segments: ResolvedSegment[],
     handleData?: HandleData,
   ): void;
-  getCachedSegments(
-    historyKey: string,
-  ):
-    | { segments: ResolvedSegment[]; stale: boolean; handleData?: HandleData }
+  getCachedSegments(historyKey: string):
+    | {
+        segments: ResolvedSegment[];
+        stale: boolean;
+        handleData?: HandleData;
+        routerId?: string;
+      }
     | undefined;
   hasHistoryCache(historyKey: string): boolean;
   updateCacheHandleData(historyKey: string, handleData: HandleData): void;
@@ -381,6 +436,10 @@ export interface NavigationStore {
   getInterceptSourceUrl(): string | null;
   setInterceptSourceUrl(url: string | null): void;
 
+  // Router identity tracking (for cross-app navigation detection)
+  getRouterId?(): string | undefined;
+  setRouterId?(id: string): void;
+
   // UI update notifications
   onUpdate(callback: UpdateSubscriber): () => void;
   emitUpdate(update: NavigationUpdate): void;
@@ -392,35 +451,6 @@ export interface NavigationStore {
     actionId: string,
     listener: ActionStateListener,
   ): () => void;
-}
-
-// ============================================================================
-// Request Controller Types
-// ============================================================================
-
-/**
- * Disposable abort controller with automatic cleanup
- */
-export interface DisposableAbortController extends Disposable {
-  controller: AbortController;
-}
-
-/**
- * Request controller for managing concurrent requests
- *
- * Separates navigation requests (aborted on new navigation) from
- * action requests (complete independently of navigation).
- */
-export interface RequestController {
-  create(): AbortController;
-  createDisposable(): DisposableAbortController;
-  /** Create a disposable controller for actions (not aborted by navigation) */
-  createActionDisposable(): DisposableAbortController;
-  /** Abort all navigation requests (not actions) */
-  abortAll(): void;
-  /** Abort all action requests (used for error handling) */
-  abortAllActions(): void;
-  remove(controller: AbortController): void;
 }
 
 // ============================================================================
@@ -440,6 +470,8 @@ export interface FetchPartialOptions {
   interceptSourceUrl?: string;
   /** RSC version for cache invalidation detection */
   version?: string;
+  /** Current router ID — server detects app switch and returns full response */
+  routerId?: string;
   /** If true, this is an HMR refetch - server should invalidate manifest cache */
   hmr?: boolean;
 }
@@ -480,7 +512,6 @@ export interface LinkInterceptorOptions {
  */
 export interface ServerActionBridge {
   register(): void;
-  unregister(): void;
 }
 
 /**
@@ -509,6 +540,8 @@ export interface NavigationBridge {
   refresh(): Promise<void>;
   handlePopstate(): Promise<void>;
   registerLinkInterception(): () => void;
+  /** Update the RSC version (e.g. after HMR). Clears prefetch cache. */
+  updateVersion(newVersion: string): void;
 }
 
 /**
@@ -526,3 +559,11 @@ export interface NavigationBridgeConfig {
 
 // Re-export ResolvedSegment for convenience
 export type { ResolvedSegment };
+
+/**
+ * Token for tracking an active stream.
+ * Call end() when the stream completes.
+ */
+export interface StreamingToken {
+  end(): void;
+}

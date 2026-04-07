@@ -13,6 +13,9 @@
 
 import type { MiddlewareFn, MiddlewareContext } from "../router/middleware.js";
 import { getRequestContext } from "../server/request-context.js";
+import { mayNeedSSR } from "../rsc/ssr-setup.js";
+import { sortedSearchString } from "./cache-key-utils.js";
+import { runBackground } from "./background-task.js";
 
 // ============================================================================
 // Constants
@@ -110,15 +113,24 @@ function addCacheStatusHeader(
 }
 
 /**
- * Run onResponse callbacks registered on the request context
+ * Drain and run onResponse callbacks registered on the request context.
+ * Mirrors the drain semantics of finalizeResponse() in rsc/helpers.ts:
+ * callbacks are spliced out so they fire at most once per request.
  */
-function runOnResponseCallbacks(
+function drainOnResponseCallbacks(
   response: Response,
-  callbacks: Array<(response: Response) => Response>,
+  requestCtx:
+    | { _onResponseCallbacks: Array<(r: Response) => Response> }
+    | undefined,
 ): Response {
+  if (!requestCtx || requestCtx._onResponseCallbacks.length === 0) {
+    return response;
+  }
+  const callbacks = requestCtx._onResponseCallbacks;
+  requestCtx._onResponseCallbacks = [];
   let result = response;
   for (const callback of callbacks) {
-    result = callback(result);
+    result = callback(result) ?? result;
   }
   return result;
 }
@@ -193,13 +205,24 @@ export function createDocumentCacheMiddleware<TEnv = any>(
   ): Promise<Response> {
     const url = ctx.url;
 
+    // Use the original request URL for _rsc* param detection and cache key
+    // differentiation. ctx.url is stripped of _rsc* params by the middleware
+    // pipeline (stripInternalParams), so _rsc_partial, _rsc_segments, etc.
+    // are not visible on ctx.url in production.
+    const rawUrl = new URL(ctx.request.url);
+
+    // Only cache GET requests — mutations and other methods must not be cached
+    if (ctx.request.method !== "GET") {
+      return next();
+    }
+
     // Skip RSC action requests (mutations shouldn't be cached)
-    if (url.searchParams.has("_rsc_action")) {
+    if (rawUrl.searchParams.has("_rsc_action")) {
       return next();
     }
 
     // Skip loader requests (have their own caching)
-    if (url.searchParams.has("_rsc_loader")) {
+    if (rawUrl.searchParams.has("_rsc_loader")) {
       return next();
     }
 
@@ -225,22 +248,38 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       return next();
     }
 
-    // Determine request type for cache key differentiation
-    const isPartial = url.searchParams.has("_rsc_partial");
-    const typeLabel = isPartial ? "RSC" : "HTML";
+    // Determine request type for cache key differentiation.
+    // Uses rawUrl for _rsc* param checks and mayNeedSSR for Accept-based
+    // detection. Full-document RSC fetches must not share the HTML cache slot.
+    const isPartial = rawUrl.searchParams.has("_rsc_partial");
+    const isRscRequest = !mayNeedSSR(ctx.request, rawUrl);
+    const typeLabel = isRscRequest ? "RSC" : "HTML";
 
-    // Generate cache key
-    // For partial requests, include hash of client segments to prevent serving
-    // wrong cached response when navigating from different pages with different layouts
-    const clientSegments = url.searchParams.get("_rsc_segments") || "";
-    const segmentHash =
-      isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
-    const typeSuffix = isPartial ? ":rsc" : ":html";
-    const cacheKey = keyGenerator
-      ? keyGenerator(url) + segmentHash + typeSuffix
-      : `${url.pathname}${segmentHash}${typeSuffix}`;
+    // Track whether next() has been called so the catch block knows
+    // whether it is safe to fall through to the handler.
+    let handlerCalled = false;
 
     try {
+      // Generate cache key inside try so a throwing keyGenerator degrades
+      // gracefully to the origin handler instead of rejecting the request.
+      // This is a deliberate fail-open-to-origin policy: the fallback is
+      // "serve uncached from origin", not "use a different cache key".
+      const clientSegments = rawUrl.searchParams.get("_rsc_segments") || "";
+      const segmentHash =
+        isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
+      const typeSuffix = isRscRequest ? ":rsc" : ":html";
+
+      let searchSuffix = "";
+      if (!keyGenerator) {
+        const sorted = sortedSearchString(url.searchParams);
+        if (sorted) {
+          searchSuffix = `?${sorted}`;
+        }
+      }
+
+      const cacheKey = keyGenerator
+        ? keyGenerator(url) + segmentHash + typeSuffix
+        : `${url.pathname}${searchSuffix}${segmentHash}${typeSuffix}`;
       // 1. Check cache
       const cached = await store.getResponse(cacheKey);
 
@@ -248,15 +287,10 @@ export function createDocumentCacheMiddleware<TEnv = any>(
         if (!cached.shouldRevalidate) {
           // Fresh hit - return immediately
           log(`[DocumentCache] HIT ${typeLabel}: ${url.pathname}`);
-          let response = addCacheStatusHeader(cached.response, "HIT");
-          // Run onResponse callbacks even for cache hits
-          if (requestCtx && requestCtx._onResponseCallbacks.length > 0) {
-            response = runOnResponseCallbacks(
-              response,
-              requestCtx._onResponseCallbacks,
-            );
-          }
-          return response;
+          return drainOnResponseCallbacks(
+            addCacheStatusHeader(cached.response, "HIT"),
+            requestCtx,
+          );
         }
 
         // Stale hit - return cached response, revalidate in background
@@ -264,41 +298,33 @@ export function createDocumentCacheMiddleware<TEnv = any>(
           `[DocumentCache] STALE ${typeLabel}: ${url.pathname} (revalidating)`,
         );
 
-        if (requestCtx) {
-          requestCtx.waitUntil(async () => {
-            try {
-              const fresh = await next();
-              const directives = shouldCacheResponse(fresh);
+        runBackground(requestCtx, async () => {
+          try {
+            const fresh = await next();
+            const directives = shouldCacheResponse(fresh);
 
-              if (directives) {
-                await store.putResponse!(
-                  cacheKey,
-                  fresh,
-                  directives.sMaxAge!,
-                  directives.staleWhileRevalidate,
-                );
-                log(
-                  `[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`,
-                );
-              }
-            } catch (error) {
-              console.error(`[DocumentCache] Revalidation failed:`, error);
+            if (directives) {
+              await store.putResponse!(
+                cacheKey,
+                fresh,
+                directives.sMaxAge!,
+                directives.staleWhileRevalidate,
+              );
+              log(`[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`);
             }
-          });
-        }
+          } catch (error) {
+            console.error(`[DocumentCache] Revalidation failed:`, error);
+          }
+        });
 
-        let response = addCacheStatusHeader(cached.response, "STALE");
-        // Run onResponse callbacks even for stale cache hits
-        if (requestCtx && requestCtx._onResponseCallbacks.length > 0) {
-          response = runOnResponseCallbacks(
-            response,
-            requestCtx._onResponseCallbacks,
-          );
-        }
-        return response;
+        return drainOnResponseCallbacks(
+          addCacheStatusHeader(cached.response, "STALE"),
+          requestCtx,
+        );
       }
 
       // 2. Cache miss - run handler
+      handlerCalled = true;
       const originalResponse = await next();
 
       // 3. Cache if response has appropriate headers
@@ -309,24 +335,27 @@ export function createDocumentCacheMiddleware<TEnv = any>(
           `[DocumentCache] MISS ${typeLabel}: ${url.pathname} (caching with s-maxage=${directives.sMaxAge})`,
         );
 
+        // If the response has no body (e.g., 200 with empty body), skip caching
+        if (!originalResponse.body) {
+          return originalResponse;
+        }
+
         // Tee the body so we can return one stream and cache the other
-        const [returnStream, cacheStream] = originalResponse.body!.tee();
+        const [returnStream, cacheStream] = originalResponse.body.tee();
 
         // Clone response for caching (non-blocking)
-        if (requestCtx) {
-          requestCtx.waitUntil(async () => {
-            try {
-              await store.putResponse!(
-                cacheKey,
-                new Response(cacheStream, originalResponse),
-                directives.sMaxAge!,
-                directives.staleWhileRevalidate,
-              );
-            } catch (error) {
-              console.error(`[DocumentCache] Cache write failed:`, error);
-            }
-          });
-        }
+        runBackground(requestCtx, async () => {
+          try {
+            await store.putResponse!(
+              cacheKey,
+              new Response(cacheStream, originalResponse),
+              directives.sMaxAge!,
+              directives.staleWhileRevalidate,
+            );
+          } catch (error) {
+            console.error(`[DocumentCache] Cache write failed:`, error);
+          }
+        });
 
         return addCacheStatusHeader(
           new Response(returnStream, originalResponse),
@@ -338,7 +367,12 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       return originalResponse;
     } catch (error) {
       console.error(`[DocumentCache] Error:`, error);
-      // On any cache error, fall through to handler
+      if (handlerCalled) {
+        // Post-handler failure (e.g. body.tee()): do not call next() again
+        // as that would re-run handler side effects.
+        throw error;
+      }
+      // Pre-handler failure (cache lookup): degrade gracefully to origin
       return next();
     }
   };

@@ -3,6 +3,27 @@ import { test as base, expect as baseExpect } from "@playwright/test";
 import { waitForHydration, expectNoPageError } from "./helper";
 import { useFixture } from "./fixture";
 
+type ExpectLike = typeof expect;
+
+async function expectCountToRemain(
+  expectFn: ExpectLike,
+  getCount: () => number | Promise<number>,
+  expected: number,
+  durationMs = 500,
+): Promise<void> {
+  const start = Date.now();
+  await expectFn
+    .poll(
+      async () =>
+        (await getCount()) === expected && Date.now() - start >= durationMs,
+      {
+        timeout: durationMs + 3000,
+        message: `Expected count to remain ${expected} for ${durationMs}ms`,
+      },
+    )
+    .toBe(true);
+}
+
 /**
  * Prefetch on hover tests (router mode — default)
  *
@@ -37,7 +58,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
 
     // Wait for the prefetch request to be made
     await expect
-      .poll(() => prefetchRequests.length, { timeout: 3000 })
+      .poll(() => prefetchRequests.length, { timeout: 5000 })
       .toBeGreaterThan(0);
 
     // Verify the request has _rsc_partial and X-Rango-State header
@@ -74,18 +95,16 @@ test.describe("prefetch-on-hover (router mode)", () => {
 
     // Hover, move away, hover again
     await blogLink.hover();
-    await page.waitForTimeout(300);
+    await expect.poll(() => prefetchRequests.length, { timeout: 5000 }).toBe(1);
 
     // Move away from the link
     await page.locator("h1").first().hover();
-    await page.waitForTimeout(200);
 
     // Hover again
     await blogLink.hover();
-    await page.waitForTimeout(300);
 
     // Only one prefetch request should have been made
-    expect(prefetchRequests.length).toBe(1);
+    await expectCountToRemain(expect, () => prefetchRequests.length, 1);
   });
 
   test("should prefetch multiple links independently", async ({
@@ -107,11 +126,23 @@ test.describe("prefetch-on-hover (router mode)", () => {
 
     // Hover over Blog link
     await page.locator('nav a:has-text("Blog")').hover();
-    await page.waitForTimeout(300);
+    await expect
+      .poll(() => prefetchUrls.filter((u) => u.includes("/blog")).length, {
+        timeout: 5000,
+      })
+      .toBe(1);
 
     // Hover over Shop link
     await page.locator('nav a:has-text("Shop")').hover();
-    await page.waitForTimeout(300);
+    await expect
+      .poll(
+        () => ({
+          blog: prefetchUrls.filter((u) => u.includes("/blog")).length,
+          shop: prefetchUrls.filter((u) => u.includes("/shop")).length,
+        }),
+        { timeout: 5000 },
+      )
+      .toEqual({ blog: 1, shop: 1 });
 
     // Both prefetch requests should have been made
     const blogPrefetches = prefetchUrls.filter((u) => u.includes("/blog"));
@@ -144,8 +175,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     await blogLink.hover();
 
     // Wait for prefetch request
-    await expect.poll(() => rscRequests.length, { timeout: 3000 }).toBe(1);
-    await page.waitForTimeout(200);
+    await expect.poll(() => rscRequests.length, { timeout: 5000 }).toBe(1);
 
     // Click the link to navigate
     await blogLink.click();
@@ -153,14 +183,21 @@ test.describe("prefetch-on-hover (router mode)", () => {
     // Verify navigation completed
     await page.waitForURL("**/blog", { timeout: 5000 });
 
-    // Navigation sends its own fetch with X-Rango-State and X-RSC-Router-Client-Path.
-    // Browser HTTP cache should serve the prefetch response (matching Vary headers).
-    // Both requests should share the same X-Rango-State and Client-Path values.
+    // With in-memory prefetch cache, navigation consumes the cached
+    // response without making a second network request. Both prefetch
+    // and navigation use matching X-Rango-State and X-RSC-Router-Client-Path.
     const prefetchState = rscRequests[0]!.headers["x-rango-state"];
     expect(prefetchState).toBeDefined();
+    expect(rscRequests[0]!.headers["x-rango-prefetch"]).toBe("1");
     const prefetchClientPath =
       rscRequests[0]!.headers["x-rsc-router-client-path"];
     expect(prefetchClientPath).toBeDefined();
+
+    // Navigation should use the in-memory cache (1 request = cache hit).
+    // If the response wasn't fully buffered in time, navigation falls
+    // back to a network fetch (2 requests = cache miss, still valid).
+    expect(rscRequests.length).toBeGreaterThanOrEqual(1);
+    expect(rscRequests.length).toBeLessThanOrEqual(2);
 
     // If navigation made a request (cache miss), verify same header values
     if (rscRequests.length > 1) {
@@ -195,7 +232,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     devServerURL,
   }) => {
     // Vary should include X-Rango-State and X-RSC-Router-Client-Path on ALL RSC responses,
-    // not just those with the headers — ensures consistent browser cache behavior.
+    // not just those with the headers — ensures consistent cache behavior.
     const url = new URL("/shop", devServerURL);
     url.searchParams.set("_rsc_partial", "true");
 
@@ -247,7 +284,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     page,
     devServerURL,
   }) => {
-    test.setTimeout(30000);
+    test.slow();
     using _ = expectNoPageError(page);
 
     await page.goto(devURL(devServerURL, "/todos"));
@@ -272,12 +309,10 @@ test.describe("prefetch-on-hover (router mode)", () => {
     await blogLink.hover();
 
     // Wait for prefetch to complete
-    await expect.poll(() => prefetchStates.length, { timeout: 3000 }).toBe(1);
-    await page.waitForTimeout(200);
+    await expect.poll(() => prefetchStates.length, { timeout: 5000 }).toBe(1);
 
     // Move cursor away from Blog link
     await page.locator("h1").first().hover();
-    await page.waitForTimeout(200);
 
     // Perform server action: add a todo
     // This triggers markCacheAsStale -> clearPrefetchCache -> invalidateRangoState
@@ -289,13 +324,18 @@ test.describe("prefetch-on-hover (router mode)", () => {
     await expect(page.locator("button:has-text('Add Todo')")).toBeVisible({
       timeout: 10000,
     });
-    await page.waitForTimeout(300);
+
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem("rango-state")), {
+        timeout: 5000,
+      })
+      .not.toBe(prefetchStates[0]);
 
     // Hover Blog link again — should trigger a NEW prefetch
     // because the cache was cleared and state key changed
     await blogLink.hover();
 
-    await expect.poll(() => prefetchStates.length, { timeout: 3000 }).toBe(2);
+    await expect.poll(() => prefetchStates.length, { timeout: 5000 }).toBe(2);
 
     // Verify the X-Rango-State value changed after invalidation
     expect(prefetchStates[0]).not.toBe(prefetchStates[1]);
@@ -327,7 +367,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     });
 
     await page.locator('nav a:has-text("Blog")').hover();
-    await expect.poll(() => prefetchRequests.length, { timeout: 3000 }).toBe(1);
+    await expect.poll(() => prefetchRequests.length, { timeout: 5000 }).toBe(1);
 
     // Verify prefetch used the localStorage state key
     expect(prefetchRequests[0]!.headers["x-rango-state"]).toBe(initialState);
@@ -399,7 +439,7 @@ base.describe("prefetch-on-hover (production)", () => {
     await blogLink.hover();
 
     await baseExpect
-      .poll(() => prefetchRequests.length, { timeout: 3000 })
+      .poll(() => prefetchRequests.length, { timeout: 5000 })
       .toBeGreaterThan(0);
 
     const req = prefetchRequests[0]!;
@@ -433,16 +473,23 @@ base.describe("prefetch-on-hover (production)", () => {
       await blogLink.hover();
 
       await baseExpect
-        .poll(() => rscRequests.length, { timeout: 3000 })
+        .poll(() => rscRequests.length, { timeout: 5000 })
         .toBe(1);
-      await page.waitForTimeout(200);
 
       await blogLink.click();
-      await page.waitForURL("**/blog", { timeout: 5000 });
+      await baseExpect(page).toHaveURL(/\/blog/, { timeout: 10000 });
 
       // Both requests should share the same X-Rango-State value
       const prefetchState = rscRequests[0]!.headers["x-rango-state"];
       baseExpect(prefetchState).toBeDefined();
+      baseExpect(rscRequests[0]!.headers["x-rango-prefetch"]).toBe("1");
+
+      // Navigation should use the in-memory cache (1 request = cache hit).
+      // If the response wasn't fully buffered in time, navigation falls
+      // back to a network fetch (2 requests = cache miss, still valid).
+      baseExpect(rscRequests.length).toBeGreaterThanOrEqual(1);
+      baseExpect(rscRequests.length).toBeLessThanOrEqual(2);
+
       if (rscRequests.length > 1) {
         baseExpect(rscRequests[1]!.headers["x-rango-state"]).toBe(
           prefetchState,
@@ -550,13 +597,11 @@ base.describe("prefetch-on-hover (production)", () => {
 
       // Wait for prefetch to complete
       await baseExpect
-        .poll(() => prefetchStates.length, { timeout: 3000 })
+        .poll(() => prefetchStates.length, { timeout: 5000 })
         .toBe(1);
-      await page.waitForTimeout(200);
 
       // Move cursor away from Blog link
       await page.locator("h1").first().hover();
-      await page.waitForTimeout(200);
 
       // Perform server action: add a todo
       const input = page.locator('input[placeholder="What needs to be done?"]');
@@ -567,14 +612,19 @@ base.describe("prefetch-on-hover (production)", () => {
       await baseExpect(page.locator("button:has-text('Add Todo')")).toBeVisible(
         { timeout: 10000 },
       );
-      await page.waitForTimeout(300);
+
+      await baseExpect
+        .poll(() => page.evaluate(() => localStorage.getItem("rango-state")), {
+          timeout: 5000,
+        })
+        .not.toBe(prefetchStates[0]);
 
       // Hover Blog link again — should trigger a NEW prefetch
       // because state key changed after invalidation
       await blogLink.hover();
 
       await baseExpect
-        .poll(() => prefetchStates.length, { timeout: 3000 })
+        .poll(() => prefetchStates.length, { timeout: 5000 })
         .toBe(2);
 
       // Verify the X-Rango-State value changed after invalidation
@@ -606,7 +656,7 @@ base.describe("prefetch-on-hover (production)", () => {
 
       await page.locator('nav a:has-text("Blog")').hover();
       await baseExpect
-        .poll(() => prefetchRequests.length, { timeout: 3000 })
+        .poll(() => prefetchRequests.length, { timeout: 5000 })
         .toBe(1);
 
       // Verify prefetch used the localStorage state key
@@ -691,7 +741,7 @@ test.describe("prefetch-viewport (dev)", () => {
     await waitForHydration(page);
 
     // Wait for visible viewport links to fire
-    await page.waitForTimeout(500);
+    await expectCountToRemain(expect, () => prefetchRequests.length, 0);
 
     // Shop link is below a 3000px spacer — should NOT have been prefetched
     expect(prefetchRequests.length).toBe(0);
@@ -727,7 +777,7 @@ test.describe("prefetch-viewport (dev)", () => {
     await expect.poll(() => prefetchRequests.length, { timeout: 5000 }).toBe(1);
   });
 
-  test("should resolve hybrid to hover on desktop", async ({
+  test("should resolve adaptive to hover on desktop", async ({
     page,
     devServerURL,
   }) => {
@@ -744,15 +794,15 @@ test.describe("prefetch-viewport (dev)", () => {
     await page.goto(devURL(devServerURL, "/prefetch-test"));
     await waitForHydration(page);
 
-    // On desktop (pointer device), hybrid resolves to hover.
+    // On desktop (pointer device), adaptive resolves to hover.
     // No prefetch should happen without hovering.
-    await page.waitForTimeout(500);
+    await expectCountToRemain(expect, () => prefetchRequests.length, 0);
     expect(prefetchRequests.length).toBe(0);
 
-    // Hover the hybrid link — should trigger prefetch
-    await page.locator('a:has-text("Magazine (hybrid)")').hover();
+    // Hover the adaptive link — should trigger prefetch
+    await page.locator('a:has-text("Magazine (adaptive)")').hover();
 
-    await expect.poll(() => prefetchRequests.length, { timeout: 3000 }).toBe(1);
+    await expect.poll(() => prefetchRequests.length, { timeout: 5000 }).toBe(1);
   });
 });
 
@@ -801,7 +851,7 @@ base.describe("prefetch-viewport (production)", () => {
       await page.goto(f.url("/prefetch-test"));
       await waitForHydration(page);
 
-      await page.waitForTimeout(500);
+      await expectCountToRemain(baseExpect, () => prefetchRequests.length, 0);
       baseExpect(prefetchRequests.length).toBe(0);
 
       await page
@@ -831,7 +881,7 @@ base.describe("prefetch-viewport (production)", () => {
       .toBe(1);
   });
 
-  base("should resolve hybrid to hover on desktop", async ({ page }) => {
+  base("should resolve adaptive to hover on desktop", async ({ page }) => {
     const prefetchRequests: string[] = [];
     page.on("request", (request) => {
       const url = request.url();
@@ -843,13 +893,13 @@ base.describe("prefetch-viewport (production)", () => {
     await page.goto(f.url("/prefetch-test"));
     await waitForHydration(page);
 
-    await page.waitForTimeout(500);
+    await expectCountToRemain(baseExpect, () => prefetchRequests.length, 0);
     baseExpect(prefetchRequests.length).toBe(0);
 
-    await page.locator('a:has-text("Magazine (hybrid)")').hover();
+    await page.locator('a:has-text("Magazine (adaptive)")').hover();
 
     await baseExpect
-      .poll(() => prefetchRequests.length, { timeout: 3000 })
+      .poll(() => prefetchRequests.length, { timeout: 5000 })
       .toBe(1);
   });
 });

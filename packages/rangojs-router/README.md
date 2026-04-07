@@ -1,14 +1,16 @@
 # @rangojs/router
 
-Django-inspired RSC router with type-safe partial rendering for Vite.
+Named-route RSC router with structural composability and type-safe partial rendering for Vite.
 
 > **Experimental:** This package is under active development. APIs may change between releases. Install with `@experimental` tag.
 
 ## Features
 
-- **Composable URL patterns** — Django-style `urls()` DSL with `path`, `layout`, `include`
 - **Named routes** — `reverse("blogPost", { slug })` for type-safe URL generation (Django-style)
+- **Structural composability** — Attach routes, loaders, middleware, handles, caching, prerendering, and static generation without hiding the route tree
+- **Composable URL patterns** — Django-style `urls()` DSL with `path`, `layout`, `include`
 - **Data loaders** — `createLoader()` with automatic streaming and Suspense integration
+- **Live data layer** — Pre-render or cache the UI shell while loaders stay live by default at request time
 - **Layouts & nesting** — Nested layouts with `<Outlet />` and parallel routes
 - **Segment-level caching** — `cache()` DSL with TTL/SWR and pluggable cache stores
 - **Middleware** — Route-level middleware with cookie and header access
@@ -16,7 +18,14 @@ Django-inspired RSC router with type-safe partial rendering for Vite.
 - **Theme support** — Light/dark mode with FOUC prevention and system detection
 - **Host routing** — Multi-app routing by domain/subdomain via `@rangojs/router/host`
 - **Response routes** — `path.json()`, `path.text()`, `path.xml()` for API endpoints
+- **Trailing slash control** — Per-route canonical URLs with `"never"`, `"always"`, or `"ignore"`
 - **CLI codegen** — `rango generate` for route type generation
+
+## Design Docs
+
+- [Execution model](./docs/internal/execution-model.md)
+- [Semantic change checklist](./docs/internal/semantic-change-checklist.md)
+- [Stability roadmap](./docs/internal/stability-roadmap.md)
 
 ## Installation
 
@@ -36,6 +45,30 @@ For Cloudflare Workers:
 npm install @cloudflare/vite-plugin
 ```
 
+## Import Paths
+
+Use these import paths consistently:
+
+- `@rangojs/router` — server/RSC router APIs, route DSL, `createRouter`, `urls`, `redirect`, `Prerender`, `Static`, shared types
+- `@rangojs/router/client` — hooks and components such as `Link`, `Outlet`, `href`, `useNavigation`, `useLoader`, `useAction`, `useLocationState`
+- `@rangojs/router/cache` — public cache APIs such as `CFCacheStore`, `MemorySegmentCacheStore`, `createDocumentCacheMiddleware`
+- `@rangojs/router/host`, `@rangojs/router/theme`, `@rangojs/router/vite` — specialized public subpaths
+- `@rangojs/router/rsc`, `@rangojs/router/ssr` — advanced server-only integration subpaths for custom request/HTML pipelines
+
+Use only subpaths that are explicitly exported from the package. Avoid deep imports such as `@rangojs/router/cache/cf`.
+
+`@rangojs/router` is conditionally resolved. Server-only root APIs such as
+`createRouter()`, `urls()`, `redirect()`, `Prerender()`, and `cookies()` rely on
+the `react-server` export condition and are meant to run in router definitions,
+handlers, and other RSC/server modules. Outside that environment the root entry
+falls back to stub implementations that throw guidance errors.
+
+If you hit a root-entrypoint stub error:
+
+- hooks and components like `Link`, `Outlet`, `useLoader`, `useNavigation`, and `MetaTags` belong in `@rangojs/router/client`
+- cache APIs like `CFCacheStore` and `createDocumentCacheMiddleware` belong in `@rangojs/router/cache`
+- host-router APIs belong in `@rangojs/router/host`
+
 ## Quick Start
 
 ### Vite Config
@@ -53,23 +86,35 @@ export default defineConfig({
 
 ### Router
 
+This file is a server/RSC module and should import router construction APIs from
+`@rangojs/router`.
+
 ```tsx
 // src/router.tsx
-import { createRouter, urls } from "@rangojs/router";
-import { Document } from "./document";
+import { createRouter } from "@rangojs/router";
 
-const urlpatterns = urls(({ path, layout }) => [
-  layout(<MainLayout />, () => [
-    path("/", HomePage, { name: "home" }),
-    path("/about", AboutPage, { name: "about" }),
-    path("/blog/:slug", BlogPostPage, { name: "blogPost" }),
-  ]),
+export const router = createRouter().routes(({ path }) => [
+  path("/", HomePage, { name: "home" }),
+  path("/about", AboutPage, { name: "about" }),
 ]);
 
-export const router = createRouter({ document: Document }).routes(urlpatterns);
-
-// Export typed reverse function for URL generation by route name
 export const reverse = router.reverse;
+// reverse("home") -> "/"
+```
+
+For larger apps, extract route modules with `urls()` and compose with `include()`:
+
+```tsx
+import { createRouter, urls } from "@rangojs/router";
+import { blogPatterns } from "./urls/blog";
+
+const urlpatterns = urls(({ path, include }) => [
+  path("/", HomePage, { name: "home" }),
+  include("/blog", blogPatterns, { name: "blog" }),
+]);
+
+export const router = createRouter().routes(urlpatterns);
+// reverse("blog.post", { slug: "hello-world" }) -> "/blog/hello-world"
 ```
 
 ### Document
@@ -95,7 +140,15 @@ export function Document({ children }: { children: ReactNode }) {
 
 ## Defining Routes
 
-### Path Patterns
+Rango is a named-route router first.
+
+Paths define where a route lives. Names define how the app refers to it.
+
+It is also structurally composable.
+
+As an app grows, routes can pull in external handlers, loaders, middleware, handles, cache policy, intercepts, prerendering, and static generation while keeping the route tree visible at the composition site.
+
+### Named Routes
 
 ```tsx
 import { urls } from "@rangojs/router";
@@ -107,6 +160,99 @@ const urlpatterns = urls(({ path }) => [
   path("/files/*", FilesPage, { name: "files" }),
 ]);
 ```
+
+Use `reverse()` as the default way to link to routes:
+
+```tsx
+router.reverse("product", { slug: "widget" }); // "/product/widget"
+router.reverse("search", undefined, { q: "rsc" }); // "/search?q=rsc"
+```
+
+### Composable URL Modules
+
+Local route names compose cleanly with `include(..., { name })`:
+
+```tsx
+import { urls } from "@rangojs/router";
+
+export const blogPatterns = urls(({ path }) => [
+  path("/", BlogIndexPage, { name: "index" }),
+  path("/:slug", BlogPostPage, { name: "post" }),
+]);
+
+export const urlpatterns = urls(({ path, include }) => [
+  path("/", HomePage, { name: "home" }),
+  include("/blog", blogPatterns, { name: "blog" }),
+]);
+
+router.reverse("blog.index"); // "/blog"
+router.reverse("blog.post", { slug: "hello-world" }); // "/blog/hello-world"
+```
+
+This is the core composition model:
+
+- Paths stay local to the module that defines them
+- Names become stable references across the app
+- `include()` scales those names without forcing raw path-string coupling
+
+### Structural Composability
+
+Rango avoids the usual tradeoff between modularity and visibility.
+
+You can extract route behavior into separate files or packages and still keep one readable route definition that shows the structure of the app.
+
+```tsx
+import { urls } from "@rangojs/router";
+import { ProductPage } from "./routes/product";
+import { ProductLoader } from "./loaders/product";
+import { productMiddleware } from "./middleware/product";
+import { productRevalidate } from "./revalidation/product";
+
+const shopPatterns = urls(({ path, loader, middleware, revalidate, cache }) => [
+  path("/product/:slug", ProductPage, { name: "product" }, () => [
+    middleware(productMiddleware),
+    loader(ProductLoader),
+    revalidate(productRevalidate),
+    cache({ ttl: 300 }),
+  ]),
+]);
+```
+
+The route tree stays explicit even when behavior is modular.
+
+This applies to:
+
+- external route modules mounted with `include()`
+- imported loaders, middleware, and handles attached at the route site
+- prerendering and static generation attached without turning the route tree opaque
+
+### Loaders As the Live Data Layer
+
+Rango separates app structure from app data.
+
+Routes, layouts, and pre-rendered segments can be static or cached, while
+loaders stay live by default and re-resolve at request time.
+
+This means you can pre-render or cache the shell of a page without freezing its
+data.
+
+- `cache()` caches route structure and rendered UI segments
+- `Prerender()` skips loaders at build time
+- `loader()` provides fresh request-time data
+- individual loaders can opt into caching explicitly when needed
+
+```tsx
+import { urls, Prerender } from "@rangojs/router";
+import { ArticleLoader } from "./loaders/article";
+
+const docsPatterns = urls(({ path, loader }) => [
+  path("/docs/:slug", Prerender(DocsArticle), { name: "docs.article" }, () => [
+    loader(ArticleLoader), // fresh by default
+  ]),
+]);
+```
+
+Pre-render the page, keep the data live.
 
 ### Typed Handlers
 
@@ -121,6 +267,30 @@ export const ProductPage: Handler<"product"> = (ctx) => {
   return <h1>Product: {slug}</h1>;
 };
 ```
+
+### Choosing a Handler Style
+
+All handler typing styles are supported, but they solve different problems:
+
+- `Handler<"product">` — default for named app routes
+- `Handler<".post", ScopedRouteMap<"blog">>` — best for reusable included modules
+- `Handler<"/blog/:slug">` — good for unnamed or local-only extracted handlers
+- `Handler<{ slug: string }>` — escape hatch for advanced or decoupled cases
+
+Example of a scoped local name inside a mounted module:
+
+```tsx
+import type { Handler } from "@rangojs/router";
+import type { ScopedRouteMap } from "@rangojs/router/__internal";
+
+type BlogRoutes = ScopedRouteMap<"blog">;
+
+export const BlogPostPage: Handler<".post", BlogRoutes> = (ctx) => {
+  return <a href={ctx.reverse(".index")}>Back to blog</a>;
+};
+```
+
+See [`../../docs/named-routes.md`](../../docs/named-routes.md) for the recommended mental model.
 
 ### Search Params
 
@@ -140,6 +310,44 @@ const SearchPage: Handler<"search"> = (ctx) => {
   // q: string, page: number | undefined, sort: string | undefined
 };
 ```
+
+### Trailing Slash Handling
+
+Trailing slash behavior is a current `path()` feature.
+
+Set it per route with `trailingSlash`:
+
+```tsx
+const urlpatterns = urls(({ path }) => [
+  path("/about", AboutPage, {
+    name: "about",
+    trailingSlash: "never",
+  }),
+  path("/docs/", DocsPage, {
+    name: "docs",
+    trailingSlash: "always",
+  }),
+  path("/webhook", WebhookHandler, {
+    name: "webhook",
+    trailingSlash: "ignore",
+  }),
+]);
+```
+
+Modes:
+
+- `"never"` — canonical URL has no trailing slash, redirects `/about/` to `/about`
+- `"always"` — canonical URL has a trailing slash, redirects `/docs` to `/docs/`
+- `"ignore"` — matches both forms without redirect
+
+Default behavior when `trailingSlash` is omitted:
+
+- There is no separate global default mode
+- If the pattern is defined without a trailing slash, the canonical URL is the no-slash form
+- If the pattern is defined with a trailing slash, the canonical URL is the slash form
+- The router redirects to the canonical form based on the pattern you defined
+
+The recommended public API is the per-route `path(..., { trailingSlash })` option. Use `"ignore"` sparingly, especially on content pages, because `/x` and `/x/` are distinct URLs.
 
 ### Response Routes
 
@@ -248,10 +456,10 @@ import { useLoader } from "@rangojs/router/client";
 import { BlogSidebarLoader } from "./loaders/blog";
 
 function BlogSidebar() {
-  const { posts } = useLoader(BlogSidebarLoader);
+  const { data } = useLoader(BlogSidebarLoader);
   return (
     <ul>
-      {posts.map((p) => (
+      {data.posts.map((p) => (
         <li key={p.slug}>{p.title}</li>
       ))}
     </ul>
@@ -313,7 +521,7 @@ function Nav() {
   return (
     <nav>
       <Link to={href("/")}>Home</Link>
-      <Link to={href("/blog")} prefetch="intent">
+      <Link to={href("/blog")} prefetch="adaptive">
         Blog
       </Link>
       <Link to={href("/about")}>About</Link>
@@ -324,20 +532,21 @@ function Nav() {
 
 `href()` validates that the path matches a registered route pattern at compile time (e.g. `/blog/my-post` matches `/blog/:slug`).
 
-### Navigation Hook
+### Navigation Hooks
 
 ```tsx
 "use client";
-import { useNavigation } from "@rangojs/router/client";
+import { useNavigation, useRouter } from "@rangojs/router/client";
 
 function SearchForm() {
-  const { navigate, isPending } = useNavigation();
+  const router = useRouter();
+  const nav = useNavigation();
 
   function handleSubmit(query: string) {
-    navigate(`/search?q=${encodeURIComponent(query)}`);
+    router.push(`/search?q=${encodeURIComponent(query)}`);
   }
 
-  return <form onSubmit={...}>{isPending && <Spinner />}</form>;
+  return <form onSubmit={...}>{nav.state !== "idle" && <Spinner />}</form>;
 }
 ```
 
@@ -384,6 +593,20 @@ export const urlpatterns = urls(({ path, include }) => [
 ```
 
 Included route names are prefixed with the include name: `reverse("api.health")`, `reverse("api.products")`.
+
+### Include name scoping
+
+The `name` option controls how child route names appear globally:
+
+| Form                               | Child names         | Generated types        | Reverse resolution                                                   |
+| ---------------------------------- | ------------------- | ---------------------- | -------------------------------------------------------------------- |
+| `include("/x", p, { name: "ns" })` | `ns.child`          | Exported as `ns.child` | `reverse("ns.child")` globally, `reverse(".child")` inside           |
+| `include("/x", p, { name: "" })`   | `child` (flattened) | Exported as-is         | `reverse("child")` globally, `reverse(".child")` inside (root-scope) |
+| `include("/x", p)`                 | Private scope       | Not exported           | `reverse(".child")` inside only                                      |
+
+Without a `name`, included routes are local to the mounted module. They still match requests and render normally, but their names are hidden from the generated route map and cannot be reversed globally. Use `{ name: "" }` to merge children into the parent namespace without adding a prefix.
+
+**`{ name: "" }` is flattening, not isolation.** Flattened routes behave as if defined inline at the include site — dot-local reverse (`.name`) can reach any sibling route at root scope, including routes from other `{ name: "" }` mounts. If you need module-level isolation, omit the `name` option or use a namespace.
 
 ## Middleware
 
@@ -493,10 +716,12 @@ export const BlogPost = Prerender(
 
 ### Passthrough for Unknown Params
 
-```tsx
-import { Prerender } from "@rangojs/router";
+Wrap a `Prerender` definition with `Passthrough()` to add a live handler for unknown params at runtime. The build handler runs at build time, the live handler runs at request time for params not in the prerender cache.
 
-export const ProductPage = Prerender(
+```tsx
+import { Prerender, Passthrough } from "@rangojs/router";
+
+export const ProductPageDef = Prerender(
   async () => {
     const featured = await db.getFeaturedProducts();
     return featured.map((p) => ({ id: p.id }));
@@ -505,11 +730,79 @@ export const ProductPage = Prerender(
     const product = await db.getProduct(ctx.params.id);
     return <Product data={product} />;
   },
-  { passthrough: true },
+);
+
+// In route definition:
+path(
+  "/products/:id",
+  Passthrough(ProductPageDef, async (ctx) => {
+    const product = await ctx.env.DB.getProduct(ctx.params.id);
+    return <Product data={product} />;
+  }),
 );
 ```
 
-With `passthrough: true`, known params are served from the build-time cache and unknown params fall through to live rendering.
+Build handlers can also skip individual param sets with `ctx.passthrough()`, deferring them to the live handler:
+
+```tsx
+export const ProductPageDef = Prerender(
+  async () => {
+    const all = await db.getAllProducts();
+    return all.map((p) => ({ id: p.id }));
+  },
+  async (ctx) => {
+    const product = await db.getProduct(ctx.params.id);
+    if (!product.published) return ctx.passthrough();
+    return <Product data={product} />;
+  },
+);
+```
+
+### Build-Time Environment Bindings
+
+Prerender handlers can access platform bindings (KV, D1, R2) at build time when `buildEnv` is configured in the Vite plugin:
+
+```ts
+// vite.config.ts
+import { rango } from "@rangojs/router/vite";
+
+rango({ preset: "cloudflare", buildEnv: "auto" });
+```
+
+With `buildEnv: "auto"`, the plugin calls `wrangler.getPlatformProxy()` to provide local bindings. Handlers then access `ctx.env` during build:
+
+```tsx
+export const BlogPosts = Prerender<{ slug: string }>(
+  async (ctx) => {
+    const rows = await ctx.env.DB.prepare("SELECT slug FROM posts").all();
+    return rows.map((r) => ({ slug: r.slug }));
+  },
+  async (ctx) => {
+    const post = await ctx.env.DB.prepare("SELECT * FROM posts WHERE slug = ?")
+      .bind(ctx.params.slug)
+      .first();
+    return <BlogPost post={post} />;
+  },
+);
+```
+
+`buildEnv` also accepts a factory function or plain object:
+
+```ts
+// Custom factory
+rango({
+  buildEnv: async (ctx) => {
+    const { getPlatformProxy } = await import("wrangler");
+    const proxy = await getPlatformProxy();
+    return { env: proxy.env, dispose: proxy.dispose };
+  },
+});
+
+// Plain object (Node.js)
+rango({ buildEnv: { DATABASE_URL: process.env.DATABASE_URL } });
+```
+
+Build-time env applies to both production builds and dev on-demand prerender. Without `buildEnv`, accessing `ctx.env` in a Prerender handler throws with a clear error.
 
 ## Theme
 
@@ -635,16 +928,22 @@ module, use `scopedReverse<typeof localPatterns>(ctx.reverse)` or
 
 ## Subpath Exports
 
-| Export                   | Description                                                                       |
-| ------------------------ | --------------------------------------------------------------------------------- |
-| `@rangojs/router`        | Core: `createRouter`, `urls`, `createLoader`, `Handler`, `Prerender`, `Meta`      |
-| `@rangojs/router/client` | Client: `Link`, `Outlet`, `href`, `useNavigation`, `useLoader`, `MetaTags`        |
-| `@rangojs/router/cache`  | Cache: `CFCacheStore`, `MemorySegmentCacheStore`, `createDocumentCacheMiddleware` |
-| `@rangojs/router/theme`  | Theme: `useTheme`, `ThemeProvider`, `ThemeScript`                                 |
-| `@rangojs/router/host`   | Host routing: `createHostRouter`, `defineHosts`                                   |
-| `@rangojs/router/vite`   | Vite plugin: `rango()`                                                            |
-| `@rangojs/router/server` | Server utilities                                                                  |
-| `@rangojs/router/build`  | Build utilities                                                                   |
+| Export                   | Description                                                                                              |
+| ------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `@rangojs/router`        | Server/RSC core and shared types: `createRouter`, `urls`, `createLoader`, `Handler`, `Prerender`, `Meta` |
+| `@rangojs/router/client` | Client: `Link`, `Outlet`, `href`, `useNavigation`, `useLoader`, `MetaTags`                               |
+| `@rangojs/router/cache`  | Cache: `CFCacheStore`, `MemorySegmentCacheStore`, `createDocumentCacheMiddleware`                        |
+| `@rangojs/router/theme`  | Theme: `useTheme`, `ThemeProvider`, `ThemeScript`                                                        |
+| `@rangojs/router/host`   | Host routing: `createHostRouter`, `defineHosts`                                                          |
+| `@rangojs/router/vite`   | Vite plugin: `rango()`                                                                                   |
+| `@rangojs/router/rsc`    | Advanced server pipeline APIs: `createRSCHandler`, request-context access                                |
+| `@rangojs/router/ssr`    | Advanced SSR bridge APIs: `createSSRHandler`                                                             |
+| `@rangojs/router/server` | Internal build/runtime utilities for advanced integrations                                               |
+| `@rangojs/router/build`  | Build utilities                                                                                          |
+
+The root entrypoint is not a generic client/runtime barrel. If you need hooks
+or components, import from `@rangojs/router/client`; if you need cache or host
+APIs, use their dedicated subpaths.
 
 ## Examples
 

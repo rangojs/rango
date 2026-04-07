@@ -61,7 +61,14 @@ export function findTsFiles(dir: string, filter?: ScanFilter): string[] {
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      if (
+        entry.name === "node_modules" ||
+        entry.name.startsWith(".") ||
+        entry.name === "dist" ||
+        entry.name === "build" ||
+        entry.name === "coverage"
+      )
+        continue;
       results.push(...findTsFiles(fullPath, filter));
     } else if (
       (entry.name.endsWith(".ts") ||

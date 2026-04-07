@@ -21,6 +21,10 @@ import {
   extractIncludesWithDiagnostics,
   detectUnresolvableIncludes,
   extractUrlsVariableFromRouter,
+  extractUrlsFromRouter,
+  extractBasenameFromRouter,
+  findNestedRouterConflict,
+  findRouterFiles,
 } from "../generate-route-types";
 
 // Helper: create a minimal urls module that the static parser can extract routes from.
@@ -60,6 +64,87 @@ describe("writeCombinedRouteTypes", () => {
 
   afterEach(() => {
     rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("treats a directory with a router file as a router root", () => {
+    const appDir = join(tempDir, "src", "app");
+    const nestedDir = join(appDir, "nested");
+    const adminDir = join(tempDir, "src", "admin");
+
+    mkdirSync(nestedDir, { recursive: true });
+    mkdirSync(adminDir, { recursive: true });
+
+    const appRouter = join(appDir, "router.ts");
+    const nestedRouter = join(nestedDir, "router.ts");
+    const adminRouter = join(adminDir, "router.ts");
+
+    writeFileSync(appRouter, routerSource("./urls.js"));
+    writeFileSync(nestedRouter, routerSource("./urls.js"));
+    writeFileSync(adminRouter, routerSource("./urls.js"));
+
+    const discovered = findRouterFiles(tempDir).sort();
+
+    expect(discovered).toEqual([adminRouter, appRouter].sort());
+    expect(discovered).not.toContain(nestedRouter);
+  });
+
+  it("detects explicit nested router conflicts", () => {
+    const appRouter = join(tempDir, "src", "app", "router.ts");
+    const nestedRouter = join(tempDir, "src", "app", "nested", "router.ts");
+    const siblingRouter = join(tempDir, "src", "admin", "router.ts");
+
+    const conflict = findNestedRouterConflict([
+      appRouter,
+      nestedRouter,
+      siblingRouter,
+    ]);
+
+    expect(conflict).toEqual({
+      ancestor: appRouter,
+      nested: nestedRouter,
+    });
+  });
+
+  it("detects nested router conflicts regardless of input order", () => {
+    const appRouter = join(tempDir, "src", "app", "router.ts");
+    const nestedRouter = join(tempDir, "src", "app", "nested", "router.ts");
+
+    const conflict = findNestedRouterConflict([nestedRouter, appRouter]);
+
+    expect(conflict).toEqual({
+      ancestor: appRouter,
+      nested: nestedRouter,
+    });
+  });
+
+  it("does not report nested router conflicts for sibling roots", () => {
+    const appRouter = join(tempDir, "src", "app", "router.ts");
+    const adminRouter = join(tempDir, "src", "admin", "router.ts");
+
+    expect(findNestedRouterConflict([appRouter, adminRouter])).toBeNull();
+  });
+
+  it("throws when asked to generate combined route types for nested routers", () => {
+    const appDir = join(tempDir, "src", "app");
+    const nestedDir = join(appDir, "nested");
+    mkdirSync(nestedDir, { recursive: true });
+
+    const appUrls = join(appDir, "urls.ts");
+    const nestedUrls = join(nestedDir, "urls.ts");
+    const appRouter = join(appDir, "router.ts");
+    const nestedRouter = join(nestedDir, "router.ts");
+
+    writeFileSync(appUrls, urlsSource([{ pattern: "/", name: "index" }]));
+    writeFileSync(
+      nestedUrls,
+      urlsSource([{ pattern: "/detail", name: "detail" }]),
+    );
+    writeFileSync(appRouter, routerSource("./urls.js"));
+    writeFileSync(nestedRouter, routerSource("./urls.js"));
+
+    expect(() =>
+      writeCombinedRouteTypes(tempDir, [appRouter, nestedRouter]),
+    ).toThrow(/Nested router roots are not supported/);
   });
 
   it("should create .named-routes.gen.ts with correct routes", () => {
@@ -131,6 +216,57 @@ describe("writeCombinedRouteTypes", () => {
     const after = readFileSync(outPath, "utf-8");
     expect(after).toContain("contact");
     expect(after).toBe(largerContent);
+  });
+
+  it("should ignore internal runtime-only routes when preserveIfLarger compares counts", () => {
+    const urlsPath = join(tempDir, "urls.ts");
+    const routerPath = join(tempDir, "router.ts");
+
+    writeFileSync(
+      urlsPath,
+      urlsSource([
+        { pattern: "/", name: "index" },
+        { pattern: "/about", name: "about" },
+      ]),
+    );
+    writeFileSync(routerPath, routerSource("./urls.js"));
+
+    const outPath = genPath(routerPath);
+    const dirtyRuntimeContent = generateRouteTypesSource({
+      "$prefix_0.index": "/private",
+      "$prefix_0.about": "/private/about",
+      index: "/",
+      about: "/about",
+    });
+    writeFileSync(outPath, dirtyRuntimeContent);
+
+    writeCombinedRouteTypes(tempDir, [routerPath], { preserveIfLarger: true });
+
+    const after = readFileSync(outPath, "utf-8");
+    expect(after).not.toContain("$prefix_0.index");
+    expect(after).toContain('index: "/"');
+    expect(after).toContain('about: "/about"');
+  });
+
+  it("should never emit internal route names in generated named-routes", () => {
+    const content = generateRouteTypesSource(
+      {
+        "$prefix_0.index": "/private",
+        $path__health: "/health",
+        index: "/",
+      },
+      {
+        "$prefix_0.index": { q: "string" },
+        $path__health: { probe: "boolean?" },
+        index: { page: "number?" },
+      },
+    );
+
+    expect(content).not.toContain("$prefix_0.index");
+    expect(content).not.toContain("$path__health");
+    expect(content).toContain(
+      'index: { path: "/", search: { page: "number?" } }',
+    );
   });
 
   it("should allow growth when preserveIfLarger is set", () => {
@@ -581,6 +717,119 @@ export const patterns = urls(({ path, include }) => [
     expect(content).toContain("/api/posts");
   });
 
+  it("does not export child route names from include() without a name", () => {
+    const adminPath = join(tempDir, "admin-urls.ts");
+    writeFileSync(
+      adminPath,
+      `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const adminUrls = urls(({ path }) => [
+  path("/", handler, { name: "index" }),
+  path("/users", handler, { name: "users" }),
+]);
+`,
+    );
+
+    const mainPath = join(tempDir, "urls.ts");
+    writeFileSync(
+      mainPath,
+      `import { urls } from "@rangojs/router";
+import { adminUrls } from "./admin-urls.js";
+const handler = () => null;
+export const patterns = urls(({ path, include }) => [
+  path("/", handler, { name: "home" }),
+  include("/admin", adminUrls),
+]);
+`,
+    );
+
+    writePerModuleRouteTypesForFile(mainPath);
+
+    const genPath = mainPath.replace(/\.ts$/, ".gen.ts");
+    const content = readFileSync(genPath, "utf-8");
+    expect(content).toContain('home: "/"');
+    expect(content).not.toContain('index: "/admin"');
+    expect(content).not.toContain('users: "/admin/users"');
+    expect(content).not.toContain("/admin/users");
+  });
+
+  it('exports flattened child names when include() uses { name: "" }', () => {
+    const adminPath = join(tempDir, "admin-urls.ts");
+    writeFileSync(
+      adminPath,
+      `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const adminUrls = urls(({ path }) => [
+  path("/", handler, { name: "dashboard" }),
+  path("/users", handler, { name: "users" }),
+]);
+`,
+    );
+
+    const mainPath = join(tempDir, "urls.ts");
+    writeFileSync(
+      mainPath,
+      `import { urls } from "@rangojs/router";
+import { adminUrls } from "./admin-urls.js";
+const handler = () => null;
+export const patterns = urls(({ path, include }) => [
+  path("/", handler, { name: "home" }),
+  include("/admin", adminUrls, { name: "" }),
+]);
+`,
+    );
+
+    writePerModuleRouteTypesForFile(mainPath);
+
+    const genPath = mainPath.replace(/\.ts$/, ".gen.ts");
+    const content = readFileSync(genPath, "utf-8");
+    expect(content).toContain('home: "/"');
+    // Flattened — no prefix
+    expect(content).toContain('dashboard: "/admin"');
+    expect(content).toContain('users: "/admin/users"');
+    // Not under any scope prefix
+    expect(content).not.toContain("$prefix_");
+  });
+
+  it('exports prefixed child names when include() uses { name: "foo" }', () => {
+    const childPath = join(tempDir, "child-urls.ts");
+    writeFileSync(
+      childPath,
+      `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const childUrls = urls(({ path }) => [
+  path("/", handler, { name: "child" }),
+  path("/detail", handler, { name: "detail" }),
+]);
+`,
+    );
+
+    const mainPath = join(tempDir, "urls.ts");
+    writeFileSync(
+      mainPath,
+      `import { urls } from "@rangojs/router";
+import { childUrls } from "./child-urls.js";
+const handler = () => null;
+export const patterns = urls(({ path, include }) => [
+  path("/", handler, { name: "home" }),
+  include("/x", childUrls, { name: "foo" }),
+]);
+`,
+    );
+
+    writePerModuleRouteTypesForFile(mainPath);
+
+    const genPath = mainPath.replace(/\.ts$/, ".gen.ts");
+    const content = readFileSync(genPath, "utf-8");
+    expect(content).toContain('home: "/"');
+    // Prefixed with foo.
+    expect(content).toContain('"foo.child": "/x"');
+    expect(content).toContain('"foo.detail": "/x/detail"');
+    // Not flat or hidden
+    expect(content).not.toContain('child: "/x"');
+    expect(content).not.toContain("$prefix_");
+  });
+
   it("follows multi-level includes (A -> B -> C)", () => {
     // Level C: leaf routes
     const cPath = join(tempDir, "c-urls.ts");
@@ -766,6 +1015,110 @@ export const patterns = urls(({ path, include }) => [
     expect(content).toContain('index: "/"');
     expect(content).toContain("api.users");
     expect(content).toContain("/api/users");
+  });
+
+  it("emits empty placeholder when urls() variable exists but routes are unresolvable", () => {
+    // Dynamic/factory-generated routes that the static parser cannot resolve
+    const filePath = join(tempDir, "urls.ts");
+    writeFileSync(
+      filePath,
+      `import { urls } from "@rangojs/router";
+import { buildRoutes } from "./factory.js";
+export const patterns = urls(buildRoutes);
+`,
+    );
+
+    writePerModuleRouteTypesForFile(filePath);
+
+    const genPath = filePath.replace(/\.ts$/, ".gen.ts");
+    expect(existsSync(genPath)).toBe(true);
+
+    const content = readFileSync(genPath, "utf-8");
+    expect(content).toContain("export const routes = {");
+    expect(content).toContain("} as const;");
+  });
+
+  it("does not overwrite existing gen file when urls() variable resolves zero routes", () => {
+    const filePath = join(tempDir, "urls.ts");
+    writeFileSync(
+      filePath,
+      `import { urls } from "@rangojs/router";
+import { buildRoutes } from "./factory.js";
+export const patterns = urls(buildRoutes);
+`,
+    );
+
+    // Pre-seed a gen file (simulating runtime discovery)
+    const genPath = filePath.replace(/\.ts$/, ".gen.ts");
+    const existingContent = generatePerModuleTypesSource([
+      { name: "index", pattern: "/" },
+    ]);
+    writeFileSync(genPath, existingContent);
+
+    writePerModuleRouteTypesForFile(filePath);
+
+    // Should not overwrite the richer runtime-discovered content
+    const after = readFileSync(genPath, "utf-8");
+    expect(after).toBe(existingContent);
+  });
+
+  it("includes the same imported variable under multiple prefixes without false cycle detection", () => {
+    const sharedPath = join(tempDir, "shared-urls.ts");
+    writeFileSync(
+      sharedPath,
+      `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const sharedUrls = urls(({ path }) => [
+  path("/health", handler, { name: "health" }),
+  path("/:id", handler, { name: "detail" }),
+]);
+`,
+    );
+
+    const mainPath = join(tempDir, "urls.ts");
+    writeFileSync(
+      mainPath,
+      `import { urls } from "@rangojs/router";
+import { sharedUrls } from "./shared-urls.js";
+const handler = () => null;
+export const patterns = urls(({ path, include }) => [
+  path("/", handler, { name: "home" }),
+  include("/api", sharedUrls, { name: "api" }),
+  include("/v2", sharedUrls, { name: "v2" }),
+]);
+`,
+    );
+
+    writePerModuleRouteTypesForFile(mainPath);
+
+    const genPath = mainPath.replace(/\.ts$/, ".gen.ts");
+    const content = readFileSync(genPath, "utf-8");
+
+    // Both mounts should be present
+    expect(content).toContain('"api.health"');
+    expect(content).toContain('"/api/health"');
+    expect(content).toContain('"api.detail"');
+    expect(content).toContain('"/api/:id"');
+    expect(content).toContain('"v2.health"');
+    expect(content).toContain('"/v2/health"');
+    expect(content).toContain('"v2.detail"');
+    expect(content).toContain('"/v2/:id"');
+  });
+
+  it("still skips gen file when no urls() variable and no routes found", () => {
+    // File contains urls( in a comment but no actual urls() variable
+    const filePath = join(tempDir, "urls.ts");
+    writeFileSync(
+      filePath,
+      `// This file uses urls( pattern but has no named routes
+const x = 42;
+`,
+    );
+
+    writePerModuleRouteTypesForFile(filePath);
+
+    const genPath = filePath.replace(/\.ts$/, ".gen.ts");
+    expect(existsSync(genPath)).toBe(false);
   });
 });
 
@@ -995,4 +1348,124 @@ export const router = createRouter({
 `;
     expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
   });
+});
+
+// ---------------------------------------------------------------------------
+// extractUrlsFromRouter (inline builder support)
+// ---------------------------------------------------------------------------
+
+describe("extractUrlsFromRouter", () => {
+  it("returns variable kind for .routes(identifier)", () => {
+    const code = `export const router = createRouter().routes(urlpatterns);`;
+    const result = extractUrlsFromRouter(code);
+    expect(result).toEqual({ kind: "variable", name: "urlpatterns" });
+  });
+
+  it("returns variable kind for urls: identifier", () => {
+    const code = `export const router = createRouter({ urls: urlpatterns });`;
+    const result = extractUrlsFromRouter(code);
+    expect(result).toEqual({ kind: "variable", name: "urlpatterns" });
+  });
+
+  it("returns inline kind for .routes(arrow function)", () => {
+    const code = `
+export const router = createRouter({ document: Document }).routes(({ path }) => [
+  path("/", HomePage, { name: "home" }),
+  path("/about", AboutPage, { name: "about" }),
+]);
+`;
+    const result = extractUrlsFromRouter(code);
+    expect(result?.kind).toBe("inline");
+    expect(result!.kind === "inline" && result!.block).toContain(
+      'path("/", HomePage',
+    );
+    expect(result!.kind === "inline" && result!.block).toContain(
+      'path("/about"',
+    );
+  });
+
+  it("returns inline kind for urls: arrow function", () => {
+    const code = `
+export const router = createRouter({
+  document: Document,
+  urls: ({ path, layout }) => [
+    path("/", HomePage, { name: "home" }),
+  ],
+});
+`;
+    const result = extractUrlsFromRouter(code);
+    expect(result?.kind).toBe("inline");
+    expect(result!.kind === "inline" && result!.block).toContain(
+      'path("/", HomePage',
+    );
+  });
+
+  it("returns inline kind for chained .middleware().routes(arrow)", () => {
+    const code = `
+export const router = createRouter<AppEnv>({
+  document: Document,
+}).use(authMiddleware).routes(({ path }) => [
+  path("/dashboard", Dashboard, { name: "dashboard" }),
+]);
+`;
+    const result = extractUrlsFromRouter(code);
+    expect(result?.kind).toBe("inline");
+    expect(result!.kind === "inline" && result!.block).toContain(
+      'path("/dashboard"',
+    );
+  });
+
+  it("returns null for no createRouter call", () => {
+    const code = `const x = someFunction().routes(patterns);`;
+    expect(extractUrlsFromRouter(code)).toBeNull();
+  });
+
+  // Variable-held builders are a known gap: the extractor sees the identifier
+  // and falls into the variable branch, but same-file resolution only matches
+  // `const x = urls(...)`, not `const x = (helpers) => [...]`.
+  // Runtime discovery still generates correct gen files at build time.
+  it.todo(
+    "returns inline kind for .routes(variable) where variable is an arrow function",
+  );
+  it.todo(
+    "returns inline kind for urls: variable where variable is an arrow function",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// extractBasenameFromRouter
+// ---------------------------------------------------------------------------
+
+describe("extractBasenameFromRouter", () => {
+  it("extracts basename from createRouter({ basename: '/admin' })", () => {
+    const code = `export const router = createRouter({ basename: "/admin" }).routes(patterns);`;
+    expect(extractBasenameFromRouter(code)).toBe("/admin");
+  });
+
+  it("extracts basename alongside other options", () => {
+    const code = `export const router = createRouter({ basename: "/v2", document: Doc }).routes(patterns);`;
+    expect(extractBasenameFromRouter(code)).toBe("/v2");
+  });
+
+  it("returns undefined when no basename is set", () => {
+    const code = `export const router = createRouter({ document: Doc }).routes(patterns);`;
+    expect(extractBasenameFromRouter(code)).toBeUndefined();
+  });
+
+  it("returns undefined when createRouter has no options", () => {
+    const code = `export const router = createRouter().routes(patterns);`;
+    expect(extractBasenameFromRouter(code)).toBeUndefined();
+  });
+
+  it("ignores basename in non-createRouter calls", () => {
+    const code = `const config = someFunction({ basename: "/admin" });`;
+    expect(extractBasenameFromRouter(code)).toBeUndefined();
+  });
+
+  // Variable-held basenames are a known gap: the extractor only recognizes
+  // string literals, not identifier references. Runtime discovery still
+  // generates correct gen files at build time.
+  it.todo(
+    "extracts basename from variable reference (e.g. basename: BASENAME)",
+  );
 });

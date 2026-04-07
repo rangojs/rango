@@ -131,9 +131,9 @@ describe("buildMatchResult", () => {
     it("deduplicates matched IDs for partial match", () => {
       const segments = [
         seg("M0L0"),
-        seg("M0L0C0", { component: null }), // null = client already has it
-        seg("M0L0C0L0", { component: null }), // null = client already has it
-        seg("M0L0C0L0R0", { type: "route" }), // has component
+        seg("M0L0C0", { component: null }),
+        seg("M0L0C0L0", { component: null }),
+        seg("M0L0C0L0R0", { type: "route" }),
       ];
 
       const state = makeState({
@@ -183,12 +183,12 @@ describe("buildMatchResult", () => {
       expect(new Set(result.diff).size).toBe(result.diff.length);
     });
 
-    it("diff only includes segments with component for partial match", () => {
+    it("diff filters null-component segments client has, keeps ones it doesn't", () => {
       const segments = [
         seg("L0"), // has component
-        seg("L0C0", { component: null }), // null = skip
+        seg("L0C0", { component: null }), // null + client has it = skip
         seg("L0C0R0", { type: "route" }), // has component
-        seg("L0D0", { type: "loader", component: null }), // loader = keep even if null
+        seg("L0D0", { type: "loader", component: null }), // loader = keep
       ];
 
       const state = makeState({
@@ -197,12 +197,35 @@ describe("buildMatchResult", () => {
 
       const result = buildMatchResult(
         segments,
-        makeCtx({ isFullMatch: false }),
+        makeCtx({
+          isFullMatch: false,
+          clientSegmentIds: ["L0", "L0C0", "L0C0R0", "L0D0"],
+        }),
         state,
       );
 
-      // diff = filtered segments (component !== null OR type === "loader")
+      // L0C0 filtered (null + client has it), loader kept
       expect(result.diff).toEqual(["L0", "L0C0R0", "L0D0"]);
+    });
+
+    it("diff includes null-component segments client does not have", () => {
+      const segments = [
+        seg("L0"), // has component
+        seg("L0C0", { component: null }), // null but client doesn't have it
+        seg("L0C0R0", { type: "route" }), // has component
+      ];
+
+      const state = makeState({
+        matchedIds: ["L0", "L0C0", "L0C0R0"],
+      });
+
+      const result = buildMatchResult(
+        segments,
+        makeCtx({ isFullMatch: false, clientSegmentIds: [] }),
+        state,
+      );
+
+      expect(result.diff).toEqual(["L0", "L0C0", "L0C0R0"]);
     });
   });
 });

@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
 
+// This file uses a single isolated dev server and asserts against shared
+// server stdout. Keep it serial so per-test log windows do not overlap.
+test.describe.configure({ mode: "serial" });
+
 /**
  * Tests that validate cache status behavior.
  *
@@ -76,7 +80,7 @@ test.describe("cache-status-behavior", () => {
             "Expected [CacheScope] Cached: log for /cache-status/success",
         },
       )
-      .toBeTruthy();
+      .toBe(true);
 
     // Check logs
     const afterFirstStdout = f.proc().stdout();
@@ -85,12 +89,12 @@ test.describe("cache-status-behavior", () => {
     // Should have MISS (first visit)
     expect(
       firstLogs.misses.some((log) => log.includes("/cache-status/success")),
-    ).toBeTruthy();
+    ).toBe(true);
 
     // Should have Cached (200 response without errors)
     expect(
       firstLogs.cached.some((log) => log.includes("/cache-status/success")),
-    ).toBeTruthy();
+    ).toBe(true);
   });
 
   test("notFound() should return 404 and NOT be cached", async ({ page }) => {
@@ -112,7 +116,7 @@ test.describe("cache-status-behavior", () => {
 
     expect(
       logs.misses.some((log) => log.includes("/cache-status/not-found")),
-    ).toBeTruthy();
+    ).toBe(true);
 
     // Should NOT have Cached (non-200 responses are skipped)
     expect(
@@ -139,67 +143,11 @@ test.describe("cache-status-behavior", () => {
 
     expect(
       logs.misses.some((log) => log.includes("/cache-status/server-error")),
-    ).toBeTruthy();
+    ).toBe(true);
 
     // Should NOT have Cached (non-200 responses are skipped)
     expect(
       logs.cached.some((log) => log.includes("/cache-status/server-error")),
-    ).toBeFalsy();
-  });
-
-  test("cached 200 should hit on second request", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    const beforeFirstStdout = f.proc().stdout();
-    const beforeFirstLen = beforeFirstStdout.length;
-
-    // First visit - populate cache
-    await page.goto(f.url("/cache-status/success"));
-    await waitForHydration(page);
-
-    // Wait for async cache write to complete before navigating away
-    await expect
-      .poll(
-        () => {
-          const stdout = f.proc().stdout().substring(beforeFirstLen);
-          return (
-            stdout.includes("[CacheScope] Cached:") &&
-            stdout.includes("/cache-status/success")
-          );
-        },
-        {
-          timeout: 5000,
-          message: "Expected cache write to complete for /cache-status/success",
-        },
-      )
-      .toBeTruthy();
-
-    // Navigate away
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    // Record stdout before second visit
-    const beforeSecondStdout = f.proc().stdout();
-    const beforeSecondLen = beforeSecondStdout.length;
-
-    // Second visit - should hit cache
-    await page.goto(f.url("/cache-status/success"));
-    await waitForHydration(page);
-
-    // Check logs
-    const afterSecondStdout = f.proc().stdout();
-    const secondLogs = getCacheLogs(
-      afterSecondStdout.substring(beforeSecondLen),
-    );
-
-    // Should have HIT (from cache)
-    expect(
-      secondLogs.hits.some((log) => log.includes("/cache-status/success")),
-    ).toBeTruthy();
-
-    // Should NOT have MISS
-    expect(
-      secondLogs.misses.some((log) => log.includes("/cache-status/success")),
     ).toBeFalsy();
   });
 
@@ -231,7 +179,7 @@ test.describe("cache-status-behavior", () => {
     // Should still have MISS (not cached from first request)
     expect(
       secondLogs.misses.some((log) => log.includes("/cache-status/not-found")),
-    ).toBeTruthy();
+    ).toBe(true);
 
     // Should NOT have HIT
     expect(

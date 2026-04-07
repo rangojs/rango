@@ -65,10 +65,10 @@ test.describe("streaming-actions", () => {
       // Verify "Streaming..." loading state appears in the result area
       await expect(
         page.locator('[data-testid="streaming-btn-loading"]'),
-      ).toContainText("Streaming...", { timeout: 5000 });
+      ).toContainText("Streaming...");
 
       // Verify state transitions to streaming
-      await expect(actionStatus).toContainText("streaming", { timeout: 5000 });
+      await expect(actionStatus).toContainText("streaming");
 
       // Wait for the streaming result to show "Completed!"
       await expect(
@@ -76,7 +76,7 @@ test.describe("streaming-actions", () => {
       ).toContainText("Completed", { timeout: 10000 });
 
       // Verify state returns to idle after completion
-      await expect(actionStatus).toContainText("idle", { timeout: 5000 });
+      await expect(actionStatus).toContainText("idle");
 
       // Verify timing - streaming completes after ~3000ms
       const elapsed = Date.now() - startTime;
@@ -306,6 +306,131 @@ test.describe("action-form-patterns", () => {
     await page.waitForTimeout(600);
 
     // Page should remain stable
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+  });
+});
+
+// ============================================================================
+// Production build
+// ============================================================================
+
+test.describe("streaming-actions (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.setTimeout(30000);
+
+  test("streaming action should show loading then complete on document load", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/product/product-a"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+
+    const button = page.locator('[data-testid="streaming-btn"]');
+    await expect(button).toBeVisible();
+
+    await button.click();
+
+    await expect(
+      page.locator('[data-testid="streaming-btn-result"]'),
+    ).toContainText("Completed", { timeout: 10000 });
+
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+  });
+
+  test("streaming action should work after SPA navigation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
+    await productLink.click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+
+    await page.locator('[data-testid="view-full-details"]').click();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+
+    const button = page.locator('[data-testid="streaming-btn"]');
+    await button.click();
+
+    await expect(
+      page.locator('[data-testid="streaming-btn-result"]'),
+    ).toContainText("Completed", { timeout: 10000 });
+
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+  });
+});
+
+test.describe("action-form-patterns (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("add to cart action should work on document load", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/product/product-a"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+
+    const button = page.locator('[data-testid="add-to-cart-btn"]');
+    await button.click();
+
+    await expect(
+      page.locator('[data-testid="add-to-cart-btn-result"]'),
+    ).toBeVisible();
+
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+  });
+
+  test("add to cart action should work after SPA navigation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
+    await productLink.click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await page.locator('[data-testid="view-full-details"]').click();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+
+    const button = page.locator('[data-testid="add-to-cart-btn"]');
+    await button.click();
+
+    await expect(
+      page.locator('[data-testid="add-to-cart-btn-result"]'),
+    ).toBeVisible();
+
     await expect(
       page.locator('[data-testid="segment-metadata"]'),
     ).toBeVisible();

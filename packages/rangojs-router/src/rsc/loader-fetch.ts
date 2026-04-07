@@ -14,9 +14,20 @@
 import { getLoaderLazy } from "../server/loader-registry.js";
 import { executeLoaderMiddleware } from "../router/middleware.js";
 import { requireRequestContext } from "../server/request-context.js";
-import { createReverseFunction } from "../router/handler-context.js";
-import { getGlobalRouteMap } from "../route-map-builder.js";
-import { createResponseWithMergedHeaders } from "./helpers.js";
+import {
+  createReverseFunction,
+  stripInternalParams,
+} from "../router/handler-context.js";
+import {
+  getGlobalRouteMap,
+  getSearchSchema,
+  isRouteRootScoped,
+} from "../route-map-builder.js";
+import { parseSearchParams } from "../search-params.js";
+import {
+  createResponseWithMergedHeaders,
+  finalizeResponse,
+} from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 
 export async function handleLoaderFetch<TEnv>(
@@ -41,6 +52,15 @@ export async function handleLoaderFetch<TEnv>(
     return createResponseWithMergedHeaders(
       `Loader "${loaderId}" not found in registry`,
       { status: 404 },
+    );
+  }
+
+  // Non-fetchable loaders are registered for SSR ctx.use() only.
+  // They must not be callable through the standalone _rsc_loader endpoint.
+  if (!registeredLoader.fetchable) {
+    return createResponseWithMergedHeaders(
+      `Loader "${loaderId}" is not fetchable`,
+      { status: 403 },
     );
   }
 
@@ -90,51 +110,84 @@ export async function handleLoaderFetch<TEnv>(
     }
   }
 
-  // Execute the loader with middleware
+  // Execute the loader with middleware.
+  // finalizeResponse drains onResponse callbacks that middleware short-circuits
+  // may leave behind (executeLoaderMiddleware does not finalize them itself).
   try {
     const { fn, middleware } = registeredLoader;
 
-    return await executeLoaderMiddleware(
-      middleware,
-      request,
-      env,
-      loaderParams,
-      variables,
-      async () => {
-        const reqCtx = requireRequestContext();
-        // Merge route params (from previewMatch) with explicit loader params.
-        // Explicit params take precedence over route-matched params.
-        const mergedParams = {
-          ...(routeParams ?? {}),
-          ...loaderParams,
-        };
-        const loaderCtx: any = {
-          ...reqCtx,
-          params: mergedParams,
-          body: loaderBody,
-          method: request.method,
-          reverse: createReverseFunction(
-            getGlobalRouteMap(),
-            reqCtx._routeName,
-            mergedParams,
-          ),
-          ...(loaderFormData ? { formData: loaderFormData } : {}),
-        };
+    return finalizeResponse(
+      await executeLoaderMiddleware(
+        middleware,
+        request,
+        env,
+        loaderParams,
+        variables,
+        async () => {
+          const reqCtx = requireRequestContext();
+          // Merge route params (from previewMatch) with explicit loader params.
+          // Explicit params take precedence over route-matched params.
+          const resolvedRouteParams = routeParams ?? {};
+          const mergedParams = {
+            ...resolvedRouteParams,
+            ...loaderParams,
+          };
+          // Strip _rsc_* transport params so loaders see the same
+          // url/searchParams as during SSR/navigation.
+          const cleanUrl = stripInternalParams(url);
+          const cleanSearchParams = cleanUrl.searchParams;
+          const searchSchema = reqCtx._routeName
+            ? getSearchSchema(reqCtx._routeName)
+            : undefined;
+          const loaderCtx: any = {
+            ...reqCtx,
+            url: cleanUrl,
+            pathname: cleanUrl.pathname,
+            searchParams: cleanSearchParams,
+            search: searchSchema
+              ? parseSearchParams(cleanSearchParams, searchSchema)
+              : {},
+            params: mergedParams,
+            routeParams: resolvedRouteParams,
+            body: loaderBody,
+            method: request.method,
+            reverse: createReverseFunction(
+              getGlobalRouteMap(),
+              reqCtx._routeName,
+              mergedParams,
+              reqCtx._routeName
+                ? isRouteRootScoped(reqCtx._routeName)
+                : undefined,
+            ),
+            ...(loaderFormData ? { formData: loaderFormData } : {}),
+          };
 
-        const result = await fn(loaderCtx);
+          const result = await fn(loaderCtx);
 
-        interface LoaderPayload {
-          loaderResult: unknown;
-        }
-        const loaderPayload: LoaderPayload = { loaderResult: result };
-        const rscStream =
-          ctx.renderToReadableStream<LoaderPayload>(loaderPayload);
+          interface LoaderPayload {
+            loaderResult: unknown;
+          }
+          const loaderPayload: LoaderPayload = { loaderResult: result };
+          const rscStream = ctx.renderToReadableStream<LoaderPayload>(
+            loaderPayload,
+            {
+              onError: (error: unknown) => {
+                ctx.callOnError(error, "rendering", {
+                  request,
+                  url,
+                  env,
+                  loaderName: loaderId,
+                });
+              },
+            },
+          );
 
-        return createResponseWithMergedHeaders(rscStream, {
-          headers: { "content-type": "text/x-component;charset=utf-8" },
-        });
-      },
-      createReverseFunction(ctx.getRequiredRouteMap()),
+          return createResponseWithMergedHeaders(rscStream, {
+            headers: { "content-type": "text/x-component;charset=utf-8" },
+          });
+        },
+        createReverseFunction(ctx.getRequiredRouteMap()),
+      ),
     );
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
@@ -157,7 +210,16 @@ export async function handleLoaderFetch<TEnv>(
         name: err.name,
       },
     };
-    const rscStream = ctx.renderToReadableStream(errorPayload);
+    const rscStream = ctx.renderToReadableStream(errorPayload, {
+      onError: (error: unknown) => {
+        ctx.callOnError(error, "rendering", {
+          request,
+          url,
+          env,
+          loaderName: loaderId,
+        });
+      },
+    });
 
     return createResponseWithMergedHeaders(rscStream, {
       status: 500,

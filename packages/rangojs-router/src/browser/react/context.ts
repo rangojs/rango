@@ -43,10 +43,15 @@ export interface NavigationStoreContextValue {
   refresh: () => Promise<void>;
 
   /**
-   * App version from server payload (stable, immutable).
-   * Used in prefetch requests for version mismatch detection.
+   * App version from the initial server payload.
    */
   version: string | undefined;
+
+  /**
+   * URL prefix for all routes (from createRouter({ basename })).
+   * Used by Link and useRouter() to auto-prefix app-local paths.
+   */
+  basename: string | undefined;
 }
 
 /**

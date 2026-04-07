@@ -6,47 +6,77 @@
  */
 
 import type { ReactNode } from "react";
-import { DataNotFoundError, invariant } from "../../errors";
+import { invariant } from "../../errors";
 import {
-  createErrorInfo,
-  createErrorSegment,
-  createNotFoundInfo,
-  createNotFoundSegment,
-} from "../error-handling.js";
-import { getRequestContext } from "../../server/request-context.js";
-import { DefaultErrorFallback } from "../../default-error-boundary.js";
-import type { EntryData } from "../../server/context";
+  getParallelEntries,
+  getParallelSlotEntries,
+  type EntryData,
+} from "../../server/context";
 import type {
   HandlerContext,
   InternalHandlerContext,
   ResolvedSegment,
-  ErrorInfo,
 } from "../../types";
 import type { SegmentResolutionDeps } from "../types.js";
-import { debugLog } from "../logging.js";
-import { tryStaticLookup } from "./static-store.js";
 import { resolveLoaderData } from "./loader-cache.js";
+import { _getRequestContext } from "../../server/request-context.js";
+import { appendMetric } from "../metrics.js";
+import {
+  handleHandlerResult,
+  tryStaticHandler,
+  tryStaticSlot,
+  resolveLayoutComponent,
+  resolveWithErrorBoundary,
+} from "./helpers.js";
+import { getRouterContext } from "../router-context.js";
+import { resolveSink, safeEmit } from "../telemetry.js";
+import {
+  track,
+  RSCRouterContext,
+  runInsideLoaderScope,
+} from "../../server/context.js";
+
+// ---------------------------------------------------------------------------
+// Streamed handler telemetry
+// ---------------------------------------------------------------------------
 
 /**
- * Handle Response returns from handlers.
- * When a handler returns a Response (e.g., redirect), throw it to trigger
- * the short-circuit mechanism. Otherwise return the ReactNode.
+ * Attach a fire-and-forget rejection observer to a streamed handler promise.
+ * React catches the actual error via its error boundary; this only emits
+ * the handler.error telemetry event.
  */
-export function handleHandlerResult(
-  result: ReactNode | Response | Promise<ReactNode> | Promise<Response>,
-): ReactNode {
-  if (result instanceof Response) {
-    throw result;
+function observeStreamedHandler(
+  promise: Promise<ReactNode>,
+  segmentId: string,
+  segmentType: string,
+  pathname?: string,
+  routeKey?: string,
+  params?: Record<string, string>,
+): void {
+  let routerCtx;
+  try {
+    routerCtx = getRouterContext();
+  } catch {
+    return;
   }
-  if (result instanceof Promise) {
-    return result.then((resolved) => {
-      if (resolved instanceof Response) {
-        throw resolved;
-      }
-      return resolved;
-    }) as ReactNode;
-  }
-  return result;
+  if (!routerCtx?.telemetry) return;
+  const sink = resolveSink(routerCtx.telemetry);
+  const reqId = routerCtx.requestId;
+  promise.catch((err: unknown) => {
+    const errorObj = err instanceof Error ? err : new Error(String(err));
+    safeEmit(sink, {
+      type: "handler.error",
+      timestamp: performance.now(),
+      requestId: reqId,
+      segmentId,
+      segmentType,
+      error: errorObj,
+      handledByBoundary: true,
+      pathname,
+      routeKey,
+      params,
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -70,9 +100,11 @@ export async function resolveLoaders<TEnv>(
   const shortCode = shortCodeOverride ?? entry.shortCode;
   const hasLoading = "loading" in entry && entry.loading !== undefined;
   const loadingDisabled = hasLoading && entry.loading === false;
+  const ms = _getRequestContext()?._metricsStore;
 
   if (!loadingDisabled) {
-    return loaderEntries.map((loaderEntry, i) => {
+    // Streaming loaders: promises kick off now, settle during RSC serialization.
+    const segments = loaderEntries.map((loaderEntry, i) => {
       const { loader } = loaderEntry;
       const segmentId = `${shortCode}D${i}.${loader.$$id}`;
       return {
@@ -84,7 +116,9 @@ export async function resolveLoaders<TEnv>(
         params: ctx.params,
         loaderId: loader.$$id,
         loaderData: deps.wrapLoaderPromise(
-          resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+          runInsideLoaderScope(() =>
+            resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+          ),
           entry,
           segmentId,
           ctx.pathname,
@@ -92,18 +126,38 @@ export async function resolveLoaders<TEnv>(
         belongsToRoute,
       };
     });
+
+    return segments;
   }
 
   // Loading disabled: still start all loaders in parallel, but only emit
   // settled promises so handlers don't stream loading placeholders.
-  const pendingLoaderData = loaderEntries.map((loaderEntry) =>
-    resolveLoaderData(loaderEntry, ctx, ctx.pathname),
-  );
-  await Promise.all(pendingLoaderData);
+  const pendingLoaderData = loaderEntries.map((loaderEntry) => {
+    const start = performance.now();
+    const promise = runInsideLoaderScope(() =>
+      resolveLoaderData(loaderEntry, ctx, ctx.pathname),
+    );
+    return { promise, start, loaderId: loaderEntry.loader.$$id };
+  });
+  await Promise.all(pendingLoaderData.map((p) => p.promise));
 
   return loaderEntries.map((loaderEntry, i) => {
     const { loader } = loaderEntry;
     const segmentId = `${shortCode}D${i}.${loader.$$id}`;
+    const pending = pendingLoaderData[i]!;
+    if (ms && !ms.metrics.some((m) => m.label === `loader:${loader.$$id}`)) {
+      // All loaders ran in parallel via Promise.all — each span covers
+      // from its own kickoff to the batch settlement, giving a ceiling
+      // on that loader's contribution to the overall wait.
+      const batchEnd = performance.now();
+      appendMetric(
+        ms,
+        `loader:${loader.$$id}`,
+        pending.start,
+        batchEnd - pending.start,
+        2,
+      );
+    }
     return {
       id: segmentId,
       namespace: entry.id,
@@ -113,7 +167,7 @@ export async function resolveLoaders<TEnv>(
       params: ctx.params,
       loaderId: loader.$$id,
       loaderData: deps.wrapLoaderPromise(
-        pendingLoaderData[i]!,
+        pending.promise,
         entry,
         segmentId,
         ctx.pathname,
@@ -154,38 +208,14 @@ export async function resolveSegment<TEnv>(
       segments.push(...loaderSegments);
     }
 
-    for (const parallelEntry of entry.parallel) {
-      const parallelSegments = await resolveParallelEntry(
-        parallelEntry,
-        params,
-        context,
-        false,
-        entry.shortCode,
-        deps,
-        options,
-      );
-      segments.push(...parallelSegments);
-    }
-
+    // Handler-first: layout handler executes before its parallels and orphan
+    // layouts so that ctx.set() values are visible to all children.
     (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
       entry.shortCode;
 
-    // Static handler interception: use pre-rendered component from build-time store.
-    // Cast via any because the cache entry type in the union lacks isStaticPrerender.
-    const entryAny = entry as any;
-    let component: ReactNode | undefined;
-    if (entryAny.isStaticPrerender && entryAny.staticHandlerId) {
-      component = await tryStaticLookup(
-        entryAny.staticHandlerId,
-        entry.shortCode,
-      );
-    }
-    if (component === undefined) {
-      component =
-        typeof entry.handler === "function"
-          ? handleHandlerResult(await entry.handler(context))
-          : entry.handler;
-    }
+    const doneLayoutHandler = track(`handler:${entry.id}`, 2);
+    const component = await resolveLayoutComponent(entry, context);
+    doneLayoutHandler();
 
     segments.push({
       id: entry.shortCode,
@@ -201,6 +231,26 @@ export async function resolveSegment<TEnv>(
       ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
     });
 
+    const resolvedParallelEntries = new Set<string>();
+    for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
+      entry.parallel,
+    )) {
+      const parallelSegments = await resolveParallelEntry(
+        parallelEntry,
+        params,
+        context,
+        false,
+        entry.shortCode,
+        deps,
+        options,
+        routeKey,
+        [slot],
+        !resolvedParallelEntries.has(parallelEntry.id),
+      );
+      segments.push(...parallelSegments);
+      resolvedParallelEntries.add(parallelEntry.id);
+    }
+
     for (const orphan of entry.layout) {
       const orphanSegments = await resolveOrphanLayout(
         orphan,
@@ -210,6 +260,7 @@ export async function resolveSegment<TEnv>(
         false,
         deps,
         options,
+        routeKey,
       );
       segments.push(...orphanSegments);
     }
@@ -228,22 +279,41 @@ export async function resolveSegment<TEnv>(
     // the correct tree composition order (layouts wrap the route content).
     (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
       entry.shortCode;
-    let component: ReactNode | undefined;
-
-    // Static handler interception: use pre-rendered component from build-time store
-    if (entry.isStaticPrerender && (entry as any).staticHandlerId) {
-      component = await tryStaticLookup(
-        (entry as any).staticHandlerId,
-        entry.shortCode,
-      );
-    }
+    let component: ReactNode | undefined = await tryStaticHandler(
+      entry,
+      entry.shortCode,
+    );
     if (component === undefined) {
+      // For Passthrough routes at runtime, use the live handler instead of
+      // the build handler. At build time (context.build === true), always
+      // use the build handler from entry.handler.
+      const handler =
+        !context.build && entry.liveHandler ? entry.liveHandler : entry.handler;
+      const doneRouteHandler = track(`handler:${entry.id}`, 2);
       if (entry.loading) {
-        const result = handleHandlerResult(entry.handler(context));
-        component =
-          result instanceof Promise ? deps.trackHandler(result) : result;
+        const result = handleHandlerResult(handler(context));
+        if (result instanceof Promise) {
+          result.finally(doneRouteHandler).catch(() => {});
+          const tracked = deps.trackHandler(result, {
+            segmentId: entry.shortCode,
+            segmentType: entry.type,
+          });
+          observeStreamedHandler(
+            tracked,
+            entry.shortCode,
+            entry.type,
+            context.pathname,
+            routeKey,
+            params,
+          );
+          component = tracked;
+        } else {
+          doneRouteHandler();
+          component = result;
+        }
       } else {
-        component = handleHandlerResult(await entry.handler(context));
+        component = handleHandlerResult(await handler(context));
+        doneRouteHandler();
       }
     }
 
@@ -256,11 +326,16 @@ export async function resolveSegment<TEnv>(
         true,
         deps,
         options,
+        routeKey,
+        entry,
       );
       segments.push(...orphanSegments);
     }
 
-    for (const parallelEntry of entry.parallel) {
+    const resolvedParallelEntries = new Set<string>();
+    for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
+      entry.parallel,
+    )) {
       const parallelSegments = await resolveParallelEntry(
         parallelEntry,
         params,
@@ -269,8 +344,12 @@ export async function resolveSegment<TEnv>(
         entry.shortCode,
         deps,
         options,
+        routeKey,
+        [slot],
+        !resolvedParallelEntries.has(parallelEntry.id),
       );
       segments.push(...parallelSegments);
+      resolvedParallelEntries.add(parallelEntry.id);
     }
 
     segments.push({
@@ -278,7 +357,7 @@ export async function resolveSegment<TEnv>(
       namespace: entry.id,
       type: "route",
       index: 0,
-      component,
+      component: component ?? null,
       loading: entry.loading === false ? null : entry.loading,
       transition: entry.transition,
       params,
@@ -303,6 +382,10 @@ export async function resolveOrphanLayout<TEnv>(
   belongsToRoute: boolean,
   deps: SegmentResolutionDeps<TEnv>,
   options?: ResolveSegmentOptions,
+  routeKey?: string,
+  /** Parent route entry — its loaders are inherited by the layout so
+   *  parallel slots inside this layout can access them via useLoader(). */
+  parentRouteEntry?: EntryData,
 ): Promise<ResolvedSegment[]> {
   invariant(
     orphan.type === "layout" || orphan.type === "cache",
@@ -318,36 +401,37 @@ export async function resolveOrphanLayout<TEnv>(
       deps,
     );
     segments.push(...loaderSegments);
+
+    // Inherit parent route's loaders so parallel slots inside this layout
+    // can access them via useLoader(). Without this, the route's loaders
+    // are only in the route's OutletProvider (rendered as <Outlet /> content),
+    // which is a child — not a parent — of the layout's context.
+    if (
+      parentRouteEntry &&
+      parentRouteEntry.loader &&
+      parentRouteEntry.loader.length > 0 &&
+      Object.keys(orphan.parallel).length > 0
+    ) {
+      const inheritedLoaders = await resolveLoaders(
+        parentRouteEntry,
+        context,
+        belongsToRoute,
+        deps,
+        orphan.shortCode,
+      );
+      // Tag as inherited so buildMatchResult can deduplicate when safe
+      for (const s of inheritedLoaders) {
+        s._inherited = true;
+      }
+      segments.push(...inheritedLoaders);
+    }
   }
 
-  for (const parallelEntry of orphan.parallel) {
-    const parallelSegments = await resolveParallelEntry(
-      parallelEntry,
-      params,
-      context,
-      belongsToRoute,
-      orphan.shortCode,
-      deps,
-      options,
-    );
-    segments.push(...parallelSegments);
-  }
-
-  // Static handler interception for orphan layouts
-  const orphanAny = orphan as any;
-  let component: ReactNode | undefined;
-  if (orphanAny.isStaticPrerender && orphanAny.staticHandlerId) {
-    component = await tryStaticLookup(
-      orphanAny.staticHandlerId,
-      orphan.shortCode,
-    );
-  }
-  if (component === undefined) {
-    component =
-      typeof orphan.handler === "function"
-        ? handleHandlerResult(await orphan.handler(context))
-        : orphan.handler;
-  }
+  // Handler-first: orphan layout handler executes before its parallels
+  // so that ctx.set() values are visible to parallel children.
+  const doneOrphanHandler = track(`handler:${orphan.id}`, 2);
+  const component = await resolveLayoutComponent(orphan, context);
+  doneOrphanHandler();
 
   segments.push({
     id: orphan.shortCode,
@@ -363,6 +447,26 @@ export async function resolveOrphanLayout<TEnv>(
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
   });
 
+  const resolvedParallelEntries = new Set<string>();
+  for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
+    orphan.parallel,
+  )) {
+    const parallelSegments = await resolveParallelEntry(
+      parallelEntry,
+      params,
+      context,
+      belongsToRoute,
+      orphan.shortCode,
+      deps,
+      options,
+      routeKey,
+      [slot],
+      !resolvedParallelEntries.has(parallelEntry.id),
+    );
+    segments.push(...parallelSegments);
+    resolvedParallelEntries.add(parallelEntry.id);
+  }
+
   return segments;
 }
 
@@ -377,6 +481,9 @@ export async function resolveParallelEntry<TEnv>(
   parentShortCode: string,
   deps: SegmentResolutionDeps<TEnv>,
   options?: ResolveSegmentOptions,
+  routeKey?: string,
+  slotNames?: `@${string}`[],
+  includeLoaders: boolean = true,
 ): Promise<ResolvedSegment[]> {
   invariant(
     parallelEntry.type === "parallel",
@@ -391,28 +498,55 @@ export async function resolveParallelEntry<TEnv>(
     | ReactNode
   >;
 
-  for (const [slot, handler] of Object.entries(slots)) {
-    let component: ReactNode | undefined;
+  const slotsToResolve = slotNames ?? (Object.keys(slots) as `@${string}`[]);
 
-    // Static handler interception for individual parallel slots
-    const slotStaticId = (parallelEntry as any).staticHandlerIds?.[slot];
-    if (slotStaticId) {
-      component = await tryStaticLookup(
-        slotStaticId,
-        `${parentShortCode}.${slot}`,
-      );
-    }
+  for (const slot of slotsToResolve) {
+    // Try static lookup first — in production, handler bodies are evicted
+    // and replaced with stubs that have no .handler property (undefined).
+    // The static store holds the pre-rendered component for these slots.
+    let component: ReactNode | undefined = await tryStaticSlot(
+      parallelEntry,
+      slot,
+      `${parentShortCode}.${slot}`,
+    );
 
     if (component === undefined) {
+      const handler = slots[slot];
+      if (handler === undefined) {
+        continue;
+      }
+      const doneParallelHandler = track(
+        `handler:${parallelEntry.id}.${slot}`,
+        2,
+      );
       const hasLoadingFallback =
         parallelEntry.loading !== undefined && parallelEntry.loading !== false;
       if (hasLoadingFallback) {
         const result =
           typeof handler === "function" ? handler(context) : handler;
-        component = result as ReactNode;
+        if (result instanceof Promise) {
+          result.finally(doneParallelHandler).catch(() => {});
+          const tracked = deps.trackHandler(result, {
+            segmentId: `${parentShortCode}.${slot}`,
+            segmentType: "parallel",
+          });
+          observeStreamedHandler(
+            tracked,
+            `${parentShortCode}.${slot}`,
+            "parallel",
+            context.pathname,
+            routeKey,
+            params,
+          );
+          component = tracked as ReactNode;
+        } else {
+          doneParallelHandler();
+          component = result as ReactNode;
+        }
       } else {
         component =
           typeof handler === "function" ? await handler(context) : handler;
+        doneParallelHandler();
       }
     }
 
@@ -434,7 +568,7 @@ export async function resolveParallelEntry<TEnv>(
     });
   }
 
-  if (!parallelEntry.loading && !options?.skipLoaders) {
+  if (!options?.skipLoaders && includeLoaders) {
     const loaderSegments = await resolveLoaders(
       parallelEntry,
       context,
@@ -442,140 +576,19 @@ export async function resolveParallelEntry<TEnv>(
       deps,
       parentShortCode,
     );
+    // Tag parallel-owned loaders so renderSegments can stream them
+    // using the parallel's loading() instead of awaiting on the layout
+    const parallelLoading =
+      parallelEntry.loading === false ? undefined : parallelEntry.loading;
+    if (parallelLoading) {
+      for (const seg of loaderSegments) {
+        seg.parallelLoading = parallelLoading;
+      }
+    }
     segments.push(...loaderSegments);
   }
 
   return segments;
-}
-
-/**
- * Wrapper that adds error boundary handling to segment resolution.
- */
-export async function resolveWithErrorHandling<TEnv>(
-  entry: EntryData,
-  routeKey: string,
-  params: Record<string, string>,
-  context: HandlerContext<any, TEnv>,
-  loaderPromises: Map<string, Promise<any>>,
-  resolveFn: () => Promise<ResolvedSegment[]>,
-  deps: SegmentResolutionDeps<TEnv>,
-  errorContext?: {
-    env?: TEnv;
-    isPartial?: boolean;
-    requestStartTime?: number;
-  },
-): Promise<ResolvedSegment[]> {
-  try {
-    return await resolveFn();
-  } catch (error) {
-    if (error instanceof Response) {
-      throw error;
-    }
-
-    if (error instanceof DataNotFoundError) {
-      const notFoundFallback = deps.findNearestNotFoundBoundary(entry);
-
-      if (notFoundFallback) {
-        const notFoundInfo = createNotFoundInfo(
-          error,
-          entry.shortCode,
-          entry.type,
-          context.pathname,
-        );
-
-        // Safe request access: during build-time prerendering, context.request
-        // is a throwing getter. Use undefined when unavailable.
-        let safeRequest: Request | undefined;
-        try {
-          safeRequest = context.request;
-        } catch {}
-
-        deps.callOnError(error, "handler", {
-          request: safeRequest as Request,
-          url: context.url,
-          routeKey,
-          params,
-          segmentId: entry.shortCode,
-          segmentType: entry.type as any,
-          env: errorContext?.env,
-          isPartial: errorContext?.isPartial,
-          handledByBoundary: true,
-          metadata: { notFound: true, message: notFoundInfo.message },
-          requestStartTime: errorContext?.requestStartTime,
-        });
-
-        debugLog("segment", "notFound boundary handled error", {
-          segmentId: entry.shortCode,
-          message: notFoundInfo.message,
-        });
-
-        const reqCtx = getRequestContext();
-        if (reqCtx) {
-          reqCtx.res = new Response(null, {
-            status: 404,
-            headers: reqCtx.res.headers,
-          });
-        }
-
-        const notFoundSegment = createNotFoundSegment(
-          notFoundInfo,
-          notFoundFallback,
-          entry,
-          params,
-        );
-        return [notFoundSegment];
-      }
-    }
-
-    const fallback = deps.findNearestErrorBoundary(entry);
-    const segmentType: ErrorInfo["segmentType"] = entry.type;
-    const errorInfo = createErrorInfo(error, entry.shortCode, segmentType);
-    const effectiveFallback = fallback ?? DefaultErrorFallback;
-
-    // Safe request access: during build-time prerendering, context.request
-    // is a throwing getter. Use undefined when unavailable.
-    let safeReq: Request | undefined;
-    try {
-      safeReq = context.request;
-    } catch {}
-
-    deps.callOnError(error, "handler", {
-      request: safeReq as Request,
-      url: context.url,
-      routeKey,
-      params,
-      segmentId: entry.shortCode,
-      segmentType: entry.type as any,
-      env: errorContext?.env,
-      isPartial: errorContext?.isPartial,
-      handledByBoundary: !!fallback,
-      requestStartTime: errorContext?.requestStartTime,
-    });
-
-    debugLog("segment", "error boundary handled error", {
-      segmentId: entry.shortCode,
-      boundary: fallback ? "custom" : "default",
-      message: errorInfo.message,
-    });
-
-    {
-      const reqCtx = getRequestContext();
-      if (reqCtx) {
-        reqCtx.res = new Response(null, {
-          status: 500,
-          headers: reqCtx.res.headers,
-        });
-      }
-    }
-
-    const errorSegment = createErrorSegment(
-      errorInfo,
-      effectiveFallback,
-      entry,
-      params,
-    );
-    return [errorSegment];
-  }
 }
 
 /**
@@ -593,13 +606,31 @@ export async function resolveAllSegments<TEnv>(
   const allSegments: ResolvedSegment[] = [];
   const seenIds = new Set<string>();
 
+  // Safe request access: during build-time prerendering, context.request
+  // is a throwing getter. Use undefined when unavailable.
+  let safeRequest: Request | undefined;
+  try {
+    safeRequest = context.request;
+  } catch {}
+
+  // Get telemetry sink from RouterContext (may not exist during prerendering)
+  let telemetry;
+  try {
+    telemetry = getRouterContext()?.telemetry;
+  } catch {}
+
   for (const entry of entries) {
-    const resolvedSegments = await resolveWithErrorHandling(
+    // Set ALS flag when entering a cache() boundary so that ctx.get()
+    // can guard non-cacheable variable reads. Also guards response-level
+    // side effects (headers.set). Persists for all descendant entries.
+    if (entry.type === "cache") {
+      const store = RSCRouterContext.getStore();
+      if (store) store.insideCacheScope = true;
+    }
+    const doneEntry = track(`segment:${entry.id}`, 1);
+    const resolvedSegments = await resolveWithErrorBoundary(
       entry,
-      routeKey,
       params,
-      context,
-      loaderPromises,
       () =>
         resolveSegment(
           entry,
@@ -611,8 +642,12 @@ export async function resolveAllSegments<TEnv>(
           false,
           options,
         ),
+      (seg) => [seg],
       deps,
+      { request: safeRequest, url: context.url, routeKey, telemetry },
+      context.pathname,
     );
+    doneEntry();
     // Deduplicate by segment ID. include() scopes can produce entries that
     // resolve the same shared layout/loader segment. Duplicates in the segment
     // array propagate to the client's matched[] and change the React tree depth.
@@ -636,11 +671,77 @@ export async function resolveLoadersOnly<TEnv>(
   deps: SegmentResolutionDeps<TEnv>,
 ): Promise<ResolvedSegment[]> {
   const loaderSegments: ResolvedSegment[] = [];
+  const seenIds = new Set<string>();
+
+  async function collectEntryLoaders(
+    entry: EntryData,
+    belongsToRoute: boolean,
+    shortCodeOverride?: string,
+  ): Promise<void> {
+    // Skip if all loaders from this entry have already been resolved
+    // via a parent (e.g., cache boundary wrapping a layout with shared loaders).
+    const entryLoaders = entry.loader ?? [];
+    const sc = shortCodeOverride ?? entry.shortCode;
+    const allAlreadySeen =
+      entryLoaders.length > 0 &&
+      entryLoaders.every((le, i) =>
+        seenIds.has(`${sc}D${i}.${le.loader.$$id}`),
+      );
+    if (!allAlreadySeen) {
+      const segments = await resolveLoaders(
+        entry,
+        context,
+        belongsToRoute,
+        deps,
+        shortCodeOverride,
+      );
+      for (const seg of segments) {
+        if (!seenIds.has(seg.id)) {
+          seenIds.add(seg.id);
+          loaderSegments.push(seg);
+        }
+      }
+    }
+
+    const seenParallelEntryIds = new Set<string>();
+    for (const parallelEntry of getParallelEntries(entry.parallel)) {
+      if (seenParallelEntryIds.has(parallelEntry.id)) continue;
+      seenParallelEntryIds.add(parallelEntry.id);
+      await collectEntryLoaders(parallelEntry, belongsToRoute, entry.shortCode);
+    }
+
+    const childBelongsToRoute = belongsToRoute || entry.type === "route";
+    for (const layoutEntry of entry.layout) {
+      await collectEntryLoaders(layoutEntry, childBelongsToRoute);
+      // Inherit route loaders for orphan layouts with parallels.
+      // Resolve directly — do NOT re-enter collectEntryLoaders with the
+      // route entry, as that would re-iterate route.layout and loop.
+      if (
+        entry.type === "route" &&
+        entry.loader &&
+        entry.loader.length > 0 &&
+        Object.keys(layoutEntry.parallel).length > 0
+      ) {
+        const inherited = await resolveLoaders(
+          entry,
+          context,
+          childBelongsToRoute,
+          deps,
+          layoutEntry.shortCode,
+        );
+        for (const seg of inherited) {
+          if (!seenIds.has(seg.id)) {
+            seenIds.add(seg.id);
+            seg._inherited = true;
+            loaderSegments.push(seg);
+          }
+        }
+      }
+    }
+  }
 
   for (const entry of entries) {
-    const belongsToRoute = entry.type === "route";
-    const segments = await resolveLoaders(entry, context, belongsToRoute, deps);
-    loaderSegments.push(...segments);
+    await collectEntryLoaders(entry, entry.type === "route");
   }
 
   return loaderSegments;

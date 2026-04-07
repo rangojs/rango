@@ -6,7 +6,8 @@ argument-hint: [hook-name]
 
 # Client-Side React Hooks
 
-All hooks are imported from `@rangojs/router` or `@rangojs/router/client`.
+Import the hooks and components in this skill from `@rangojs/router/client`.
+The root `@rangojs/router` entrypoint is for server/RSC APIs and shared types.
 
 ## Navigation Hooks
 
@@ -57,13 +58,33 @@ function NavigationControls() {
 }
 ```
 
+#### Skipping revalidation
+
+Pass `revalidate: false` to skip the RSC server fetch for same-pathname navigations (search param or hash changes). The URL updates and all hooks re-render, but server components stay as-is.
+
+```tsx
+// Update search params without server round-trip
+router.push("/products?color=blue", { revalidate: false });
+router.replace("/products?page=3", { revalidate: false });
+```
+
+If the pathname changes, `revalidate: false` is silently ignored and a full navigation occurs. This also works on `<Link>`:
+
+```tsx
+<Link to="/products?color=blue" revalidate={false}>
+  Blue
+</Link>
+```
+
+Plain `<a>` tags can opt in via `data-revalidate="false"`.
+
 ### useSegments()
 
 Access current URL path and matched route segments:
 
 ```tsx
 "use client";
-import { useSegments } from "@rangojs/router";
+import { useSegments } from "@rangojs/router/client";
 
 function Breadcrumbs() {
   const { path, segmentIds, location } = useSegments();
@@ -107,7 +128,7 @@ Access loader data (strict - data guaranteed):
 
 ```tsx
 "use client";
-import { useLoader } from "@rangojs/router";
+import { useLoader } from "@rangojs/router/client";
 import { ProductLoader } from "../loaders/product";
 
 function ProductPrice() {
@@ -143,7 +164,7 @@ Access loader with on-demand fetching (flexible):
 
 ```tsx
 "use client";
-import { useFetchLoader } from "@rangojs/router";
+import { useFetchLoader } from "@rangojs/router/client";
 import { SearchLoader } from "../loaders/search";
 
 function SearchResults() {
@@ -197,7 +218,7 @@ server, JSON bodies are available via `ctx.body` and FormData bodies via `ctx.fo
 
 ```tsx
 "use client";
-import { useFetchLoader } from "@rangojs/router";
+import { useFetchLoader } from "@rangojs/router/client";
 import { FileUploadLoader } from "../loaders/upload";
 
 function FileUploader() {
@@ -238,22 +259,6 @@ export const FileUploadLoader = createLoader(async (ctx) => {
 }, true); // true = fetchable (can be called from the client via load())
 ```
 
-### useLoaderData()
-
-Get all loader data in current context:
-
-```tsx
-"use client";
-import { useLoaderData } from "@rangojs/router";
-
-function DebugPanel() {
-  const allData = useLoaderData();
-  // Record<string, any> - Map of loader ID to data
-
-  return <pre>{JSON.stringify(allData, null, 2)}</pre>;
-}
-```
-
 ## Handle Hooks
 
 ### useHandle()
@@ -262,8 +267,7 @@ Access accumulated handle data from route segments:
 
 ```tsx
 "use client";
-import { useHandle } from "@rangojs/router";
-import { Breadcrumbs } from "../handles/breadcrumbs";
+import { useHandle, Breadcrumbs } from "@rangojs/router/client";
 
 function BreadcrumbNav() {
   const crumbs = useHandle(Breadcrumbs);
@@ -297,8 +301,7 @@ path("/dashboard", (ctx) => {
 
 // Client component — typeof infers the full Handle<T> type
 ("use client");
-import { useHandle } from "@rangojs/router/client";
-import type { Breadcrumbs } from "../handles";
+import { useHandle, type Breadcrumbs } from "@rangojs/router/client";
 
 function DashboardNav({ handle }: { handle: typeof Breadcrumbs }) {
   const crumbs = useHandle(handle);
@@ -324,7 +327,7 @@ Track state of server action invocations:
 
 ```tsx
 "use client";
-import { useAction } from "@rangojs/router";
+import { useAction } from "@rangojs/router/client";
 import { addToCart } from "../actions/cart";
 
 function AddToCartButton({ productId }: { productId: string }) {
@@ -359,7 +362,7 @@ Read type-safe state from history:
 
 ```tsx
 "use client";
-import { useLocationState, createLocationState } from "@rangojs/router";
+import { useLocationState, createLocationState } from "@rangojs/router/client";
 
 // Define typed state (all export patterns supported)
 // Keys are auto-injected by the Vite plugin -- no manual key needed.
@@ -396,6 +399,33 @@ import { ProductState } from "./state";
 <Link to="/product/123" state={[ProductState({ name: "Widget", price: 99 })]}>
   View Product
 </Link>;
+```
+
+Pass typed state just in time (getter evaluated at click time, not render time):
+
+```tsx
+"use client"; // JIT state requires a client component (getter can't cross RSC boundary)
+
+import { Link } from "@rangojs/router/client";
+import { ProductState } from "./state";
+
+// The getter is stored lazily and only called when the user clicks the link.
+// This is useful for capturing values that change after render (e.g., scroll
+// position, form state, ref values).
+<Link
+  to="/product/123"
+  state={[ProductState(() => ({ name: product.name, price: product.price }))]}
+>
+  View Product
+</Link>;
+```
+
+Plain state can also be evaluated just in time (also requires a client component):
+
+```tsx
+<Link to="/product/123" state={() => ({ from: window.location.pathname })}>
+  View Product
+</Link>
 ```
 
 ### Flash State (read-once)
@@ -457,7 +487,7 @@ Or via `ctx.setLocationState()` on any response:
 
 ```tsx
 (ctx) => {
-  ctx.setLocationState([FlashMessage({ text: "Welcome back!" })]);
+  ctx.setLocationState(FlashMessage({ text: "Welcome back!" }));
   return <Dashboard />;
 };
 ```
@@ -482,7 +512,7 @@ Manually control client-side navigation cache:
 
 ```tsx
 "use client";
-import { useClientCache } from "@rangojs/router";
+import { useClientCache } from "@rangojs/router/client";
 
 function SaveButton() {
   const { clear } = useClientCache();
@@ -510,7 +540,7 @@ function SaveButton() {
 Render child content in layouts:
 
 ```tsx
-import { Outlet, ParallelOutlet } from "@rangojs/router";
+import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
 function DashboardLayout({ children }: { children?: React.ReactNode }) {
   return (
@@ -531,7 +561,7 @@ Access outlet content programmatically:
 
 ```tsx
 "use client";
-import { useOutlet } from "@rangojs/router";
+import { useOutlet } from "@rangojs/router/client";
 
 function ConditionalLayout() {
   const outlet = useOutlet();
@@ -668,7 +698,6 @@ See `/links` for full URL generation guide including server-side `ctx.reverse`.
 | `useLinkStatus()`    | Link pending state                | { pending }                                     |
 | `useLoader()`        | Loader data (strict)              | data, isLoading, error                          |
 | `useFetchLoader()`   | Loader with on-demand fetch       | data, load, isLoading                           |
-| `useLoaderData()`    | All loader data                   | Record<string, any>                             |
 | `useHandle()`        | Accumulated handle data           | T (handle type)                                 |
 | `useAction()`        | Server action state               | state, error, result                            |
 | `useLocationState()` | History state (persists or flash) | T \| undefined                                  |

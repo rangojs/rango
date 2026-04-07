@@ -19,6 +19,25 @@ function extractServerRendered(text: string | null): string {
   return match ? match[1] : "";
 }
 
+async function readClientAge(
+  locator: import("@playwright/test").Locator,
+): Promise<number> {
+  return extractClientAge(await locator.textContent());
+}
+
+async function waitForClientAgeToExceed(
+  locator: import("@playwright/test").Locator,
+  baseline: number,
+  delta = 1,
+  timeout = 15000,
+): Promise<number> {
+  await expect
+    .poll(() => readClientAge(locator), { timeout })
+    .toBeGreaterThan(baseline + delta);
+
+  return readClientAge(locator);
+}
+
 /**
  * Revalidation tests - verifies that query-param-only navigations don't cause
  * component remounting when revalidation returns false.
@@ -56,22 +75,18 @@ devTest.describe("revalidation-query-param-navigation", () => {
         const initialServerRendered = extractServerRendered(initialText);
         const initialClientAge = extractClientAge(initialText);
 
-        // Wait a moment for the timer to tick
-        await page.waitForTimeout(2000);
-
         // Click the "Change to ?tab=reviews" link
         await page.locator('a:has-text("Change to ?tab=reviews")').click();
 
         // Wait for navigation to complete
         await expect(page).toHaveURL(/tab=reviews/);
 
-        // Wait another moment
-        await page.waitForTimeout(1000);
-
-        // Get the new values
+        const newClientAge = await waitForClientAgeToExceed(
+          metadataLocator,
+          initialClientAge,
+        );
         const newText = await metadataLocator.textContent();
         const newServerRendered = extractServerRendered(newText);
-        const newClientAge = extractClientAge(newText);
 
         // CRITICAL ASSERTIONS:
         // 1. Server Rendered timestamp should be the SAME (no server re-render)
@@ -108,21 +123,16 @@ devTest.describe("revalidation-query-param-navigation", () => {
         const initialText = await metadataLocator.textContent();
         const initialClientAge = extractClientAge(initialText);
 
-        // Wait a moment for the timer to tick
-        await page.waitForTimeout(2000);
-
         // Click the "Add ?tab=details" link
         await page.locator('a:has-text("Add ?tab=details")').click();
 
         // Wait for navigation to complete
         await expect(page).toHaveURL(/tab=details/);
 
-        // Wait another moment
-        await page.waitForTimeout(1000);
-
-        // Get the new Client Age
-        const newText = await metadataLocator.textContent();
-        const newClientAge = extractClientAge(newText);
+        const newClientAge = await waitForClientAgeToExceed(
+          metadataLocator,
+          initialClientAge,
+        );
 
         // Client Age should have INCREASED (timer kept running)
         expect(newClientAge).toBeGreaterThan(initialClientAge + 1);
@@ -145,15 +155,16 @@ devTest.describe("revalidation-query-param-navigation", () => {
           page.locator("h2:has-text('Wireless Headphones')"),
         ).toBeVisible({ timeout: 10000 });
 
-        // Wait for timer to build up
-        await page.waitForTimeout(3000);
-
         // Get the Client Age before navigation
         const metadataLocator = page.locator(
           "text=/Server Rendered:.*Client Age:/",
         );
-        const beforeText = await metadataLocator.textContent();
-        const beforeClientAge = extractClientAge(beforeText);
+        const beforeClientAge = await waitForClientAgeToExceed(
+          metadataLocator,
+          0,
+          2,
+          6000,
+        );
 
         // Should have at least 3 seconds
         expect(beforeClientAge).toBeGreaterThanOrEqual(3);
@@ -201,22 +212,18 @@ devTest.describe("revalidation-query-param-navigation", () => {
         const initialServerRendered = extractServerRendered(initialText);
         const initialClientAge = extractClientAge(initialText);
 
-        // Wait a moment for the timer to tick
-        await page.waitForTimeout(2000);
-
         // Click the "Add ?tab=1" link
         await page.locator('a:has-text("Add ?tab=1")').click();
 
         // Wait for URL to change
         await expect(page).toHaveURL(/tab=1/);
 
-        // Wait another moment
-        await page.waitForTimeout(1000);
-
-        // Get the new values
+        const afterTab1ClientAge = await waitForClientAgeToExceed(
+          metadataLocator,
+          initialClientAge,
+        );
         const afterTab1Text = await metadataLocator.textContent();
         const afterTab1ServerRendered = extractServerRendered(afterTab1Text);
-        const afterTab1ClientAge = extractClientAge(afterTab1Text);
 
         // CRITICAL ASSERTIONS:
         // 1. Server Rendered timestamp should be the SAME (no server re-render)
@@ -231,13 +238,13 @@ devTest.describe("revalidation-query-param-navigation", () => {
         // Wait for URL to change
         await expect(page).toHaveURL(/tab=2/);
 
-        // Wait another moment
-        await page.waitForTimeout(1000);
-
-        // Get the final values
+        const finalClientAge = await waitForClientAgeToExceed(
+          metadataLocator,
+          afterTab1ClientAge,
+          0,
+        );
         const finalText = await metadataLocator.textContent();
         const finalServerRendered = extractServerRendered(finalText);
-        const finalClientAge = extractClientAge(finalText);
 
         // Server Rendered should STILL be the same
         expect(finalServerRendered).toBe(initialServerRendered);
@@ -282,15 +289,15 @@ test.describe("revalidation-query-param-navigation (production)", () => {
       const initialServerRendered = extractServerRendered(initialText);
       const initialClientAge = extractClientAge(initialText);
 
-      await page.waitForTimeout(2000);
-
       await page.locator('a:has-text("Change to ?tab=reviews")').click();
       await expect(page).toHaveURL(/tab=reviews/);
-      await page.waitForTimeout(1000);
 
+      const newClientAge = await waitForClientAgeToExceed(
+        metadataLocator,
+        initialClientAge,
+      );
       const newText = await metadataLocator.textContent();
       const newServerRendered = extractServerRendered(newText);
-      const newClientAge = extractClientAge(newText);
 
       expect(newServerRendered).toBe(initialServerRendered);
       expect(newClientAge).toBeGreaterThan(initialClientAge + 1);
@@ -308,13 +315,15 @@ test.describe("revalidation-query-param-navigation (production)", () => {
         page.locator("h2:has-text('Wireless Headphones')"),
       ).toBeVisible({ timeout: 15000 });
 
-      await page.waitForTimeout(3000);
-
       const metadataLocator = page.locator(
         "text=/Server Rendered:.*Client Age:/",
       );
-      const beforeText = await metadataLocator.textContent();
-      const beforeClientAge = extractClientAge(beforeText);
+      const beforeClientAge = await waitForClientAgeToExceed(
+        metadataLocator,
+        0,
+        2,
+        6000,
+      );
 
       expect(beforeClientAge).toBeGreaterThanOrEqual(3);
 
@@ -353,26 +362,29 @@ test.describe("revalidation-query-param-navigation (production)", () => {
       const initialServerRendered = extractServerRendered(initialText);
       const initialClientAge = extractClientAge(initialText);
 
-      await page.waitForTimeout(2000);
-
       await page.locator('a:has-text("Add ?tab=1")').click();
       await expect(page).toHaveURL(/tab=1/);
-      await page.waitForTimeout(1000);
 
+      const afterTab1ClientAge = await waitForClientAgeToExceed(
+        metadataLocator,
+        initialClientAge,
+      );
       const afterTab1Text = await metadataLocator.textContent();
       const afterTab1ServerRendered = extractServerRendered(afterTab1Text);
-      const afterTab1ClientAge = extractClientAge(afterTab1Text);
 
       expect(afterTab1ServerRendered).toBe(initialServerRendered);
       expect(afterTab1ClientAge).toBeGreaterThan(initialClientAge + 1);
 
       await page.locator('a:has-text("Change to ?tab=2")').click();
       await expect(page).toHaveURL(/tab=2/);
-      await page.waitForTimeout(1000);
 
+      const finalClientAge = await waitForClientAgeToExceed(
+        metadataLocator,
+        afterTab1ClientAge,
+        0,
+      );
       const finalText = await metadataLocator.textContent();
       const finalServerRendered = extractServerRendered(finalText);
-      const finalClientAge = extractClientAge(finalText);
 
       expect(finalServerRendered).toBe(initialServerRendered);
       expect(finalClientAge).toBeGreaterThan(afterTab1ClientAge);

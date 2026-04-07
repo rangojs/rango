@@ -365,7 +365,7 @@ describe("createEventController", () => {
       expect(second.hadConcurrentActions).toBe(true); // second saw first
     });
 
-    it("recordRevalidatedSegments tracks segments for consolidation", () => {
+    it("recordRevalidatedSegments accumulates into shared set", () => {
       const ctrl = createController();
       const first = ctrl.startAction("hash#a", []);
       const second = ctrl.startAction("hash#b", []);
@@ -373,33 +373,18 @@ describe("createEventController", () => {
       first.recordRevalidatedSegments(["seg1", "seg2"]);
       second.recordRevalidatedSegments(["seg2", "seg3"]);
 
-      // Can't consolidate while any action is still fetching
-      expect(second.getConsolidationSegments()).toBeNull();
-
-      // Complete both so none are fetching
-      first.complete();
-      second.complete();
-
-      // Now consolidation returns all revalidated segments
-      const segments = second.getConsolidationSegments();
-      expect(segments).toContain("seg1");
-      expect(segments).toContain("seg2");
-      expect(segments).toContain("seg3");
+      // getRevalidatedSegments returns the raw shared set
+      const segments = second.getRevalidatedSegments();
+      expect(segments.has("seg1")).toBe(true);
+      expect(segments.has("seg2")).toBe(true);
+      expect(segments.has("seg3")).toBe(true);
+      expect(segments.size).toBe(3);
     });
 
-    it("getConsolidationSegments returns null when no concurrent actions", () => {
+    it("getRevalidatedSegments returns empty set when no segments recorded", () => {
       const ctrl = createController();
       const handle = ctrl.startAction("hash#a", []);
-      expect(handle.getConsolidationSegments()).toBeNull();
-    });
-
-    it("getConsolidationSegments returns null when segments are empty", () => {
-      const ctrl = createController();
-      const first = ctrl.startAction("hash#a", []);
-      const second = ctrl.startAction("hash#b", []);
-      first.complete();
-      // No segments were recorded
-      expect(second.getConsolidationSegments()).toBeNull();
+      expect(handle.getRevalidatedSegments().size).toBe(0);
     });
 
     it("clearConsolidation resets tracking", () => {
@@ -411,7 +396,7 @@ describe("createEventController", () => {
       first.complete();
       second.clearConsolidation();
 
-      expect(second.getConsolidationSegments()).toBeNull();
+      expect(second.getRevalidatedSegments().size).toBe(0);
     });
 
     it("settlement of last action resets concurrent tracking", () => {
@@ -444,6 +429,70 @@ describe("createEventController", () => {
       expect(ctrl.getInflightActions().size).toBe(0);
       expect(ctrl.getState().state).toBe("idle");
     });
+
+    it("fail() before abortAllActions() delivers error to subscribers", () => {
+      const ctrl = createController();
+      const handle = ctrl.startAction("hash#save", []);
+      const error = new Error("action error");
+
+      // Subscribe to capture notifications
+      const observed: { error: unknown }[] = [];
+      ctrl.subscribeToAction("save", (s) => {
+        observed.push({ error: s.error });
+      });
+
+      // Fail the handle first (while it's still in inflightActions)
+      handle.fail(error);
+
+      // abortAllActions preserves settling entries so the debounced
+      // notification can still find the entry and deliver the error
+      ctrl.abortAllActions();
+
+      // Settling entry should survive abort
+      expect(ctrl.getInflightActions().size).toBe(1);
+      expect(handle.settled).toBe(true);
+
+      // Flush debounced notification — subscriber should see the error
+      vi.advanceTimersByTime(0);
+      expect(observed.some((s) => s.error === error)).toBe(true);
+
+      // After settlement timeout, entry is cleaned up
+      vi.advanceTimersByTime(100);
+      expect(ctrl.getInflightActions().size).toBe(0);
+    });
+
+    it("fail() after abortAllActions() is a no-op (entry already removed)", () => {
+      const ctrl = createController();
+      const handle = ctrl.startAction("hash#save", []);
+
+      // Abort first — removes the entry from the map
+      ctrl.abortAllActions();
+
+      // Fail after abort — should be a no-op, not throw
+      handle.fail(new Error("late error"));
+      expect(handle.settled).toBe(false);
+    });
+
+    it("abortAllActions notifies short-name subscribers (suffix match)", () => {
+      const ctrl = createController();
+      ctrl.startAction("hash#save", []);
+
+      const observed: unknown[] = [];
+      ctrl.subscribeToAction("save", (s) => {
+        observed.push(s.state);
+      });
+
+      // Flush the startAction notification first
+      vi.advanceTimersByTime(0);
+      observed.length = 0;
+
+      ctrl.abortAllActions();
+
+      // abortAllActions should notify "save" subscribers immediately
+      // (not via debounced notifyAction which would fail suffix matching)
+      expect(observed.length).toBeGreaterThan(0);
+      expect(observed).toContain("idle");
+    });
   });
 
   // ======================================================================
@@ -470,11 +519,22 @@ describe("createEventController", () => {
       const handle = ctrl.startNavigation("/about");
       expect(ctrl.getState().pendingUrl).toBe("/about");
 
-      // Once streaming starts, we don't report pendingUrl
-      // (but navigation entry phase doesn't change via startStreaming on navigation handle)
-      // pendingUrl comes from currentNavigation.phase === "fetching"
+      // Once streaming starts, phase transitions to "streaming" and
+      // pendingUrl should clear (URL is no longer pending — data is arriving)
+      const token = handle.startStreaming();
+      expect(ctrl.getState().pendingUrl).toBeNull();
+
+      token.end();
       handle.complete(loc("/about"));
       expect(ctrl.getState().pendingUrl).toBeNull();
+    });
+
+    it("pendingUrl is null for skipLoadingState navigations (background revalidations)", () => {
+      const ctrl = createController();
+      ctrl.startNavigation("/slow", { skipLoadingState: true });
+      // Background revalidations don't expose pendingUrl
+      expect(ctrl.getState().pendingUrl).toBeNull();
+      expect(ctrl.getState().state).toBe("idle");
     });
 
     it("inflightActions excludes settling actions", () => {

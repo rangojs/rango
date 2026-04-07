@@ -1,14 +1,14 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError, goBack } from "./helper";
+import { waitForHydration, expectNoPageError } from "./helper";
 
 /**
- * Tests for the "use cache" directive.
+ * Tests for the "use cache" directive — basic caching, boundary enforcement,
+ * and JSON endpoints.
  *
  * Validates file-level and function-level "use cache" transforms,
- * named cache profiles, tainted ctx exclusion from cache keys,
- * handle capture/replay, streaming with loading boundaries,
- * and JSON endpoint caching.
+ * named cache profiles, cookies()/headers() boundary guards,
+ * branded runtime checks, and JSON endpoint caching.
  *
  * Strategy: cached functions embed Date.now() + Math.random() in their
  * return values. On cache hit the values are identical to the first call.
@@ -23,7 +23,6 @@ test.describe("use-cache basic", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
-    isolatedServer: true,
   });
 
   test("file-level use cache returns cached data on second request", async ({
@@ -39,8 +38,8 @@ test.describe("use-cache basic", () => {
     const ts1 = await page.getByTestId("use-cache-basic-ts").textContent();
     const rand1 = await page.getByTestId("use-cache-basic-rand").textContent();
 
-    expect(ts1).toBeTruthy();
-    expect(rand1).toBeTruthy();
+    expect(ts1).toMatch(/^\d+$/);
+    expect(rand1).toMatch(/^0\.\d+$/);
 
     // Navigate away
     await page.goto(f.url("/"));
@@ -105,7 +104,7 @@ test.describe("use-cache basic", () => {
 
     await expect(page.getByTestId("use-cache-profile-page")).toBeVisible();
     const ts1 = await page.getByTestId("use-cache-profile-ts").textContent();
-    expect(ts1).toBeTruthy();
+    expect(ts1).toMatch(/^\d+$/);
 
     // Navigate away and back — should hit cache
     await page.goto(f.url("/"));
@@ -116,264 +115,6 @@ test.describe("use-cache basic", () => {
 
     const ts2 = await page.getByTestId("use-cache-profile-ts").textContent();
     expect(ts2).toBe(ts1);
-  });
-
-  test("tainted ctx is excluded from cache key and handles are replayed", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    // First visit — cache miss, breadcrumb handle is pushed
-    await page.goto(f.url("/use-cache-test/with-handles"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("use-cache-handles-page")).toBeVisible();
-    const cachedTs1 = await page
-      .getByTestId("use-cache-handles-ts")
-      .textContent();
-    const serverTs1 = await page
-      .getByTestId("use-cache-handles-server-ts")
-      .textContent();
-
-    // Breadcrumb should appear (RootLayout pushes "Home", fetchWithBreadcrumbs pushes "Cached Page")
-    const breadcrumbs = page.getByTestId("breadcrumbs");
-    await expect(breadcrumbs).toBeVisible();
-    await expect(breadcrumbs).toContainText("Cached Page");
-
-    // Navigate away
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    // Second visit — cache hit, handles should be replayed
-    await page.goto(f.url("/use-cache-test/with-handles"));
-    await waitForHydration(page);
-
-    const cachedTs2 = await page
-      .getByTestId("use-cache-handles-ts")
-      .textContent();
-    const serverTs2 = await page
-      .getByTestId("use-cache-handles-server-ts")
-      .textContent();
-
-    // Cached fn resolved from cache (same timestamp)
-    expect(cachedTs2).toBe(cachedTs1);
-    // Handler ran fresh (server time advanced)
-    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
-
-    // Breadcrumb should still appear (handle replay from cache)
-    await expect(breadcrumbs).toBeVisible();
-    await expect(breadcrumbs).toContainText("Cached Page");
-  });
-
-  test("streaming: cached timestamp stays consistent while server time advances", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    // First visit — cache miss, 500ms delay
-    await page.goto(f.url("/use-cache-test/streaming"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("use-cache-streaming-page")).toBeVisible({
-      timeout: 10000,
-    });
-    const cachedTs1 = await page
-      .getByTestId("use-cache-streaming-ts")
-      .textContent();
-    const serverTs1 = await page
-      .getByTestId("use-cache-streaming-server-ts")
-      .textContent();
-    expect(cachedTs1).toBeTruthy();
-    expect(serverTs1).toBeTruthy();
-
-    // Navigate away
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    // Second visit — cache hit: cached ts unchanged, server ts is fresh
-    await page.goto(f.url("/use-cache-test/streaming"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("use-cache-streaming-page")).toBeVisible();
-    const cachedTs2 = await page
-      .getByTestId("use-cache-streaming-ts")
-      .textContent();
-    const serverTs2 = await page
-      .getByTestId("use-cache-streaming-server-ts")
-      .textContent();
-
-    // Cached value is identical (resolved from cache, not re-executed)
-    expect(cachedTs2).toBe(cachedTs1);
-    // Server timestamp is fresh (handler ran again, only the cached fn was skipped)
-    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
-  });
-
-  test("cached function returning React node serializes through cache", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    // First visit — cache miss, 200ms internal await, JSX serialized via Flight
-    await page.goto(f.url("/use-cache-test/cached-node"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("use-cache-node-page")).toBeVisible({
-      timeout: 10000,
-    });
-    const cachedTs1 = await page.getByTestId("cached-node-ts").textContent();
-    const cachedRand1 = await page
-      .getByTestId("cached-node-rand")
-      .textContent();
-    const serverTs1 = await page
-      .getByTestId("use-cache-node-server-ts")
-      .textContent();
-
-    expect(cachedTs1).toBeTruthy();
-    expect(cachedRand1).toBeTruthy();
-
-    // Navigate away
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    // Second visit — cache hit, JSX deserialized from cache
-    await page.goto(f.url("/use-cache-test/cached-node"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("use-cache-node-page")).toBeVisible();
-    const cachedTs2 = await page.getByTestId("cached-node-ts").textContent();
-    const cachedRand2 = await page
-      .getByTestId("cached-node-rand")
-      .textContent();
-    const serverTs2 = await page
-      .getByTestId("use-cache-node-server-ts")
-      .textContent();
-
-    // Cached JSX is identical (RSC Flight roundtrip preserved the React elements)
-    expect(cachedTs2).toBe(cachedTs1);
-    expect(cachedRand2).toBe(cachedRand1);
-    // Handler ran fresh (server time advanced)
-    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
-  });
-
-  test("inline use cache in path handler: breadcrumbs captured and replayed", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    // First visit — cache miss, handler runs, breadcrumb pushed
-    await page.goto(f.url("/use-cache-test/inline-handler"));
-    await waitForHydration(page);
-
-    await expect(
-      page.getByTestId("use-cache-inline-handler-page"),
-    ).toBeVisible();
-    const cachedTs1 = await page.getByTestId("inline-handler-ts").textContent();
-
-    // Breadcrumb from inline "use cache" handler should appear
-    const breadcrumbs = page.getByTestId("breadcrumbs");
-    await expect(breadcrumbs).toBeVisible();
-    await expect(breadcrumbs).toContainText("Inline Cached Handler");
-
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    // Second visit — cache hit, breadcrumbs replayed from cache
-    await page.goto(f.url("/use-cache-test/inline-handler"));
-    await waitForHydration(page);
-
-    const cachedTs2 = await page.getByTestId("inline-handler-ts").textContent();
-    expect(cachedTs2).toBe(cachedTs1);
-
-    // Breadcrumb still appears (handle replay from cached entry)
-    await expect(breadcrumbs).toBeVisible();
-    await expect(breadcrumbs).toContainText("Inline Cached Handler");
-  });
-
-  test("inline use cache on parameterized path differentiates by params", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    // Visit slug "alpha" — cache miss
-    await page.goto(f.url("/use-cache-test/inline-params/alpha"));
-    await waitForHydration(page);
-
-    await expect(
-      page.getByTestId("use-cache-inline-params-page"),
-    ).toBeVisible();
-    await expect(page.getByTestId("inline-params-slug")).toHaveText("alpha");
-    const alphaTs = await page.getByTestId("inline-params-ts").textContent();
-    const alphaRand = await page
-      .getByTestId("inline-params-rand")
-      .textContent();
-
-    expect(alphaTs).toBeTruthy();
-
-    // Visit slug "beta" — different cache entry
-    await page.goto(f.url("/use-cache-test/inline-params/beta"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("inline-params-slug")).toHaveText("beta");
-    const betaTs = await page.getByTestId("inline-params-ts").textContent();
-
-    // Different slug must produce different cache entry
-    expect(betaTs).not.toBe(alphaTs);
-
-    // Revisit slug "alpha" — cache hit
-    await page.goto(f.url("/use-cache-test/inline-params/alpha"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("inline-params-slug")).toHaveText("alpha");
-    const alphaTs2 = await page.getByTestId("inline-params-ts").textContent();
-    const alphaRand2 = await page
-      .getByTestId("inline-params-rand")
-      .textContent();
-
-    expect(alphaTs2).toBe(alphaTs);
-    expect(alphaRand2).toBe(alphaRand);
-  });
-
-  test("inline use cache in layout: meta captured and replayed", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    // First visit — cache miss, layout runs, meta set
-    await page.goto(f.url("/use-cache-test/inline-layout"));
-    await waitForHydration(page);
-
-    await expect(
-      page.getByTestId("use-cache-inline-layout-page"),
-    ).toBeVisible();
-    const layoutTs1 = await page.getByTestId("inline-layout-ts").textContent();
-
-    // Meta title set by cached layout should be present
-    await expect(page).toHaveTitle("Cached Layout Title");
-
-    // Child route renders fresh each time (not cached)
-    const childTs1 = await page
-      .getByTestId("inline-layout-child-ts")
-      .textContent();
-
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    // Second visit — layout from cache, meta replayed
-    await page.goto(f.url("/use-cache-test/inline-layout"));
-    await waitForHydration(page);
-
-    const layoutTs2 = await page.getByTestId("inline-layout-ts").textContent();
-    // Layout timestamp cached (same value)
-    expect(layoutTs2).toBe(layoutTs1);
-
-    // Meta title still correct (handle replay)
-    await expect(page).toHaveTitle("Cached Layout Title");
-
-    // Child route ran fresh (different timestamp)
-    const childTs2 = await page
-      .getByTestId("inline-layout-child-ts")
-      .textContent();
-    expect(Number(childTs2)).toBeGreaterThan(Number(childTs1));
   });
 
   test("plain data JSON endpoint returns cached data", async ({ request }) => {
@@ -407,243 +148,133 @@ test.describe("use-cache basic", () => {
     expect(body.data.plainFnBranded).toBe(false);
   });
 
-  test("cached function inside loader returns cached data", async ({
-    page,
+  test("cookies() throws inside a 'use cache' function", async ({
+    request,
   }) => {
-    using _ = expectNoPageError(page);
-
-    // First visit — cache miss: getCachedLoaderData() runs
-    await page.goto(f.url("/use-cache-test/with-loader"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("use-cache-loader-page")).toBeVisible();
-    const cachedTs1 = await page
-      .getByTestId("use-cache-loader-ts")
-      .textContent();
-    const cachedRand1 = await page
-      .getByTestId("use-cache-loader-rand")
-      .textContent();
-    const serverTs1 = await page
-      .getByTestId("use-cache-loader-server-ts")
-      .textContent();
-
-    expect(cachedTs1).toBeTruthy();
-    expect(cachedRand1).toBeTruthy();
-
-    // Navigate away
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    // Second visit — cache hit: inner cached function returns same data
-    await page.goto(f.url("/use-cache-test/with-loader"));
-    await waitForHydration(page);
-
-    const cachedTs2 = await page
-      .getByTestId("use-cache-loader-ts")
-      .textContent();
-    const cachedRand2 = await page
-      .getByTestId("use-cache-loader-rand")
-      .textContent();
-    const serverTs2 = await page
-      .getByTestId("use-cache-loader-server-ts")
-      .textContent();
-
-    // Cached function returned same data (cache hit)
-    expect(cachedTs2).toBe(cachedTs1);
-    expect(cachedRand2).toBe(cachedRand1);
-    // Handler ran fresh (server time advanced)
-    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
+    const res = await request.get(f.url("/use-cache-test/guard-cookies"));
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.data.threw).toBe(true);
+    expect(body.data.message).toMatch(/cookies\(\) cannot be called inside/i);
+    expect(body.data.message).toMatch(/cache key/i);
   });
 
-  test("intercept handler has distinct cache from path handler", async ({
-    page,
+  test("headers() throws inside a 'use cache' function", async ({
+    request,
   }) => {
-    using _ = expectNoPageError(page);
+    const res = await request.get(f.url("/use-cache-test/guard-headers"));
+    expect(res.status()).toBe(200);
+    const body = await res.json();
 
-    // Direct visit to path — cache miss for path handler
-    await page.goto(f.url("/use-cache-test/intercept-target/1"));
-    await waitForHydration(page);
-
-    await expect(
-      page.getByTestId("use-cache-intercept-path-page"),
-    ).toBeVisible();
-    const pathTs1 = await page.getByTestId("intercept-path-ts").textContent();
-    const pathRand1 = await page
-      .getByTestId("intercept-path-rand")
-      .textContent();
-
-    expect(pathTs1).toBeTruthy();
-    expect(pathRand1).toBeTruthy();
-
-    // Navigate away and back — path handler cache hit
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    await page.goto(f.url("/use-cache-test/intercept-target/1"));
-    await waitForHydration(page);
-
-    const pathTs2 = await page.getByTestId("intercept-path-ts").textContent();
-    const pathRand2 = await page
-      .getByTestId("intercept-path-rand")
-      .textContent();
-
-    expect(pathTs2).toBe(pathTs1);
-    expect(pathRand2).toBe(pathRand1);
-
-    // Now navigate to intercept index and trigger intercept
-    await page.goto(f.url("/use-cache-test/intercept-index"));
-    await waitForHydration(page);
-
-    await page.getByTestId("use-cache-intercept-link").click();
-    await expect(page.getByTestId("use-cache-intercept-modal")).toBeVisible();
-
-    const modalTs1 = await page.getByTestId("intercept-modal-ts").textContent();
-    const modalRand1 = await page
-      .getByTestId("intercept-modal-rand")
-      .textContent();
-
-    // Modal values must differ from path values (distinct cache entries)
-    expect(modalTs1).not.toBe(pathTs1);
-
-    // Navigate back to index and trigger intercept again — intercept cache hit
-    await goBack(page);
-    await expect(page.getByTestId("use-cache-intercept-index")).toBeVisible();
-
-    await page.getByTestId("use-cache-intercept-link").click();
-    await expect(page.getByTestId("use-cache-intercept-modal")).toBeVisible();
-
-    const modalTs2 = await page.getByTestId("intercept-modal-ts").textContent();
-    const modalRand2 = await page
-      .getByTestId("intercept-modal-rand")
-      .textContent();
-
-    // Intercept handler cache hit — same values
-    expect(modalTs2).toBe(modalTs1);
-    expect(modalRand2).toBe(modalRand1);
+    expect(body.data.threw).toBe(true);
+    expect(body.data.message).toMatch(/headers\(\) cannot be called inside/i);
   });
 
-  test("interleave: cached function with ReactNode slots returns frozen output on cache hit", async ({
-    page,
-  }) => {
+  test("ctx.set() throws inside a 'use cache' function", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    // First visit — CachedWithSlots receives dynamic ReactNode slots.
-    // The entire cached function output (including rendered slot content)
-    // is serialized and stored. On cache hit, the stored output is returned
-    // as-is — slot content is NOT interleaved separately.
-    await page.goto(f.url("/use-cache-test/interleave-slots"));
+    await page.goto(f.url("/use-cache-test/guard-ctx-set"));
     await waitForHydration(page);
 
-    await expect(page.getByTestId("interleave-slots-page")).toBeVisible();
-
-    const cachedTs1 = await page.getByTestId("cached-slots-ts").textContent();
-    const cachedRand1 = await page
-      .getByTestId("cached-slots-rand")
+    await expect(page.getByTestId("guard-ctx-set-threw")).toHaveText("true");
+    const message = await page
+      .getByTestId("guard-ctx-set-message")
       .textContent();
-    const headerContent1 = await page
-      .getByTestId("interleave-slots-header-content")
-      .textContent();
-    const childrenContent1 = await page
-      .getByTestId("interleave-slots-children-content")
-      .textContent();
-    const serverTs1 = await page
-      .getByTestId("interleave-slots-server-ts")
-      .textContent();
-
-    expect(cachedTs1).toBeTruthy();
-    expect(cachedRand1).toBeTruthy();
-    expect(headerContent1).toBeTruthy();
-
-    // Header and children should show the same dynamicTs
-    expect(headerContent1).toBe(childrenContent1);
-
-    // Navigate away
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    // Second visit — cached function returns frozen result (cache hit).
-    // Both the function's own data and the rendered slot content are frozen.
-    await page.goto(f.url("/use-cache-test/interleave-slots"));
-    await waitForHydration(page);
-
-    const cachedTs2 = await page.getByTestId("cached-slots-ts").textContent();
-    const cachedRand2 = await page
-      .getByTestId("cached-slots-rand")
-      .textContent();
-    const headerContent2 = await page
-      .getByTestId("interleave-slots-header-content")
-      .textContent();
-    const childrenContent2 = await page
-      .getByTestId("interleave-slots-children-content")
-      .textContent();
-    const serverTs2 = await page
-      .getByTestId("interleave-slots-server-ts")
-      .textContent();
-
-    // Cached function data is frozen (cache hit)
-    expect(cachedTs2).toBe(cachedTs1);
-    expect(cachedRand2).toBe(cachedRand1);
-
-    // Slot content is also frozen (part of cached output)
-    expect(headerContent2).toBe(headerContent1);
-    expect(childrenContent2).toBe(childrenContent1);
-
-    // Handler's own timestamp is fresh (handler runs on every request,
-    // only the CachedWithSlots call returns cached output)
-    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
+    expect(message).toMatch(/ctx\.set\(\) cannot be called inside/i);
   });
 
-  test("interleave: server action works alongside cached data", async ({
+  test("ctx.headers.set() throws inside a 'use cache' function", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
 
-    // Visit page — getCachedActionData() runs (cache miss), client component renders
-    await page.goto(f.url("/use-cache-test/interleave-action"));
+    await page.goto(f.url("/use-cache-test/guard-ctx-headers-set"));
     await waitForHydration(page);
 
-    await expect(page.getByTestId("interleave-action-page")).toBeVisible();
-
-    const cachedTs1 = await page.getByTestId("cached-action-ts").textContent();
-    const cachedRand1 = await page
-      .getByTestId("cached-action-rand")
+    await expect(page.getByTestId("guard-ctx-headers-set-threw")).toHaveText(
+      "true",
+    );
+    const message = await page
+      .getByTestId("guard-ctx-headers-set-message")
       .textContent();
-    const serverTs1 = await page
-      .getByTestId("interleave-action-server-ts")
-      .textContent();
+    expect(message).toMatch(/ctx\.headers\(\) cannot be called inside/i);
+  });
 
-    expect(cachedTs1).toBeTruthy();
-    expect(cachedRand1).toBeTruthy();
+  test("child ctx.set() works when parent layout has 'use cache' after revalidation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
 
-    // Client component with server action renders alongside cached data
-    await expect(page.getByTestId("interleave-action-btn")).toBeVisible();
-    await expect(page.getByTestId("interleave-action-btn")).toBeEnabled();
-
-    // Navigate away
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/use-cache-test/cached-parent-child-set"));
     await waitForHydration(page);
 
-    // Second visit — cached data should be stable (cache hit)
-    await page.goto(f.url("/use-cache-test/interleave-action"));
+    // Initial render — ctx.set() should work
+    await expect(page.getByTestId("child-set-value")).toHaveText("from-child");
+    const ts1 = await page.getByTestId("child-set-ts").textContent();
+
+    // Trigger revalidation via server action
+    await page.getByTestId("child-set-revalidate").click();
+    await page.getByTestId("child-set-revalidate-result").waitFor();
+
+    // After revalidation — ctx.set() must still work (not blocked by cached parent)
+    await expect(page.getByTestId("child-set-value")).toHaveText("from-child");
+    const ts2 = await page.getByTestId("child-set-ts").textContent();
+    expect(ts2).not.toBe(ts1);
+  });
+
+  test("layout loader segment persists in _rsc_segments across navigations", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Track _rsc_segments on each partial navigation request
+    const segmentRequests: string[][] = [];
+    page.on("request", (req) => {
+      const url = new URL(req.url());
+      const segments = url.searchParams.get("_rsc_segments");
+      if (segments) {
+        segmentRequests.push(decodeURIComponent(segments).split(","));
+      }
+    });
+
+    await page.goto(f.url("/use-cache-test/loader-segments/items?page=1"));
     await waitForHydration(page);
 
-    const cachedTs2 = await page.getByTestId("cached-action-ts").textContent();
-    const cachedRand2 = await page
-      .getByTestId("cached-action-rand")
-      .textContent();
-    const serverTs2 = await page
-      .getByTestId("interleave-action-server-ts")
-      .textContent();
+    await expect(page.getByTestId("loader-segments-current-page")).toHaveText(
+      "1",
+    );
 
-    // Cached function data is frozen (cache hit)
-    expect(cachedTs2).toBe(cachedTs1);
-    expect(cachedRand2).toBe(cachedRand1);
-    // Handler ran fresh (server time advanced)
-    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
+    // Navigate to page 2 — first client navigation
+    await page.getByTestId("loader-segments-link-2").click();
+    await expect(page.getByTestId("loader-segments-current-page")).toHaveText(
+      "2",
+    );
 
-    // Client component still renders correctly on cache hit
-    await expect(page.getByTestId("interleave-action-btn")).toBeVisible();
-    await expect(page.getByTestId("interleave-action-btn")).toBeEnabled();
+    // Navigate to page 3
+    await page.getByTestId("loader-segments-link-3").click();
+    await expect(page.getByTestId("loader-segments-current-page")).toHaveText(
+      "3",
+    );
+
+    // Navigate backwards to page 1 — this is where the loader used to drop
+    await page.getByTestId("loader-segments-link-1").click();
+    await expect(page.getByTestId("loader-segments-current-page")).toHaveText(
+      "1",
+    );
+
+    // Verify every partial navigation included the loader segment ID.
+    // Regression: getNonLoaderSegmentIds stripped loader IDs from cache-hit
+    // navigations, causing them to disappear from tracking permanently.
+    const loaderSegmentPattern = /D\d+\./; // Loader IDs contain "D0.", "D1.", etc.
+    for (let i = 0; i < segmentRequests.length; i++) {
+      const hasLoader = segmentRequests[i].some((id) =>
+        loaderSegmentPattern.test(id),
+      );
+      expect(
+        hasLoader,
+        `Navigation ${i + 1} missing loader segment in _rsc_segments: [${segmentRequests[i].join(", ")}]`,
+      ).toBe(true);
+    }
   });
 
   test("path.json with use cache: params differentiate entries", async ({
@@ -678,7 +309,7 @@ test.describe("use-cache basic", () => {
 // Production mode tests
 // ============================================================================
 
-test.describe("use-cache (production)", () => {
+test.describe("use-cache basic (production)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "build",
@@ -696,8 +327,8 @@ test.describe("use-cache (production)", () => {
     const ts1 = await page.getByTestId("use-cache-basic-ts").textContent();
     const rand1 = await page.getByTestId("use-cache-basic-rand").textContent();
 
-    expect(ts1).toBeTruthy();
-    expect(rand1).toBeTruthy();
+    expect(ts1).toMatch(/^\d+$/);
+    expect(rand1).toMatch(/^0\.\d+$/);
 
     await page.goto(f.url("/"));
     await waitForHydration(page);
@@ -766,227 +397,6 @@ test.describe("use-cache (production)", () => {
     expect(ts2).toBe(ts1);
   });
 
-  test("tainted ctx excluded from cache key and handles replayed", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/use-cache-test/with-handles"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("use-cache-handles-page")).toBeVisible();
-    const cachedTs1 = await page
-      .getByTestId("use-cache-handles-ts")
-      .textContent();
-    const serverTs1 = await page
-      .getByTestId("use-cache-handles-server-ts")
-      .textContent();
-
-    const breadcrumbs = page.getByTestId("breadcrumbs");
-    await expect(breadcrumbs).toBeVisible();
-    await expect(breadcrumbs).toContainText("Cached Page");
-
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    await page.goto(f.url("/use-cache-test/with-handles"));
-    await waitForHydration(page);
-
-    const cachedTs2 = await page
-      .getByTestId("use-cache-handles-ts")
-      .textContent();
-    const serverTs2 = await page
-      .getByTestId("use-cache-handles-server-ts")
-      .textContent();
-
-    expect(cachedTs2).toBe(cachedTs1);
-    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
-
-    await expect(breadcrumbs).toBeVisible();
-    await expect(breadcrumbs).toContainText("Cached Page");
-  });
-
-  test("cached function returning React node serializes through cache", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/use-cache-test/cached-node"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("use-cache-node-page")).toBeVisible({
-      timeout: 10000,
-    });
-    const cachedTs1 = await page.getByTestId("cached-node-ts").textContent();
-    const cachedRand1 = await page
-      .getByTestId("cached-node-rand")
-      .textContent();
-    const serverTs1 = await page
-      .getByTestId("use-cache-node-server-ts")
-      .textContent();
-
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    await page.goto(f.url("/use-cache-test/cached-node"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("use-cache-node-page")).toBeVisible();
-    const cachedTs2 = await page.getByTestId("cached-node-ts").textContent();
-    const cachedRand2 = await page
-      .getByTestId("cached-node-rand")
-      .textContent();
-    const serverTs2 = await page
-      .getByTestId("use-cache-node-server-ts")
-      .textContent();
-
-    expect(cachedTs2).toBe(cachedTs1);
-    expect(cachedRand2).toBe(cachedRand1);
-    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
-  });
-
-  test("streaming: cached timestamp stays consistent while server time advances", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/use-cache-test/streaming"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("use-cache-streaming-page")).toBeVisible({
-      timeout: 10000,
-    });
-    const cachedTs1 = await page
-      .getByTestId("use-cache-streaming-ts")
-      .textContent();
-    const serverTs1 = await page
-      .getByTestId("use-cache-streaming-server-ts")
-      .textContent();
-
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    await page.goto(f.url("/use-cache-test/streaming"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("use-cache-streaming-page")).toBeVisible();
-    const cachedTs2 = await page
-      .getByTestId("use-cache-streaming-ts")
-      .textContent();
-    const serverTs2 = await page
-      .getByTestId("use-cache-streaming-server-ts")
-      .textContent();
-
-    expect(cachedTs2).toBe(cachedTs1);
-    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
-  });
-
-  test("inline use cache in path handler: breadcrumbs captured and replayed", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/use-cache-test/inline-handler"));
-    await waitForHydration(page);
-
-    await expect(
-      page.getByTestId("use-cache-inline-handler-page"),
-    ).toBeVisible();
-    const cachedTs1 = await page.getByTestId("inline-handler-ts").textContent();
-
-    const breadcrumbs = page.getByTestId("breadcrumbs");
-    await expect(breadcrumbs).toBeVisible();
-    await expect(breadcrumbs).toContainText("Inline Cached Handler");
-
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    await page.goto(f.url("/use-cache-test/inline-handler"));
-    await waitForHydration(page);
-
-    const cachedTs2 = await page.getByTestId("inline-handler-ts").textContent();
-    expect(cachedTs2).toBe(cachedTs1);
-
-    await expect(breadcrumbs).toBeVisible();
-    await expect(breadcrumbs).toContainText("Inline Cached Handler");
-  });
-
-  test("inline use cache on parameterized path differentiates by params", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/use-cache-test/inline-params/alpha"));
-    await waitForHydration(page);
-
-    await expect(
-      page.getByTestId("use-cache-inline-params-page"),
-    ).toBeVisible();
-    await expect(page.getByTestId("inline-params-slug")).toHaveText("alpha");
-    const alphaTs = await page.getByTestId("inline-params-ts").textContent();
-    const alphaRand = await page
-      .getByTestId("inline-params-rand")
-      .textContent();
-
-    expect(alphaTs).toBeTruthy();
-
-    await page.goto(f.url("/use-cache-test/inline-params/beta"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("inline-params-slug")).toHaveText("beta");
-    const betaTs = await page.getByTestId("inline-params-ts").textContent();
-
-    expect(betaTs).not.toBe(alphaTs);
-
-    await page.goto(f.url("/use-cache-test/inline-params/alpha"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("inline-params-slug")).toHaveText("alpha");
-    const alphaTs2 = await page.getByTestId("inline-params-ts").textContent();
-    const alphaRand2 = await page
-      .getByTestId("inline-params-rand")
-      .textContent();
-
-    expect(alphaTs2).toBe(alphaTs);
-    expect(alphaRand2).toBe(alphaRand);
-  });
-
-  test("inline use cache in layout: meta captured and replayed", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/use-cache-test/inline-layout"));
-    await waitForHydration(page);
-
-    await expect(
-      page.getByTestId("use-cache-inline-layout-page"),
-    ).toBeVisible();
-    const layoutTs1 = await page.getByTestId("inline-layout-ts").textContent();
-
-    await expect(page).toHaveTitle("Cached Layout Title");
-
-    const childTs1 = await page
-      .getByTestId("inline-layout-child-ts")
-      .textContent();
-
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    await page.goto(f.url("/use-cache-test/inline-layout"));
-    await waitForHydration(page);
-
-    const layoutTs2 = await page.getByTestId("inline-layout-ts").textContent();
-    expect(layoutTs2).toBe(layoutTs1);
-
-    await expect(page).toHaveTitle("Cached Layout Title");
-
-    const childTs2 = await page
-      .getByTestId("inline-layout-child-ts")
-      .textContent();
-    expect(Number(childTs2)).toBeGreaterThan(Number(childTs1));
-  });
-
   test("plain data JSON endpoint returns cached data", async ({ request }) => {
     const res1 = await request.get(f.url("/use-cache-test/plain-data"));
     expect(res1.status()).toBe(200);
@@ -1013,223 +423,123 @@ test.describe("use-cache (production)", () => {
     expect(body.data.plainFnBranded).toBe(false);
   });
 
-  test("cached function inside loader returns cached data", async ({
-    page,
+  test("cookies() throws inside a 'use cache' function", async ({
+    request,
   }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/use-cache-test/with-loader"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("use-cache-loader-page")).toBeVisible();
-    const cachedTs1 = await page
-      .getByTestId("use-cache-loader-ts")
-      .textContent();
-    const cachedRand1 = await page
-      .getByTestId("use-cache-loader-rand")
-      .textContent();
-    const serverTs1 = await page
-      .getByTestId("use-cache-loader-server-ts")
-      .textContent();
-
-    expect(cachedTs1).toBeTruthy();
-    expect(cachedRand1).toBeTruthy();
-
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    await page.goto(f.url("/use-cache-test/with-loader"));
-    await waitForHydration(page);
-
-    const cachedTs2 = await page
-      .getByTestId("use-cache-loader-ts")
-      .textContent();
-    const cachedRand2 = await page
-      .getByTestId("use-cache-loader-rand")
-      .textContent();
-    const serverTs2 = await page
-      .getByTestId("use-cache-loader-server-ts")
-      .textContent();
-
-    expect(cachedTs2).toBe(cachedTs1);
-    expect(cachedRand2).toBe(cachedRand1);
-    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
+    const res = await request.get(f.url("/use-cache-test/guard-cookies"));
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.data.threw).toBe(true);
+    expect(body.data.message).toMatch(/cookies\(\) cannot be called inside/i);
+    expect(body.data.message).toMatch(/cache key/i);
   });
 
-  test("intercept handler has distinct cache from path handler", async ({
-    page,
+  test("headers() throws inside a 'use cache' function", async ({
+    request,
   }) => {
-    using _ = expectNoPageError(page);
+    const res = await request.get(f.url("/use-cache-test/guard-headers"));
+    expect(res.status()).toBe(200);
+    const body = await res.json();
 
-    await page.goto(f.url("/use-cache-test/intercept-target/1"));
-    await waitForHydration(page);
-
-    await expect(
-      page.getByTestId("use-cache-intercept-path-page"),
-    ).toBeVisible();
-    const pathTs1 = await page.getByTestId("intercept-path-ts").textContent();
-    const pathRand1 = await page
-      .getByTestId("intercept-path-rand")
-      .textContent();
-
-    expect(pathTs1).toBeTruthy();
-    expect(pathRand1).toBeTruthy();
-
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    await page.goto(f.url("/use-cache-test/intercept-target/1"));
-    await waitForHydration(page);
-
-    const pathTs2 = await page.getByTestId("intercept-path-ts").textContent();
-    const pathRand2 = await page
-      .getByTestId("intercept-path-rand")
-      .textContent();
-
-    expect(pathTs2).toBe(pathTs1);
-    expect(pathRand2).toBe(pathRand1);
-
-    await page.goto(f.url("/use-cache-test/intercept-index"));
-    await waitForHydration(page);
-
-    await page.getByTestId("use-cache-intercept-link").click();
-    await expect(page.getByTestId("use-cache-intercept-modal")).toBeVisible();
-
-    const modalTs1 = await page.getByTestId("intercept-modal-ts").textContent();
-    const modalRand1 = await page
-      .getByTestId("intercept-modal-rand")
-      .textContent();
-
-    expect(modalTs1).not.toBe(pathTs1);
-
-    await goBack(page);
-    await expect(page.getByTestId("use-cache-intercept-index")).toBeVisible();
-
-    await page.getByTestId("use-cache-intercept-link").click();
-    await expect(page.getByTestId("use-cache-intercept-modal")).toBeVisible();
-
-    const modalTs2 = await page.getByTestId("intercept-modal-ts").textContent();
-    const modalRand2 = await page
-      .getByTestId("intercept-modal-rand")
-      .textContent();
-
-    expect(modalTs2).toBe(modalTs1);
-    expect(modalRand2).toBe(modalRand1);
+    expect(body.data.threw).toBe(true);
+    expect(body.data.message).toMatch(/headers\(\) cannot be called inside/i);
   });
 
-  test("interleave: cached function with ReactNode slots returns frozen output on cache hit", async ({
-    page,
-  }) => {
+  test("ctx.set() throws inside a 'use cache' function", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/use-cache-test/interleave-slots"));
+    await page.goto(f.url("/use-cache-test/guard-ctx-set"));
     await waitForHydration(page);
 
-    await expect(page.getByTestId("interleave-slots-page")).toBeVisible();
-
-    const cachedTs1 = await page.getByTestId("cached-slots-ts").textContent();
-    const cachedRand1 = await page
-      .getByTestId("cached-slots-rand")
+    await expect(page.getByTestId("guard-ctx-set-threw")).toHaveText("true");
+    const message = await page
+      .getByTestId("guard-ctx-set-message")
       .textContent();
-    const headerContent1 = await page
-      .getByTestId("interleave-slots-header-content")
-      .textContent();
-    const childrenContent1 = await page
-      .getByTestId("interleave-slots-children-content")
-      .textContent();
-    const serverTs1 = await page
-      .getByTestId("interleave-slots-server-ts")
-      .textContent();
-
-    expect(cachedTs1).toBeTruthy();
-    expect(cachedRand1).toBeTruthy();
-    expect(headerContent1).toBeTruthy();
-
-    expect(headerContent1).toBe(childrenContent1);
-
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    await page.goto(f.url("/use-cache-test/interleave-slots"));
-    await waitForHydration(page);
-
-    const cachedTs2 = await page.getByTestId("cached-slots-ts").textContent();
-    const cachedRand2 = await page
-      .getByTestId("cached-slots-rand")
-      .textContent();
-    const headerContent2 = await page
-      .getByTestId("interleave-slots-header-content")
-      .textContent();
-    const childrenContent2 = await page
-      .getByTestId("interleave-slots-children-content")
-      .textContent();
-    const serverTs2 = await page
-      .getByTestId("interleave-slots-server-ts")
-      .textContent();
-
-    // Cached function data is frozen (cache hit)
-    expect(cachedTs2).toBe(cachedTs1);
-    expect(cachedRand2).toBe(cachedRand1);
-
-    // Slot content is also frozen (part of cached output)
-    expect(headerContent2).toBe(headerContent1);
-    expect(childrenContent2).toBe(childrenContent1);
-
-    // Handler's own timestamp is fresh (handler runs on every request)
-    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
+    expect(message).toMatch(/ctx\.set\(\) cannot be called inside/i);
   });
 
-  test("interleave: server action works alongside cached data", async ({
+  test("ctx.headers.set() throws inside a 'use cache' function", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
 
-    // Visit page — getCachedActionData() runs (cache miss), client component renders
-    await page.goto(f.url("/use-cache-test/interleave-action"));
+    await page.goto(f.url("/use-cache-test/guard-ctx-headers-set"));
     await waitForHydration(page);
 
-    await expect(page.getByTestId("interleave-action-page")).toBeVisible();
-
-    const cachedTs1 = await page.getByTestId("cached-action-ts").textContent();
-    const cachedRand1 = await page
-      .getByTestId("cached-action-rand")
+    await expect(page.getByTestId("guard-ctx-headers-set-threw")).toHaveText(
+      "true",
+    );
+    const message = await page
+      .getByTestId("guard-ctx-headers-set-message")
       .textContent();
-    const serverTs1 = await page
-      .getByTestId("interleave-action-server-ts")
-      .textContent();
+    expect(message).toMatch(/ctx\.headers\(\) cannot be called inside/i);
+  });
 
-    expect(cachedTs1).toBeTruthy();
-    expect(cachedRand1).toBeTruthy();
+  test("child ctx.set() works when parent layout has 'use cache' after revalidation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
 
-    // Client component with server action renders alongside cached data
-    await expect(page.getByTestId("interleave-action-btn")).toBeVisible();
-    await expect(page.getByTestId("interleave-action-btn")).toBeEnabled();
-
-    // Navigate away
-    await page.goto(f.url("/"));
+    await page.goto(f.url("/use-cache-test/cached-parent-child-set"));
     await waitForHydration(page);
 
-    // Second visit — cached data should be stable (cache hit)
-    await page.goto(f.url("/use-cache-test/interleave-action"));
+    await expect(page.getByTestId("child-set-value")).toHaveText("from-child");
+    const ts1 = await page.getByTestId("child-set-ts").textContent();
+
+    await page.getByTestId("child-set-revalidate").click();
+    await page.getByTestId("child-set-revalidate-result").waitFor();
+
+    await expect(page.getByTestId("child-set-value")).toHaveText("from-child");
+    const ts2 = await page.getByTestId("child-set-ts").textContent();
+    expect(ts2).not.toBe(ts1);
+  });
+
+  test("layout loader segment persists in _rsc_segments across navigations", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    const segmentRequests: string[][] = [];
+    page.on("request", (req) => {
+      const url = new URL(req.url());
+      const segments = url.searchParams.get("_rsc_segments");
+      if (segments) {
+        segmentRequests.push(decodeURIComponent(segments).split(","));
+      }
+    });
+
+    await page.goto(f.url("/use-cache-test/loader-segments/items?page=1"));
     await waitForHydration(page);
 
-    const cachedTs2 = await page.getByTestId("cached-action-ts").textContent();
-    const cachedRand2 = await page
-      .getByTestId("cached-action-rand")
-      .textContent();
-    const serverTs2 = await page
-      .getByTestId("interleave-action-server-ts")
-      .textContent();
+    await expect(page.getByTestId("loader-segments-current-page")).toHaveText(
+      "1",
+    );
 
-    // Cached function data is frozen (cache hit)
-    expect(cachedTs2).toBe(cachedTs1);
-    expect(cachedRand2).toBe(cachedRand1);
-    // Handler ran fresh (server time advanced)
-    expect(Number(serverTs2)).toBeGreaterThan(Number(serverTs1));
+    await page.getByTestId("loader-segments-link-2").click();
+    await expect(page.getByTestId("loader-segments-current-page")).toHaveText(
+      "2",
+    );
 
-    // Client component still renders correctly on cache hit
-    await expect(page.getByTestId("interleave-action-btn")).toBeVisible();
-    await expect(page.getByTestId("interleave-action-btn")).toBeEnabled();
+    await page.getByTestId("loader-segments-link-3").click();
+    await expect(page.getByTestId("loader-segments-current-page")).toHaveText(
+      "3",
+    );
+
+    await page.getByTestId("loader-segments-link-1").click();
+    await expect(page.getByTestId("loader-segments-current-page")).toHaveText(
+      "1",
+    );
+
+    const loaderSegmentPattern = /D\d+\./;
+    for (let i = 0; i < segmentRequests.length; i++) {
+      const hasLoader = segmentRequests[i].some((id) =>
+        loaderSegmentPattern.test(id),
+      );
+      expect(
+        hasLoader,
+        `Navigation ${i + 1} missing loader segment in _rsc_segments: [${segmentRequests[i].join(", ")}]`,
+      ).toBe(true);
+    }
   });
 
   test("path.json with use cache: params differentiate entries", async ({

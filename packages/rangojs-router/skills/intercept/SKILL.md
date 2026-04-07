@@ -8,6 +8,9 @@ argument-hint: [@slot-name] [route-to-intercept]
 
 Intercept routes render a different component during soft navigation (client-side) while preserving the background route. Hard navigation (direct URL) shows the full page.
 
+Canonical semantics reference:
+[docs/execution-model.md](../../docs/internal/execution-model.md)
+
 ## Basic Intercept
 
 ```typescript
@@ -66,6 +69,78 @@ intercept(
     loading(<ProductModalSkeleton />),
   ]
 )
+```
+
+## Intercept Middleware
+
+Intercepts support their own middleware chain via the use callback. The full chain for an intercept request is:
+
+```
+global mw (router.use) -> route mw (urls middleware()) -> intercept mw -> intercept handler -> intercept loaders
+```
+
+```typescript
+intercept(
+  "@modal",
+  "product",
+  <ProductModal />,
+  () => [
+    middleware(async (ctx, next) => {
+      // Runs only for this intercept, after global and route middleware
+      ctx.set("interceptSource", "modal");
+      await next();
+    }),
+    loader(ProductLoader),
+  ]
+)
+```
+
+The intercept handler can read context variables set by all upstream middleware layers (global, route, and intercept-specific).
+
+Handler/layout `ctx.set()` data follows the same rule as elsewhere:
+intercepts see data produced in the current render pass, but partial
+action revalidation only recomputes segments that actually revalidate.
+If an intercept depends on data established by an outer layout/handler,
+revalidate that outer segment too or reload/guard the data inside the
+intercept.
+
+### Revalidation Contracts for Intercept Dependencies
+
+Use named revalidation contracts on both the outer producer and the intercept
+consumer when they share `ctx.set()` data:
+
+```typescript
+export const revalidateProductShell = ({ actionId }) =>
+  actionId?.includes("src/actions/product.ts#") ?? false;
+
+layout(ProductLayout, () => [
+  revalidate(revalidateProductShell), // producer reruns
+  intercept("@modal", "product", <ProductModal />, () => [
+    revalidate(revalidateProductShell), // consumer reruns
+    loader(ProductLoader),
+  ]),
+]);
+```
+
+Compose multiple contracts if the intercept depends on multiple upstream
+domains.
+
+Helper handoff style keeps intercept trees terse:
+
+```typescript
+import { revalidate } from "@rangojs/router";
+
+export const revalidateProduct = () => [
+  revalidate(revalidateProductShell),
+];
+
+layout(ProductLayout, () => [
+  revalidateProduct(),
+  intercept("@modal", "product", <ProductModal />, () => [
+    revalidateProduct(),
+    loader(ProductLoader),
+  ]),
+]);
 ```
 
 ## Conditional Intercept with when()
@@ -165,6 +240,10 @@ Runtime behavior:
 
 Loaders inside the intercept always run fresh at request time, same as regular
 pre-rendered routes.
+
+During action-driven partial revalidation, this same partial rule applies:
+refreshing the intercept does not implicitly rebuild non-revalidated outer
+segments.
 
 ## Complete Example
 

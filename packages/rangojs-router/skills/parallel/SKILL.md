@@ -8,6 +8,9 @@ argument-hint: [@slot-name]
 
 Parallel routes render multiple components simultaneously in named slots.
 
+Canonical semantics reference:
+[docs/execution-model.md](../../docs/internal/execution-model.md)
+
 ## Basic Parallel Routes
 
 ```typescript
@@ -56,8 +59,21 @@ parallel({
 
 ## Reading Handler Data
 
-When a parallel is inside a route that uses `ctx.set()`, it can read that
-data via `ctx.get()`. The route handler always executes before its children.
+Parallels can read `ctx.set()` values from their parent handler or layout
+via `ctx.get()`. The handler always executes before its parallels
+(handler-first).
+
+Visibility follows tree structure:
+
+- Layout-level parallels see layout data, but not path handler data
+  (the path is a separate entry).
+- Parallels inside a path (or its orphan layouts) see both layout and
+  path handler data.
+
+This applies to full render passes. During partial action revalidation,
+only revalidated segments are recomputed. If a parallel depends on data
+set by an outer handler or layout, revalidate that outer segment too, or
+have the parallel reload/guard the data itself.
 
 ```typescript
 path("/dashboard/:id", (ctx) => {
@@ -76,6 +92,73 @@ path("/dashboard/:id", (ctx) => {
 ])
 ```
 
+## Setting Handles (Meta, Breadcrumbs)
+
+Parallel slot handlers can call `ctx.use(Meta)` or `ctx.use(Breadcrumbs)` to
+push handle data. The data is associated with the **parent** layout or route
+segment, not the parallel segment itself. This is because parallels execute
+after their parent handler and inherit its segment scope.
+
+This works well for document-level metadata — the handle data follows the
+parent's lifecycle (appears when the parent is mounted, removed when it
+unmounts).
+
+```typescript
+parallel({
+  "@meta": (ctx) => {
+    const meta = ctx.use(Meta);
+    meta({ title: "Product Detail" });
+    meta({ name: "description", content: "..." });
+    return null; // UI-less slot, only sets metadata
+  },
+  "@sidebar": (ctx) => <Sidebar />,
+})
+```
+
+Multiple parallels on the same parent can each push handle data — they all
+accumulate under the parent segment ID.
+
+### Pattern: `@meta` slot for per-route metadata overrides
+
+A dedicated `@meta` parallel slot lets routes define metadata separately from
+their handler logic. The layout sets defaults via a title template, and each
+route overrides via its own `@meta` slot. Since child segments push after
+parents and `collectMeta` uses last-wins deduplication, overrides work
+naturally.
+
+```typescript
+// Layout sets defaults
+layout((ctx) => {
+  ctx.use(Meta)({ title: { template: "%s | Store", default: "Store" } });
+  return <StoreLayout />;
+}, () => [
+  // Route with @meta override — decoupled from handler rendering
+  path("/:slug", ProductPage, { name: "product" }, () => [
+    parallel({
+      "@meta": async (ctx) => {
+        const product = await ctx.use(ProductLoader);
+        const meta = ctx.use(Meta);
+        meta({ title: product.name });
+        meta({ name: "description", content: product.description });
+        meta({
+          "script:ld+json": {
+            "@context": "https://schema.org",
+            "@type": "Product",
+            name: product.name,
+            description: product.description,
+          },
+        });
+        return null; // UI-less slot
+      },
+    }),
+  ]),
+])
+```
+
+This keeps the route handler focused on rendering UI while metadata
+(title, description, Open Graph, JSON-LD) lives in a composable slot that
+can be added, removed, or swapped per route without touching the handler.
+
 ## Parallel Routes with Loaders
 
 Add loaders and loading states to parallel routes:
@@ -92,6 +175,65 @@ parallel(
   ]
 )
 ```
+
+### Streaming Behavior
+
+Parallels with `loading()` are **independent streaming units**. They don't
+block the parent layout or sibling routes during SSR:
+
+- **With `loading()`**: The skeleton renders immediately. The loader runs
+  in the background and streams data to the client when ready. The rest
+  of the page (layout, route content, other parallels) renders without
+  waiting.
+- **Without `loading()`**: The parallel's loaders block the parent layout's
+  rendering. Use this when the data must be available before the page
+  paints (e.g., critical above-the-fold content).
+- **SPA navigation**: Parallel loaders resolve in the background. The
+  existing parallel UI stays visible — no skeleton flash on route changes
+  within the same layout.
+
+```typescript
+// Sidebar streams independently — page renders immediately
+parallel(
+  { "@sidebar": () => <Sidebar /> },
+  () => [loader(SlowSidebarLoader), loading(<SidebarSkeleton />)]
+)
+
+// Cart data blocks layout — must be ready before paint
+parallel(
+  { "@cartBadge": () => <CartBadge /> },
+  () => [loader(CartCountLoader)]  // No loading() = awaited
+)
+```
+
+## Slot Override Semantics
+
+When multiple `parallel()` calls define the same slot name, **the last
+definition wins**. Earlier definitions of that slot are removed. Other
+slots from the earlier call are preserved.
+
+This enables composition patterns where included routes override
+parent-defined slots:
+
+```typescript
+layout(DashboardLayout, () => [
+  // Base slots
+  parallel({
+    "@sidebar": () => <DefaultSidebar />,
+    "@footer": () => <Footer />,
+  }),
+
+  // Override just @sidebar — @footer is preserved
+  parallel({ "@sidebar": () => <CustomSidebar /> }),
+
+  path("/", DashboardIndex, { name: "index" }),
+])
+```
+
+After resolution, the layout has two parallel entries:
+
+- `{ "@footer": () => <Footer /> }` (first call, `@sidebar` removed)
+- `{ "@sidebar": () => <CustomSidebar /> }` (second call, wins)
 
 ## Multiple Parallel Slots
 
@@ -140,6 +282,45 @@ parallel(
     revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
   ]
 )
+```
+
+Revalidating only the parallel does not re-run outer handlers/layouts.
+If the slot reads `ctx.get()` data established above it, opt the outer
+segment into revalidation as well.
+
+### Revalidation Contracts for Parallel Dependencies
+
+Prefer named revalidation contracts shared by both the upstream producer and
+the parallel consumer:
+
+```typescript
+// revalidation-contracts.ts
+export const revalidateCartData = ({ actionId }) =>
+  actionId?.includes("src/actions/cart.ts#") ?? false;
+
+layout(CartLayout, () => [
+  revalidate(revalidateCartData), // producer reruns
+  parallel(
+    { "@cart": CartSummary },
+    () => [revalidate(revalidateCartData)], // consumer reruns
+  ),
+]);
+```
+
+If the slot consumes multiple upstream domains, compose the contracts on both
+segments.
+
+Handoff helper style also works:
+
+```typescript
+import { revalidate } from "@rangojs/router";
+
+export const revalidateCart = () => [revalidate(revalidateCartData)];
+
+layout(CartLayout, () => [
+  revalidateCart(),
+  parallel({ "@cart": CartSummary }, () => [revalidateCart()]),
+]);
 ```
 
 ## Named Outlets

@@ -1,6 +1,7 @@
 import { urls } from "@rangojs/router";
 import { Meta, type HandlerContext } from "@rangojs/router";
 import { AdminLayout } from "./components/AdminLayout.js";
+import { adminApiPatterns } from "./api.js";
 
 function DashboardPage(ctx: HandlerContext) {
   const meta = ctx.use(Meta);
@@ -26,9 +27,10 @@ function UsersPage(ctx: HandlerContext) {
   );
 }
 
-export const adminPatterns = urls(({ path, layout }) => [
+export const adminPatterns = urls(({ path, layout, include }) => [
   layout(<AdminLayout />, () => [
-    path("/", DashboardPage, { name: "dashboard" }),
+    path("/", DashboardPage, { name: "home" }),
     path("/users", UsersPage, { name: "users" }),
+    include("/api", adminApiPatterns, { name: "api" }),
   ]),
 ]);

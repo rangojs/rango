@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { urls, Meta } from "@rangojs/router";
 import {
   LoadersDemoLayout,
   LoadersIndexPage,
@@ -7,17 +7,26 @@ import {
 import { UsersLoader } from "../handlers/loaders-demo/loaders.js";
 
 export const loadersPatterns = urls(({ path, layout, loader, revalidate }) => [
-  layout(<LoadersDemoLayout />, () => [
-    // Global loader for the demo - provides users data
-    loader(UsersLoader, () => [
-      revalidate(({ actionId, stale, defaultShouldRevalidate }) => {
-        const isUserAction = actionId?.includes("loaders-demo/actions");
-        console.log("[Loaders] Revalidation check", { actionId, isUserAction });
-        return isUserAction ?? stale ?? defaultShouldRevalidate;
-      }),
-    ]),
+  layout(
+    (ctx) => {
+      ctx.use(Meta)({ title: "Loaders" });
+      return <LoadersDemoLayout />;
+    },
+    () => [
+      // Global loader for the demo - provides users data
+      loader(UsersLoader, () => [
+        revalidate(({ actionId, stale, defaultShouldRevalidate }) => {
+          const isUserAction = actionId?.includes("loaders-demo/actions");
+          console.log("[Loaders] Revalidation check", {
+            actionId,
+            isUserAction,
+          });
+          return isUserAction ?? stale ?? defaultShouldRevalidate;
+        }),
+      ]),
 
-    path("/", LoadersIndexPage, { name: "index" }),
-    path("/stats", LoadersStatsPage, { name: "stats" }),
-  ]),
+      path("/", LoadersIndexPage, { name: "index" }),
+      path("/stats", LoadersStatsPage, { name: "stats" }),
+    ],
+  ),
 ]);

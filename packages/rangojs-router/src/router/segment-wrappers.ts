@@ -50,6 +50,7 @@ export interface SegmentWrappers<TEnv = any> {
       actionResult?: any;
       formData?: FormData;
     },
+    stale?: boolean,
   ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
   buildEntryRevalidateMap: (
     entries: EntryData[],
@@ -158,6 +159,7 @@ export function createSegmentWrappers<TEnv = any>(
       actionResult?: any;
       formData?: FormData;
     },
+    stale?: boolean,
   ): ReturnType<typeof _resolveLoadersOnlyWithRevalidation> {
     return _resolveLoadersOnlyWithRevalidation(
       entries,
@@ -170,6 +172,7 @@ export function createSegmentWrappers<TEnv = any>(
       routeKey,
       segmentDeps,
       actionContext,
+      stale,
     );
   }
 
@@ -201,6 +204,7 @@ export function createSegmentWrappers<TEnv = any>(
     interceptResult: { intercept: InterceptEntry; entry: EntryData } | null,
     localRouteName: string,
     pathname: string,
+    stale?: boolean,
   ): ReturnType<typeof _resolveAllSegmentsWithRevalidation> {
     return _resolveAllSegmentsWithRevalidation(
       entries,
@@ -218,6 +222,7 @@ export function createSegmentWrappers<TEnv = any>(
       localRouteName,
       pathname,
       segmentDeps,
+      stale,
     );
   }
 

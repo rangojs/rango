@@ -205,11 +205,10 @@ const responseHolder: ResponseHolder = { response: stubResponse };
 
 This allows middleware to:
 
-1. Access `ctx.res` immediately (returns stub before `next()`, real response after)
+1. Read `ctx.res` (returns stub before `next()`, real response after)
 2. Set headers before `next()` via `ctx.header()` or `ctx.res.headers.set()`
-3. Set cookies before `next()` via `ctx.setCookie()` (uses `headers.append("Set-Cookie", ...)`)
+3. Set cookies before `next()` via `cookies().set()` (uses `headers.append("Set-Cookie", ...)`)
 4. Headers/cookies set on stub are merged into the real response after `next()` completes
-5. Replace response via `ctx.res = newResponse` (setter)
 
 **Merge Logic:** After handler returns, stub headers are merged into the real response:
 
@@ -243,7 +242,7 @@ function createResponseWithMergedHeaders(
 }
 ```
 
-This ensures headers/cookies set via `ctx.header()` or `ctx.setCookie()` in middleware are included in:
+This ensures headers/cookies set via `ctx.header()` or `cookies().set()` in middleware are included in:
 
 - RSC stream responses
 - HTML responses
@@ -257,7 +256,7 @@ This ensures headers/cookies set via `ctx.header()` or `ctx.setCookie()` in midd
 const middleware: MiddlewareFn = async (ctx, next) => {
   // Set headers/cookies BEFORE next() - applied to stub, merged into real response
   ctx.header("X-Request-Id", generateId());
-  ctx.setCookie("session", "abc123", { httpOnly: true });
+  cookies().set("session", "abc123", { httpOnly: true });
 
   await next();
 
@@ -280,8 +279,8 @@ return await executeLoaderMiddleware(
   request,
   env,
   loaderParams,
-  requireRequestContext().var, // Variables from unified context
-  requireRequestContext().res, // Stub response for header merging
+  getRequestContext().var, // Variables from unified context
+  getRequestContext().res, // Stub response for header merging
   async () => {
     // Loader executes within request context
     // Variables accessed via getRequestContext().var
@@ -378,7 +377,7 @@ Server actions run within the existing request context but:
 ```
 Request arrives
   ↓
-App middleware executes (sets ctx.var.user = ...)
+App middleware executes (calls ctx.set("user", ...))
   ↓
 Route middleware executes
   ↓
@@ -426,7 +425,7 @@ if (interceptEntry.middleware.length > 0) {
 1. **Cookies are properly applied:**
 
 ```typescript
-// Cookies collected via ctx.setCookie() are applied to early response
+// Cookies collected via cookies().set() are applied to early response
 if (earlyResponse) {
   return applyPendingCookies(earlyResponse, pendingCookies);
 }

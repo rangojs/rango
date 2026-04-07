@@ -16,7 +16,7 @@ import {
 } from "../server/context";
 import { invariant } from "../errors";
 import { isCachedFunction } from "../cache/taint.js";
-import { getCacheProfile } from "../cache/profile-registry.js";
+import { RSCRouterContext } from "../server/context";
 import { isStaticHandler } from "../static-handler.js";
 import RootLayout from "../server/root-layout";
 import type {
@@ -37,6 +37,7 @@ import type {
   UseItems,
 } from "../route-types.js";
 import type { RouteHelpers } from "./helpers-types.js";
+import { resolveHandlerUse, mergeHandlerUse } from "./resolve-handler-use.js";
 
 /**
  * Check if an item contains routes (directly or inside nested structures like cache).
@@ -227,7 +228,9 @@ const cache: RouteHelpers<any, any>["cache"] = (
     children = undefined;
   } else if (typeof optionsOrChildren === "string") {
     // cache('profileName') or cache('profileName', () => [...])
-    const profile = getCacheProfile(optionsOrChildren);
+    // Resolve from context-scoped profiles (set per-router via HelperContext).
+    const ctxStore = RSCRouterContext.getStore();
+    const profile = ctxStore?.cacheProfiles?.[optionsOrChildren];
     invariant(
       profile,
       `cache("${optionsOrChildren}"): unknown cache profile. ` +
@@ -245,7 +248,9 @@ const cache: RouteHelpers<any, any>["cache"] = (
     children = maybeChildren;
   }
 
-  const name = `$${store.getNextIndex("cache")}`;
+  // Allocate a single index for this cache() call (used in all paths)
+  const cacheIndex = store.getNextIndex("cache");
+  const name = `$${cacheIndex}`;
   const cacheConfig = { options };
 
   // If no children, create an orphan cache entry (like orphan layouts)
@@ -262,7 +267,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
 
     // Create orphan cache entry (like orphan layout)
     // Subsequent siblings in the same array will attach to this entry
-    const namespace = `${ctx.namespace}.${store.getNextIndex("cache")}`;
+    const namespace = `${ctx.namespace}.${cacheIndex}`;
     const cacheUrlPrefix = getUrlPrefix();
 
     const entry = {
@@ -278,7 +283,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
       errorBoundary: [],
       notFoundBoundary: [],
       layout: [],
-      parallel: [],
+      parallel: {},
       intercept: [],
       loader: [],
       ...(cacheUrlPrefix ? { mountPath: cacheUrlPrefix } : {}),
@@ -297,8 +302,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
   }
 
   // With children: create a cache entry (like layout with caching semantics)
-  const cacheNextIndex = store.getNextIndex("cache");
-  const namespace = `${ctx.namespace}.${cacheNextIndex}`;
+  const namespace = `${ctx.namespace}.${cacheIndex}`;
   const cacheShortCode = store.getShortCode("cache");
 
   const cacheUrlPrefix2 = getUrlPrefix();
@@ -317,7 +321,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
     errorBoundary: [],
     notFoundBoundary: [],
     layout: [],
-    parallel: [],
+    parallel: {},
     intercept: [],
     loader: [],
     ...(cacheUrlPrefix2 ? { mountPath: cacheUrlPrefix2 } : {}),
@@ -390,6 +394,8 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     "parallel() cannot be nested inside another parallel()",
   );
 
+  const slotNames = Object.keys(slots as Record<string, any>) as `@${string}`[];
+
   const namespace = `${ctx.namespace}.$${store.getNextIndex("parallel")}`;
 
   // Unwrap any static handler definitions in parallel slots
@@ -428,7 +434,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     errorBoundary: [],
     notFoundBoundary: [],
     layout: [],
-    parallel: [],
+    parallel: {},
     intercept: [],
     loader: [],
     ...(parallelUrlPrefix ? { mountPath: parallelUrlPrefix } : {}),
@@ -442,16 +448,46 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
       : {}),
   } satisfies EntryData;
 
-  // Run use callback if provided to collect loaders, revalidate, loading
-  if (use && typeof use === "function") {
-    const result = store.run(namespace, entry, use)?.flat(3);
-    invariant(
-      Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-      `parallel() use() callback must return an array of use items [${namespace}]`,
-    );
-  }
+  for (const slotName of slotNames) {
+    const slotEntry = {
+      ...entry,
+      handler: { [slotName]: unwrappedSlots[slotName]! },
+      middleware: [...entry.middleware],
+      revalidate: [...entry.revalidate],
+      errorBoundary: [...entry.errorBoundary],
+      notFoundBoundary: [...entry.notFoundBoundary],
+      layout: [...entry.layout],
+      parallel: { ...entry.parallel },
+      intercept: [...entry.intercept],
+      loader: [...entry.loader],
+      ...(entry.staticHandlerIds?.[slotName]
+        ? {
+            isStaticPrerender: true as const,
+            staticHandlerIds: { [slotName]: entry.staticHandlerIds[slotName]! },
+          }
+        : {
+            isStaticPrerender: undefined,
+            staticHandlerIds: undefined,
+          }),
+    } satisfies EntryData;
 
-  ctx.parent.parallel.push(entry);
+    // Per-slot: handler.use defaults first, then explicit use second.
+    // This matches the "defaults first, overrides second" rule used by
+    // path(), layout(), and intercept(). Each slot's handler.use is
+    // scoped to its own entry (no cross-slot bleed).
+    const slotHandler = (slots as Record<string, any>)[slotName];
+    const slotHandlerUse = resolveHandlerUse(slotHandler);
+    const slotMergedUse = mergeHandlerUse(slotHandlerUse, use, "parallel");
+    if (slotMergedUse) {
+      const result = store.run(namespace, slotEntry, slotMergedUse)?.flat(3);
+      invariant(
+        Array.isArray(result) && result.every((item) => isValidUseItem(item)),
+        `parallel() use() callback must return an array of use items [${namespace}]`,
+      );
+    }
+
+    ctx.parent.parallel[slotName] = slotEntry;
+  }
   return { name: namespace, type: "parallel" } as ParallelItem;
 };
 
@@ -499,8 +535,12 @@ const intercept = (
     when: [], // Selector conditions for conditional interception
   };
 
-  // Run use callback if provided to collect loaders, revalidate, middleware, etc.
-  if (use && typeof use === "function") {
+  // Merge handler.use defaults with explicit use
+  const handlerUseFn = resolveHandlerUse(handler);
+  const mergedUse = mergeHandlerUse(handlerUseFn, use, "intercept");
+
+  // Run merged use callback to collect loaders, revalidate, middleware, etc.
+  if (mergedUse) {
     // Create a temporary parent context for the use() callback
     // so that middleware, loader, revalidate attach to the intercept entry
     const originalParent = ctx.parent;
@@ -527,7 +567,7 @@ const intercept = (
     };
     ctx.parent = tempParent as EntryData;
 
-    const result = use()?.flat(3);
+    const result = mergedUse()?.flat(3);
 
     // Restore original parent
     ctx.parent = originalParent;
@@ -624,11 +664,15 @@ const loadingFn: RouteHelpers<any, any>["loading"] = (component, options) => {
     invariant(false, "No parent entry available for loading()");
   }
 
+  // Unwrap function form: loading(() => <Skeleton />) → loading(<Skeleton />)
+  const resolved =
+    typeof component === "function" ? (component as () => any)() : component;
+
   // If ssr: false and we're in SSR, set loading to false
   if (options?.ssr === false && ctx.isSSR) {
     parent.loading = false;
   } else {
-    parent.loading = component;
+    parent.loading = resolved;
   }
 
   const name = `$${store.getNextIndex("loading")}`;
@@ -684,7 +728,7 @@ const transitionFn = (
     errorBoundary: [],
     notFoundBoundary: [],
     layout: [],
-    parallel: [],
+    parallel: {},
     intercept: [],
     loader: [],
   } as EntryData;
@@ -724,14 +768,14 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
     shortCode: store.getShortCode("route"),
     type: "route",
     parent: ctx.parent,
-    handler,
+    handler: handler as unknown as Handler<any, any, any>,
     loading: undefined, // Allow loading() to attach loading state
     middleware: [],
     revalidate: [],
     errorBoundary: [],
     notFoundBoundary: [],
     layout: [],
-    parallel: [],
+    parallel: {},
     intercept: [],
     loader: [],
   } satisfies EntryData;
@@ -743,9 +787,12 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
   );
   /* Register route entry */
   ctx.manifest.set(name, entry);
+  /* Merge handler.use defaults with explicit use */
+  const handlerUseFn = resolveHandlerUse(handler);
+  const mergedUse = mergeHandlerUse(handlerUseFn, use, "route");
   /* Run use and attach handlers */
-  if (use && typeof use === "function") {
-    const result = store.run(namespace, entry, use)?.flat(3);
+  if (mergedUse) {
+    const result = store.run(namespace, entry, mergedUse)?.flat(3);
     invariant(
       Array.isArray(result) && result.every((item) => isValidUseItem(item)),
       `route() use() callback must return an array of use items [${namespace}]`,
@@ -788,7 +835,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     revalidate: [],
     errorBoundary: [],
     notFoundBoundary: [],
-    parallel: [],
+    parallel: {},
     intercept: [],
     layout: [],
     loader: [],
@@ -806,10 +853,14 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     (handler as any).$$routePrefix = ctx.namePrefix;
   }
 
-  // Run use callback if provided
+  // Merge handler.use defaults with explicit use
+  const handlerUseFn = resolveHandlerUse(handler);
+  const mergedUse = mergeHandlerUse(handlerUseFn, use, "layout");
+
+  // Run merged use callback if present
   let result: AllUseItems[] | undefined;
-  if (use && typeof use === "function") {
-    result = store.run(namespace, entry, use)?.flat(3);
+  if (mergedUse) {
+    result = store.run(namespace, entry, mergedUse)?.flat(3);
 
     invariant(
       Array.isArray(result) && result.every((item) => isValidUseItem(item)),

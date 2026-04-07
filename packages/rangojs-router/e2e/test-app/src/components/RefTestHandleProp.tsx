@@ -1,7 +1,6 @@
 "use client";
 
-import { useHandle, Link } from "@rangojs/router/client";
-import type { Breadcrumbs } from "../handles.js";
+import { useHandle, Link, type Breadcrumbs } from "@rangojs/router/client";
 
 /**
  * Client component that receives a handle as a prop (passed from server component).

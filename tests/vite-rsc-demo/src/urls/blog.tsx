@@ -17,6 +17,7 @@ import {
   AuthorModalContentSkeleton,
 } from "../handlers/blog/components/AuthorModal.js";
 import { shouldInterceptBlogAuthor } from "../handlers/blog/conditions/index.js";
+import { Meta } from "@rangojs/router";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import {
   BlogPostHandler,
@@ -41,6 +42,8 @@ export const blogPatterns = urls(
       (ctx) => {
         const push = ctx.use(Breadcrumbs);
         push({ label: "Blog", href: "/blog" });
+        const meta = ctx.use(Meta);
+        meta({ title: { template: "%s | Blog", default: "Blog" } });
         return <BlogLayout />;
       },
       () => [
@@ -48,8 +51,7 @@ export const blogPatterns = urls(
         parallel(
           {
             "@sidebar": async (ctx) => {
-              const data = await ctx.use(BlogSidebarLoader);
-              return <BlogSidebar data={data} />;
+              return <BlogSidebar />;
             },
           },
           () => [loader(BlogSidebarLoader), loading(<BlogSidebarSkeleton />)],

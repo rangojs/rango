@@ -46,6 +46,7 @@ test.describe("prerender passthrough (production)", () => {
 
     await expect(testId(page, "guide-detail")).toBeVisible();
     await expect(testId(page, "guide-title")).toHaveText("Routing Guide");
+    await expect(testId(page, "guide-build")).toHaveText("Build: true");
     await expect(testId(page, "guide-slug")).toHaveText("Slug: routing");
     await expect(testId(page, "guide-rendered-at")).toBeVisible();
   });
@@ -58,6 +59,7 @@ test.describe("prerender passthrough (production)", () => {
 
     await expect(testId(page, "guide-detail")).toBeVisible();
     await expect(testId(page, "guide-title")).toHaveText("Caching Guide");
+    await expect(testId(page, "guide-build")).toHaveText("Build: true");
     await expect(testId(page, "guide-slug")).toHaveText("Slug: caching");
   });
 
@@ -71,6 +73,7 @@ test.describe("prerender passthrough (production)", () => {
 
     await expect(testId(page, "guide-detail")).toBeVisible();
     await expect(testId(page, "guide-title")).toHaveText("Guide: unknown-slug");
+    await expect(testId(page, "guide-build")).toHaveText("Build: false");
     await expect(testId(page, "guide-slug")).toHaveText("Slug: unknown-slug");
     await expect(testId(page, "guide-rendered-at")).toBeVisible();
   });
@@ -85,6 +88,7 @@ test.describe("prerender passthrough (production)", () => {
     await expect(testId(page, "guide-title")).toHaveText(
       "Guide: any-arbitrary-slug",
     );
+    await expect(testId(page, "guide-build")).toHaveText("Build: false");
   });
 
   // -- Client-side navigation tests --
@@ -135,6 +139,7 @@ test.describe("prerender passthrough (production)", () => {
     await testId(page, "guide-link-dynamic").click();
     await expect(testId(page, "guide-detail")).toBeVisible();
     await expect(testId(page, "guide-title")).toHaveText("Guide: dynamic-test");
+    await expect(testId(page, "guide-build")).toHaveText("Build: false");
     await expect(testId(page, "guide-slug")).toHaveText("Slug: dynamic-test");
   });
 
@@ -257,33 +262,29 @@ test.describe("prerender passthrough bundle output (production)", () => {
   let ssrBundle: string;
 
   test.beforeAll(() => {
-    const rscAssets = readAllFiles(path.join(DIST, "rsc/assets"));
-    const handlerFile = rscAssets.find((f) =>
-      f.startsWith("__prerender-handlers"),
-    );
-    expect(handlerFile).toBeTruthy();
-    prerenderHandlersBundle = fs.readFileSync(
-      path.join(DIST, "rsc/assets", handlerFile!),
-      "utf-8",
-    );
+    // After manualChunks removal (#436), prerender handler stubs are inlined
+    // into the RSC entry/worker-entry chunk instead of a separate
+    // __prerender-handlers file. Concat code chunks (excluding __pr-*/__st-*
+    // prerender asset files which contain rendered output, not handler code).
+    prerenderHandlersBundle = readAllFiles(path.join(DIST, "rsc/assets"))
+      .filter((f) => !f.startsWith("__pr-") && !f.startsWith("__st-"))
+      .map((f) => fs.readFileSync(path.join(DIST, "rsc/assets", f), "utf-8"))
+      .join("\n");
     clientBundle = concatBundleContents(path.join(DIST, "client/assets"));
     ssrBundle = concatBundleContents(path.join(DIST, "rsc/ssr/assets"));
   });
 
-  test("passthrough handler code stays in RSC prerender-handlers chunk", () => {
-    // GuidesDetail (passthrough: true) should NOT be replaced with a stub
-    // It should contain the full Prerender call
-    expect(prerenderHandlersBundle).toContain("GuidesDetail");
+  test("prerender definitions are evicted from RSC bundle", () => {
+    // GuidesDetailDef (Prerender def) should be replaced with a stub
     expect(prerenderHandlersBundle).toMatch(
-      /const\s+GuidesDetail\s*=\s*Prerender/,
+      /const\s+GuidesDetailDef\s*=\s*\{\s*__brand:\s*"prerenderHandler"/,
     );
   });
 
-  test("passthrough handler code stays for PaginatedArticles", () => {
-    // PaginatedArticles (passthrough: true) should NOT be evicted
-    expect(prerenderHandlersBundle).toContain("PaginatedArticles");
+  test("PaginatedArticlesDef is evicted from RSC bundle", () => {
+    // PaginatedArticlesDef (Prerender def) should be replaced with a stub
     expect(prerenderHandlersBundle).toMatch(
-      /const\s+PaginatedArticles\s*=\s*Prerender/,
+      /const\s+PaginatedArticlesDef\s*=\s*\{\s*__brand:\s*"prerenderHandler"/,
     );
   });
 
@@ -295,17 +296,11 @@ test.describe("prerender passthrough bundle output (production)", () => {
   });
 
   test("passthrough handler not in client bundle", () => {
-    expect(clientBundle).not.toContain("GuidesDetail");
+    expect(clientBundle).not.toContain("GuidesDetailDef");
   });
 
   test("passthrough handler not in SSR bundle", () => {
-    expect(ssrBundle).not.toContain("GuidesDetail");
-  });
-
-  test("passthrough handler-specific code stays in RSC bundle", () => {
-    // The guide title lookup logic should be in the bundle
-    expect(prerenderHandlersBundle).toContain("Routing Guide");
-    expect(prerenderHandlersBundle).toContain("Caching Guide");
+    expect(ssrBundle).not.toContain("GuidesDetailDef");
   });
 
   test("passthrough handler-specific code not in client bundle", () => {
@@ -332,11 +327,14 @@ test.describe("prerender passthrough assets (production)", () => {
       path.join(RSC_DIR, "__prerender-manifest.js"),
       "utf-8",
     );
+    const jsonMatch = manifestCode.match(/JSON\.parse\('(.+)'\)/);
+    expect(jsonMatch).toBeTruthy();
+    const manifest: Record<string, string> = JSON.parse(jsonMatch![1]);
     // 2 known slugs: routing, caching — each has a param hash key
-    expect(manifestCode).toMatch(/"guides\.detail\/[a-f0-9]+"/);
-    // Count the number of guides.detail entries
-    const matches = manifestCode.match(/"guides\.detail\/[a-f0-9]+"/g);
-    expect(matches).toHaveLength(2);
+    const guidesKeys = Object.keys(manifest).filter((k) =>
+      k.startsWith("guides.detail/"),
+    );
+    expect(guidesKeys).toHaveLength(2);
   });
 
   test("prerender asset files for guides have valid segments and handles", () => {
@@ -344,17 +342,21 @@ test.describe("prerender passthrough assets (production)", () => {
       path.join(RSC_DIR, "__prerender-manifest.js"),
       "utf-8",
     );
-    // Extract __pr-*.js filenames referenced by guides.detail entries
-    const guidesImports = manifestCode.match(
-      /"guides\.detail\/[a-f0-9]+":\(\)=>import\("\.\/assets\/(__pr-[a-f0-9]+\.js)"\)/g,
-    );
-    expect(guidesImports).toHaveLength(2);
+    const jsonMatch = manifestCode.match(/JSON\.parse\('(.+)'\)/);
+    expect(jsonMatch).toBeTruthy();
+    const manifest: Record<string, string> = JSON.parse(jsonMatch![1]);
 
-    for (const imp of guidesImports!) {
-      const fileMatch = imp.match(/__pr-[a-f0-9]+\.js/);
-      expect(fileMatch).toBeTruthy();
+    // Get asset specifiers for guides.detail entries
+    const guidesSpecifiers = Object.entries(manifest)
+      .filter(([k]) => k.startsWith("guides.detail/"))
+      .map(([, v]) => v);
+    expect(guidesSpecifiers).toHaveLength(2);
+
+    for (const specifier of guidesSpecifiers) {
+      // Specifiers are like "./assets/__pr-abcd1234.js"
+      const fileName = specifier.replace("./assets/", "");
       const content = fs.readFileSync(
-        path.join(RSC_ASSETS_DIR, fileMatch![0]),
+        path.join(RSC_ASSETS_DIR, fileName),
         "utf-8",
       );
       const dataMatch = content.match(/export default\s+({[\s\S]*});\s*$/);
@@ -386,6 +388,7 @@ test.describe("prerender passthrough (dev)", () => {
 
     await expect(testId(page, "guide-detail")).toBeVisible();
     await expect(testId(page, "guide-title")).toHaveText("Routing Guide");
+    await expect(testId(page, "guide-build")).toHaveText("Build: true");
     await expect(testId(page, "guide-slug")).toHaveText("Slug: routing");
     await expect(testId(page, "guide-rendered-at")).toBeVisible();
   });
@@ -398,6 +401,7 @@ test.describe("prerender passthrough (dev)", () => {
 
     await expect(testId(page, "guide-detail")).toBeVisible();
     await expect(testId(page, "guide-title")).toHaveText("Caching Guide");
+    await expect(testId(page, "guide-build")).toHaveText("Build: true");
   });
 
   test("unknown slug renders live in dev mode", async ({ page }) => {
@@ -408,6 +412,7 @@ test.describe("prerender passthrough (dev)", () => {
 
     await expect(testId(page, "guide-detail")).toBeVisible();
     await expect(testId(page, "guide-title")).toHaveText("Guide: unknown-slug");
+    await expect(testId(page, "guide-build")).toHaveText("Build: false");
     await expect(testId(page, "guide-slug")).toHaveText("Slug: unknown-slug");
   });
 
@@ -421,6 +426,7 @@ test.describe("prerender passthrough (dev)", () => {
 
     await testId(page, "guide-link-dynamic").click();
     await expect(testId(page, "guide-title")).toHaveText("Guide: dynamic-test");
+    await expect(testId(page, "guide-build")).toHaveText("Build: false");
   });
 
   test("client navigation between guides in dev mode", async ({ page }) => {

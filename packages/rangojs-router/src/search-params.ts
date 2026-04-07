@@ -55,14 +55,22 @@ type Simplify<T> = { [K in keyof T]: T[K] };
 /**
  * Resolve a SearchSchema to its typed object.
  *
+ * Both required and optional params resolve to `T | undefined` at the handler
+ * level. The required/optional distinction is a consumer-facing contract
+ * (e.g., for href() and reverse() autocomplete) — it tells callers which
+ * params the route expects, but the handler must still check for undefined
+ * since the framework cannot trust the client to send all required params.
+ *
  * @example
  * type S = { q: "string"; page: "number?"; sort: "string?" };
  * type R = ResolveSearchSchema<S>;
- * // { q: string; page?: number; sort?: string }
+ * // { q: string | undefined; page?: number; sort?: string }
  */
 export type ResolveSearchSchema<T extends SearchSchema> = Simplify<
   {
-    [K in RequiredKeys<T> & string]: ResolveBaseType<BaseType<T[K]>>;
+    [K in RequiredKeys<T> & string]:
+      | ResolveBaseType<BaseType<T[K]>>
+      | undefined;
   } & {
     [K in OptionalKeys<T> & string]?: ResolveBaseType<BaseType<T[K]>>;
   }
@@ -127,20 +135,32 @@ type ExtractRouteParamsFromMap<TRouteMap, TName> = TName extends keyof TRouteMap
       : {}
   : {};
 
+/** Parse "a|b|c" into "a" | "b" | "c" */
+type ParseConstraint<T extends string> =
+  T extends `${infer First}|${infer Rest}` ? First | ParseConstraint<Rest> : T;
+
 /** Minimal inline param extraction (avoids importing from types.ts to prevent circular deps). */
 type ExtractParamsFromPattern<T extends string> =
   T extends `${string}:${infer Param}/${infer Rest}`
-    ? Param extends `${infer Name}?`
-      ? { [K in Name]?: string } & ExtractParamsFromPattern<`/${Rest}`>
-      : Param extends `${infer Name}(${string})`
-        ? { [K in Name]: string } & ExtractParamsFromPattern<`/${Rest}`>
-        : { [K in Param]: string } & ExtractParamsFromPattern<`/${Rest}`>
+    ? Param extends `${infer Name}(${infer C})?`
+      ? {
+          [K in Name]?: ParseConstraint<C>;
+        } & ExtractParamsFromPattern<`/${Rest}`>
+      : Param extends `${infer Name}(${infer C})`
+        ? {
+            [K in Name]: ParseConstraint<C>;
+          } & ExtractParamsFromPattern<`/${Rest}`>
+        : Param extends `${infer Name}?`
+          ? { [K in Name]?: string } & ExtractParamsFromPattern<`/${Rest}`>
+          : { [K in Param]: string } & ExtractParamsFromPattern<`/${Rest}`>
     : T extends `${string}:${infer Param}`
-      ? Param extends `${infer Name}?`
-        ? { [K in Name]?: string }
-        : Param extends `${infer Name}(${string})`
-          ? { [K in Name]: string }
-          : { [K in Param]: string }
+      ? Param extends `${infer Name}(${infer C})?`
+        ? { [K in Name]?: ParseConstraint<C> }
+        : Param extends `${infer Name}(${infer C})`
+          ? { [K in Name]: ParseConstraint<C> }
+          : Param extends `${infer Name}?`
+            ? { [K in Name]?: string }
+            : { [K in Param]: string }
       : {};
 
 // ============================================================================
@@ -154,7 +174,9 @@ type ExtractParamsFromPattern<T extends string> =
  * - `"number"` / `"number?"` - coerced via `Number()`; NaN treated as missing
  * - `"boolean"` / `"boolean?"` - `"true"` / `"1"` -> true, `"false"` / `"0"` / `""` -> false
  *
- * Missing required params are set to their zero value (empty string / 0 / false).
+ * Missing params (both required and optional) are omitted from the result
+ * (undefined). The required/optional distinction is a consumer-facing contract
+ * only — the handler must check for undefined.
  */
 export function parseSearchParams<T extends SearchSchema>(
   searchParams: URLSearchParams,
@@ -168,13 +190,7 @@ export function parseSearchParams<T extends SearchSchema>(
     const raw = searchParams.get(key);
 
     if (raw === null) {
-      if (!isOptional) {
-        // Required param missing: use zero value
-        if (baseType === "string") result[key] = "";
-        else if (baseType === "number") result[key] = 0;
-        else if (baseType === "boolean") result[key] = false;
-      }
-      // Optional params are omitted (undefined)
+      // Missing params are omitted (undefined) regardless of required/optional
       continue;
     }
 
@@ -182,11 +198,10 @@ export function parseSearchParams<T extends SearchSchema>(
       result[key] = raw;
     } else if (baseType === "number") {
       const num = Number(raw);
-      if (Number.isNaN(num)) {
-        if (!isOptional) result[key] = 0;
-      } else {
+      if (!Number.isNaN(num)) {
         result[key] = num;
       }
+      // NaN treated as missing (undefined)
     } else if (baseType === "boolean") {
       result[key] = raw === "true" || raw === "1";
     }

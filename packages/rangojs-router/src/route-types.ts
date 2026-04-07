@@ -169,6 +169,13 @@ export type IncludeItem = {
     parent: unknown; // EntryData - avoid circular import
     /** Counter snapshot from pattern extraction for consistent shortCode indices */
     counters?: Record<string, number>;
+    /** Cache profiles for DSL-time cache("profileName") resolution */
+    cacheProfiles?: Record<
+      string,
+      import("./cache/profile-registry.js").CacheProfile
+    >;
+    /** Root scope flag for dot-local reverse resolution */
+    rootScoped?: boolean;
   };
   [IncludeBrand]: void;
 };
@@ -250,3 +257,14 @@ export type LoaderUseItem = RevalidateItem | CacheItem;
  * runtime via .flat(3).
  */
 export type UseItems<T> = (T | readonly T[])[];
+
+/**
+ * Union of all items that handler.use() may return.
+ * A handler doesn't know its mount site at definition time, so the type
+ * is intentionally broad — validation happens per-mount-site at runtime.
+ */
+export type HandlerUseItem =
+  | RouteUseItem
+  | LayoutUseItem
+  | ParallelUseItem
+  | InterceptUseItem;

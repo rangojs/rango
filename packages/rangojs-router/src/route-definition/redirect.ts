@@ -2,6 +2,7 @@ import type { LocationStateEntry } from "../browser/react/location-state-shared.
 import {
   requireRequestContext,
   getRequestContext,
+  _getRequestContext,
 } from "../server/request-context.js";
 
 /**
@@ -43,11 +44,16 @@ import {
 export function redirect(url: string, status?: number): Response;
 export function redirect(
   url: string,
-  options: { status?: number; state?: LocationStateEntry[] },
+  options: {
+    status?: number;
+    state?: LocationStateEntry | LocationStateEntry[];
+  },
 ): Response;
 export function redirect(
   url: string,
-  statusOrOptions?: number | { status?: number; state?: LocationStateEntry[] },
+  statusOrOptions?:
+    | number
+    | { status?: number; state?: LocationStateEntry | LocationStateEntry[] },
 ): Response {
   const status =
     typeof statusOrOptions === "number"
@@ -62,7 +68,14 @@ export function redirect(
 
     if (process.env.NODE_ENV !== "production") {
       const reqCtx = getRequestContext();
-      if (reqCtx && !reqCtx.url.searchParams.has("_rsc_partial")) {
+      // Warn only on true full-page SSR loads. SPA partial requests and server
+      // actions both deliver state through Flight payloads, so suppress for those.
+      if (
+        reqCtx &&
+        !reqCtx.originalUrl.searchParams.has("_rsc_partial") &&
+        !reqCtx.request.headers.has("rsc-action") &&
+        !reqCtx.originalUrl.searchParams.has("_rsc_action")
+      ) {
         console.warn(
           `[Router] redirect() with state during a full-page (SSR) request to "${url}". ` +
             "Location state is only delivered during SPA navigations and will be lost on this request.",
@@ -71,10 +84,17 @@ export function redirect(
     }
   }
 
+  // Auto-prefix root-relative URLs with basename for app-local redirects.
+  const bn = _getRequestContext()?._basename;
+  let resolvedUrl = url;
+  if (bn && url.startsWith("/") && !url.startsWith(bn + "/") && url !== bn) {
+    resolvedUrl = url === "/" ? bn : bn + url;
+  }
+
   return new Response(null, {
     status,
     headers: {
-      Location: url,
+      Location: resolvedUrl,
       "X-RSC-Redirect": "soft",
     },
   });

@@ -13,7 +13,6 @@ import {
   type ClientErrorBoundaryFallbackProps,
   type ErrorInfo,
   type LoaderDefinition,
-  type LoaderFn,
   type ResolvedSegment,
 } from "./types";
 import {
@@ -21,6 +20,7 @@ import {
   LoaderBoundary,
 } from "./route-content-wrapper.js";
 import { OutletProvider } from "./outlet-provider.js";
+import { MountContextProvider } from "./browser/react/mount-context.js";
 
 /**
  * Outlet component - renders child content in layouts
@@ -87,6 +87,8 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
       content = segment.component ?? null;
     }
 
+    let result: ReactNode;
+
     // If segment has a layout, wrap appropriately
     if (segment.layout) {
       // Check if this segment has loaders that need streaming
@@ -106,25 +108,23 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
           </LoaderBoundary>
         );
 
-        return (
+        result = (
           <OutletProvider content={loaderAwareContent} segment={segment}>
             {segment.layout}
           </OutletProvider>
         );
+      } else {
+        // No loaders - wrap in OutletProvider so layout can use <Outlet />
+        result = (
+          <OutletProvider content={content} segment={segment}>
+            {segment.layout}
+          </OutletProvider>
+        );
       }
-
-      // No loaders - wrap in OutletProvider so layout can use <Outlet />
-      return (
-        <OutletProvider content={content} segment={segment}>
-          {segment.layout}
-        </OutletProvider>
-      );
-    }
-
-    // No layout but has loaders - wrap content with LoaderBoundary for useLoader context
-    // This is common for intercept routes that use useLoader without a custom layout
-    if (segment.loaderDataPromise && segment.loaderIds) {
-      return (
+    } else if (segment.loaderDataPromise && segment.loaderIds) {
+      // No layout but has loaders - wrap content with LoaderBoundary for useLoader context
+      // This is common for intercept routes that use useLoader without a custom layout
+      result = (
         <LoaderBoundary
           loaderDataPromise={segment.loaderDataPromise}
           loaderIds={segment.loaderIds}
@@ -136,9 +136,20 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
           {content}
         </LoaderBoundary>
       );
+    } else {
+      result = content;
     }
 
-    return content;
+    // Wrap with MountContextProvider for include() scoped parallel/intercept slots
+    if (segment.mountPath) {
+      return (
+        <MountContextProvider value={segment.mountPath}>
+          {result}
+        </MountContextProvider>
+      );
+    }
+
+    return result;
   }
 
   // Default: render child content
@@ -202,6 +213,8 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
     content = segment.component ?? null;
   }
 
+  let result: ReactNode;
+
   // If segment has a layout, wrap appropriately
   if (segment.layout) {
     // Check if this segment has loaders that need streaming
@@ -220,25 +233,23 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
         </LoaderBoundary>
       );
 
-      return (
+      result = (
         <OutletProvider content={loaderAwareContent} segment={segment}>
           {segment.layout}
         </OutletProvider>
       );
+    } else {
+      // No loaders - wrap in OutletProvider so layout can use <Outlet />
+      result = (
+        <OutletProvider content={content} segment={segment}>
+          {segment.layout}
+        </OutletProvider>
+      );
     }
-
-    // No loaders - wrap in OutletProvider so layout can use <Outlet />
-    return (
-      <OutletProvider content={content} segment={segment}>
-        {segment.layout}
-      </OutletProvider>
-    );
-  }
-
-  // No layout but has loaders - wrap content with LoaderBoundary for useLoader context
-  // This is common for intercept routes that use useLoader without a custom layout
-  if (segment.loaderDataPromise && segment.loaderIds) {
-    return (
+  } else if (segment.loaderDataPromise && segment.loaderIds) {
+    // No layout but has loaders - wrap content with LoaderBoundary for useLoader context
+    // This is common for intercept routes that use useLoader without a custom layout
+    result = (
       <LoaderBoundary
         loaderDataPromise={segment.loaderDataPromise}
         loaderIds={segment.loaderIds}
@@ -250,9 +261,20 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
         {content}
       </LoaderBoundary>
     );
+  } else {
+    result = content;
   }
 
-  return content;
+  // Wrap with MountContextProvider for include() scoped parallel/intercept slots
+  if (segment.mountPath) {
+    return (
+      <MountContextProvider value={segment.mountPath}>
+        {result}
+      </MountContextProvider>
+    );
+  }
+
+  return result;
 }
 
 // OutletProvider is defined in outlet-provider.tsx to break a circular
@@ -289,103 +311,6 @@ export {
   type UseFetchLoaderResult,
   type UseLoaderOptions,
 } from "./use-loader.js";
-
-/**
- * Hook to access all loader data in the current context
- *
- * Returns a record of all loader data available in the current outlet context
- * and all parent contexts. Useful for debugging or when you need access to
- * multiple loaders.
- *
- * @returns Record of loader name to data, or empty object if no loaders
- *
- * @example
- * ```tsx
- * "use client";
- * import { useLoaderData } from "rsc-router/client";
- *
- * export function DebugPanel() {
- *   const loaderData = useLoaderData();
- *   return <pre>{JSON.stringify(loaderData, null, 2)}</pre>;
- * }
- * ```
- */
-export function useLoaderData(): Record<string, any> {
-  const context = useContext(OutletContext);
-
-  // Collect all loader data from the context chain
-  // Child loaders override parent loaders with the same name
-  const result: Record<string, any> = {};
-  const stack: OutletContextValue[] = [];
-
-  // Build stack from current to root
-  let current: OutletContextValue | null | undefined = context;
-  while (current) {
-    stack.push(current);
-    current = current.parent;
-  }
-
-  // Apply from root to current (so children override parents)
-  for (let i = stack.length - 1; i >= 0; i--) {
-    const ctx = stack[i];
-    if (ctx.loaderData) {
-      Object.assign(result, ctx.loaderData);
-    }
-  }
-
-  return result;
-}
-
-/**
- * Client-safe createLoader factory
- *
- * Creates a loader definition that can be used with useLoader().
- * This is the client-side version that only stores the $$id - the function
- * is ignored since loaders only execute on the server.
- *
- * The $$id is injected by the exposeLoaderId Vite plugin. In most cases,
- * you should import the loader directly from the server file rather than
- * creating a reference manually.
- *
- * @param fn - Loader function (ignored on client, kept for API compatibility)
- * @param _fetchable - Optional fetchable flag (ignored on client)
- * @param __injectedId - $$id injected by Vite plugin
- *
- * @example
- * ```tsx
- * "use client";
- * import { useLoader } from "rsc-router/client";
- * import { CartLoader } from "../loaders/cart"; // Import from server file
- *
- * export function CartIcon() {
- *   const cart = useLoader(CartLoader);
- *   return <span>Cart ({cart?.items.length ?? 0})</span>;
- * }
- * ```
- */
-// Overload 1: With function only (not fetchable)
-export function createLoader<T>(
-  fn: LoaderFn<T, Record<string, string | undefined>, any>,
-): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
-
-// Overload 2: With function and fetchable flag
-export function createLoader<T>(
-  fn: LoaderFn<T, Record<string, string | undefined>, any>,
-  fetchable: true,
-): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
-
-// Implementation - function is ignored at runtime on client
-// The $$id is injected by Vite plugin as hidden third parameter
-export function createLoader(
-  _fn: LoaderFn<any, Record<string, string | undefined>, any>,
-  _fetchable?: true,
-  __injectedId?: string,
-): LoaderDefinition<any, Record<string, string | undefined>> {
-  return {
-    __brand: "loader",
-    $$id: __injectedId || "",
-  };
-}
 
 /**
  * Props for the ErrorBoundary component
@@ -557,16 +482,15 @@ export {
   type ScrollRestorationProps,
 } from "./browser/react/ScrollRestoration.js";
 
-// Handle API - for accumulating data across route segments
-export { createHandle, isHandle, type Handle } from "./handle.js";
-
-// Handle data hook
+// Handle data hook (client-side only — createHandle/isHandle are server APIs from the root export)
+export { type Handle } from "./handle.js";
 export { useHandle } from "./browser/react/use-handle.js";
 
 // Built-in handles
 export { Meta } from "./handles/meta.js";
 export { MetaTags } from "./handles/MetaTags.js";
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
+export { Breadcrumbs, type BreadcrumbItem } from "./handles/breadcrumbs.js";
 
 // Location state - type-safe navigation state
 export {

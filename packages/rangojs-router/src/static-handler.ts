@@ -32,10 +32,20 @@
  */
 import type { ReactNode } from "react";
 import type { Handler } from "./types.js";
-import type { PrerenderOptions, StaticBuildContext } from "./prerender.js";
+import type { StaticBuildContext } from "./prerender.js";
+import type { UseItems, HandlerUseItem } from "./route-types.js";
 import { isCachedFunction } from "./cache/taint.js";
 
 // -- Types ------------------------------------------------------------------
+
+export interface StaticHandlerOptions {
+  /**
+   * Keep handler in server bundle for live fallback (default: false).
+   * false: handler replaced with stub, source-only APIs excluded from bundle.
+   * true: handler stays in bundle, renders live at request time.
+   */
+  passthrough?: boolean;
+}
 
 export interface StaticHandlerDefinition<
   TParams extends Record<string, any> = any,
@@ -46,14 +56,16 @@ export interface StaticHandlerDefinition<
   /** In dev mode, the actual handler function that layout/path/parallel can call. */
   handler: Handler<TParams>;
   /** Static handler options (passthrough support). */
-  options?: PrerenderOptions;
+  options?: StaticHandlerOptions;
+  /** Composable default DSL items merged when the handler is mounted. */
+  use?: () => UseItems<HandlerUseItem>;
 }
 
 // -- Function ---------------------------------------------------------------
 
 export function Static<TParams extends Record<string, any> = {}>(
   handler: (ctx: StaticBuildContext) => ReactNode | Promise<ReactNode>,
-  options?: PrerenderOptions,
+  options?: StaticHandlerOptions,
   __injectedId?: string,
 ): StaticHandlerDefinition<TParams>;
 
@@ -61,7 +73,7 @@ export function Static<TParams extends Record<string, any> = {}>(
 
 export function Static<TParams extends Record<string, any>>(
   handler: Function,
-  optionsOrId?: PrerenderOptions | string,
+  optionsOrId?: StaticHandlerOptions | string,
   maybeId?: string,
 ): StaticHandlerDefinition<TParams> {
   if (isCachedFunction(handler)) {
@@ -72,14 +84,21 @@ export function Static<TParams extends Record<string, any>>(
     );
   }
 
-  let options: PrerenderOptions | undefined;
+  let options: StaticHandlerOptions | undefined;
   let id: string;
 
   if (typeof optionsOrId === "string") {
     id = optionsOrId;
   } else {
-    options = optionsOrId as PrerenderOptions | undefined;
+    options = optionsOrId as StaticHandlerOptions | undefined;
     id = maybeId ?? "";
+  }
+
+  if (!id) {
+    throw new Error(
+      "[rsc-router] Static: missing $$id. " +
+        "Ensure the exposeInternalIds Vite plugin is configured.",
+    );
   }
 
   return {

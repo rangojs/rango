@@ -9,35 +9,9 @@ import {
   useRef,
 } from "react";
 import { NavigationStoreContext } from "./context.js";
+import { shallowEqual } from "./shallow-equal.js";
 import type { PublicNavigationState } from "../types.js";
 import type { DerivedNavigationState } from "../event-controller.js";
-
-/**
- * Shallow equality check for selector results
- */
-function shallowEqual<T>(a: T, b: T): boolean {
-  if (Object.is(a, b)) return true;
-  if (
-    typeof a !== "object" ||
-    a === null ||
-    typeof b !== "object" ||
-    b === null
-  ) {
-    return false;
-  }
-  const keysA = Object.keys(a);
-  const keysB = Object.keys(b);
-  if (keysA.length !== keysB.length) return false;
-  for (const key of keysA) {
-    if (
-      !Object.hasOwn(b, key) ||
-      !Object.is((a as any)[key], (b as any)[key])
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
 
 /**
  * Convert derived state to public version (strips inflightActions)
@@ -69,9 +43,7 @@ export function useNavigation<T>(
   const ctx = useContext(NavigationStoreContext);
 
   if (!ctx) {
-    throw new Error(
-      "useNavigation must be used within NavigationStoreContext.Provider",
-    );
+    throw new Error("useNavigation must be used within NavigationProvider");
   }
 
   // Base state for useOptimistic
@@ -84,8 +56,11 @@ export function useNavigation<T>(
   // useOptimistic allows immediate updates during transitions/actions
   const [value, setOptimisticValue] = useOptimistic(baseValue);
 
-  // Store selector in a ref to avoid re-subscribing when an inline
-  // function is passed (its identity changes every render).
+  // Store selector in a ref so the subscription callback always uses the
+  // latest selector without re-subscribing on every render (inline functions
+  // have a new identity each render). This is event-driven by design: the
+  // value updates when the store emits, not when the selector changes.
+  // Between events there is nothing new to select from.
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 

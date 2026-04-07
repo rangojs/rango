@@ -30,16 +30,11 @@ export const testNoJs = test.extend({
   javaScriptEnabled: ({}, use) => use(false),
 });
 
-/**
- * Wait for React hydration to complete and verify no hydration errors
- */
-export async function waitForHydration(page: Page, locator: string = "body") {
+export async function waitForHydration(page: Page) {
   const hydrationErrors: string[] = [];
 
-  // Listen for console messages during hydration
   const consoleHandler = (msg: import("@playwright/test").ConsoleMessage) => {
     const text = msg.text();
-    // Catch React hydration mismatch errors from console
     if (
       text.includes("Hydration failed") ||
       text.includes("hydration mismatch") ||
@@ -52,10 +47,8 @@ export async function waitForHydration(page: Page, locator: string = "body") {
     }
   };
 
-  // Listen for page errors (React throws hydration errors here)
   const pageErrorHandler = (error: Error) => {
     const text = error.message;
-    // Catch React hydration mismatch errors from pageerror
     if (
       text.includes("Hydration failed") ||
       text.includes("hydration mismatch") ||
@@ -72,25 +65,15 @@ export async function waitForHydration(page: Page, locator: string = "body") {
   page.on("pageerror", pageErrorHandler);
 
   try {
-    // Wait for React fiber to be attached (hydration complete)
-    await expect
-      .poll(
-        () =>
-          page
-            .locator(locator)
-            .evaluate(
-              (el) =>
-                el &&
-                Object.keys(el).some((key) => key.startsWith("__reactFiber")),
-            ),
-        { timeout: 20000 },
-      )
-      .toBeTruthy();
+    await page.waitForLoadState("domcontentloaded");
 
-    // Small delay to catch any async hydration errors
+    await page.waitForFunction(
+      () => document.documentElement.hasAttribute("data-hydrated"),
+      { timeout: 20000 },
+    );
+
     await page.waitForTimeout(100);
 
-    // Assert no hydration errors occurred
     if (hydrationErrors.length > 0) {
       throw new Error(
         `Hydration errors detected:\n${hydrationErrors.join("\n")}`,

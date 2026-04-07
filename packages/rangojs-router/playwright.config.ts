@@ -6,7 +6,12 @@ const browserConfig = {
   deviceScaleFactor: undefined,
 };
 
+const webkitConfig = {
+  ...devices["Desktop Safari"],
+};
+
 const DEV_SERVER_PORT = 5188;
+const PREVIEW_SERVER_PORT = 5189;
 
 const isUIMode = process.argv.includes("--ui");
 
@@ -15,20 +20,31 @@ export default defineConfig({
   fullyParallel: true,
   globalTimeout: 600000, // 10 minutes max
   timeout: process.env.CI ? 60000 : 30000, // 60s on CI, 30s locally
-  webServer: {
-    // Build first (for production tests), then clean optimizer cache and start
-    // dev server. Building before the dev server prevents `vite build` from
-    // overwriting the running server's optimizer cache (node_modules/.vite/deps).
-    command: `pnpm build && rm -rf node_modules/.vite && pnpm dev --port ${DEV_SERVER_PORT}`,
-    cwd: "./e2e/test-app",
-    port: DEV_SERVER_PORT,
-    reuseExistingServer: !process.env.CI,
-  },
+  webServer: [
+    {
+      // Build first (for production tests), then clean optimizer cache and start
+      // dev server. Building before the dev server prevents `vite build` from
+      // overwriting the running server's optimizer cache (node_modules/.vite/deps).
+      command: `pnpm build && rm -rf node_modules/.vite-e2e-test-app && pnpm dev --port ${DEV_SERVER_PORT}`,
+      cwd: "./e2e/test-app",
+      port: DEV_SERVER_PORT,
+      reuseExistingServer: !process.env.CI,
+    },
+    {
+      // Shared preview server for all production tests using test-app.
+      // Started after the build (included in the dev server command above).
+      command: `pnpm preview --port ${PREVIEW_SERVER_PORT}`,
+      cwd: "./e2e/test-app",
+      port: PREVIEW_SERVER_PORT,
+      reuseExistingServer: !process.env.CI,
+    },
+  ],
   use: {
     screenshot: "only-on-failure",
     trace: "on-all-retries",
   },
   expect: {
+    timeout: 10000,
     toPass: { timeout: 10000 },
   },
   // In UI mode, flatten projects to avoid the dependency chain that breaks
@@ -51,6 +67,10 @@ export default defineConfig({
             "**/loader-hmr.test.ts",
             "**/route-types-hmr.test.ts",
             "**/client-component-hmr.test.ts",
+            "**/intercept-hmr*.test.ts",
+            "**/prerender-hmr.test.ts",
+            "**/basename-hmr.test.ts",
+            "**/refresh-cmd.test.ts",
             "**/*.setup.ts",
           ],
           use: {
@@ -62,20 +82,61 @@ export default defineConfig({
           name: "production",
           grep: /\(production/,
           testIgnore: ["**/smoke.test.ts"],
+          use: {
+            ...browserConfig,
+            baseURL: `http://localhost:${PREVIEW_SERVER_PORT}`,
+          },
+          fullyParallel: false,
+        },
+        {
+          name: "hmr-prerender",
+          testMatch: "**/prerender-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          dependencies: ["dev"],
         },
         {
           name: "hmr-client",
           testMatch: "**/client-component-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
+          dependencies: ["dev"],
         },
         {
-          name: "hmr",
-          testMatch: ["**/loader-hmr.test.ts", "**/route-types-hmr.test.ts"],
+          name: "hmr-loader",
+          testMatch: ["**/loader-hmr.test.ts", "**/refresh-cmd.test.ts"],
           use: browserConfig,
           fullyParallel: false,
+          dependencies: ["dev"],
+        },
+        {
+          name: "hmr-routes",
+          testMatch: "**/route-types-hmr.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          dependencies: ["dev"],
+        },
+        {
+          name: "hmr-intercept",
+          testMatch: "**/intercept-hmr*.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          dependencies: ["dev"],
+        },
+        {
+          name: "hmr-basename",
+          testMatch: "**/basename-hmr.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          // Basename HMR modifies router.tsx to add basename: "/app",
+          // which triggers route rediscovery and rewrites the gen file.
+          // Must run after dev tests to avoid contaminating parallel tests.
+          dependencies: ["dev"],
+        },
+        {
+          name: "webkit-smoke",
+          testMatch: "**/smoke.test.ts",
+          use: webkitConfig,
         },
       ]
     : [
@@ -107,6 +168,10 @@ export default defineConfig({
             "**/loader-hmr.test.ts",
             "**/route-types-hmr.test.ts",
             "**/client-component-hmr.test.ts",
+            "**/intercept-hmr*.test.ts",
+            "**/prerender-hmr.test.ts",
+            "**/basename-hmr.test.ts",
+            "**/refresh-cmd.test.ts",
             "**/*.setup.ts",
           ],
           use: {
@@ -119,9 +184,13 @@ export default defineConfig({
           name: "production",
           grep: /\(production/,
           testIgnore: ["**/smoke.test.ts"],
-          use: browserConfig,
-          // Run production tests serially to avoid port conflicts.
-          // Each test file spins up its own preview server.
+          use: {
+            ...browserConfig,
+            baseURL: `http://localhost:${PREVIEW_SERVER_PORT}`,
+          },
+          // Shared preview server on the built test-app has shown intermittent
+          // connection-refused failures under long high-parallel runs. Keep the
+          // production project serial for stability.
           fullyParallel: false,
           dependencies: ["build"],
         },
@@ -130,24 +199,69 @@ export default defineConfig({
           testMatch: "**/client-component-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
-          dependencies: process.env.CI ? [] : ["dev", "production"],
+          // HMR tests modify route files in the shared test-app directory.
+          // The dev server's Vite watcher picks up these changes, invalidating
+          // modules and busting the in-memory cache — causing cache tests to fail.
+          // Must run after dev tests complete.
+          dependencies: ["dev"],
         },
         {
-          name: "hmr",
-          // Only run HMR test files (loader-hmr and route-types-hmr modify server modules
-          // that can corrupt RSC module state, so they run after hmr-client)
-          testMatch: ["**/loader-hmr.test.ts", "**/route-types-hmr.test.ts"],
+          name: "hmr-loader",
+          testMatch: ["**/loader-hmr.test.ts", "**/refresh-cmd.test.ts"],
           use: browserConfig,
-          // HMR tests modify files, run serially to avoid conflicts
           fullyParallel: false,
-          dependencies: process.env.CI
-            ? []
-            : ["dev", "production", "hmr-client"],
+          dependencies: ["dev", "hmr-client"],
+        },
+        {
+          name: "hmr-routes",
+          // Route-types HMR modifies route definition files — must not
+          // overlap with intercept-hmr which expects routes to be intact.
+          testMatch: "**/route-types-hmr.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          dependencies: ["dev", "hmr-loader"],
+        },
+        {
+          name: "hmr-intercept",
+          // Intercept HMR modifies the intercept config file. Runs after
+          // route-types HMR to avoid file-modification conflicts.
+          testMatch: "**/intercept-hmr*.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          dependencies: ["dev", "hmr-routes"],
+        },
+        {
+          name: "hmr-basename",
+          // Basename HMR modifies router.tsx to add basename: "/app",
+          // which triggers route rediscovery and rewrites the gen file
+          // with /app-prefixed routes. Must run after dev tests to avoid
+          // contaminating parallel tests with the wrong route map.
+          testMatch: "**/basename-hmr.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          dependencies: ["dev"],
+        },
+        {
+          name: "hmr-prerender",
+          // Local-only: tests skip on CI via test.skip(!!process.env.CI).
+          testMatch: "**/prerender-hmr.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          dependencies: ["dev"],
+        },
+        {
+          name: "webkit-smoke",
+          testMatch: "**/smoke.test.ts",
+          use: webkitConfig,
+          // Run after the build completes to avoid resource contention.
+          // Does not depend on dev/production to avoid being blocked by
+          // flaky dev tests.
+          dependencies: ["build"],
         },
       ],
-  workers: process.env.CI ? 3 : 6,
+  workers: 3,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
+  retries: 2,
   reporter: [
     ["list"],
     ...(process.env.CI ? [["github"], ["html", { open: "never" }]] : []),

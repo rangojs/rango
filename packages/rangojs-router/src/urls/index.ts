@@ -11,6 +11,7 @@ export {
 // Pattern types
 export type {
   UnnamedRoute,
+  LocalOnlyInclude,
   PathOptions,
   PathDefinition,
   UrlPatterns,

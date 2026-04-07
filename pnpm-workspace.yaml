@@ -2,12 +2,13 @@ packages:
   - "packages/*"
   - "packages/rangojs-router/e2e/test-app"
   - "packages/rangojs-router/e2e/e2e-basic"
+  - "packages/rangojs-router/e2e/e2e-timeout"
   - "examples/*"
   - "tests/*"
 
 catalog:
   "@vitejs/plugin-react": ^5.1.4
-  "@vitejs/plugin-rsc": ^0.5.14
+  "@vitejs/plugin-rsc": ^0.5.19
   react: ^19.2.4
   react-dom: ^19.2.4
   "@types/react": ^19.2.7

@@ -10,21 +10,6 @@
  * - CacheScope / createCacheScope - Request-scoped cache provider
  */
 
-// Generic cache store types (reserved for future extensibility)
-// These types support caching arbitrary values like Response, Stream, etc.
-// Currently unused - segment caching uses SegmentCacheStore directly.
-export type {
-  CacheStore,
-  CacheEntry,
-  CacheValue,
-  CacheValueType,
-  CachePutOptions,
-  CacheMetadata,
-} from "./types.js";
-
-// Generic memory cache (reserved for future extensibility)
-export { MemoryCacheStore } from "./memory-store.js";
-
 // Segment cache store types and implementations
 export type {
   SegmentCacheStore,
@@ -50,6 +35,7 @@ export {
   type CFTagInvalidationStore,
   type CFKVTagInvalidationStoreOptions,
   type KVNamespaceLike,
+  type KVNamespace,
   CACHE_STALE_AT_HEADER,
   CACHE_TAGS_HEADER,
   CACHE_TAGGED_AT_HEADER,

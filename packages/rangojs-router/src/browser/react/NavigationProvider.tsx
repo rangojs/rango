@@ -3,8 +3,10 @@
 import React, {
   useState,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useMemo,
+  useRef,
   use,
   type ReactNode,
 } from "react";
@@ -22,8 +24,10 @@ import type { EventController } from "../event-controller.js";
 import { RootErrorBoundary } from "../../root-error-boundary.js";
 import type { HandleData } from "../types.js";
 import { ThemeProvider } from "../../theme/ThemeProvider.js";
+import { NonceContext } from "./nonce-context.js";
 import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
-import { cancelAllPrefetches } from "../prefetch-queue.js";
+import { cancelAllPrefetches } from "../prefetch/queue.js";
+import { handleNavigationEnd } from "../scroll-restoration.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -130,9 +134,14 @@ export interface NavigationProviderProps {
 
   /**
    * App version from server payload (stable, immutable).
-   * Forwarded to prefetch requests for version mismatch detection.
+   * Forwarded to context for cache key building.
    */
   version?: string;
+
+  /**
+   * URL prefix for all routes (from createRouter({ basename })).
+   */
+  basename?: string;
 }
 
 /**
@@ -165,6 +174,7 @@ export function NavigationProvider({
   initialTheme,
   warmupEnabled,
   version,
+  basename,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
   const [payload, setPayload] = useState(initialPayload);
@@ -194,6 +204,7 @@ export function NavigationProvider({
       navigate,
       refresh,
       version,
+      basename,
     }),
     [],
   );
@@ -285,24 +296,50 @@ export function NavigationProvider({
     };
   }, [warmupEnabled]);
 
-  // Cancel speculative prefetches when navigation starts.
-  // Viewport/render prefetches should not compete with navigation fetches.
+  // Cancel non-matching prefetches when navigation starts.
+  // Frees connections so the navigation fetch isn't competing with
+  // speculative prefetches. The prefetch matching the navigation target
+  // is kept alive so it can be reused via consumeInflightPrefetch.
   useEffect(() => {
     let wasIdle = true;
     const unsub = eventController.subscribe(() => {
       const state = eventController.getState();
       const isIdle = state.state === "idle" && !state.isStreaming;
       if (wasIdle && !isIdle) {
-        cancelAllPrefetches();
+        cancelAllPrefetches(state.pendingUrl);
       }
       wasIdle = isIdle;
     });
     return unsub;
   }, [eventController]);
 
+  // Pending scroll action to apply after React commits
+  const pendingScrollRef = useRef<NavigationUpdate["scroll"]>(undefined);
+
+  // Apply scroll after React commits the new content to the DOM
+  useLayoutEffect(() => {
+    const scrollAction = pendingScrollRef.current;
+    if (!scrollAction) return;
+    pendingScrollRef.current = undefined;
+
+    if (scrollAction.enabled === false) return;
+
+    handleNavigationEnd({
+      restore: scrollAction.restore,
+      scroll: scrollAction.enabled,
+      isStreaming: scrollAction.isStreaming,
+    });
+  });
+
   // Subscribe to UI updates (for re-rendering the tree)
   useEffect(() => {
     const unsubscribe = store.onUpdate((update) => {
+      // Capture scroll intent — it will be applied in useLayoutEffect
+      // after React commits this state update to the DOM.
+      // Always assign (even undefined) to clear stale scroll from prior navigations,
+      // so server actions or error updates don't accidentally replay old scroll.
+      pendingScrollRef.current = update.scroll;
+
       setPayload({
         root: update.root,
         metadata: update.metadata,
@@ -369,6 +406,13 @@ export function NavigationProvider({
       </ThemeProvider>
     );
   }
+
+  // Match SSR tree shape: NonceContext.Provider is always present so
+  // hydration sees the same component tree. Value is undefined on the
+  // client — CSP nonces are a server-side HTML concern.
+  content = (
+    <NonceContext.Provider value={undefined}>{content}</NonceContext.Provider>
+  );
 
   return (
     <NavigationStoreContext.Provider value={contextValue}>

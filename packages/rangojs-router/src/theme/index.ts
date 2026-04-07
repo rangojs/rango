@@ -1,9 +1,10 @@
 /**
  * Theme module exports for @rangojs/router/theme
  *
- * This module provides theme management for rsc-router:
+ * This module provides the public theme API:
  * - useTheme: Hook for accessing theme state in client components
  * - ThemeProvider: Component for manual theme provider setup (typically not needed)
+ * - ThemeScript: FOUC-prevention script component for document/head usage
  * - Types for theme configuration
  *
  * @example
@@ -43,20 +44,5 @@ export type {
   ThemeContextValue,
 } from "./types.js";
 
-// Constants (for advanced use cases)
-export {
-  THEME_DEFAULTS,
-  THEME_COOKIE,
-  resolveThemeConfig,
-} from "./constants.js";
-
-// Script generation (for advanced SSR use cases)
-export { generateThemeScript, getNonceAttribute } from "./theme-script.js";
-
-// Context (for advanced use cases)
-export {
-  ThemeContext,
-  useThemeContext,
-  initThemeConfigSync,
-  getSSRThemeConfig,
-} from "./theme-context.js";
+// Constants
+export { THEME_DEFAULTS, THEME_COOKIE } from "./constants.js";

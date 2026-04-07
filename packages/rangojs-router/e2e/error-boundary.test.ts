@@ -3,62 +3,66 @@ import { useFixture } from "./fixture";
 import { waitForHydration, testId, goBack } from "./helper";
 
 /**
- * Error boundary tests - verifying client and server errors are caught
+ * Shared error boundary tests run against both dev and production.
+ *
+ * Contract under test:
+ * - Sync server errors: caught per-segment during RSC render, layout preserved
+ * - Streaming errors: caught client-side by RootErrorBoundary, layout replaced
+ * - Client errors: caught client-side by RootErrorBoundary, layout replaced
+ * - Navigation away from error boundary recovers the app (layout restored)
+ * - Back navigation from error boundary recovers the app
  */
-test.describe("error-boundary", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
+function errorBoundaryTests(f: ReturnType<typeof useFixture>, isDev: boolean) {
   test.describe("client-component-errors", () => {
     test("should show error boundary when client component throws on interaction", async ({
       page,
     }) => {
-      // Navigate to the client error page
       await page.goto(f.url("/errors/client-error"));
       await waitForHydration(page);
 
-      // Verify the page rendered correctly
       await expect(testId(page, "client-error-title")).toBeVisible();
       await expect(testId(page, "client-error-thrower")).toBeVisible();
 
-      // Click the button to trigger the error
       await testId(page, "client-error-thrower-trigger").click();
 
-      // The error boundary should catch the error and show fallback UI
-      // RootErrorBoundary shows "Internal Server Error" and the error message
+      // RootErrorBoundary shows "Internal Server Error" fallback
       await expect(page.getByText("Internal Server Error")).toBeVisible({
         timeout: 5000,
       });
 
-      // Verify the error message is displayed
-      await expect(
-        page.getByText("Client-side error", { exact: false }).first(),
-      ).toBeVisible();
+      // Detailed error message is only shown in dev mode
+      if (isDev) {
+        await expect(
+          page.getByText("Client-side error", { exact: false }).first(),
+        ).toBeVisible();
+      }
     });
 
-    test("should preserve app shell during client error", async ({ page }) => {
+    test("client error replaces segment tree with error fallback", async ({
+      page,
+    }) => {
       await page.goto(f.url("/errors/client-error"));
       await waitForHydration(page);
 
-      // Verify the app shell elements are present
+      // Verify layout elements exist before the error
       await expect(testId(page, "app-root")).toBeVisible();
       await expect(testId(page, "nav")).toBeVisible();
+      await expect(testId(page, "client-error-title")).toBeVisible();
 
       // Trigger the error
       await testId(page, "client-error-thrower-trigger").click();
 
-      // Wait for error boundary
+      // RootErrorBoundary replaces the segment tree
       await expect(page.getByText("Internal Server Error")).toBeVisible({
         timeout: 5000,
       });
 
-      // The RootErrorBoundary wraps content inside NavigationProvider,
-      // so it replaces the content but NOT the whole document.
-      // However, the app-root and nav are INSIDE the RSC payload (part of the layout),
-      // so they get replaced when the error boundary catches the error.
-      // This is expected behavior - the error boundary fallback replaces the errored content.
+      // The route content is gone (replaced by error fallback)
+      await expect(testId(page, "client-error-title")).not.toBeVisible();
+
+      // Error fallback provides recovery links
+      await expect(page.getByText("Try Again")).toBeVisible();
+      await expect(page.getByText("Go to homepage")).toBeVisible();
     });
   });
 
@@ -66,40 +70,35 @@ test.describe("error-boundary", () => {
     test("should show error boundary for server component error", async ({
       page,
     }) => {
-      // Direct navigation to server error route
       await page.goto(f.url("/errors/server-error"));
 
-      // The error boundary should catch the server error and show fallback
       await expect(page.getByText("Internal Server Error")).toBeVisible({
         timeout: 5000,
       });
 
-      // Verify the error message mentions it's a server error
-      await expect(
-        page.getByText("Server error", { exact: false }).first(),
-      ).toBeVisible();
+      if (isDev) {
+        await expect(
+          page.getByText("Server error", { exact: false }).first(),
+        ).toBeVisible();
+      }
     });
 
-    test("should show error boundary on SPA navigation to server error", async ({
+    test("SPA navigation to server error preserves layout", async ({
       page,
     }) => {
-      // Start at the errors index page
       await page.goto(f.url("/errors"));
       await waitForHydration(page);
 
-      // Verify we're on the errors index
       await expect(testId(page, "errors-title")).toBeVisible();
 
-      // Navigate to the server error route via SPA
       await testId(page, "server-error-link").click();
 
-      // The error boundary should catch the error
       await expect(page.getByText("Internal Server Error")).toBeVisible({
         timeout: 5000,
       });
 
-      // App shell should still be visible
-      await expect(testId(page, "app-root")).toBeVisible();
+      // Server errors are scoped to the errored segment — layout stays
+      await expect(testId(page, "nav")).toBeVisible();
     });
   });
 
@@ -107,7 +106,6 @@ test.describe("error-boundary", () => {
     test("should show loading then error boundary for streaming error", async ({
       page,
     }) => {
-      // Navigate to streaming error page
       await page.goto(f.url("/errors/streaming-error"));
 
       // Should briefly show loading state
@@ -119,28 +117,26 @@ test.describe("error-boundary", () => {
         timeout: 2000,
       });
 
-      // Then the error boundary should appear after the async error
+      // Then the error boundary should appear
       await expect(page.getByText("Internal Server Error")).toBeVisible({
         timeout: 5000,
       });
 
-      // Verify the error message mentions streaming
-      await expect(
-        page.getByText("Streaming error", { exact: false }).first(),
-      ).toBeVisible();
+      if (isDev) {
+        await expect(
+          page.getByText("Streaming error", { exact: false }).first(),
+        ).toBeVisible();
+      }
     });
 
-    test("should handle SPA navigation to streaming error route", async ({
+    test("SPA navigation to streaming error replaces layout", async ({
       page,
     }) => {
-      // Start at errors index
       await page.goto(f.url("/errors"));
       await waitForHydration(page);
 
-      // Navigate to streaming error route
       await testId(page, "streaming-error-link").click();
 
-      // Should show loading
       await expect(
         testId(page, "main-content").locator(
           '[data-testid="streaming-error-loading"]',
@@ -149,13 +145,14 @@ test.describe("error-boundary", () => {
         timeout: 2000,
       });
 
-      // Then error boundary
       await expect(page.getByText("Internal Server Error")).toBeVisible({
         timeout: 5000,
       });
 
-      // The RootErrorBoundary replaces the entire content, including the app shell
-      // This is expected since the error boundary catches the error at the NavigationProvider level
+      // Streaming errors throw mid-stream after the client starts processing
+      // the RSC payload, so RootErrorBoundary catches them client-side and
+      // replaces the entire tree (same as client errors, unlike sync server errors).
+      await expect(testId(page, "nav")).not.toBeVisible();
     });
   });
 
@@ -163,43 +160,92 @@ test.describe("error-boundary", () => {
     test("should be able to navigate away from error boundary", async ({
       page,
     }) => {
-      // Navigate to server error page (will show error boundary)
       await page.goto(f.url("/errors/server-error"));
 
-      // Wait for error boundary
       await expect(page.getByText("Internal Server Error")).toBeVisible({
         timeout: 5000,
       });
 
-      // Navigate to home using the nav
-      await testId(page, "nav-home").click();
+      // Error fallback has a homepage link
+      await page.getByText("Go to homepage").click();
 
-      // Should successfully navigate to home
       await expect(testId(page, "index-page")).toBeVisible({
         timeout: 5000,
       });
     });
 
     test("should work with back navigation after error", async ({ page }) => {
-      // Start at errors index page
       await page.goto(f.url("/errors"));
       await waitForHydration(page);
 
-      // Navigate to server error
       await testId(page, "server-error-link").click();
 
-      // Wait for error boundary
       await expect(page.getByText("Internal Server Error")).toBeVisible({
         timeout: 5000,
       });
 
-      // Go back
       await goBack(page);
 
-      // Should be back at errors index
       await expect(testId(page, "errors-title")).toBeVisible({
         timeout: 5000,
       });
     });
+
+    test("server error preserves layout, client error replaces it", async ({
+      page,
+    }) => {
+      // Server error: layout (nav) is preserved because the error is
+      // caught per-segment during RSC render, not by the client-side
+      // RootErrorBoundary which would replace the whole tree.
+      await page.goto(f.url("/errors/server-error"));
+      await expect(page.getByText("Internal Server Error")).toBeVisible({
+        timeout: 5000,
+      });
+      // Nav is still visible — server errors are scoped to the errored segment
+      await expect(testId(page, "nav")).toBeVisible();
+
+      // Client error: RootErrorBoundary catches and replaces the entire tree
+      await page.goto(f.url("/errors/client-error"));
+      await waitForHydration(page);
+      await testId(page, "client-error-thrower-trigger").click();
+      await expect(page.getByText("Internal Server Error")).toBeVisible({
+        timeout: 5000,
+      });
+      // Nav is gone — client errors bubble to RootErrorBoundary
+      await expect(testId(page, "nav")).not.toBeVisible();
+
+      // Recovery: navigate home and verify full app shell restored
+      await page.getByText("Go to homepage").click();
+      await waitForHydration(page);
+      await expect(testId(page, "app-root")).toBeVisible();
+      await expect(testId(page, "nav")).toBeVisible();
+      await expect(testId(page, "index-page")).toBeVisible();
+    });
   });
+}
+
+/**
+ * Error boundary tests - dev mode
+ */
+test.describe("error-boundary", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  errorBoundaryTests(f, true);
+});
+
+/**
+ * Error boundary tests - production mode
+ */
+test.describe("error-boundary (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  errorBoundaryTests(f, false);
 });

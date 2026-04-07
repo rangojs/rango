@@ -37,7 +37,10 @@ import type {
   UseItems,
 } from "../route-types.js";
 import type { SearchSchema } from "../search-params.js";
-import type { PrerenderHandlerDefinition } from "../prerender.js";
+import type {
+  PrerenderHandlerDefinition,
+  PassthroughHandlerDefinition,
+} from "../prerender.js";
 import type { StaticHandlerDefinition } from "../static-handler.js";
 import type { InterceptWhenFn } from "../server/context";
 import type {
@@ -47,6 +50,7 @@ import type {
 } from "./response-types.js";
 import type {
   UnnamedRoute,
+  LocalOnlyInclude,
   PathOptions,
   UrlPatterns,
   IncludeOptions,
@@ -69,6 +73,7 @@ export type PathFn<TEnv> = <
         ctx: HandlerContext<TParams, TEnv, TSearch>,
       ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>)
     | PrerenderHandlerDefinition<TParams>
+    | PassthroughHandlerDefinition<TParams, TEnv>
     | StaticHandlerDefinition<TParams>,
   optionsOrUse?: PathOptions<TName, TSearch> | (() => UseItems<RouteUseItem>),
   use?: () => UseItems<RouteUseItem>,
@@ -149,7 +154,7 @@ export type TextResponsePathFn<TEnv> = <
 export type IncludeFn<TEnv> = <
   TRoutes extends Record<string, any>,
   const TUrlPrefix extends string,
-  const TNamePrefix extends string = never,
+  const TNamePrefix extends string = LocalOnlyInclude,
   TResponses extends Record<string, unknown> = Record<string, unknown>,
 >(
   prefix: TUrlPrefix,
@@ -205,14 +210,24 @@ export type PathHelpers<TEnv> = {
   };
 
   /**
-   * Include nested URL patterns with optional name prefix
+   * Include nested URL patterns under a URL prefix.
+   *
+   * The `name` option controls how child route names appear in the
+   * global route map and generated types:
    *
    * ```typescript
-   * // Without name - routes keep local names
-   * include("/blog", blogPatterns)
-   *
-   * // With name - routes are prefixed (e.g., "index" -> "blog.index")
+   * // Named — children become "blog.index", "blog.post", etc.
+   * // Visible in generated types and globally reversible.
    * include("/blog", blogPatterns, { name: "blog" })
+   *
+   * // Flattened — children merge into the parent namespace as-is.
+   * // Equivalent to defining those routes inline at the include site.
+   * include("/blog", blogPatterns, { name: "" })
+   *
+   * // Local-only (default) — children are scoped privately.
+   * // Hidden from generated types and global reverse resolution.
+   * // Only dot-local reverse (reverse(".child")) works inside.
+   * include("/blog", blogPatterns)
    * ```
    */
   include: IncludeFn<TEnv>;
@@ -234,12 +249,19 @@ export type PathHelpers<TEnv> = {
    * Define an intercepting route for soft navigation
    * Note: routeName must match a named path() in this urlpatterns
    */
-  intercept: (
-    slotName: `@${string}`,
-    routeName: string,
-    handler: ReactNode | Handler<any, any, TEnv>,
-    use?: () => InterceptUseItem[],
-  ) => InterceptItem;
+  intercept: keyof RSCRouter.GeneratedRouteMap extends never
+    ? (
+        slotName: `@${string}`,
+        routeName: string,
+        handler: ReactNode | Handler<any, any, TEnv>,
+        use?: () => InterceptUseItem[],
+      ) => InterceptItem
+    : (
+        slotName: `@${string}`,
+        routeName: (keyof RSCRouter.GeneratedRouteMap & string) | `.${string}`,
+        handler: ReactNode | Handler<any, any, TEnv>,
+        use?: () => InterceptUseItem[],
+      ) => InterceptItem;
 
   /**
    * Attach middleware to the current route/layout
@@ -262,7 +284,10 @@ export type PathHelpers<TEnv> = {
   /**
    * Attach a loading component to the current route/layout
    */
-  loading: (component: ReactNode, options?: { ssr?: boolean }) => LoadingItem;
+  loading: (
+    component: ReactNode | (() => ReactNode),
+    options?: { ssr?: boolean },
+  ) => LoadingItem;
 
   /**
    * Attach an error boundary to catch errors in this segment

@@ -8,9 +8,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "wrangler deploy",
-    "extract": "npx rango extract-names ./",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "bench": "npx tsx bench/run.ts",
+    "bench:prod": "npx tsx bench/run.ts --mode=production",
+    "bench:compare": "npx tsx bench/compare.ts"
   },
   "dependencies": {
     "@rangojs/router": "workspace:*",
@@ -21,9 +23,11 @@
     "@cloudflare/vite-plugin": "^1.25.6",
     "@cloudflare/workers-types": "^4.20260228.0",
     "@playwright/test": "^1.57.0",
+    "@types/autocannon": "^7.12.7",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
+    "autocannon": "^8.0.0",
     "tinyexec": "^0.3.2",
     "typescript": "^5.7.0",
     "vite": "catalog:",

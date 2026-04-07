@@ -1,6 +1,19 @@
 import type { LinkInterceptorOptions, NavigateOptions } from "./types.js";
 
 /**
+ * Check if an anchor points to the same page with only a hash change.
+ * Used by both Link component and link-interceptor to let the browser
+ * handle anchor scrolling natively.
+ */
+export function isHashOnlyNavigation(anchor: HTMLAnchorElement): boolean {
+  return (
+    anchor.pathname === window.location.pathname &&
+    anchor.search === window.location.search &&
+    !!anchor.hash
+  );
+}
+
+/**
  * Default link interception predicate
  *
  * Returns true if the link should be intercepted for SPA navigation.
@@ -41,6 +54,12 @@ export function defaultShouldIntercept(link: HTMLAnchorElement): boolean {
 
   // Don't intercept external links
   if (link.hasAttribute("data-external")) {
+    return false;
+  }
+
+  // Don't intercept hash-only navigation (same path, only fragment changes).
+  // Let the browser handle anchor scrolling natively.
+  if (isHashOnlyNavigation(link)) {
     return false;
   }
 
@@ -98,6 +117,7 @@ export function setupLinkInterception(
     // Read navigation options from data attributes (set by Link component)
     const scrollAttr = link.getAttribute("data-scroll");
     const replaceAttr = link.getAttribute("data-replace");
+    const revalidateAttr = link.getAttribute("data-revalidate");
 
     const navigateOptions: NavigateOptions = {};
     if (scrollAttr === "false") {
@@ -106,16 +126,16 @@ export function setupLinkInterception(
     if (replaceAttr === "true") {
       navigateOptions.replace = true;
     }
+    if (revalidateAttr === "false") {
+      navigateOptions.revalidate = false;
+    }
 
     onNavigate(href, navigateOptions);
   };
 
   document.addEventListener("click", handleClick);
 
-  console.log("[Browser] Link interception enabled");
-
   return () => {
     document.removeEventListener("click", handleClick);
-    console.log("[Browser] Link interception disabled");
   };
 }

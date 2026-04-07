@@ -91,6 +91,11 @@ export function insertMissingDiffSegments(
 ): void {
   if (!diff || diff.length === 0) return;
 
+  // Track how many siblings have been inserted per parent so each new
+  // sibling goes after the last one rather than always at parentIndex + 1
+  // (which would reverse the server order).
+  const insertedPerParent = new Map<string, number>();
+
   diff.forEach((diffId: string) => {
     if (!matchedIdSet.has(diffId)) {
       const fromServer = newSegmentMap.get(diffId);
@@ -104,8 +109,10 @@ export function insertMissingDiffSegments(
             (s) => s.id === parentLayoutId,
           );
           if (parentIndex !== -1) {
-            // Insert loader segment right after its parent layout
-            allSegments.splice(parentIndex + 1, 0, fromServer);
+            const alreadyInserted = insertedPerParent.get(parentLayoutId) ?? 0;
+            const insertAt = parentIndex + 1 + alreadyInserted;
+            allSegments.splice(insertAt, 0, fromServer);
+            insertedPerParent.set(parentLayoutId, alreadyInserted + 1);
             debugLog(
               `[Browser] Inserted diff segment ${diffId} after ${parentLayoutId}`,
             );

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { expectNoPageError } from "./helper";
+import { expectNoPageError, waitForHydration, testId } from "./helper";
 
 /**
  * Progressive Enhancement Tests
@@ -136,6 +136,91 @@ test.describe("progressive-enhancement", () => {
 
       // Should still be on the same page (no full page reload with JS)
       await expect(page).toHaveURL(/\/progressive-enhancement/);
+    });
+  });
+});
+
+test.describe("pe-redirect", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test.describe("with JavaScript disabled", () => {
+    test.use({ javaScriptEnabled: false });
+
+    test("return redirect() follows redirect in PE mode", async ({ page }) => {
+      await page.goto(f.url("/pe-redirect"));
+      await expect(
+        page.locator('[data-testid="pe-redirect-title"]'),
+      ).toHaveText("PE Redirect Test");
+
+      await page.locator('[data-testid="pe-return-redirect-btn"]').click();
+      await page.waitForLoadState("domcontentloaded");
+
+      // Should have redirected to /progressive-enhancement
+      await expect(page).toHaveURL(/\/progressive-enhancement/);
+      await expect(page.locator('[data-testid="page-title"]')).toHaveText(
+        "Progressive Enhancement Test",
+      );
+    });
+
+    test("throw redirect() follows redirect in PE mode", async ({ page }) => {
+      await page.goto(f.url("/pe-redirect"));
+      await expect(
+        page.locator('[data-testid="pe-redirect-title"]'),
+      ).toHaveText("PE Redirect Test");
+
+      await page.locator('[data-testid="pe-throw-redirect-btn"]').click();
+      await page.waitForLoadState("domcontentloaded");
+
+      // Should have redirected to /progressive-enhancement
+      await expect(page).toHaveURL(/\/progressive-enhancement/);
+      await expect(page.locator('[data-testid="page-title"]')).toHaveText(
+        "Progressive Enhancement Test",
+      );
+    });
+  });
+});
+
+test.describe("pe-redirect (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.describe("with JavaScript disabled", () => {
+    test.use({ javaScriptEnabled: false });
+    test.setTimeout(120000);
+
+    test("return redirect() follows redirect in PE mode", async ({ page }) => {
+      await page.goto(f.url("/pe-redirect"));
+      await expect(
+        page.locator('[data-testid="pe-redirect-title"]'),
+      ).toHaveText("PE Redirect Test");
+
+      await page.locator('[data-testid="pe-return-redirect-btn"]').click();
+      await page.waitForLoadState("domcontentloaded");
+
+      await expect(page).toHaveURL(/\/progressive-enhancement/);
+      await expect(page.locator('[data-testid="page-title"]')).toHaveText(
+        "Progressive Enhancement Test",
+      );
+    });
+
+    test("throw redirect() follows redirect in PE mode", async ({ page }) => {
+      await page.goto(f.url("/pe-redirect"));
+      await expect(
+        page.locator('[data-testid="pe-redirect-title"]'),
+      ).toHaveText("PE Redirect Test");
+
+      await page.locator('[data-testid="pe-throw-redirect-btn"]').click();
+      await page.waitForLoadState("domcontentloaded");
+
+      await expect(page).toHaveURL(/\/progressive-enhancement/);
+      await expect(page.locator('[data-testid="page-title"]')).toHaveText(
+        "Progressive Enhancement Test",
+      );
     });
   });
 });

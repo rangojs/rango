@@ -16,6 +16,7 @@ export interface ParsedSegment {
   value: string; // static text, param name, or "*"
   optional: boolean;
   constraint?: string[]; // enum values like ["en", "gb"]
+  suffix?: string; // literal text after param in same segment (e.g., ".html")
 }
 
 /**
@@ -39,11 +40,21 @@ export function parsePattern(pattern: string): ParsedSegment[] {
   // - :param(a|b)?
   // - *
   const segmentRegex =
-    /\/(:([a-zA-Z_][a-zA-Z0-9_]*)(\(([^)]+)\))?(\?)?|(\*)|([^/]+))/g;
+    /\/(:([a-zA-Z_][a-zA-Z0-9_]*)(\(([^)]+)\))?(\?)?([^/]*)|(\*)|([^/]+))/g;
 
   let match;
   while ((match = segmentRegex.exec(pattern)) !== null) {
-    const [, , paramName, , constraint, optional, wildcard, staticText] = match;
+    const [
+      ,
+      ,
+      paramName,
+      ,
+      constraint,
+      optional,
+      suffix,
+      wildcard,
+      staticText,
+    ] = match;
 
     if (wildcard) {
       segments.push({ type: "wildcard", value: "*", optional: false });
@@ -53,6 +64,7 @@ export function parsePattern(pattern: string): ParsedSegment[] {
         value: paramName,
         optional: optional === "?",
         constraint: constraint ? constraint.split("|") : undefined,
+        suffix: suffix || undefined,
       });
     } else if (staticText) {
       segments.push({ type: "static", value: staticText, optional: false });
@@ -139,16 +151,19 @@ export function compilePattern(pattern: string): CompiledPattern {
       regexPattern += "/(.*)";
     } else if (segment.type === "param") {
       paramNames.push(segment.value);
+      const suffixPattern = segment.suffix ? escapeRegex(segment.suffix) : "";
       const valuePattern = segment.constraint
-        ? `(${segment.constraint.join("|")})`
-        : "([^/]+)";
+        ? `(${segment.constraint.map(escapeRegex).join("|")})`
+        : segment.suffix
+          ? "([^/]+?)"
+          : "([^/]+)";
 
       if (segment.optional) {
         optionalParams.add(segment.value);
         // Optional: make the whole /segment optional
-        regexPattern += `(?:/${valuePattern})?`;
+        regexPattern += `(?:/${valuePattern}${suffixPattern})?`;
       } else {
-        regexPattern += `/${valuePattern}`;
+        regexPattern += `/${valuePattern}${suffixPattern}`;
       }
     } else {
       // Static segment
@@ -388,6 +403,9 @@ export function findMatch<TEnv>(
       const prFlag = entry.prerenderRouteKeys?.has(routeKey)
         ? { pr: true as const }
         : {};
+      const ptFlag = entry.passthroughRouteKeys?.has(routeKey)
+        ? { pt: true as const }
+        : {};
 
       // Try exact match first
       const match = regex.exec(pathname);
@@ -419,6 +437,7 @@ export function findMatch<TEnv>(
             optionalParams,
             redirectTo: pathname + "/",
             ...prFlag,
+            ...ptFlag,
           };
         } else if (trailingSlashMode === "never" && pathnameHasTrailingSlash) {
           // Mode says never have trailing slash, but pathname has it
@@ -429,10 +448,18 @@ export function findMatch<TEnv>(
             optionalParams,
             redirectTo: pathname.slice(0, -1),
             ...prFlag,
+            ...ptFlag,
           };
         }
 
-        return { entry, routeKey, params, optionalParams, ...prFlag };
+        return {
+          entry,
+          routeKey,
+          params,
+          optionalParams,
+          ...prFlag,
+          ...ptFlag,
+        };
       }
 
       // Try alternate pathname (opposite trailing slash)
@@ -446,7 +473,14 @@ export function findMatch<TEnv>(
         // Determine redirect behavior based on mode
         if (trailingSlashMode === "ignore") {
           // Match without redirect
-          return { entry, routeKey, params, optionalParams, ...prFlag };
+          return {
+            entry,
+            routeKey,
+            params,
+            optionalParams,
+            ...prFlag,
+            ...ptFlag,
+          };
         } else if (trailingSlashMode === "never") {
           // Redirect to no trailing slash
           if (pathnameHasTrailingSlash) {
@@ -457,9 +491,17 @@ export function findMatch<TEnv>(
               optionalParams,
               redirectTo: alternatePathname,
               ...prFlag,
+              ...ptFlag,
             };
           }
-          return { entry, routeKey, params, optionalParams, ...prFlag };
+          return {
+            entry,
+            routeKey,
+            params,
+            optionalParams,
+            ...prFlag,
+            ...ptFlag,
+          };
         } else if (trailingSlashMode === "always") {
           // Redirect to with trailing slash
           if (!pathnameHasTrailingSlash) {
@@ -470,9 +512,17 @@ export function findMatch<TEnv>(
               optionalParams,
               redirectTo: alternatePathname,
               ...prFlag,
+              ...ptFlag,
             };
           }
-          return { entry, routeKey, params, optionalParams, ...prFlag };
+          return {
+            entry,
+            routeKey,
+            params,
+            optionalParams,
+            ...prFlag,
+            ...ptFlag,
+          };
         } else {
           // No explicit mode - use pattern-based detection
           // Redirect to canonical form (what the pattern defines)
@@ -486,6 +536,7 @@ export function findMatch<TEnv>(
             optionalParams,
             redirectTo: canonicalPath,
             ...prFlag,
+            ...ptFlag,
           };
         }
       }

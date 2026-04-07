@@ -38,18 +38,18 @@ test.describe("handler eviction (production)", () => {
     clientBundle = concatBundleContents(path.join(DIST, "client/assets"));
     ssrBundle = concatBundleContents(path.join(DIST, "rsc/ssr/assets"));
 
+    // After manualChunks removal (#436), prerender handler stubs are inlined
+    // into the RSC entry/worker-entry chunk instead of a separate
+    // __prerender-handlers file. Concat code chunks (excluding __pr-*/__st-*
+    // prerender asset files which contain rendered output, not handler code).
     const rscAssets = readAllFiles(path.join(DIST, "rsc/assets"));
-    const handlerFile = rscAssets.find((f) =>
-      f.startsWith("__prerender-handlers"),
-    );
-    expect(handlerFile).toBeTruthy();
-    prerenderHandlersBundle = fs.readFileSync(
-      path.join(DIST, "rsc/assets", handlerFile!),
-      "utf-8",
-    );
+    prerenderHandlersBundle = rscAssets
+      .filter((f) => !f.startsWith("__pr-") && !f.startsWith("__st-"))
+      .map((f) => fs.readFileSync(path.join(DIST, "rsc/assets", f), "utf-8"))
+      .join("\n");
   });
 
-  test("prerender-handlers chunk exists in RSC bundle", () => {
+  test("prerender handler stubs exist in RSC bundle", () => {
     expect(prerenderHandlersBundle.length).toBeGreaterThan(0);
   });
 
@@ -198,16 +198,33 @@ test.describe("prerender asset structure (production)", () => {
       "utf-8",
     );
 
+    // Should use JSON.parse for the manifest data
+    expect(manifestCode).toContain("JSON.parse");
+
+    // Parse the manifest to verify its contents
+    const jsonMatch = manifestCode.match(/JSON\.parse\('(.+)'\)/);
+    expect(jsonMatch).toBeTruthy();
+    const manifest = JSON.parse(jsonMatch![1]);
+
     // Paginated list routes use hex param hashes (page param)
-    expect(manifestCode).toMatch(/"articles\.list\/[a-f0-9]+"/);
-    const listMatches = manifestCode.match(/"articles\.list\/[a-f0-9]+"/g);
-    expect(listMatches).toHaveLength(4); // 4 pages
+    const listKeys = Object.keys(manifest).filter((k) =>
+      k.startsWith("articles.list/"),
+    );
+    expect(listKeys).toHaveLength(4); // 4 pages
 
     // Dynamic detail routes use hex param hashes
-    expect(manifestCode).toMatch(/"articles\.detail\/[a-f0-9]+"/);
+    const detailKeys = Object.keys(manifest).filter((k) =>
+      k.startsWith("articles.detail/"),
+    );
+    expect(detailKeys.length).toBeGreaterThan(0);
 
-    // References __pr-*.js asset imports
-    expect(manifestCode).toMatch(/import\("\.\/assets\/__pr-[a-f0-9]+\.js"\)/);
+    // Values should be relative asset specifiers (not import thunks)
+    for (const value of Object.values(manifest)) {
+      expect(value).toMatch(/^\.\/assets\/__pr-[a-f0-9]+\.js$/);
+    }
+
+    // Manifest module should export loadPrerenderAsset
+    expect(manifestCode).toContain("loadPrerenderAsset");
   });
 
   test("__pr-*.js asset files exist and have correct count", () => {
@@ -265,9 +282,9 @@ test.describe("prerender asset structure (production)", () => {
     }
   });
 
-  test("RSC entry imports __prerender-manifest.js", () => {
+  test("RSC entry lazily loads __prerender-manifest.js", () => {
     const rscIndex = fs.readFileSync(path.join(RSC_DIR, "index.js"), "utf-8");
     expect(rscIndex).toContain("__prerender-manifest.js");
-    expect(rscIndex).toContain("__PRERENDER_MANIFEST");
+    expect(rscIndex).toContain("__loadPrerenderManifestModule");
   });
 });

@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import type { ResolvedSegment } from "../browser/types";
+import { ServerRedirect } from "../errors";
 
 // Mock startTransition to run callbacks synchronously
 vi.mock("react", async () => {
@@ -122,7 +123,7 @@ function createMockTx(currentUrl = "http://localhost/") {
   return {
     currentUrl,
     startStreaming: vi.fn(() => ({ end: vi.fn() })),
-    commit: vi.fn(),
+    commit: vi.fn(() => ({ scroll: undefined })),
   };
 }
 
@@ -158,6 +159,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -193,10 +195,12 @@ describe("partial-update", () => {
       );
 
       // onUpdate called with rendered tree
-      expect(onUpdate).toHaveBeenCalledWith({
-        root: `tree-2`,
-        metadata: expect.objectContaining({ isPartial: true }),
-      });
+      expect(onUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          root: `tree-2`,
+          metadata: expect.objectContaining({ isPartial: true }),
+        }),
+      );
     });
 
     it("preserves cached component when server returns null for layout", async () => {
@@ -224,6 +228,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -263,6 +268,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -318,6 +324,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -359,6 +366,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -390,6 +398,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -397,6 +406,7 @@ describe("partial-update", () => {
       });
 
       await updater("http://localhost/page", undefined, false, undefined, tx, {
+        type: "navigate",
         targetCacheSegments: targetSegs,
       });
 
@@ -433,6 +443,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -440,12 +451,86 @@ describe("partial-update", () => {
       });
 
       await updater("http://localhost/", undefined, false, undefined, tx, {
-        leavingIntercept: true,
+        type: "leave-intercept",
       });
 
       // Should render and update UI to remove modal
       expect(renderSegments).toHaveBeenCalled();
       expect(onUpdate).toHaveBeenCalled();
+    });
+  });
+
+  describe("redirect payload validation", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("throws ServerRedirect for same-origin redirect payload", async () => {
+      vi.stubGlobal("window", {
+        location: { origin: "http://localhost" },
+      });
+
+      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const { client } = createMockClient({
+        metadata: {
+          redirect: { url: "/target" },
+          locationState: { __rsc_ls_flash: "ok" },
+        },
+      });
+
+      const tx = createMockTx();
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments: vi.fn(async () => "tree"),
+      });
+
+      await expect(
+        updater("http://localhost/", ["R0"], false, undefined, tx),
+      ).rejects.toMatchObject({
+        name: "ServerRedirect",
+        url: "http://localhost/target",
+      } satisfies Partial<ServerRedirect>);
+    });
+
+    it("ignores cross-origin redirect payload", async () => {
+      vi.stubGlobal("window", {
+        location: { origin: "http://localhost" },
+      });
+
+      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const { client } = createMockClient({
+        metadata: {
+          redirect: { url: "https://evil.example/phish" },
+          locationState: { __rsc_ls_flash: "blocked" },
+        },
+      });
+
+      const onUpdate = vi.fn();
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments,
+      });
+
+      await expect(
+        updater("http://localhost/", ["R0"], false, undefined, tx),
+      ).resolves.toBeUndefined();
+
+      expect(tx.commit).not.toHaveBeenCalled();
+      expect(onUpdate).not.toHaveBeenCalled();
+      expect(renderSegments).not.toHaveBeenCalled();
+      expect(consoleError).toHaveBeenCalled();
     });
   });
 
@@ -495,6 +580,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -507,7 +593,7 @@ describe("partial-update", () => {
         false,
         undefined,
         tx,
-        { targetCacheSegments: [targetLayout, targetRoute] },
+        { type: "navigate", targetCacheSegments: [targetLayout, targetRoute] },
       );
 
       const mainSegs = (
@@ -547,6 +633,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -554,7 +641,7 @@ describe("partial-update", () => {
       });
 
       await updater("http://localhost/", undefined, false, undefined, tx, {
-        leavingIntercept: true,
+        type: "leave-intercept",
       });
 
       // fetchPartial should be called with filtered segments (no intercept namespace segments)
@@ -587,6 +674,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -634,6 +722,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -669,6 +758,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -676,7 +766,7 @@ describe("partial-update", () => {
       });
 
       await updater("http://localhost/page1", [], false, undefined, tx, {
-        staleRevalidation: true,
+        type: "stale-revalidation",
       });
 
       // Should render but NOT call onUpdate because history key changed
@@ -701,6 +791,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -715,10 +806,12 @@ describe("partial-update", () => {
       // Commit with segment IDs from server
       expect(tx.commit).toHaveBeenCalledWith(["L0", "L0R0"], serverSegments);
 
-      expect(onUpdate).toHaveBeenCalledWith({
-        root: "full-tree",
-        metadata: expect.objectContaining({ isPartial: false }),
-      });
+      expect(onUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          root: "full-tree",
+          metadata: expect.objectContaining({ isPartial: false }),
+        }),
+      );
     });
 
     it("returns early for full update when signal is aborted", async () => {
@@ -738,6 +831,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -799,6 +893,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -828,6 +923,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -860,6 +956,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate,
@@ -867,7 +964,7 @@ describe("partial-update", () => {
       });
 
       await updater("http://localhost/", ["R0"], false, undefined, tx, {
-        isAction: true,
+        type: "action",
       });
 
       // Our mocked startTransition runs synchronously, so onUpdate should be called
@@ -892,6 +989,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -899,7 +997,7 @@ describe("partial-update", () => {
       });
 
       await updater("http://localhost/", ["R0"], false, undefined, tx, {
-        staleRevalidation: true,
+        type: "stale-revalidation",
       });
 
       expect(renderSegments).toHaveBeenCalledWith(
@@ -957,6 +1055,7 @@ describe("partial-update", () => {
         const tx = createMockTx();
 
         const updater = createPartialUpdater({
+          getVersion: () => undefined,
           store: store as any,
           client: client as any,
           onUpdate: vi.fn(),
@@ -970,7 +1069,7 @@ describe("partial-update", () => {
           undefined,
           tx,
           {
-            isAction: true,
+            type: "action",
           },
         );
 
@@ -1021,6 +1120,7 @@ describe("partial-update", () => {
         const tx = createMockTx();
 
         const updater = createPartialUpdater({
+          getVersion: () => undefined,
           store: store as any,
           client: client as any,
           onUpdate: vi.fn(),
@@ -1034,7 +1134,7 @@ describe("partial-update", () => {
           undefined,
           tx,
           {
-            isAction: true,
+            type: "action",
           },
         );
 
@@ -1086,6 +1186,7 @@ describe("partial-update", () => {
         const tx = createMockTx();
 
         const updater = createPartialUpdater({
+          getVersion: () => undefined,
           store: store as any,
           client: client as any,
           onUpdate: vi.fn(),
@@ -1099,7 +1200,7 @@ describe("partial-update", () => {
           undefined,
           tx,
           {
-            isAction: true,
+            type: "action",
           },
         );
 
@@ -1148,6 +1249,7 @@ describe("partial-update", () => {
         const tx = createMockTx();
 
         const updater = createPartialUpdater({
+          getVersion: () => undefined,
           store: store as any,
           client: client as any,
           onUpdate: vi.fn(),
@@ -1161,7 +1263,7 @@ describe("partial-update", () => {
           undefined,
           tx,
           {
-            isAction: true,
+            type: "action",
           },
         );
 
@@ -1210,6 +1312,7 @@ describe("partial-update", () => {
         const tx = createMockTx();
 
         const updater = createPartialUpdater({
+          getVersion: () => undefined,
           store: store as any,
           client: client as any,
           onUpdate: vi.fn(),
@@ -1252,6 +1355,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -1289,6 +1393,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -1317,6 +1422,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -1324,7 +1430,7 @@ describe("partial-update", () => {
       });
 
       await updater("http://localhost/", ["R0"], false, undefined, tx, {
-        isAction: true,
+        type: "action",
       });
 
       expect(store.setInterceptSourceUrl).not.toHaveBeenCalled();
@@ -1352,6 +1458,7 @@ describe("partial-update", () => {
       tx.startStreaming.mockReturnValue({ end: endFn });
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -1385,9 +1492,8 @@ describe("partial-update", () => {
       expect(endFn).toHaveBeenCalled();
     });
 
-    it("ends streaming token when fetchPartial throws", async () => {
+    it("does not start streaming when fetchPartial throws", async () => {
       const store = createMockStore({ cachedSegments: [seg("R0")] });
-      const endFn = vi.fn();
 
       const fetchError = new Error("network failure");
       const client = {
@@ -1397,9 +1503,9 @@ describe("partial-update", () => {
       };
 
       const tx = createMockTx();
-      tx.startStreaming.mockReturnValue({ end: endFn });
 
       const updater = createPartialUpdater({
+        getVersion: () => undefined,
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
@@ -1411,12 +1517,9 @@ describe("partial-update", () => {
         updater("http://localhost/", ["R0"], false, undefined, tx),
       ).rejects.toThrow("network failure");
 
-      // startStreaming was called before the fetch
-      expect(tx.startStreaming).toHaveBeenCalled();
-
-      // streamingToken.end() must be called even though fetchPartial threw,
-      // otherwise isStreaming is permanently stuck as true
-      expect(endFn).toHaveBeenCalled();
+      // startStreaming is called after fetchPartial, so on error it's never reached.
+      // This avoids setting phase = "streaming" before any data arrives.
+      expect(tx.startStreaming).not.toHaveBeenCalled();
     });
   });
 });

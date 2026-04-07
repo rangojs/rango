@@ -1,7 +1,7 @@
 "use server";
 
 import { ReactNode } from "react";
-import { requireRequestContext, redirect } from "@rangojs/router";
+import { cookies, getRequestContext, redirect } from "@rangojs/router";
 import { FlashMessage } from "./location-states.js";
 
 // Simulated delay helper
@@ -11,11 +11,11 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const carts: Map<string, Map<string, number>> = new Map();
 
 function getCartId(): string {
-  const ctx = requireRequestContext();
-  let cartId = ctx.cookie("cart-id");
+  const jar = cookies();
+  let cartId = jar.get("cart-id")?.value;
   if (!cartId) {
     cartId = Math.random().toString(36).slice(2);
-    ctx.setCookie("cart-id", cartId, { path: "/" });
+    jar.set("cart-id", cartId, { path: "/" });
   }
   return cartId;
 }
@@ -111,14 +111,19 @@ export async function prerenderTestAction(): Promise<{ ok: true }> {
 }
 
 /**
- * Simple action that triggers revalidation
- * Used to test that loaders registered with loader() are revalidated
+ * Simple action that triggers revalidation.
+ * Mutating a cookie makes the current route re-render so loader-based tests can
+ * verify that registered loaders are re-executed after the action completes.
  */
 export async function triggerRevalidation(): Promise<{
   triggered: boolean;
   timestamp: string;
 }> {
   await delay(100);
+  cookies().set("test-revalidation", new Date().toISOString(), {
+    path: "/",
+    maxAge: 60,
+  });
   return {
     triggered: true,
     timestamp: new Date().toISOString(),
@@ -195,7 +200,7 @@ export const StreamingAction = async (_data: FormData) => {
  */
 export async function saveAndRedirect(): Promise<void> {
   return redirect("/location-state", {
-    state: [FlashMessage({ text: "Action saved successfully!" })],
+    state: FlashMessage({ text: "Action saved successfully!" }),
   }) as any;
 }
 
@@ -212,7 +217,7 @@ export async function actionSimpleRedirect(): Promise<void> {
  */
 export async function throwRedirectWithState(): Promise<void> {
   throw redirect("/location-state", {
-    state: [FlashMessage({ text: "Thrown redirect flash!" })],
+    state: FlashMessage({ text: "Thrown redirect flash!" }),
   });
 }
 
@@ -229,6 +234,18 @@ export async function throwSimpleRedirect(): Promise<void> {
  */
 export async function throwActionError(): Promise<void> {
   throw new Error("Action error for onError test");
+}
+
+/**
+ * useActionState-compatible action that throws.
+ * Used to prove PE form actions report phase="action" but do not currently
+ * surface a stable actionId through the router boundary.
+ */
+export async function throwFormActionError(
+  _prevState: unknown,
+  _formData: FormData,
+): Promise<never> {
+  throw new Error("Form action error for onError test");
 }
 
 /**
@@ -251,7 +268,7 @@ export async function testRequestContextReverse(): Promise<{
   blogPost: string;
   hrefIndex: string;
 }> {
-  const ctx = requireRequestContext();
+  const ctx = getRequestContext();
   const blogIndex = ctx.reverse("blog.index");
   const blogPost = ctx.reverse("blog.post", { postId: "from-action" });
   const hrefIndex = ctx.reverse("href.index");
@@ -273,11 +290,119 @@ export async function actionRedirectLogin(
     return { error: "Email is required" };
   }
 
-  const ctx = requireRequestContext();
-  ctx.setCookie("test-auth-session", email, {
+  cookies().set("test-auth-session", email, {
     path: "/",
     maxAge: 86400,
   });
 
   throw redirect("/action-redirect-revalidation");
+}
+
+/**
+ * Action that sets a cookie without redirecting.
+ * Used to test same-request read-after-write during revalidation:
+ * the action mutates a cookie, then the subsequent render pass lets
+ * route middleware and loaders observe the updated value.
+ */
+export async function actionSetSessionCookie(): Promise<void> {
+  cookies().set("mw-session", "action-set-value", {
+    path: "/",
+    maxAge: 86400,
+  });
+}
+
+/**
+ * Action for the revalidation-contract fixture.
+ * It mutates a cookie so the child route has a visible signal that the action
+ * follow-up render happened, without repopulating upstream ctx.set() state.
+ */
+export async function revalidationContractAction(): Promise<void> {
+  cookies().set("revalidation-contract-action", "set", {
+    path: "/",
+    maxAge: 86400,
+  });
+}
+
+/**
+ * Middleware chain test action.
+ * Sets a cookie, a context variable, and a response header.
+ * Exercises action writes across all three channels so the
+ * subsequent route middleware and loaders can verify propagation.
+ */
+export async function mwChainAction(): Promise<void> {
+  const ctx = getRequestContext();
+  cookies().set("chain-action", "av", { path: "/", maxAge: 86400 });
+  ctx.set("chainAction", "from-action");
+  ctx.header("X-Chain-Action", "applied");
+}
+
+/**
+ * Form-based variant of mwChainAction for progressive enhancement testing.
+ * Works with native HTML form POST (no-JS) and with React enhancement.
+ */
+/**
+ * PE redirect actions for testing progressive enhancement redirect handling.
+ * These are form-compatible (accept FormData) so they work with native HTML forms.
+ */
+export async function peReturnRedirect(_formData: FormData): Promise<void> {
+  return redirect("/progressive-enhancement") as any;
+}
+
+export async function peThrowRedirect(_formData: FormData): Promise<void> {
+  throw redirect("/progressive-enhancement");
+}
+
+export async function mwChainFormAction(_formData: FormData): Promise<void> {
+  const ctx = getRequestContext();
+  cookies().set("chain-action", "av", { path: "/", maxAge: 86400 });
+  ctx.set("chainAction", "from-action");
+  ctx.header("X-Chain-Action", "applied");
+}
+
+/**
+ * ALS scope test action. Reads the scope chain from request context to prove
+ * that route middleware does NOT wrap action execution (scope should only
+ * contain "global", not "route"). Also reads custom AsyncLocalStorage instances
+ * to prove user-owned ALS propagation follows the same scope rules.
+ */
+export async function alsScopeAction(): Promise<void> {
+  const ctx = getRequestContext();
+  const {
+    AlsGlobalMark,
+    AlsRouteMark,
+    AlsInterceptMark,
+    customGlobalAls,
+    customRouteAls,
+  } = await import("./urls/als-scope.js");
+  // Build scope snapshot from action's perspective
+  const parts: string[] = [];
+  if (ctx.get(AlsGlobalMark)) parts.push("global");
+  if (ctx.get(AlsRouteMark)) parts.push("route");
+  if (ctx.get(AlsInterceptMark)) parts.push("intercept");
+  ctx.set("alsActionProbe", parts.length > 0 ? parts.join(",") : "none");
+  // Build custom ALS snapshot — action should see top-mw but NOT dsl-mw
+  const customParts: string[] = [];
+  if (customGlobalAls.getStore()) customParts.push("top-mw");
+  if (customRouteAls.getStore()) customParts.push("dsl-mw");
+  ctx.set(
+    "alsActionCustomProbe",
+    customParts.length > 0 ? customParts.join(",") : "none",
+  );
+}
+
+/**
+ * Auth boundary test action. Mutates state (sets a cookie) to prove the action
+ * executed. Route middleware does NOT guard this — only global middleware does.
+ */
+export async function authBoundaryAction(): Promise<void> {
+  cookies().set("auth-boundary-action-ran", "true", { path: "/", maxAge: 60 });
+}
+
+/**
+ * Form-based variant for progressive enhancement testing.
+ */
+export async function authBoundaryFormAction(
+  _formData: FormData,
+): Promise<void> {
+  cookies().set("auth-boundary-action-ran", "true", { path: "/", maxAge: 60 });
 }

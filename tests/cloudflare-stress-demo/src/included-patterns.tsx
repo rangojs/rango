@@ -2,7 +2,7 @@
  * 500 routes for include() testing with various param patterns
  */
 import { urls, type Handler } from "@rangojs/router";
-import { getMatchDebugStats } from "@rangojs/router";
+import { getMatchDebugStats } from "@rangojs/router/__internal";
 import type { routes } from "./included-patterns.gen.js";
 
 // Benchmark handler for API routes - returns debug stats
@@ -12,7 +12,7 @@ const ApiBenchmarkHandler: Handler<".benchFirst", routes> = async (ctx) => {
     JSON.stringify({
       route: ctx.pathname,
       timing: {
-        requestStart: ctx.var.dateStart ?? 0,
+        requestStart: ctx.get("dateStart") ?? 0,
         handlerReached: Date.now(),
       },
       matchStats,
@@ -28,7 +28,7 @@ const ParamPage: Handler<Record<string, any>> = async (ctx) => {
   await new Promise((r) => setTimeout(r, 1));
 
   const renderTime = Date.now();
-  const requestStart = ctx.var.dateStart ?? 0;
+  const requestStart = ctx.get("dateStart") ?? 0;
   const totalTime = renderTime - requestStart;
 
   return (

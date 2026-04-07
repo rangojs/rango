@@ -11,7 +11,11 @@ import type {
   InterceptEntry,
   InterceptSelectorContext,
 } from "../server/context";
-import type { HandlerContext, ResolvedSegment } from "../types";
+import type {
+  HandlerContext,
+  InternalHandlerContext,
+  ResolvedSegment,
+} from "../types";
 import { evaluateRevalidation } from "./revalidation.js";
 import { getRequestContext } from "../server/request-context.js";
 import { executeInterceptMiddleware } from "./middleware.js";
@@ -20,6 +24,7 @@ import { getGlobalRouteMap } from "../route-map-builder.js";
 import { handleHandlerResult } from "./segment-resolution.js";
 import type { SegmentResolutionDeps } from "./types.js";
 import { debugLog } from "./logging.js";
+import { runInsideLoaderScope } from "../server/context.js";
 
 /**
  * Check if an intercept's when conditions are satisfied.
@@ -133,7 +138,7 @@ export async function resolveInterceptEntry<TEnv>(
       context.request,
       context.env,
       params,
-      context.var as Record<string, any>,
+      (context as InternalHandlerContext<any, TEnv>)._variables,
       requestCtx.res,
       createReverseFunction(getGlobalRouteMap()),
     );
@@ -188,6 +193,7 @@ export async function resolveInterceptEntry<TEnv>(
           context,
           actionContext,
           stale,
+          traceSource: "intercept-loader",
         });
 
         if (!shouldRevalidate) {
@@ -206,7 +212,7 @@ export async function resolveInterceptEntry<TEnv>(
     loaderIds.push(loader.$$id);
     loaderPromises.push(
       deps.wrapLoaderPromise(
-        context.use(loader),
+        runInsideLoaderScope(() => context.use(loader)),
         parentEntry,
         segmentId,
         context.pathname,
@@ -355,6 +361,7 @@ export async function resolveInterceptLoadersOnly<TEnv>(
         context,
         actionContext,
         stale,
+        traceSource: "intercept-loader",
       });
 
       if (!shouldRevalidate) {
@@ -372,7 +379,7 @@ export async function resolveInterceptLoadersOnly<TEnv>(
     loaderIds.push(loader.$$id);
     loaderPromises.push(
       deps.wrapLoaderPromise(
-        context.use(loader),
+        runInsideLoaderScope(() => context.use(loader)),
         parentEntry,
         segmentId,
         context.pathname,
@@ -384,10 +391,12 @@ export async function resolveInterceptLoadersOnly<TEnv>(
     return null;
   }
 
-  const loaderDataPromise =
-    interceptEntry.loading !== undefined
-      ? Promise.all(loaderPromises)
-      : await Promise.all(loaderPromises);
+  // Match fresh-path semantics: only defer (no await) when loading is truthy.
+  // `loading: false` means "no loading UI, await loaders before render" —
+  // same as the fresh path's `if (interceptEntry.loading && ...)` check.
+  const loaderDataPromise = interceptEntry.loading
+    ? Promise.all(loaderPromises)
+    : await Promise.all(loaderPromises);
 
   return { loaderDataPromise, loaderIds };
 }

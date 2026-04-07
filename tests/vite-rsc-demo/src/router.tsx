@@ -1,5 +1,5 @@
-import { createRouter, type RouterEnv } from "@rangojs/router";
-import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
+import { createRouter } from "@rangojs/router";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { RootLayout } from "./layouts/RootLayout.js";
 
 // Create cache store with defaults (persists across HMR via globalThis)
@@ -25,7 +25,7 @@ export interface AppBindings {
 
 /**
  * Middleware-injected variables (user, permissions, etc.)
- * Accessed via ctx.var or ctx.get('key')
+ * Accessed via ctx.get('key')
  */
 export interface AppVariables {
   user?: {
@@ -45,20 +45,14 @@ export interface AppVariables {
   };
 }
 
-/**
- * Combined app environment (Hono-inspired type-safe context)
- */
-export type AppEnv = RouterEnv<AppBindings, AppVariables>;
+export type AppEnv = AppBindings;
 
-/**
- * Module augmentation - makes AppEnv available globally in all handlers
- * This allows handlers to have type-safe context without importing AppEnv
- */
 type AppRoutes = typeof router.routeMap;
 
 declare global {
   namespace RSCRouter {
-    interface Env extends AppEnv {}
+    interface Env extends AppBindings {}
+    interface Vars extends AppVariables {}
     interface RegisteredRoutes extends AppRoutes {}
   }
 }

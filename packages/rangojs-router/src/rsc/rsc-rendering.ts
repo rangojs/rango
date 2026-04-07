@@ -12,6 +12,8 @@ import {
   getLocationState,
 } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
+import { appendMetric } from "../router/metrics.js";
+import { getSSRSetup } from "./ssr-setup.js";
 import type { RscPayload } from "./types.js";
 import {
   createResponseWithMergedHeaders,
@@ -28,13 +30,9 @@ export async function handleRscRendering<TEnv>(
   handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
   nonce: string | undefined,
 ): Promise<Response> {
-  // Retrieve handler-level timing from variables
   const reqCtx = requireRequestContext();
-  const handlerTimingArr: string[] = reqCtx.var.__handlerTiming || [];
-  const handlerStart: number = reqCtx.var.__handlerStart || 0;
 
   let payload: RscPayload;
-  let serverTiming: string | undefined;
   let hasInterceptSlots = false;
 
   if (isPartial) {
@@ -53,11 +51,11 @@ export async function handleRscRendering<TEnv>(
         return createSimpleRedirectResponse(match.redirect);
       }
 
-      serverTiming = match.serverTiming;
-
       payload = {
         metadata: {
           pathname: url.pathname,
+          routerId: ctx.router.id,
+          basename: ctx.router.basename,
           segments: match.segments,
           matched: match.matched,
           diff: match.diff,
@@ -66,18 +64,20 @@ export async function handleRscRendering<TEnv>(
           rootLayout: ctx.router.rootLayout,
           handles: handleStore.stream(),
           version: ctx.version,
+          prefetchCacheTTL: ctx.router.prefetchCacheTTL,
           themeConfig: ctx.router.themeConfig,
           initialTheme: reqCtx.theme,
         },
       };
     } else {
       setRequestContextParams(result.params, result.routeName);
-      serverTiming = result.serverTiming;
+
       hasInterceptSlots = !!result.slots;
 
       payload = {
         metadata: {
           pathname: url.pathname,
+          routerId: ctx.router.id,
           segments: result.segments,
           matched: result.matched,
           diff: result.diff,
@@ -86,6 +86,7 @@ export async function handleRscRendering<TEnv>(
           slots: result.slots,
           handles: handleStore.stream(),
           version: ctx.version,
+          prefetchCacheTTL: ctx.router.prefetchCacheTTL,
         },
       };
     }
@@ -111,6 +112,7 @@ export async function handleRscRendering<TEnv>(
       const nonLoaderSegments = match.segments.filter(
         (s) => s.type !== "loader",
       );
+      handleStore.seal();
       await handleStore.settled;
       const { serializeSegments } = await import("../cache/segment-codec.js");
       const serializedSegments = await serializeSegments(nonLoaderSegments);
@@ -131,14 +133,14 @@ export async function handleRscRendering<TEnv>(
         { headers: { "Content-Type": "application/json" } },
       );
     } else {
-      serverTiming = match.serverTiming;
-
       payload = {
         // Initial SSR can reconstruct the tree from segments + rootLayout,
         // so we omit root to avoid sending the same structure twice.
 
         metadata: {
           pathname: url.pathname,
+          routerId: ctx.router.id,
+          basename: ctx.router.basename,
           segments: match.segments,
           matched: match.matched,
           diff: match.diff,
@@ -147,6 +149,7 @@ export async function handleRscRendering<TEnv>(
           rootLayout: ctx.router.rootLayout,
           handles: handleStore.stream(),
           version: ctx.version,
+          prefetchCacheTTL: ctx.router.prefetchCacheTTL,
           themeConfig: ctx.router.themeConfig,
           initialTheme: reqCtx.theme,
         },
@@ -165,10 +168,24 @@ export async function handleRscRendering<TEnv>(
     }
   }
 
+  const metricsStore = reqCtx._metricsStore;
+  const renderStart = performance.now();
+
   // Serialize to RSC stream
   const rscSerializeStart = performance.now();
-  const rscStream = ctx.renderToReadableStream<RscPayload>(payload);
+  const rscStream = ctx.renderToReadableStream<RscPayload>(payload, {
+    onError: (error: unknown) => {
+      ctx.callOnError(error, "rendering", { request, url, env });
+    },
+  });
   const rscSerializeDur = performance.now() - rscSerializeStart;
+  // This measures synchronous stream creation, not end-to-end stream consumption.
+  appendMetric(
+    metricsStore,
+    "rsc-serialize",
+    rscSerializeStart,
+    rscSerializeDur,
+  );
 
   // Determine if this is an RSC request or HTML request.
   // Partial requests (_rsc_partial) are always RSC -- they come from client-side
@@ -180,15 +197,9 @@ export async function handleRscRendering<TEnv>(
       !url.searchParams.has("__html")) ||
     url.searchParams.has("__rsc");
 
-  // Build complete Server-Timing: handler phases + match/manifest + RSC serialize
-  const timingParts: string[] = [...handlerTimingArr];
-  if (serverTiming) {
-    timingParts.push(serverTiming);
-  }
-  timingParts.push(`rsc-serialize;dur=${rscSerializeDur.toFixed(2)}`);
-
   if (isRscRequest) {
-    const fullTiming = timingParts.join(", ");
+    const renderDur = performance.now() - renderStart;
+    appendMetric(metricsStore, "render:total", renderStart, renderDur);
     const rscHeaders: Record<string, string> = {
       "content-type": "text/x-component;charset=utf-8",
       vary: "accept, X-Rango-State, X-RSC-Router-Client-Path",
@@ -204,40 +215,32 @@ export async function handleRscRendering<TEnv>(
         rscHeaders["cache-control"] = cc;
       }
     }
-    if (fullTiming) {
-      rscHeaders["Server-Timing"] = fullTiming;
-    }
     return createResponseWithMergedHeaders(rscStream, {
       headers: rscHeaders,
     });
   }
 
-  // Delegate to SSR for HTML response
-  const ssrModuleStart = performance.now();
-  const ssrModule = await ctx.loadSSRModule();
-  const ssrModuleDur = performance.now() - ssrModuleStart;
-  timingParts.push(`ssr-module-load;dur=${ssrModuleDur.toFixed(2)}`);
+  // Delegate to SSR for HTML response (reuse early setup if available)
+  const [ssrModule, streamMode] = await getSSRSetup(
+    ctx,
+    request,
+    env,
+    url,
+    metricsStore,
+  );
 
   const ssrRenderStart = performance.now();
-  const htmlStream = await ssrModule.renderHTML(rscStream, { nonce });
+  const htmlStream = await ssrModule.renderHTML(rscStream, {
+    nonce,
+    streamMode,
+  });
   const ssrRenderDur = performance.now() - ssrRenderStart;
-  timingParts.push(`ssr-render-html;dur=${ssrRenderDur.toFixed(2)}`);
+  appendMetric(metricsStore, "ssr-render-html", ssrRenderStart, ssrRenderDur);
 
-  // Add total handler duration
-  if (handlerStart) {
-    const totalHandler = performance.now() - handlerStart;
-    timingParts.push(`handler-total;dur=${totalHandler.toFixed(2)}`);
-  }
-
-  const fullTiming = timingParts.join(", ");
-  const htmlHeaders: Record<string, string> = {
-    "content-type": "text/html;charset=utf-8",
-  };
-  if (fullTiming) {
-    htmlHeaders["Server-Timing"] = fullTiming;
-  }
+  const renderDur = performance.now() - renderStart;
+  appendMetric(metricsStore, "render:total", renderStart, renderDur);
 
   return createResponseWithMergedHeaders(htmlStream, {
-    headers: htmlHeaders,
+    headers: { "content-type": "text/html;charset=utf-8" },
   });
 }

@@ -10,9 +10,6 @@
  *   import from "@rangojs/router/client"
  */
 
-// Universal rendering utilities (work on both server and client)
-export { renderSegments } from "./segment-system.js";
-
 // Error classes (can be used on both server and client)
 export {
   RouteNotFoundError,
@@ -22,9 +19,6 @@ export {
   HandlerError,
   BuildError,
   InvalidHandlerError,
-  NetworkError,
-  isNetworkError,
-  sanitizeError,
   RouterError,
   Skip,
   isSkip,
@@ -34,7 +28,6 @@ export {
 export type {
   // Configuration types
   DocumentProps,
-  RouterEnv,
   DefaultEnv,
   RouteDefinition,
   RouteConfig,
@@ -42,7 +35,6 @@ export type {
   TrailingSlashMode,
   // Handler types
   Handler, // Supports params object, path pattern, or route name
-  ScopedRouteMap, // Scoped view of GeneratedRouteMap for Handler<"localName", ScopedRouteMap<"prefix">>
   HandlerContext,
   ExtractParams,
   GenericParams,
@@ -96,6 +88,7 @@ export type {
   LayoutUseItem,
   AllUseItems,
   UseItems,
+  HandlerUseItem,
 } from "./route-types.js";
 
 // Response route types (usable in both server and client contexts)
@@ -116,25 +109,32 @@ export type {
 // Middleware context types
 export type { MiddlewareContext, CookieOptions } from "./router/middleware.js";
 
+function serverOnlyStubError(name: string): Error {
+  return new Error(
+    `${name}() is only available from "@rangojs/router" in a react-server/RSC environment. ` +
+      `For client hooks and components, import from "@rangojs/router/client".`,
+  );
+}
+
 /**
  * Error-throwing stub for server-only `urls` function.
  */
 export function urls(): never {
-  throw new Error("urls() is server-only and requires RSC context.");
+  throw serverOnlyStubError("urls");
 }
 
 /**
  * Error-throwing stub for server-only `createRouter` function.
  */
 export function createRouter(): never {
-  throw new Error("createRouter() is server-only and requires RSC context.");
+  throw serverOnlyStubError("createRouter");
 }
 
 /**
  * Error-throwing stub for server-only `redirect` function.
  */
 export function redirect(): never {
-  throw new Error("redirect() is server-only and requires RSC context.");
+  throw serverOnlyStubError("redirect");
 }
 
 // Handle API (universal - works on both server and client)
@@ -150,111 +150,108 @@ export { nonce } from "./rsc/nonce.js";
  * Error-throwing stub for server-only `Prerender` function.
  */
 export function Prerender(): never {
-  throw new Error("Prerender() is server-only and requires RSC context.");
+  throw serverOnlyStubError("Prerender");
+}
+
+/**
+ * Error-throwing stub for server-only `Passthrough` function.
+ */
+export function Passthrough(): never {
+  throw serverOnlyStubError("Passthrough");
 }
 
 /**
  * Error-throwing stub for server-only `Static` function.
  */
 export function Static(): never {
-  throw new Error("Static() is server-only and requires RSC context.");
+  throw serverOnlyStubError("Static");
 }
 
 /**
  * Error-throwing stub for server-only `getRequestContext` function.
  */
 export function getRequestContext(): never {
-  throw new Error(
-    "getRequestContext() is server-only and requires RSC context.",
-  );
+  throw serverOnlyStubError("getRequestContext");
 }
 
 /**
- * Error-throwing stub for server-only `requireRequestContext` function.
+ * Error-throwing stub for server-only `cookies` function.
  */
-export function requireRequestContext(): never {
-  throw new Error(
-    "requireRequestContext() is server-only and requires RSC context.",
-  );
+export function cookies(): never {
+  throw serverOnlyStubError("cookies");
+}
+
+/**
+ * Error-throwing stub for server-only `headers` function.
+ */
+export function headers(): never {
+  throw serverOnlyStubError("headers");
 }
 
 /**
  * Error-throwing stub for server-only `createReverse` function.
  */
 export function createReverse(): never {
-  throw new Error("createReverse() is server-only and requires RSC context.");
-}
-
-/**
- * Error-throwing stub for server-only `enableMatchDebug` function.
- */
-export function enableMatchDebug(): never {
-  throw new Error(
-    "enableMatchDebug() is server-only and requires RSC context.",
-  );
-}
-
-/**
- * Error-throwing stub for server-only `getMatchDebugStats` function.
- */
-export function getMatchDebugStats(): never {
-  throw new Error(
-    "getMatchDebugStats() is server-only and requires RSC context.",
-  );
-}
-
-/**
- * Error-throwing stub for server-only `track` function.
- */
-export function track(): never {
-  throw new Error("track() is server-only and requires RSC context.");
+  throw serverOnlyStubError("createReverse");
 }
 
 // Error-throwing stubs for server-only route helpers
 export function layout(): never {
-  throw new Error("layout() is server-only and requires RSC context.");
+  throw serverOnlyStubError("layout");
 }
 export function cache(): never {
-  throw new Error("cache() is server-only and requires RSC context.");
+  throw serverOnlyStubError("cache");
 }
 export function middleware(): never {
-  throw new Error("middleware() is server-only and requires RSC context.");
+  throw serverOnlyStubError("middleware");
 }
 export function revalidate(): never {
-  throw new Error("revalidate() is server-only and requires RSC context.");
+  throw serverOnlyStubError("revalidate");
 }
 export function loader(): never {
-  throw new Error("loader() is server-only and requires RSC context.");
+  throw serverOnlyStubError("loader");
 }
 export function loading(): never {
-  throw new Error("loading() is server-only and requires RSC context.");
+  throw serverOnlyStubError("loading");
 }
 export function parallel(): never {
-  throw new Error("parallel() is server-only and requires RSC context.");
+  throw serverOnlyStubError("parallel");
 }
 export function intercept(): never {
-  throw new Error("intercept() is server-only and requires RSC context.");
+  throw serverOnlyStubError("intercept");
 }
 export function when(): never {
-  throw new Error("when() is server-only and requires RSC context.");
+  throw serverOnlyStubError("when");
 }
 export function errorBoundary(): never {
-  throw new Error("errorBoundary() is server-only and requires RSC context.");
+  throw serverOnlyStubError("errorBoundary");
 }
 export function notFoundBoundary(): never {
-  throw new Error(
-    "notFoundBoundary() is server-only and requires RSC context.",
-  );
+  throw serverOnlyStubError("notFoundBoundary");
 }
 export function transition(): never {
-  throw new Error("transition() is server-only and requires RSC context.");
+  throw serverOnlyStubError("transition");
 }
 
 // Request context type (safe for client)
-export type { RequestContext } from "./server/request-context.js";
+export type { PublicRequestContext as RequestContext } from "./server/request-context.js";
+
+// Cookie store types (safe for client)
+export type {
+  CookieStore,
+  Cookie,
+  ReadonlyHeaders,
+} from "./server/cookie-store.js";
+
+// Built-in handles (universal — work on both server and client)
+export { Meta } from "./handles/meta.js";
+export { Breadcrumbs } from "./handles/breadcrumbs.js";
 
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
+
+// Breadcrumb types
+export type { BreadcrumbItem } from "./handles/breadcrumbs.js";
 
 // Reverse type utilities for type-safe URL generation (Django-style URL reversal)
 export type {
@@ -262,8 +259,6 @@ export type {
   ReverseFunction,
   ExtractLocalRoutes,
   ParamsFor,
-  SanitizePrefix,
-  MergeRoutes,
 } from "./reverse.js";
 // scopedReverse() helper for handlers to get locally-typed reverse
 export { scopedReverse } from "./reverse.js";
@@ -278,3 +273,17 @@ export {
 
 // Path-based response type lookup from RegisteredRoutes
 export type { PathResponse } from "./href-client.js";
+
+// Telemetry sink
+export { createConsoleSink } from "./router/telemetry.js";
+export { createOTelSink } from "./router/telemetry-otel.js";
+export type { OTelTracer, OTelSpan } from "./router/telemetry-otel.js";
+export type { TelemetrySink, TelemetryEvent } from "./router/telemetry.js";
+
+// Timeout types and error class
+export { RouterTimeoutError } from "./router/timeout.js";
+export type {
+  RouterTimeouts,
+  TimeoutPhase,
+  TimeoutContext,
+} from "./router/timeout.js";

@@ -8,33 +8,45 @@
  */
 
 import { createElement } from "react";
-import { RouteNotFoundError, RouterError } from "../errors.js";
+import { RouteNotFoundError } from "../errors.js";
 import { matchMiddleware, executeMiddleware } from "../router/middleware.js";
 import {
   runWithRequestContext,
   setRequestContextParams,
   requireRequestContext,
+  getRequestContext,
+  _getRequestContext,
   createRequestContext,
-  getLocationState,
 } from "../server/request-context.js";
-import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
-
-import type { RscPayload, CreateRSCHandlerOptions } from "./types.js";
+import type {
+  RscPayload,
+  CreateRSCHandlerOptions,
+  LoadSSRModule,
+  SSRModule,
+} from "./types.js";
 import {
   createResponseWithMergedHeaders,
-  createSimpleRedirectResponse,
+  finalizeResponse,
+  interceptRedirectForPartial,
+  buildRouteMiddlewareEntries,
 } from "./helpers.js";
+import {
+  handleResponseRoute,
+  type ResponseRouteMatch,
+} from "./response-route-handler.js";
 import { generateNonce, nonce as nonceToken } from "./nonce.js";
 import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
 import type { RouterRequestInput } from "../router/router-interfaces.js";
 import { invokeOnError } from "../router/error-handling.js";
-import { createReverseFunction } from "../router/handler-context.js";
-import { contextGet, contextSet } from "../context-var.js";
-import { NOCACHE_SYMBOL } from "../cache/taint.js";
-import { traverseBack } from "../router/pattern-matching.js";
-import { createCacheScope, resolveCacheTags } from "../cache/cache-scope.js";
+import {
+  createReverseFunction,
+  stripInternalParams,
+} from "../router/handler-context.js";
+import { getRouterContext } from "../router/router-context.js";
+import { resolveSink, safeEmit } from "../router/telemetry.js";
+import { contextSet } from "../context-var.js";
 import {
   hasCachedManifest,
   getRouteTrie,
@@ -44,12 +56,38 @@ import {
   getRouterTrie,
 } from "../route-map-builder.js";
 import type { HandlerContext } from "./handler-context.js";
-import { createResponseErrorPayload } from "./response-error.js";
 import { buildRouterTrieFromUrlpatterns } from "./manifest-init.js";
 import { handleProgressiveEnhancement } from "./progressive-enhancement.js";
-import { handleServerAction } from "./server-action.js";
+import {
+  executeServerAction,
+  revalidateAfterAction,
+  type ActionContinuation,
+} from "./server-action.js";
 import { handleLoaderFetch } from "./loader-fetch.js";
+import { checkRequestOrigin, type OriginCheckPhase } from "./origin-guard.js";
 import { handleRscRendering } from "./rsc-rendering.js";
+import {
+  withTimeout,
+  RouterTimeoutError,
+  createDefaultTimeoutResponse,
+  type TimeoutPhase,
+} from "../router/timeout.js";
+import {
+  createMetricsStore,
+  appendMetric,
+  buildMetricsTiming,
+} from "../router/metrics.js";
+import {
+  startSSRSetup,
+  getSSRSetup,
+  mayNeedSSR,
+  SSR_SETUP_VAR,
+} from "./ssr-setup.js";
+import {
+  classifyRequest,
+  type RequestPlan,
+  type ExecutableRequestPlan,
+} from "../router/request-classification.js";
 
 /**
  * Create an RSC request handler.
@@ -84,13 +122,6 @@ import { handleRscRendering } from "./rsc-rendering.js";
  * });
  * ```
  */
-// Only cache successful responses. Non-200 statuses (errors, redirects) are
-// not cached — notFound() produces 500 in response routes, and explicit
-// non-200 Responses are rare enough that caching them would be surprising.
-function isCacheableStatus(status: number): boolean {
-  return status === 200;
-}
-
 export function createRSCHandler<
   TEnv = unknown,
   TRoutes extends Record<string, string> = Record<string, string>,
@@ -115,27 +146,41 @@ export function createRSCHandler<
     decodeFormState,
   } = deps;
 
-  // Use provided loadSSRModule or default to vite RSC module loader
-  const loadSSRModule =
+  // Use provided loadSSRModule or default to vite RSC module loader.
+  // In production the SSR module is stable across requests, so memoize
+  // the dynamic import to avoid repeated module resolution overhead.
+  // In dev mode Vite may hot-reload the module, so skip memoization.
+  const rawLoadSSRModule: LoadSSRModule =
     options.loadSSRModule ??
     (() => import.meta.viteRsc.loadModule("ssr", "index"));
-
-  // Track errors already reported to onError to prevent double-reporting
-  // when errors are caught by a phase-specific handler and re-thrown.
-  const reportedErrors = new WeakSet<object>();
+  let _ssrModulePromise: Promise<SSRModule> | undefined;
+  const loadSSRModule: LoadSSRModule =
+    process.env.NODE_ENV === "production"
+      ? () =>
+          (_ssrModulePromise ??= rawLoadSSRModule().catch((err) => {
+            _ssrModulePromise = undefined;
+            throw err;
+          }))
+      : rawLoadSSRModule;
 
   /**
-   * Wrapper for invokeOnError that binds the router's onError callback.
-   * Uses the shared utility from router/error-handling.ts for consistent behavior.
+   * Per-request error reporter that deduplicates via the ALS request context.
+   *
+   * Uses the same _reportedErrors WeakSet as the router layer so errors
+   * that propagate across layers are only reported once per request.
    */
   function callOnError(
     error: unknown,
     phase: ErrorPhase,
     context: Parameters<typeof invokeOnError<TEnv>>[3],
   ): void {
-    if (error != null && typeof error === "object") {
-      if (reportedErrors.has(error)) return;
-      reportedErrors.add(error);
+    // Guard: abort signal handlers fire asynchronously outside the ALS
+    // request scope, so the context may be gone. Skip dedup in that
+    // case — the error is from a cancelled stream, not a real failure.
+    const reqCtx = _getRequestContext();
+    if (error != null && typeof error === "object" && reqCtx) {
+      if (reqCtx._reportedErrors.has(error)) return;
+      reqCtx._reportedErrors.add(error);
     }
     invokeOnError(router.onError, error, phase, context, "RSC");
   }
@@ -148,6 +193,72 @@ export function createRSCHandler<
       );
     }
     return routeMap;
+  }
+
+  /**
+   * Handle a timeout by reporting the error, emitting telemetry,
+   * and returning either the custom onTimeout response or a default 504.
+   */
+  async function handleTimeoutResponse(
+    request: Request,
+    env: TEnv,
+    url: URL,
+    phase: TimeoutPhase,
+    durationMs: number,
+    routeKey?: string,
+    actionId?: string,
+  ): Promise<Response> {
+    const timeoutError = new RouterTimeoutError(phase, durationMs);
+
+    callOnError(timeoutError, phase === "action" ? "action" : "handler", {
+      request,
+      url,
+      env,
+      routeKey,
+      actionId,
+      handledByBoundary: false,
+      metadata: { timeout: true, phase, durationMs },
+    });
+
+    try {
+      const routerCtx = getRouterContext();
+      if (routerCtx?.telemetry) {
+        safeEmit(resolveSink(routerCtx.telemetry), {
+          type: "request.timeout" as const,
+          timestamp: performance.now(),
+          requestId: routerCtx.requestId,
+          phase,
+          pathname: url.pathname,
+          routeKey,
+          actionId,
+          durationMs,
+          customHandler: !!router.onTimeout,
+        });
+      }
+    } catch {
+      // Router context may not be available
+    }
+
+    if (router.onTimeout) {
+      try {
+        return await router.onTimeout({
+          phase,
+          request,
+          url,
+          env,
+          routeKey,
+          actionId,
+          durationMs,
+        });
+      } catch (e) {
+        if (process.env.NODE_ENV !== "production") {
+          console.error("[RSC] onTimeout callback error:", e);
+        }
+        return createDefaultTimeoutResponse(phase);
+      }
+    }
+
+    return createDefaultTimeoutResponse(phase);
   }
 
   /**
@@ -174,7 +285,8 @@ export function createRSCHandler<
     });
   }
 
-  // Bundle shared dependencies for extracted handler functions
+  // Bundle shared dependencies for extracted handler functions.
+  // callOnError reads from ALS so it's inherently per-request scoped.
   const handlerCtx: HandlerContext<TEnv> = {
     router,
     version,
@@ -188,6 +300,11 @@ export function createRSCHandler<
     callOnError,
     getRequiredRouteMap,
     createRedirectFlightResponse,
+    resolveStreamMode: async (request, env, url) => {
+      const resolver = router.ssr?.resolveStreaming;
+      if (!resolver) return "stream";
+      return resolver({ request, env, url });
+    },
   };
 
   return async function handler(
@@ -195,6 +312,11 @@ export function createRSCHandler<
     input: RouterRequestInput<TEnv> = {},
   ): Promise<Response> {
     const handlerStart = performance.now();
+    // Create the metrics store at handler start so handler:total has startTime=0
+    // and all metrics are relative to the request entry point.
+    const earlyMetricsStore = router.debugPerformance
+      ? createMetricsStore(true, handlerStart)
+      : undefined;
 
     const { env = {} as TEnv, vars: initialVars, ctx: executionCtx } = input;
 
@@ -294,9 +416,6 @@ export function createRSCHandler<
     }
     const manifestCacheDur = performance.now() - manifestCacheStart;
 
-    // Note: Route map for useHref() is loaded lazily via getGlobalRouteMap()
-    // This allows it to include all routes from lazy includes after manifest loading
-
     // Create unified request context with all methods
     // Includes: stub response, handle store, loader memoization, use(), cookies, headers, cache store
     // params starts empty, populated after route matching via setRequestContextParams
@@ -308,9 +427,27 @@ export function createRSCHandler<
       variables,
       cacheStore,
       explicitTaggedStores,
+      cacheProfiles: router.cacheProfiles,
       executionContext: executionCtx,
       themeConfig: router.themeConfig,
     });
+    if (earlyMetricsStore) {
+      requestContext._debugPerformance = true;
+      requestContext._metricsStore = earlyMetricsStore;
+    }
+    // Wire background error reporting so "use cache" and other subsystems
+    // can surface non-fatal errors through the router's onError callback.
+    requestContext._reportBackgroundError = (
+      error: unknown,
+      category: string,
+    ) => {
+      callOnError(error, "cache", {
+        request,
+        url,
+        metadata: { category },
+      });
+    };
+
     const ctxCreateDur = performance.now() - ctxCreateStart;
 
     // Accumulate handler-level timing for Server-Timing header
@@ -332,6 +469,9 @@ export function createRSCHandler<
     // - Server components during rendering
     // - Error boundaries
     // - Streaming
+    // Store basename on request context (scoped per-request via existing ALS)
+    requestContext._basename = router.basename;
+
     return runWithRequestContext(requestContext, async () => {
       // Core handler logic (wrapped by middleware)
       const coreHandler = async (): Promise<Response> => {
@@ -339,6 +479,7 @@ export function createRSCHandler<
       };
 
       // Execute middleware chain if any, otherwise call core handler directly
+      let response: Response;
       if (matchedMiddleware.length > 0) {
         const mwResponse = await executeMiddleware(
           matchedMiddleware,
@@ -349,34 +490,66 @@ export function createRSCHandler<
           createReverseFunction(getRequiredRouteMap()),
         );
 
-        // If global middleware returned a redirect during a partial (SPA)
-        // request, intercept it. fetch auto-follows 3xx, so we must signal
-        // the redirect via our own mechanism instead.
-        // - With state: Flight payload (200) so location state survives.
-        // - Without state: 204 + X-RSC-Redirect header (lightweight).
-        const isPartial = url.searchParams.has("_rsc_partial");
-        const redirectUrl = mwResponse.headers.get("Location");
-        const isRedirect =
-          mwResponse.status >= 300 && mwResponse.status < 400 && redirectUrl;
-        if (isPartial && isRedirect) {
-          const locationState = getLocationState();
-          if (locationState) {
-            return createRedirectFlightResponse(
-              redirectUrl,
-              resolveLocationStateEntries(locationState),
-            );
-          }
-          return createSimpleRedirectResponse(redirectUrl);
+        if (
+          url.searchParams.has("_rsc_partial") ||
+          url.searchParams.has("_rsc_action")
+        ) {
+          const intercepted = interceptRedirectForPartial(
+            mwResponse,
+            createRedirectFlightResponse,
+          );
+          response = intercepted ?? finalizeResponse(mwResponse);
+        } else {
+          response = finalizeResponse(mwResponse);
         }
-
-        return mwResponse;
+      } else {
+        response = await coreHandler();
       }
 
-      return coreHandler();
+      // Finalize metrics after all middleware (including post-next work)
+      // has completed so :post spans are captured in the timeline.
+      // Handler timing parts are always emitted (even without debug metrics)
+      // so non-debug requests still get bootstrap Server-Timing entries.
+      const handlerTimingArr: string[] = variables.__handlerTiming || [];
+      // Preserve any existing Server-Timing set by response routes or middleware
+      const existingTiming = response.headers.get("Server-Timing");
+      const timingParts = existingTiming
+        ? [existingTiming, ...handlerTimingArr]
+        : [...handlerTimingArr];
+
+      const metricsStore = requestContext._metricsStore;
+      if (metricsStore) {
+        // When the store was created at handler start (earlyMetricsStore),
+        // handler:total covers the full request. When ctx.debugPerformance()
+        // created the store mid-request, use its requestStart to avoid a
+        // negative startTime offset.
+        const totalStart = earlyMetricsStore
+          ? handlerStart
+          : metricsStore.requestStart;
+        appendMetric(
+          metricsStore,
+          "handler:total",
+          totalStart,
+          performance.now() - totalStart,
+        );
+        const metricsTiming = buildMetricsTiming(
+          request.method,
+          url.pathname,
+          metricsStore,
+        );
+        if (metricsTiming) timingParts.push(metricsTiming);
+      }
+
+      const fullTiming = timingParts.join(", ");
+      if (fullTiming) response.headers.set("Server-Timing", fullTiming);
+
+      return response;
     });
   };
 
-  // Core request handling logic (separated for middleware wrapping)
+  // Core request handling logic (separated for middleware wrapping).
+  // Uses the classify → execute model: classifyRequest produces a RequestPlan,
+  // then execution dispatches on the plan mode.
   async function coreRequestHandler(
     request: Request,
     env: TEnv,
@@ -384,438 +557,10 @@ export function createRSCHandler<
     variables: Record<string, any>,
     nonce: string | undefined,
   ): Promise<Response> {
-    // First, check for route-level middleware
-    const previewStart = performance.now();
-    const preview = await router.previewMatch(request, { env });
-    const previewDur = performance.now() - previewStart;
     const handlerTiming: string[] = variables.__handlerTiming || [];
-    handlerTiming.push(`handler-preview-match;dur=${previewDur.toFixed(2)}`);
-    // Response route short-circuit: skip entire RSC pipeline
-    if (preview?.responseType && preview.handler) {
-      const isPartial = url.searchParams.has("_rsc_partial");
 
-      // Partial requests (client-side navigation) to response routes
-      // get X-RSC-Reload to trigger hard navigation in the browser
-      if (isPartial) {
-        const cleanUrl = new URL(url);
-        cleanUrl.searchParams.delete("_rsc_partial");
-        cleanUrl.searchParams.delete("_rsc_segments");
-        cleanUrl.searchParams.delete("_rsc_v");
-        cleanUrl.searchParams.delete("_rsc_stale");
-        cleanUrl.searchParams.delete("_rsc_action");
-        cleanUrl.searchParams.delete("_rsc_prev");
-
-        return createResponseWithMergedHeaders(null, {
-          status: 200,
-          headers: {
-            "X-RSC-Reload": cleanUrl.toString(),
-            "content-type": "text/x-component;charset=utf-8",
-          },
-        });
-      }
-
-      // Build lightweight context for response handler
-      const reqCtx = requireRequestContext();
-      const responseHandlerCtx = {
-        request,
-        params: preview.params || {},
-        env,
-        searchParams: url.searchParams,
-        url,
-        pathname: url.pathname,
-        href: (name: string, hrefParams?: Record<string, string>) => {
-          if (name.startsWith("/")) {
-            if (!hrefParams) return name;
-            return name.replace(/:([^/]+)/g, (_, key) => {
-              const value = hrefParams[key];
-              if (value === undefined)
-                throw new Error(`Missing param "${key}" for path "${name}"`);
-              return encodeURIComponent(value);
-            });
-          }
-          return name;
-        },
-        get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
-        header: (name: string, value: string) => reqCtx.header(name, value),
-        setCookie: (name: string, value: string, options?: any) =>
-          reqCtx.setCookie(name, value, options),
-        _responseType: preview.responseType,
-      };
-      // Brand with taint symbol so "use cache" detects it as request-scoped
-      // and extracts route-identifying properties (params, pathname, _responseType)
-      (responseHandlerCtx as any)[NOCACHE_SYMBOL] = true;
-
-      // Call handler directly, wrapped by route middleware if present
-      const callHandler = async () => {
-        // JSON response routes: wrap in { data } / { error } envelope
-        if (preview.responseType === "json") {
-          const errorCtx = { request, url, env };
-          try {
-            const result = await (preview.handler as Function)(
-              responseHandlerCtx,
-            );
-            if (result instanceof Response) {
-              const mergedHeaders: Record<string, string> = {};
-              result.headers.forEach((value, key) => {
-                mergedHeaders[key] = value;
-              });
-              return createResponseWithMergedHeaders(result.body, {
-                status: result.status,
-                headers: mergedHeaders,
-              });
-            }
-            return createResponseWithMergedHeaders(
-              JSON.stringify({ data: result }),
-              {
-                status: 200,
-                headers: { "content-type": "application/json;charset=utf-8" },
-              },
-            );
-          } catch (error) {
-            callOnError(error, "handler", errorCtx);
-            const isDev = process.env.NODE_ENV !== "production";
-            const status = error instanceof RouterError ? error.status : 500;
-            return createResponseWithMergedHeaders(
-              JSON.stringify({
-                error: createResponseErrorPayload(error, isDev),
-              }),
-              {
-                status,
-                headers: { "content-type": "application/json;charset=utf-8" },
-              },
-            );
-          }
-        }
-
-        // Non-JSON response routes: catch errors and return plain Response
-        const errorCtx = { request, url, env };
-        try {
-          const result = await (preview.handler as Function)(
-            responseHandlerCtx,
-          );
-
-          if (result instanceof Response) {
-            // Handler returned a Response directly -- pass through
-            const mergedHeaders: Record<string, string> = {};
-            result.headers.forEach((value, key) => {
-              mergedHeaders[key] = value;
-            });
-            return createResponseWithMergedHeaders(result.body, {
-              status: result.status,
-              headers: mergedHeaders,
-            });
-          }
-
-          // Auto-wrap based on response type tag
-          switch (preview.responseType) {
-            case "text":
-              return createResponseWithMergedHeaders(String(result), {
-                status: 200,
-                headers: { "content-type": "text/plain;charset=utf-8" },
-              });
-            case "html":
-              return createResponseWithMergedHeaders(String(result), {
-                status: 200,
-                headers: { "content-type": "text/html;charset=utf-8" },
-              });
-            case "xml":
-              return createResponseWithMergedHeaders(String(result), {
-                status: 200,
-                headers: { "content-type": "application/xml;charset=utf-8" },
-              });
-            case "md":
-              return createResponseWithMergedHeaders(String(result), {
-                status: 200,
-                headers: { "content-type": "text/markdown;charset=utf-8" },
-              });
-            default:
-              // image, stream, any -- must return Response
-              throw new Error(
-                `Response route handler for "${preview.responseType}" must return a Response object, got ${typeof result}`,
-              );
-          }
-        } catch (error) {
-          callOnError(error, "handler", errorCtx);
-          const isDev = process.env.NODE_ENV !== "production";
-          const status = error instanceof RouterError ? error.status : 500;
-          const message =
-            error instanceof RouterError
-              ? error.message
-              : isDev && error instanceof Error
-                ? error.message
-                : "Internal Server Error";
-          return createResponseWithMergedHeaders(message, {
-            status,
-            headers: { "content-type": "text/plain;charset=utf-8" },
-          });
-        }
-      };
-
-      // Wrap callHandler to append Vary: Accept on content-negotiated responses
-      const callHandlerWithVary = async () => {
-        const response = await callHandler();
-        if (preview.negotiated) {
-          response.headers.append("Vary", "Accept");
-        }
-        return response;
-      };
-
-      // Wrap with response caching if cache() config is present
-      const executeHandler = async () => {
-        if (preview.routeMiddleware && preview.routeMiddleware.length > 0) {
-          const middlewareEntries = preview.routeMiddleware.map((mw) => ({
-            entry: {
-              pattern: null,
-              regex: null,
-              paramNames: [],
-              handler: mw.handler,
-              mountPrefix: null,
-            },
-            params: mw.params,
-          }));
-          return executeMiddleware(
-            middlewareEntries,
-            request,
-            env,
-            variables,
-            callHandlerWithVary,
-            createReverseFunction(getRequiredRouteMap()),
-          );
-        }
-        return callHandlerWithVary();
-      };
-
-      // Resolve cache config from entry tree (same pattern as match-api.ts)
-      if (preview.manifestEntry) {
-        const entries = [...traverseBack(preview.manifestEntry)];
-        let cacheScope: ReturnType<typeof createCacheScope> = null;
-        for (const entry of entries) {
-          if (entry.cache) {
-            cacheScope = createCacheScope(entry.cache, cacheScope);
-          }
-        }
-
-        if (cacheScope?.enabled) {
-          const store = cacheScope.getStore() ?? reqCtx._cacheStore;
-          if (store?.getResponse && store?.putResponse) {
-            // Resolve tags for response cache entries
-            const responseTags = resolveCacheTags(cacheScope.config, reqCtx);
-
-            // Register the explicit per-scope store for cross-store tag invalidation.
-            // Only register when the store came from cache({ store }), not the
-            // app-level fallback (which is reachable via ctx._cacheStore).
-            // The set is scoped per handler, so different routers don't cross-pollinate.
-            if (
-              cacheScope.hasExplicitStore &&
-              responseTags &&
-              responseTags.length > 0
-            ) {
-              reqCtx._explicitTaggedStores?.add(store);
-            }
-
-            // Build cache key with response:{type}: prefix to avoid collision
-            // with segment keys and differentiate between response types
-            let cacheKey = `response:${preview.responseType}:${url.pathname}`;
-            if (store.keyGenerator) {
-              try {
-                cacheKey = await store.keyGenerator(reqCtx, cacheKey);
-              } catch {
-                // Fall back to default key on keyGenerator failure
-              }
-            }
-
-            try {
-              const cached = await store.getResponse(cacheKey);
-
-              if (cached && isCacheableStatus(cached.response.status)) {
-                if (!cached.shouldRevalidate) {
-                  // Fresh hit
-                  return cached.response;
-                }
-
-                // Stale hit (SWR) - return cached, revalidate in background
-                reqCtx.waitUntil(async () => {
-                  try {
-                    const fresh = await executeHandler();
-                    if (isCacheableStatus(fresh.status)) {
-                      await store.putResponse!(
-                        cacheKey,
-                        fresh,
-                        cacheScope!.ttl,
-                        cacheScope!.swr,
-                        responseTags,
-                      );
-                    }
-                  } catch (error) {
-                    console.error(
-                      `[ResponseCache] Revalidation failed:`,
-                      error,
-                    );
-                  }
-                });
-
-                return cached.response;
-              }
-            } catch (error) {
-              console.error(`[ResponseCache] Cache lookup failed:`, error);
-            }
-
-            // Cache miss - execute handler and cache the result
-            const response = await executeHandler();
-
-            if (isCacheableStatus(response.status)) {
-              reqCtx.waitUntil(async () => {
-                try {
-                  await store.putResponse!(
-                    cacheKey,
-                    response.clone(),
-                    cacheScope!.ttl,
-                    cacheScope!.swr,
-                    responseTags,
-                  );
-                } catch (error) {
-                  console.error(`[ResponseCache] Cache write failed:`, error);
-                }
-              });
-            }
-
-            return response;
-          }
-        }
-      }
-
-      return executeHandler();
-    }
-
-    // Wrap RSC handler to append Vary: Accept on content-negotiated routes
-    const rscHandler = async () => {
-      const response = await coreRequestHandlerInner(
-        request,
-        env,
-        url,
-        variables,
-        nonce,
-        preview?.params,
-        preview?.routeKey,
-      );
-      if (preview?.negotiated) {
-        response.headers.append("Vary", "Accept");
-      }
-      return response;
-    };
-
-    if (preview?.routeMiddleware && preview.routeMiddleware.length > 0) {
-      // Convert route middleware to app middleware format for execution
-      const middlewareEntries = preview.routeMiddleware.map((mw) => ({
-        entry: {
-          pattern: null,
-          regex: null,
-          paramNames: [],
-          handler: mw.handler,
-          mountPrefix: null,
-        },
-        params: mw.params,
-      }));
-
-      // Execute route middleware wrapping the actual request handling
-      const mwResponse = await executeMiddleware(
-        middlewareEntries,
-        request,
-        env,
-        variables,
-        rscHandler,
-        createReverseFunction(getRequiredRouteMap()),
-      );
-
-      // If route middleware returned a redirect during a partial (SPA)
-      // request, intercept it. fetch auto-follows 3xx, so we must signal
-      // the redirect via our own mechanism instead.
-      // - With state: Flight payload (200) so location state survives.
-      // - Without state: 204 + X-RSC-Redirect header (lightweight).
-      const isPartial = url.searchParams.has("_rsc_partial");
-      const mwRedirectUrl = mwResponse.headers.get("Location");
-      const isMwRedirect =
-        mwResponse.status >= 300 && mwResponse.status < 400 && mwRedirectUrl;
-      if (isPartial && isMwRedirect) {
-        const locationState = getLocationState();
-        if (locationState) {
-          return createRedirectFlightResponse(
-            mwRedirectUrl,
-            resolveLocationStateEntries(locationState),
-          );
-        }
-        return createSimpleRedirectResponse(mwRedirectUrl);
-      }
-
-      return mwResponse;
-    }
-
-    // No route middleware, proceed directly
-    return rscHandler();
-  }
-
-  // Inner request handler (actual RSC logic, wrapped by route middleware if any)
-  async function coreRequestHandlerInner(
-    request: Request,
-    env: TEnv,
-    url: URL,
-    variables: Record<string, any>,
-    nonce: string | undefined,
-    routeParams?: Record<string, string>,
-    routeKey?: string,
-  ): Promise<Response> {
-    const isPartial = url.searchParams.has("_rsc_partial");
-    const isAction =
-      request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
-    const actionId =
-      request.headers.get("rsc-action") || url.searchParams.get("_rsc_action");
-
-    // Version mismatch detection - client may have stale code after HMR/deployment
-    // If versions don't match, tell the client to reload
-    const clientVersion = url.searchParams.get("_rsc_v");
-    if (version && clientVersion && clientVersion !== version) {
-      console.log(
-        `[RSC] Version mismatch: client=${clientVersion}, server=${version}. Forcing reload.`,
-      );
-
-      // Clean URL by removing RSC params
-      const cleanUrl = new URL(url);
-      cleanUrl.searchParams.delete("_rsc_partial");
-      cleanUrl.searchParams.delete("_rsc_segments");
-      cleanUrl.searchParams.delete("_rsc_v");
-      cleanUrl.searchParams.delete("_rsc_stale");
-      cleanUrl.searchParams.delete("_rsc_action");
-      cleanUrl.searchParams.delete("_rsc_prev");
-
-      // For actions, reload current page (referer) if same origin.
-      // For navigation, load the target URL.
-      // Validate referer origin to prevent open redirect via crafted header.
-      let reloadUrl = cleanUrl.toString();
-      if (isAction) {
-        const referer = request.headers.get("referer");
-        if (referer) {
-          try {
-            const refererUrl = new URL(referer);
-            if (refererUrl.origin === url.origin) {
-              reloadUrl = referer;
-            }
-          } catch {
-            // Malformed referer, fall back to cleanUrl
-          }
-        }
-      }
-
-      // Return special response that tells client to reload
-      return createResponseWithMergedHeaders(null, {
-        status: 200,
-        headers: {
-          "X-RSC-Reload": reloadUrl,
-          "content-type": "text/x-component;charset=utf-8",
-        },
-      });
-    }
-    // Debug manifest endpoint: ?__debug_manifest on any route.
-    // Always available in dev, requires allowDebugManifest option in production.
+    // Debug manifest endpoint: handled before classification since it
+    // doesn't need a route match and needs trie access from the closure.
     const isDev = process.env.NODE_ENV !== "production";
     if (
       url.searchParams.has("__debug_manifest") &&
@@ -843,221 +588,610 @@ export function createRSCHandler<
       );
     }
 
-    // Get handle store from request context (created at start of request)
+    // ---- 1. Classify ----
+    // classifyRequest may throw RouteNotFoundError for unknown routes.
+    // In that case, fall through to a full-render plan so the pipeline
+    // can render the 404 page via the existing error handling path.
+    const classifyStart = performance.now();
+    let plan: RequestPlan<TEnv>;
+    try {
+      plan = await classifyRequest<TEnv>(request, url, {
+        findMatch: router.findMatch,
+        routerVersion: version,
+        routerId: router.id,
+      });
+    } catch (error) {
+      if (
+        error instanceof RouteNotFoundError ||
+        (error instanceof Error && error.name === "RouteNotFoundError")
+      ) {
+        // Let the render path handle 404 — match()/matchPartial() will
+        // re-throw RouteNotFoundError and the catch block in
+        // executeRenderWithMiddleware renders the not-found page.
+        plan = {
+          mode: "full-render",
+          route: {
+            matched: null as any,
+            manifestEntry: null as any,
+            entries: [],
+            routeKey: "",
+            localRouteName: "",
+            params: {},
+            routeMiddleware: [],
+            cacheScope: null,
+            isPassthrough: false,
+          },
+          negotiated: false,
+        };
+      } else {
+        throw error;
+      }
+    }
+    const classifyDur = performance.now() - classifyStart;
+    handlerTiming.push(`handler-classify;dur=${classifyDur.toFixed(2)}`);
+
+    // ---- 2. Terminal plans (no execution needed) ----
+    if (plan.mode === "redirect") {
+      // Redirects are handled by the pipeline (match/matchPartial),
+      // but for partial requests we short-circuit with a Flight redirect.
+      if (url.searchParams.has("_rsc_partial")) {
+        return createRedirectFlightResponse(plan.redirectUrl);
+      }
+      // Full requests: let the pipeline handle the redirect via match()
+      // which returns { redirect: url }. Fall through to full-render.
+    }
+
+    if (plan.mode === "version-mismatch") {
+      console.log(
+        `[RSC] Version mismatch: client=${url.searchParams.get("_rsc_v")}, server=${version}. Forcing reload.`,
+      );
+      return createResponseWithMergedHeaders(null, {
+        status: 200,
+        headers: {
+          "X-RSC-Reload": plan.reloadUrl,
+          "content-type": "text/x-component;charset=utf-8",
+        },
+      });
+    }
+
+    // ---- 3. Origin guard (gate for action/loader/PE modes) ----
+    const originPhase: OriginCheckPhase | null =
+      plan.mode === "action"
+        ? "action"
+        : plan.mode === "loader"
+          ? "loader"
+          : plan.mode === "pe-render"
+            ? "pe-form"
+            : null;
+    if (originPhase) {
+      const originResult = await checkRequestOrigin(
+        request,
+        url,
+        router.originCheck,
+        env,
+        router.id,
+        originPhase,
+      );
+      if (originResult) {
+        const originError = new Error(
+          `Origin check rejected: ${request.headers.get("origin") ?? "none"} vs ${request.headers.get("host") ?? "none"}`,
+        );
+        originError.name = "OriginCheckError";
+
+        callOnError(originError, "origin", {
+          request,
+          url,
+          env,
+          handledByBoundary: false,
+          metadata: {
+            phase: originPhase,
+            origin: request.headers.get("origin"),
+            host: request.headers.get("host"),
+          },
+        });
+
+        try {
+          const routerCtx = getRouterContext();
+          if (routerCtx?.telemetry) {
+            safeEmit(resolveSink(routerCtx.telemetry), {
+              type: "request.origin-rejected" as const,
+              timestamp: performance.now(),
+              requestId: routerCtx.requestId,
+              method: request.method,
+              pathname: url.pathname,
+              phase: originPhase,
+              origin: request.headers.get("origin"),
+              host: request.headers.get("host"),
+            });
+          }
+        } catch {
+          // Router context may not be available
+        }
+
+        return originResult;
+      }
+    }
+
+    // ---- 4. Execute ----
+    return executeRequest(
+      plan as ExecutableRequestPlan<TEnv>,
+      request,
+      env,
+      url,
+      variables,
+      nonce,
+    );
+  }
+
+  // Execute a classified request plan. Dispatches to the appropriate handler
+  // based on plan.mode. Lives in the createRSCHandler closure for access to
+  // handlerCtx, router, callOnError, etc.
+  // Only receives executable plans (version-mismatch is handled above).
+  async function executeRequest(
+    plan: ExecutableRequestPlan<TEnv>,
+    request: Request,
+    env: TEnv,
+    url: URL,
+    variables: Record<string, any>,
+    nonce: string | undefined,
+  ): Promise<Response> {
+    // Common setup
     const handleStore = requireRequestContext()._handleStore;
 
-    try {
-      // Set route params early so all execution paths (progressive enhancement,
-      // server actions, loader fetches) can access ctx.params via getRequestContext().
-      // Previously this was only done for JS actions, leaving PE actions with empty params.
-      if (routeParams) {
-        setRequestContextParams(routeParams, routeKey);
-      }
-
-      // ============================================================================
-      // PROGRESSIVE ENHANCEMENT: No-JS Form Submissions
-      // ============================================================================
-      const progressiveResult = await handleProgressiveEnhancement(
-        handlerCtx,
+    // Wire up error reporting for late streaming-handle failures
+    handleStore.onError = (error: Error) => {
+      const reqCtx = requireRequestContext();
+      callOnError(error, "handler", {
         request,
-        env,
         url,
-        isAction,
-        handleStore,
-        nonce,
-      );
-      if (progressiveResult) {
-        return progressiveResult;
-      }
-
-      // ============================================================================
-      // SERVER ACTION EXECUTION (JavaScript-enabled client)
-      // ============================================================================
-      if (isAction && actionId) {
-        try {
-          return await handleServerAction(
-            handlerCtx,
-            request,
-            env,
-            url,
-            actionId,
-            handleStore,
-          );
-        } catch (error) {
-          callOnError(error, "action", {
-            request,
-            url,
-            env,
-            actionId,
-            handledByBoundary: false,
+        routeKey: reqCtx._routeName,
+        params: reqCtx.params as Record<string, string>,
+        handledByBoundary: true,
+      });
+      try {
+        const routerCtx = getRouterContext();
+        if (routerCtx?.telemetry) {
+          safeEmit(resolveSink(routerCtx.telemetry), {
+            type: "handler.error" as const,
+            timestamp: performance.now(),
+            requestId: routerCtx.requestId,
+            error,
+            handledByBoundary: true,
+            pathname: url.pathname,
+            routeKey: reqCtx._routeName,
+            params: reqCtx.params as Record<string, string>,
           });
-          console.error(`[RSC] Action error:`, error);
-          throw error;
         }
+      } catch {
+        // Router context may not be available (e.g. prerender path)
       }
+    };
 
-      // ============================================================================
-      // LOADER FETCH EXECUTION (data fetching with RSC serialization)
-      // ============================================================================
-      const isLoaderRequest = url.searchParams.has("_rsc_loader");
-      if (isLoaderRequest) {
-        return handleLoaderFetch(
+    // Set route params early so all execution paths can access ctx.params.
+    // Also store the classified snapshot so match/matchPartial can reuse it
+    // instead of calling resolveRoute again.
+    if (plan.mode !== "redirect") {
+      setRequestContextParams(plan.route.params, plan.route.routeKey);
+      requireRequestContext()._classifiedRoute = plan.route;
+    }
+
+    const routeReverse = createReverseFunction(getRequiredRouteMap());
+
+    // ---- Response route: skip entire RSC pipeline ----
+    if (plan.mode === "response") {
+      // Build ResponseRouteMatch from plan fields. handleResponseRoute
+      // expects a flat object with params at the top level.
+      const responseMatch: ResponseRouteMatch = {
+        responseType: plan.responseType,
+        handler: plan.handler,
+        params: plan.route.params,
+        negotiated: plan.negotiated,
+        manifestEntry: plan.manifestEntry,
+        routeMiddleware: plan.routeMiddleware,
+      };
+      const responseOutcome = await withTimeout(
+        handleResponseRoute(
           handlerCtx,
+          responseMatch,
           request,
           env,
           url,
           variables,
-          routeParams,
+        ),
+        router.timeouts.renderStartMs,
+        "render-start",
+      );
+      if (responseOutcome.timedOut) {
+        return handleTimeoutResponse(
+          request,
+          env,
+          url,
+          "render-start",
+          responseOutcome.durationMs,
+          plan.route.routeKey,
         );
       }
+      const response = responseOutcome.result;
+      if (plan.negotiated) {
+        response.headers.append("Vary", "Accept");
+      }
+      return response;
+    }
 
-      // ============================================================================
-      // REGULAR RSC RENDERING (Navigation)
-      // ============================================================================
-      // Note: Must use "return await" for try/catch to catch async rejections
-      return await handleRscRendering(
+    // SSR setup: kick off in parallel for modes that need HTML rendering.
+    // Placed after response-route short-circuit so response/mime routes
+    // never pay for SSR work.
+    if (plan.mode !== "loader" && mayNeedSSR(request, url)) {
+      variables[SSR_SETUP_VAR] = startSSRSetup(
         handlerCtx,
         request,
         env,
         url,
-        isPartial,
+        router.debugPerformance
+          ? () => requireRequestContext()._metricsStore
+          : undefined,
+      );
+    }
+
+    // ---- Loader fetch ----
+    if (plan.mode === "loader") {
+      return handleLoaderFetch(
+        handlerCtx,
+        request,
+        env,
+        url,
+        variables,
+        plan.route.params,
+      );
+    }
+
+    // ---- Progressive enhancement ----
+    if (plan.mode === "pe-render") {
+      const peResult = await handleProgressiveEnhancement(
+        handlerCtx,
+        request,
+        env,
+        url,
+        false, // isAction = false for PE
         handleStore,
         nonce,
+        {
+          routeMiddleware: plan.route.routeMiddleware,
+          variables,
+          routeReverse,
+        },
       );
-    } catch (error) {
-      // Check if middleware/handler returned Response
-      if (error instanceof Response) {
-        // During partial (client-side navigation), a 200 Response from a handler
-        // means the route serves raw content (JSON, text, etc.), not JSX.
-        // Signal the browser to hard-navigate so it renders the raw response.
-        // Only for 200 — redirects (3xx) work already because the browser follows
-        // them automatically to a URL that serves Flight data.
-        if (isPartial && error.status === 200) {
-          console.warn(
-            `[RSC] Route handler at ${url.pathname} returned a Response during client-side navigation. ` +
-              `Falling back to hard navigation. Use data-external on the <Link> to avoid the extra round-trip.`,
+      if (peResult) return peResult;
+      // PE handler returned null (not a PE form) — fall through to render
+    }
+
+    // ---- Action: execute action, then revalidate wrapped in route middleware ----
+    if (plan.mode === "action") {
+      let actionContinuation: ActionContinuation | undefined;
+      try {
+        const actionOutcome = await withTimeout(
+          executeServerAction(
+            handlerCtx,
+            request,
+            env,
+            url,
+            plan.actionId,
+            handleStore,
+          ),
+          router.timeouts.actionMs,
+          "action",
+        );
+        if (actionOutcome.timedOut) {
+          return handleTimeoutResponse(
+            request,
+            env,
+            url,
+            "action",
+            actionOutcome.durationMs,
+            plan.route.routeKey,
+            plan.actionId,
           );
-          const cleanUrl = new URL(url);
-          cleanUrl.searchParams.delete("_rsc_partial");
-          cleanUrl.searchParams.delete("_rsc_segments");
-          cleanUrl.searchParams.delete("_rsc_v");
-          cleanUrl.searchParams.delete("_rsc_stale");
-          cleanUrl.searchParams.delete("_rsc_action");
-          cleanUrl.searchParams.delete("_rsc_prev");
-          return createResponseWithMergedHeaders(null, {
-            status: 200,
-            headers: {
-              "X-RSC-Reload": cleanUrl.toString(),
-              "content-type": "text/x-component;charset=utf-8",
+        }
+        const result = actionOutcome.result;
+        // Response means redirect or error boundary — done.
+        if (result instanceof Response) return result;
+        actionContinuation = result;
+      } catch (error) {
+        callOnError(error, "action", {
+          request,
+          url,
+          env,
+          actionId: plan.actionId,
+          handledByBoundary: false,
+        });
+        console.error(`[RSC] Action error:`, error);
+        throw error;
+      }
+
+      // Revalidation render wrapped in route middleware.
+      // Actions from client-side navigation include _rsc_partial — preserve
+      // the partial flag so the revalidation returns a Flight stream, not HTML.
+      // App-switch is already excluded by classifyRequest (would be full-render).
+      const isPartialAction = url.searchParams.has("_rsc_partial");
+      return executeRenderWithMiddleware(
+        plan.route.routeMiddleware,
+        plan.negotiated,
+        plan.route.routeKey,
+        routeReverse,
+        request,
+        env,
+        url,
+        variables,
+        nonce,
+        handleStore,
+        isPartialAction,
+        actionContinuation,
+      );
+    }
+
+    // ---- Full render / Partial render (or PE that fell through) ----
+    if (plan.mode === "full-render" || plan.mode === "partial-render") {
+      const isPartial = plan.mode === "partial-render";
+      return executeRenderWithMiddleware(
+        plan.route.routeMiddleware,
+        plan.negotiated,
+        plan.route.routeKey,
+        routeReverse,
+        request,
+        env,
+        url,
+        variables,
+        nonce,
+        handleStore,
+        isPartial,
+      );
+    }
+
+    // PE that fell through (handleProgressiveEnhancement returned null)
+    // falls back to full render
+    if (plan.mode === "pe-render") {
+      return executeRenderWithMiddleware(
+        plan.route.routeMiddleware,
+        false,
+        plan.route.routeKey,
+        routeReverse,
+        request,
+        env,
+        url,
+        variables,
+        nonce,
+        handleStore,
+        false,
+      );
+    }
+
+    // Redirect plan that wasn't handled above (full-page redirect — let
+    // the pipeline handle it via match() which returns { redirect: url })
+    return executeRenderWithMiddleware(
+      plan.route.routeMiddleware,
+      false,
+      plan.route.routeKey,
+      routeReverse,
+      request,
+      env,
+      url,
+      variables,
+      nonce,
+      handleStore,
+      false,
+    );
+  }
+
+  // Shared render execution: wraps handleRscRendering (or revalidateAfterAction)
+  // in route middleware and timeout handling. Consolidates the pattern used by
+  // action-revalidate, full-render, and partial-render modes.
+  async function executeRenderWithMiddleware(
+    routeMiddleware: import("../router/middleware-types.js").CollectedMiddleware[],
+    negotiated: boolean,
+    routeKey: string,
+    routeReverse: ReturnType<typeof createReverseFunction>,
+    request: Request,
+    env: TEnv,
+    url: URL,
+    variables: Record<string, any>,
+    nonce: string | undefined,
+    handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+    isPartial: boolean,
+    actionContinuation?: ActionContinuation,
+  ): Promise<Response> {
+    const renderHandler = async (): Promise<Response> => {
+      try {
+        let response: Response;
+        if (actionContinuation) {
+          response = await revalidateAfterAction(
+            handlerCtx,
+            request,
+            env,
+            url,
+            handleStore,
+            actionContinuation,
+          );
+        } else {
+          response = await handleRscRendering(
+            handlerCtx,
+            request,
+            env,
+            url,
+            isPartial,
+            handleStore,
+            nonce,
+          );
+        }
+        if (negotiated) {
+          response.headers.append("Vary", "Accept");
+        }
+        return response;
+      } catch (error) {
+        // Check if middleware/handler returned Response
+        if (error instanceof Response) {
+          // During partial (client-side navigation), a 200 Response from a handler
+          // means the route serves raw content (JSON, text, etc.), not JSX.
+          // Signal the browser to hard-navigate so it renders the raw response.
+          if (isPartial && error.status === 200) {
+            console.warn(
+              `[RSC] Route handler at ${url.pathname} returned a Response during client-side navigation. ` +
+                `Falling back to hard navigation. Use data-external on the <Link> to avoid the extra round-trip.`,
+            );
+            return createResponseWithMergedHeaders(null, {
+              status: 200,
+              headers: {
+                "X-RSC-Reload": stripInternalParams(url).toString(),
+                "content-type": "text/x-component;charset=utf-8",
+              },
+            });
+          }
+
+          if (isPartial) {
+            const intercepted = interceptRedirectForPartial(
+              error,
+              createRedirectFlightResponse,
+            );
+            if (intercepted) return intercepted;
+          }
+
+          return error;
+        }
+
+        // Render 404 page for unmatched routes
+        const isRouteNotFound =
+          error instanceof RouteNotFoundError ||
+          (error instanceof Error && error.name === "RouteNotFoundError");
+        if (isRouteNotFound) {
+          callOnError(error, "routing", {
+            request,
+            url,
+            env,
+            handledByBoundary: true,
+          });
+
+          const notFoundOption = router.notFound;
+          const notFoundComponent =
+            typeof notFoundOption === "function"
+              ? notFoundOption({ pathname: url.pathname })
+              : (notFoundOption ?? createElement("h1", null, "Not Found"));
+
+          const notFoundSegment = {
+            id: "notFound",
+            namespace: "notFound",
+            type: "route" as const,
+            index: 0,
+            component: notFoundComponent,
+            params: {},
+          };
+
+          const payload: RscPayload = {
+            metadata: {
+              pathname: url.pathname,
+              routerId: router.id,
+              basename: router.basename,
+              segments: [notFoundSegment],
+              matched: [],
+              diff: [],
+              isPartial: false,
+              rootLayout: router.rootLayout,
+              handles: handleStore.stream(),
+              version,
+              themeConfig: router.themeConfig,
+              warmupEnabled: router.warmupEnabled,
+              initialTheme: requireRequestContext().theme,
             },
+          };
+
+          const rscStream = renderToReadableStream(payload, {
+            onError: (error: unknown) => {
+              callOnError(error, "rendering", { request, url, env });
+            },
+          });
+
+          const isRscRequest =
+            isPartial ||
+            (!request.headers.get("accept")?.includes("text/html") &&
+              !url.searchParams.has("__html")) ||
+            url.searchParams.has("__rsc");
+
+          if (isRscRequest) {
+            return createResponseWithMergedHeaders(rscStream, {
+              status: 404,
+              headers: { "content-type": "text/x-component;charset=utf-8" },
+            });
+          }
+
+          const [ssrModule, streamMode] = await getSSRSetup(
+            handlerCtx,
+            request,
+            env,
+            url,
+            requireRequestContext()._metricsStore,
+          );
+          const htmlStream = await ssrModule.renderHTML(rscStream, {
+            nonce,
+            streamMode,
+          });
+
+          return createResponseWithMergedHeaders(htmlStream, {
+            status: 404,
+            headers: { "content-type": "text/html;charset=utf-8" },
           });
         }
 
-        // For partial requests: intercept redirects. HTTP 3xx redirects are
-        // auto-followed by fetch, which would hit the target URL without
-        // _rsc_partial and render a full HTML page the client can't parse.
-        // - With state: Flight payload (200) so location state survives.
-        // - Without state: 204 + X-RSC-Redirect header (lightweight).
-        const redirectUrl = error.headers.get("Location");
-        const isRedirect =
-          error.status >= 300 && error.status < 400 && redirectUrl;
-        if (isPartial && isRedirect) {
-          const locationState = getLocationState();
-          if (locationState) {
-            return createRedirectFlightResponse(
-              redirectUrl,
-              resolveLocationStateEntries(locationState),
-            );
-          }
-          return createSimpleRedirectResponse(redirectUrl);
-        }
-
-        return error;
-      }
-
-      // Render 404 page for unmatched routes
-      // Check both instanceof and error.name for cross-bundle compatibility
-      const isRouteNotFound =
-        error instanceof RouteNotFoundError ||
-        (error instanceof Error && error.name === "RouteNotFoundError");
-      if (isRouteNotFound) {
+        // Report unhandled errors
         callOnError(error, "routing", {
           request,
           url,
           env,
-          handledByBoundary: true, // Handled by notFound component
+          handledByBoundary: false,
         });
+        console.error(`[RSC] Error:`, error);
+        throw error;
+      }
+    };
 
-        // Get notFound component from router options or use default
-        const notFoundOption = router.notFound;
-        const notFoundComponent =
-          typeof notFoundOption === "function"
-            ? notFoundOption({ pathname: url.pathname })
-            : (notFoundOption ?? createElement("h1", null, "Not Found"));
+    // Wrap the render path in a renderStartMs timeout
+    const executeRender = async (): Promise<Response> => {
+      if (routeMiddleware.length > 0) {
+        const mwResponse = await executeMiddleware(
+          buildRouteMiddlewareEntries<TEnv>(routeMiddleware),
+          request,
+          env,
+          variables,
+          renderHandler,
+          routeReverse,
+        );
 
-        // Create a simple segment for the 404 page
-        const notFoundSegment = {
-          id: "notFound",
-          namespace: "notFound",
-          type: "route" as const,
-          index: 0,
-          component: notFoundComponent,
-          params: {},
-        };
-
-        const payload: RscPayload = {
-          metadata: {
-            pathname: url.pathname,
-            segments: [notFoundSegment],
-            matched: [],
-            diff: [],
-            isPartial: false,
-            rootLayout: router.rootLayout,
-            handles: handleStore.stream(),
-            version,
-            themeConfig: router.themeConfig,
-            warmupEnabled: router.warmupEnabled,
-            initialTheme: requireRequestContext().theme,
-            // No routeName for not-found routes
-          },
-        };
-
-        const rscStream = renderToReadableStream(payload);
-
-        // Determine if this is an RSC request or HTML request.
-        // Partial requests are always RSC (see main isRscRequest comment).
-        const isRscRequest =
-          isPartial ||
-          (!request.headers.get("accept")?.includes("text/html") &&
-            !url.searchParams.has("__html")) ||
-          url.searchParams.has("__rsc");
-
-        if (isRscRequest) {
-          return createResponseWithMergedHeaders(rscStream, {
-            status: 404,
-            headers: { "content-type": "text/x-component;charset=utf-8" },
-          });
+        if (isPartial || actionContinuation) {
+          const intercepted = interceptRedirectForPartial(
+            mwResponse,
+            createRedirectFlightResponse,
+          );
+          if (intercepted) return intercepted;
         }
 
-        // Delegate to SSR for HTML response
-        const ssrModule = await loadSSRModule();
-        const htmlStream = await ssrModule.renderHTML(rscStream, { nonce });
-
-        return createResponseWithMergedHeaders(htmlStream, {
-          status: 404,
-          headers: { "content-type": "text/html;charset=utf-8" },
-        });
+        return finalizeResponse(mwResponse);
       }
 
-      // Report unhandled errors
-      callOnError(error, "routing", {
+      return renderHandler();
+    };
+
+    const renderOutcome = await withTimeout(
+      executeRender(),
+      router.timeouts.renderStartMs,
+      "render-start",
+    );
+    if (renderOutcome.timedOut) {
+      return handleTimeoutResponse(
         request,
-        url,
         env,
-        handledByBoundary: false,
-      });
-      console.error(`[RSC] Error:`, error);
-      throw error;
+        url,
+        "render-start",
+        renderOutcome.durationMs,
+        routeKey,
+      );
     }
+    return renderOutcome.result;
   }
 }

@@ -11,12 +11,7 @@ import { createEventController } from "./event-controller.js";
 import { createNavigationClient } from "./navigation-client.js";
 import { createServerActionBridge } from "./server-action-bridge.js";
 import { createNavigationBridge } from "./navigation-bridge.js";
-import {
-  NavigationProvider,
-  initHandleDataSync,
-  initSegmentsSync,
-} from "./react/index.js";
-import { initThemeConfigSync } from "../theme/theme-context.js";
+import { NavigationProvider } from "./react/index.js";
 import type {
   RscPayload,
   RscBrowserDependencies,
@@ -27,6 +22,12 @@ import type {
 import type { EventController } from "./event-controller.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 import { initRangoState } from "./rango-state.js";
+import { initPrefetchCache } from "./prefetch/cache.js";
+import { setAppVersion } from "./app-version.js";
+import {
+  isInterceptSegment,
+  splitInterceptSegments,
+} from "./intercept-utils.js";
 
 // Vite HMR types are provided by vite/client
 
@@ -139,7 +140,6 @@ export async function initBrowserApp(
     initialTheme,
   } = options;
 
-  // Load initial payload from SSR-injected __FLIGHT_DATA__
   const initialPayload =
     await deps.createFromReadableStream<RscPayload>(rscStream);
 
@@ -164,20 +164,16 @@ export async function initBrowserApp(
     ...(storeOptions?.cacheSize && { cacheSize: storeOptions.cacheSize }),
   });
 
+  // Seed router identity from the initial SSR payload so the first
+  // cross-app SPA navigation can detect the app switch.
+  if (initialPayload.metadata?.routerId) {
+    store.setRouterId?.(initialPayload.metadata.routerId);
+  }
+
   // Create event controller for reactive state management
   const eventController = createEventController({
     initialLocation: new URL(window.location.href),
   });
-
-  // Initialize segments state BEFORE hydration to avoid mismatch
-  initSegmentsSync(
-    initialPayload.metadata?.matched,
-    initialPayload.metadata?.pathname,
-    initialPayload.metadata?.params,
-  );
-
-  // Initialize theme config for MetaTags (must match SSR state)
-  initThemeConfigSync(effectiveThemeConfig);
 
   // Initialize event controller with segment order (even without handles)
   eventController.setHandleData({}, initialPayload.metadata?.matched);
@@ -194,12 +190,11 @@ export async function initBrowserApp(
     for await (const handleData of handlesGenerator) {
       lastHandleData = handleData;
     }
-    // Initialize both event controller AND module-level SSR state for hydration compatibility
+    // Initialize event controller with initial handle state before hydration.
     eventController.setHandleData(
       lastHandleData,
       initialPayload.metadata?.matched,
     );
-    initHandleDataSync(lastHandleData, initialPayload.metadata?.matched);
 
     // Update the initial cache entry with the processed handleData
     // The cache entry was created by createNavigationStore but without handleData
@@ -213,9 +208,17 @@ export async function initBrowserApp(
   const rootLayout = initialPayload.metadata?.rootLayout;
   const version = initialPayload.metadata?.version;
 
-  // Initialize the localStorage state key for browser HTTP cache invalidation.
+  // Initialize the localStorage state key for cache invalidation.
   // Uses the build version so a new deploy automatically busts all cached prefetches.
   initRangoState(version ?? "0");
+  setAppVersion(version);
+
+  // Initialize the in-memory prefetch cache TTL from server config.
+  // A value of 0 disables the cache; undefined falls back to the module default.
+  const prefetchCacheTTL = initialPayload.metadata?.prefetchCacheTTL;
+  if (prefetchCacheTTL !== undefined) {
+    initPrefetchCache(prefetchCacheTTL);
+  }
 
   // Create a bound renderSegments that includes rootLayout
   const renderSegments = (
@@ -235,7 +238,6 @@ export async function initBrowserApp(
     deps,
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
-    version,
     onNavigate: (url, options) => {
       if (!navigateFn) {
         window.location.href = url;
@@ -253,7 +255,7 @@ export async function initBrowserApp(
     client,
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
-    version,
+    version: version,
   });
 
   // Connect action redirect → navigation bridge (now that both are initialized)
@@ -267,52 +269,139 @@ export async function initBrowserApp(
   // Build initial tree with rootLayout
   const initialTree = renderSegments(initialPayload.metadata!.segments);
 
-  // Setup HMR
+  // Setup HMR with debounce — burst saves (format-on-save, rapid edits)
+  // fire many rsc:update events in quick succession. Without debouncing,
+  // each event triggers a fetchPartial() which on slow routes can pile up
+  // and overwhelm the worker (cross-request promise issues, 500s).
   if (import.meta.hot) {
-    import.meta.hot.on("rsc:update", async () => {
-      console.log("[RSCRouter] HMR: Server update, refetching RSC");
+    let hmrTimer: ReturnType<typeof setTimeout> | null = null;
+    let hmrAbort: AbortController | null = null;
 
-      const handle = eventController.startNavigation(window.location.href, {
-        replace: true,
-      });
-      const streamingToken = handle.startStreaming();
+    import.meta.hot.on("rsc:update", () => {
+      // Cancel any pending debounce timer
+      if (hmrTimer !== null) {
+        clearTimeout(hmrTimer);
+      }
 
-      try {
-        const { payload, streamComplete } = await client.fetchPartial({
-          targetUrl: window.location.href,
-          segmentIds: [],
-          previousUrl: store.getSegmentState().currentUrl,
-          hmr: true,
-        });
+      // Abort any in-flight HMR fetch so it doesn't race with the next one
+      if (hmrAbort) {
+        hmrAbort.abort();
+        hmrAbort = null;
+      }
 
-        if (payload.metadata?.isPartial) {
-          const segments = payload.metadata.segments || [];
-          const matched = payload.metadata.matched || [];
+      // Debounce: wait 200ms of quiet before fetching
+      hmrTimer = setTimeout(async () => {
+        hmrTimer = null;
 
-          store.setSegmentIds(matched);
-          store.setCurrentUrl(window.location.href);
-
-          const historyKey = generateHistoryKey(window.location.href);
-          store.setHistoryKey(historyKey);
-          const currentHandleData = eventController.getHandleState().data;
-          store.cacheSegmentsForHistory(
-            historyKey,
-            segments,
-            currentHandleData,
-          );
-
-          store.emitUpdate({
-            root: renderSegments(segments),
-            metadata: payload.metadata,
-          });
+        // Don't interrupt an active user navigation — startNavigation()
+        // would abort it and refetch the old URL (window.location.href
+        // hasn't updated yet). The user's navigation will pick up the
+        // new server code when it completes. isNavigating covers the
+        // full lifecycle (fetching + streaming, before commit) without
+        // blocking on server actions.
+        if (eventController.getState().isNavigating) {
+          console.log("[RSCRouter] HMR: Skipping — navigation in progress");
+          return;
         }
 
-        await streamComplete;
-      } finally {
-        streamingToken.end();
-      }
-      handle.complete(new URL(window.location.href));
-      console.log("[RSCRouter] HMR: RSC stream complete");
+        console.log("[RSCRouter] HMR: Server update, refetching RSC");
+
+        const abort = new AbortController();
+        hmrAbort = abort;
+
+        const handle = eventController.startNavigation(window.location.href, {
+          replace: true,
+        });
+        const streamingToken = handle.startStreaming();
+
+        const interceptSourceUrl = store.getInterceptSourceUrl();
+
+        try {
+          const { payload, streamComplete } = await client.fetchPartial({
+            targetUrl: window.location.href,
+            segmentIds: [],
+            previousUrl: store.getSegmentState().currentUrl,
+            interceptSourceUrl: interceptSourceUrl || undefined,
+            routerId: store.getRouterId?.(),
+            hmr: true,
+            signal: abort.signal,
+          });
+
+          if (abort.signal.aborted) return;
+
+          // If the server returned a non-RSC response (404, 500 without
+          // error boundary), the payload won't have valid metadata.
+          // Reload to recover rather than leaving the page stale.
+          if (!payload.metadata) {
+            throw new Error("HMR refetch returned invalid payload");
+          }
+
+          // Update version BEFORE rebuilding state so that
+          // clearHistoryCache() runs first, then the fresh segment
+          // cache entry we create below survives.
+          const newVersion = payload.metadata.version;
+          if (newVersion && newVersion !== version) {
+            console.log(
+              "[RSCRouter] HMR: version changed",
+              version,
+              "→",
+              newVersion,
+              "clearing caches",
+            );
+            navigationBridge.updateVersion(newVersion);
+          }
+
+          if (payload.metadata?.isPartial) {
+            const segments = payload.metadata.segments || [];
+            const matched = payload.metadata.matched || [];
+
+            // Derive intercept state from the returned payload, not the
+            // pre-fetch store snapshot. If the HMR edit removed intercept
+            // behavior, the response won't contain intercept segments.
+            const responseIsIntercept = segments.some(isInterceptSegment);
+
+            // Sync store intercept state with what the server returned
+            if (!responseIsIntercept && interceptSourceUrl) {
+              store.setInterceptSourceUrl(null);
+            }
+
+            store.setSegmentIds(matched);
+            store.setCurrentUrl(window.location.href);
+
+            const historyKey = generateHistoryKey(window.location.href, {
+              intercept: responseIsIntercept,
+            });
+            store.setHistoryKey(historyKey);
+            const currentHandleData = eventController.getHandleState().data;
+            store.cacheSegmentsForHistory(
+              historyKey,
+              segments,
+              currentHandleData,
+            );
+
+            const { main, intercept } = splitInterceptSegments(segments);
+            store.emitUpdate({
+              root: renderSegments(main, {
+                interceptSegments: intercept.length > 0 ? intercept : undefined,
+              }),
+              metadata: payload.metadata,
+            });
+          }
+
+          await streamComplete;
+          handle.complete(new URL(window.location.href));
+          console.log("[RSCRouter] HMR: RSC stream complete");
+        } catch (err) {
+          if (abort.signal.aborted) return;
+          console.warn("[RSCRouter] HMR: Refetch failed, reloading page", err);
+          window.location.reload();
+          return;
+        } finally {
+          if (hmrAbort === abort) hmrAbort = null;
+          streamingToken.end();
+          handle[Symbol.dispose]();
+        }
+      }, 200);
     });
   }
 
@@ -394,6 +483,13 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
     version,
   } = getBrowserAppContext();
 
+  // Signal that the React tree has hydrated. useEffect only fires after
+  // hydration completes, so this attribute is a stable readiness marker
+  // that does not depend on React internals like __reactFiber.
+  React.useEffect(() => {
+    document.documentElement.dataset.hydrated = "";
+  }, []);
+
   return (
     <NavigationProvider
       store={store}
@@ -404,6 +500,7 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
       initialTheme={initialTheme}
       warmupEnabled={warmupEnabled}
       version={version}
+      basename={initialPayload.metadata?.basename}
     />
   );
 }

@@ -67,10 +67,11 @@
  *   Keep if:
  *     - component !== null (needs rendering)
  *     - type === "loader" (carries data even with null component)
+ *     - client doesn't have the segment (structurally required parent node)
  *
  *   Skip if:
- *     - component === null AND type !== "loader"
- *     - (Client already has this segment's UI)
+ *     - component === null AND type !== "loader" AND client has it cached
+ *     - (Revalidation skip — client already has this segment's UI)
  *
  *
  * INTERCEPT HANDLING
@@ -108,8 +109,8 @@
  */
 import type { MatchResult, ResolvedSegment } from "../types.js";
 import type { MatchContext, MatchPipelineState } from "./match-context.js";
-import { generateServerTiming, logMetrics } from "./metrics.js";
 import { debugLog } from "./logging.js";
+import { appendMetric } from "./metrics.js";
 
 /**
  * Collect all segments from an async generator
@@ -122,6 +123,69 @@ export async function collectSegments(
     segments.push(segment);
   }
   return segments;
+}
+
+/**
+ * Deduplicate inherited loader segments by loaderId.
+ *
+ * When a route has loaders and a child layout has parallel slots, the same
+ * loader is resolved twice: once for the route and once inherited into the
+ * layout (tagged with `_inherited`). The inherited copy is only needed when
+ * the route uses `loading()` — in that case, the loader data is inside a
+ * LoaderBoundary/Suspense that parallel slots can't reach through. Without
+ * loading(), useLoader() traverses parent contexts and finds the data.
+ */
+function deduplicateLoaderSegments(
+  segments: ResolvedSegment[],
+  logPrefix: string,
+): ResolvedSegment[] {
+  // First pass: collect loaderIds of original (non-inherited) segments
+  // and whether their parent entry uses loading()
+  const originalLoaders = new Set<string>();
+  const loadersWithLoading = new Set<string>();
+  for (const s of segments) {
+    if (s.type === "loader" && s.loaderId && !s._inherited) {
+      originalLoaders.add(s.loaderId);
+      // If the segment has a sibling with loading, the parent uses loading()
+      // We detect this by checking if any non-loader segment in the same
+      // namespace has loading defined
+    }
+  }
+  // Check if any layout/route segment has loading — if a loader's namespace
+  // matches a segment with loading, the inherited copy is needed
+  for (const s of segments) {
+    if (s.type !== "loader" && s.loading !== undefined && s.loading !== false) {
+      // Find loaders in this namespace
+      for (const l of segments) {
+        if (l.type === "loader" && l.namespace === s.namespace && l.loaderId) {
+          loadersWithLoading.add(l.loaderId);
+        }
+      }
+    }
+  }
+
+  const result: ResolvedSegment[] = [];
+  let dedupCount = 0;
+
+  for (const s of segments) {
+    if (
+      s.type === "loader" &&
+      s.loaderId &&
+      s._inherited &&
+      originalLoaders.has(s.loaderId) &&
+      !loadersWithLoading.has(s.loaderId)
+    ) {
+      dedupCount++;
+      continue;
+    }
+    result.push(s);
+  }
+
+  if (dedupCount > 0) {
+    debugLog(logPrefix, `deduped ${dedupCount} inherited loader segment(s)`);
+  }
+
+  return result;
 }
 
 /**
@@ -168,12 +232,22 @@ export function buildMatchResult<TEnv>(
     // Deduplicate allIds (defense-in-depth for partial match path)
     allIds = [...new Set(allIds)];
 
-    // Filter out segments with null components (client already has them)
-    // BUT always include loader segments - they carry data even with null component
+    // Filter out null-component segments only when the client already has
+    // them cached (revalidation skip). If the client doesn't have the segment,
+    // it must be included even with null component — it's structurally required
+    // as a parent node for child layouts/parallels to reconcile against.
+    // Loader segments are always included as they carry data.
+    const clientIdSet = new Set(ctx.clientSegmentIds);
     segmentsToRender = allSegments.filter(
-      (s) => s.component !== null || s.type === "loader",
+      (s) =>
+        s.component !== null || s.type === "loader" || !clientIdSet.has(s.id),
     );
   }
+
+  const dedupedSegments = deduplicateLoaderSegments(
+    segmentsToRender,
+    logPrefix,
+  );
 
   debugLog(logPrefix, "all segments", {
     segments: allSegments.map((s) => ({
@@ -183,23 +257,25 @@ export function buildMatchResult<TEnv>(
     })),
   });
   debugLog(logPrefix, "segments to render", {
-    segmentIds: segmentsToRender.map((s) => s.id),
+    segmentIds: dedupedSegments.map((s) => s.id),
   });
 
-  // Output metrics if enabled
-  let serverTiming: string | undefined;
-  if (ctx.metricsStore) {
-    logMetrics(ctx.request.method, ctx.pathname, ctx.metricsStore);
-    serverTiming = generateServerTiming(ctx.metricsStore);
-  }
+  // Remove deduped loader IDs from matched so the client doesn't treat
+  // them as missing segments and trigger a fallback refetch.
+  const removedIds = new Set(
+    segmentsToRender
+      .filter((s) => !dedupedSegments.includes(s))
+      .map((s) => s.id),
+  );
+  const matchedIds =
+    removedIds.size > 0 ? allIds.filter((id) => !removedIds.has(id)) : allIds;
 
   return {
-    segments: segmentsToRender,
-    matched: allIds,
-    diff: segmentsToRender.map((s) => s.id),
+    segments: dedupedSegments,
+    matched: matchedIds,
+    diff: dedupedSegments.map((s) => s.id),
     params: ctx.matched.params,
     routeName: ctx.routeKey,
-    serverTiming,
     slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
     routeMiddleware:
       ctx.routeMiddleware.length > 0 ? ctx.routeMiddleware : undefined,
@@ -219,10 +295,19 @@ export async function collectMatchResult<TEnv>(
 ): Promise<MatchResult> {
   const allSegments = await collectSegments(pipeline);
 
+  const buildStart = performance.now();
+
   // Update state with collected segments if not already set
   if (state.segments.length === 0) {
     state.segments = allSegments;
   }
 
-  return buildMatchResult(allSegments, ctx, state);
+  const result = buildMatchResult(allSegments, ctx, state);
+  appendMetric(
+    ctx.metricsStore,
+    "collect-result",
+    buildStart,
+    performance.now() - buildStart,
+  );
+  return result;
 }

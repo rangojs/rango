@@ -23,7 +23,7 @@ export const shopPatterns = urls(({ path, layout, intercept, when }) => [
       "@modal",
       ".product",
       (ctx) => <ProductModal params={ctx.params} />,
-      () => [when(({ from }) => from.pathname === "/shop")],
+      () => [when(({ from }) => from.pathname === "/app/shop")],
     ),
     path("/cart", CartPage, { name: "cart" }),
   ]),

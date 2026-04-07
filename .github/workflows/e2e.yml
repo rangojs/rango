@@ -4,23 +4,38 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  lint:
+  # On push to main, wait 2 minutes before starting CI. Combined with
+  # cancel-in-progress, a follow-up push within the window cancels this
+  # run so only the latest commit gets a full suite. Instant for PRs.
+  debounce:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - name: Wait for additional pushes
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: sleep 120
+
+  lint:
+    needs: [debounce]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: "pnpm"
@@ -32,16 +47,17 @@ jobs:
         run: pnpm lint
 
   format:
+    needs: [debounce]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: "pnpm"
@@ -53,16 +69,17 @@ jobs:
         run: pnpm format
 
   install-playwright:
+    needs: [debounce]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: "pnpm"
@@ -72,7 +89,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
@@ -84,17 +101,18 @@ jobs:
         run: pnpm --filter @rangojs/router exec playwright install --with-deps chromium
 
   typecheck:
+    needs: [debounce]
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: "pnpm"
@@ -109,17 +127,18 @@ jobs:
         run: pnpm typecheck
 
   unit-tests:
+    needs: [debounce]
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: "pnpm"
@@ -135,7 +154,10 @@ jobs:
 
   vite-rsc-demo-e2e:
     needs: [install-playwright, smoke-e2e]
-    if: github.event.pull_request.draft == false || github.event_name == 'push'
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -143,17 +165,20 @@ jobs:
       matrix:
         include:
           - project: dev
+            shard: 1
+          - project: dev
+            shard: 2
           # Production tests run in single job (build-once via setup project)
           - project: production
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: "pnpm"
@@ -165,7 +190,7 @@ jobs:
         run: pnpm --filter @rangojs/router build
 
       - name: Restore Playwright browsers
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
@@ -175,30 +200,37 @@ jobs:
       - name: Install Playwright system deps
         run: pnpm --filter vite-rsc-demo exec playwright install-deps chromium
 
-      - name: Run demo app e2e tests (${{ matrix.project }})
-        run: pnpm --filter vite-rsc-demo exec playwright test --project=${{ matrix.project }}
+      - name: Run demo app e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
+        run: |
+          if [ -n "${{ matrix.shard }}" ]; then
+            pnpm --filter vite-rsc-demo exec playwright test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/2
+          else
+            pnpm --filter vite-rsc-demo exec playwright test --project=${{ matrix.project }}
+          fi
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: failure()
         with:
-          name: playwright-report-demo-${{ matrix.project }}
+          name: playwright-report-demo-${{ matrix.project }}${{ matrix.shard && format('-shard-{0}', matrix.shard) || '' }}
           path: tests/vite-rsc-demo/playwright-report/
           retention-days: 7
 
   smoke-e2e:
     needs: [install-playwright]
-    if: github.event.pull_request.draft == false || github.event_name == 'push'
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: "pnpm"
@@ -210,7 +242,7 @@ jobs:
         run: pnpm --filter @rangojs/router build
 
       - name: Restore Playwright browsers
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
@@ -224,7 +256,7 @@ jobs:
         run: pnpm --filter @rangojs/router test --project=smoke
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: failure()
         with:
           name: playwright-report-smoke
@@ -233,31 +265,51 @@ jobs:
 
   rangojs-router-e2e:
     needs: [install-playwright, smoke-e2e]
-    if: github.event.pull_request.draft == false || github.event_name == 'push'
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Dev tests sharded across 2 jobs
+          # Dev tests sharded across 3 jobs
           - project: dev
             shard: 1
+            shardTotal: 3
           - project: dev
             shard: 2
-          # Production tests run in single job (build-once via setup project)
+            shardTotal: 3
+          - project: dev
+            shard: 3
+            shardTotal: 3
+          # Production tests sharded across 2 jobs
           - project: production
-          # HMR tests run in single job
-          - project: hmr
+            shard: 1
+            shardTotal: 2
+          - project: production
+            shard: 2
+            shardTotal: 2
+          # HMR tests run serially (workers=1) to avoid filesystem interference
+          - project: hmr-client
+            workers: 1
+          - project: hmr-loader
+            workers: 1
+          - project: hmr-routes
+            workers: 1
+          - project: hmr-intercept
+            workers: 1
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: "pnpm"
@@ -269,7 +321,7 @@ jobs:
         run: pnpm --filter @rangojs/router build
 
       - name: Restore Playwright browsers
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
@@ -280,15 +332,28 @@ jobs:
         run: pnpm --filter @rangojs/router exec playwright install-deps chromium
 
       - name: Run rangojs-router e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
+        env:
+          CHOKIDAR_USEPOLLING: ${{ matrix.workers && 'true' || '' }}
         run: |
+          WORKERS_FLAG=""
+          if [ -n "${{ matrix.workers }}" ]; then
+            WORKERS_FLAG="--workers=${{ matrix.workers }}"
+          fi
+          # HMR projects use useFixture() to start their own dev server,
+          # so skip dependency projects (dev, build, warmup) that would
+          # re-run hundreds of unrelated tests and blow the timeout.
+          NO_DEPS_FLAG=""
+          if [[ "${{ matrix.project }}" == hmr-* ]]; then
+            NO_DEPS_FLAG="--no-deps"
+          fi
           if [ -n "${{ matrix.shard }}" ]; then
-            pnpm --filter @rangojs/router test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/2
+            pnpm --filter @rangojs/router test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.shardTotal }} $WORKERS_FLAG $NO_DEPS_FLAG
           else
-            pnpm --filter @rangojs/router test --project=${{ matrix.project }}
+            pnpm --filter @rangojs/router test --project=${{ matrix.project }} $WORKERS_FLAG $NO_DEPS_FLAG
           fi
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: failure()
         with:
           name: playwright-report-router-${{ matrix.project }}${{ matrix.shard && format('-shard-{0}', matrix.shard) || '' }}
@@ -297,18 +362,21 @@ jobs:
 
   cloudflare-basic-e2e:
     needs: [install-playwright, smoke-e2e]
-    if: github.event.pull_request.draft == false || github.event_name == 'push'
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: "pnpm"
@@ -320,7 +388,7 @@ jobs:
         run: pnpm --filter @rangojs/router build
 
       - name: Restore Playwright browsers
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
@@ -336,27 +404,30 @@ jobs:
           TEST_DEBUG: "1"
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: failure()
         with:
           name: playwright-report-cloudflare-basic
           path: tests/cloudflare-basic/playwright-report/
           retention-days: 7
 
-  react-experimental-e2e:
+  cloudflare-multi-router-e2e:
     needs: [install-playwright, smoke-e2e]
-    if: github.event.pull_request.draft == false || github.event_name == 'push'
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: "pnpm"
@@ -368,7 +439,58 @@ jobs:
         run: pnpm --filter @rangojs/router build
 
       - name: Restore Playwright browsers
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-browsers-
+
+      - name: Install Playwright system deps
+        run: pnpm --filter cloudflare-multi-router exec playwright install-deps chromium
+
+      - name: Run cloudflare-multi-router e2e tests
+        run: pnpm --filter cloudflare-multi-router test:e2e
+        env:
+          TEST_DEBUG: "1"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: playwright-report-cloudflare-multi-router
+          path: examples/cloudflare-multi-router/playwright-report/
+          retention-days: 7
+
+  react-experimental-e2e:
+    needs: [install-playwright, smoke-e2e]
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
+
+      - name: Restore Playwright browsers
+        uses: actions/cache/restore@v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
@@ -382,7 +504,7 @@ jobs:
         run: pnpm --filter react-experimental test:e2e
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: failure()
         with:
           name: playwright-report-react-experimental
@@ -391,18 +513,21 @@ jobs:
 
   cloudflare-stress-demo-e2e:
     needs: [install-playwright, smoke-e2e]
-    if: github.event.pull_request.draft == false || github.event_name == 'push'
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: "pnpm"
@@ -414,7 +539,7 @@ jobs:
         run: pnpm --filter @rangojs/router build
 
       - name: Restore Playwright browsers
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
@@ -428,7 +553,7 @@ jobs:
         run: pnpm --filter cloudflare-stress-demo test:e2e
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         if: failure()
         with:
           name: playwright-report-cloudflare-stress-demo

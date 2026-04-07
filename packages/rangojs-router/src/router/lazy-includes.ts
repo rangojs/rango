@@ -4,6 +4,7 @@ import {
   EntryData,
   RSCRouterContext,
   runWithPrefixes,
+  getIsolatedLazyParent,
 } from "../server/context";
 import type { UrlPatterns } from "../urls.js";
 import type { AllUseItems, IncludeItem } from "../route-types.js";
@@ -14,6 +15,7 @@ export interface LazyEvalDeps<TEnv = any> {
   mergedRouteMap: Record<string, string>;
   nextMountIndex: () => number;
   getPrecomputedByPrefix: () => Map<string, Record<string, string>> | null;
+  routerId?: string;
 }
 
 // Detect lazy includes in handler result and create placeholder entries
@@ -28,6 +30,7 @@ export function findLazyIncludes<TEnv = any>(
     urlPrefix: string;
     namePrefix: string | undefined;
     parent: unknown;
+    rootScoped?: boolean;
   };
 }> {
   const lazyItems: Array<{
@@ -37,6 +40,7 @@ export function findLazyIncludes<TEnv = any>(
       urlPrefix: string;
       namePrefix: string | undefined;
       parent: unknown;
+      rootScoped?: boolean;
     };
   }> = [];
 
@@ -135,8 +139,10 @@ export function evaluateLazyEntry<TEnv = any>(
       patternsByPrefix,
       trailingSlash: trailingSlashMap,
       namespace: "lazy",
-      parent: (lazyContext?.parent as EntryData | null) ?? null,
+      parent: getIsolatedLazyParent(lazyContext?.parent as EntryData | null),
       counters: lazyCounters,
+      cacheProfiles: (lazyContext as any)?.cacheProfiles,
+      rootScoped: (lazyContext as any)?.rootScoped,
     },
     () => {
       // Run the lazy patterns handler with the original context prefixes
@@ -196,6 +202,7 @@ export function evaluateLazyEntry<TEnv = any>(
       trailingSlash: entry.trailingSlash,
       handler: (lazyInclude.patterns as UrlPatterns<TEnv>).handler,
       mountIndex: deps.nextMountIndex(),
+      routerId: deps.routerId,
       // Lazy evaluation fields
       lazy: true,
       lazyPatterns: lazyInclude.patterns,

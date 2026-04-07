@@ -11,6 +11,8 @@ import {
   createStaticContext,
   createReverseFunction,
 } from "./handler-context.js";
+import { isPrerenderPassthrough } from "../prerender.js";
+import { isRouteRootScoped } from "../route-map-builder.js";
 import { setupBuildUse } from "./loader-resolution.js";
 import { loadManifest } from "./manifest.js";
 import { traverseBack } from "./pattern-matching.js";
@@ -51,6 +53,10 @@ export async function matchForPrerender<TEnv = any>(
   params: Record<string, string>,
   deps: PrerenderMatchDeps<TEnv>,
   buildVars?: Record<string, any>,
+  isPassthroughRoute?: boolean,
+  buildEnv?: TEnv,
+  /** Dev-only: check getParams() for passthrough routes to skip unknown params. */
+  devMode?: boolean,
 ): Promise<{
   segments: SerializedSegmentData[];
   handles: Record<string, SegmentHandleData>;
@@ -58,6 +64,7 @@ export async function matchForPrerender<TEnv = any>(
   params: Record<string, string>;
   interceptSegments?: SerializedSegmentData[];
   interceptHandles?: Record<string, SegmentHandleData>;
+  passthrough?: true;
 } | null> {
   // 1. Find the matching route entry
   const matched = deps.findMatch(pathname);
@@ -65,6 +72,7 @@ export async function matchForPrerender<TEnv = any>(
 
   // Use params from trie match if available, fall back to provided params
   const matchedParams = matched.params ?? params;
+  const matchedPassthroughRoute = isPassthroughRoute ?? matched.pt === true;
 
   // Build RouterContext for loadManifest/traverseBack
   const routerCtx = deps.buildRouterContext();
@@ -85,20 +93,106 @@ export async function matchForPrerender<TEnv = any>(
       entries.push(entry);
     }
 
+    // 3b. Dev-mode passthrough shortcut: if the route is a Passthrough route
+    // and has getParams(), check if the matched params are in the known list.
+    // In production, only known params are pre-rendered; unknown params fall
+    // through to the live handler. Mirror that behavior in dev mode to avoid
+    // rendering unknown params with build: true.
+    // Vars collected from getParams() probe — merged into render context below.
+    let devProbeBuildVars: Record<string, any> | undefined;
+
+    if (devMode && matchedPassthroughRoute) {
+      const routeEntry = entries.find(
+        (
+          e,
+        ): e is EntryData & {
+          type: "route";
+          prerenderDef: { getParams: (ctx: any) => Promise<any[]> | any[] };
+        } =>
+          e.type === "route" &&
+          !!(e as any).isPassthrough &&
+          !!(e as any).prerenderDef?.getParams,
+      );
+      if (routeEntry) {
+        try {
+          const probeBuildVars: Record<string, any> = {};
+          const knownParamsList = await routeEntry.prerenderDef.getParams({
+            build: true as const,
+            dev: true,
+            set: ((keyOrVar: any, value: any) => {
+              contextSet(probeBuildVars, keyOrVar, value);
+            }) as any,
+            reverse: createReverseFunction(deps.mergedRouteMap),
+            get env() {
+              if (buildEnv !== undefined) return buildEnv;
+              throw new Error(
+                "[rsc-router] ctx.env is not available during dev-mode getParams(). " +
+                  "Configure buildEnv in your rango() plugin options to enable build-time env access.",
+              );
+            },
+          });
+          // Compare only the keys returned by getParams — ignore mount params
+          // from include() prefixes that aren't part of the handler's params.
+          const isKnown = knownParamsList.some((known: Record<string, any>) => {
+            const knownKeys = Object.keys(known);
+            return knownKeys.every(
+              (k) => String(known[k]) === String(matchedParams[k]),
+            );
+          });
+          if (!isKnown) {
+            return {
+              segments: [],
+              handles: {},
+              routeName: matched.routeKey,
+              params: matchedParams,
+              passthrough: true as const,
+            };
+          }
+          // Preserve vars set by getParams() for the render context
+          if (
+            Object.keys(probeBuildVars).length > 0 ||
+            Object.getOwnPropertySymbols(probeBuildVars).length > 0
+          ) {
+            devProbeBuildVars = probeBuildVars;
+          }
+        } catch (err: any) {
+          // Mirror production semantics (prerender-collection.ts):
+          // Skip errors are intentional — treat as passthrough.
+          // All other errors propagate so dev surfaces them.
+          if (err?.name === "Skip") {
+            return {
+              segments: [],
+              handles: {},
+              routeName: matched.routeKey,
+              params: matchedParams,
+              passthrough: true as const,
+            };
+          }
+          throw err;
+        }
+      }
+    }
+
     // 4. Create handle store for collecting handle data
     const handleStore = createHandleStore();
 
     // 5. Create a minimal request context with the handle store
-    // Shallow-copy getParams vars so each param set is independent
-    const variables: Record<string, any> = buildVars ? { ...buildVars } : {};
+    // Shallow-copy getParams vars so each param set is independent.
+    // In dev mode, merge vars from the getParams() probe if the caller
+    // didn't provide buildVars (production passes them from expandPrerenderRoutes).
+    const effectiveBuildVars = buildVars ?? devProbeBuildVars;
+    const variables: Record<string, any> = effectiveBuildVars
+      ? { ...effectiveBuildVars }
+      : {};
     const stubRes = new Response(null, { status: 200 });
     const minimalRequestContext: RequestContext<TEnv> = {
-      env: {} as TEnv,
+      env: buildEnv ?? ({} as TEnv),
       request: new Request("http://prerender" + pathname),
       url: new URL("http://prerender" + pathname),
+      originalUrl: new URL("http://prerender" + pathname),
       pathname,
       searchParams: new URLSearchParams(),
-      var: variables,
+      _variables: variables,
       get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
       set: ((keyOrVar: any, value: any) => {
         contextSet(variables, keyOrVar, value);
@@ -110,6 +204,8 @@ export async function matchForPrerender<TEnv = any>(
       setCookie: () => {},
       deleteCookie: () => {},
       header: () => {},
+      setStatus: () => {},
+      _setStatus: () => {},
       use: (() => {
         throw new Error("use() not available during pre-rendering");
       }) as any,
@@ -120,23 +216,30 @@ export async function matchForPrerender<TEnv = any>(
       _onResponseCallbacks: [],
       setLocationState() {},
       _locationState: undefined,
+      _renderBarrier: Promise.resolve(),
+      _resolveRenderBarrier: () => {},
+      _reportedErrors: new WeakSet<object>(),
       reverse: createReverseFunction(
         deps.mergedRouteMap,
         matched.routeKey,
         matchedParams,
+        matched.routeKey ? isRouteRootScoped(matched.routeKey) : undefined,
       ),
     };
 
     return runWithRequestContext(minimalRequestContext, async () => {
       // 6. Create prerender context with synthetic URL.
       // Prerender handlers get params, pathname, url, searchParams, search,
-      // reverse, and use(handle) — but no request, env, headers, or cookies.
+      // reverse, use(handle), and optionally env (when buildEnv is configured).
       const buildCtx = createPrerenderContext<TEnv>(
         matchedParams,
         pathname,
         deps.mergedRouteMap,
         matched.routeKey,
         variables,
+        matchedPassthroughRoute,
+        buildEnv,
+        devMode,
       );
 
       // 7. Wire use() for handles only (loaders throw)
@@ -153,17 +256,31 @@ export async function matchForPrerender<TEnv = any>(
         { skipLoaders: true },
       );
 
-      // 9. Filter out any loader segments (belt-and-suspenders)
+      // 9. Detect passthrough sentinel: handler returned ctx.passthrough()
+      for (const seg of allSegments) {
+        if (isPrerenderPassthrough(seg.component)) {
+          return {
+            segments: [],
+            handles: {},
+            routeName: matched.routeKey,
+            params: matchedParams,
+            passthrough: true as const,
+          };
+        }
+      }
+
+      // 10. Filter out any loader segments (belt-and-suspenders)
       const nonLoaderSegments = allSegments.filter((s) => s.type !== "loader");
 
-      // 10. Wait for handles to settle
+      // 11. Wait for handles to settle
+      handleStore.seal();
       await handleStore.settled;
 
-      // 11. Serialize segments using the cache serializer
+      // 12. Serialize segments using the cache serializer
       const { serializeSegments } = await import("../cache/segment-codec.js");
       const serializedSegments = await serializeSegments(nonLoaderSegments);
 
-      // 12. Collect handle data per segment (skip segments with no handle data)
+      // 13. Collect handle data per segment (skip segments with no handle data)
       const handles: Record<string, SegmentHandleData> = {};
       for (const seg of nonLoaderSegments) {
         const segHandles = handleStore.getDataForSegment(seg.id);
@@ -175,7 +292,7 @@ export async function matchForPrerender<TEnv = any>(
       // Use the trie-level route key (e.g., "docs", "docs.article")
       const routeName = matched.routeKey;
 
-      // 13. Resolve intercept segments for this route (if any ancestor defines
+      // 14. Resolve intercept segments for this route (if any ancestor defines
       //     an intercept targeting this route). At build time we skip when()
       //     evaluation -- we pre-render all intercepts unconditionally and let
       //     runtime matching decide which to serve.
@@ -295,6 +412,8 @@ export async function renderStaticSegment<TEnv = any>(
   handlerId: string,
   mergedRouteMap: Record<string, string>,
   routeName?: string,
+  buildEnv?: TEnv,
+  devMode?: boolean,
 ): Promise<{ encoded: string; handles: Record<string, unknown[]> } | null> {
   const syntheticUrl = new URL("http://prerender/");
   const syntheticRequest = new Request(syntheticUrl);
@@ -305,12 +424,13 @@ export async function renderStaticSegment<TEnv = any>(
   // Minimal request context so setupBuildUse can find the HandleStore
   const stubRes = new Response(null, { status: 200 });
   const minimalRequestContext: RequestContext<TEnv> = {
-    env: {} as TEnv,
+    env: buildEnv ?? ({} as TEnv),
     request: syntheticRequest,
     url: syntheticUrl,
+    originalUrl: syntheticUrl,
     pathname: "/",
     searchParams: syntheticUrl.searchParams,
-    var: {},
+    _variables: {},
     get: () => undefined as any,
     set: () => {},
     params: {},
@@ -320,6 +440,8 @@ export async function renderStaticSegment<TEnv = any>(
     setCookie: () => {},
     deleteCookie: () => {},
     header: () => {},
+    setStatus: () => {},
+    _setStatus: () => {},
     use: (() => {
       throw new Error("use() not available during static pre-rendering");
     }) as any,
@@ -330,13 +452,25 @@ export async function renderStaticSegment<TEnv = any>(
     _onResponseCallbacks: [],
     setLocationState() {},
     _locationState: undefined,
-    reverse: createReverseFunction(mergedRouteMap, routeName, {}),
+    _renderBarrier: Promise.resolve(),
+    _resolveRenderBarrier: () => {},
+    _reportedErrors: new WeakSet<object>(),
+    reverse: createReverseFunction(
+      mergedRouteMap,
+      routeName,
+      {},
+      routeName ? isRouteRootScoped(routeName) : undefined,
+    ),
   };
 
   return runWithRequestContext(minimalRequestContext, async () => {
-    // Static handlers get only reverse and use(handle) — no URL, params,
-    // request, env, headers, or cookies.
-    const buildCtx = createStaticContext<TEnv>(mergedRouteMap, routeName);
+    // Static handlers get only reverse, use(handle), and optionally env.
+    const buildCtx = createStaticContext<TEnv>(
+      mergedRouteMap,
+      routeName,
+      buildEnv,
+      devMode,
+    );
 
     // Set segment ID so handle pushes are keyed correctly
     (buildCtx as InternalHandlerContext<any, TEnv>)._currentSegmentId =

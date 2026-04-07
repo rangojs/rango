@@ -7,7 +7,7 @@
 
 import type { ResolvedSegment, SlotState } from "../types.js";
 import type { HandleData } from "../server/handle-store.js";
-import type { RSCRouter } from "../router.js";
+import type { RSCRouterInternal } from "../router/router-interfaces.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 
 /**
@@ -19,6 +19,9 @@ export interface RscPayload {
   metadata?: {
     pathname: string;
     segments: ResolvedSegment[];
+    /** Router instance ID. When this changes between navigations, the client
+     *  discards cached segments and does a full tree replacement (app switch). */
+    routerId?: string;
     isPartial?: boolean;
     isError?: boolean;
     matched?: string[];
@@ -32,10 +35,14 @@ export interface RscPayload {
     handles?: AsyncGenerator<HandleData, void, unknown>;
     /** RSC version string for cache invalidation */
     version?: string;
+    /** TTL in milliseconds for the client-side in-memory prefetch cache */
+    prefetchCacheTTL?: number;
     /** Theme configuration for FOUC prevention */
     themeConfig?: ResolvedThemeConfig | null;
     /** Initial theme from cookie (for SSR hydration) */
     initialTheme?: Theme;
+    /** URL prefix for all routes (from createRouter({ basename })). */
+    basename?: string;
     /** Whether connection warmup is enabled */
     warmupEnabled?: boolean;
     /** Server-side redirect with optional state (for partial requests) */
@@ -61,7 +68,10 @@ export interface RSCDependencies {
    */
   renderToReadableStream: <T>(
     payload: T,
-    options?: { temporaryReferences?: unknown },
+    options?: {
+      temporaryReferences?: unknown;
+      onError?: (error: unknown) => string | void;
+    },
   ) => ReadableStream<Uint8Array>;
 
   /**
@@ -114,6 +124,14 @@ export interface SSRRenderOptions {
    * Nonce for Content Security Policy (CSP)
    */
   nonce?: string;
+
+  /**
+   * SSR stream mode.
+   *
+   * - `"stream"` (default) — start flushing HTML immediately.
+   * - `"allReady"` — await `stream.allReady` before returning.
+   */
+  streamMode?: import("../router/router-options.js").SSRStreamMode;
 }
 
 /**
@@ -161,7 +179,7 @@ export interface CreateRSCHandlerOptions<
   /**
    * The RSC router instance
    */
-  router: RSCRouter<TEnv, TRoutes>;
+  router: RSCRouterInternal<TEnv, TRoutes>;
 
   /**
    * RSC dependencies from @vitejs/plugin-rsc/rsc.

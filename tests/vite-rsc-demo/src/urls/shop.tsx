@@ -1,11 +1,12 @@
 import { urls } from "@rangojs/router";
-import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
 // Layouts
 import { ShopLayout } from "../layouts/ShopLayout.js";
 import { CheckoutLayout } from "../layouts/CheckoutLayout.js";
 import { AccountLayout } from "../layouts/AccountLayout.js";
+import { Meta } from "@rangojs/router";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 
 // Route components
@@ -131,6 +132,7 @@ export const shopPatterns = urls(
       (ctx) => {
         const push = ctx.use(Breadcrumbs);
         push({ label: "Shop", href: "/shop" });
+        ctx.use(Meta)({ title: { template: "%s | Shop", default: "Shop" } });
         return (
           <>
             <ParallelOutlet name="@promoBanner" />
@@ -216,62 +218,74 @@ export const shopPatterns = urls(
 
     // Checkout routes with dedicated cache store
     cache({ store: checkoutCacheStore }, () => [
-      layout(<CheckoutLayout />, () => [
-        loading(<CheckoutSkeleton />),
-        middleware(...requireAuthMiddleware),
+      layout(
+        (ctx) => {
+          ctx.use(Meta)({ title: "Checkout" });
+          return <CheckoutLayout />;
+        },
+        () => [
+          loading(<CheckoutSkeleton />),
+          middleware(...requireAuthMiddleware),
 
-        path(
-          "/checkout",
-          CheckoutIndexRoute,
-          { name: "checkout.index" },
-          () => [
-            parallel({
-              "@summary": () => <OrderSummary variant="checkout" />,
-            }),
-          ],
-        ),
+          path(
+            "/checkout",
+            CheckoutIndexRoute,
+            { name: "checkout.index" },
+            () => [
+              parallel({
+                "@summary": () => <OrderSummary variant="checkout" />,
+              }),
+            ],
+          ),
 
-        path(
-          "/checkout/payment",
-          CheckoutPaymentRoute,
-          { name: "checkout.payment" },
-          () => [
-            parallel({
-              "@summary": () => <OrderSummary variant="payment" />,
-            }),
-          ],
-        ),
+          path(
+            "/checkout/payment",
+            CheckoutPaymentRoute,
+            { name: "checkout.payment" },
+            () => [
+              parallel({
+                "@summary": () => <OrderSummary variant="payment" />,
+              }),
+            ],
+          ),
 
-        path(
-          "/checkout/confirm",
-          CheckoutConfirmRoute,
-          { name: "checkout.confirm" },
-          () => [revalidate(checkoutConfirmRevalidation)],
-        ),
-      ]),
+          path(
+            "/checkout/confirm",
+            CheckoutConfirmRoute,
+            { name: "checkout.confirm" },
+            () => [revalidate(checkoutConfirmRevalidation)],
+          ),
+        ],
+      ),
     ]),
 
     // Account routes
-    layout(<AccountLayout />, () => [
-      loader(OrdersLoader),
+    layout(
+      (ctx) => {
+        ctx.use(Meta)({ title: "Account" });
+        return <AccountLayout />;
+      },
+      () => [
+        loader(OrdersLoader),
 
-      path("/account", AccountIndexRoute, { name: "account.index" }, () => [
-        parallel({ "@orders": () => <RecentOrders /> }),
-      ]),
+        path("/account", AccountIndexRoute, { name: "account.index" }, () => [
+          parallel({ "@orders": () => <RecentOrders /> }),
+        ]),
 
-      path(
-        "/account/orders",
-        AccountOrdersRoute,
-        { name: "account.orders" },
-        () => [middleware(...permissionsMiddleware)],
-      ),
+        path(
+          "/account/orders",
+          AccountOrdersRoute,
+          { name: "account.orders" },
+          () => [middleware(...permissionsMiddleware)],
+        ),
 
-      path(
-        "/account/orders/:id",
-        AccountOrderDetailRoute,
-        { name: "account.orderDetail" },
-        () => [revalidate(orderDetailRevalidation)],
-      ),
-    ]),
+        path(
+          "/account/orders/:id",
+          AccountOrderDetailRoute,
+          { name: "account.orderDetail" },
+          () => [revalidate(orderDetailRevalidation)],
+        ),
+      ],
+    ),
   ],
 );

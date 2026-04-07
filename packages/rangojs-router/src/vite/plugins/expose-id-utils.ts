@@ -20,6 +20,18 @@ export function hashId(filePath: string, exportName: string): string {
 }
 
 /**
+ * Build a stable ID for an export binding. Uses hashed IDs in production
+ * builds (short + opaque) and readable path#name IDs in dev.
+ */
+export function makeStubId(
+  filePath: string,
+  exportName: string,
+  isBuild: boolean,
+): string {
+  return isBuild ? hashId(filePath, exportName) : `${filePath}#${exportName}`;
+}
+
+/**
  * Generate an 8-char hex hash for an inline static handler call site.
  * Uses file path and line number (plus optional index for same-line collisions).
  */

@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { urls, Meta } from "@rangojs/router";
 import {
   ErrorsLayout,
   ErrorsIndexPage,
@@ -16,27 +16,33 @@ import {
 
 export const errorsPatterns = urls(
   ({ path, layout, loader, errorBoundary, notFoundBoundary }) => [
-    layout(<ErrorsLayout />, () => [
-      errorBoundary(errorsErrorBoundary),
-      notFoundBoundary(errorsNotFoundBoundary),
+    layout(
+      (ctx) => {
+        ctx.use(Meta)({ title: "Errors" });
+        return <ErrorsLayout />;
+      },
+      () => [
+        errorBoundary(errorsErrorBoundary),
+        notFoundBoundary(errorsNotFoundBoundary),
 
-      path("/", ErrorsIndexPage, { name: "index" }),
-      path("/throw", ErrorsThrowHandler, { name: "throwError" }),
-      path(
-        "/loader-error",
-        ErrorsLoaderErrorPage,
-        { name: "loaderError" },
-        () => [loader(ErrorPageLoader)],
-      ),
-      path("/not-found", ErrorsNotFoundLoaderPage, { name: "notFound" }),
-      path(
-        "/not-found-loader",
-        ErrorsNotFoundLoaderPage,
-        { name: "notFoundLoader" },
-        () => [loader(NotFoundLoader)],
-      ),
-      path("/client-error", ErrorsClientErrorPage, { name: "clientError" }),
-    ]),
+        path("/", ErrorsIndexPage, { name: "index" }),
+        path("/throw", ErrorsThrowHandler, { name: "throwError" }),
+        path(
+          "/loader-error",
+          ErrorsLoaderErrorPage,
+          { name: "loaderError" },
+          () => [loader(ErrorPageLoader)],
+        ),
+        path("/not-found", ErrorsNotFoundLoaderPage, { name: "notFound" }),
+        path(
+          "/not-found-loader",
+          ErrorsNotFoundLoaderPage,
+          { name: "notFoundLoader" },
+          () => [loader(NotFoundLoader)],
+        ),
+        path("/client-error", ErrorsClientErrorPage, { name: "clientError" }),
+      ],
+    ),
   ],
 );
 

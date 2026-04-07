@@ -15,6 +15,12 @@ import type {
   SegmentHandleData,
 } from "./types.js";
 import type { RequestContext } from "../server/request-context.js";
+import {
+  resolveTtl,
+  resolveSwrWindow,
+  computeExpiration,
+  DEFAULT_FUNCTION_TTL,
+} from "./cache-policy.js";
 
 const CACHE_REGISTRY_KEY = "__rsc_router_segment_cache_registry__";
 const RESPONSE_CACHE_REGISTRY_KEY = "__rsc_router_response_cache_registry__";
@@ -22,18 +28,23 @@ const ITEM_CACHE_REGISTRY_KEY = "__rsc_router_item_cache_registry__";
 const TAG_INDEX_REGISTRY_KEY = "__rsc_router_tag_index_registry__";
 
 /**
- * Returns the globalThis-backed registry of named cache Maps.
- * The registry itself survives HMR; individual stores are keyed by name.
+ * Get or create a named Map from a globalThis-backed registry.
+ * The registry survives HMR; individual stores are keyed by name.
  */
-function getGlobalRegistry(): Map<string, Map<string, CachedEntryData>> {
-  let registry = (globalThis as any)[CACHE_REGISTRY_KEY] as
-    | Map<string, Map<string, CachedEntryData>>
+function getNamedMap<V>(registryKey: string, name: string): Map<string, V> {
+  let registry = (globalThis as any)[registryKey] as
+    | Map<string, Map<string, V>>
     | undefined;
   if (!registry) {
     registry = new Map();
-    (globalThis as any)[CACHE_REGISTRY_KEY] = registry;
+    (globalThis as any)[registryKey] = registry;
   }
-  return registry;
+  let map = registry.get(name);
+  if (!map) {
+    map = new Map<string, V>();
+    registry.set(name, map);
+  }
+  return map;
 }
 
 interface CachedResponseEntry {
@@ -48,52 +59,7 @@ interface CachedItemEntry {
   value: string;
   handles?: Record<string, SegmentHandleData>;
   expiresAt: number;
-}
-
-/**
- * Returns the globalThis-backed registry of named item cache Maps (for "use cache").
- */
-function getItemCacheRegistry(): Map<string, Map<string, CachedItemEntry>> {
-  let registry = (globalThis as any)[ITEM_CACHE_REGISTRY_KEY] as
-    | Map<string, Map<string, CachedItemEntry>>
-    | undefined;
-  if (!registry) {
-    registry = new Map();
-    (globalThis as any)[ITEM_CACHE_REGISTRY_KEY] = registry;
-  }
-  return registry;
-}
-
-/**
- * Returns the globalThis-backed registry of named response cache Maps.
- */
-function getResponseCacheRegistry(): Map<
-  string,
-  Map<string, CachedResponseEntry>
-> {
-  let registry = (globalThis as any)[RESPONSE_CACHE_REGISTRY_KEY] as
-    | Map<string, Map<string, CachedResponseEntry>>
-    | undefined;
-  if (!registry) {
-    registry = new Map();
-    (globalThis as any)[RESPONSE_CACHE_REGISTRY_KEY] = registry;
-  }
-  return registry;
-}
-
-/**
- * Returns the globalThis-backed registry of named tag index Maps.
- * Each tag maps to a set of prefixed cache keys (seg:, res:, item:).
- */
-function getTagIndexRegistry(): Map<string, Map<string, Set<string>>> {
-  let registry = (globalThis as any)[TAG_INDEX_REGISTRY_KEY] as
-    | Map<string, Map<string, Set<string>>>
-    | undefined;
-  if (!registry) {
-    registry = new Map();
-    (globalThis as any)[TAG_INDEX_REGISTRY_KEY] = registry;
-  }
-  return registry;
+  staleAt: number;
 }
 
 /**
@@ -138,7 +104,7 @@ export interface MemorySegmentCacheStoreOptions<TEnv = unknown> {
    * @example
    * ```typescript
    * keyGenerator: (ctx, defaultKey) => {
-   *   const locale = ctx.cookie('locale') || 'en';
+   *   const locale = cookies().get('locale')?.value || 'en';
    *   return `${locale}:${defaultKey}`;
    * }
    * ```
@@ -190,37 +156,22 @@ export class MemorySegmentCacheStore<
     if (options?.name != null) {
       // Named stores use the globalThis registry so data survives HMR.
       // Each name gets its own isolated Map.
-      const registry = getGlobalRegistry();
-      let map = registry.get(options.name);
-      if (!map) {
-        map = new Map<string, CachedEntryData>();
-        registry.set(options.name, map);
-      }
-      this.cache = map;
-
-      const responseRegistry = getResponseCacheRegistry();
-      let responseMap = responseRegistry.get(options.name);
-      if (!responseMap) {
-        responseMap = new Map<string, CachedResponseEntry>();
-        responseRegistry.set(options.name, responseMap);
-      }
-      this.responseCache = responseMap;
-
-      const itemRegistry = getItemCacheRegistry();
-      let itemMap = itemRegistry.get(options.name);
-      if (!itemMap) {
-        itemMap = new Map<string, CachedItemEntry>();
-        itemRegistry.set(options.name, itemMap);
-      }
-      this.itemCache = itemMap;
-
-      const tagRegistry = getTagIndexRegistry();
-      let tagMap = tagRegistry.get(options.name);
-      if (!tagMap) {
-        tagMap = new Map<string, Set<string>>();
-        tagRegistry.set(options.name, tagMap);
-      }
-      this.tagIndex = tagMap;
+      this.cache = getNamedMap<CachedEntryData>(
+        CACHE_REGISTRY_KEY,
+        options.name,
+      );
+      this.responseCache = getNamedMap<CachedResponseEntry>(
+        RESPONSE_CACHE_REGISTRY_KEY,
+        options.name,
+      );
+      this.itemCache = getNamedMap<CachedItemEntry>(
+        ITEM_CACHE_REGISTRY_KEY,
+        options.name,
+      );
+      this.tagIndex = getNamedMap<Set<string>>(
+        TAG_INDEX_REGISTRY_KEY,
+        options.name,
+      );
     } else {
       // Unnamed stores get a plain instance-level Map (no globalThis sharing).
       this.cache = new Map<string, CachedEntryData>();
@@ -318,9 +269,8 @@ export class MemorySegmentCacheStore<
       headers.push([name, value]);
     });
 
-    const swrWindow = swr ?? this.defaults?.swr ?? 0;
-    const staleAt = Date.now() + ttl * 1000;
-    const expiresAt = staleAt + swrWindow * 1000;
+    const swrWindow = resolveSwrWindow(swr, this.defaults);
+    const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
 
     const prefixedKey = `res:${key}`;
     this.unregisterTags(prefixedKey);
@@ -340,16 +290,18 @@ export class MemorySegmentCacheStore<
     const cached = this.itemCache.get(key);
     if (!cached) return null;
 
-    if (Date.now() > cached.expiresAt) {
+    const now = Date.now();
+    if (now > cached.expiresAt) {
       this.unregisterTags(`item:${key}`);
       this.itemCache.delete(key);
       return null;
     }
 
+    const isStale = now > cached.staleAt;
     return {
       value: cached.value,
       handles: cached.handles,
-      shouldRevalidate: false,
+      shouldRevalidate: isStale,
     };
   }
 
@@ -358,13 +310,16 @@ export class MemorySegmentCacheStore<
     value: string,
     options?: CacheItemOptions,
   ): Promise<void> {
-    const ttl = options?.ttl ?? this.defaults?.ttl ?? 900;
+    const ttl = resolveTtl(options?.ttl, this.defaults, DEFAULT_FUNCTION_TTL);
+    const swrWindow = resolveSwrWindow(options?.swr, this.defaults);
+    const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
     const prefixedKey = `item:${key}`;
     this.unregisterTags(prefixedKey);
     this.itemCache.set(key, {
       value,
       handles: options?.handles,
-      expiresAt: Date.now() + ttl * 1000,
+      expiresAt,
+      staleAt,
     });
     if (options?.tags && options.tags.length > 0) {
       this.registerTags(options.tags, prefixedKey);

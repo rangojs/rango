@@ -1,0 +1,15 @@
+pre-commit:
+  parallel: true
+  jobs:
+    - name: format
+      run: pnpm exec oxfmt {staged_files}
+      stage_fixed: true
+      glob: "*.{ts,tsx,js,jsx,json,css}"
+    - name: lint
+      run: pnpm -w run lint
+      glob: "*.{ts,tsx,js,jsx}"
+
+post-merge:
+  jobs:
+    - name: install
+      run: pnpm install --frozen-lockfile

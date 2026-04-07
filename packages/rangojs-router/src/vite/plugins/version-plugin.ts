@@ -1,5 +1,115 @@
-import type { Plugin } from "vite";
+import { parseAst, type Plugin } from "vite";
 import { VIRTUAL_IDS, getVirtualVersionContent } from "./virtual-entries.js";
+
+interface ClientModuleSignature {
+  key: string;
+}
+
+function isCodeModule(id: string): boolean {
+  return /\.(tsx?|jsx?)($|\?)/.test(id);
+}
+
+function normalizeModuleId(id: string): string {
+  return id.split("?", 1)[0];
+}
+
+function getClientModuleSignature(
+  source: string,
+): ClientModuleSignature | undefined {
+  let program: any;
+  try {
+    program = parseAst(source, { jsx: true });
+  } catch {
+    return undefined;
+  }
+
+  let isUseClient = false;
+  for (const node of program.body ?? []) {
+    if (
+      node?.type === "ExpressionStatement" &&
+      node.expression?.type === "Literal" &&
+      typeof node.expression.value === "string"
+    ) {
+      if (node.expression.value === "use client") {
+        isUseClient = true;
+      }
+      continue;
+    }
+    break;
+  }
+
+  if (!isUseClient) return undefined;
+
+  const exports = new Set<string>();
+  let hasDefault = false;
+  let hasExportAll = false;
+
+  const collectBindingNames = (pattern: any) => {
+    if (!pattern) return;
+    if (pattern.type === "Identifier") {
+      exports.add(pattern.name);
+    } else if (pattern.type === "ObjectPattern") {
+      for (const prop of pattern.properties ?? []) {
+        if (prop?.type === "RestElement") {
+          collectBindingNames(prop.argument);
+        } else {
+          collectBindingNames(prop?.value);
+        }
+      }
+    } else if (pattern.type === "ArrayPattern") {
+      for (const el of pattern.elements ?? []) {
+        if (el?.type === "RestElement") {
+          collectBindingNames(el.argument);
+        } else {
+          collectBindingNames(el);
+        }
+      }
+    }
+  };
+
+  const collectDeclarationNames = (declaration: any) => {
+    if (!declaration) return;
+    if (declaration.type === "VariableDeclaration") {
+      for (const decl of declaration.declarations ?? []) {
+        collectBindingNames(decl?.id);
+      }
+      return;
+    }
+    collectBindingNames(declaration.id);
+  };
+
+  for (const node of program.body ?? []) {
+    if (node?.type === "ExportDefaultDeclaration") {
+      hasDefault = true;
+      continue;
+    }
+    if (node?.type === "ExportAllDeclaration") {
+      hasExportAll = true;
+      continue;
+    }
+    if (node?.type !== "ExportNamedDeclaration") continue;
+
+    collectDeclarationNames(node.declaration);
+
+    for (const specifier of node.specifiers ?? []) {
+      const exportedName =
+        specifier?.exported?.name ?? specifier?.exported?.value;
+      if (exportedName === "default") {
+        hasDefault = true;
+      } else if (typeof exportedName === "string") {
+        exports.add(exportedName);
+      }
+    }
+  }
+
+  return {
+    key: JSON.stringify({
+      default: hasDefault,
+      exportAll: hasExportAll,
+      exports: [...exports].sort(),
+    }),
+  };
+}
 
 /**
  * Plugin providing rsc-router:version virtual module.
@@ -23,6 +133,23 @@ export function createVersionPlugin(): Plugin {
   let currentVersion = buildVersion;
   let isDev = false;
   let server: any = null;
+  const clientModuleSignatures = new Map<string, ClientModuleSignature>();
+
+  let versionCounter = 0;
+  const bumpVersion = (reason: string) => {
+    // Use timestamp + counter to guarantee uniqueness even when multiple
+    // bumps happen within the same millisecond (e.g. cascading HMR events).
+    currentVersion = Date.now().toString(16) + String(++versionCounter);
+    console.log(`[rsc-router] ${reason}, version updated: ${currentVersion}`);
+
+    const rscEnv = server?.environments?.rsc;
+    const versionMod = rscEnv?.moduleGraph?.getModuleById(
+      "\0" + VIRTUAL_IDS.version,
+    );
+    if (versionMod) {
+      rscEnv.moduleGraph.invalidateModule(versionMod);
+    }
+  };
 
   return {
     name: "@rangojs/router:version",
@@ -34,6 +161,13 @@ export function createVersionPlugin(): Plugin {
 
     configureServer(devServer) {
       server = devServer;
+
+      devServer.watcher.on("unlink", (filePath) => {
+        if (!isDev) return;
+        if (!clientModuleSignatures.has(filePath)) return;
+        clientModuleSignatures.delete(filePath);
+        bumpVersion("Client module removed");
+      });
     },
 
     resolveId(id) {
@@ -50,8 +184,27 @@ export function createVersionPlugin(): Plugin {
       return null;
     },
 
+    transform(code, id) {
+      if (!isDev || !isCodeModule(id)) return null;
+      const normalizedId = normalizeModuleId(id);
+      if (
+        !code.includes("use client") &&
+        !clientModuleSignatures.has(normalizedId)
+      ) {
+        return null;
+      }
+
+      const signature = getClientModuleSignature(code);
+      if (signature) {
+        clientModuleSignatures.set(normalizedId, signature);
+      } else {
+        clientModuleSignatures.delete(normalizedId);
+      }
+      return null;
+    },
+
     // Track RSC module changes and update version
-    hotUpdate(ctx) {
+    async hotUpdate(ctx) {
       if (!isDev) return;
 
       // Check if this is an RSC environment update (not client/ssr)
@@ -59,26 +212,55 @@ export function createVersionPlugin(): Plugin {
       // In Vite 6, environment is accessed via `this.environment`
       const isRscModule = this.environment?.name === "rsc";
 
-      if (isRscModule && ctx.modules.length > 0) {
-        // Update version when RSC modules change
-        currentVersion = Date.now().toString(16);
-        console.log(
-          `[rsc-router] RSC module changed, version updated: ${currentVersion}`,
-        );
+      if (!isRscModule) return;
 
-        // Invalidate the version module so it gets reloaded with new version
-        if (server) {
-          const rscEnv = server.environments?.rsc;
-          if (rscEnv?.moduleGraph) {
-            const versionMod = rscEnv.moduleGraph.getModuleById(
-              "\0" + VIRTUAL_IDS.version,
-            );
-            if (versionMod) {
-              rscEnv.moduleGraph.invalidateModule(versionMod);
-            }
-          }
-        }
+      // Skip re-bumping when the version virtual module itself is invalidated
+      // (our own bumpVersion() invalidates it, which re-triggers hotUpdate).
+      if (
+        ctx.modules.length === 1 &&
+        ctx.modules[0].id === "\0" + VIRTUAL_IDS.version
+      ) {
+        return;
       }
+
+      if (isCodeModule(ctx.file)) {
+        const filePath = normalizeModuleId(ctx.file);
+        const previousSignature = clientModuleSignatures.get(filePath);
+        try {
+          const source = await ctx.read();
+          const nextSignature = getClientModuleSignature(source);
+          if (nextSignature) {
+            // "use client" file — compare export signatures.
+            // client-component-hmr may have cleared ctx.modules, so we
+            // cannot rely on ctx.modules.length for these files.
+            clientModuleSignatures.set(filePath, nextSignature);
+            if (
+              previousSignature &&
+              previousSignature.key === nextSignature.key
+            ) {
+              return;
+            }
+          } else {
+            clientModuleSignatures.delete(filePath);
+            if (!previousSignature) {
+              // Not and never was "use client" — use module graph check.
+              // ctx.modules is reliable for pure server files (only
+              // client-component-hmr clears it for "use client" modules).
+              if (ctx.modules.length === 0) return;
+            }
+            // Was "use client" but directive removed — boundary changed,
+            // bump below.
+          }
+        } catch {
+          // Fail open: if we can't read or parse the update, invalidate.
+        }
+      } else {
+        // Non-code file (json, css, etc.) — only bump if it's actually
+        // referenced by the RSC module graph.
+        if (ctx.modules.length === 0) return;
+      }
+
+      bumpVersion("RSC module changed");
     },
   };
 }

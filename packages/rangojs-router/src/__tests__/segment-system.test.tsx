@@ -747,6 +747,187 @@ describe("segment-system", () => {
         // which is a child of L0, so it gets included in L0's loaders
         expect(layoutOutlet.props.loaderData).toBeDefined();
       });
+
+      it("reconstructs missing parallel loader markers for layout-owned parallels", async () => {
+        const loadingSkeleton = createElement("div", null, "Loading sidebar");
+        const loaderPromise = Promise.resolve({ sidebar: true });
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0.@sidebar",
+            namespace: "parallel.sidebar",
+            type: "parallel",
+            slot: "@sidebar",
+            loading: loadingSkeleton,
+          }),
+          seg({
+            id: "L0D0.sidebar-data",
+            namespace: "parallel.sidebar",
+            type: "loader",
+            loaderId: "sidebar-loader",
+            loaderData: loaderPromise,
+          }),
+          seg({ id: "L0R0", type: "route" }),
+        ];
+
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+        const outlets = collectByType(tree, MockOutletProvider);
+        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
+
+        expect(layoutOutlet.props.loaderData).toBeUndefined();
+        expect(layoutOutlet.props.parallel).toHaveLength(1);
+        expect(layoutOutlet.props.parallel[0].loaderIds).toEqual([
+          "sidebar-loader",
+        ]);
+        expect(layoutOutlet.props.parallel[0].loaderDataPromise).toBeInstanceOf(
+          Promise,
+        );
+      });
+
+      it("reconstructs missing parallel loader markers for route-owned parallels", async () => {
+        const loadingSkeleton = createElement("div", null, "Loading sidebar");
+        const loaderPromise = Promise.resolve({ sidebar: true });
+        const segments: ResolvedSegment[] = [
+          seg({
+            id: "R0.@sidebar",
+            namespace: "parallel.sidebar",
+            type: "parallel",
+            slot: "@sidebar",
+            loading: loadingSkeleton,
+          }),
+          seg({
+            id: "R0D0.sidebar-data",
+            namespace: "parallel.sidebar",
+            type: "loader",
+            loaderId: "sidebar-loader",
+            loaderData: loaderPromise,
+          }),
+          seg({ id: "R0", type: "route" }),
+        ];
+
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+        const outlets = collectByType(tree, MockOutletProvider);
+        const routeOutlet = outlets.find((o) => o.props.segment.id === "R0")!;
+
+        expect(routeOutlet.props.loaderData).toBeUndefined();
+        expect(routeOutlet.props.parallel).toHaveLength(1);
+        expect(routeOutlet.props.parallel[0].loaderIds).toEqual([
+          "sidebar-loader",
+        ]);
+        expect(routeOutlet.props.parallel[0].loaderDataPromise).toBeInstanceOf(
+          Promise,
+        );
+      });
+
+      it("keeps parallel-owned loaders isolated per parallel definition", async () => {
+        const sidebarLoading = createElement("div", null, "Loading sidebar");
+        const modalLoading = createElement("div", null, "Loading modal");
+        const sidebarLoaderPromise = Promise.resolve({ sidebar: true });
+        const modalLoaderPromise = Promise.resolve({ modal: true });
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0.@sidebar",
+            namespace: "parallel.sidebar",
+            type: "parallel",
+            slot: "@sidebar",
+            loading: sidebarLoading,
+          }),
+          seg({
+            id: "L0.@modal",
+            namespace: "parallel.modal",
+            type: "parallel",
+            slot: "@modal",
+            loading: modalLoading,
+          }),
+          seg({
+            id: "L0D0.sidebar-data",
+            namespace: "parallel.sidebar",
+            type: "loader",
+            loaderId: "sidebar-loader",
+            loaderData: sidebarLoaderPromise,
+          }),
+          seg({
+            id: "L0D1.modal-data",
+            namespace: "parallel.modal",
+            type: "loader",
+            loaderId: "modal-loader",
+            loaderData: modalLoaderPromise,
+          }),
+          seg({ id: "L0R0", type: "route" }),
+        ];
+
+        const result = await renderSegments(segments);
+        const tree = toTreeNode(result);
+        const outlets = collectByType(tree, MockOutletProvider);
+        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
+        const sidebarParallel = layoutOutlet.props.parallel.find(
+          (p: ResolvedSegment) => p.slot === "@sidebar",
+        ) as ResolvedSegment;
+        const modalParallel = layoutOutlet.props.parallel.find(
+          (p: ResolvedSegment) => p.slot === "@modal",
+        ) as ResolvedSegment;
+
+        expect(sidebarParallel.loaderIds).toEqual(["sidebar-loader"]);
+        expect(modalParallel.loaderIds).toEqual(["modal-loader"]);
+        expect(sidebarParallel.loaderDataPromise).toBeInstanceOf(Promise);
+        expect(modalParallel.loaderDataPromise).toBeInstanceOf(Promise);
+        expect(sidebarParallel.loaderDataPromise).not.toBe(
+          modalParallel.loaderDataPromise,
+        );
+      });
+
+      it("reuses pending parallel loader promise across rerenders with the same loader inputs", async () => {
+        let resolveLoader!: (value: unknown) => void;
+        const loaderPromise = new Promise((resolve) => {
+          resolveLoader = resolve;
+        });
+        const loadingSkeleton = createElement("div", null, "Loading sidebar");
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0.@sidebar",
+            namespace: "parallel.sidebar",
+            type: "parallel",
+            slot: "@sidebar",
+            loading: loadingSkeleton,
+          }),
+          seg({
+            id: "L0D0.sidebar-data",
+            namespace: "parallel.sidebar",
+            type: "loader",
+            loaderId: "sidebar-loader",
+            loaderData: loaderPromise,
+          }),
+          seg({ id: "L0R0", type: "route" }),
+        ];
+
+        const firstResult = await renderSegments(segments);
+        const firstTree = toTreeNode(firstResult);
+        const firstOutlets = collectByType(firstTree, MockOutletProvider);
+        const firstLayoutOutlet = firstOutlets.find(
+          (o) => o.props.segment.id === "L0",
+        )!;
+        const firstPromise =
+          firstLayoutOutlet.props.parallel[0].loaderDataPromise;
+
+        const secondResult = await renderSegments(segments);
+        const secondTree = toTreeNode(secondResult);
+        const secondOutlets = collectByType(secondTree, MockOutletProvider);
+        const secondLayoutOutlet = secondOutlets.find(
+          (o) => o.props.segment.id === "L0",
+        )!;
+        const secondPromise =
+          secondLayoutOutlet.props.parallel[0].loaderDataPromise;
+
+        expect(firstPromise).toBeInstanceOf(Promise);
+        expect(secondPromise).toBe(firstPromise);
+
+        resolveLoader({ sidebar: true });
+        await firstPromise;
+      });
     });
   });
 });

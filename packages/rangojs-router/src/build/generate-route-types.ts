@@ -25,8 +25,15 @@ export {
 } from "./route-types/include-resolution.js";
 export {
   extractUrlsVariableFromRouter,
+  extractUrlsFromRouter,
+  extractBasenameFromRouter,
+  type UrlsExtractionResult,
   buildCombinedRouteMapForRouterFile,
   detectUnresolvableIncludes,
+  detectUnresolvableIncludesForUrlsFile,
+  findNestedRouterConflict,
+  formatNestedRouterConflictError,
   findRouterFiles,
   writeCombinedRouteTypes,
 } from "./route-types/router-processing.js";
+export { findUrlsVariableNames } from "./route-types/per-module-writer.js";

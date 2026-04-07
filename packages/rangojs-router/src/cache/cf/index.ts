@@ -19,6 +19,7 @@ export {
   type CFTagInvalidationStore,
   type CFKVTagInvalidationStoreOptions,
   type KVNamespaceLike,
+  type KVNamespace,
 } from "./cf-cache-store.js";
 
 // Header constants for debugging and inspection

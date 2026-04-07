@@ -8,6 +8,10 @@ export interface LazyIncludeContext {
   urlPrefix: string;
   namePrefix: string | undefined;
   parent: unknown; // EntryData - avoid circular import
+  cacheProfiles?: Record<
+    string,
+    import("../cache/profile-registry.js").CacheProfile
+  >;
 }
 
 /**
@@ -37,6 +41,14 @@ export interface RouteEntry<TEnv = any> {
    * If not specified for a route, defaults to pattern-based detection
    */
   trailingSlash?: Record<string, TrailingSlashMode>;
+  /**
+   * Supported handler shapes:
+   *   - sync: () => Array<AllUseItems>
+   *   - lazy import: () => Promise<{ default: () => Array<AllUseItems> }>
+   *   - lazy function: () => Promise<() => Array<AllUseItems>>
+   *
+   * Direct Promise<Array> is NOT supported and rejected at runtime.
+   */
   handler: () =>
     | Array<AllUseItems>
     | Promise<{ default: () => Array<AllUseItems> }>
@@ -44,10 +56,23 @@ export interface RouteEntry<TEnv = any> {
   mountIndex: number;
 
   /**
+   * Router ID that owns this entry. Used to namespace the manifest cache
+   * so multi-router setups (host routing) don't share cached EntryData
+   * across routers with overlapping mountIndex + routeKey combinations.
+   */
+  routerId?: string;
+
+  /**
    * Route keys in this entry that have pre-render handlers.
    * Used by the non-trie match path to set the `pr` flag.
    */
   prerenderRouteKeys?: Set<string>;
+
+  /**
+   * Route keys in this entry that are wrapped with `Passthrough()`.
+   * Used by the non-trie match path to set the `pt` flag.
+   */
+  passthroughRouteKeys?: Set<string>;
 
   // === Lazy evaluation fields ===
 
@@ -71,4 +96,14 @@ export interface RouteEntry<TEnv = any> {
    * For lazy entries: whether patterns have been evaluated
    */
   lazyEvaluated?: boolean;
+
+  /**
+   * Cache profiles for DSL-time cache("profileName") resolution.
+   * Set on all entries (lazy and non-lazy) so loadManifest() can
+   * propagate them into the HelperContext Store.
+   */
+  cacheProfiles?: Record<
+    string,
+    import("../cache/profile-registry.js").CacheProfile
+  >;
 }

@@ -44,7 +44,7 @@ export function hasActiveIntercept(slots?: Record<string, SlotState>): boolean {
 
 /**
  * Check if cached segments contain any intercept segments.
- * Intercept caches shouldn't be used for optimistic rendering since
+ * Intercept caches shouldn't be used for cached SWR rendering since
  * whether interception happens depends on the current page context.
  */
 export function isInterceptOnlyCache(segments: ResolvedSegment[]): boolean {

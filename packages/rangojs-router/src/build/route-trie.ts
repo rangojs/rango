@@ -47,6 +47,8 @@ export interface TrieNode {
   s?: Record<string, TrieNode>;
   /** Param child: { n: paramName, c: child node } */
   p?: { n: string; c: TrieNode };
+  /** Suffix-param children keyed by suffix (e.g., ".html" → { n: "productId", c: ... }) */
+  xp?: Record<string, { n: string; c: TrieNode }>;
   /** Wildcard terminal: leaf + paramName */
   w?: TrieLeaf & { pn: string };
 }
@@ -158,6 +160,11 @@ export function extractAncestryFromTrie(
         visit(child);
       }
     }
+    if (node.xp) {
+      for (const child of Object.values(node.xp)) {
+        visit(child.c);
+      }
+    }
     if (node.p) {
       visit(node.p.c);
     }
@@ -235,10 +242,19 @@ function insertSegments(
       mergeLeaf(node, leaf);
       // AND continue with param child (param present)
     }
-    if (!node.p) {
-      node.p = { n: segment.value, c: {} };
+    if (segment.suffix) {
+      // Suffix param: keyed by suffix string (e.g., ".html")
+      if (!node.xp) node.xp = {};
+      if (!node.xp[segment.suffix]) {
+        node.xp[segment.suffix] = { n: segment.value, c: {} };
+      }
+      insertSegments(node.xp[segment.suffix].c, segments, index + 1, leaf);
+    } else {
+      if (!node.p) {
+        node.p = { n: segment.value, c: {} };
+      }
+      insertSegments(node.p.c, segments, index + 1, leaf);
     }
-    insertSegments(node.p.c, segments, index + 1, leaf);
   } else if (segment.type === "wildcard") {
     // Wildcard consumes all remaining segments
     const wildLeaf = { ...leaf, pn: "*" };

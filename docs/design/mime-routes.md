@@ -275,14 +275,14 @@ type Handler<TParams, TEnv> = (
 interface ResponseHandlerContext<TParams, TEnv> {
   request: Request;
   params: TParams;
-  env: TEnv extends RouterEnv<infer B, any> ? B : {}; // extracts bindings, same as HandlerContext
+  env: TEnv; // platform bindings from createRouter<TBindings>()
   searchParams: URLSearchParams; // system params filtered
   url: URL;
   pathname: string;
   reverse: ReverseFunction;
   // No ctx.use() — no loaders
   // No ctx.res — handler creates its own Response
-  // No ctx.var / ctx.get / ctx.set — no middleware variables
+  // No ctx.set() — response routes can read middleware variables via ctx.get()
 }
 ```
 

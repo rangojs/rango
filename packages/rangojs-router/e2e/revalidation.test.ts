@@ -11,6 +11,14 @@ import { waitForHydration, expectNoPageError, goBack } from "./helper";
  * 4. Actions trigger correct revalidation
  *
  * Uses isolated test app with data-testid selectors.
+ *
+ * Intentionally dev-only: these tests verify RSC wire protocol internals
+ * (request headers, segment IDs, partial payload structure) via network
+ * request interception. The behavioral surface (navigation works, actions
+ * trigger updates, back navigation restores state) is covered by other
+ * production tests (navigation.test.ts, smoke.test.ts, pending-actions.test.ts).
+ * Production parity explicitly deferred — low signal-to-noise ratio vs existing
+ * behavioral coverage.
  */
 
 interface RscRequest {

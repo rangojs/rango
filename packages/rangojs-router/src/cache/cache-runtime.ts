@@ -17,9 +17,6 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
 
 import {
-  renderToReadableStream,
-  createFromReadableStream,
-  createTemporaryReferenceSet,
   encodeReply,
   createClientTemporaryReferenceSet,
 } from "@vitejs/plugin-rsc/rsc";
@@ -28,39 +25,18 @@ import {
   isTainted,
   CACHED_FN_SYMBOL,
   isCachedFunction,
-  INSIDE_CACHE_EXEC,
+  stampCacheExec,
+  unstampCacheExec,
 } from "./taint.js";
 
 export { isCachedFunction };
-import { getCacheProfile } from "./profile-registry.js";
 import { runWithCacheTagScope } from "./cache-tag.js";
-import { streamToString, stringToStream } from "./segment-codec.js";
-import type { SegmentHandleData } from "./types.js";
-import type { HandleStore } from "../server/handle-store.js";
-
-// ============================================================================
-// Serialization Helpers
-// ============================================================================
-
-async function serializeResult(value: unknown): Promise<string | null> {
-  try {
-    const temporaryReferences = createTemporaryReferenceSet();
-    const stream = renderToReadableStream(value, { temporaryReferences });
-    return await streamToString(stream);
-  } catch {
-    return null;
-  }
-}
-
-async function deserializeResult<T>(encoded: string): Promise<T> {
-  const temporaryReferences = createTemporaryReferenceSet();
-  const stream = stringToStream(encoded);
-  return createFromReadableStream<T>(stream, { temporaryReferences });
-}
-
-// ============================================================================
-// Cache Key Generation
-// ============================================================================
+import { serializeResult, deserializeResult } from "./segment-codec.js";
+import { createHandleStore } from "../server/handle-store.js";
+import { restoreHandles } from "./handle-snapshot.js";
+import { startHandleCapture, type HandleCapture } from "./handle-capture.js";
+import { sortedSearchString } from "./cache-key-utils.js";
+import { runBackground } from "./background-task.js";
 
 /**
  * Convert encodeReply result to a stable string key.
@@ -71,58 +47,6 @@ async function replyToCacheKey(encoded: string | FormData): Promise<string> {
   // FormData: convert to Response body, then to string for deterministic key
   const text = await new Response(encoded).text();
   return text;
-}
-
-// ============================================================================
-// Handle Capture
-// ============================================================================
-
-interface HandleCapture {
-  data: Record<string, SegmentHandleData>;
-}
-
-function startHandleCapture(handleStore: HandleStore): HandleCapture {
-  const capture: HandleCapture = { data: {} };
-  const originalPush = handleStore.push.bind(handleStore);
-
-  // Intercept push() calls to record them
-  handleStore.push = (
-    handleName: string,
-    segmentId: string,
-    value: unknown,
-  ) => {
-    if (!capture.data[segmentId]) {
-      capture.data[segmentId] = {};
-    }
-    if (!capture.data[segmentId][handleName]) {
-      capture.data[segmentId][handleName] = [];
-    }
-    capture.data[segmentId][handleName].push(value);
-    // Still call the original so the data flows through normally
-    originalPush(handleName, segmentId, value);
-  };
-
-  return capture;
-}
-
-function stopHandleCapture(
-  handleStore: HandleStore,
-  _capture: HandleCapture,
-): void {
-  // Restore original push by deleting the override
-  // (the original is on the prototype/closure, our override is an own property)
-  delete (handleStore as any).push;
-}
-
-function restoreHandles(
-  handles: Record<string, SegmentHandleData>,
-  handleStore: HandleStore,
-): void {
-  for (const [segId, segHandles] of Object.entries(handles)) {
-    if (Object.keys(segHandles).length > 0) {
-      handleStore.replaySegmentData(segId, segHandles);
-    }
-  }
 }
 
 // ============================================================================
@@ -145,17 +69,30 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
   const wrapped = async function (this: any, ...args: any[]): Promise<any> {
     const requestCtx = getRequestContext();
     const store = requestCtx?._cacheStore;
-    const profile = getCacheProfile(profileName || "default");
+    const resolvedProfileName = profileName || "default";
 
-    // Bypass: no store, no getItem support, or no profile configured
-    if (!store?.getItem || !profile) {
+    // Bypass: no store or no getItem support
+    if (!store?.getItem) {
       return fn.apply(this, args);
     }
 
+    // Resolve profile strictly from request-scoped config (set by the
+    // active router via createRequestContext). No global fallback —
+    // global profile state is only for DSL-time cache("profileName").
+    const profile = requestCtx?._cacheProfiles?.[resolvedProfileName];
+
+    if (!profile) {
+      throw new Error(
+        `[use cache] "${id}" uses unknown cache profile "${resolvedProfileName}". ` +
+          `Define it in createRouter({ cacheProfiles: { "${resolvedProfileName}": { ttl: ... } } }).`,
+      );
+    }
+
     // Separate tainted args (ctx, env, req) from key-generating args.
-    // For tainted objects that carry route context (params, pathname),
-    // extract those serializable values into the key so different routes
-    // and param combinations produce distinct cache entries.
+    // For tainted objects that carry route context (params, pathname,
+    // searchParams), extract serializable values into the key so
+    // different routes, param combinations, and query variants produce
+    // distinct cache entries.
     const keyArgs: unknown[] = [];
     let hasTaintedArgs = false;
     for (const arg of args) {
@@ -163,9 +100,27 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         hasTaintedArgs = true;
         const ctx = arg as any;
         if (ctx.params && typeof ctx.params === "object") {
+          // Include host to prevent cross-host cache collisions (same
+          // pattern as route-level cache-scope.ts key generation).
+          if (ctx.url?.host) {
+            keyArgs.push(ctx.url.host);
+          }
+          // Include route name to prevent collisions when the same cached
+          // function is reused across routes with identical pathname/params
+          // but different local reverse() scope.
+          if (ctx._routeName) {
+            keyArgs.push(ctx._routeName);
+          }
           keyArgs.push(ctx.pathname, ctx.params);
           if (ctx._responseType) {
             keyArgs.push(ctx._responseType);
+          }
+          // Include user-facing search params (exclude internal _rsc*/__ params)
+          if (ctx.searchParams instanceof URLSearchParams) {
+            const normalized = sortedSearchString(ctx.searchParams);
+            if (normalized) {
+              keyArgs.push(normalized);
+            }
           }
         }
       } else {
@@ -235,26 +190,67 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             restoreHandles(cached.handles, handleStore);
           }
         }
-        // Background revalidation
-        if (requestCtx?.waitUntil) {
-          requestCtx.waitUntil(async () => {
-            try {
-              const scoped = runWithCacheTagScope(() => fn.apply(this, args));
-              const freshResult = await scoped.result;
-              const freshTags = [...(profile.tags ?? []), ...scoped.tags]; // read tags after await
-              const serialized = await serializeResult(freshResult);
-              if (serialized !== null) {
-                await store.setItem!(cacheKey, serialized, {
-                  ttl: profile.ttl,
-                  swr: profile.swr,
-                  tags: freshTags.length > 0 ? freshTags : undefined,
-                });
-              }
-            } catch {
-              // Background revalidation failed silently
+        // Background revalidation — must capture handles if tainted args present.
+        // Use an isolated handle store so background pushes don't pollute the
+        // live response or throw LateHandlePushError on the completed store.
+        // Same isolation pattern as route-level background-revalidation.ts.
+        runBackground(requestCtx, async () => {
+          // Reuse closure-captured requestCtx instead of calling
+          // getRequestContext() — ALS context may be gone inside waitUntil.
+          let originalHandleStore:
+            | ReturnType<typeof createHandleStore>
+            | undefined;
+          if (hasTaintedArgs && requestCtx) {
+            originalHandleStore = requestCtx._handleStore;
+            requestCtx._handleStore = createHandleStore();
+          }
+          const bgHandleStore = hasTaintedArgs
+            ? requestCtx?._handleStore
+            : undefined;
+          let bgCapture: HandleCapture | undefined;
+          let bgStopCapture: (() => void) | undefined;
+          if (bgHandleStore) {
+            const c = startHandleCapture(bgHandleStore);
+            bgCapture = c.capture;
+            bgStopCapture = c.stop;
+          }
+
+          // Stamp tainted ARGS only — not requestCtx.
+          const bgTaintedArgs: unknown[] = [];
+          for (const arg of args) {
+            if (isTainted(arg)) {
+              stampCacheExec(arg as object);
+              bgTaintedArgs.push(arg);
             }
-          });
-        }
+          }
+
+          try {
+            const scoped = runWithCacheTagScope(() => fn.apply(this, args));
+            const freshResult = await scoped.result;
+            const freshTags = [...(profile.tags ?? []), ...scoped.tags];
+            bgStopCapture?.();
+            const serialized = await serializeResult(freshResult);
+            if (serialized !== null) {
+              await store.setItem!(cacheKey, serialized, {
+                handles: bgCapture?.data,
+                ttl: profile.ttl,
+                swr: profile.swr,
+                tags: freshTags.length > 0 ? freshTags : undefined,
+              });
+            }
+          } catch (bgError) {
+            bgStopCapture?.();
+            requestCtx?._reportBackgroundError?.(bgError, "stale-revalidation");
+          } finally {
+            for (const arg of bgTaintedArgs) {
+              unstampCacheExec(arg as object);
+            }
+            // Restore original handle store
+            if (originalHandleStore && requestCtx) {
+              requestCtx._handleStore = originalHandleStore;
+            }
+          }
+        });
         return result;
       } catch {
         // Deserialization of stale value failed, fall through
@@ -264,18 +260,29 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // Cache miss: execute, serialize, store
     const handleStore = hasTaintedArgs ? requestCtx?._handleStore : undefined;
     let capture: HandleCapture | undefined;
+    let stopCapture: (() => void) | undefined;
     if (handleStore && hasTaintedArgs) {
-      capture = startHandleCapture(handleStore);
+      const c = startHandleCapture(handleStore);
+      capture = c.capture;
+      stopCapture = c.stop;
     }
 
     // Stamp tainted args so ctx.set(), ctx.header(), etc. throw if called
     // inside the cached function body (those side effects are lost on hit).
+    // Uses ref-counted stamp/unstamp so overlapping executions
+    // sharing the same ctx don't clear each other's guards.
     const taintedArgs: unknown[] = [];
     for (const arg of args) {
       if (isTainted(arg)) {
-        (arg as any)[INSIDE_CACHE_EXEC] = true;
+        stampCacheExec(arg as object);
         taintedArgs.push(arg);
       }
+    }
+    // Always stamp the ALS RequestContext so cookies()/headers() guards fire
+    // even when the cached function receives no tainted args. The guard in
+    // cookie-store.ts checks RequestContext, not function args.
+    if (requestCtx) {
+      stampCacheExec(requestCtx as object);
     }
 
     let result: any;
@@ -283,14 +290,15 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     try {
       result = await scoped.result;
     } finally {
-      // Always remove the flag, even if the function throws
+      // Decrement ref count; symbol is deleted when it reaches zero
       for (const arg of taintedArgs) {
-        delete (arg as any)[INSIDE_CACHE_EXEC];
+        unstampCacheExec(arg as object);
       }
-    }
-
-    if (capture && handleStore) {
-      stopHandleCapture(handleStore, capture);
+      if (requestCtx) {
+        unstampCacheExec(requestCtx as object);
+      }
+      // Remove this capture token (order-independent, safe for concurrent use)
+      stopCapture?.();
     }
 
     // Merge profile tags with runtime tags from cacheTag() calls
@@ -310,17 +318,12 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             tags: allTags.length > 0 ? allTags : undefined,
           });
         }
-      } catch {
-        // Serialization or store write failed silently
+      } catch (writeError) {
+        requestCtx?._reportBackgroundError?.(writeError, "cache-write");
       }
     };
 
-    if (requestCtx?.waitUntil) {
-      requestCtx.waitUntil(cacheWrite);
-    } else {
-      // No waitUntil (e.g. Node.js dev server): run inline as best-effort
-      await cacheWrite();
-    }
+    await runBackground(requestCtx, cacheWrite, true);
 
     return result;
   };

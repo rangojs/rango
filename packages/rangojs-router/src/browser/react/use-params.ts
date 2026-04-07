@@ -2,37 +2,7 @@
 
 import { useContext, useState, useEffect, useRef } from "react";
 import { NavigationStoreContext } from "./context.js";
-import { getSsrParams } from "./use-segments.js";
-
-/**
- * Shallow equality check for selector results
- */
-function shallowEqual<T>(a: T, b: T): boolean {
-  if (Object.is(a, b)) return true;
-  if (
-    typeof a !== "object" ||
-    a === null ||
-    typeof b !== "object" ||
-    b === null
-  ) {
-    return false;
-  }
-  const keysA = Object.keys(a);
-  const keysB = Object.keys(b);
-  if (keysA.length !== keysB.length) return false;
-  for (const key of keysA) {
-    if (
-      !Object.hasOwn(b, key) ||
-      !Object.is(
-        (a as Record<string, unknown>)[key],
-        (b as Record<string, unknown>)[key],
-      )
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
+import { shallowEqual } from "./shallow-equal.js";
 
 /**
  * Hook to access the current route params.
@@ -60,15 +30,16 @@ export function useParams<T>(
   const ctx = useContext(NavigationStoreContext);
 
   const [value, setValue] = useState<T | Record<string, string>>(() => {
-    if (typeof document === "undefined" || !ctx) {
-      const ssrParams = getSsrParams();
-      return selector ? selector(ssrParams) : ssrParams;
+    if (!ctx) {
+      return selector ? selector({}) : {};
     }
     const params = ctx.eventController.getParams();
     return selector ? selector(params) : params;
   });
 
   const prevValue = useRef(value);
+  // Ref keeps the latest selector without re-subscribing. Event-driven by
+  // design: value updates on store events, not on selector identity change.
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 

@@ -304,13 +304,38 @@ export function createReverse<TRoutes extends Record<string, string>>(
     let result = pattern;
     if (params) {
       // Replace :param placeholders with actual values
-      result = result.replace(/:([^/]+)/g, (_: string, key: string) => {
-        const value = params[key];
-        if (value === undefined) {
-          throw new Error(`Missing param "${key}" for route "${name}"`);
-        }
-        return encodeURIComponent(value);
-      });
+      // Strip constraint syntax: :param(a|b) -> use "param" as key
+      // Optional params (:param?) are omitted when not provided
+      let hadOmittedOptional = false;
+      result = result.replace(
+        /:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?(\?)/g,
+        (_, key, _constraint, optional) => {
+          const value = params[key];
+          if (value === undefined) {
+            hadOmittedOptional = true;
+            return "";
+          }
+          return encodeURIComponent(value);
+        },
+      );
+      // Second pass: required params (no trailing ?)
+      result = result.replace(
+        /:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?(?!\?)/g,
+        (_, key) => {
+          const value = params[key];
+          if (value === undefined) {
+            throw new Error(`Missing param "${key}" for route "${name}"`);
+          }
+          return encodeURIComponent(value);
+        },
+      );
+      // Clean up slashes only when an optional param was actually omitted,
+      // so intentional trailing-slash patterns like "/blog/" are preserved.
+      if (hadOmittedOptional) {
+        const hadTrailingSlash = pattern.length > 1 && pattern.endsWith("/");
+        result = result.replace(/\/\/+/g, "/").replace(/\/+$/, "") || "/";
+        if (hadTrailingSlash && !result.endsWith("/")) result += "/";
+      }
     }
 
     // Append search params as query string

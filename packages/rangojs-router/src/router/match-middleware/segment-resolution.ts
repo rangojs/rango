@@ -87,9 +87,48 @@
  *   if (state.cacheHit) return;   // Now we can check
  */
 import type { ResolvedSegment } from "../../types.js";
+import type { EntryData } from "../../server/context.js";
+import { _getRequestContext } from "../../server/request-context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
+
+/**
+ * Check whether any entry in the tree uses loading() (streaming).
+ * Matches the router's streaming semantics in fresh.ts: streaming is
+ * enabled when `loading` is defined AND not `false`. `loading: false`
+ * explicitly disables streaming; `undefined` means no loading at all.
+ */
+export function treeHasStreaming(entries: EntryData[]): boolean {
+  for (const entry of entries) {
+    if (
+      "loading" in entry &&
+      entry.loading !== undefined &&
+      entry.loading !== false
+    )
+      return true;
+    if (entry.layout) {
+      if (treeHasStreaming(entry.layout)) return true;
+    }
+    if (entry.parallel) {
+      for (const key in entry.parallel) {
+        const parallelEntry = entry.parallel[key as `@${string}`];
+        if (parallelEntry) {
+          if (
+            "loading" in parallelEntry &&
+            parallelEntry.loading !== undefined &&
+            parallelEntry.loading !== false
+          )
+            return true;
+          if (parallelEntry.layout) {
+            if (treeHasStreaming(parallelEntry.layout)) return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
 
 /**
  * Creates segment resolution middleware
@@ -104,7 +143,6 @@ export function withSegmentResolution<TEnv>(
   return async function* (
     source: AsyncGenerator<ResolvedSegment>,
   ): AsyncGenerator<ResolvedSegment> {
-    const pipelineStart = performance.now();
     const ms = ctx.metricsStore;
 
     // IMPORTANT: Always iterate source first to give cache-lookup a chance
@@ -113,16 +151,25 @@ export function withSegmentResolution<TEnv>(
       yield segment;
     }
 
+    // Measure own work only (after source iteration completes)
+    const ownStart = performance.now();
+
     // If cache hit, segments were already yielded by cache lookup
+    // (render barrier is resolved on the cache-hit path)
     if (state.cacheHit) {
       if (ms) {
         ms.metrics.push({
           label: "pipeline:segment-resolve",
-          duration: performance.now() - pipelineStart,
-          startTime: pipelineStart - ms.requestStart,
+          duration: performance.now() - ownStart,
+          startTime: ownStart - ms.requestStart,
         });
       }
       return;
+    }
+
+    const reqCtx = _getRequestContext();
+    if (reqCtx && reqCtx._treeHasStreaming === undefined) {
+      reqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);
     }
 
     const { resolveAllSegmentsWithRevalidation, resolveAllSegments } =
@@ -146,6 +193,10 @@ export function withSegmentResolution<TEnv>(
       state.segments = segments;
       state.matchedIds = segments.map((s: { id: string }) => s.id);
 
+      if (reqCtx) {
+        reqCtx._resolveRenderBarrier(segments);
+      }
+
       // Yield all resolved segments
       for (const segment of segments) {
         yield segment;
@@ -168,12 +219,17 @@ export function withSegmentResolution<TEnv>(
           ctx.interceptResult,
           ctx.localRouteName,
           ctx.pathname,
+          ctx.stale,
         ),
       );
 
       // Update state with resolved segments
       state.segments = result.segments;
       state.matchedIds = result.matchedIds;
+
+      if (reqCtx) {
+        reqCtx._resolveRenderBarrier(result.segments);
+      }
 
       // Yield all resolved segments
       for (const segment of result.segments) {
@@ -184,8 +240,8 @@ export function withSegmentResolution<TEnv>(
     if (ms) {
       ms.metrics.push({
         label: "pipeline:segment-resolve",
-        duration: performance.now() - pipelineStart,
-        startTime: pipelineStart - ms.requestStart,
+        duration: performance.now() - ownStart,
+        startTime: ownStart - ms.requestStart,
       });
     }
   };

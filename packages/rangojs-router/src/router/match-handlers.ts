@@ -22,9 +22,21 @@ import {
   matchError as _matchError,
 } from "./match-api.js";
 import { previewMatch as _previewMatch } from "./preview-match.js";
-import { runWithRouterLogContext, withRouterLogScope } from "./logging.js";
+import {
+  runWithRouterLogContext,
+  withRouterLogScope,
+  isRouterDebugEnabled,
+  startRevalidationTrace,
+  flushRevalidationTrace,
+} from "./logging.js";
 import type { ErrorBoundaryHandler, NotFoundBoundaryHandler } from "../types";
 import type { MiddlewareFn } from "./middleware.js";
+import {
+  type TelemetrySink,
+  safeEmit,
+  resolveSink,
+  getRequestId,
+} from "./telemetry.js";
 
 export interface MatchHandlerDeps<TEnv = any> {
   buildRouterContext: () => RouterContext<TEnv>;
@@ -38,6 +50,7 @@ export interface MatchHandlerDeps<TEnv = any> {
     selectorContext: InterceptSelectorContext | null,
     isAction: boolean,
   ) => { intercept: InterceptEntry; entry: EntryData } | null;
+  telemetry?: TelemetrySink;
 }
 
 export interface MatchHandlers<TEnv = any> {
@@ -98,6 +111,8 @@ export function createMatchHandlers<TEnv = any>(
     defaultErrorBoundary,
     findInterceptForRoute,
   } = deps;
+  const hasTelemetry = !!deps.telemetry;
+  const telemetry = resolveSink(deps.telemetry);
 
   async function createMatchContextForFull(
     request: Request,
@@ -140,13 +155,43 @@ export function createMatchHandlers<TEnv = any>(
    * - background-revalidation: SWR revalidation
    */
   async function match(request: Request, env: TEnv): Promise<MatchResult> {
-    return runWithRouterLogContext({ request, transaction: "match" }, () =>
-      runWithRouterContext(buildRouterContext(), async () =>
+    const requestId = hasTelemetry ? getRequestId(request) : undefined;
+    return runWithRouterLogContext({ request, transaction: "match" }, () => {
+      const routerCtx = buildRouterContext();
+      routerCtx.requestId = requestId;
+      return runWithRouterContext(routerCtx, async () =>
         withRouterLogScope("match", async () => {
+          const matchStart = performance.now();
+          const pathname = new URL(request.url).pathname;
+          if (hasTelemetry) {
+            safeEmit(telemetry, {
+              type: "request.start",
+              timestamp: matchStart,
+              requestId,
+              method: request.method,
+              pathname,
+              transaction: "match",
+              isPartial: false,
+            });
+          }
+
           const result = await createMatchContextForFull(request, env);
 
           // Handle redirect case
           if ("type" in result && result.type === "redirect") {
+            if (hasTelemetry) {
+              safeEmit(telemetry, {
+                type: "request.end",
+                timestamp: performance.now(),
+                requestId,
+                method: request.method,
+                pathname,
+                transaction: "match",
+                durationMs: performance.now() - matchStart,
+                segmentCount: 0,
+                cacheHit: false,
+              });
+            }
             return {
               segments: [],
               matched: [],
@@ -161,8 +206,47 @@ export function createMatchHandlers<TEnv = any>(
           try {
             const state = createPipelineState();
             const pipeline = createMatchPartialPipeline(ctx, state);
-            return await collectMatchResult(pipeline, ctx, state);
+            const matchResult = await collectMatchResult(pipeline, ctx, state);
+            if (hasTelemetry) {
+              safeEmit(telemetry, {
+                type: "cache.decision",
+                timestamp: performance.now(),
+                requestId,
+                pathname,
+                routeKey: ctx.routeKey,
+                hit: state.cacheHit,
+                shouldRevalidate: !!state.shouldRevalidate,
+                source: state.cacheSource,
+              });
+              safeEmit(telemetry, {
+                type: "request.end",
+                timestamp: performance.now(),
+                requestId,
+                method: request.method,
+                pathname,
+                transaction: "match",
+                durationMs: performance.now() - matchStart,
+                segmentCount: matchResult.segments.length,
+                cacheHit: state.cacheHit,
+              });
+            }
+            return matchResult;
           } catch (error) {
+            if (hasTelemetry) {
+              const errorObj =
+                error instanceof Error ? error : new Error(String(error));
+              safeEmit(telemetry, {
+                type: "request.error",
+                timestamp: performance.now(),
+                requestId,
+                method: request.method,
+                pathname,
+                transaction: "match",
+                error: errorObj,
+                phase: error instanceof Response ? "redirect" : "routing",
+                durationMs: performance.now() - matchStart,
+              });
+            }
             if (error instanceof Response) throw error;
             // Report unhandled errors during full match pipeline
             callOnError(error, "routing", {
@@ -175,8 +259,8 @@ export function createMatchHandlers<TEnv = any>(
             throw sanitizeError(error);
           }
         }),
-      ),
-    );
+      );
+    });
   }
 
   async function matchError(
@@ -214,23 +298,112 @@ export function createMatchHandlers<TEnv = any>(
     context: TEnv,
     actionContext?: ActionContext,
   ): Promise<MatchResult | null> {
+    const partialRequestId = hasTelemetry ? getRequestId(request) : undefined;
     return runWithRouterLogContext(
       { request, transaction: "matchPartial" },
-      () =>
-        runWithRouterContext(buildRouterContext(), async () =>
+      () => {
+        const routerCtx = buildRouterContext();
+        routerCtx.requestId = partialRequestId;
+        return runWithRouterContext(routerCtx, async () =>
           withRouterLogScope("matchPartial", async () => {
+            const matchStart = performance.now();
+            const pathname = new URL(request.url).pathname;
+            if (hasTelemetry) {
+              safeEmit(telemetry, {
+                type: "request.start",
+                timestamp: matchStart,
+                requestId: partialRequestId,
+                method: request.method,
+                pathname,
+                transaction: "matchPartial",
+                isPartial: true,
+              });
+            }
+
             const ctx = await createMatchContextForPartial(
               request,
               context,
               actionContext,
             );
-            if (!ctx) return null;
+            if (!ctx) {
+              if (hasTelemetry) {
+                safeEmit(telemetry, {
+                  type: "request.end",
+                  timestamp: performance.now(),
+                  requestId: partialRequestId,
+                  method: request.method,
+                  pathname,
+                  transaction: "matchPartial",
+                  durationMs: performance.now() - matchStart,
+                  segmentCount: 0,
+                  cacheHit: false,
+                });
+              }
+              return null;
+            }
+
+            if (isRouterDebugEnabled()) {
+              startRevalidationTrace({
+                method: request.method,
+                prevUrl: ctx.prevUrl.href,
+                nextUrl: ctx.url.href,
+                routeKey: ctx.routeKey,
+                isAction: !!actionContext,
+                stale: ctx.stale || undefined,
+              });
+            }
 
             try {
               const state = createPipelineState();
               const pipeline = createMatchPartialPipeline(ctx, state);
-              return await collectMatchResult(pipeline, ctx, state);
+              const matchResult = await collectMatchResult(
+                pipeline,
+                ctx,
+                state,
+              );
+              flushRevalidationTrace();
+              if (hasTelemetry) {
+                safeEmit(telemetry, {
+                  type: "cache.decision",
+                  timestamp: performance.now(),
+                  requestId: partialRequestId,
+                  pathname,
+                  routeKey: ctx.routeKey,
+                  hit: state.cacheHit,
+                  shouldRevalidate: !!state.shouldRevalidate,
+                  source: state.cacheSource,
+                });
+                safeEmit(telemetry, {
+                  type: "request.end",
+                  timestamp: performance.now(),
+                  requestId: partialRequestId,
+                  method: request.method,
+                  pathname,
+                  transaction: "matchPartial",
+                  durationMs: performance.now() - matchStart,
+                  segmentCount: matchResult.segments.length,
+                  cacheHit: state.cacheHit,
+                });
+              }
+              return matchResult;
             } catch (error) {
+              flushRevalidationTrace();
+              if (hasTelemetry) {
+                const errorObj =
+                  error instanceof Error ? error : new Error(String(error));
+                const phase = actionContext ? "action" : "revalidation";
+                safeEmit(telemetry, {
+                  type: "request.error",
+                  timestamp: performance.now(),
+                  requestId: partialRequestId,
+                  method: request.method,
+                  pathname,
+                  transaction: "matchPartial",
+                  error: errorObj,
+                  phase: error instanceof Response ? "redirect" : phase,
+                  durationMs: performance.now() - matchStart,
+                });
+              }
               if (error instanceof Response) throw error;
               // Report unhandled errors during partial match pipeline
               callOnError(error, actionContext ? "action" : "revalidation", {
@@ -244,7 +417,8 @@ export function createMatchHandlers<TEnv = any>(
               throw sanitizeError(error);
             }
           }),
-        ),
+        );
+      },
     );
   }
 

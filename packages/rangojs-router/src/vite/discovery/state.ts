@@ -13,8 +13,13 @@ export const VIRTUAL_ROUTES_MANIFEST_ID = "virtual:rsc-router/routes-manifest";
 export interface PluginOptions {
   enableBuildPrerender?: boolean;
   staticRouteTypesGeneration?: boolean;
-  include?: string[];
-  exclude?: string[];
+  // Mutable ref for deferred auto-discovery (node preset).
+  // The auto-discover config() hook populates this before configResolved.
+  routerPathRef?: { path?: string };
+  /** Build-time env option from rango() config. */
+  buildEnv?: import("../plugin-types.js").BuildEnvOption;
+  /** Deployment preset (needed for buildEnv "auto" resolution). */
+  preset?: "node" | "cloudflare";
 }
 
 export interface PrecomputedEntry {
@@ -53,13 +58,10 @@ export interface DiscoveryState {
   perRouterPrecomputedMap: Map<string, PrecomputedEntry[]>;
   perRouterManifestDataMap: Map<string, Record<string, string>>;
 
-  prerenderCollectedData: Record<string, any> | null;
-  staticCollectedData: Record<
-    string,
-    { encoded: string; handles: Record<string, unknown[]> }
-  > | null;
-  handlerChunkInfo: ChunkInfo | null;
-  staticHandlerChunkInfo: ChunkInfo | null;
+  prerenderManifestEntries: Record<string, string> | null;
+  staticManifestEntries: Record<string, string> | null;
+  handlerChunkInfoMap: Map<string, ChunkInfo>;
+  staticHandlerChunkInfoMap: Map<string, ChunkInfo>;
   rscEntryFileName: string | null;
   resolvedPrerenderModules: Map<string, string[]> | undefined;
   resolvedStaticModules: Map<string, string[]> | undefined;
@@ -69,6 +71,11 @@ export interface DiscoveryState {
   devServer: any;
   selfWrittenGenFiles: Map<string, { at: number; hash: string }>;
   SELF_WRITE_WINDOW_MS: number;
+
+  /** Resolved build-time env bindings (set during buildStart/configureServer). */
+  resolvedBuildEnv?: Record<string, unknown>;
+  /** Cleanup function for build-time env resources (e.g., miniflare). */
+  buildEnvDispose?: (() => Promise<void> | void) | null;
 }
 
 export function createDiscoveryState(
@@ -93,10 +100,10 @@ export function createDiscoveryState(
     perRouterPrecomputedMap: new Map(),
     perRouterManifestDataMap: new Map(),
 
-    prerenderCollectedData: null,
-    staticCollectedData: null,
-    handlerChunkInfo: null,
-    staticHandlerChunkInfo: null,
+    prerenderManifestEntries: null,
+    staticManifestEntries: null,
+    handlerChunkInfoMap: new Map(),
+    staticHandlerChunkInfoMap: new Map(),
     rscEntryFileName: null,
     resolvedPrerenderModules: undefined,
     resolvedStaticModules: undefined,

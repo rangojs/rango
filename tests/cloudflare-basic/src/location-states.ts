@@ -12,3 +12,14 @@ export interface FeatureState {
  * The key is auto-generated from file path + export name.
  */
 export const FeatureLocationState = createLocationState<FeatureState>();
+
+export interface ActionFlashState {
+  message: string;
+}
+
+/**
+ * ActionFlash - location state set by a server action (non-redirect flow).
+ * Used to verify that action-set location state reaches the client
+ * through the revalidation payload.
+ */
+export const ActionFlash = createLocationState<ActionFlashState>();

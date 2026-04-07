@@ -6,9 +6,9 @@
  */
 
 import { resolve } from "node:path";
-import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { evictHandlerCode } from "../utils/bundle-analysis.js";
+import { copyStagedBuildAssets } from "../utils/prerender-utils.js";
 import type { DiscoveryState } from "./state.js";
 
 /**
@@ -17,11 +17,11 @@ import type { DiscoveryState } from "./state.js";
  */
 export function postprocessBundle(state: DiscoveryState): void {
   const hasPrerenderData =
-    state.prerenderCollectedData &&
-    Object.keys(state.prerenderCollectedData).length > 0;
+    state.prerenderManifestEntries &&
+    Object.keys(state.prerenderManifestEntries).length > 0;
   const hasStaticData =
-    state.staticCollectedData &&
-    Object.keys(state.staticCollectedData).length > 0;
+    state.staticManifestEntries &&
+    Object.keys(state.staticManifestEntries).length > 0;
   if (!hasPrerenderData && !hasStaticData) return;
 
   // Find RSC entry (recorded in generateBundle, fallback to dist/rsc/index.js)
@@ -31,25 +31,25 @@ export function postprocessBundle(state: DiscoveryState): void {
     state.rscEntryFileName ?? "index.js",
   );
 
-  // 1. Evict handler code from __prerender-handlers and __static-handlers chunks.
-  // handlerChunkInfo/staticHandlerChunkInfo are populated by generateBundle
+  // 1. Evict handler code from whichever chunks contain handler exports.
+  // handlerChunkInfoMap/staticHandlerChunkInfoMap are populated by generateBundle
   // after the production RSC build. In Vite 6 multi-environment builds, the
-  // RSC build runs twice (analysis + production). Chunk info is only available
-  // after the production pass, so we run eviction whenever it becomes available.
+  // RSC build runs twice (analysis + production). The maps are cleared at the
+  // start of each generateBundle pass so only production data is used here.
   const evictionTargets: Array<{
-    info: typeof state.handlerChunkInfo;
+    infos: Iterable<import("./state.js").ChunkInfo>;
     fnName: string;
     brand: string;
     label: string;
   }> = [
     {
-      info: state.handlerChunkInfo,
+      infos: state.handlerChunkInfoMap.values(),
       fnName: "Prerender",
       brand: "prerenderHandler",
       label: "handler code from RSC bundle",
     },
     {
-      info: state.staticHandlerChunkInfo,
+      infos: state.staticHandlerChunkInfoMap.values(),
       fnName: "Static",
       brand: "staticHandler",
       label: "static handler code",
@@ -57,67 +57,58 @@ export function postprocessBundle(state: DiscoveryState): void {
   ];
 
   for (const target of evictionTargets) {
-    if (!target.info) continue;
-    const chunkPath = resolve(
-      state.projectRoot,
-      "dist/rsc",
-      target.info.fileName,
-    );
-    try {
-      const code = readFileSync(chunkPath, "utf-8");
-      const result = evictHandlerCode(
-        code,
-        target.info.exports,
-        target.fnName,
-        target.brand,
-      );
-      if (result) {
-        writeFileSync(chunkPath, result.code);
-        const savedKB = (result.savedBytes / 1024).toFixed(1);
-        console.log(
-          `[rsc-router] Evicted ${target.label} (${savedKB} KB saved): ${target.info.fileName}`,
-        );
-      }
-    } catch (replaceErr: any) {
-      console.warn(
-        `[rsc-router] Failed to evict ${target.label}: ${replaceErr.message}`,
-      );
-    }
-  }
-  state.handlerChunkInfo = null;
-  state.staticHandlerChunkInfo = null;
-
-  // 2. Write prerender data as separate importable asset modules
-  // and inject a manifest import into the RSC entry.
-  if (hasPrerenderData && existsSync(rscEntryPath)) {
-    const rscCode = readFileSync(rscEntryPath, "utf-8");
-    if (!rscCode.includes("__PRERENDER_MANIFEST")) {
+    for (const info of target.infos) {
+      const chunkPath = resolve(state.projectRoot, "dist/rsc", info.fileName);
       try {
-        const assetsDir = resolve(state.projectRoot, "dist/rsc/assets");
-        mkdirSync(assetsDir, { recursive: true });
-
-        const manifestEntries: string[] = [];
-        let totalBytes = 0;
-
-        for (const [key, entry] of Object.entries(
-          state.prerenderCollectedData!,
-        )) {
-          const entryJson = JSON.stringify(entry);
-          const contentHash = createHash("sha256")
-            .update(entryJson)
-            .digest("hex")
-            .slice(0, 8);
-          const assetFileName = `__pr-${contentHash}.js`;
-          const assetPath = resolve(assetsDir, assetFileName);
-          const assetCode = `export default ${entryJson};\n`;
-          writeFileSync(assetPath, assetCode);
-          totalBytes += Buffer.byteLength(assetCode);
-          manifestEntries.push(
-            `${JSON.stringify(key)}:()=>import("./assets/${assetFileName}")`,
+        const code = readFileSync(chunkPath, "utf-8");
+        const result = evictHandlerCode(
+          code,
+          info.exports,
+          target.fnName,
+          target.brand,
+        );
+        if (result) {
+          writeFileSync(chunkPath, result.code);
+          const savedKB = (result.savedBytes / 1024).toFixed(1);
+          console.log(
+            `[rsc-router] Evicted ${target.label} (${savedKB} KB saved): ${info.fileName}`,
           );
         }
+      } catch (replaceErr: any) {
+        console.warn(
+          `[rsc-router] Failed to evict ${target.label}: ${replaceErr.message}`,
+        );
+      }
+    }
+  }
+  state.handlerChunkInfoMap.clear();
+  state.staticHandlerChunkInfoMap.clear();
 
-        const manifestCode = `const m={${manifestEntries.join(",")}};export default m;\n`;
+  // 2. Write prerender data as separate importable asset modules
+  // and inject a lazy manifest loader into the RSC entry.
+  if (hasPrerenderData && existsSync(rscEntryPath)) {
+    const rscCode = readFileSync(rscEntryPath, "utf-8");
+    // Check for the specific injection marker to avoid double-injection.
+    if (!rscCode.includes("__prerender-manifest.js")) {
+      try {
+        let totalBytes = copyStagedBuildAssets(
+          state.projectRoot,
+          Object.values(state.prerenderManifestEntries!),
+        );
+
+        const manifestMap: Record<string, string> = {};
+        for (const [key, assetFileName] of Object.entries(
+          state.prerenderManifestEntries!,
+        )) {
+          manifestMap[key] = `./assets/${assetFileName}`;
+        }
+
+        const manifestCode = [
+          `const m=JSON.parse('${JSON.stringify(manifestMap).replace(/'/g, "\\'")}');`,
+          `export function loadPrerenderAsset(s){return import(s)}`,
+          `export default m;`,
+          "",
+        ].join("\n");
         const manifestPath = resolve(
           state.projectRoot,
           "dist/rsc/__prerender-manifest.js",
@@ -125,12 +116,12 @@ export function postprocessBundle(state: DiscoveryState): void {
         writeFileSync(manifestPath, manifestCode);
         totalBytes += Buffer.byteLength(manifestCode);
 
-        const injection = `import __pm from "./__prerender-manifest.js";\nglobalThis.__PRERENDER_MANIFEST = __pm;\n`;
+        const injection = `globalThis.__loadPrerenderManifestModule = () => import("./__prerender-manifest.js");\n`;
         writeFileSync(rscEntryPath, injection + rscCode);
 
         const totalKB = (totalBytes / 1024).toFixed(1);
         console.log(
-          `[rsc-router] Wrote prerender assets (${totalKB} KB total, ${Object.keys(state.prerenderCollectedData!).length} entries)`,
+          `[rsc-router] Wrote prerender assets (${totalKB} KB total, ${Object.keys(state.prerenderManifestEntries!).length} entries)`,
         );
       } catch (err: any) {
         throw new Error(
@@ -144,31 +135,17 @@ export function postprocessBundle(state: DiscoveryState): void {
   // and inject a __STATIC_MANIFEST import into the RSC entry.
   if (hasStaticData && existsSync(rscEntryPath)) {
     const rscCode = readFileSync(rscEntryPath, "utf-8");
-    if (!rscCode.includes("__STATIC_MANIFEST")) {
+    if (!rscCode.includes("__static-manifest.js")) {
       try {
-        const assetsDir = resolve(state.projectRoot, "dist/rsc/assets");
-        mkdirSync(assetsDir, { recursive: true });
-
         const manifestEntries: string[] = [];
-        let totalBytes = 0;
+        let totalBytes = copyStagedBuildAssets(
+          state.projectRoot,
+          Object.values(state.staticManifestEntries!),
+        );
 
-        for (const [handlerId, { encoded, handles }] of Object.entries(
-          state.staticCollectedData!,
+        for (const [handlerId, assetFileName] of Object.entries(
+          state.staticManifestEntries!,
         )) {
-          const contentHash = createHash("sha256")
-            .update(encoded)
-            .digest("hex")
-            .slice(0, 8);
-          const assetFileName = `__st-${contentHash}.js`;
-          const assetPath = resolve(assetsDir, assetFileName);
-          // Store both the Flight payload and handle data
-          const hasHandles = Object.keys(handles).length > 0;
-          const exportValue = hasHandles
-            ? JSON.stringify({ encoded, handles })
-            : JSON.stringify(encoded);
-          const assetCode = `export default ${exportValue};\n`;
-          writeFileSync(assetPath, assetCode);
-          totalBytes += Buffer.byteLength(assetCode);
           manifestEntries.push(
             `${JSON.stringify(handlerId)}:()=>import("./assets/${assetFileName}")`,
           );
@@ -192,7 +169,7 @@ export function postprocessBundle(state: DiscoveryState): void {
 
         const totalKB = (totalBytes / 1024).toFixed(1);
         console.log(
-          `[rsc-router] Wrote static assets (${totalKB} KB total, ${Object.keys(state.staticCollectedData!).length} entries)`,
+          `[rsc-router] Wrote static assets (${totalKB} KB total, ${Object.keys(state.staticManifestEntries!).length} entries)`,
         );
       } catch (err: any) {
         throw new Error(

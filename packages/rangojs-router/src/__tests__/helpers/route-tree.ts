@@ -12,7 +12,10 @@ import React from "react";
 import type { urls } from "../../urls.js";
 import {
   RSCRouterContext,
+  getParallelEntries,
+  getParallelSlotCount,
   runWithPrefixes,
+  getIsolatedLazyParent,
   type EntryData,
   type InterceptEntry,
   type LoaderEntry,
@@ -101,7 +104,7 @@ export function buildRouteTree(
     errorBoundary: [],
     notFoundBoundary: [],
     layout: [],
-    parallel: [],
+    parallel: {},
     intercept: [],
     loader: [],
   };
@@ -143,9 +146,10 @@ export function buildRouteTree(
         patternsByPrefix: new Map(),
         trailingSlash: trailingSlashMap,
         namespace: "lazy",
-        parent: (lazy.context.parent as EntryData | null) ?? null,
+        parent: getIsolatedLazyParent(lazy.context.parent as EntryData | null),
         counters: lazyCounters,
         mountIndex,
+        rootScoped: lazy.context.rootScoped,
       },
       () => {
         const fullPrefix = (lazy.context.urlPrefix || "") + lazy.prefix;
@@ -352,7 +356,7 @@ export class RouteTree {
 
   /** Get parallel slot entries (child EntryData with type="parallel") */
   parallelSlots(name: string): EntryData[] {
-    return this.entry(name)?.parallel ?? [];
+    return getParallelEntries(this.entry(name)?.parallel);
   }
 
   /** Get parallel slot names for a named route/layout */
@@ -360,7 +364,7 @@ export class RouteTree {
     const entry = this.entry(name);
     if (!entry) return [];
     // Parallel entry handler is Record<`@${string}`, Handler>
-    return entry.parallel
+    return getParallelEntries(entry.parallel)
       .map((p) => {
         if (
           p.type === "parallel" &&
@@ -421,8 +425,8 @@ export class RouteTree {
         extras.push(`ld:${entry.loader.length}`);
       if (entry && entry.intercept.length > 0)
         extras.push(`int:${entry.intercept.length}`);
-      if (entry && entry.parallel.length > 0)
-        extras.push(`par:${entry.parallel.length}`);
+      if (entry && getParallelSlotCount(entry.parallel) > 0)
+        extras.push(`par:${getParallelSlotCount(entry.parallel)}`);
       if (entry?.errorBoundary?.length) extras.push("err");
       if (entry?.cache) extras.push("cache");
       const suffix = extras.length > 0 ? ` {${extras.join(", ")}}` : "";
@@ -446,6 +450,7 @@ function findLazyIncludes(items: AllUseItems[]): Array<{
     namePrefix: string | undefined;
     parent: unknown;
     counters?: Record<string, number>;
+    rootScoped?: boolean;
   };
 }> {
   const result: Array<{
@@ -456,6 +461,7 @@ function findLazyIncludes(items: AllUseItems[]): Array<{
       namePrefix: string | undefined;
       parent: unknown;
       counters?: Record<string, number>;
+      rootScoped?: boolean;
     };
   }> = [];
 

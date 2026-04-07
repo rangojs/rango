@@ -83,13 +83,20 @@ export interface SegmentResolutionDeps<TEnv = any> {
       requestStartTime?: number;
     },
   ) => Promise<LoaderDataResult<T>>;
-  trackHandler: <T>(promise: Promise<T>) => Promise<T>;
+  trackHandler: <T>(
+    promise: Promise<T>,
+    errorContext?: {
+      segmentId?: string;
+      segmentType?: string;
+    },
+  ) => Promise<T>;
   findNearestErrorBoundary: (
     entry: EntryData | null,
   ) => ReactNode | ErrorBoundaryHandler | null;
   findNearestNotFoundBoundary: (
     entry: EntryData | null,
   ) => ReactNode | NotFoundBoundaryHandler | null;
+  notFoundComponent?: ReactNode | ((props: { pathname: string }) => ReactNode);
   callOnError: (error: unknown, phase: ErrorPhase, context: any) => void;
 }
 

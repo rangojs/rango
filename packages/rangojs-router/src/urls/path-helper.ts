@@ -6,17 +6,27 @@ import type {
   RouteUseItem,
   UseItems,
 } from "../route-types.js";
-import { getContext, getUrlPrefix, getNamePrefix } from "../server/context";
-import { invariant } from "../errors";
+import {
+  getContext,
+  getUrlPrefix,
+  getNamePrefix,
+  getRootScoped,
+} from "../server/context";
+import { invariant, DataNotFoundError } from "../errors";
+import { validateUserRouteName } from "../route-name.js";
 import {
   isPrerenderHandler,
+  isPassthroughHandler,
   type PrerenderHandlerDefinition,
 } from "../prerender.js";
 import {
   isStaticHandler,
   type StaticHandlerDefinition,
 } from "../static-handler.js";
-import { registerSearchSchema } from "../route-map-builder.js";
+import {
+  registerSearchSchema,
+  registerRouteRootScope,
+} from "../route-map-builder.js";
 import { RESPONSE_TYPE } from "./response-types.js";
 import type { PathOptions } from "./pattern-types.js";
 import type {
@@ -25,6 +35,10 @@ import type {
   JsonResponsePathFn,
   TextResponsePathFn,
 } from "./path-helper-types.js";
+import {
+  resolveHandlerUse,
+  mergeHandlerUse,
+} from "../route-definition/resolve-handler-use.js";
 
 /**
  * Check if a value is a valid use item
@@ -133,6 +147,12 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
       use = maybeUse;
     }
 
+    // Merge handler.use() defaults with explicit use()
+    // Response routes (path.json, path.text, etc.) only allow middleware + cache
+    const handlerUseFn = resolveHandlerUse(handler);
+    const mountSite = resolveResponseType(options) ? "response" : "path";
+    const mergedUse = mergeHandlerUse(handlerUseFn, use, mountSite);
+
     // Get prefixes from context (set by include())
     const urlPrefix = getUrlPrefix();
     const namePrefix = getNamePrefix();
@@ -143,6 +163,9 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
     // Generate route name - use provided name or generate from pattern
     const localName =
       options?.name || `$path_${pattern.replace(/[/:*?]/g, "_")}`;
+    if (options?.name) {
+      validateUserRouteName(options.name);
+    }
     // Apply name prefix if set (from include())
     const routeName = applyNamePrefix(namePrefix, localName);
 
@@ -164,14 +187,31 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
     }
 
     // Ensure handler is always a function (wrap ReactNode or extract from prerender/static def)
+    // For prerender stubs (production builds where handler code is evicted),
+    // handler.handler is undefined — provide a notFound fallback so requests
+    // for non-prerendered params get 404 instead of "handler is not a function".
     const wrappedHandler: Handler<any, any, TEnv> =
       typeof handler === "function"
         ? (handler as Handler<any, any, TEnv>)
-        : isPrerenderHandler(handler)
-          ? (handler.handler as Handler<any, any, TEnv>)
-          : isStaticHandler(handler)
-            ? (handler.handler as Handler<any, any, TEnv>)
-            : () => handler;
+        : isPassthroughHandler(handler)
+          ? typeof handler.prerenderDef.handler === "function"
+            ? (handler.prerenderDef.handler as Handler<any, any, TEnv>)
+            : () => {
+                throw new DataNotFoundError(
+                  "No prerender data found for this route",
+                );
+              }
+          : isPrerenderHandler(handler)
+            ? typeof handler.handler === "function"
+              ? (handler.handler as Handler<any, any, TEnv>)
+              : () => {
+                  throw new DataNotFoundError(
+                    "No prerender data found for this route",
+                  );
+                }
+            : isStaticHandler(handler)
+              ? (handler.handler as Handler<any, any, TEnv>)
+              : () => handler;
 
     const entry = {
       id: namespace,
@@ -187,16 +227,23 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
       errorBoundary: [],
       notFoundBoundary: [],
       layout: [],
-      parallel: [],
+      parallel: {},
       intercept: [],
       loader: [],
       ...(urlPrefix ? { mountPath: urlPrefix } : {}),
-      ...(isPrerenderHandler(handler)
+      ...(isPassthroughHandler(handler)
         ? {
             isPrerender: true as const,
-            prerenderDef: handler as PrerenderHandlerDefinition,
+            prerenderDef: handler.prerenderDef as PrerenderHandlerDefinition,
+            isPassthrough: true as const,
+            liveHandler: handler.liveHandler as Handler<any, any, TEnv>,
           }
-        : {}),
+        : isPrerenderHandler(handler)
+          ? {
+              isPrerender: true as const,
+              prerenderDef: handler as PrerenderHandlerDefinition,
+            }
+          : {}),
       ...(isStaticHandler(handler)
         ? {
             isStaticPrerender: true as const,
@@ -221,6 +268,9 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
 
     // Register route entry with prefixed name
     ctx.manifest.set(routeName, entry);
+
+    // Register root-scope flag for dot-local reverse resolution
+    registerRouteRootScope(routeName, getRootScoped());
 
     // Also store pattern in a separate map for URL generation
     if (ctx.patterns) {
@@ -249,9 +299,9 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
       registerSearchSchema(routeName, options.search);
     }
 
-    // Run use callback if provided
-    if (use && typeof use === "function") {
-      const result = store.run(namespace, entry, use)?.flat(3);
+    // Run merged use callback (handler.use defaults + explicit use) if present
+    if (mergedUse) {
+      const result = store.run(namespace, entry, mergedUse)?.flat(3);
       invariant(
         Array.isArray(result) && result.every((item) => isValidUseItem(item)),
         `path() use() callback must return an array of use items [${namespace}]`,

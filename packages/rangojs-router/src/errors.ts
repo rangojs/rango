@@ -327,7 +327,12 @@ export function sanitizeError(error: unknown): Response {
     return error;
   }
 
-  const isDev = (import.meta as any).env?.DEV ?? true;
+  // Vite replaces import.meta.env.DEV at compile time. The fallback covers
+  // non-Vite environments (plain Node, test runners without Vite transforms).
+  // SECURITY: fail closed — default to production when the environment is ambiguous.
+  const isDev =
+    (import.meta as any).env?.DEV ??
+    globalThis.process?.env?.NODE_ENV === "development";
 
   if (isDev) {
     // Development: Send full error details for debugging

@@ -12,6 +12,16 @@ import {
   startBrowserTransaction,
 } from "./logging.js";
 import { getRangoState } from "./rango-state.js";
+import {
+  extractRscHeaderUrl,
+  emptyResponse,
+  teeWithCompletion,
+} from "./response-adapter.js";
+import {
+  buildPrefetchKey,
+  consumeInflightPrefetch,
+  consumePrefetch,
+} from "./prefetch/cache.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -19,21 +29,12 @@ import { getRangoState } from "./rango-state.js";
  * The client handles building URLs with RSC parameters and
  * deserializing the response using the RSC runtime.
  *
+ * Checks the in-memory prefetch cache before making a network request.
+ * The cache key is source-dependent (includes the previous URL) so
+ * prefetch responses match the exact diff the server would produce.
+ *
  * @param deps - RSC browser dependencies (createFromFetch)
  * @returns NavigationClient instance
- *
- * @example
- * ```typescript
- * import { createFromFetch } from "@vitejs/plugin-rsc/browser";
- *
- * const client = createNavigationClient({ createFromFetch });
- *
- * const payload = await client.fetchPartial({
- *   targetUrl: "/shop/products",
- *   segmentIds: ["root", "shop"],
- *   previousUrl: "/",
- * });
- * ```
  */
 export function createNavigationClient(
   deps: Pick<RscBrowserDependencies, "createFromFetch">,
@@ -42,8 +43,9 @@ export function createNavigationClient(
     /**
      * Fetch a partial RSC payload for navigation
      *
-     * Sends current segment IDs to the server so it can determine
-     * which segments need to be re-rendered (diff).
+     * First checks the in-memory prefetch cache for a matching entry.
+     * If found, uses the cached response instantly. Otherwise sends
+     * current segment IDs to the server for diff-based rendering.
      *
      * @param options - Fetch options
      * @returns RSC payload with segments and metadata, plus stream completion promise
@@ -59,6 +61,7 @@ export function createNavigationClient(
         staleRevalidation,
         interceptSourceUrl,
         version,
+        routerId,
         hmr,
       } = options;
 
@@ -75,7 +78,8 @@ export function createNavigationClient(
         });
       }
 
-      // Build fetch URL with partial rendering params
+      // Build fetch URL with partial rendering params (used for both
+      // cache key lookup and actual fetch if cache misses)
       const fetchUrl = new URL(targetUrl, window.location.origin);
       fetchUrl.searchParams.set("_rsc_partial", "true");
       fetchUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
@@ -85,51 +89,73 @@ export function createNavigationClient(
       if (version) {
         fetchUrl.searchParams.set("_rsc_v", version);
       }
-      if (tx) {
-        browserDebugLog(tx, "fetching", {
-          path: `${fetchUrl.pathname}${fetchUrl.search}`,
-        });
+      if (routerId) {
+        fetchUrl.searchParams.set("_rsc_rid", routerId);
       }
 
+      // Check completed in-memory prefetch cache before making a network request.
+      // The cache key includes the source URL (previousUrl) because the
+      // server's diff response depends on the source page context.
+      // Skip cache for stale revalidation (needs fresh data), HMR (needs
+      // fresh modules), and intercept contexts (source-dependent responses).
+      //
+      const canUsePrefetch = !staleRevalidation && !hmr && !interceptSourceUrl;
+      const cacheKey = buildPrefetchKey(previousUrl, fetchUrl);
+      // Wildcard key matches prefetch entries stored with a custom prefetchKey
+      // (Link's prefetchKey prop stores under "*" instead of the source URL).
+      const wildcardKey = "*\0" + fetchUrl.pathname + fetchUrl.search;
+
+      let cachedResponse: Response | null = null;
+      let hitKey: string | null = null;
+      if (canUsePrefetch) {
+        cachedResponse = consumePrefetch(cacheKey);
+        if (cachedResponse) {
+          hitKey = cacheKey;
+        } else {
+          cachedResponse = consumePrefetch(wildcardKey);
+          if (cachedResponse) hitKey = wildcardKey;
+        }
+      }
+
+      let inflightResponsePromise: Promise<Response | null> | null = null;
+      if (canUsePrefetch && !cachedResponse) {
+        inflightResponsePromise = consumeInflightPrefetch(cacheKey);
+        if (inflightResponsePromise) {
+          hitKey = cacheKey;
+        } else {
+          inflightResponsePromise = consumeInflightPrefetch(wildcardKey);
+          if (inflightResponsePromise) hitKey = wildcardKey;
+        }
+      }
       // Track when the stream completes
       let resolveStreamComplete: () => void;
       const streamComplete = new Promise<void>((resolve) => {
         resolveStreamComplete = resolve;
       });
 
-      // Create a response promise that tracks stream completion
-      const responsePromise = fetch(fetchUrl, {
-        headers: {
-          "X-RSC-Router-Client-Path": previousUrl,
-          "X-Rango-State": getRangoState(),
-          ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
-          ...(interceptSourceUrl && {
-            "X-RSC-Router-Intercept-Source": interceptSourceUrl,
-          }),
-          ...(hmr && { "X-RSC-HMR": "1" }),
-        },
-        signal,
-      }).then((response) => {
-        // Check for version mismatch - server wants us to reload
-        const reloadUrl = response.headers.get("X-RSC-Reload");
-        if (reloadUrl) {
-          // Validate origin to prevent open redirect via crafted headers
-          try {
-            const target = new URL(reloadUrl, window.location.origin);
-            if (target.origin !== window.location.origin) {
-              throw new Error(
-                `X-RSC-Reload blocked: origin mismatch (${target.origin})`,
-              );
-            }
-          } catch (e) {
-            console.error("[rango]", e);
-            return response;
-          }
+      /**
+       * Validate RSC control headers on any response (fresh, cached, or
+       * in-flight). Handles version-mismatch reloads and server redirects.
+       * Returns the response unchanged when no control header is present.
+       */
+      const validateRscHeaders = (
+        response: Response,
+        source: string,
+      ): Response | Promise<Response> => {
+        // Version mismatch — server wants a full page reload
+        const reload = extractRscHeaderUrl(response, "X-RSC-Reload");
+        if (reload === "blocked") {
+          resolveStreamComplete();
+          return emptyResponse();
+        }
+        if (reload) {
           if (tx) {
-            browserDebugLog(tx, "version mismatch, reloading", { reloadUrl });
+            browserDebugLog(tx, `version mismatch, reloading (${source})`, {
+              reloadUrl: reload.url,
+            });
           }
-          window.location.href = reloadUrl;
-          // Return a never-resolving promise to prevent further processing
+          window.location.href = reload.url;
+          // Block further processing — page is reloading
           return new Promise<Response>(() => {});
         }
 
@@ -137,61 +163,116 @@ export function createNavigationClient(
         // X-RSC-Redirect instead of a 3xx (which fetch would auto-follow
         // to a URL rendering full HTML). Throw ServerRedirect so the
         // navigation bridge catches it and re-navigates with _skipCache.
-        const redirectUrl = response.headers.get("X-RSC-Redirect");
-        if (redirectUrl) {
+        const redirect = extractRscHeaderUrl(response, "X-RSC-Redirect");
+        if (redirect === "blocked") {
+          resolveStreamComplete();
+          return emptyResponse();
+        }
+        if (redirect) {
           if (tx) {
-            browserDebugLog(tx, "server redirect", { redirectUrl });
+            browserDebugLog(tx, `server redirect (${source})`, {
+              redirectUrl: redirect.url,
+            });
           }
           resolveStreamComplete();
-          throw new ServerRedirect(redirectUrl, undefined);
+          throw new ServerRedirect(redirect.url, undefined);
         }
 
-        if (!response.body) {
-          // No body means stream is already complete
-          resolveStreamComplete();
-          return response;
+        return response;
+      };
+
+      /** Start a fresh navigation fetch (no cache / inflight hit). */
+      const doFreshFetch = (): Promise<Response> => {
+        if (tx) {
+          browserDebugLog(tx, "fetching", {
+            path: `${fetchUrl.pathname}${fetchUrl.search}`,
+          });
         }
 
-        // Tee the stream: one for RSC runtime, one for tracking completion
-        const [rscStream, trackingStream] = response.body.tee();
+        return fetch(fetchUrl, {
+          headers: {
+            "X-RSC-Router-Client-Path": previousUrl,
+            "X-Rango-State": getRangoState(),
+            ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
+            ...(interceptSourceUrl && {
+              "X-RSC-Router-Intercept-Source": interceptSourceUrl,
+            }),
+            ...(hmr && { "X-RSC-HMR": "1" }),
+          },
+          signal,
+        }).then((response) => {
+          const validated = validateRscHeaders(response, "fetch");
+          if (validated instanceof Promise) return validated;
 
-        // Consume the tracking stream to detect when it closes
-        (async () => {
-          const reader = trackingStream.getReader();
+          return teeWithCompletion(
+            validated,
+            () => {
+              if (tx) browserDebugLog(tx, "stream complete");
+              resolveStreamComplete();
+            },
+            signal,
+          );
+        });
+      };
 
-          // Cancel tracking if navigation is aborted
-          const onAbort = reader.cancel.bind(reader);
-          signal?.addEventListener("abort", onAbort, { once: true });
+      let responsePromise: Promise<Response>;
 
-          try {
-            while (true) {
-              const { done } = await reader.read();
-              if (done) break;
-            }
-          } finally {
-            signal?.removeEventListener("abort", onAbort);
-            reader.releaseLock();
+      if (cachedResponse) {
+        if (tx) {
+          browserDebugLog(tx, "prefetch cache hit", {
+            key: hitKey,
+            wildcard: hitKey === wildcardKey,
+          });
+        }
+        responsePromise = Promise.resolve(cachedResponse).then((response) => {
+          const validated = validateRscHeaders(response, "prefetch cache");
+          if (validated instanceof Promise) return validated;
+
+          return teeWithCompletion(
+            validated,
+            () => {
+              if (tx) browserDebugLog(tx, "stream complete (from cache)");
+              resolveStreamComplete();
+            },
+            signal,
+          );
+        });
+      } else if (inflightResponsePromise) {
+        if (tx) {
+          browserDebugLog(tx, "reusing inflight prefetch", {
+            key: hitKey,
+            wildcard: hitKey === wildcardKey,
+          });
+        }
+        responsePromise = inflightResponsePromise.then(async (response) => {
+          if (!response) {
             if (tx) {
-              browserDebugLog(tx, "stream complete");
+              browserDebugLog(tx, "inflight prefetch unavailable, refetching");
             }
-            resolveStreamComplete();
+            return doFreshFetch();
           }
-        })().catch((error) => {
-          console.error("[Browser] Error reading tracking stream:", error);
-          resolveStreamComplete();
-        });
 
-        // Return response with the RSC stream
-        return new Response(rscStream, {
-          headers: response.headers,
-          status: response.status,
-          statusText: response.statusText,
+          const validated = validateRscHeaders(response, "inflight prefetch");
+          if (validated instanceof Promise) return validated;
+
+          return teeWithCompletion(
+            validated,
+            () => {
+              if (tx) {
+                browserDebugLog(tx, "stream complete (from inflight prefetch)");
+              }
+              resolveStreamComplete();
+            },
+            signal,
+          );
         });
-      });
+      } else {
+        responsePromise = doFreshFetch();
+      }
 
       try {
-        // Deserialize RSC payload
         const payload = await deps.createFromFetch<RscPayload>(responsePromise);
+
         if (tx) {
           browserDebugLog(tx, "response received", {
             isPartial: payload.metadata?.isPartial,

@@ -3,7 +3,7 @@ import {
   findMatchingParenInBundle,
   extractHandlerExportsFromChunk,
   evictHandlerCode,
-} from "../index.js";
+} from "../utils/bundle-analysis.js";
 
 // ---------------------------------------------------------------------------
 // findMatchingParenInBundle

@@ -15,14 +15,10 @@ export { useParams } from "./use-params.js";
 export { useAction, type TrackedActionState } from "./use-action.js";
 
 // Segments state hook
-export {
-  useSegments,
-  initSegmentsSync,
-  type SegmentsState,
-} from "./use-segments.js";
+export { useSegments, type SegmentsState } from "./use-segments.js";
 
 // Handle data hook
-export { useHandle, initHandleDataSync } from "./use-handle.js";
+export { useHandle } from "./use-handle.js";
 
 // Client cache controls hook
 export {

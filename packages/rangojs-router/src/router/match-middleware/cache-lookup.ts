@@ -70,9 +70,11 @@
  *   - No segments yielded from this middleware
  *
  * Loaders:
- *   - NEVER cached by design
+ *   - NEVER cached in the segment cache
  *   - Always resolved fresh on every request
  *   - Ensures data freshness even with cached UI components
+ *   - Segment cache staleness does NOT propagate to loader revalidation;
+ *     loaders use their own revalidation rules (actionId, user-defined)
  *
  *
  * REVALIDATION RULES
@@ -92,6 +94,9 @@
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
+import { resolveSink, safeEmit } from "../telemetry.js";
+import { pushRevalidationTraceEntry, isTraceActive } from "../logging.js";
+import { treeHasStreaming } from "./segment-resolution.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
 import type { HandleStore } from "../../server/handle-store.js";
 import {
@@ -185,8 +190,19 @@ async function* yieldFromStore<TEnv>(
   }
 
   state.cacheHit = true;
+  state.cacheSource = "prerender";
   state.cachedSegments = segments;
   state.cachedMatchedIds = segments.map((s) => s.id);
+
+  // Set streaming flag (once) and resolve render barrier.
+  const reqCtx = handleStoreRef ? undefined : _lazyGetRequestContext?.();
+  const barrierReqCtx = reqCtx ?? _getRequestContext();
+  if (barrierReqCtx) {
+    if (barrierReqCtx._treeHasStreaming === undefined) {
+      barrierReqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);
+    }
+    barrierReqCtx._resolveRenderBarrier(segments);
+  }
 
   // For partial navigation, nullify components the client already has
   // so parent layouts stay live (client keeps its existing versions).
@@ -207,6 +223,9 @@ async function* yieldFromStore<TEnv>(
   }
 
   // Resolve loaders fresh (loaders are never pre-rendered/cached)
+  const ms = ctx.metricsStore;
+  const loaderStart = performance.now();
+
   if (ctx.isFullMatch) {
     if (resolveLoadersOnly) {
       const loaderSegments = await ctx.Store.run(() =>
@@ -232,6 +251,7 @@ async function* yieldFromStore<TEnv>(
           ctx.url,
           ctx.routeKey,
           ctx.actionContext,
+          ctx.stale || undefined,
         ),
       );
       state.matchedIds = [
@@ -246,11 +266,17 @@ async function* yieldFromStore<TEnv>(
     }
   }
 
-  const ms = ctx.metricsStore;
   if (ms) {
+    const loaderEnd = performance.now();
     ms.metrics.push({
-      label: "pipeline:cache-lookup",
-      duration: performance.now() - pipelineStart,
+      label: "pipeline:loader-resolve",
+      duration: loaderEnd - loaderStart,
+      startTime: loaderStart - ms.requestStart,
+      depth: 1,
+    });
+    ms.metrics.push({
+      label: "pipeline:cache-hit",
+      duration: loaderEnd - pipelineStart,
       startTime: pipelineStart - ms.requestStart,
     });
   }
@@ -302,17 +328,26 @@ export function withCacheLookup<TEnv>(
 
     // Prerender lookup: check build-time cached data before runtime cache.
     // Prerender data is available regardless of runtime cache configuration.
-    if (!ctx.isAction && ctx.matched.pr) {
+    // Skip for HMR requests — the dev prerender endpoint reads from a stale
+    // RouterRegistry snapshot; rendering fresh ensures edits are visible.
+    const isHmr = !!ctx.request.headers.get("X-RSC-HMR");
+    if (!ctx.isAction && !isHmr && ctx.matched.pr) {
       await ensurePrerenderDeps();
       if (prerenderStoreInstance) {
         const paramHash = _hashParams!(ctx.matched.params);
+        const isPassthroughPrerenderRoute = ctx.entries.some(
+          (entry) => entry.type === "route" && entry.isPassthrough === true,
+        );
 
         if (ctx.isIntercept) {
           // Intercept navigation: try intercept-specific prerender entry
           const entry = await prerenderStoreInstance.get(
             ctx.matched.routeKey,
             paramHash + "/i",
-            { pathname: ctx.pathname },
+            {
+              pathname: ctx.pathname,
+              isPassthroughRoute: isPassthroughPrerenderRoute,
+            },
           );
           if (entry) {
             yield* yieldFromStore(
@@ -331,7 +366,10 @@ export function withCacheLookup<TEnv>(
           const entry = await prerenderStoreInstance.get(
             ctx.matched.routeKey,
             paramHash,
-            { pathname: ctx.pathname },
+            {
+              pathname: ctx.pathname,
+              isPassthroughRoute: isPassthroughPrerenderRoute,
+            },
           );
           if (entry) {
             yield* yieldFromStore(
@@ -367,12 +405,18 @@ export function withCacheLookup<TEnv>(
         await ensurePrerenderDeps();
         if (prerenderStoreInstance) {
           const paramHash = _hashParams!(ctx.matched.params);
+          const isPassthroughPrerenderRoute = ctx.entries.some(
+            (entry) => entry.type === "route" && entry.isPassthrough === true,
+          );
 
           if (ctx.isIntercept) {
             const entry = await prerenderStoreInstance.get(
               ctx.matched.routeKey,
               paramHash + "/i",
-              { pathname: ctx.pathname },
+              {
+                pathname: ctx.pathname,
+                isPassthroughRoute: isPassthroughPrerenderRoute,
+              },
             );
             if (entry) {
               yield* yieldFromStore(
@@ -389,7 +433,10 @@ export function withCacheLookup<TEnv>(
             const entry = await prerenderStoreInstance.get(
               ctx.matched.routeKey,
               paramHash,
-              { pathname: ctx.pathname },
+              {
+                pathname: ctx.pathname,
+                isPassthroughRoute: isPassthroughPrerenderRoute,
+              },
             );
             if (entry) {
               yield* yieldFromStore(
@@ -412,7 +459,7 @@ export function withCacheLookup<TEnv>(
       yield* source;
       if (ms) {
         ms.metrics.push({
-          label: "pipeline:cache-lookup",
+          label: "pipeline:cache-miss",
           duration: performance.now() - pipelineStart,
           startTime: pipelineStart - ms.requestStart,
         });
@@ -432,7 +479,7 @@ export function withCacheLookup<TEnv>(
       yield* source;
       if (ms) {
         ms.metrics.push({
-          label: "pipeline:cache-lookup",
+          label: "pipeline:cache-miss",
           duration: performance.now() - pipelineStart,
           startTime: pipelineStart - ms.requestStart,
         });
@@ -442,6 +489,7 @@ export function withCacheLookup<TEnv>(
 
     // Cache HIT
     state.cacheHit = true;
+    state.cacheSource = "runtime";
     state.shouldRevalidate = cacheResult.shouldRevalidate;
     state.cachedSegments = cacheResult.segments;
     state.cachedMatchedIds = cacheResult.segments.map((s) => s.id);
@@ -460,6 +508,17 @@ export function withCacheLookup<TEnv>(
     for (const segment of cacheResult.segments) {
       // Skip segments client doesn't have - they need their component
       if (!ctx.clientSegmentSet.has(segment.id)) {
+        if (isTraceActive()) {
+          pushRevalidationTraceEntry({
+            segmentId: segment.id,
+            segmentType: segment.type,
+            belongsToRoute: segment.belongsToRoute ?? false,
+            source: "cache-hit",
+            defaultShouldRevalidate: true,
+            finalShouldRevalidate: true,
+            reason: "new-segment",
+          });
+        }
         yield segment;
         continue;
       }
@@ -472,8 +531,53 @@ export function withCacheLookup<TEnv>(
 
       // Look up revalidation rules for this segment
       const entryInfo = entryRevalidateMap?.get(segment.id);
+
+      // Even without explicit revalidation rules, route segments and their
+      // children must re-render when params or search params change — the
+      // handler reads ctx.params/ctx.searchParams so different values produce
+      // different content. Matches evaluateRevalidation's default logic.
+      const searchChanged = ctx.prevUrl.search !== ctx.url.search;
+      const routeParamsChanged = !paramsEqual(
+        ctx.matched.params,
+        ctx.prevParams,
+      );
+      const shouldDefaultRevalidate =
+        (searchChanged || routeParamsChanged) &&
+        (segment.type === "route" ||
+          (segment.belongsToRoute &&
+            (segment.type === "layout" || segment.type === "parallel")));
+
       if (!entryInfo || entryInfo.revalidate.length === 0) {
+        if (shouldDefaultRevalidate) {
+          // Params or search params changed — must re-render even without custom rules
+          if (isTraceActive()) {
+            pushRevalidationTraceEntry({
+              segmentId: segment.id,
+              segmentType: segment.type,
+              belongsToRoute: segment.belongsToRoute ?? false,
+              source: "cache-hit",
+              defaultShouldRevalidate: true,
+              finalShouldRevalidate: true,
+              reason: routeParamsChanged
+                ? "cached-params-changed"
+                : "cached-search-changed",
+            });
+          }
+          yield segment;
+          continue;
+        }
         // No revalidation rules, use default behavior (skip if client has)
+        if (isTraceActive()) {
+          pushRevalidationTraceEntry({
+            segmentId: segment.id,
+            segmentType: segment.type,
+            belongsToRoute: segment.belongsToRoute ?? false,
+            source: "cache-hit",
+            defaultShouldRevalidate: false,
+            finalShouldRevalidate: false,
+            reason: "cached-no-rules",
+          });
+        }
         segment.component = null;
         segment.loading = undefined;
         yield segment;
@@ -495,7 +599,23 @@ export function withCacheLookup<TEnv>(
         routeKey: ctx.routeKey,
         context: ctx.handlerContext,
         actionContext: ctx.actionContext,
+        stale: cacheResult.shouldRevalidate || ctx.stale || undefined,
+        traceSource: "cache-hit",
       });
+
+      const routerCtx = getRouterContext<TEnv>();
+      if (routerCtx.telemetry) {
+        const tSink = resolveSink(routerCtx.telemetry);
+        safeEmit(tSink, {
+          type: "revalidation.decision",
+          timestamp: performance.now(),
+          requestId: routerCtx.requestId,
+          segmentId: segment.id,
+          pathname: ctx.pathname,
+          routeKey: ctx.routeKey,
+          shouldRevalidate,
+        });
+      }
 
       if (!shouldRevalidate) {
         // Client has it, no revalidation needed
@@ -506,9 +626,19 @@ export function withCacheLookup<TEnv>(
       yield segment;
     }
 
+    // Set streaming flag (once) and resolve render barrier.
+    const barrierReqCtx = _getRequestContext();
+    if (barrierReqCtx) {
+      if (barrierReqCtx._treeHasStreaming === undefined) {
+        barrierReqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);
+      }
+      barrierReqCtx._resolveRenderBarrier(cacheResult.segments);
+    }
+
     // Resolve loaders fresh (loaders are NOT cached by default)
     // This ensures fresh data even on cache hit
     const Store = ctx.Store;
+    const loaderStart = performance.now();
 
     if (ctx.isFullMatch) {
       // Full match (document request) - simple loader resolution without revalidation
@@ -541,6 +671,11 @@ export function withCacheLookup<TEnv>(
             ctx.url,
             ctx.routeKey,
             ctx.actionContext,
+            // Loaders are never cached in the segment cache, so segment
+            // staleness (cacheResult.shouldRevalidate) must not propagate.
+            // But browser-sent staleness (ctx.stale) — indicating an action
+            // happened in this or another tab — must still reach loaders.
+            ctx.stale || undefined,
           ),
         );
 
@@ -559,9 +694,16 @@ export function withCacheLookup<TEnv>(
       }
     }
     if (ms) {
+      const loaderEnd = performance.now();
       ms.metrics.push({
-        label: "pipeline:cache-lookup",
-        duration: performance.now() - pipelineStart,
+        label: "pipeline:loader-resolve",
+        duration: loaderEnd - loaderStart,
+        startTime: loaderStart - ms.requestStart,
+        depth: 1,
+      });
+      ms.metrics.push({
+        label: "pipeline:cache-hit",
+        duration: loaderEnd - pipelineStart,
         startTime: pipelineStart - ms.requestStart,
       });
     }

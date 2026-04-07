@@ -1,6 +1,5 @@
-import { Meta } from "@rangojs/router";
+import { Meta, Breadcrumbs } from "@rangojs/router";
 import { Outlet, Link } from "@rangojs/router/client";
-import { Breadcrumbs } from "../../handles.js";
 import { BreadcrumbNav } from "../BreadcrumbNav.js";
 import { SegmentsDisplay } from "../SegmentsDisplay.js";
 import { NavigationStatus } from "../NavigationStatus.js";
@@ -17,6 +16,15 @@ export function RootLayout(ctx: any) {
   const meta = ctx.use(Meta);
   meta({ title: "RSC Router Test App" });
   meta({ name: "description", content: "E2E test application for RSC Router" });
+  // Layout-level JSON-LD (WebSite schema — present on all pages)
+  meta({
+    "script:ld+json": {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      name: "RSC Router Test App",
+      url: "https://example.com",
+    },
+  });
 
   return (
     <div data-testid="app-root">

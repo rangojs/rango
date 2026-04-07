@@ -18,6 +18,7 @@ import type {
   ShouldRevalidateFn,
 } from "../types.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
+import type { TelemetrySink } from "./telemetry.js";
 
 /**
  * Revalidation context passed to segment resolution
@@ -79,6 +80,7 @@ export interface RouterContext<TEnv = any> {
     routeMap?: Record<string, string>,
     routeName?: string,
     responseType?: string,
+    isPassthroughRoute?: boolean,
   ) => HandlerContext<any, TEnv>;
 
   // Loader setup
@@ -136,6 +138,7 @@ export interface RouterContext<TEnv = any> {
     interceptResult: InterceptResult | null,
     localRouteName: string,
     pathname: string,
+    stale?: boolean,
   ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
 
   // Generator-based segment resolution (for pipeline)
@@ -181,6 +184,15 @@ export interface RouterContext<TEnv = any> {
     context: HandlerContext<any, TEnv>;
     actionContext?: any;
     stale?: boolean;
+    traceSource?:
+      | "segment-resolution"
+      | "cache-hit"
+      | "loader"
+      | "parallel"
+      | "orphan-layout"
+      | "route-handler"
+      | "layout-handler"
+      | "intercept-loader";
   }) => Promise<boolean>;
 
   // Request context
@@ -198,6 +210,7 @@ export interface RouterContext<TEnv = any> {
     params: Record<string, string>,
     handlerContext: HandlerContext<any, TEnv>,
     loaderPromises: Map<string, Promise<any>>,
+    options?: { skipLoaders?: boolean },
   ) => Promise<ResolvedSegment[]>;
 
   // Generator-based simple resolution
@@ -234,12 +247,19 @@ export interface RouterContext<TEnv = any> {
     nextUrl: URL,
     routeKey: string,
     actionContext?: any,
+    stale?: boolean,
   ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
 
   // Entry revalidation map
   buildEntryRevalidateMap?: (
     entries: EntryData[],
   ) => Map<string, { revalidate: ShouldRevalidateFn[] }>;
+
+  // Telemetry sink (optional, no-op when undefined)
+  telemetry?: TelemetrySink;
+
+  // Request ID for telemetry span correlation (set per-request in match handlers)
+  requestId?: string;
 
   // Intercept loaders only (for cache hit + intercept scenarios)
   resolveInterceptLoadersOnly?: (

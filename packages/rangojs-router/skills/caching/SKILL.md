@@ -89,7 +89,7 @@ Configure a cache store in the router:
 
 ```typescript
 import { createRouter } from "@rangojs/router";
-import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 
 const store = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 300 },
@@ -112,7 +112,7 @@ const router = createRouter({
 For single-instance deployments:
 
 ```typescript
-import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 
 const store = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 300 },
@@ -122,10 +122,10 @@ const store = new MemorySegmentCacheStore({
 
 ### Cloudflare Edge Cache Store
 
-Per-datacenter caching using the Cloudflare Cache API:
+For distributed caching on Cloudflare Workers using the Cache API:
 
 ```typescript
-import { CFCacheStore } from "@rangojs/router/rsc";
+import { CFCacheStore } from "@rangojs/router/cache";
 
 const router = createRouter<AppBindings>({
   document: Document,
@@ -140,21 +140,21 @@ const router = createRouter<AppBindings>({
 });
 ```
 
-### Cloudflare Edge + KV Hybrid Store
+### With KV L2 Persistence
 
-Cache API as L1, Workers KV as persistent L2. On edge miss, falls back to KV
-and repopulates the edge. Includes built-in distributed tag invalidation via KV.
+Add a KV namespace for global cross-colo persistence. On Cache API miss, KV is
+checked and hits are promoted back to L1. Writes go to both layers.
 
 ```typescript
-import { CFEdgeKVCacheStore } from "@rangojs/router/rsc";
+import { CFCacheStore } from "@rangojs/router/cache";
 
 const router = createRouter<AppBindings>({
   document: Document,
   urls: urlpatterns,
   cache: (env, ctx) => ({
-    store: new CFEdgeKVCacheStore({
+    store: new CFCacheStore({
       ctx,
-      kv: env.CACHE_KV,
+      kv: env.CACHE_KV, // optional KV namespace binding
       defaults: { ttl: 60, swr: 300 },
     }),
     enabled: true,
@@ -162,44 +162,24 @@ const router = createRouter<AppBindings>({
 });
 ```
 
-### Tag Invalidation
+**How the two layers work:**
 
-Attach tags to cached entries via `cache()` options, then invalidate them from
-server actions with `revalidateTag()`.
+| Scenario     | L1 (Cache API) | L2 (KV) | Result                        |
+| ------------ | -------------- | ------- | ----------------------------- |
+| Hot request  | HIT            | —       | Serve from L1 (fast)          |
+| Cold colo    | MISS           | HIT     | Serve from KV, promote to L1  |
+| First render | MISS           | MISS    | Render, write to both L1 + KV |
 
-```typescript
-// In urls: tag cached routes
-cache({ ttl: 300, tags: ["products"] }, () => [
-  path("/products", ProductList, { name: "products" }),
-  path("/products/:id", ProductDetail, { name: "product" }),
-]);
+KV entries require `expirationTtl >= 60s`. Short-lived entries (< 60s total TTL)
+are only cached in L1.
 
-// In a server action: invalidate by tag
-import { revalidateTag } from "@rangojs/router";
+## Context Variables Inside Cache Boundaries
 
-async function updateProduct(formData: FormData) {
-  "use server";
-  await db.products.update(formData);
-  revalidateTag("products");
-}
-```
-
-For distributed invalidation across Cloudflare datacenters, use
-`tagInvalidationStore` on `CFCacheStore` or the built-in KV-backed store
-on `CFEdgeKVCacheStore` (enabled by default).
-
-```typescript
-import { CFCacheStore, CFKVTagInvalidationStore } from "@rangojs/router/rsc";
-
-// Edge-only store with distributed tag invalidation via KV
-cache: (env, ctx) => ({
-  store: new CFCacheStore({
-    ctx,
-    tagInvalidationStore: new CFKVTagInvalidationStore(env.CACHE_KV),
-    defaults: { ttl: 60, swr: 300 },
-  }),
-}),
-```
+Context variables (`createVar`) are cacheable by default and can be read and
+written inside `cache()` scopes. Variables marked with `{ cache: false }` (at
+the var level or write level) throw when read inside a cache scope. Response
+side effects (`ctx.header()`, `ctx.cookie()`) always throw inside cache
+boundaries. See `/cache-guide` for the full cache safety table.
 
 ## Nested Cache Boundaries
 
@@ -236,7 +216,7 @@ cache({ store: checkoutCache }, () => [
 
 ```typescript
 import { urls } from "@rangojs/router";
-import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 
 // Custom store for checkout (short TTL)
 const checkoutCache = new MemorySegmentCacheStore({

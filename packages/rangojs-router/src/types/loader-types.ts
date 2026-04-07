@@ -1,4 +1,5 @@
 import type { ContextVar } from "../context-var.js";
+import type { Handle } from "../handle.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import type { ScopedReverseFunction } from "../reverse.js";
 import type { SearchSchema, ResolveSearchSchema } from "../search-params.js";
@@ -40,26 +41,55 @@ export type LoaderContext<
   TSearch extends SearchSchema = {},
 > = {
   params: TParams;
+  /**
+   * Route params extracted from the URL pattern match (server-side only).
+   * Unlike `params`, these cannot be overridden by client-provided loader params.
+   * Use this when you need trusted, server-matched route params for auth or
+   * resource scoping.
+   */
+  routeParams: Record<string, string>;
   request: Request;
   searchParams: URLSearchParams;
   search: {} extends TSearch ? {} : ResolveSearchSchema<TSearch>;
   pathname: string;
   url: URL;
   env: TEnv;
-  var: DefaultVars;
   get: {
     <T>(contextVar: ContextVar<T>): T | undefined;
   } & (<K extends keyof DefaultVars>(key: K) => DefaultVars[K]);
-  /** Get a cookie value from the request */
-  cookie(name: string): string | undefined;
-  /** Get all cookies from the request */
-  cookies(): Record<string, string>;
   /**
-   * Access another loader's data (returns promise since loaders run in parallel)
+   * Access another loader's data, or read handle data after rendered().
+   *
+   * For loaders: returns a promise (loaders run in parallel).
+   * For handles: returns collected data (only after `await ctx.rendered()`).
    */
-  use: <T, TLoaderParams = any>(
-    loader: LoaderDefinition<T, TLoaderParams>,
-  ) => Promise<T>;
+  use: {
+    <T, TLoaderParams = any>(
+      loader: LoaderDefinition<T, TLoaderParams>,
+    ): Promise<T>;
+    <TData, TAccumulated = TData[]>(
+      handle: Handle<TData, TAccumulated>,
+    ): TAccumulated;
+  };
+  /**
+   * **Experimental.** Wait for all non-loader segments to settle.
+   *
+   * After the returned promise resolves, handle data is available via
+   * `ctx.use(handle)`. Only supported in DSL loaders on non-streaming
+   * trees (no `loading()`). Throws if called from a handler-invoked
+   * loader or when the tree uses streaming.
+   *
+   * @example
+   * ```typescript
+   * const PricesLoader = createLoader(async (ctx) => {
+   *   "use server";
+   *   await ctx.rendered();
+   *   const products = ctx.use(Products); // reads handle data
+   *   return pricing.getLive(products.map(p => p.id));
+   * });
+   * ```
+   */
+  rendered: () => Promise<void>;
   /**
    * HTTP method (GET, POST, PUT, PATCH, DELETE)
    * Available when loader is called via load({ method: "POST", ... })
@@ -163,11 +193,11 @@ export type LoadOptions =
  *   return await db.products.findBySlug(slug);
  * });
  *
- * // Server usage
- * const cart = ctx.use(CartLoader);
+ * // Client usage (preferred — cache-safe, always fresh)
+ * const { data } = useLoader(CartLoader);
  *
- * // Client usage (fn is stripped, only name remains)
- * const cart = useLoader(CartLoader);
+ * // Server escape hatch (handler needs data directly)
+ * const cart = await ctx.use(CartLoader);
  * ```
  */
 export type LoaderDefinition<

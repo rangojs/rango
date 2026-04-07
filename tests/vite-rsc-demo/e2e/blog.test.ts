@@ -7,6 +7,7 @@ import {
   expectNoReload,
   goBack,
   testId,
+  measureTime,
 } from "./helper";
 
 /**
@@ -38,6 +39,84 @@ devTest.describe("blog-navigation", () => {
       await expect(
         page.locator('a[href="/blog/router-design"]').first(),
       ).toBeVisible();
+    },
+  );
+
+  devTest(
+    "should allow second navigation from blog index before sidebar stream completes",
+    async ({ page, devServerURL }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(devURL(devServerURL, "/"));
+      await waitForHydration(page);
+
+      await page.locator('a[href="/blog"]').first().click();
+
+      await expect(page.locator("text=Blog Posts")).toBeVisible({
+        timeout: 3000,
+      });
+      await expect(page.locator("text=Loading Sidebar...")).toBeVisible({
+        timeout: 3000,
+      });
+
+      const { elapsed } = await measureTime(async () => {
+        await page
+          .locator("main")
+          .locator('a[href="/blog/react-server-components"]')
+          .click();
+        await expect(
+          page.locator("h2:has-text('React Server Components')"),
+        ).toBeVisible({
+          timeout: 3000,
+        });
+      });
+
+      expect(elapsed).toBeLessThan(4000);
+    },
+  );
+
+  devTest(
+    "should keep the same pending sidebar stream across child blog navigations",
+    async ({ page, devServerURL }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(devURL(devServerURL, "/"));
+      await waitForHydration(page);
+
+      const { elapsed } = await measureTime(async () => {
+        await page.locator('a[href="/blog"]').first().click();
+        await expect(page.locator("text=Blog Posts")).toBeVisible({
+          timeout: 3000,
+        });
+        await expect(page.locator("text=Loading Sidebar...")).toBeVisible({
+          timeout: 3000,
+        });
+
+        await page
+          .locator("main")
+          .locator('a[href="/blog/react-server-components"]')
+          .click();
+        await expect(
+          page.locator("h2:has-text('React Server Components')"),
+        ).toBeVisible({
+          timeout: 3000,
+        });
+
+        await page
+          .locator("main")
+          .locator('a[href="/blog/hello-world"]')
+          .last()
+          .click();
+        await expect(page.locator("h2:has-text('Hello World')")).toBeVisible({
+          timeout: 3000,
+        });
+
+        await expect(page.locator("text=Recent Posts")).toBeVisible({
+          timeout: 8000,
+        });
+      });
+
+      expect(elapsed).toBeLessThan(8000);
     },
   );
 
@@ -106,12 +185,14 @@ devTest.describe("blog-navigation", () => {
       await expect(page.locator("text=Recent Posts")).toBeVisible({
         timeout: 8000,
       });
+      await expect(page.locator("text=Loading Sidebar...")).not.toBeVisible();
 
       // Navigate to another post using sidebar link
       await page.locator('a[href="/blog/rsc-routing"]').click();
 
       // Sidebar should still be visible (not showing loading again due to revalidation rules)
       await expect(page.locator("text=Recent Posts")).toBeVisible();
+      await expect(page.locator("text=Loading Sidebar...")).not.toBeVisible();
 
       // New post content should load
       await expect(page.locator("h2:has-text('Rsc Routing')")).toBeVisible({
@@ -318,6 +399,82 @@ test.describe("blog-navigation (production)", () => {
     ).toBeVisible();
   });
 
+  test("should allow second navigation from blog index before sidebar stream completes", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await page.locator('a[href="/blog"]').first().click();
+
+    await expect(page.locator("text=Blog Posts")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(page.locator("text=Loading Sidebar...")).toBeVisible({
+      timeout: 5000,
+    });
+
+    const { elapsed } = await measureTime(async () => {
+      await page
+        .locator("main")
+        .locator('a[href="/blog/react-server-components"]')
+        .click();
+      await expect(
+        page.locator("h2:has-text('React Server Components')"),
+      ).toBeVisible({
+        timeout: 5000,
+      });
+    });
+
+    expect(elapsed).toBeLessThan(4000);
+  });
+
+  test("should keep the same pending sidebar stream across child blog navigations", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    const { elapsed } = await measureTime(async () => {
+      await page.locator('a[href="/blog"]').first().click();
+      await expect(page.locator("text=Blog Posts")).toBeVisible({
+        timeout: 5000,
+      });
+      await expect(page.locator("text=Loading Sidebar...")).toBeVisible({
+        timeout: 5000,
+      });
+
+      await page
+        .locator("main")
+        .locator('a[href="/blog/react-server-components"]')
+        .click();
+      await expect(
+        page.locator("h2:has-text('React Server Components')"),
+      ).toBeVisible({
+        timeout: 5000,
+      });
+
+      await page
+        .locator("main")
+        .locator('a[href="/blog/hello-world"]')
+        .last()
+        .click();
+      await expect(page.locator("h2:has-text('Hello World')")).toBeVisible({
+        timeout: 5000,
+      });
+
+      await expect(page.locator("text=Recent Posts")).toBeVisible({
+        timeout: 10000,
+      });
+    });
+
+    expect(elapsed).toBeLessThan(8000);
+  });
+
   test("should display blog post with sidebar content", async ({ page }) => {
     using _ = expectNoPageError(page);
 
@@ -343,10 +500,12 @@ test.describe("blog-navigation (production)", () => {
     await expect(page.locator("text=Recent Posts")).toBeVisible({
       timeout: 10000,
     });
+    await expect(page.locator("text=Loading Sidebar...")).not.toBeVisible();
 
     await page.locator('a[href="/blog/rsc-routing"]').click();
 
     await expect(page.locator("text=Recent Posts")).toBeVisible();
+    await expect(page.locator("text=Loading Sidebar...")).not.toBeVisible();
     await expect(page.locator("h2:has-text('Rsc Routing')")).toBeVisible({
       timeout: 5000,
     });

@@ -104,7 +104,8 @@ import type { ResolvedSegment } from "../../types.js";
 import { getRequestContext } from "../../server/request-context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
-import { debugLog, debugWarn } from "../logging.js";
+import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
+import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 
 /**
@@ -120,7 +121,6 @@ export function withCacheStore<TEnv>(
   return async function* (
     source: AsyncGenerator<ResolvedSegment>,
   ): AsyncGenerator<ResolvedSegment> {
-    const pipelineStart = performance.now();
     const ms = ctx.metricsStore;
 
     // Collect all segments while passing them through
@@ -129,6 +129,9 @@ export function withCacheStore<TEnv>(
       allSegments.push(segment);
       yield segment;
     }
+
+    // Measure own work only (after source iteration completes)
+    const ownStart = performance.now();
 
     // Skip caching if:
     // 1. Cache miss but cache scope is disabled
@@ -144,8 +147,8 @@ export function withCacheStore<TEnv>(
       if (ms) {
         ms.metrics.push({
           label: "pipeline:cache-store",
-          duration: performance.now() - pipelineStart,
-          startTime: pipelineStart - ms.requestStart,
+          duration: performance.now() - ownStart,
+          startTime: ownStart - ms.requestStart,
         });
       }
       return;
@@ -162,16 +165,23 @@ export function withCacheStore<TEnv>(
     // Combine main segments with intercept segments
     const allSegmentsToCache = [...allSegments, ...state.interceptSegments];
 
-    // Check if any non-loader segments have null components
-    // This happens when client already had those segments (partial navigation)
+    // Check if any non-loader segments have null components from revalidation
+    // skip (client already had them). Segments where the handler intentionally
+    // returned null are not revalidation skips — re-rendering them will still
+    // produce null, so proactive caching would be wasted work.
+    const clientIdSet = new Set(ctx.clientSegmentIds);
     const hasNullComponents = allSegmentsToCache.some(
-      (s) => s.component === null && s.type !== "loader",
+      (s) =>
+        s.component === null && s.type !== "loader" && clientIdSet.has(s.id),
     );
 
     const requestCtx = getRequestContext();
     if (!requestCtx) return;
 
     const cacheScope = ctx.cacheScope;
+    const reqId = INTERNAL_RANGO_DEBUG
+      ? getOrCreateRequestId(ctx.request)
+      : undefined;
 
     // Register onResponse callback to skip caching for non-200 responses
     // Note: error/notFound status codes are set elsewhere (not caching-specific)
@@ -189,6 +199,11 @@ export function withCacheStore<TEnv>(
         // Proactive caching: render all segments fresh in background
         // This ensures cache has complete components for future requests
         requestCtx.waitUntil(async () => {
+          // Prevent background metrics from polluting foreground timeline.
+          const savedMetrics = ctx.Store.metrics;
+          ctx.Store.metrics = undefined;
+
+          const start = performance.now();
           debugLog("cacheStore", "proactive caching started", {
             pathname: ctx.pathname,
           });
@@ -211,13 +226,16 @@ export function withCacheStore<TEnv>(
               ctx.routeMap,
               ctx.matched.routeKey,
               ctx.matched.responseType,
+              ctx.matched.pt === true,
             );
             const proactiveLoaderPromises = new Map<string, Promise<any>>();
 
             // Use normal loader access so handle data is captured
             setupLoaderAccess(proactiveHandlerContext, proactiveLoaderPromises);
 
-            // Re-resolve ALL segments without revalidation
+            // Re-resolve ALL segments without revalidation.
+            // Skip DSL loaders — they are never cached (cacheRoute filters them)
+            // and are always resolved fresh on each request.
             const Store = ctx.Store;
             const freshSegments = await Store.run(() =>
               resolveAllSegments(
@@ -226,6 +244,7 @@ export function withCacheStore<TEnv>(
                 ctx.matched.params,
                 proactiveHandlerContext,
                 proactiveLoaderPromises,
+                { skipLoaders: true },
               ),
             );
 
@@ -248,34 +267,60 @@ export function withCacheStore<TEnv>(
               ...freshSegments,
               ...freshInterceptSegments,
             ];
+            requestCtx._handleStore.seal();
             await cacheScope.cacheRoute(
               ctx.pathname,
               ctx.matched.params,
               completeSegments,
               ctx.isIntercept,
             );
+            if (INTERNAL_RANGO_DEBUG) {
+              const dur = performance.now() - start;
+              console.log(
+                `[RSC Background][req:${reqId}] Proactive cache ${ctx.pathname} (${dur.toFixed(2)}ms) segments=${completeSegments.length}`,
+              );
+            }
             debugLog("cacheStore", "proactive caching complete", {
               pathname: ctx.pathname,
             });
           } catch (error) {
+            if (INTERNAL_RANGO_DEBUG) {
+              const dur = performance.now() - start;
+              console.log(
+                `[RSC Background][req:${reqId}] Proactive cache ${ctx.pathname} FAILED (${dur.toFixed(2)}ms) error=${String(error)}`,
+              );
+            }
             debugWarn("cacheStore", "proactive caching failed", {
               pathname: ctx.pathname,
               error: String(error),
             });
           } finally {
             requestCtx._handleStore = originalHandleStore;
+            ctx.Store.metrics = savedMetrics;
           }
         });
       } else {
         // All segments have components - cache directly
         // Schedule caching in waitUntil since cacheRoute is now async (key resolution)
+        if (INTERNAL_RANGO_DEBUG) {
+          console.log(
+            `[RSC CacheStore][req:${reqId}] Direct cache path: scheduling cacheRoute for ${ctx.pathname} (${allSegmentsToCache.length} segments, hasNullComponents=${hasNullComponents})`,
+          );
+        }
         requestCtx.waitUntil(async () => {
+          const start = performance.now();
           await cacheScope.cacheRoute(
             ctx.pathname,
             ctx.matched.params,
             allSegmentsToCache,
             ctx.isIntercept,
           );
+          if (INTERNAL_RANGO_DEBUG) {
+            const dur = performance.now() - start;
+            console.log(
+              `[RSC Background][req:${reqId}] Cache store ${ctx.pathname} (${dur.toFixed(2)}ms) segments=${allSegmentsToCache.length}`,
+            );
+          }
         });
       }
 
@@ -285,8 +330,8 @@ export function withCacheStore<TEnv>(
     if (ms) {
       ms.metrics.push({
         label: "pipeline:cache-store",
-        duration: performance.now() - pipelineStart,
-        startTime: pipelineStart - ms.requestStart,
+        duration: performance.now() - ownStart,
+        startTime: ownStart - ms.requestStart,
       });
     }
   };

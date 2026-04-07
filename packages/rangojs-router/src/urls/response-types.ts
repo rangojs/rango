@@ -1,6 +1,31 @@
-import type { CookieOptions } from "../router/middleware.js";
 import type { ContextVar } from "../context-var.js";
-import type { DefaultVars } from "../types/global-namespace.js";
+import type { ReverseFunction } from "../reverse.js";
+import type {
+  DefaultReverseRouteMap,
+  DefaultVars,
+} from "../types/global-namespace.js";
+import type { UseItems, ResponseRouteUseItem } from "../route-types.js";
+
+/**
+ * Reverse function for response handler contexts.
+ * Global names get autocomplete and param validation from the generated route map.
+ * Local `.name` calls are accepted but not validated (scope unknown at type level).
+ */
+type ResponseReverseFunction = [DefaultReverseRouteMap] extends [
+  Record<string, string>,
+]
+  ? (
+      name: string,
+      params?: Record<string, string>,
+      search?: Record<string, unknown>,
+    ) => string
+  : ReverseFunction<DefaultReverseRouteMap> & {
+      (
+        name: `.${string}`,
+        params?: Record<string, string>,
+        search?: Record<string, unknown>,
+      ): string;
+    };
 
 /**
  * Symbol marking a route as a response route (non-RSC).
@@ -14,9 +39,12 @@ export const RESPONSE_TYPE: unique symbol = Symbol.for(
  * Handler that must return Response (not ReactNode).
  * Used by path.image(), path.stream(), path.any() (binary/streaming data).
  */
-export type ResponseHandler<TParams = Record<string, string>, TEnv = any> = (
+export type ResponseHandler<TParams = Record<string, string>, TEnv = any> = ((
   ctx: ResponseHandlerContext<TParams, TEnv>,
-) => Response | Promise<Response>;
+) => Response | Promise<Response>) & {
+  /** Composable default DSL items merged when the handler is mounted. */
+  use?: () => UseItems<ResponseRouteUseItem>;
+};
 
 /**
  * JSON-serializable value type for auto-wrap support.
@@ -36,9 +64,12 @@ export type JsonValue =
 export type JsonResponseHandler<
   TParams = Record<string, string>,
   TEnv = any,
-> = (
+> = ((
   ctx: ResponseHandlerContext<TParams, TEnv>,
-) => JsonValue | Response | Promise<JsonValue | Response>;
+) => JsonValue | Response | Promise<JsonValue | Response>) & {
+  /** Composable default DSL items merged when the handler is mounted. */
+  use?: () => UseItems<ResponseRouteUseItem>;
+};
 
 /**
  * Handler for text-based response routes (text, html, xml).
@@ -47,14 +78,17 @@ export type JsonResponseHandler<
 export type TextResponseHandler<
   TParams = Record<string, string>,
   TEnv = any,
-> = (
+> = ((
   ctx: ResponseHandlerContext<TParams, TEnv>,
-) => string | Response | Promise<string | Response>;
+) => string | Response | Promise<string | Response>) & {
+  /** Composable default DSL items merged when the handler is mounted. */
+  use?: () => UseItems<ResponseRouteUseItem>;
+};
 
 /**
  * Lighter handler context for response routes.
- * No ctx.use() (no loaders). Supports setting response headers and cookies
- * without constructing a full Response object.
+ * No ctx.use() (no loaders). Supports setting response headers via ctx.header().
+ * Use the standalone cookies() function for cookie mutations.
  */
 export interface ResponseHandlerContext<
   TParams = Record<string, string>,
@@ -72,13 +106,11 @@ export interface ResponseHandlerContext<
   url: URL;
   /** The pathname portion of the request URL. */
   pathname: string;
-  reverse: (name: string, params?: Record<string, string>) => string;
+  reverse: ResponseReverseFunction;
   /** Read a variable set by middleware via ctx.set(key, value) or ctx.set(ContextVar, value). */
   get: {
     <T>(contextVar: ContextVar<T>): T | undefined;
   } & (<K extends keyof DefaultVars>(key: K) => DefaultVars[K]);
   /** Set a response header. Merged into the auto-wrapped or pass-through Response. */
   header: (name: string, value: string) => void;
-  /** Set a cookie on the response. */
-  setCookie: (name: string, value: string, options?: CookieOptions) => void;
 }
