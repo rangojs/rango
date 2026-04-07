@@ -206,6 +206,8 @@ export interface CacheItemOptions {
   swr?: number;
   /** Cache tags for invalidation */
   tags?: string[];
+  /** Timestamp when tags were attached (for distributed invalidation) */
+  taggedAt?: number;
 }
 
 /**

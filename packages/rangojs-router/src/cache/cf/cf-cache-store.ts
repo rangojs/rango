@@ -43,6 +43,7 @@ import { VERSION } from "@rangojs/router:version";
 import {
   resolveTtl,
   resolveSwrWindow,
+  computeExpiration,
   DEFAULT_FUNCTION_TTL,
 } from "../cache-policy.js";
 
@@ -69,6 +70,9 @@ export const CACHE_STATUS_HEADER = "x-edge-cache-status";
  * @internal
  */
 export const REVALIDATION_LOCK_TTL = 30;
+
+/** Key prefix for SWR revalidation locks. */
+const REVALIDATION_LOCK_PREFIX = "__revalidation:";
 
 // ============================================================================
 // Types
@@ -400,15 +404,6 @@ async function isGloballyInvalidated(
   return latest !== null && latest > taggedAt;
 }
 
-function getTtlParts(
-  ttl: number,
-  swr: number | undefined,
-): { staleAt: number; expiresAt: number } {
-  const staleAt = Date.now() + ttl * 1000;
-  const expiresAt = staleAt + (swr ?? 0) * 1000;
-  return { staleAt, expiresAt };
-}
-
 function getRemainingTtlParts(
   staleAt: number,
   expiresAt: number,
@@ -582,7 +577,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private async isRevalidating(cache: Cache, key: string): Promise<boolean> {
     try {
       const lockRes = await cache.match(
-        this.keyToRequest(`__revalidation:${key}`),
+        this.keyToRequest(`${REVALIDATION_LOCK_PREFIX}${key}`),
       );
       if (!lockRes) return false;
       const timestamp = Number(await lockRes.text());
@@ -601,7 +596,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    */
   private async markRevalidating(cache: Cache, key: string): Promise<void> {
     await cache.put(
-      this.keyToRequest(`__revalidation:${key}`),
+      this.keyToRequest(`${REVALIDATION_LOCK_PREFIX}${key}`),
       new Response(String(Date.now()), {
         headers: {
           "Content-Type": "text/plain",
@@ -619,7 +614,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * - If stale and lock exists (< 30s): another worker is revalidating, skip
    * - If stale and no lock (or lock expired): write lock, return shouldRevalidate: true
    *
-   * The lock is a lightweight cache entry (`__revalidation:{key}`) with a short
+   * The lock is a lightweight cache entry (`${REVALIDATION_LOCK_PREFIX}{key}`) with a short
    * TTL that auto-expires if the revalidation fails or takes too long.
    *
    * On L1 miss, falls back to KV (L2) if configured.
@@ -709,7 +704,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       const response = new Response(JSON.stringify(payload), { headers });
 
-      const lockRequest = this.keyToRequest(`__revalidation:${key}`);
+      const lockRequest = this.keyToRequest(
+        `${REVALIDATION_LOCK_PREFIX}${key}`,
+      );
       const putPromise = cache
         .put(request, response)
         .then(() => cache.delete(lockRequest));
@@ -881,7 +878,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         const bodyBuf = kvBody
           ? await new Response(kvBody).arrayBuffer()
           : new ArrayBuffer(0);
-        const bodyBase64 = bufferToBase64(bodyBuf);
+        const bodyBase64 = encodeBase64(new Uint8Array(bodyBuf));
 
         this.waitUntil(async () => {
           try {
@@ -994,9 +991,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const swrWindow = resolveSwrWindow(options?.swr, this.defaults);
       const totalTtl = ttl + swrWindow;
       const staleAt = Date.now() + ttl * 1000;
-      const taggedAt =
-        (options as CacheItemOptions & { taggedAt?: number })?.taggedAt ??
-        getTaggedAt(options?.tags);
+      const taggedAt = options?.taggedAt ?? getTaggedAt(options?.tags);
 
       const body = JSON.stringify({
         value,
@@ -1017,7 +1012,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       }
       const response = new Response(body, { headers });
 
-      const lockRequest = this.keyToRequest(`__revalidation:fn:${key}`);
+      const lockRequest = this.keyToRequest(
+        `${REVALIDATION_LOCK_PREFIX}fn:${key}`,
+      );
       const putPromise = cache
         .put(request, response)
         .then(() => cache.delete(lockRequest));
@@ -1314,7 +1311,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       // Reconstruct Response (decode base64 → binary)
       const headers = new Headers(envelope.hd);
-      const bodyBuffer = base64ToBuffer(envelope.b);
+      const bodyBuffer = decodeBase64(envelope.b).buffer as ArrayBuffer;
       const response = new Response(bodyBuffer, {
         status: envelope.st,
         statusText: envelope.stx,
@@ -1349,7 +1346,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         headers.set("Cache-Control", `public, max-age=${remainingTtl}`);
         headers.set(CACHE_STALE_AT_HEADER, String(envelope.s));
 
-        const bodyBuffer = base64ToBuffer(envelope.b);
+        const bodyBuffer = decodeBase64(envelope.b).buffer as ArrayBuffer;
         const response = new Response(bodyBuffer, {
           status: envelope.st,
           statusText: envelope.stx,
@@ -1367,26 +1364,6 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 // ============================================================================
 // Base64 Helpers (binary-safe response body encoding for KV)
 // ============================================================================
-
-/** Encode ArrayBuffer to base64 string. */
-function bufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]!);
-  }
-  return btoa(binary);
-}
-
-/** Decode base64 string to ArrayBuffer. */
-function base64ToBuffer(base64: string): ArrayBuffer {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
-}
 
 /**
  * Hybrid Cloudflare cache store with Cache API as L1 and KV as L2.
@@ -1487,7 +1464,7 @@ export class CFEdgeKVCacheStore<
         taggedAt !== undefined ? { ...data, taggedAt } : data;
       const payload: KVSegmentEntry = {
         data: withTaggedAt,
-        ...getTtlParts(ttl, swr),
+        ...computeExpiration(ttl, swr),
       };
       await Promise.all([
         this.edgeStore.set(key, withTaggedAt, ttl, swr),
@@ -1564,7 +1541,7 @@ export class CFEdgeKVCacheStore<
     tags?: string[],
   ): Promise<void> {
     try {
-      const { staleAt, expiresAt } = getTtlParts(ttl, swr);
+      const { staleAt, expiresAt } = computeExpiration(ttl, swr);
       const taggedAt = getTaggedAt(tags);
       const edgeClone = response.clone();
       const payload = await serializeResponseEntry(
@@ -1613,7 +1590,7 @@ export class CFEdgeKVCacheStore<
           swr: ttlParts.swr,
           tags: entry.tags,
           taggedAt: entry.taggedAt,
-        } as CacheItemOptions);
+        });
       }
 
       return {
@@ -1642,13 +1619,13 @@ export class CFEdgeKVCacheStore<
         handles: options?.handles as KVItemEntry["handles"],
         tags,
         taggedAt,
-        ...getTtlParts(ttl, swr),
+        ...computeExpiration(ttl, swr),
       };
       await Promise.all([
         this.edgeStore.setItem?.(key, value, {
           ...options,
           taggedAt,
-        } as CacheItemOptions),
+        }),
         this.writeKV("fn", key, payload, ttl + swr),
       ]);
     } catch (error) {
