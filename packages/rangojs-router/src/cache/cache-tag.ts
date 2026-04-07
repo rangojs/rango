@@ -35,6 +35,17 @@ export function cacheTag(...tags: string[]): void {
     throw new Error('cacheTag() must be called inside a "use cache" function.');
   }
   for (const tag of tags) {
+    if (process.env.NODE_ENV !== "production") {
+      if (!tag || !tag.trim()) {
+        console.warn(`[cacheTag] Ignoring empty or whitespace-only tag.`);
+        continue;
+      }
+      if (tag.includes(",")) {
+        throw new Error(
+          `[cacheTag] Tag "${tag}" contains a comma, which breaks Cloudflare Cache-Tag header round-tripping. Use separate tags instead.`,
+        );
+      }
+    }
     store.add(tag);
   }
 }

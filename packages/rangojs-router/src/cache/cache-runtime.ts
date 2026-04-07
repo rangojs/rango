@@ -286,8 +286,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     }
 
     let result: any;
-    const scoped = runWithCacheTagScope(() => fn.apply(this, args));
+    let scoped: ReturnType<typeof runWithCacheTagScope>;
     try {
+      scoped = runWithCacheTagScope(() => fn.apply(this, args));
       result = await scoped.result;
     } finally {
       // Decrement ref count; symbol is deleted when it reaches zero
@@ -303,7 +304,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
 
     // Merge profile tags with runtime tags from cacheTag() calls
     // Read scoped.tags after awaiting result so post-await cacheTag() calls are included
-    const allTags = [...(profile.tags ?? []), ...scoped.tags];
+    const allTags = [...(profile.tags ?? []), ...scoped!.tags];
 
     // Serialize and store — fully non-blocking when waitUntil is available.
     // The response does not need to wait for serialization or the store write.

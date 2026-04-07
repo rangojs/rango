@@ -28,6 +28,8 @@ import {
 /**
  * Resolve tags from cache config.
  * Tags can be a static array or a function of RequestContext.
+ * Fails open: a thrown tag callback falls back to no tags rather than
+ * aborting the request. Tags are additive metadata, not identity.
  * @internal
  */
 export function resolveCacheTags<TEnv>(
@@ -35,7 +37,18 @@ export function resolveCacheTags<TEnv>(
   ctx: import("../server/request-context.js").RequestContext<TEnv>,
 ): string[] | undefined {
   if (config === false || !config.tags) return undefined;
-  return typeof config.tags === "function" ? config.tags(ctx) : config.tags;
+  if (typeof config.tags === "function") {
+    try {
+      return config.tags(ctx);
+    } catch (error) {
+      console.error(
+        `[CacheScope] Tags function failed, caching without tags:`,
+        error,
+      );
+      return undefined;
+    }
+  }
+  return config.tags;
 }
 
 function debugCacheLog(message: string): void {
