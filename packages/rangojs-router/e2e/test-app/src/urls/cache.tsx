@@ -1,5 +1,6 @@
 import { urls, cacheTag, revalidateTag } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
+import { InvalidateTagButton } from "../components/InvalidateTagButton.js";
 import {
   NonCachedTestLoader,
   CachedTestLoader,
@@ -312,5 +313,21 @@ export const cachePatterns = urls(
         { name: "cacheTagTest.catalog" },
       ),
     ]),
+
+    // Action-driven tag invalidation test page
+    path(
+      "/cache-tag-test/action-page",
+      async () => {
+        "use cache";
+        cacheTag("action-test");
+        return (
+          <div data-testid="action-tag-page">
+            <span data-testid="action-tag-ts">{Date.now()}</span>
+            <InvalidateTagButton tag="action-test" />
+          </div>
+        );
+      },
+      { name: "cacheTagTest.actionPage" },
+    ),
   ],
 );

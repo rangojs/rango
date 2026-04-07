@@ -2057,3 +2057,199 @@ test.describe("cache-tag invalidation (production)", () => {
       .not.toBe(data1.data.ts);
   });
 });
+
+// ============================================================================
+// No-op / unknown tag invalidation (dev)
+// ============================================================================
+
+test.describe("cache-tag-noop-invalidation", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+    isolatedServer: true,
+  });
+
+  test("invalidating an unknown tag does not error and does not affect cached entries", async ({
+    request,
+  }) => {
+    // Populate a tagged cache entry
+    const res1 = await request.get(f.url("/cache-tag-test/item/noop"), {
+      headers: { Accept: "application/json" },
+    });
+    const data1 = await res1.json();
+
+    // Wait for cache write
+    await expect
+      .poll(
+        async () => {
+          const res = await request.get(f.url("/cache-tag-test/item/noop"), {
+            headers: { Accept: "application/json" },
+          });
+          return (await res.json()).data.ts;
+        },
+        { timeout: 5000 },
+      )
+      .toBe(data1.data.ts);
+
+    // Invalidate a tag that no entry uses
+    const invalidateRes = await request.get(
+      f.url("/cache-tag-test/invalidate/nonexistent-tag-xyz"),
+      { headers: { Accept: "application/json" } },
+    );
+    expect(invalidateRes.status()).toBe(200);
+
+    // Original entry should still be cached (same ts)
+    const res2 = await request.get(f.url("/cache-tag-test/item/noop"), {
+      headers: { Accept: "application/json" },
+    });
+    expect((await res2.json()).data.ts).toBe(data1.data.ts);
+  });
+});
+
+// ============================================================================
+// No-op / unknown tag invalidation (production)
+// ============================================================================
+
+test.describe("cache-tag-noop-invalidation (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+    isolatedServer: true,
+  });
+
+  test("invalidating an unknown tag does not error and does not affect cached entries", async ({
+    request,
+  }) => {
+    const res1 = await request.get(f.url("/cache-tag-test/item/noop"), {
+      headers: { Accept: "application/json" },
+    });
+    const data1 = await res1.json();
+
+    await expect
+      .poll(
+        async () => {
+          const res = await request.get(f.url("/cache-tag-test/item/noop"), {
+            headers: { Accept: "application/json" },
+          });
+          return (await res.json()).data.ts;
+        },
+        { timeout: 5000 },
+      )
+      .toBe(data1.data.ts);
+
+    const invalidateRes = await request.get(
+      f.url("/cache-tag-test/invalidate/nonexistent-tag-xyz"),
+      { headers: { Accept: "application/json" } },
+    );
+    expect(invalidateRes.status()).toBe(200);
+
+    const res2 = await request.get(f.url("/cache-tag-test/item/noop"), {
+      headers: { Accept: "application/json" },
+    });
+    expect((await res2.json()).data.ts).toBe(data1.data.ts);
+  });
+});
+
+// ============================================================================
+// Action-driven tag invalidation (dev)
+// ============================================================================
+
+test.describe("cache-tag-action-invalidation", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+    isolatedServer: true,
+  });
+
+  test("server action calling revalidateTag() invalidates cached page data", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // First visit — cache miss
+    await page.goto(f.url("/cache-tag-test/action-page"));
+    await waitForHydration(page);
+
+    const initialTs = await page.getByTestId("action-tag-ts").textContent();
+    expect(initialTs).toMatch(/^\d+$/);
+
+    // Poll until cached (revisit gives same ts)
+    await expect
+      .poll(
+        async () => {
+          await page.goto(f.url("/cache-tag-test/action-page"));
+          await waitForHydration(page);
+          return await page.getByTestId("action-tag-ts").textContent();
+        },
+        { timeout: 10000 },
+      )
+      .toBe(initialTs);
+
+    // Click the invalidate button (triggers server action with revalidateTag)
+    await page.getByTestId("invalidate-tag-btn").click();
+    await expect(page.getByTestId("invalidate-tag-result")).toBeVisible();
+
+    // Navigate away and back — cache should be invalidated
+    await expect
+      .poll(
+        async () => {
+          await page.goto(f.url("/cache-tag-test/action-page"));
+          await waitForHydration(page);
+          return await page.getByTestId("action-tag-ts").textContent();
+        },
+        { timeout: 10000 },
+      )
+      .not.toBe(initialTs);
+  });
+});
+
+// ============================================================================
+// Action-driven tag invalidation (production)
+// ============================================================================
+
+test.describe("cache-tag-action-invalidation (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+    isolatedServer: true,
+  });
+
+  test("server action calling revalidateTag() invalidates cached page data", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-tag-test/action-page"));
+    await waitForHydration(page);
+
+    const initialTs = await page.getByTestId("action-tag-ts").textContent();
+
+    // Poll until cached
+    await expect
+      .poll(
+        async () => {
+          await page.goto(f.url("/cache-tag-test/action-page"));
+          await waitForHydration(page);
+          return await page.getByTestId("action-tag-ts").textContent();
+        },
+        { timeout: 10000 },
+      )
+      .toBe(initialTs);
+
+    // Click the invalidate button
+    await page.getByTestId("invalidate-tag-btn").click();
+    await expect(page.getByTestId("invalidate-tag-result")).toBeVisible();
+
+    // Verify cache was invalidated
+    await expect
+      .poll(
+        async () => {
+          await page.goto(f.url("/cache-tag-test/action-page"));
+          await waitForHydration(page);
+          return await page.getByTestId("action-tag-ts").textContent();
+        },
+        { timeout: 10000 },
+      )
+      .not.toBe(initialTs);
+  });
+});

@@ -406,3 +406,22 @@ export async function authBoundaryFormAction(
 ): Promise<void> {
   cookies().set("auth-boundary-action-ran", "true", { path: "/", maxAge: 60 });
 }
+
+// ============================================================================
+// Cache tag invalidation via server action
+// ============================================================================
+
+import { revalidateTag } from "@rangojs/router";
+
+/**
+ * Server action that invalidates a cache tag.
+ * Used by the action-driven cache tag e2e test.
+ */
+export async function invalidateTagAction(
+  _prev: { invalidated: boolean; tag: string; ts: number } | null,
+  formData: FormData,
+): Promise<{ invalidated: boolean; tag: string; ts: number }> {
+  const tag = formData.get("tag") as string;
+  revalidateTag(tag);
+  return { invalidated: true, tag, ts: Date.now() };
+}
