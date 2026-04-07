@@ -1,6 +1,6 @@
 ---
 name: caching
-description: Configure segment caching with memory or Cloudflare KV stores in @rangojs/router
+description: Configure segment caching, tag-based invalidation, and cache stores in @rangojs/router
 argument-hint: [setup]
 ---
 
@@ -172,6 +172,85 @@ const router = createRouter<AppBindings>({
 
 KV entries require `expirationTtl >= 60s`. Short-lived entries (< 60s total TTL)
 are only cached in L1.
+
+## Tag-Based Invalidation
+
+Tag cache entries for on-demand invalidation with `cacheTag()` and `revalidateTag()`.
+
+### Runtime Tags with "use cache"
+
+```typescript
+import { cacheTag } from "@rangojs/router";
+
+async function getProduct(ctx) {
+  "use cache";
+  cacheTag(`product:${ctx.params.id}`, "products");
+  return db.getProduct(ctx.params.id);
+}
+```
+
+### Static Tags with cache() DSL
+
+```typescript
+cache({ ttl: 600, tags: ["products"] }, () => [
+  path("/products", ProductList, { name: "products" }),
+  path("/products/:id", ProductDetail, { name: "productDetail" }),
+]);
+```
+
+Tags can also be a function of the request context:
+
+```typescript
+cache({ ttl: 600, tags: (ctx) => [`tenant:${ctx.params.tenantId}`] }, () => [
+  path("/:tenantId/dashboard", Dashboard, { name: "dashboard" }),
+]);
+```
+
+### Invalidating Tags
+
+Call `revalidateTag()` from server actions after mutations:
+
+```typescript
+"use server";
+import { revalidateTag } from "@rangojs/router";
+
+export async function updateProduct(formData: FormData) {
+  const id = formData.get("id") as string;
+  await db.updateProduct(id, formData);
+  revalidateTag(`product:${id}`); // invalidate this product
+  revalidateTag("products");       // invalidate the list
+}
+```
+
+`revalidateTag()` invalidates across the app-level store and any explicit
+per-scope stores from `cache({ store })`. Runs via `waitUntil()` so it
+does not block the response.
+
+### Tag Validation
+
+- Tags must not contain commas (breaks Cloudflare `Cache-Tag` header format)
+- Empty and whitespace-only tags are silently dropped
+- In dev, comma tags throw; in production they are silently skipped
+
+### Cloudflare Distributed Invalidation
+
+For multi-colo invalidation, configure a `CFTagInvalidationStore` backed by KV:
+
+```typescript
+import { CFCacheStore, CFKVTagInvalidationStore } from "@rangojs/router/cache";
+
+const tagStore = new CFKVTagInvalidationStore(env.CACHE_TAGS_KV);
+
+const store = new CFCacheStore({
+  ctx,
+  tagInvalidationStore: tagStore,
+  defaults: { ttl: 60, swr: 300 },
+});
+```
+
+Tagged entries store a `taggedAt` timestamp. On read, if any tag was invalidated
+after `taggedAt`, the entry is treated as a miss. This provides lazy global
+invalidation without requiring immediate key enumeration.
 
 ## Context Variables Inside Cache Boundaries
 
