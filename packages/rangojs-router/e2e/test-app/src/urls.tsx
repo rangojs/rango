@@ -56,6 +56,7 @@ import { authBoundaryPatterns } from "./urls/auth-boundary.js";
 import { contentOwnershipPatterns } from "./urls/content-ownership.js";
 import { cacheIsolationPatterns } from "./urls/cache-isolation.js";
 import { actionCtxSetPatterns } from "./urls/action-ctx-set.js";
+import { middlewareWrappingPatterns } from "./urls/middleware-wrapping.js";
 import { alsScopePatterns } from "./urls/als-scope.js";
 import { streamModePatterns } from "./urls/stream-mode.js";
 import { devDebugPatterns, devInfoHandler } from "./urls/dev-routes.js";
@@ -637,6 +638,11 @@ export const urlpatterns = urls(
       // Action ctx.set → handler ctx.get test
       include("/action-ctx-set", actionCtxSetPatterns, {
         name: "actionCtxSet",
+      }),
+
+      // Middleware wrapping test (middleware(fn, () => [...]) scoping)
+      include("/middleware-wrapping", middlewareWrappingPatterns, {
+        name: "middlewareWrapping",
       }),
 
       // Middleware chain integration test (global mw + action + route mw + layout + loader)

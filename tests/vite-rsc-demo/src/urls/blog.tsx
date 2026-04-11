@@ -47,7 +47,7 @@ export const blogPatterns = urls(
         return <BlogLayout />;
       },
       () => [
-        middleware(...blogLoggerMiddleware),
+        middleware(blogLoggerMiddleware),
         parallel(
           {
             "@sidebar": async (ctx) => {

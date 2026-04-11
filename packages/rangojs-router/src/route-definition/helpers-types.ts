@@ -182,21 +182,41 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
     ): InterceptItem;
   };
   /**
-   * Attach middleware to the current route/layout
-   * ```typescript
-   * middleware(async (ctx, next) => {
-   *   const session = await getSession(ctx.request);
-   *   if (!session) return redirect("/login");
-   *   ctx.set("user", session.user);
-   *   next();
-   * })
+   * Attach middleware to the current route/layout, or wrap child segments
    *
-   * // Chain multiple middleware
-   * middleware(authMiddleware, loggingMiddleware, rateLimitMiddleware)
+   * **Sibling mode** — attaches middleware to the parent entry:
+   * ```typescript
+   * layout(<DashboardShell />, () => [
+   *   middleware(authMiddleware),
+   *   middleware([authMiddleware, loggingMiddleware]),
+   *   path("/", DashboardPage),
+   * ])
    * ```
-   * @param fns - One or more middleware functions to execute in order
+   *
+   * **Wrapping mode** — scopes middleware to the children only:
+   * ```typescript
+   * middleware(authMiddleware, () => [
+   *   path("/dashboard", DashboardPage),
+   *   path("/settings", SettingsPage),
+   * ])
+   *
+   * middleware([authMiddleware, loggingMiddleware], () => [
+   *   path("/admin", AdminPage),
+   * ])
+   * ```
    */
-  middleware: (...fns: MiddlewareFn<TEnv>[]) => MiddlewareItem;
+  middleware: {
+    (fn: MiddlewareFn<TEnv>): MiddlewareItem;
+    (
+      fn: MiddlewareFn<TEnv>,
+      children: () => UseItems<LayoutUseItem>,
+    ): MiddlewareItem;
+    (fns: MiddlewareFn<TEnv>[]): MiddlewareItem;
+    (
+      fns: MiddlewareFn<TEnv>[],
+      children: () => UseItems<LayoutUseItem>,
+    ): MiddlewareItem;
+  };
   /**
    * Control when a segment should revalidate during navigation
    * ```typescript

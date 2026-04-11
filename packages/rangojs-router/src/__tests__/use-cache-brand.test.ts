@@ -53,7 +53,7 @@ describe("use-cache branding", () => {
       }).toThrow(/cannot be used as middleware/);
     });
 
-    it("throws when multiple fns include a cached function", () => {
+    it("throws when array of fns includes a cached function", () => {
       const helpers = createRouteHelpers();
       const normalFn = async (_ctx: any, next: any) => {
         await next();
@@ -62,7 +62,7 @@ describe("use-cache branding", () => {
       (cachedFn as any)[CACHED_FN_SYMBOL] = true;
 
       expect(() => {
-        helpers.middleware(normalFn as any, cachedFn as any);
+        helpers.middleware([normalFn, cachedFn] as any);
       }).toThrow(/cannot be used as middleware/);
     });
 

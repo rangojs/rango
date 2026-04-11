@@ -242,7 +242,7 @@ describe("route tree inspection", () => {
     const tree = buildRouteTree(
       urls(({ path, layout, middleware }) => [
         layout(RootLayout, () => [
-          middleware(logMiddleware, authMiddleware, rateLimitMiddleware),
+          middleware([logMiddleware, authMiddleware, rateLimitMiddleware]),
           path("/", HomePage, { name: "home" }),
         ]),
       ]),

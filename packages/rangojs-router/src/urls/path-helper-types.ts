@@ -264,9 +264,20 @@ export type PathHelpers<TEnv> = {
       ) => InterceptItem;
 
   /**
-   * Attach middleware to the current route/layout
+   * Attach middleware to the current route/layout, or wrap child segments
    */
-  middleware: (...fns: MiddlewareFn<TEnv>[]) => MiddlewareItem;
+  middleware: {
+    (fn: MiddlewareFn<TEnv>): MiddlewareItem;
+    (
+      fn: MiddlewareFn<TEnv>,
+      children: () => UseItems<LayoutUseItem>,
+    ): MiddlewareItem;
+    (fns: MiddlewareFn<TEnv>[]): MiddlewareItem;
+    (
+      fns: MiddlewareFn<TEnv>[],
+      children: () => UseItems<LayoutUseItem>,
+    ): MiddlewareItem;
+  };
 
   /**
    * Control when a segment should revalidate during navigation
