@@ -33,6 +33,7 @@ Django-inspired RSC router with composable URL patterns, type-safe href, and ser
 | `/mime-routes`     | Content negotiation — same URL, different response types via Accept header |
 | `/fonts`           | Load web fonts with preload hints                                          |
 | `/migrate-nextjs`  | Migrate a Next.js App Router project to Rango                              |
+| `/migrate-react-router` | Migrate a React Router / Remix project to Rango                       |
 
 ## Quick Start
 
