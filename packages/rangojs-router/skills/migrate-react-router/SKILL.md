@@ -1,13 +1,28 @@
 ---
 name: migrate-react-router
 description: Migrate a React Router v7/v6 project to @rangojs/router. Use when the user asks to "migrate from React Router", "convert React Router to Rango", "replace React Router", "move from Remix to Rango", or has a React Router / Remix app they want to port.
-argument-hint: [path-to-react-router-app]
+argument-hint: path-to-react-router-app
 ---
 
 # Migrate from React Router to @rangojs/router
 
-Covers React Router v7 (framework mode and library mode) and v6. Also applies
-to Remix v2 since React Router v7 is Remix's successor.
+Covers React Router v7 (framework mode and library mode), v6, and Remix v2.
+
+## Identify the mode first
+
+React Router v7 has two modes that require different migration paths:
+
+- **Framework mode** (`@react-router/dev` plugin, file-based routing, route module
+  API with `loader`/`action`/`meta`/`headers`/`shouldRevalidate` exports) — this is
+  the Remix successor. Migration involves replacing the route module convention with
+  Rango's `urls()` DSL and server component handlers.
+
+- **Library mode** (`createBrowserRouter` or `<BrowserRouter>`, client-side only) —
+  migration involves moving from client-side routing to server-rendered RSC with the
+  `urls()` DSL.
+
+React Router v6 and Remix v2 follow the same patterns as v7 library mode and
+framework mode respectively.
 
 ## Migration Strategy
 
@@ -19,12 +34,19 @@ loaders/actions. Verify each route works before moving to the next.
 Replace React Router tooling with Vite + Rango:
 
 ```bash
-npm remove react-router react-router-dom @react-router/dev @react-router/node
+# Framework mode:
+npm remove react-router @react-router/dev @react-router/node @react-router/serve
+# Library mode:
+npm remove react-router react-router-dom
+
 npm install @rangojs/router
 ```
 
+Replace the `@react-router/dev` Vite plugin with `rango()`:
+
 ```typescript
 // vite.config.ts
+// Before: import { reactRouter } from "@react-router/dev/vite";
 import { defineConfig } from "vite";
 import { rango } from "@rangojs/router/vite";
 
@@ -32,6 +54,8 @@ export default defineConfig({
   plugins: [rango()],
 });
 ```
+
+Delete `react-router.config.ts` — route configuration moves to the `urls()` DSL.
 
 ```typescript
 // src/router.tsx
@@ -46,10 +70,108 @@ export default createRouter({
 
 ## 2. Route Mapping
 
-### File-based / config routes → URL pattern DSL
+### RR7 framework mode: route modules → urls() DSL
 
-React Router uses file conventions or `createBrowserRouter` config. Rango uses
-the `urls()` DSL:
+In framework mode, each route is a file with conventional exports (`loader`,
+`action`, `default`, `meta`, `headers`, `shouldRevalidate`, `handle`,
+`ErrorBoundary`, `HydrateFallback`). In Rango, all of these become part of the
+`urls()` DSL or move into the server component handler:
+
+```text
+RR7 route module export     → Rango equivalent
+─────────────────────────────────────────────────────
+default (Component)         → handler in path()
+loader                      → fetch in handler, or createLoader()
+action                      → "use server" function
+meta                        → ctx.use(Meta) in handler
+headers                     → ctx.header() in handler or middleware
+shouldRevalidate            → revalidate() DSL
+ErrorBoundary               → errorBoundary() DSL
+HydrateFallback             → loading() DSL
+handle                      → no equivalent needed (server components)
+clientLoader / clientAction → "use client" component with useActionState
+```
+
+#### Example: full route module migration
+
+```typescript
+// RR7 framework mode: app/routes/product.$slug.tsx
+import type { Route } from "./+types/product.$slug";
+
+export async function loader({ params }: Route.LoaderArgs) {
+  const product = await getProduct(params.slug);
+  if (!product) throw new Response("Not Found", { status: 404 });
+  return { product };
+}
+
+export async function action({ request }: Route.ActionArgs) {
+  const formData = await request.formData();
+  await addToCart(formData.get("productId") as string);
+  return { ok: true };
+}
+
+export function meta({ data }: Route.MetaArgs) {
+  return [{ title: data.product.name }];
+}
+
+export function headers() {
+  return { "Cache-Control": "max-age=300" };
+}
+
+export function shouldRevalidate({ actionResult }) {
+  return !!actionResult;
+}
+
+export default function ProductPage({ loaderData }: Route.ComponentProps) {
+  return <div>{loaderData.product.name}</div>;
+}
+
+export function ErrorBoundary() {
+  return <div>Product error</div>;
+}
+```
+
+```typescript
+// Rango: urls.tsx + handler
+import { notFound } from "@rangojs/router";
+
+const ProductPage: Handler<"product"> = async (ctx) => {
+  const product = await getProduct(ctx.params.slug);
+  if (!product) notFound("Product not found");
+
+  const meta = ctx.use(Meta);
+  meta({ title: product.name });
+  ctx.header("Cache-Control", "max-age=300");
+
+  return <div>{product.name}</div>;
+};
+
+// In urls.tsx:
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  revalidate(({ actionId }) => !!actionId),
+  errorBoundary(() => <div>Product error</div>),
+  loading(<ProductSkeleton />),
+])
+```
+
+Key shift: the route module's scattered exports consolidate into the handler
+(data fetching, meta, headers) and the DSL (revalidation, error boundary, loading).
+
+### RR7 file routing → urls() DSL
+
+| RR7 file path | Rango |
+|---|---|
+| `app/routes/_index.tsx` | `path("/", HomePage, { name: "home" })` |
+| `app/routes/about.tsx` | `path("/about", AboutPage, { name: "about" })` |
+| `app/routes/blog.$slug.tsx` | `path("/blog/:slug", BlogPost, { name: "blogPost" })` |
+| `app/routes/files.$.tsx` (splat) | `path("/files/:path+", FileBrowser, { name: "files" })` |
+| `app/routes/dashboard.tsx` (layout) | `layout(<DashboardLayout />, () => [...])` |
+| `app/routes/dashboard._index.tsx` | `path("/dashboard", DashboardIndex, { name: "dashboard" })` |
+| `app/routes/dashboard.settings.tsx` | `path("/dashboard/settings", Settings, { name: "settings" })` |
+| `app/routes/_auth.tsx` (pathless layout) | `layout(<AuthLayout />, () => [...])` |
+| `app/routes/_auth.login.tsx` | `path("/login", LoginPage, { name: "login" })` |
+
+### Library mode: config routes → urls() DSL
 
 | React Router | Rango |
 |---|---|
@@ -258,9 +380,48 @@ function ProductPrice() {
 }
 ```
 
+### clientLoader / clientAction (framework mode)
+
+RR7 framework mode's `clientLoader` and `clientAction` run in the browser and
+can call the server loader or skip it entirely. In Rango, the equivalent depends
+on what the client loader/action does:
+
+- **Client-side cache or transformation of server data** → use `createLoader()` +
+  `useLoader()` in a client component. The loader runs on the server; the client
+  component handles display logic.
+- **Client-only data (localStorage, IndexedDB)** → keep as a `"use client"` component
+  with `useState`/`useEffect`. No server involvement.
+- **Optimistic UI** → use `useActionState` or `useOptimistic` with a `"use server"`
+  action. Same React patterns, no framework-specific API.
+
+### shouldRevalidate (framework mode)
+
+RR7's `shouldRevalidate` export maps directly to Rango's `revalidate()` DSL:
+
+```typescript
+// RR7:
+export function shouldRevalidate({ actionResult, currentParams, nextParams }) {
+  if (actionResult) return true;
+  return currentParams.slug !== nextParams.slug;
+}
+
+// Rango:
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  revalidate(({ actionId, currentParams, nextParams }) => {
+    if (actionId) return true;
+    return currentParams.slug !== nextParams.slug;
+  }),
+])
+```
+
+Note: RR7's `shouldRevalidate` controls client-side loader re-fetching. Rango's
+`revalidate()` controls which segments re-run during partial rendering after
+navigation or actions. The intent is the same — skip unnecessary work — but
+the mechanism is segment-level rather than loader-level.
+
 ## 4. Middleware / Route Protection
 
-React Router doesn't have middleware. Protection is typically done in loaders:
+React Router doesn't have built-in middleware. Protection is typically done in loaders:
 
 ```typescript
 // React Router: auth check in loader
