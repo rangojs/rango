@@ -6,6 +6,39 @@ argument-hint: [path-to-nextjs-app]
 
 # Migrate from Next.js App Router to @rangojs/router
 
+## Why Rango
+
+Common reasons to migrate:
+
+- **Server components by default** — keep data fetching on the server without
+  framework-specific file conventions.
+  See: `/router-setup`, `/route`
+- **Django-style route definition** — `urls()`, `path()`, and `layout()` make
+  the route tree explicit instead of spreading routing across many special files.
+  See: `/route`, `/layout`
+- **Named routes** — reverse URLs by route name instead of hard-coding path
+  strings throughout the app.
+  See: `/links`, `/typesafety`
+- **Clear execution model** — request scope, render scope, segment boundaries,
+  and shared `ctx` behavior are explicit in the routing model.
+  See: `/middleware`, `/loader`
+- **Live data layer** — `createLoader()` and `loader()` keep data fresh
+  independently of cached UI. A route can serve cached segments while loaders
+  still resolve live on every request.
+  See: `/loader`, `/caching`, `/cache-guide`
+- **Explicit caching model** — `cache()` DSL, `revalidate()`, `use cache`, and
+  custom cache stores make caching and revalidation behavior visible in code.
+  See: `/caching`, `/cache-guide`, `/use-cache`
+- **Build-time rendering** — `Static()` and `Prerender()` provide explicit
+  build-time rendering instead of mixing rendering and caching behind conventions.
+  See: `/prerender`
+- **Composable route tree** — layouts, includes, middleware, parallels, and
+  intercepts compose directly in the route definition.
+  See: `/composability`, `/parallel`, `/intercept`
+- **Multi-router flexibility** — support multiple routers, domain routing, and
+  worker/edge-style deployment patterns.
+  See: `/host-router`
+
 ## Migration Strategy
 
 Work route-by-route, bottom-up. Start with leaf pages, then layouts, then middleware. Verify each route works before moving to the next.
@@ -486,6 +519,31 @@ path.text("/api/health", () => "ok", { name: "apiHealth" })
 
 See `/response-routes` for full API.
 
+## 10. Theme / Dark Mode
+
+If the Next.js app uses `next-themes` or a custom theme provider, replace it
+with Rango's built-in theme system (FOUC prevention included):
+
+```typescript
+const router = createRouter({
+  theme: true, // or { defaultTheme: "system", attribute: "class" }
+});
+```
+
+Client components use `useTheme()` to read and toggle:
+
+```typescript
+"use client";
+import { useTheme } from "@rangojs/router/theme";
+
+function ThemeToggle() {
+  const { theme, setTheme } = useTheme();
+  return <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>{theme}</button>;
+}
+```
+
+See `/theme` for full API including system detection and cookie persistence.
+
 ## Migration Checklist
 
 1. [ ] Set up Vite config with `rango()` plugin
@@ -499,4 +557,5 @@ See `/response-routes` for full API.
 9. [ ] Convert loading/error files to `loading()` / `errorBoundary()`
 10. [ ] Migrate API routes to `path.json()` / `path.text()`
 11. [ ] Update metadata to use `Meta` handle + `<MetaTags />` in document head
-12. [ ] Run `npx rango generate src/` to generate route types
+12. [ ] Replace `next-themes` with `theme: true` in createRouter (see `/theme`)
+13. [ ] Run `npx rango generate src/` to generate route types
