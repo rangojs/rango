@@ -17,7 +17,7 @@ export const dashboardPatterns = urls(
         return <DashboardLayout />;
       },
       () => [
-        middleware(
+        middleware([
           (ctx, next) => {
             console.log("[Dashboard Middleware] Rate limit check");
             const requestCount = ctx.get("requestCount") || 0;
@@ -35,7 +35,7 @@ export const dashboardPatterns = urls(
             console.log(`[Dashboard Middleware] Analytics: ${ctx.pathname}`);
             next();
           },
-        ),
+        ]),
         revalidate(({ currentUrl, nextUrl }) => {
           console.log("[Dashboard] Context-based revalidation");
           return currentUrl.search !== nextUrl.search;

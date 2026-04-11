@@ -1002,7 +1002,7 @@ describe("urls()", () => {
       const mw3 = async (_ctx: any, next: any) => next();
 
       const urlPatterns = urls(({ path, middleware }) => [
-        middleware(mw1 as any, mw2 as any, mw3 as any),
+        (middleware as any)(mw1, mw2, mw3),
         path("/", () => <div />, { name: "home" }),
       ]);
 

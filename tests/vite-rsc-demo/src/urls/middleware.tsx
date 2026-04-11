@@ -20,20 +20,20 @@ export const middlewarePatterns = urls(({ path, layout, middleware }) => [
       return <MiddlewareDemoLayout />;
     },
     () => [
-      middleware(...globalMiddleware),
+      middleware(globalMiddleware),
 
       path("/", MiddlewareIndexPage, { name: "index" }),
       path("/dashboard", MiddlewareDashboardPage, { name: "dashboard" }, () => [
-        middleware(...dashboardMiddleware),
+        middleware(dashboardMiddleware),
       ]),
       path("/timed", MiddlewareTimedPage, { name: "timed" }, () => [
-        middleware(...timedMiddleware),
+        middleware(timedMiddleware),
       ]),
       path("/user/:userId", MiddlewareUserPage, { name: "user" }, () => [
-        middleware(...userMiddleware),
+        middleware(userMiddleware),
       ]),
       path("/api/data", MiddlewareApiPage, { name: "api" }, () => [
-        middleware(...apiMiddleware),
+        middleware(apiMiddleware),
       ]),
     ],
   ),
