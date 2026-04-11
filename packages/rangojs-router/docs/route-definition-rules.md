@@ -141,6 +141,33 @@ Included patterns use the full `urls()` builder, so they support `layout()`,
 chains stack: parent layout middleware runs first, then middleware from within
 the included patterns.
 
+### Middleware wrapping
+
+`middleware()` supports two modes:
+
+- **Sibling mode** — `middleware(fn)` or `middleware([fn1, fn2])` attaches
+  middleware to the parent entry.
+- **Wrapping mode** — `middleware(fn, () => [...])` or
+  `middleware([fn1, fn2], () => [...])` creates a transparent layout that
+  scopes middleware to the children callback only.
+
+```text
+// Wrapping: authMw only applies to /admin and /admin/settings
+middleware(authMw, () => [
+  path("/admin", AdminPage, { name: "admin" }),
+  path("/admin/settings", SettingsPage, { name: "settings" }),
+]),
+path("/public", PublicPage, { name: "public" }), // no authMw
+
+// Multiple middleware: use array form
+middleware([authMw, loggingMw], () => [
+  path("/admin", AdminPage, { name: "admin" }),
+])
+```
+
+The variadic form `middleware(fn1, fn2)` is not supported. Use
+`middleware([fn1, fn2])` to pass multiple middleware.
+
 ### Name scoping
 
 The `name` option determines child route visibility:

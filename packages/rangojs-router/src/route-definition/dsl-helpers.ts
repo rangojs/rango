@@ -55,6 +55,9 @@ const hasRoutesInItem = (item: AllUseItems): boolean => {
   if (item.type === "layout" && item.uses) {
     return item.uses.some((child) => hasRoutesInItem(child));
   }
+  if (item.type === "middleware" && item.uses) {
+    return item.uses.some((child) => hasRoutesInItem(child));
+  }
   return false;
 };
 
@@ -353,10 +356,37 @@ const cache: RouteHelpers<any, any>["cache"] = (
   return { name: namespace, type: "cache", uses: result } as CacheItem;
 };
 
-const middleware: RouteHelpers<any, any>["middleware"] = (...fn) => {
+const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
+  // Four call forms:
+  //   middleware(fn)                       — single fn, sibling
+  //   middleware(fn, () => [...])          — single fn, wrapping
+  //   middleware([fn1, fn2])              — array, sibling
+  //   middleware([fn1, fn2], () => [...]) — array, wrapping
+  const isArray = Array.isArray(args[0]);
+
+  // Reject the removed variadic form before executing anything.
+  // middleware(fn1, fn2, fn3) — 3+ args, always wrong.
+  // middleware(fn1, fn2) where fn2 is a middleware fn (length >= 1), not a
+  // children callback (length === 0) — legacy two-fn form, reject early.
+  if (
+    args.length > 2 ||
+    (!isArray &&
+      args.length === 2 &&
+      typeof args[1] === "function" &&
+      args[1].length > 0)
+  ) {
+    throw new Error(
+      "middleware() no longer accepts variadic arguments. " +
+        "Use middleware([fn1, fn2, ...]) instead of middleware(fn1, fn2, ...).",
+    );
+  }
+
+  const fns: MiddlewareFn<any>[] = isArray ? args[0] : [args[0]];
+  const children: (() => any[]) | undefined =
+    typeof args[1] === "function" ? args[1] : undefined;
+
   // Prevent "use cache" functions from being used as middleware.
-  // Checked before context validation — this is a static invariant.
-  for (const f of fn) {
+  for (const f of fns) {
     if (isCachedFunction(f)) {
       throw new Error(
         `A "use cache" function cannot be used as middleware. ` +
@@ -367,17 +397,80 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...fn) => {
     }
   }
 
-  const ctx = getContext().getStore();
+  const store = getContext();
+  const ctx = store.getStore();
   if (!ctx) throw new Error("middleware() must be called inside map()");
 
-  // Attach to last entry in stack
-  const parent = ctx.parent;
-  if (!parent || !("middleware" in parent)) {
-    invariant(false, "No parent entry available for middleware()");
+  if (!children) {
+    // Sibling mode: attach to parent entry
+    const parent = ctx.parent;
+    if (!parent || !("middleware" in parent)) {
+      invariant(false, "No parent entry available for middleware()");
+    }
+    const name = `$${store.getNextIndex("middleware")}`;
+    parent.middleware.push(...fns);
+    return { name, type: "middleware" } as MiddlewareItem;
   }
-  const name = `$${getContext().getNextIndex("middleware")}`;
-  parent.middleware.push(...fn);
-  return { name, type: "middleware" } as MiddlewareItem;
+
+  // Wrapping mode: create a transparent layout that carries the middleware
+  const mwIndex = store.getNextIndex("middleware");
+  const namespace = `${ctx.namespace}.${mwIndex}`;
+
+  const urlPrefix = getUrlPrefix();
+  const entry = {
+    id: namespace,
+    shortCode: store.getShortCode("layout"),
+    type: "layout",
+    parent: ctx.parent,
+    handler: RootLayout,
+    loading: undefined,
+    middleware: [...fns],
+    revalidate: [],
+    errorBoundary: [],
+    notFoundBoundary: [],
+    layout: [],
+    parallel: {},
+    intercept: [],
+    loader: [],
+    ...(urlPrefix ? { mountPath: urlPrefix } : {}),
+  } as EntryData;
+
+  // Run children callback. If the second arg was actually a middleware fn
+  // (old variadic form: middleware(mw1, mw2)), this will return a non-array
+  // and the invariant below gives a clear migration error.
+  const rawResult = store.run(namespace, entry, children);
+
+  invariant(
+    Array.isArray(rawResult),
+    "middleware(fn, children) expects the second argument to return an array of use items. " +
+      "To pass multiple middleware, use middleware([fn1, fn2]).",
+  );
+
+  const result = rawResult.flat(3);
+
+  invariant(
+    result.every((item: any) => isValidUseItem(item)),
+    `middleware() children callback must return an array of use items [${namespace}]`,
+  );
+
+  const hasRoutes =
+    result &&
+    Array.isArray(result) &&
+    result.some((item) => item != null && hasRoutesInItem(item));
+
+  if (!hasRoutes) {
+    const parent = ctx.parent;
+    if (parent && "layout" in parent) {
+      entry.parent = null;
+      parent.layout.push(entry);
+    }
+  }
+
+  return {
+    name: namespace,
+    type: "middleware",
+    uses: result,
+  } as MiddlewareItem;
 };
 
 const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {

@@ -881,4 +881,166 @@ describe("urls()", () => {
       expect(manifest.has("index")).toBe(false);
     });
   });
+
+  describe("middleware wrapping", () => {
+    let manifest: Map<string, EntryData>;
+    let patterns: Map<string, string>;
+
+    beforeEach(() => {
+      manifest = new Map();
+      patterns = new Map();
+    });
+
+    it("single-fn wrapping creates a layout entry with middleware attached", () => {
+      const mwFn = async (_ctx: any, next: any) => {
+        await next();
+      };
+
+      const urlPatterns = urls(({ path, middleware }) => [
+        middleware(mwFn, () => [
+          path("/guarded", () => <div>Guarded</div>, { name: "guarded" }),
+        ]),
+        path("/public", () => <div>Public</div>, { name: "public" }),
+      ]);
+
+      RSCRouterContext.run(
+        {
+          manifest,
+          patterns,
+          namespace: "test",
+          parent: null,
+          counters: {},
+        },
+        () => urlPatterns.handler(),
+      );
+
+      // Both routes registered
+      expect(manifest.has("guarded")).toBe(true);
+      expect(manifest.has("public")).toBe(true);
+
+      // Guarded route has a layout parent with middleware
+      const guardedEntry = manifest.get("guarded")!;
+      expect(guardedEntry.parent).not.toBeNull();
+      expect(guardedEntry.parent!.type).toBe("layout");
+      expect(guardedEntry.parent!.middleware).toHaveLength(1);
+      expect(guardedEntry.parent!.middleware[0]).toBe(mwFn);
+
+      // Public route has no middleware on its parent
+      const publicEntry = manifest.get("public")!;
+      expect(publicEntry.parent?.middleware ?? []).toHaveLength(0);
+    });
+
+    it("array-fn wrapping attaches all middleware to the layout entry", () => {
+      const mw1 = async (_ctx: any, next: any) => {
+        await next();
+      };
+      const mw2 = async (_ctx: any, next: any) => {
+        await next();
+      };
+
+      const urlPatterns = urls(({ path, middleware }) => [
+        middleware([mw1, mw2], () => [
+          path("/guarded", () => <div>Guarded</div>, { name: "guarded" }),
+        ]),
+      ]);
+
+      RSCRouterContext.run(
+        {
+          manifest,
+          patterns,
+          namespace: "test",
+          parent: null,
+          counters: {},
+        },
+        () => urlPatterns.handler(),
+      );
+
+      const guardedEntry = manifest.get("guarded")!;
+      expect(guardedEntry.parent).not.toBeNull();
+      expect(guardedEntry.parent!.middleware).toHaveLength(2);
+      expect(guardedEntry.parent!.middleware[0]).toBe(mw1);
+      expect(guardedEntry.parent!.middleware[1]).toBe(mw2);
+    });
+
+    it("sibling middleware still attaches to existing parent", () => {
+      const mwFn = async (_ctx: any, next: any) => {
+        await next();
+      };
+
+      const urlPatterns = urls(({ path, layout, middleware }) => [
+        layout(
+          () => <div />,
+          () => [
+            middleware(mwFn),
+            path("/page", () => <div>Page</div>, { name: "page" }),
+          ],
+        ),
+      ]);
+
+      RSCRouterContext.run(
+        {
+          manifest,
+          patterns,
+          namespace: "test",
+          parent: null,
+          counters: {},
+        },
+        () => urlPatterns.handler(),
+      );
+
+      const pageEntry = manifest.get("page")!;
+      // The middleware is on the layout, which is the parent
+      expect(pageEntry.parent).not.toBeNull();
+      expect(pageEntry.parent!.type).toBe("layout");
+      expect(pageEntry.parent!.middleware).toHaveLength(1);
+      expect(pageEntry.parent!.middleware[0]).toBe(mwFn);
+    });
+
+    it("rejects variadic form middleware(fn1, fn2, fn3) with migration hint", () => {
+      const mw1 = async (_ctx: any, next: any) => next();
+      const mw2 = async (_ctx: any, next: any) => next();
+      const mw3 = async (_ctx: any, next: any) => next();
+
+      const urlPatterns = urls(({ path, middleware }) => [
+        middleware(mw1 as any, mw2 as any, mw3 as any),
+        path("/", () => <div />, { name: "home" }),
+      ]);
+
+      expect(() =>
+        RSCRouterContext.run(
+          {
+            manifest,
+            patterns,
+            namespace: "test",
+            parent: null,
+            counters: {},
+          },
+          () => urlPatterns.handler(),
+        ),
+      ).toThrow(/middleware\(\[fn1, fn2/);
+    });
+
+    it("rejects legacy two-fn form middleware(fn1, fn2) with migration hint", () => {
+      const mw1 = async (_ctx: any, next: any) => next();
+      const mw2 = async (_ctx: any, next: any) => next();
+
+      const urlPatterns = urls(({ path, middleware }) => [
+        middleware(mw1 as any, mw2 as any),
+        path("/", () => <div />, { name: "home" }),
+      ]);
+
+      expect(() =>
+        RSCRouterContext.run(
+          {
+            manifest,
+            patterns,
+            namespace: "test",
+            parent: null,
+            counters: {},
+          },
+          () => urlPatterns.handler(),
+        ),
+      ).toThrow(/middleware\(\[fn1, fn2/);
+    });
+  });
 });
