@@ -147,24 +147,52 @@ export { createVar, type ContextVar } from "./context-var.js";
 export { nonce } from "./rsc/nonce.js";
 
 /**
- * Error-throwing stub for server-only `Prerender` function.
+ * SSR/client stub for server-only `Prerender` function.
+ *
+ * Returns a lightweight stub object instead of throwing so that the
+ * production SSR build can safely bundle the RSC entry chunk — the SSR
+ * bundler resolves `@rangojs/router` to this (SSR) entry, so Prerender
+ * calls in RSC code must not crash at module-evaluation time.
  */
-export function Prerender(): never {
-  throw serverOnlyStubError("Prerender");
+export function Prerender(
+  _handler?: any,
+  _optionsOrId?: any,
+  __injectedId?: string,
+): any {
+  const id =
+    typeof _optionsOrId === "string" ? _optionsOrId : __injectedId || "";
+  return { __brand: "prerenderHandler" as const, $$id: id };
 }
 
 /**
- * Error-throwing stub for server-only `Passthrough` function.
+ * SSR/client stub for server-only `Passthrough` function.
  */
-export function Passthrough(): never {
-  throw serverOnlyStubError("Passthrough");
+export function Passthrough(
+  _handler?: any,
+  _optionsOrId?: any,
+  __injectedId?: string,
+): any {
+  const id =
+    typeof _optionsOrId === "string" ? _optionsOrId : __injectedId || "";
+  return { __brand: "passthroughHandler" as const, $$id: id };
 }
 
 /**
- * Error-throwing stub for server-only `Static` function.
+ * SSR/client stub for server-only `Static` function.
+ *
+ * Returns a lightweight stub object instead of throwing so that the
+ * production SSR build can safely bundle the RSC entry chunk — the SSR
+ * bundler resolves `@rangojs/router` to this (SSR) entry, so Static
+ * calls in RSC code must not crash at module-evaluation time.
  */
-export function Static(): never {
-  throw serverOnlyStubError("Static");
+export function Static(
+  _handler?: any,
+  _optionsOrId?: any,
+  __injectedId?: string,
+): any {
+  const id =
+    typeof _optionsOrId === "string" ? _optionsOrId : __injectedId || "";
+  return { __brand: "staticHandler" as const, $$id: id };
 }
 
 /**
