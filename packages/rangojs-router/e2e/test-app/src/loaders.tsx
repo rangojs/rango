@@ -721,3 +721,16 @@ export const ParallelInheritLoader = createLoader(async () => {
 export const ParallelRevalLoader = createLoader(async () => {
   return { count: Date.now() };
 });
+
+// ============================================================================
+// Action ctx.set → loader ctx.get test
+// Reads context variables set by an action to verify loaders see them
+// during the revalidation render pass.
+// ============================================================================
+
+export const ActionCtxSetLoader = createLoader(async (ctx) => {
+  const { ActionCtxTypedVar } = await import("./urls/action-ctx-set.js");
+  const stringValue = ctx.get("actionCtxValue") ?? null;
+  const typedValue = ctx.get(ActionCtxTypedVar) ?? null;
+  return { stringValue, typedValue };
+});
