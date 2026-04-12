@@ -163,7 +163,7 @@ urls(({ path, middleware }) => [
 
   // Public route — no authMw
   path("/", HomePage, { name: "home" }),
-])
+]);
 ```
 
 Multiple middleware with wrapping:
@@ -171,7 +171,7 @@ Multiple middleware with wrapping:
 ```typescript
 middleware([authMw, loggingMw], () => [
   path("/admin", AdminPage, { name: "admin" }),
-])
+]);
 ```
 
 This creates a transparent layout (`<Outlet />`) that carries the middleware.

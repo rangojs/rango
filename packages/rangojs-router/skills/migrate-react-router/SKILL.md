@@ -194,27 +194,27 @@ Key shift: the route module's scattered exports consolidate into the handler
 
 ### RR7 file routing → urls() DSL
 
-| RR7 file path | Rango |
-|---|---|
-| `app/routes/_index.tsx` | `path("/", HomePage, { name: "home" })` |
-| `app/routes/about.tsx` | `path("/about", AboutPage, { name: "about" })` |
-| `app/routes/blog.$slug.tsx` | `path("/blog/:slug", BlogPost, { name: "blogPost" })` |
-| `app/routes/files.$.tsx` (splat) | `path("/files/:path+", FileBrowser, { name: "files" })` |
-| `app/routes/dashboard.tsx` (layout) | `layout(<DashboardLayout />, () => [...])` |
-| `app/routes/dashboard._index.tsx` | `path("/dashboard", DashboardIndex, { name: "dashboard" })` |
-| `app/routes/dashboard.settings.tsx` | `path("/dashboard/settings", Settings, { name: "settings" })` |
-| `app/routes/_auth.tsx` (pathless layout) | `layout(<AuthLayout />, () => [...])` |
-| `app/routes/_auth.login.tsx` | `path("/login", LoginPage, { name: "login" })` |
+| RR7 file path                            | Rango                                                         |
+| ---------------------------------------- | ------------------------------------------------------------- |
+| `app/routes/_index.tsx`                  | `path("/", HomePage, { name: "home" })`                       |
+| `app/routes/about.tsx`                   | `path("/about", AboutPage, { name: "about" })`                |
+| `app/routes/blog.$slug.tsx`              | `path("/blog/:slug", BlogPost, { name: "blogPost" })`         |
+| `app/routes/files.$.tsx` (splat)         | `path("/files/:path+", FileBrowser, { name: "files" })`       |
+| `app/routes/dashboard.tsx` (layout)      | `layout(<DashboardLayout />, () => [...])`                    |
+| `app/routes/dashboard._index.tsx`        | `path("/dashboard", DashboardIndex, { name: "dashboard" })`   |
+| `app/routes/dashboard.settings.tsx`      | `path("/dashboard/settings", Settings, { name: "settings" })` |
+| `app/routes/_auth.tsx` (pathless layout) | `layout(<AuthLayout />, () => [...])`                         |
+| `app/routes/_auth.login.tsx`             | `path("/login", LoginPage, { name: "login" })`                |
 
 ### Library mode: config routes → urls() DSL
 
-| React Router | Rango |
-|---|---|
-| `path: "/"` | `path("/", HomePage, { name: "home" })` |
-| `path: "about"` | `path("/about", AboutPage, { name: "about" })` |
-| `path: "blog/:slug"` | `path("/blog/:slug", BlogPost, { name: "blogPost" })` |
-| `path: "files/*"` (splat) | `path("/files/:path+", FileBrowser, { name: "files" })` |
-| `path: "docs/:lang?"` (optional param) | `path("/docs/:lang?", Docs, { name: "docs" })` |
+| React Router                           | Rango                                                   |
+| -------------------------------------- | ------------------------------------------------------- |
+| `path: "/"`                            | `path("/", HomePage, { name: "home" })`                 |
+| `path: "about"`                        | `path("/about", AboutPage, { name: "about" })`          |
+| `path: "blog/:slug"`                   | `path("/blog/:slug", BlogPost, { name: "blogPost" })`   |
+| `path: "files/*"` (splat)              | `path("/files/:path+", FileBrowser, { name: "files" })` |
+| `path: "docs/:lang?"` (optional param) | `path("/docs/:lang?", Docs, { name: "docs" })`          |
 
 ### Layouts
 
@@ -533,7 +533,7 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
     if (actionId) return true;
     return currentParams.slug !== nextParams.slug;
   }),
-])
+]);
 ```
 
 Note: RR7's `shouldRevalidate` controls client-side loader re-fetching. Rango's
@@ -555,8 +555,8 @@ export async function loader({ request }) {
 
 // Rango: router.use() for request-level auth
 const router = createRouter({})
-  .use(authInit)                        // all routes — resolves session
-  .use("/dashboard/*", requireAuth)     // scoped guard
+  .use(authInit) // all routes — resolves session
+  .use("/dashboard/*", requireAuth) // scoped guard
   .routes(urlpatterns);
 ```
 
@@ -624,18 +624,18 @@ layout(<ShopLayout />, () => [
 
 ## 6. Navigation
 
-| React Router | Rango |
-|---|---|
-| `import { Link } from "react-router-dom"` | `import { Link } from "@rangojs/router/client"` |
-| `<Link to="/about">` | `<Link to="/about">` |
-| `useNavigate()` | `useRouter()` from `@rangojs/router/client` |
-| `navigate("/about")` | `useRouter().push("/about")` |
-| `navigate("/about", { replace: true })` | `useRouter().replace("/about")` |
-| `navigate(-1)` | `useRouter().back()` |
-| `useLocation().pathname` | `usePathname()` from `@rangojs/router/client` |
-| `useSearchParams()` | `useSearchParams()` from `@rangojs/router/client` |
-| `useParams()` | `useParams()` from `@rangojs/router/client` (or `ctx.params` in server handlers) |
-| `<NavLink>` | `<Link>` with `usePathname()` for active state |
+| React Router                              | Rango                                                                            |
+| ----------------------------------------- | -------------------------------------------------------------------------------- |
+| `import { Link } from "react-router-dom"` | `import { Link } from "@rangojs/router/client"`                                  |
+| `<Link to="/about">`                      | `<Link to="/about">`                                                             |
+| `useNavigate()`                           | `useRouter()` from `@rangojs/router/client`                                      |
+| `navigate("/about")`                      | `useRouter().push("/about")`                                                     |
+| `navigate("/about", { replace: true })`   | `useRouter().replace("/about")`                                                  |
+| `navigate(-1)`                            | `useRouter().back()`                                                             |
+| `useLocation().pathname`                  | `usePathname()` from `@rangojs/router/client`                                    |
+| `useSearchParams()`                       | `useSearchParams()` from `@rangojs/router/client`                                |
+| `useParams()`                             | `useParams()` from `@rangojs/router/client` (or `ctx.params` in server handlers) |
+| `<NavLink>`                               | `<Link>` with `usePathname()` for active state                                   |
 
 ### useNavigate → useRouter
 
@@ -697,9 +697,13 @@ export async function loader() {
 }
 
 // Rango: response routes
-path.json("/api/users", async () => {
-  return await getUsers();
-}, { name: "apiUsers" })
+path.json(
+  "/api/users",
+  async () => {
+    return await getUsers();
+  },
+  { name: "apiUsers" },
+);
 ```
 
 See `/response-routes` for `path.json()`, `path.text()`, `path.html()`, etc.
@@ -731,17 +735,17 @@ See `/theme` for full API including system detection and cookie persistence.
 
 ## 10. Key Conceptual Differences
 
-| Concept | React Router | Rango |
-|---|---|---|
-| Rendering | Client-side by default, SSR opt-in | Server components by default (RSC) |
-| Data loading | `loader()` + `useLoaderData()` | Direct fetch in server components |
-| Form actions | Route-scoped `action()` | Function-scoped `"use server"` |
-| Route definition | File-based or `createBrowserRouter` | `urls()` DSL with `path()`, `layout()` |
-| Middleware | Not built-in (use loaders) | `router.use()` + DSL `middleware()` |
-| Parallel routes | Not built-in | `parallel()` DSL |
-| Intercepting routes | Not built-in | `intercept()` DSL |
-| Caching | Not built-in | `cache()` DSL, `"use cache"` |
-| Type-safe routes | Partial (v7 framework mode) | Full: params, names, href, reverse |
+| Concept             | React Router                        | Rango                                  |
+| ------------------- | ----------------------------------- | -------------------------------------- |
+| Rendering           | Client-side by default, SSR opt-in  | Server components by default (RSC)     |
+| Data loading        | `loader()` + `useLoaderData()`      | Direct fetch in server components      |
+| Form actions        | Route-scoped `action()`             | Function-scoped `"use server"`         |
+| Route definition    | File-based or `createBrowserRouter` | `urls()` DSL with `path()`, `layout()` |
+| Middleware          | Not built-in (use loaders)          | `router.use()` + DSL `middleware()`    |
+| Parallel routes     | Not built-in                        | `parallel()` DSL                       |
+| Intercepting routes | Not built-in                        | `intercept()` DSL                      |
+| Caching             | Not built-in                        | `cache()` DSL, `"use cache"`           |
+| Type-safe routes    | Partial (v7 framework mode)         | Full: params, names, href, reverse     |
 
 ## Migration Checklist
 

@@ -80,13 +80,13 @@ The Document component replaces `app/layout.tsx`'s `<html>` wrapper. See `/route
 
 ### File-based → URL pattern DSL
 
-| Next.js file path | Rango equivalent |
-|---|---|
-| `app/page.tsx` | `path("/", HomePage, { name: "home" })` |
-| `app/about/page.tsx` | `path("/about", AboutPage, { name: "about" })` |
-| `app/blog/[slug]/page.tsx` | `path("/blog/:slug", BlogPost, { name: "blogPost" })` |
-| `app/shop/[...path]/page.tsx` | `path("/shop/:path+", CatchAll, { name: "shopCatchAll" })` |
-| `app/docs/[[...slug]]/page.tsx` | `path("/docs/:slug*", Docs, { name: "docs" })` |
+| Next.js file path               | Rango equivalent                                           |
+| ------------------------------- | ---------------------------------------------------------- |
+| `app/page.tsx`                  | `path("/", HomePage, { name: "home" })`                    |
+| `app/about/page.tsx`            | `path("/about", AboutPage, { name: "about" })`             |
+| `app/blog/[slug]/page.tsx`      | `path("/blog/:slug", BlogPost, { name: "blogPost" })`      |
+| `app/shop/[...path]/page.tsx`   | `path("/shop/:path+", CatchAll, { name: "shopCatchAll" })` |
+| `app/docs/[[...slug]]/page.tsx` | `path("/docs/:slug*", Docs, { name: "docs" })`             |
 
 ### Layouts
 
@@ -222,6 +222,7 @@ const ProductPage: Handler<"product"> = async (ctx) => {
 ### When to use createLoader
 
 Loaders are Rango's live data layer. Use them when you need:
+
 - **Client-side data refresh** — `useLoader()` in client components for reactive data
 - **Per-loader caching** — opt in with `loader(MyLoader, () => [cache({ ttl: 60 })])`; loaders stay live by default
 - **Revalidation control** — `revalidate()` targets specific loaders after actions
@@ -301,18 +302,16 @@ re-rendering. This is about the segment tree, not cache invalidation:
 ```typescript
 // Re-run this layout when a blog action fires
 layout(BlogLayout, () => [
-  revalidate(({ actionId }) =>
-    actionId?.includes("updateBlog") ?? false
-  ),
+  revalidate(({ actionId }) => actionId?.includes("updateBlog") ?? false),
   path("/blog/:slug", BlogPost, { name: "blogPost" }),
-])
+]);
 
 // Re-run sidebar parallel when params change
 parallel({ "@sidebar": BlogSidebar }, () => [
-  revalidate(({ currentParams, nextParams }) =>
-    currentParams.slug !== nextParams.slug
+  revalidate(
+    ({ currentParams, nextParams }) => currentParams.slug !== nextParams.slug,
   ),
-])
+]);
 ```
 
 **Server-side caching** — `cache()` DSL, loader-level `cache()`, and `"use cache"`
@@ -321,7 +320,7 @@ control what gets cached and for how long. This is separate from `revalidate()`:
 ```typescript
 cache({ ttl: 60, swr: 300 }, () => [
   path("/blog/:slug", BlogPost, { name: "blogPost" }),
-])
+]);
 ```
 
 The key shift is:
@@ -373,18 +372,18 @@ const requireAuth: Middleware = async (ctx, next) => {
 };
 
 const router = createRouter({})
-  .use(authInit)                        // all routes — sets ctx user
-  .use("/dashboard/*", requireAuth)     // dashboard only — redirects
+  .use(authInit) // all routes — sets ctx user
+  .use("/dashboard/*", requireAuth) // dashboard only — redirects
   .routes(urlpatterns);
 ```
 
 **Rango has two middleware levels with different scopes:**
 
-| | `router.use()` | `middleware()` in DSL |
-|---|---|---|
-| Wraps | Entire request (actions + rendering) | Rendering only |
-| Use for | Auth guards, logging, CORS | Context shaping, render headers |
-| Next.js equivalent | `middleware.ts` | No direct equivalent |
+|                    | `router.use()`                       | `middleware()` in DSL           |
+| ------------------ | ------------------------------------ | ------------------------------- |
+| Wraps              | Entire request (actions + rendering) | Rendering only                  |
+| Use for            | Auth guards, logging, CORS           | Context shaping, render headers |
+| Next.js equivalent | `middleware.ts`                      | No direct equivalent            |
 
 Use `router.use()` for auth guards — it wraps the full request including actions.
 DSL `middleware()` can also guard rendering (e.g. redirect unauthenticated users
@@ -448,15 +447,15 @@ children in their scope — handlers, loaders, and nested segments.
 
 ## 6. Navigation
 
-| Next.js | Rango |
-|---|---|
-| `import Link from "next/link"` | `import { Link } from "@rangojs/router/client"` |
-| `<Link href="/about">` | `<Link to="/about">` |
-| `useRouter().push("/about")` | `useRouter().push("/about")` |
-| `useRouter().replace("/about")` | `useRouter().replace("/about")` |
-| `usePathname()` | `usePathname()` from `@rangojs/router/client` |
-| `useSearchParams()` | `useSearchParams()` from `@rangojs/router/client` |
-| `redirect("/login")` (server) | `redirect("/login")` from `@rangojs/router` |
+| Next.js                         | Rango                                             |
+| ------------------------------- | ------------------------------------------------- |
+| `import Link from "next/link"`  | `import { Link } from "@rangojs/router/client"`   |
+| `<Link href="/about">`          | `<Link to="/about">`                              |
+| `useRouter().push("/about")`    | `useRouter().push("/about")`                      |
+| `useRouter().replace("/about")` | `useRouter().replace("/about")`                   |
+| `usePathname()`                 | `usePathname()` from `@rangojs/router/client`     |
+| `useSearchParams()`             | `useSearchParams()` from `@rangojs/router/client` |
+| `redirect("/login")` (server)   | `redirect("/login")` from `@rangojs/router`       |
 
 ## 7. Server Actions
 
