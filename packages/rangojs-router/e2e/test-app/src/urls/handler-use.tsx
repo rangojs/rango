@@ -207,7 +207,7 @@ const RealSidebar: Handler = () => (
 // -- Slot descriptor `{ handler, use }` for per-slot loading() ---------------
 
 // Two slow slots so we can observe the loading state per slot.
-const SlowPanelLoader = createLoader(async () => {
+export const SlowPanelLoader = createLoader(async () => {
   await new Promise((r) => setTimeout(r, 300));
   return { section: "slow-panel-data" };
 });
