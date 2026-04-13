@@ -151,6 +151,53 @@ test.describe("handler.use (dev)", () => {
       "real-sidebar-content",
     );
   });
+
+  test("slot descriptor: per-slot loading() applies only to that slot", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/handler-use"));
+    await waitForHydration(page);
+
+    // Soft-navigate so the slow loaders trigger streaming.
+    await page.getByTestId("link-to-slot-descriptor").click();
+
+    // @sidebar's slot-local loading() shows; @panel has none and does not.
+    await expect(page.getByTestId("descriptor-sidebar-loading")).toBeVisible();
+
+    // After the slow loaders resolve both slots render their content.
+    await expect(page.getByTestId("descriptor-sidebar-section")).toHaveText(
+      "slow-sidebar-data",
+    );
+    await expect(page.getByTestId("descriptor-panel-section")).toHaveText(
+      "slow-panel-data",
+    );
+  });
+
+  test("slot descriptor: loading(false) opts one slot out while sibling streams", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/handler-use"));
+    await waitForHydration(page);
+
+    await page.getByTestId("link-to-slot-opt-out").click();
+
+    // @panel still gets the broadcast skeleton; @sidebar's slot-local
+    // loading(false) cancels the broadcast for that slot only.
+    await expect(page.getByTestId("opt-out-broadcast-loading")).toBeVisible();
+
+    // The opted-out @sidebar awaits its loader before render — its skeleton
+    // never appears (there is none).
+    await expect(page.getByTestId("descriptor-sidebar-section")).toHaveText(
+      "slow-sidebar-data",
+    );
+    await expect(page.getByTestId("descriptor-panel-section")).toHaveText(
+      "slow-panel-data",
+    );
+  });
 });
 
 // -- Production build --------------------------------------------------------
@@ -297,6 +344,46 @@ test.describe("handler.use (production)", () => {
     );
     await expect(page.getByTestId("real-sidebar-text")).toHaveText(
       "real-sidebar-content",
+    );
+  });
+
+  test("slot descriptor: per-slot loading() applies only to that slot", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/handler-use"));
+    await waitForHydration(page);
+
+    await page.getByTestId("link-to-slot-descriptor").click();
+
+    await expect(page.getByTestId("descriptor-sidebar-loading")).toBeVisible();
+
+    await expect(page.getByTestId("descriptor-sidebar-section")).toHaveText(
+      "slow-sidebar-data",
+    );
+    await expect(page.getByTestId("descriptor-panel-section")).toHaveText(
+      "slow-panel-data",
+    );
+  });
+
+  test("slot descriptor: loading(false) opts one slot out while sibling streams", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/handler-use"));
+    await waitForHydration(page);
+
+    await page.getByTestId("link-to-slot-opt-out").click();
+
+    await expect(page.getByTestId("opt-out-broadcast-loading")).toBeVisible();
+
+    await expect(page.getByTestId("descriptor-sidebar-section")).toHaveText(
+      "slow-sidebar-data",
+    );
+    await expect(page.getByTestId("descriptor-panel-section")).toHaveText(
+      "slow-panel-data",
     );
   });
 });

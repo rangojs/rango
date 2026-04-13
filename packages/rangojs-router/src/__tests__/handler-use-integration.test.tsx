@@ -352,6 +352,240 @@ describe("handler.use integration", () => {
         /handler\.use\(\) returned middleware\(\).*parallel\(\)/,
       );
     });
+
+    // -------------------------------------------------------------------
+    // Per-slot use via slot descriptor `{ handler, use }`
+    // -------------------------------------------------------------------
+
+    it("slot-local use applies only to that slot, not siblings", () => {
+      const SidebarLoading = <div>Sidebar Loading</div>;
+      const Sidebar: Handler = () => <div>Sidebar</div>;
+      const Main: Handler = () => <div>Main</div>;
+
+      const urlPatterns = urls(({ path }) => [
+        layout(
+          () => <div>Layout</div>,
+          () => [
+            path("/", () => <div>Home</div>, { name: "home" }),
+            parallel({
+              "@sidebar": {
+                handler: Sidebar,
+                use: () => [loading(SidebarLoading)],
+              },
+              "@main": Main,
+            }),
+          ],
+        ),
+      ]);
+
+      runInContext(ctx, () => urlPatterns.handler());
+      const entry = ctx.manifest.get("home");
+      let layoutEntry = entry!.parent;
+      while (layoutEntry && layoutEntry.type !== "layout") {
+        layoutEntry = layoutEntry.parent;
+      }
+
+      const sidebarEntry = layoutEntry?.parallel?.["@sidebar"];
+      const mainEntry = layoutEntry?.parallel?.["@main"];
+
+      // Only @sidebar gets the loading; @main is untouched
+      expect(sidebarEntry!.loading).toBe(SidebarLoading);
+      expect(mainEntry!.loading).toBeUndefined();
+    });
+
+    it("slot-local loading wins over shared (broadcast) loading", () => {
+      const SharedLoading = <div>Shared</div>;
+      const SlotLoading = <div>Slot Local</div>;
+      const Sidebar: Handler = () => <div>Sidebar</div>;
+      const Main: Handler = () => <div>Main</div>;
+
+      const urlPatterns = urls(({ path }) => [
+        layout(
+          () => <div>Layout</div>,
+          () => [
+            path("/", () => <div>Home</div>, { name: "home" }),
+            parallel(
+              {
+                "@sidebar": {
+                  handler: Sidebar,
+                  use: () => [loading(SlotLoading)],
+                },
+                "@main": Main,
+              },
+              () => [loading(SharedLoading)],
+            ),
+          ],
+        ),
+      ]);
+
+      runInContext(ctx, () => urlPatterns.handler());
+      const entry = ctx.manifest.get("home");
+      let layoutEntry = entry!.parent;
+      while (layoutEntry && layoutEntry.type !== "layout") {
+        layoutEntry = layoutEntry.parent;
+      }
+
+      const sidebarEntry = layoutEntry?.parallel?.["@sidebar"];
+      const mainEntry = layoutEntry?.parallel?.["@main"];
+
+      // narrowest-wins: slot-local beats broadcast on @sidebar
+      expect(sidebarEntry!.loading).toBe(SlotLoading);
+      // @main has no slot-local; broadcast applies
+      expect(mainEntry!.loading).toBe(SharedLoading);
+    });
+
+    it("slot-local loading(false) opts a slot out while siblings still stream", () => {
+      const SharedLoading = <div>Shared</div>;
+      const Sidebar: Handler = () => <div>Sidebar</div>;
+      const Main: Handler = () => <div>Main</div>;
+
+      const urlPatterns = urls(({ path }) => [
+        layout(
+          () => <div>Layout</div>,
+          () => [
+            path("/", () => <div>Home</div>, { name: "home" }),
+            parallel(
+              {
+                "@sidebar": {
+                  handler: Sidebar,
+                  use: () => [loading(false)],
+                },
+                "@main": Main,
+              },
+              () => [loading(SharedLoading)],
+            ),
+          ],
+        ),
+      ]);
+
+      runInContext(ctx, () => urlPatterns.handler());
+      const entry = ctx.manifest.get("home");
+      let layoutEntry = entry!.parent;
+      while (layoutEntry && layoutEntry.type !== "layout") {
+        layoutEntry = layoutEntry.parent;
+      }
+
+      const sidebarEntry = layoutEntry?.parallel?.["@sidebar"];
+      const mainEntry = layoutEntry?.parallel?.["@main"];
+
+      // Slot opted out → no streaming for this slot
+      expect(sidebarEntry!.loading).toBe(false);
+      // Sibling still gets the broadcast skeleton
+      expect(mainEntry!.loading).toBe(SharedLoading);
+    });
+
+    it("merge order: handler.use → shared use → slot-local use", () => {
+      const HandlerLoading = <div>Handler</div>;
+      const SharedLoading = <div>Shared</div>;
+      const SlotLoading = <div>Slot</div>;
+
+      const Sidebar: Handler = Object.assign(() => <div>Sidebar</div>, {
+        use: () => [loading(HandlerLoading)],
+      });
+
+      const urlPatterns = urls(({ path }) => [
+        layout(
+          () => <div>Layout</div>,
+          () => [
+            path("/", () => <div>Home</div>, { name: "home" }),
+            parallel(
+              {
+                "@sidebar": {
+                  handler: Sidebar,
+                  use: () => [loading(SlotLoading)],
+                },
+              },
+              () => [loading(SharedLoading)],
+            ),
+          ],
+        ),
+      ]);
+
+      runInContext(ctx, () => urlPatterns.handler());
+      const entry = ctx.manifest.get("home");
+      let layoutEntry = entry!.parent;
+      while (layoutEntry && layoutEntry.type !== "layout") {
+        layoutEntry = layoutEntry.parent;
+      }
+
+      const sidebarEntry = layoutEntry?.parallel?.["@sidebar"];
+      // All three layers run; last one wins for single-assignment loading()
+      expect(sidebarEntry!.loading).toBe(SlotLoading);
+    });
+
+    it("accumulating items from all three layers compose for the slot", () => {
+      const handlerRevalidate = () => true;
+      const sharedRevalidate = () => true;
+      const slotRevalidate = () => true;
+      const Sidebar: Handler = Object.assign(() => <div>Sidebar</div>, {
+        use: () => [revalidate(handlerRevalidate)],
+      });
+
+      const urlPatterns = urls(({ path }) => [
+        layout(
+          () => <div>Layout</div>,
+          () => [
+            path("/", () => <div>Home</div>, { name: "home" }),
+            parallel(
+              {
+                "@sidebar": {
+                  handler: Sidebar,
+                  use: () => [revalidate(slotRevalidate)],
+                },
+              },
+              () => [revalidate(sharedRevalidate)],
+            ),
+          ],
+        ),
+      ]);
+
+      runInContext(ctx, () => urlPatterns.handler());
+      const entry = ctx.manifest.get("home");
+      let layoutEntry = entry!.parent;
+      while (layoutEntry && layoutEntry.type !== "layout") {
+        layoutEntry = layoutEntry.parent;
+      }
+
+      const sidebarEntry = layoutEntry?.parallel?.["@sidebar"];
+      // All three accumulate
+      expect(sidebarEntry!.revalidate).toContain(handlerRevalidate);
+      expect(sidebarEntry!.revalidate).toContain(sharedRevalidate);
+      expect(sidebarEntry!.revalidate).toContain(slotRevalidate);
+    });
+
+    it("slot-local use is treated as explicit (mount-site authored), not validated against the handler.use allow-list", () => {
+      // Slot-local use is authored at the mount site like the shared use
+      // callback — both bypass the handler.use mount-site validation, which
+      // exists because handlers don't know their mount site at definition
+      // time. The user authoring `parallel({...})` knows where they are.
+      const RevalSidebar: Handler = () => <div>Sidebar</div>;
+      const reval = () => true;
+
+      const urlPatterns = urls(({ path }) => [
+        layout(
+          () => <div>Layout</div>,
+          () => [
+            path("/", () => <div>Home</div>, { name: "home" }),
+            parallel({
+              "@sidebar": {
+                handler: RevalSidebar,
+                use: () => [revalidate(reval)],
+              },
+            }),
+          ],
+        ),
+      ]);
+
+      expect(() =>
+        runInContext(ctx, () => urlPatterns.handler()),
+      ).not.toThrow();
+      const entry = ctx.manifest.get("home");
+      let layoutEntry = entry!.parent;
+      while (layoutEntry && layoutEntry.type !== "layout") {
+        layoutEntry = layoutEntry.parent;
+      }
+      expect(layoutEntry?.parallel?.["@sidebar"]?.revalidate).toContain(reval);
+    });
   });
 
   // -----------------------------------------------------------------------

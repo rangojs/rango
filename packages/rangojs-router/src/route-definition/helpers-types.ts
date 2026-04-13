@@ -123,7 +123,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   "@main": async (ctx) => <MainContent data={ctx.use(DataLoader)} />,
    * })
    *
-   * // With loaders and loading states
+   * // With loaders and loading states (broadcast to every slot)
    * parallel({
    *   "@analytics": AnalyticsPanel,
    *   "@metrics": MetricsPanel,
@@ -131,12 +131,36 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   loader(DashboardLoader),
    *   loading(<DashboardSkeleton />),
    * ])
+   *
+   * // Per-slot scoped use via slot descriptor — for single-assignment items
+   * // like loading() that should not broadcast to siblings.
+   * parallel({
+   *   "@meta": MetaSlot,
+   *   "@sidebar": {
+   *     handler: SidebarSlot,
+   *     use: () => [loading(<SidebarSkeleton />)],
+   *   },
+   * })
    * ```
    * @param slots - Object with slot names (prefixed with @) mapped to handlers
+   *                or `{ handler, use? }` slot descriptors.
    * @param use - Optional callback for loaders, loading, revalidate, etc.
+   *              Items here apply to every slot in the call (broadcast).
+   *              For per-slot single-assignment items, use the slot descriptor's
+   *              own `use` callback — slot-local items run after the broadcast,
+   *              so they take precedence on `loading()` and other last-write-wins
+   *              fields.
    */
   parallel: <
-    TSlots extends Record<`@${string}`, Handler<any, any, TEnv> | ReactNode>,
+    TSlots extends Record<
+      `@${string}`,
+      | Handler<any, any, TEnv>
+      | ReactNode
+      | {
+          handler: Handler<any, any, TEnv> | ReactNode;
+          use?: () => UseItems<ParallelUseItem>;
+        }
+    >,
   >(
     slots: TSlots,
     use?: () => UseItems<ParallelUseItem>,
