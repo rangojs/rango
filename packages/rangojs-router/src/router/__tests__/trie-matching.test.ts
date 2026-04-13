@@ -144,4 +144,161 @@ describe("tryTrieMatch", () => {
       expect(result?.params).toEqual({ name: "hello%20world" });
     });
   });
+
+  describe("optional middle params followed by a required tail", () => {
+    // Regression: with the trie matcher, a chain of optional params followed by
+    // a required tail param used to silently mis-assign captures positionally
+    // to the front of `pa`, leaving the tail param undefined.
+    // The regex matcher (compilePattern) returns the right answer; the trie
+    // must match it.
+
+    it("places the lone segment in the required tail when all optionals are skipped", () => {
+      const trie = buildTestTrie({
+        category: "/shop/:b1?/:b2?/:b3?/:b4?/:b5?/:b6?/:categoryId",
+      });
+
+      const result = tryTrieMatch(trie, "/shop/tops");
+      expect(result?.routeKey).toBe("category");
+      expect(result?.params).toEqual({
+        b1: "",
+        b2: "",
+        b3: "",
+        b4: "",
+        b5: "",
+        b6: "",
+        categoryId: "tops",
+      });
+    });
+
+    it("fills optionals left-to-right and binds the required tail to the last segment", () => {
+      const trie = buildTestTrie({
+        category: "/shop/:b1?/:b2?/:b3?/:b4?/:b5?/:b6?/:categoryId",
+      });
+
+      expect(tryTrieMatch(trie, "/shop/women/dresses")?.params).toEqual({
+        b1: "women",
+        b2: "",
+        b3: "",
+        b4: "",
+        b5: "",
+        b6: "",
+        categoryId: "dresses",
+      });
+
+      expect(
+        tryTrieMatch(trie, "/shop/women/clothing/dresses")?.params,
+      ).toEqual({
+        b1: "women",
+        b2: "clothing",
+        b3: "",
+        b4: "",
+        b5: "",
+        b6: "",
+        categoryId: "dresses",
+      });
+    });
+
+    it("binds every slot when all optionals are filled", () => {
+      const trie = buildTestTrie({
+        category: "/shop/:b1?/:b2?/:b3?/:b4?/:b5?/:b6?/:categoryId",
+      });
+
+      expect(tryTrieMatch(trie, "/shop/a/b/c/d/e/f/dresses")?.params).toEqual({
+        b1: "a",
+        b2: "b",
+        b3: "c",
+        b4: "d",
+        b5: "e",
+        b6: "f",
+        categoryId: "dresses",
+      });
+    });
+
+    it("works for a smaller chain too (3 optionals + required tail)", () => {
+      const trie = buildTestTrie({
+        cat: "/shop/:b1?/:b2?/:b3?/:categoryId",
+      });
+
+      expect(tryTrieMatch(trie, "/shop/tops")?.params).toEqual({
+        b1: "",
+        b2: "",
+        b3: "",
+        categoryId: "tops",
+      });
+      expect(tryTrieMatch(trie, "/shop/women/dresses")?.params).toEqual({
+        b1: "women",
+        b2: "",
+        b3: "",
+        categoryId: "dresses",
+      });
+      expect(tryTrieMatch(trie, "/shop/a/b/c/dresses")?.params).toEqual({
+        b1: "a",
+        b2: "b",
+        b3: "c",
+        categoryId: "dresses",
+      });
+    });
+
+    it("handles a single optional before a required (no static prefix)", () => {
+      const trie = buildTestTrie({
+        x: "/:a?/:b",
+      });
+
+      expect(tryTrieMatch(trie, "/only")?.params).toEqual({
+        a: "",
+        b: "only",
+      });
+      expect(tryTrieMatch(trie, "/foo/bar")?.params).toEqual({
+        a: "foo",
+        b: "bar",
+      });
+    });
+
+    it("respects constraints on an optional before the required tail", () => {
+      const trie = buildTestTrie({
+        post: "/:locale(en|gb)?/:slug",
+      });
+
+      // optional absent → bind only :slug
+      expect(tryTrieMatch(trie, "/hello")?.params).toEqual({
+        locale: "",
+        slug: "hello",
+      });
+      // optional present, satisfies constraint
+      expect(tryTrieMatch(trie, "/en/hello")?.params).toEqual({
+        locale: "en",
+        slug: "hello",
+      });
+      // optional present, violates constraint → reject
+      expect(tryTrieMatch(trie, "/de/hello")).toBeNull();
+    });
+
+    it("handles required → optionals → required (mixed shape)", () => {
+      const trie = buildTestTrie({
+        m: "/:nonopt/:a?/:b?/:nonopt2",
+      });
+
+      // 2 segments: only the two required slots are bound
+      expect(tryTrieMatch(trie, "/X/Y")?.params).toEqual({
+        nonopt: "X",
+        a: "",
+        b: "",
+        nonopt2: "Y",
+      });
+      // 3 segments: greedy-left fills :a, :b stays empty
+      expect(tryTrieMatch(trie, "/X/Y/Z")?.params).toEqual({
+        nonopt: "X",
+        a: "Y",
+        b: "",
+        nonopt2: "Z",
+      });
+      // 4 segments: both optionals filled
+      expect(tryTrieMatch(trie, "/X/Y/Z/W")?.params).toEqual({
+        nonopt: "X",
+        a: "Y",
+        b: "Z",
+        nonopt2: "W",
+      });
+    });
+  });
 });
