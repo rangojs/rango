@@ -175,7 +175,7 @@ parallel({
 
 ### Two scopes for explicit `use` at the mount site: shared (broadcast) and slot-local
 
-`parallel()` accepts an explicit `use()` callback that **broadcasts** to every slot in the call ([dsl-helpers.ts](../../src/route-definition/dsl-helpers.ts)). That's the right behavior for items that accumulate (loaders, middleware, revalidate, error/notFound boundaries) — every slot gets them.
+`parallel()` accepts an explicit `use()` callback that **broadcasts** to every slot in the call ([dsl-helpers.ts](../../src/route-definition/dsl-helpers.ts)). That's the right behavior for the items the parallel allow-list permits and that accumulate (`loader`, `revalidate`, `errorBoundary`, `notFoundBoundary`, `transition`) — every slot gets them. (Note: `middleware` is not allowed inside `parallel()`; see the allowed-types table above.)
 
 For single-assignment items like `loading()`, broadcasting overwrites every slot's `handler.use` default. Pass a **slot descriptor** `{ handler, use }` instead: items in the descriptor's `use` apply only to that slot.
 
@@ -327,7 +327,7 @@ parallel(
 );
 ```
 
-Per-slot merge order is **handler.use → shared use → slot-local use**. Slot-local is the narrowest scope, so it wins for last-write-wins items like `loading()`. Items that accumulate (`loader`, `middleware`, `revalidate`, `errorBoundary`, `notFoundBoundary`) compose across all three layers regardless.
+Per-slot merge order is **handler.use → shared use → slot-local use**. Slot-local is the narrowest scope, so it wins for last-write-wins items like `loading()`. Items that accumulate within the parallel allow-list (`loader`, `revalidate`, `errorBoundary`, `notFoundBoundary`, `transition`) compose across all three layers regardless.
 
 Other things to keep in mind about `loading()`:
 
