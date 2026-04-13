@@ -15,7 +15,7 @@ Canonical implementation reference:
 
 ## Defining a handler with `.use`
 
-Attach `.use` to the function (or to the branded definition for `static()`/`prerender()`/`passthrough()`):
+Attach `.use` to the function (or to the branded definition for `Static()`/`Prerender()`/`Passthrough()`):
 
 ```typescript
 import {
@@ -271,10 +271,50 @@ QuickViewModal.use = () => [
 ];
 ```
 
+## `loading()` is a special case — call this out
+
+Most `use` items accumulate when merged: `handler.use` `middleware()` runs _and_ explicit `middleware()` runs; both `loader()` registrations apply. `loading()` is different.
+
+`loading()` mutates the segment in place — each call sets `entry.loading` and the **last call wins** ([dsl-helpers.ts](../../src/route-definition/dsl-helpers.ts)). Combined with the merge order (`handler.use` first, explicit second), this gives one useful behavior and one footgun:
+
+- **Useful:** explicit `loading()` at the mount site cleanly overrides the handler's default skeleton — exactly the override pattern shown above.
+- **Footgun:** any `loading()` (regardless of source) makes the segment a streaming unit. A handler that includes `loading()` in its `.use` opts every mount site into streaming **by default** — there's no way to "remove" it from the mount site, only to replace it. To explicitly opt back out, pass `loading(false)` (no skeleton, await loaders before render — see `loading: false` handling in [match-middleware/segment-resolution.ts](../../src/router/match-middleware/segment-resolution.ts)).
+
+```typescript
+const Sidebar: Handler = async (ctx) => {
+  const data = await ctx.use(SidebarLoader);
+  return <Sidebar data={data} />;
+};
+Sidebar.use = () => [
+  loader(SidebarLoader),
+  loading(<DefaultSkeleton />), // ← opts EVERY mount into streaming
+];
+
+// Streams (handler.use loading wins):
+parallel({ "@sidebar": Sidebar });
+
+// Streams with a different skeleton (explicit replaces):
+parallel({ "@sidebar": Sidebar }, () => [loading(<SiteSkeleton />)]);
+
+// Awaits loaders, no skeleton (must explicitly disable):
+parallel({ "@sidebar": Sidebar }, () => [loading(false)]);
+```
+
+Rule of thumb: only put `loading()` in `handler.use` if every mount site really should stream. Otherwise leave it off and let each mount site opt in.
+
 ## Edge cases & gotchas
 
 - **ReactNode handlers cannot have `.use`.** A bare JSX element passed as a handler (e.g., `path("/about", <About />)`) has no function to attach properties to. Pass a function or branded definition instead.
-- **Branded handlers** — `static()`, `prerender()`, and `passthrough()` definitions accept a `use` field on the definition object directly: `prerender({ handler, use: () => [...] })`.
+- **Branded handlers** — `Static()`, `Prerender()`, and `Passthrough()` are positional constructors (not object-arg). Construct first, then attach `.use` to the returned definition:
+
+  ```typescript
+  const ProductPage = Prerender(async (ctx) => {
+    const product = await fetchProduct(ctx.params.slug);
+    return <ProductView product={product} />;
+  });
+  ProductPage.use = () => [loader(ProductLoader)];
+  ```
+
 - **Items can be flat or nested arrays.** `handler.use()` results are flattened with `.flat(3)` before validation, so factory helpers that return arrays inline work the same as in regular `use()` callbacks.
 - **Validation runs at registration / first match**, not at handler definition. A handler doesn't know its mount site at definition time — the same handler used in a `path()` and an `intercept()` is validated against each mount's allowed-types set when registered.
 - **No silent shadowing.** If a disallowed item slips through (e.g., a layout factory returning `cache()` from a slot's `handler.use`), the runtime throws with the offending type and mount site named.
