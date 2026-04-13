@@ -206,6 +206,49 @@ parallel(
 )
 ```
 
+## Composable Slots via `handler.use`
+
+Slot handlers can carry their own loader, loading, error/notFound boundaries, revalidation, and transition defaults via `.use`. The mount site then declares **just the slot names** — no per-call data wiring.
+
+```typescript
+const CartSummary: Handler = async (ctx) => {
+  const cart = await ctx.use(CartLoader);
+  return <CartSummaryView cart={cart} />;
+};
+CartSummary.use = () => [
+  loader(CartLoader),
+  loading(<CartSkeleton />),
+  revalidate(revalidateCartData),
+];
+
+// Same slot, no copy-pasted plumbing across layouts.
+layout(<DashboardLayout />, () => [
+  parallel({ "@cart": CartSummary }),
+  path("/dashboard", DashboardIndex, { name: "dashboard.index" }),
+]);
+
+layout(<AccountLayout />, () => [
+  parallel({ "@cart": CartSummary }),
+  path("/account", AccountIndex, { name: "account.index" }),
+]);
+```
+
+A slot's `loading()` (whether from `handler.use` or explicit) makes that slot an independent streaming unit, exactly as in the **Streaming Behavior** section above.
+
+The `parallel` mount site has the narrowest allow-list for `handler.use` items — slots cannot bring their own middleware or layout, only `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, and `transition`. See [skills/handler-use](../handler-use/SKILL.md) for the full table and merge rules.
+
+### Per-slot override at the mount site
+
+Explicit `parallel(..., () => [...])` items override the slot's defaults item-by-item. Example: replace the default skeleton at one mount while keeping the slot's loader.
+
+```typescript
+parallel({ "@sidebar": OverrideSidebar }, () => [
+  // Replaces handler.use's loading() for this mount only;
+  // loader from handler.use still runs.
+  loading(<SiteSpecificSidebarSkeleton />),
+]);
+```
+
 ## Slot Override Semantics
 
 When multiple `parallel()` calls define the same slot name, **the last

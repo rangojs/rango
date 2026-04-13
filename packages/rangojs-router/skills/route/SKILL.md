@@ -383,6 +383,30 @@ urls(({ path, layout }) => [
 ])
 ```
 
+## Handler-attached `.use`
+
+Page handlers can carry their own loader, middleware, error boundaries, parallels, and other defaults via a `.use` callback — so the page is self-contained and reusable across mount sites without re-wiring the same items.
+
+```typescript
+const ProductPage: Handler<"/product/:slug"> = async (ctx) => {
+  const product = await ctx.use(ProductLoader);
+  return <ProductView product={product} />;
+};
+ProductPage.use = () => [
+  loader(ProductLoader),
+  loading(<ProductSkeleton />),
+  middleware(async (ctx, next) => {
+    await next();
+    ctx.header("Cache-Control", "private, max-age=60");
+  }),
+];
+
+// Mount site has no per-page wiring — defaults travel with the handler.
+path("/product/:slug", ProductPage, { name: "product" });
+```
+
+Explicit `use()` at the mount site merges with `handler.use` (handler defaults first, explicit second). See [skills/handler-use](../handler-use/SKILL.md) for the merge order, allowed item types per mount site, and override semantics.
+
 ## Complete Example
 
 ```typescript
