@@ -237,17 +237,25 @@ A slot's `loading()` (whether from `handler.use` or explicit) makes that slot an
 
 The `parallel` mount site has the narrowest allow-list for `handler.use` items — slots cannot bring their own middleware or layout, only `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, and `transition`. See [skills/handler-use](../handler-use/SKILL.md) for the full table and merge rules.
 
-### Per-slot override at the mount site
+### Mount-site overrides are broadcast to every slot in the call
 
-Explicit `parallel(..., () => [...])` items override the slot's defaults item-by-item. Example: replace the default skeleton at one mount while keeping the slot's loader.
+`parallel({...slots}, () => [...use])` runs the explicit `use()` callback **once per slot** ([dsl-helpers.ts](../../src/route-definition/dsl-helpers.ts)) — items in that callback land on every slot's entry, not just one. That works fine for items that accumulate (`loader`, `revalidate`, `errorBoundary`), but it **breaks the per-slot story for `loading()`** because `loading()` is a single assignment to the segment (last write wins).
 
 ```typescript
-parallel({ "@sidebar": OverrideSidebar }, () => [
-  // Replaces handler.use's loading() for this mount only;
-  // loader from handler.use still runs.
-  loading(<SiteSpecificSidebarSkeleton />),
+// ❌ Both slots get <GenericSkeleton />, replacing each handler.use loading.
+parallel({ "@cart": Cart, "@notifs": Notifs }, () => [
+  loading(<GenericSkeleton />),
 ]);
+
+// ✅ Each slot keeps its own handler.use loading default.
+parallel({ "@cart": Cart, "@notifs": Notifs });
+
+// ✅ To override one slot's loading, mount it in its own parallel() call.
+parallel({ "@cart": Cart }, () => [loading(<CustomCartSkeleton />)]);
+parallel({ "@notifs": Notifs });
 ```
+
+Same caveat applies to `loading(false)` — broadcast in a multi-slot call removes the skeleton from every slot. See [skills/handler-use § `loading()` is a special case](../handler-use/SKILL.md#loading-is-a-special-case--and-breaks-the-multi-slot-composition) for the full reasoning.
 
 ## Slot Override Semantics
 

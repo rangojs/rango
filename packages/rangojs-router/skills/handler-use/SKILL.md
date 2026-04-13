@@ -173,31 +173,30 @@ parallel({
 });
 ```
 
-### Per-slot override at the mount site
+### Mount-site overrides are broadcast to every slot in the call
 
-When you need a one-off behavior change at a single mount site, the explicit `parallel(..., () => [...])` items override the slot's defaults item-by-item.
+`parallel({...slots}, () => [...use])` runs the explicit `use()` callback **once per slot**, with the same items applied to each slot's entry ([dsl-helpers.ts](../../src/route-definition/dsl-helpers.ts)). That works fine for items that accumulate (loaders, revalidate). It is a sharp edge for `loading()` and any other single-assignment item, because the same mount-site value lands on every slot.
 
 ```typescript
-const SlowSidebarLoader = createLoader(async () => {
-  await new Promise((r) => setTimeout(r, 300));
-  return { section: "slow-sidebar-data" };
-});
-
-const OverrideSidebar: Handler = async (ctx) => {
-  const data = await ctx.use(SlowSidebarLoader);
-  return <Sidebar data={data} />;
-};
-OverrideSidebar.use = () => [
-  loader(SlowSidebarLoader),
-  loading(<DefaultSkeleton />),  // default
-];
-
-parallel({ "@sidebar": OverrideSidebar }, () => [
-  // The default skeleton is replaced for this mount only;
-  // the loader from handler.use still runs.
-  loading(<SiteSidebarSkeleton />),
+parallel({ "@cart": CartSummary, "@notifs": Notifs }, () => [
+  // This loading skeleton is set on BOTH @cart AND @notifs, replacing
+  // each slot's handler.use loading() default. There is no syntax for
+  // "this loading is for @cart only" inside one parallel() call.
+  loading(<GenericSkeleton />),
 ]);
 ```
+
+If you want per-slot loading overrides, mount each slot in its own `parallel()` call:
+
+```typescript
+// @cart gets a custom skeleton; @notifs keeps its handler.use loading().
+parallel({ "@cart": CartSummary }, () => [loading(<CartSkeleton />)]);
+parallel({ "@notifs": Notifs });
+```
+
+The same applies to `loading(false)` (opting back out of streaming): if you put it in a multi-slot `parallel()` call, every slot loses its skeleton. Split the call to scope the opt-out.
+
+For items that accumulate (`loader`, `middleware`, `revalidate`, `errorBoundary`, `notFoundBoundary`), the broadcast behavior is usually what you want — the explicit items run for every slot in addition to each slot's own `handler.use` items.
 
 ### Replacing a whole slot from a parent's `handler.use`
 
@@ -271,36 +270,49 @@ QuickViewModal.use = () => [
 ];
 ```
 
-## `loading()` is a special case — call this out
+## `loading()` is a special case — and breaks the multi-slot composition
 
-Most `use` items accumulate when merged: `handler.use` `middleware()` runs _and_ explicit `middleware()` runs; both `loader()` registrations apply. `loading()` is different.
+Most `use` items accumulate when merged: `handler.use` `middleware()` runs _and_ explicit `middleware()` runs; both `loader()` registrations apply. `loading()` is different in two ways that interact badly with parallel slots.
 
-`loading()` mutates the segment in place — each call sets `entry.loading` and the **last call wins** ([dsl-helpers.ts](../../src/route-definition/dsl-helpers.ts)). Combined with the merge order (`handler.use` first, explicit second), this gives one useful behavior and one footgun:
+**1. `loading()` is a single assignment, not compositional metadata.** Each call sets `entry.loading` directly, and the last call wins ([dsl-helpers.ts `loadingFn`](../../src/route-definition/dsl-helpers.ts)). With the merge order (`handler.use` first, explicit second), an explicit `loading()` at the mount site cleanly replaces the handler's default skeleton. So far so good.
 
-- **Useful:** explicit `loading()` at the mount site cleanly overrides the handler's default skeleton — exactly the override pattern shown above.
-- **Footgun:** any `loading()` (regardless of source) makes the segment a streaming unit. A handler that includes `loading()` in its `.use` opts every mount site into streaming **by default** — there's no way to "remove" it from the mount site, only to replace it. To explicitly opt back out, pass `loading(false)` (no skeleton, await loaders before render — see `loading: false` handling in [match-middleware/segment-resolution.ts](../../src/router/match-middleware/segment-resolution.ts)).
+**2. The mount-site `parallel(..., () => [...])` callback is broadcast to every slot.** As described above, `parallel()` runs the explicit `use()` callback once per slot, with the same items applied to each slot's entry. Combined with single-assignment `loading()`, this means a single `loading()` in a multi-slot `parallel()` overwrites every slot's `handler.use` loading default.
+
+The "slot owns its own skeleton" composition story therefore **only holds when each slot lives in its own `parallel()` call**. Multi-slot calls share the explicit `loading()`.
 
 ```typescript
-const Sidebar: Handler = async (ctx) => {
-  const data = await ctx.use(SidebarLoader);
-  return <Sidebar data={data} />;
-};
-Sidebar.use = () => [
-  loader(SidebarLoader),
-  loading(<DefaultSkeleton />), // ← opts EVERY mount into streaming
-];
+const Cart: Handler = async (ctx) => { /* … */ };
+Cart.use = () => [loader(CartLoader), loading(<CartSkeleton />)];
 
-// Streams (handler.use loading wins):
-parallel({ "@sidebar": Sidebar });
+const Notifs: Handler = async (ctx) => { /* … */ };
+Notifs.use = () => [loader(NotifsLoader), loading(<NotifsSkeleton />)];
 
-// Streams with a different skeleton (explicit replaces):
-parallel({ "@sidebar": Sidebar }, () => [loading(<SiteSkeleton />)]);
+// ❌ Broken — both slots end up with <GenericSkeleton />, the explicit
+// loading() is broadcast to @cart AND @notifs, replacing each handler.use
+// default. There is no syntax to scope loading() to one slot here.
+parallel({ "@cart": Cart, "@notifs": Notifs }, () => [
+  loading(<GenericSkeleton />),
+]);
 
-// Awaits loaders, no skeleton (must explicitly disable):
-parallel({ "@sidebar": Sidebar }, () => [loading(false)]);
+// ✅ Each slot keeps its own handler.use loading.
+parallel({ "@cart": Cart, "@notifs": Notifs });
+
+// ✅ Per-slot override — split into separate parallel() calls.
+parallel({ "@cart": Cart }, () => [loading(<CustomCartSkeleton />)]);
+parallel({ "@notifs": Notifs });
 ```
 
-Rule of thumb: only put `loading()` in `handler.use` if every mount site really should stream. Otherwise leave it off and let each mount site opt in.
+The same applies to `loading(false)` (opting back out of streaming): in a multi-slot call, every slot loses its skeleton.
+
+**Other gotchas that fall out of this:**
+
+- Any `loading()` (regardless of source) makes the segment a streaming unit. A handler that includes `loading()` in its `.use` opts every mount site into streaming by default. There is no way to "remove" it at the mount site — only to replace it, or to pass `loading(false)` (`loading: false` handling in [match-middleware/segment-resolution.ts](../../src/router/match-middleware/segment-resolution.ts)).
+- Items that accumulate (`loader`, `middleware`, `revalidate`, `errorBoundary`, `notFoundBoundary`) compose across the broadcast cleanly — explicit items run on every slot in addition to each slot's `handler.use` items.
+
+Rules of thumb:
+
+- Only put `loading()` in `handler.use` if every mount site really should stream by default; otherwise leave it off and let each mount site opt in.
+- If you need per-slot loading overrides at a mount site, split into one `parallel()` call per slot.
 
 ## Edge cases & gotchas
 
