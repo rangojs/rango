@@ -98,8 +98,14 @@ export function buildRouteTrie(
 }
 
 /**
- * Insert a route into the trie, handling optional params by forking
- * the insertion path (one terminal without the param, one with).
+ * Insert a route into the trie. Optional params expand into two branches at
+ * registration time (skip-first, then present), so each terminal lives at the
+ * correct depth for its number of bound params and carries a branch-local
+ * `pa` listing only those names. The trie's single-slot `node.p` is reused
+ * across branches because matching ignores `node.p.n` — the leaf's `pa` is
+ * the source of truth for naming. Skip-first ordering lets `mergeLeaf`'s
+ * last-wins rule produce greedy-leftmost semantics for free at any shared
+ * terminal depth.
  */
 function insertRoute(
   node: TrieNode,
@@ -107,14 +113,13 @@ function insertRoute(
   index: number,
   leaf: Omit<TrieLeaf, "op" | "cv" | "pa">,
 ): void {
-  // Collect param names, optional param names, and constraints across all segments
-  const paramNames: string[] = [];
+  // op (full optional list) and cv (full constraint map) are route-level and
+  // identical on every terminal, so compute them once on the shared base.
   const optionalParams: string[] = [];
   const constraints: Record<string, string[]> = {};
 
   for (const seg of segments) {
     if (seg.type === "param") {
-      paramNames.push(seg.value);
       if (seg.optional) {
         optionalParams.push(seg.value);
       }
@@ -124,21 +129,15 @@ function insertRoute(
     }
   }
 
-  const fullLeaf: TrieLeaf = {
+  const leafBase: Omit<TrieLeaf, "pa"> = {
     ...leaf,
-    ...(paramNames.length > 0 ? { pa: paramNames } : {}),
     ...(optionalParams.length > 0 ? { op: optionalParams } : {}),
     ...(Object.keys(constraints).length > 0 ? { cv: constraints } : {}),
   };
 
-  insertSegments(node, segments, index, fullLeaf);
+  insertSegments(node, segments, index, leafBase, []);
 }
 
-/**
- * Recursively insert segments into the trie.
- * For optional params, we add a terminal at the current node (param absent)
- * AND continue inserting into the param child (param present).
- */
 /**
  * Extract ancestry map from a built trie by visiting all leaf nodes.
  * Returns { routeName: ancestryShortCodes[] } for every route in the trie.
@@ -218,15 +217,25 @@ function mergeLeaf(node: TrieNode, leaf: TrieLeaf): void {
   node.r = mergeLeaves(node.r, leaf);
 }
 
+function buildLeaf(
+  leafBase: Omit<TrieLeaf, "pa">,
+  paramNames: string[],
+): TrieLeaf {
+  return paramNames.length > 0
+    ? { ...leafBase, pa: [...paramNames] }
+    : { ...leafBase };
+}
+
 function insertSegments(
   node: TrieNode,
   segments: ParsedSegment[],
   index: number,
-  leaf: TrieLeaf,
+  leafBase: Omit<TrieLeaf, "pa">,
+  paramNames: string[],
 ): void {
-  // Base case: all segments consumed, add terminal
+  // Base case: all segments consumed, add terminal with branch-local pa
   if (index >= segments.length) {
-    mergeLeaf(node, leaf);
+    mergeLeaf(node, buildLeaf(leafBase, paramNames));
     return;
   }
 
@@ -235,12 +244,19 @@ function insertSegments(
   if (segment.type === "static") {
     if (!node.s) node.s = {};
     if (!node.s[segment.value]) node.s[segment.value] = {};
-    insertSegments(node.s[segment.value], segments, index + 1, leaf);
+    insertSegments(
+      node.s[segment.value],
+      segments,
+      index + 1,
+      leafBase,
+      paramNames,
+    );
   } else if (segment.type === "param") {
     if (segment.optional) {
-      // Optional param: add terminal at current node (param absent)
-      mergeLeaf(node, leaf);
-      // AND continue with param child (param present)
+      // SKIP first: continue at the same node without binding this name.
+      // Skip-first ordering means the present-branch's TAKE overwrites any
+      // shared terminal later, giving greedy-leftmost semantics.
+      insertSegments(node, segments, index + 1, leafBase, paramNames);
     }
     if (segment.suffix) {
       // Suffix param: keyed by suffix string (e.g., ".html")
@@ -248,16 +264,26 @@ function insertSegments(
       if (!node.xp[segment.suffix]) {
         node.xp[segment.suffix] = { n: segment.value, c: {} };
       }
-      insertSegments(node.xp[segment.suffix].c, segments, index + 1, leaf);
+      insertSegments(node.xp[segment.suffix].c, segments, index + 1, leafBase, [
+        ...paramNames,
+        segment.value,
+      ]);
     } else {
       if (!node.p) {
         node.p = { n: segment.value, c: {} };
       }
-      insertSegments(node.p.c, segments, index + 1, leaf);
+      insertSegments(node.p.c, segments, index + 1, leafBase, [
+        ...paramNames,
+        segment.value,
+      ]);
     }
   } else if (segment.type === "wildcard") {
-    // Wildcard consumes all remaining segments
-    const wildLeaf = { ...leaf, pn: "*" };
+    // Wildcard consumes all remaining segments. Carry any params bound before
+    // the wildcard in pa so they zip correctly against paramValues at match.
+    const wildLeaf: TrieLeaf & { pn: string } = {
+      ...buildLeaf(leafBase, paramNames),
+      pn: "*",
+    };
     const existing = node.w ? ({ ...node.w } as TrieLeaf) : undefined;
     const merged = mergeLeaves(existing, wildLeaf);
     node.w = merged as TrieLeaf & { pn: string };
