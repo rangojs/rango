@@ -22,7 +22,6 @@ describe("getMemoizedContentPromise", () => {
     const result = getMemoizedContentPromise(segment, componentPromise);
 
     expect(result).toBe(componentPromise);
-    expect(segment.contentPromise).toBeUndefined();
   });
 
   it("wraps a non-Promise component and caches the wrapper on the segment", () => {

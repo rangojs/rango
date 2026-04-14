@@ -4,17 +4,12 @@ import type { ResolvedSegment } from "./types.js";
 /**
  * Return a stable Promise wrapping `component`, memoized on `segment`.
  *
- * When `component` is already a Promise, returns it directly. Otherwise,
- * returns a memoized `Promise.resolve(component)` whose identity persists
- * across renders (stashed on the segment) so React's `use()` inside
- * Suspender recognises it as already-fulfilled after the first observation.
- * Without this, a fresh `Promise.resolve` each render would suspend for one
- * microtask and briefly commit the loading fallback — the intercept /
- * parallel-slot flicker this indirection is here to prevent.
- *
- * Takes `component` as a parameter (instead of reading `segment.component`)
- * so `renderSegments` can feed in the awaited resolvedComponent during
- * actions without having to mutate the segment.
+ * A fresh `Promise.resolve(component)` each render would suspend for one
+ * microtask and briefly commit the loading fallback inside Suspender — the
+ * intercept / parallel-slot flicker this indirection prevents. Reusing the
+ * same Promise ref keeps React's `use()` in "known fulfilled" state after
+ * the first observation. `component` is separate from `segment.component`
+ * so action renders can feed in the awaited value.
  *
  * @internal
  */

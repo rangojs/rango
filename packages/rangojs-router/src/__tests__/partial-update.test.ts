@@ -244,13 +244,6 @@ describe("partial-update", () => {
     });
 
     it("preserves loading state for cached (unchanged) segments", async () => {
-      // Cached-only segments keep their truthy loading so renderSegments stays
-      // in the LoaderBoundary branch. Swapping to the plain OutletProvider
-      // branch would unmount the entire LoaderBoundary > Suspense >
-      // LoaderResolver > RouteContentWrapper chain every time the user opens
-      // an intercept or navigates back to a cached page. Promise memoization
-      // inside renderSegments keeps the Suspense fallback from committing
-      // when the underlying loader data hasn't changed.
       const cached = seg("R0", { loading: "skeleton" as any });
       const store = createMockStore({ cachedSegments: [cached] });
 

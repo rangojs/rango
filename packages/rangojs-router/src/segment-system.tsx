@@ -73,6 +73,41 @@ function hasSameReferences(a: unknown[] | undefined, b: unknown[]): boolean {
 }
 
 /**
+ * Memoize an aggregate Promise.all for a segment's owned loaders on the
+ * segment itself. Reusing the same aggregate across renders — invalidated
+ * only when an underlying loader.loaderData ref changes — keeps React's
+ * use() in "known fulfilled" state and prevents a fresh Promise.all from
+ * suspending (and briefly committing the Suspense fallback) on every
+ * partial update that doesn't actually change loader data.
+ */
+function memoizeLoaderPromise(
+  target: ResolvedSegment,
+  loaders: ResolvedSegment[],
+  sourcesKey: "layoutLoaderSources" | "parallelLoaderSources",
+): Promise<any[]> | any[] {
+  const sources = loaders.map((loader) => loader.loaderData);
+  if (
+    target.loaderDataPromise !== undefined &&
+    hasSameReferences(target[sourcesKey], sources)
+  ) {
+    return target.loaderDataPromise;
+  }
+  const promise: Promise<any[]> | any[] =
+    loaders.length > 0
+      ? Promise.all(
+          loaders.map((loader) =>
+            loader.loaderData instanceof Promise
+              ? loader.loaderData
+              : Promise.resolve(loader.loaderData),
+          ),
+        )
+      : Promise.resolve([]);
+  target.loaderDataPromise = promise;
+  target[sourcesKey] = sources;
+  return promise;
+}
+
+/**
  * Resolve loader data from raw results, unwrapping LoaderDataResult wrappers
  */
 function resolveLoaderData(
@@ -299,36 +334,11 @@ export async function renderSegments(
 
     // Prepare loader data if there are loaders
     const loaderIds = loaderEntries.map((loader) => loader.loaderId!);
-
-    // Memoize the aggregate Promise.all across renders. A fresh Promise.all
-    // starts pending even when every input is already fulfilled (it needs
-    // one microtask to settle), which causes React's use() inside
-    // LoaderBoundary to suspend and briefly commit the fallback — the flicker
-    // seen when opening/closing intercepts while the main route's loaders
-    // haven't actually changed. Reusing the same aggregate ref when the
-    // underlying loader.loaderData references are unchanged keeps the promise
-    // in React's "known fulfilled" state after the first render.
-    const layoutLoaderSources = loaderEntries.map(
-      (loader) => loader.loaderData,
+    const loaderDataPromise = memoizeLoaderPromise(
+      node.segment,
+      loaderEntries,
+      "layoutLoaderSources",
     );
-    const shouldReuseLoaderPromise =
-      node.segment.loaderDataPromise !== undefined &&
-      hasSameReferences(node.segment.layoutLoaderSources, layoutLoaderSources);
-
-    const loaderDataPromise = shouldReuseLoaderPromise
-      ? node.segment.loaderDataPromise!
-      : loaderEntries.length > 0
-        ? Promise.all(
-            loaderEntries.map((loader) =>
-              loader.loaderData instanceof Promise
-                ? loader.loaderData
-                : Promise.resolve(loader.loaderData),
-            ),
-          )
-        : Promise.resolve([]);
-
-    node.segment.loaderDataPromise = loaderDataPromise;
-    node.segment.layoutLoaderSources = layoutLoaderSources;
 
     // Use LoaderBoundary when loading is defined to maintain consistent tree structure
     // This ensures cached segments (which may not have loader segments) have the same
@@ -410,34 +420,15 @@ export async function renderSegments(
             continue;
           }
 
-          const parallelLoaderIds = ownedLoaders.map((l) => l.loaderId!);
-          const parallelLoaderSources = ownedLoaders.map((l) => l.loaderData);
-          p.loaderIds = parallelLoaderIds;
-
-          const shouldReuseParallelPromise =
-            p.loaderDataPromise !== undefined &&
-            hasSameReferences(p.parallelLoaderSources, parallelLoaderSources);
-
-          const parallelLoaderDataPromise = shouldReuseParallelPromise
-            ? p.loaderDataPromise
-            : forceAwait || isAction
-              ? await Promise.all(
-                  ownedLoaders.map((l) =>
-                    l.loaderData instanceof Promise
-                      ? l.loaderData
-                      : Promise.resolve(l.loaderData),
-                  ),
-                )
-              : Promise.all(
-                  ownedLoaders.map((l) =>
-                    l.loaderData instanceof Promise
-                      ? l.loaderData
-                      : Promise.resolve(l.loaderData),
-                  ),
-                );
-
-          p.loaderDataPromise = parallelLoaderDataPromise;
-          p.parallelLoaderSources = parallelLoaderSources;
+          p.loaderIds = ownedLoaders.map((l) => l.loaderId!);
+          const aggregated = memoizeLoaderPromise(
+            p,
+            ownedLoaders,
+            "parallelLoaderSources",
+          );
+          if ((forceAwait || isAction) && aggregated instanceof Promise) {
+            p.loaderDataPromise = await aggregated;
+          }
         }
       }
 

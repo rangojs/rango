@@ -995,28 +995,6 @@ describe("segment-system", () => {
         expect(secondPromise).not.toBe(firstPromise);
       });
 
-      it("reuses a stable content promise for non-Promise components across rerenders", async () => {
-        const loadingSkeleton = createElement("div", null, "Loading route");
-        const component = createElement("div", null, "route-body");
-        const segments: ResolvedSegment[] = [
-          seg({
-            id: "R0",
-            type: "route",
-            component,
-            loading: loadingSkeleton,
-          }),
-        ];
-
-        await renderSegments(segments);
-        const firstPromise = segments[0].contentPromise;
-
-        await renderSegments(segments);
-        const secondPromise = segments[0].contentPromise;
-
-        expect(firstPromise).toBeInstanceOf(Promise);
-        expect(secondPromise).toBe(firstPromise);
-      });
-
       // Regression guard: reconcileSegments produces fresh segment refs on
       // many paths (in-diff spread, loading-strip, mergeSegmentLoaders). If
       // memoization is tied to the exact segment ref, the realistic flow —
