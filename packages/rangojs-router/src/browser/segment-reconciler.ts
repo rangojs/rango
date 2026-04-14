@@ -9,6 +9,44 @@ import { splitInterceptSegments } from "./intercept-utils.js";
 import { debugLog } from "./logging.js";
 
 /**
+ * Carry forward renderSegments' internal memoization fields from the cached
+ * segment onto a merged/spread result. Without this, every reconcile that
+ * produces a fresh object ref (in-diff server segments, loading-strip spread,
+ * mergeSegmentLoaders) drops the stable Promise wrappers that keep React's
+ * use() in "known fulfilled" state. The hasSameReferences guards inside
+ * renderSegments invalidate stale memoization when the underlying sources
+ * actually change, so copying is always safe.
+ *
+ * Only overwrites fields that aren't already set on `merged` — preserves
+ * server-provided loaderDataPromise (parallel intercept segments) while still
+ * restoring the layout/route memoization that only renderSegments sets.
+ */
+function preserveMemoization(
+  merged: ResolvedSegment,
+  cached: ResolvedSegment,
+): ResolvedSegment {
+  if (
+    cached.contentPromise === undefined &&
+    cached.contentSource === undefined &&
+    cached.layoutLoaderSources === undefined &&
+    cached.parallelLoaderSources === undefined &&
+    cached.loaderDataPromise === undefined
+  ) {
+    return merged;
+  }
+  return {
+    ...merged,
+    contentPromise: merged.contentPromise ?? cached.contentPromise,
+    contentSource: merged.contentSource ?? cached.contentSource,
+    layoutLoaderSources:
+      merged.layoutLoaderSources ?? cached.layoutLoaderSources,
+    parallelLoaderSources:
+      merged.parallelLoaderSources ?? cached.parallelLoaderSources,
+    loaderDataPromise: merged.loaderDataPromise ?? cached.loaderDataPromise,
+  };
+}
+
+/**
  * Determines the merging behavior for segment reconciliation.
  *
  * - 'action': From server-action-bridge's own merge. Always merges loaders,
@@ -109,7 +147,13 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
           debugLog(
             `[reconcile] ${segId}: MERGE loaders (server partial, ${inDiff ? "in diff" : "not in diff"})`,
           );
-          return mergeSegmentLoaders(fromServer, fromCache);
+          // mergeSegmentLoaders spreads fromCache, so most memoization survives
+          // naturally; preserveMemoization fills any gaps and is a no-op when
+          // everything is already carried over.
+          return preserveMemoization(
+            mergeSegmentLoaders(fromServer, fromCache),
+            fromCache,
+          );
         }
 
         // Preserve cached structural properties to maintain consistent React tree.
@@ -162,7 +206,7 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
           debugLog(
             `[reconcile] ${segId}: SERVER+CACHE merge (${inDiff ? "in diff" : "not in diff"}, type=${fromServer.type}, component=${fromServer.component === null ? "null→cached" : "server"})`,
           );
-          return merged;
+          return preserveMemoization(merged, fromCache);
         }
         debugLog(
           `[reconcile] ${segId}: SERVER only (${inDiff ? "in diff" : "not in diff"}, type=${fromServer.type}, no cache entry)`,

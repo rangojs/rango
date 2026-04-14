@@ -10,6 +10,7 @@ import {
   LoaderBoundary,
 } from "./route-content-wrapper.js";
 import { RootErrorBoundary } from "./root-error-boundary.js";
+import { getMemoizedContentPromise } from "./segment-content-promise.js";
 
 // ViewTransition is only available in React experimental.
 // Access via namespace import to avoid compile-time errors on stable React.
@@ -270,32 +271,11 @@ export async function renderSegments(
       resolvedComponent = await component;
     }
 
-    // Memoize the content Promise across renders. When the component is a
-    // non-Promise (already resolved), Promise.resolve creates a new pending
-    // thenable each render and Suspender's use() re-suspends briefly even
-    // though the value is synchronously available. Reusing the same Promise
-    // ref keeps React's use() in "known fulfilled" state after first render.
-    const buildContentPromise = (): Promise<ReactNode> => {
-      if (resolvedComponent instanceof Promise) {
-        return resolvedComponent;
-      }
-      if (
-        node.segment.contentPromise !== undefined &&
-        node.segment.contentSource === resolvedComponent
-      ) {
-        return node.segment.contentPromise;
-      }
-      const promise = Promise.resolve(resolvedComponent);
-      node.segment.contentPromise = promise;
-      node.segment.contentSource = resolvedComponent;
-      return promise;
-    };
-
     let nodeContent: ReactNode =
       loading !== null && loading !== undefined && loading !== false
         ? createElement(RouteContentWrapper, {
             key: `suspense-loading-${id}`,
-            content: buildContentPromise(),
+            content: getMemoizedContentPromise(node.segment, resolvedComponent),
             fallback: loading,
             segmentId: id,
           })

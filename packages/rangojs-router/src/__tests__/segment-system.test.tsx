@@ -1016,6 +1016,101 @@ describe("segment-system", () => {
         expect(firstPromise).toBeInstanceOf(Promise);
         expect(secondPromise).toBe(firstPromise);
       });
+
+      // Regression guard: reconcileSegments produces fresh segment refs on
+      // many paths (in-diff spread, loading-strip, mergeSegmentLoaders). If
+      // memoization is tied to the exact segment ref, the realistic flow —
+      // reconcile then render — recreates Promise wrappers every navigation
+      // and the intercept flicker returns. These tests run segments through
+      // reconcile between renders to simulate the real browser path.
+      it("preserves the memoized loader promise across a reconcile that spreads the segment", async () => {
+        const { reconcileSegments } =
+          await import("../browser/segment-reconciler");
+        const loadingSkeleton = createElement("div", null, "Loading route");
+        const loaderData = Promise.resolve({ foo: "bar" });
+        const initial: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0R0",
+            type: "route",
+            loading: loadingSkeleton,
+          }),
+          seg({
+            id: "L0R0D0.data",
+            type: "loader",
+            loaderId: "route-loader",
+            loaderData,
+          }),
+        ];
+
+        await renderSegments(initial);
+        const firstPromise = initial[1].loaderDataPromise;
+        expect(firstPromise).toBeInstanceOf(Promise);
+
+        // Simulate navigation where the server returns a fresh copy of L0R0
+        // in the diff (common for intercept/parallel updates). The reconciler
+        // produces a new segment ref; memoization must survive.
+        const freshRouteSeg = seg({
+          id: "L0R0",
+          type: "route",
+          loading: loadingSkeleton,
+        });
+        const reconciled = reconcileSegments({
+          actor: "navigation",
+          matched: ["L0", "L0R0", "L0R0D0.data"],
+          diff: ["L0R0"],
+          serverSegments: [freshRouteSeg],
+          cachedSegments: initial,
+        });
+
+        const mergedRoute = reconciled.mainSegments.find(
+          (s) => s.id === "L0R0",
+        )!;
+        expect(mergedRoute).not.toBe(initial[1]);
+        expect(mergedRoute.loaderDataPromise).toBe(firstPromise);
+        expect(mergedRoute.layoutLoaderSources).toBe(
+          initial[1].layoutLoaderSources,
+        );
+
+        await renderSegments(reconciled.mainSegments);
+        expect(mergedRoute.loaderDataPromise).toBe(firstPromise);
+      });
+
+      it("preserves the memoized content promise across a reconcile that strips loading", async () => {
+        const { reconcileSegments } =
+          await import("../browser/segment-reconciler");
+        const loadingSkeleton = createElement("div", null, "Loading route");
+        const component = createElement("div", null, "route-body");
+        const initial: ResolvedSegment[] = [
+          seg({
+            id: "R0",
+            type: "route",
+            component,
+            loading: loadingSkeleton,
+          }),
+        ];
+
+        await renderSegments(initial);
+        const firstContent = initial[0].contentPromise;
+        expect(firstContent).toBeInstanceOf(Promise);
+
+        // Simulate a partial update where the server doesn't include this
+        // segment: the reconciler's navigation actor clears truthy loading
+        // on cached-only entries, producing a new object. Memoization has
+        // to come along for the ride.
+        const reconciled = reconcileSegments({
+          actor: "navigation",
+          matched: ["R0"],
+          diff: [],
+          serverSegments: [],
+          cachedSegments: initial,
+        });
+
+        const mergedRoute = reconciled.mainSegments[0];
+        expect(mergedRoute).not.toBe(initial[0]);
+        expect(mergedRoute.contentPromise).toBe(firstContent);
+        expect(mergedRoute.contentSource).toBe(component);
+      });
     });
   });
 });

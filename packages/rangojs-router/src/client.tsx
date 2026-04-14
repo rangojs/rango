@@ -21,6 +21,7 @@ import {
 } from "./route-content-wrapper.js";
 import { OutletProvider } from "./outlet-provider.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
+import { getMemoizedContentPromise } from "./segment-content-promise.js";
 
 /**
  * Outlet component - renders child content in layouts
@@ -74,11 +75,7 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
       // Use RouteContentWrapper to handle Suspense wrapping properly
       content = (
         <RouteContentWrapper
-          content={
-            segment.component instanceof Promise
-              ? segment.component
-              : Promise.resolve(segment.component)
-          }
+          content={getMemoizedContentPromise(segment, segment.component)}
           fallback={segment.loading}
           segmentId={segment.id}
         />
@@ -200,11 +197,7 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
     // Use RouteContentWrapper to handle Suspense wrapping properly
     content = (
       <RouteContentWrapper
-        content={
-          segment.component instanceof Promise
-            ? segment.component
-            : Promise.resolve(segment.component)
-        }
+        content={getMemoizedContentPromise(segment, segment.component)}
         fallback={segment.loading}
         segmentId={segment.id}
       />
