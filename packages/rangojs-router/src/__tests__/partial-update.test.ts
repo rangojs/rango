@@ -243,7 +243,7 @@ describe("partial-update", () => {
       expect(layout.component).toBe("my-layout");
     });
 
-    it("clears loading state for cached (unchanged) segments", async () => {
+    it("preserves loading state for cached (unchanged) segments", async () => {
       const cached = seg("R0", { loading: "skeleton" as any });
       const store = createMockStore({ cachedSegments: [cached] });
 
@@ -255,14 +255,6 @@ describe("partial-update", () => {
           diff: ["R0"],
         },
       });
-
-      // No server segment for R0 in newSegmentMap, but it's in matched.
-      // Since it's not found in newSegmentMap, it falls back to cache.
-      // Actually, let me fix this: R0 is in diff but not in segments from server.
-      // So newSegmentMap won't have R0. It'll use cache.
-      // Actually - let me re-read. segments: [] means newSegmentMap has nothing.
-      // matched: ["R0"] means we try to find R0 in newSegmentMap (miss) then cache (hit).
-      // Cache has loading set → should be cleared to undefined.
 
       const renderSegments = vi.fn(async () => "tree");
       const tx = createMockTx();
@@ -278,7 +270,7 @@ describe("partial-update", () => {
       await updater("http://localhost/", ["R0"], false, undefined, tx);
 
       const rendered = (renderSegments.mock.calls as any[][])[0][0];
-      expect(rendered[0].loading).toBeUndefined();
+      expect(rendered[0].loading).toBe("skeleton");
     });
 
     // BUG P0-1: cached segment loading cleared from false to undefined

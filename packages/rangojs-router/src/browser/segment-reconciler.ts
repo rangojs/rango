@@ -9,6 +9,38 @@ import { splitInterceptSegments } from "./intercept-utils.js";
 import { debugLog } from "./logging.js";
 
 /**
+ * Carry forward renderSegments' internal memoization fields from the cached
+ * segment onto a merged/spread result. Without this, every reconcile that
+ * produces a fresh object ref drops the stable Promise wrappers that keep
+ * React's use() in "known fulfilled" state. The hasSameReferences guards
+ * inside renderSegments invalidate stale memoization when the underlying
+ * sources actually change, so copying is always safe. Server-provided values
+ * on `merged` (e.g., parallel intercept loaderDataPromise) win via the
+ * undefined check.
+ */
+const MEMO_FIELDS = [
+  "contentPromise",
+  "contentSource",
+  "layoutLoaderSources",
+  "parallelLoaderSources",
+  "loaderDataPromise",
+] as const;
+
+function preserveMemoization(
+  merged: ResolvedSegment,
+  cached: ResolvedSegment,
+): ResolvedSegment {
+  let result: ResolvedSegment | null = null;
+  for (const field of MEMO_FIELDS) {
+    if (merged[field] === undefined && cached[field] !== undefined) {
+      if (!result) result = { ...merged };
+      (result as any)[field] = cached[field];
+    }
+  }
+  return result ?? merged;
+}
+
+/**
  * Determines the merging behavior for segment reconciliation.
  *
  * - 'action': From server-action-bridge's own merge. Always merges loaders,
@@ -109,7 +141,10 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
           debugLog(
             `[reconcile] ${segId}: MERGE loaders (server partial, ${inDiff ? "in diff" : "not in diff"})`,
           );
-          return mergeSegmentLoaders(fromServer, fromCache);
+          return preserveMemoization(
+            mergeSegmentLoaders(fromServer, fromCache),
+            fromCache,
+          );
         }
 
         // Preserve cached structural properties to maintain consistent React tree.
@@ -162,7 +197,7 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
           debugLog(
             `[reconcile] ${segId}: SERVER+CACHE merge (${inDiff ? "in diff" : "not in diff"}, type=${fromServer.type}, component=${fromServer.component === null ? "null→cached" : "server"})`,
           );
-          return merged;
+          return preserveMemoization(merged, fromCache);
         }
         debugLog(
           `[reconcile] ${segId}: SERVER only (${inDiff ? "in diff" : "not in diff"}, type=${fromServer.type}, no cache entry)`,
@@ -184,20 +219,16 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
         `[reconcile] ${segId}: CACHE only (not from server, type=${fromCache.type}, component=${fromCache.component != null ? "yes" : "null"})`,
       );
 
-      // For non-action actors: cached segments the server decided not to re-render.
-      // - Preserve loading=false (suppressed boundary) to maintain tree structure
-      // - Preserve parallel segment loading so renderSegments can reconstruct
-      //   parallel-owned loader markers from the cached slot metadata
-      // - Clear other truthy loading values to prevent suspense on cached content
-      if (actor !== "action") {
-        if (fromCache.type === "parallel" && fromCache.loading !== undefined) {
-          return fromCache;
-        }
-        if (fromCache.loading !== undefined && fromCache.loading !== false) {
-          return { ...fromCache, loading: undefined };
-        }
-      }
-
+      // Return the cached segment as-is, regardless of actor. We used to clear
+      // truthy `loading` here to prevent a stale Suspense fallback from
+      // committing against cached content, but that swapped the render tree
+      // from the LoaderBoundary branch to the plain OutletProvider branch
+      // inside renderSegments, causing React to unmount the entire chain
+      // (LoaderBoundary > Suspense > LoaderResolver > RouteContentWrapper >
+      // Suspender) every time the user opened an intercept or navigated back
+      // to a cached page. The flicker is now prevented by renderSegments'
+      // promise memoization keeping React's use() in "known fulfilled" state,
+      // so preserving `loading` keeps the element tree stable.
       return fromCache;
     })
     .filter(Boolean) as ResolvedSegment[];

@@ -165,7 +165,11 @@ describe("segment-reconciler", () => {
         expect(result.segments[0].loading).toBe("skeleton");
       });
 
-      it("clears truthy loading on cached segments not in server response", () => {
+      it("preserves truthy loading on cached segments not in server response", () => {
+        // Truthy loading is kept so renderSegments stays in the LoaderBoundary
+        // branch — flipping to the plain OutletProvider branch would remount
+        // the entire LoaderBoundary > Suspense > LoaderResolver >
+        // RouteContentWrapper chain on every intercept/back navigation.
         const cached = seg("L0", {
           type: "layout",
           loading: "skeleton" as any,
@@ -179,7 +183,8 @@ describe("segment-reconciler", () => {
           cachedSegments: [cached],
         });
 
-        expect(result.segments[0].loading).toBeUndefined();
+        expect(result.segments[0].loading).toBe("skeleton");
+        expect(result.segments[0]).toBe(cached);
       });
 
       it("preserves loading=false on cached segments not in server response", () => {
@@ -262,7 +267,7 @@ describe("segment-reconciler", () => {
         expect(result.segments[0].loading).toBe(false);
       });
 
-      it("clears truthy loading on cached segments not in server response", () => {
+      it("preserves truthy loading on cached segments not in server response", () => {
         const cached = seg("L0", {
           type: "layout",
           loading: "skeleton" as any,
@@ -276,7 +281,8 @@ describe("segment-reconciler", () => {
           cachedSegments: [cached],
         });
 
-        expect(result.segments[0].loading).toBeUndefined();
+        expect(result.segments[0].loading).toBe("skeleton");
+        expect(result.segments[0]).toBe(cached);
       });
 
       it("preserves truthy loading on cached parallel segments not in server response", () => {
@@ -811,6 +817,70 @@ describe("segment-reconciler", () => {
       const result = reconcileErrorSegments([], [seg("L0R0")]);
 
       expect(result.segments).toHaveLength(0);
+    });
+  });
+
+  describe("memoization preservation", () => {
+    // Without these guarantees, renderSegments' promise memoization is wiped
+    // every reconcile that produces a fresh ref — which is most of them —
+    // and the intercept flicker this exists to prevent comes back.
+    it("carries contentPromise, contentSource, and layoutLoaderSources from cache onto in-diff merges", () => {
+      const contentPromise = Promise.resolve("cached-content");
+      const loaderSources = [Promise.resolve({ a: 1 })];
+      const cached = seg("L0", {
+        type: "layout",
+        loading: "skeleton" as any,
+        contentPromise,
+        contentSource: "cached-component" as any,
+        layoutLoaderSources: loaderSources,
+        loaderDataPromise: Promise.resolve([{ a: 1 }]),
+      });
+      const server = seg("L0", {
+        type: "layout",
+        loading: "skeleton" as any,
+      });
+
+      const result = reconcileSegments({
+        actor: "navigation",
+        matched: ["L0"],
+        diff: ["L0"],
+        serverSegments: [server],
+        cachedSegments: [cached],
+      });
+
+      const merged = result.segments[0];
+      expect(merged).not.toBe(cached);
+      expect(merged.contentPromise).toBe(contentPromise);
+      expect(merged.contentSource).toBe("cached-component");
+      expect(merged.layoutLoaderSources).toBe(loaderSources);
+      expect(merged.loaderDataPromise).toBe(cached.loaderDataPromise);
+    });
+
+    it("does not overwrite a server-provided loaderDataPromise with the cached one (parallel intercept)", () => {
+      const cachedPromise = Promise.resolve([{ stale: true }]);
+      const freshPromise = Promise.resolve([{ fresh: true }]);
+      const cached = seg("L0.@modal", {
+        type: "parallel",
+        slot: "@modal",
+        loaderDataPromise: cachedPromise,
+        loaderIds: ["modal-loader"],
+      });
+      const server = seg("L0.@modal", {
+        type: "parallel",
+        slot: "@modal",
+        loaderDataPromise: freshPromise,
+        loaderIds: ["modal-loader"],
+      });
+
+      const result = reconcileSegments({
+        actor: "navigation",
+        matched: ["L0.@modal"],
+        diff: ["L0.@modal"],
+        serverSegments: [server],
+        cachedSegments: [cached],
+      });
+
+      expect(result.segments[0].loaderDataPromise).toBe(freshPromise);
     });
   });
 });
