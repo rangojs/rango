@@ -12,6 +12,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
+# Container /etc/hosts orders ::1 before 127.0.0.1, and Node 20+ defaults
+# DNS resolution to verbatim OS order. fetch('http://localhost') then
+# tries IPv6 first, but vite dev / preview bind to 127.0.0.1 only, so
+# waitForReady in the e2e fixture times out before Happy Eyeballs falls
+# back to IPv4. Forcing ipv4first eliminates the slow fallback. Harmless
+# for non-container jobs.
+env:
+  NODE_OPTIONS: --dns-result-order=ipv4first
+
 jobs:
   # On push to main, wait 2 minutes before starting CI. Combined with
   # cancel-in-progress, a follow-up push within the window cancels this
