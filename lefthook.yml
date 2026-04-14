@@ -5,6 +5,8 @@ pre-commit:
       run: pnpm exec oxfmt {staged_files}
       stage_fixed: true
       glob: "*.{ts,tsx,js,jsx,json,css}"
+      exclude:
+        - "*.gen.ts"
     - name: lint
       run: pnpm -w run lint
       glob: "*.{ts,tsx,js,jsx}"

@@ -206,6 +206,65 @@ parallel(
 )
 ```
 
+## Composable Slots via `handler.use`
+
+Slot handlers can carry their own loader, loading, error/notFound boundaries, revalidation, and transition defaults via `.use`. The mount site then declares **just the slot names** — no per-call data wiring.
+
+```typescript
+const CartSummary: Handler = async (ctx) => {
+  const cart = await ctx.use(CartLoader);
+  return <CartSummaryView cart={cart} />;
+};
+CartSummary.use = () => [
+  loader(CartLoader),
+  loading(<CartSkeleton />),
+  revalidate(revalidateCartData),
+];
+
+// Same slot, no copy-pasted plumbing across layouts.
+layout(<DashboardLayout />, () => [
+  parallel({ "@cart": CartSummary }),
+  path("/dashboard", DashboardIndex, { name: "dashboard.index" }),
+]);
+
+layout(<AccountLayout />, () => [
+  parallel({ "@cart": CartSummary }),
+  path("/account", AccountIndex, { name: "account.index" }),
+]);
+```
+
+A slot's `loading()` (whether from `handler.use` or explicit) makes that slot an independent streaming unit, exactly as in the **Streaming Behavior** section above.
+
+The `parallel` mount site has the narrowest allow-list for `handler.use` items — slots cannot bring their own middleware or layout, only `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, and `transition`. See [skills/handler-use](../handler-use/SKILL.md) for the full table and merge rules.
+
+### Two scopes for explicit `use`: shared (broadcast) and slot-local
+
+`parallel({...slots}, () => [...use])` runs the shared `use()` callback **once per slot** ([dsl-helpers.ts](../../src/route-definition/dsl-helpers.ts)) — items in that callback land on every slot's entry. That's the right behavior for the items the parallel allow-list permits and that accumulate (`loader`, `revalidate`, `errorBoundary`, `notFoundBoundary`, `transition`). (Slots cannot bring `middleware` or `layout` — see the allowed-types note above.)
+
+For single-assignment items like `loading()`, broadcasting overwrites every slot's `handler.use` default. Pass a **slot descriptor** `{ handler, use }` instead — items in the descriptor's `use` apply only to that slot:
+
+```typescript
+// @cart gets a custom skeleton; @notifs keeps its handler.use default.
+parallel({
+  "@cart": {
+    handler: Cart,
+    use: () => [loading(<CustomCartSkeleton />)],
+  },
+  "@notifs": Notifs,
+});
+
+// Opt one slot out of streaming while siblings still stream the broadcast.
+parallel(
+  {
+    "@cart": { handler: Cart, use: () => [loading(false)] },
+    "@notifs": Notifs,
+  },
+  () => [loading(<BroadcastSkeleton />)],
+);
+```
+
+Per-slot merge order is **handler.use → shared use → slot-local use**. Slot-local is the narrowest scope, so it wins for last-write-wins items. See [skills/handler-use § `loading()` is a single-assignment item — scope it correctly](../handler-use/SKILL.md#loading-is-a-single-assignment-item--scope-it-correctly) for the full reasoning.
+
 ## Slot Override Semantics
 
 When multiple `parallel()` calls define the same slot name, **the last

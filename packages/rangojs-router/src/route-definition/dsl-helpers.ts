@@ -491,13 +491,25 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
 
   const namespace = `${ctx.namespace}.$${store.getNextIndex("parallel")}`;
 
-  // Unwrap any static handler definitions in parallel slots
+  // Unwrap slot values. A slot value can be:
+  //   - a Handler / ReactNode (legacy form)
+  //   - a Static() definition (build-time only)
+  //   - a slot descriptor `{ handler, use? }` for slot-local overrides
+  // The descriptor's `use` runs after the broadcast `use` for that slot,
+  // so single-assignment items like `loading()` placed there win without
+  // affecting siblings.
   const unwrappedSlots: Record<string, any> = {};
+  const slotLocalUses: Record<string, (() => any[]) | undefined> = {};
   let hasStaticSlot = false;
   const staticSlotIds: Record<string, string> = {};
-  for (const [slotName, slotHandler] of Object.entries(
+  for (const [slotName, rawSlot] of Object.entries(
     slots as Record<string, any>,
   )) {
+    let slotHandler: any = rawSlot;
+    if (isSlotDescriptor(rawSlot)) {
+      slotHandler = rawSlot.handler;
+      slotLocalUses[slotName] = rawSlot.use;
+    }
     if (isStaticHandler(slotHandler)) {
       hasStaticSlot = true;
       unwrappedSlots[slotName] = slotHandler.handler;
@@ -564,13 +576,25 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
           }),
     } satisfies EntryData;
 
-    // Per-slot: handler.use defaults first, then explicit use second.
-    // This matches the "defaults first, overrides second" rule used by
-    // path(), layout(), and intercept(). Each slot's handler.use is
-    // scoped to its own entry (no cross-slot bleed).
-    const slotHandler = (slots as Record<string, any>)[slotName];
-    const slotHandlerUse = resolveHandlerUse(slotHandler);
-    const slotMergedUse = mergeHandlerUse(slotHandlerUse, use, "parallel");
+    // Per-slot merge order (narrowest-scope-wins for single-assignment items
+    // like loading()):
+    //   1. handler.use      — defaults baked into the handler
+    //   2. shared `use`     — broadcast at the parallel() call site
+    //   3. slot-local `use` — per-slot override via `{ handler, use }` descriptor
+    // Items that accumulate (loader, middleware, revalidate, …) compose
+    // across all three layers regardless of order.
+    const rawSlot = (slots as Record<string, any>)[slotName];
+    const slotHandlerForUse = isSlotDescriptor(rawSlot)
+      ? rawSlot.handler
+      : rawSlot;
+    const slotHandlerUse = resolveHandlerUse(slotHandlerForUse);
+    const slotLocalUse = slotLocalUses[slotName];
+    const explicitUse = combineExplicitUses(use, slotLocalUse);
+    const slotMergedUse = mergeHandlerUse(
+      slotHandlerUse,
+      explicitUse,
+      "parallel",
+    );
     if (slotMergedUse) {
       const result = store.run(namespace, slotEntry, slotMergedUse)?.flat(3);
       invariant(
@@ -583,6 +607,28 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
   }
   return { name: namespace, type: "parallel" } as ParallelItem;
 };
+
+function isSlotDescriptor(
+  value: unknown,
+): value is { handler: unknown; use?: () => any[] } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !("__brand" in value) &&
+    "handler" in value &&
+    typeof (value as any).handler !== "undefined"
+  );
+}
+
+function combineExplicitUses(
+  sharedUse: (() => any[]) | undefined,
+  slotLocalUse: (() => any[]) | undefined,
+): (() => any[]) | undefined {
+  if (!sharedUse && !slotLocalUse) return undefined;
+  if (!slotLocalUse) return sharedUse;
+  if (!sharedUse) return slotLocalUse;
+  return () => [...sharedUse(), ...slotLocalUse()];
+}
 
 /**
  * Intercept helper - defines an intercepting route for soft navigation

@@ -311,3 +311,23 @@ export const shopPatterns = urls(({
   ]),
 ]);
 ```
+
+## Handler-attached `.use`
+
+Intercept handlers can carry their own middleware, loaders, loading state, error/notFound boundaries, and even nested `layout`/`route`/`when` defaults via `.use` — useful for self-contained modal components that travel with their own data and chrome.
+
+```typescript
+const QuickViewModal: Handler = async (ctx) => {
+  const product = await ctx.use(ProductLoader);
+  return <QuickView product={product} />;
+};
+QuickViewModal.use = () => [
+  loader(ProductLoader),
+  loading(<QuickViewSkeleton />),
+  layout(<ModalChrome />),
+];
+
+intercept("@modal", "product", QuickViewModal);
+```
+
+Explicit `use()` at the mount site merges with `handler.use` (handler defaults first, explicit second). See [skills/handler-use](../handler-use/SKILL.md) for merge order and the per-mount-site allowed-types table.

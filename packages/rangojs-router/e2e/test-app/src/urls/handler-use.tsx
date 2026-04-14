@@ -51,6 +51,15 @@ const HandlerUsePage: Handler<"/handler-use"> = async (ctx) => {
       <Link to="/handler-use/parallel-override" data-testid="link-to-override">
         Go to override test
       </Link>
+      <Link
+        to="/handler-use/slot-descriptor"
+        data-testid="link-to-slot-descriptor"
+      >
+        Go to slot descriptor test
+      </Link>
+      <Link to="/handler-use/slot-opt-out" data-testid="link-to-slot-opt-out">
+        Go to slot opt-out test
+      </Link>
     </div>
   );
 };
@@ -195,6 +204,58 @@ const RealSidebar: Handler = () => (
   </aside>
 );
 
+// -- Slot descriptor `{ handler, use }` for per-slot loading() ---------------
+
+// Two slow slots so we can observe the loading state per slot.
+export const SlowPanelLoader = createLoader(async () => {
+  await new Promise((r) => setTimeout(r, 300));
+  return { section: "slow-panel-data" };
+});
+
+const SlotDescriptorPage: Handler<"/handler-use/slot-descriptor"> = () => (
+  <div data-testid="slot-descriptor-page">
+    <h1 data-testid="slot-descriptor-title">Slot Descriptor Test</h1>
+    <ParallelOutlet name="@sidebar" />
+    <ParallelOutlet name="@panel" />
+    <Link to="/handler-use" data-testid="link-back-descriptor">
+      Back
+    </Link>
+  </div>
+);
+
+const DescriptorSidebar: Handler = async (ctx) => {
+  const data = await ctx.use(SlowSidebarLoader);
+  return (
+    <aside data-testid="descriptor-sidebar">
+      <p data-testid="descriptor-sidebar-section">{data.section}</p>
+    </aside>
+  );
+};
+DescriptorSidebar.use = () => [loader(SlowSidebarLoader)];
+
+const DescriptorPanel: Handler = async (ctx) => {
+  const data = await ctx.use(SlowPanelLoader);
+  return (
+    <section data-testid="descriptor-panel">
+      <p data-testid="descriptor-panel-section">{data.section}</p>
+    </section>
+  );
+};
+DescriptorPanel.use = () => [loader(SlowPanelLoader)];
+
+// -- Slot-local loading(false) opts one slot out while sibling streams -------
+
+const SlotOptOutPage: Handler<"/handler-use/slot-opt-out"> = () => (
+  <div data-testid="slot-opt-out-page">
+    <h1 data-testid="slot-opt-out-title">Slot Opt-Out Test</h1>
+    <ParallelOutlet name="@sidebar" />
+    <ParallelOutlet name="@panel" />
+    <Link to="/handler-use" data-testid="link-back-opt-out">
+      Back
+    </Link>
+  </div>
+);
+
 // ---------------------------------------------------------------------------
 // Route patterns
 // ---------------------------------------------------------------------------
@@ -240,5 +301,50 @@ export const handlerUsePatterns = urls(({ path, layout, parallel }) => [
       { name: "parallelSlotOverride" },
       () => [parallel({ "@sidebar": RealSidebar })],
     ),
+
+    // Per-slot loading() via slot descriptor. @sidebar declares its own
+    // loading skeleton; @panel does not. Without slot-local use, putting
+    // loading() in the shared callback would broadcast it to both slots.
+    path(
+      "/slot-descriptor",
+      SlotDescriptorPage,
+      { name: "slotDescriptor" },
+      () => [
+        parallel({
+          "@sidebar": {
+            handler: DescriptorSidebar,
+            use: () => [
+              loading(
+                <div data-testid="descriptor-sidebar-loading">
+                  Sidebar loading…
+                </div>,
+              ),
+            ],
+          },
+          "@panel": DescriptorPanel,
+        }),
+      ],
+    ),
+
+    // @sidebar opts out of streaming (loading: false) via slot descriptor;
+    // @panel still gets the broadcast skeleton.
+    path("/slot-opt-out", SlotOptOutPage, { name: "slotOptOut" }, () => [
+      parallel(
+        {
+          "@sidebar": {
+            handler: DescriptorSidebar,
+            use: () => [loading(false)],
+          },
+          "@panel": DescriptorPanel,
+        },
+        () => [
+          loading(
+            <div data-testid="opt-out-broadcast-loading">
+              Broadcast loading…
+            </div>,
+          ),
+        ],
+      ),
+    ]),
   ]),
 ]);
