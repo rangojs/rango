@@ -11,6 +11,7 @@ import {
 } from "./route-content-wrapper.js";
 import { RootErrorBoundary } from "./root-error-boundary.js";
 import { getMemoizedContentPromise } from "./segment-content-promise.js";
+import { getMemoizedLoaderPromise } from "./segment-loader-promise.js";
 
 // ViewTransition is only available in React experimental.
 // Access via namespace import to avoid compile-time errors on stable React.
@@ -56,55 +57,6 @@ function restoreParallelLoaderMarkers(
   }
 
   return nextSegments ?? segments;
-}
-
-function hasSameReferences(a: unknown[] | undefined, b: unknown[]): boolean {
-  if (!a || a.length !== b.length) {
-    return false;
-  }
-
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-/**
- * Memoize an aggregate Promise.all for a segment's owned loaders on the
- * segment itself. Reusing the same aggregate across renders — invalidated
- * only when an underlying loader.loaderData ref changes — keeps React's
- * use() in "known fulfilled" state and prevents a fresh Promise.all from
- * suspending (and briefly committing the Suspense fallback) on every
- * partial update that doesn't actually change loader data.
- */
-function memoizeLoaderPromise(
-  target: ResolvedSegment,
-  loaders: ResolvedSegment[],
-  sourcesKey: "layoutLoaderSources" | "parallelLoaderSources",
-): Promise<any[]> | any[] {
-  const sources = loaders.map((loader) => loader.loaderData);
-  if (
-    target.loaderDataPromise !== undefined &&
-    hasSameReferences(target[sourcesKey], sources)
-  ) {
-    return target.loaderDataPromise;
-  }
-  const promise: Promise<any[]> | any[] =
-    loaders.length > 0
-      ? Promise.all(
-          loaders.map((loader) =>
-            loader.loaderData instanceof Promise
-              ? loader.loaderData
-              : Promise.resolve(loader.loaderData),
-          ),
-        )
-      : Promise.resolve([]);
-  target.loaderDataPromise = promise;
-  target[sourcesKey] = sources;
-  return promise;
 }
 
 /**
@@ -310,7 +262,7 @@ export async function renderSegments(
       loading !== null && loading !== undefined && loading !== false
         ? createElement(RouteContentWrapper, {
             key: `suspense-loading-${id}`,
-            content: getMemoizedContentPromise(node.segment, resolvedComponent),
+            content: getMemoizedContentPromise(resolvedComponent),
             fallback: loading,
             segmentId: id,
           })
@@ -334,11 +286,7 @@ export async function renderSegments(
 
     // Prepare loader data if there are loaders
     const loaderIds = loaderEntries.map((loader) => loader.loaderId!);
-    const loaderDataPromise = memoizeLoaderPromise(
-      node.segment,
-      loaderEntries,
-      "layoutLoaderSources",
-    );
+    const loaderDataPromise = getMemoizedLoaderPromise(loaderEntries);
 
     // Use LoaderBoundary when loading is defined to maintain consistent tree structure
     // This ensures cached segments (which may not have loader segments) have the same
@@ -421,14 +369,11 @@ export async function renderSegments(
           }
 
           p.loaderIds = ownedLoaders.map((l) => l.loaderId!);
-          const aggregated = memoizeLoaderPromise(
-            p,
-            ownedLoaders,
-            "parallelLoaderSources",
-          );
-          if ((forceAwait || isAction) && aggregated instanceof Promise) {
-            p.loaderDataPromise = await aggregated;
-          }
+          const aggregated = getMemoizedLoaderPromise(ownedLoaders);
+          p.loaderDataPromise =
+            (forceAwait || isAction) && aggregated instanceof Promise
+              ? await aggregated
+              : aggregated;
         }
       }
 
