@@ -31,6 +31,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Containerised jobs run as root while the workspace files are owned by
+      # the runner user, which makes git refuse ("dubious ownership") and
+      # breaks the lefthook install in the pnpm prepare script. Harmless on
+      # non-container jobs.
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
@@ -52,6 +59,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
+
+      # Containerised jobs run as root while the workspace files are owned by
+      # the runner user, which makes git refuse ("dubious ownership") and
+      # breaks the lefthook install in the pnpm prepare script. Harmless on
+      # non-container jobs.
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -75,6 +89,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+
+      # Containerised jobs run as root while the workspace files are owned by
+      # the runner user, which makes git refuse ("dubious ownership") and
+      # breaks the lefthook install in the pnpm prepare script. Harmless on
+      # non-container jobs.
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -101,6 +122,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+
+      # Containerised jobs run as root while the workspace files are owned by
+      # the runner user, which makes git refuse ("dubious ownership") and
+      # breaks the lefthook install in the pnpm prepare script. Harmless on
+      # non-container jobs.
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -145,6 +173,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Containerised jobs run as root while the workspace files are owned by
+      # the runner user, which makes git refuse ("dubious ownership") and
+      # breaks the lefthook install in the pnpm prepare script. Harmless on
+      # non-container jobs.
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
@@ -186,6 +221,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
+
+      # Containerised jobs run as root while the workspace files are owned by
+      # the runner user, which makes git refuse ("dubious ownership") and
+      # breaks the lefthook install in the pnpm prepare script. Harmless on
+      # non-container jobs.
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -256,6 +298,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Containerised jobs run as root while the workspace files are owned by
+      # the runner user, which makes git refuse ("dubious ownership") and
+      # breaks the lefthook install in the pnpm prepare script. Harmless on
+      # non-container jobs.
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
@@ -313,6 +362,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Containerised jobs run as root while the workspace files are owned by
+      # the runner user, which makes git refuse ("dubious ownership") and
+      # breaks the lefthook install in the pnpm prepare script. Harmless on
+      # non-container jobs.
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
@@ -353,6 +409,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+
+      # Containerised jobs run as root while the workspace files are owned by
+      # the runner user, which makes git refuse ("dubious ownership") and
+      # breaks the lefthook install in the pnpm prepare script. Harmless on
+      # non-container jobs.
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -395,6 +458,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Containerised jobs run as root while the workspace files are owned by
+      # the runner user, which makes git refuse ("dubious ownership") and
+      # breaks the lefthook install in the pnpm prepare script. Harmless on
+      # non-container jobs.
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
@@ -433,6 +503,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+
+      # Containerised jobs run as root while the workspace files are owned by
+      # the runner user, which makes git refuse ("dubious ownership") and
+      # breaks the lefthook install in the pnpm prepare script. Harmless on
+      # non-container jobs.
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
