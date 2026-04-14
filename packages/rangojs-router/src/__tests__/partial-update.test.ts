@@ -450,6 +450,53 @@ describe("partial-update", () => {
       expect(renderSegments).toHaveBeenCalled();
       expect(onUpdate).toHaveBeenCalled();
     });
+
+    it("uses segmentState.currentUrl as previousUrl for leave-intercept (popstate safety)", async () => {
+      // Popstate updates window.location.href before our handler runs, so
+      // tx.currentUrl captures the destination URL. segmentState.currentUrl
+      // still holds the intercept URL the segments render. The server needs
+      // the intercept URL as the "from" to compute the right diff.
+      const cached = seg("L0", { type: "layout" });
+      const modal = seg("L0.@modal", {
+        type: "parallel",
+        namespace: "intercept:modal",
+      });
+      const store = createMockStore({
+        cachedSegments: [cached, modal],
+        segmentIds: ["L0", "L0.@modal"],
+        currentUrl: "http://localhost/shop/product/42", // pre-popstate intercept URL
+      });
+
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: true,
+          segments: [],
+          matched: ["L0"],
+          diff: [],
+        },
+      });
+
+      const tx = createMockTx("http://localhost/shop?page=5"); // popstate destination
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments: vi.fn(async () => "tree"),
+      });
+
+      await updater(
+        "http://localhost/shop?page=5",
+        undefined,
+        false,
+        undefined,
+        tx,
+        { type: "leave-intercept" },
+      );
+
+      const fetchCall = (client.fetchPartial as any).mock.calls[0][0];
+      expect(fetchCall.previousUrl).toBe("http://localhost/shop/product/42");
+    });
   });
 
   describe("redirect payload validation", () => {

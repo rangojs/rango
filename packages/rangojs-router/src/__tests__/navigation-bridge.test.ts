@@ -31,7 +31,7 @@ function createStore() {
     setCrossTabRefreshCallback: vi.fn(),
     setHistoryKey: vi.fn(),
     setCurrentUrl: vi.fn(),
-    getInterceptSourceUrl: vi.fn(() => null),
+    getInterceptSourceUrl: vi.fn((): string | null => null),
   };
 }
 
@@ -607,5 +607,113 @@ describe("navigation-bridge stale cache handling", () => {
     expect(createNavigationTransactionMock).toHaveBeenCalled();
     const options = createNavigationTransactionMock.mock.calls[0][3];
     expect(options.skipLoadingState).toBe(false);
+  });
+});
+
+describe("navigation-bridge handlePopstate intercept exit", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    fetchPartialUpdateMock.mockReset();
+    createNavigationTransactionMock.mockReset();
+  });
+
+  it("passes leave-intercept mode when popstate exits intercept on a cache-miss URL", async () => {
+    // Simulate popstate to a non-intercept history entry whose URL isn't
+    // cached (e.g., the pre-intercept /shop?page=5 was evicted). Without the
+    // mode, partial-update hits the empty-diff "no changes" branch and the
+    // modal stays on screen.
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/shop?page=5",
+        origin: "http://localhost",
+      },
+      history: { state: {} }, // no intercept flag on new entry
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+
+    const store = createStore();
+    // Simulate that we were previously inside an intercept
+    store.getInterceptSourceUrl.mockReturnValue("http://localhost/shop?page=5");
+    store.getCachedSegments.mockReturnValue(undefined); // cache miss
+
+    const eventController = {
+      ...createEventController(),
+      setLocation: vi.fn(),
+      abortAllActions: vi.fn(),
+      getState: vi.fn(() => ({ isStreaming: false })),
+      setParams: vi.fn(),
+    };
+
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: eventController as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+
+    createNavigationTransactionMock.mockReturnValue({
+      handle: { signal: undefined },
+      with: (overrides: Record<string, unknown>) => ({
+        ...overrides,
+        handle: { signal: undefined },
+      }),
+      [Symbol.dispose]: vi.fn(),
+    });
+
+    await bridge.handlePopstate();
+
+    expect(fetchPartialUpdateMock).toHaveBeenCalled();
+    const mode = fetchPartialUpdateMock.mock.calls[0][5];
+    expect(mode).toEqual({ type: "leave-intercept" });
+  });
+
+  it("passes undefined mode for ordinary popstate with no intercept history", async () => {
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/shop?page=4",
+        origin: "http://localhost",
+      },
+      history: { state: {} },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+
+    const store = createStore();
+    store.getInterceptSourceUrl.mockReturnValue(null); // no prior intercept
+    store.getCachedSegments.mockReturnValue(undefined);
+
+    const eventController = {
+      ...createEventController(),
+      setLocation: vi.fn(),
+      abortAllActions: vi.fn(),
+      getState: vi.fn(() => ({ isStreaming: false })),
+      setParams: vi.fn(),
+    };
+
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: eventController as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+
+    createNavigationTransactionMock.mockReturnValue({
+      handle: { signal: undefined },
+      with: (overrides: Record<string, unknown>) => ({
+        ...overrides,
+        handle: { signal: undefined },
+      }),
+      [Symbol.dispose]: vi.fn(),
+    });
+
+    await bridge.handlePopstate();
+
+    expect(fetchPartialUpdateMock).toHaveBeenCalled();
+    const mode = fetchPartialUpdateMock.mock.calls[0][5];
+    expect(mode).toBeUndefined();
   });
 });
