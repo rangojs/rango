@@ -165,7 +165,11 @@ describe("segment-reconciler", () => {
         expect(result.segments[0].loading).toBe("skeleton");
       });
 
-      it("clears truthy loading on cached segments not in server response", () => {
+      it("preserves truthy loading on cached segments not in server response", () => {
+        // Truthy loading is kept so renderSegments stays in the LoaderBoundary
+        // branch — flipping to the plain OutletProvider branch would remount
+        // the entire LoaderBoundary > Suspense > LoaderResolver >
+        // RouteContentWrapper chain on every intercept/back navigation.
         const cached = seg("L0", {
           type: "layout",
           loading: "skeleton" as any,
@@ -179,7 +183,8 @@ describe("segment-reconciler", () => {
           cachedSegments: [cached],
         });
 
-        expect(result.segments[0].loading).toBeUndefined();
+        expect(result.segments[0].loading).toBe("skeleton");
+        expect(result.segments[0]).toBe(cached);
       });
 
       it("preserves loading=false on cached segments not in server response", () => {
@@ -262,7 +267,7 @@ describe("segment-reconciler", () => {
         expect(result.segments[0].loading).toBe(false);
       });
 
-      it("clears truthy loading on cached segments not in server response", () => {
+      it("preserves truthy loading on cached segments not in server response", () => {
         const cached = seg("L0", {
           type: "layout",
           loading: "skeleton" as any,
@@ -276,7 +281,8 @@ describe("segment-reconciler", () => {
           cachedSegments: [cached],
         });
 
-        expect(result.segments[0].loading).toBeUndefined();
+        expect(result.segments[0].loading).toBe("skeleton");
+        expect(result.segments[0]).toBe(cached);
       });
 
       it("preserves truthy loading on cached parallel segments not in server response", () => {

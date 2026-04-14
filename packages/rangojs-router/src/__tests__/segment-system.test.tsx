@@ -1076,7 +1076,7 @@ describe("segment-system", () => {
         expect(mergedRoute.loaderDataPromise).toBe(firstPromise);
       });
 
-      it("preserves the memoized content promise across a reconcile that strips loading", async () => {
+      it("keeps the cached segment ref when reconciling cached-only entries with truthy loading", async () => {
         const { reconcileSegments } =
           await import("../browser/segment-reconciler");
         const loadingSkeleton = createElement("div", null, "Loading route");
@@ -1094,10 +1094,9 @@ describe("segment-system", () => {
         const firstContent = initial[0].contentPromise;
         expect(firstContent).toBeInstanceOf(Promise);
 
-        // Simulate a partial update where the server doesn't include this
-        // segment: the reconciler's navigation actor clears truthy loading
-        // on cached-only entries, producing a new object. Memoization has
-        // to come along for the ride.
+        // Cached-only entries stay as-is: renderSegments must stay in the
+        // LoaderBoundary branch across partial updates (e.g., opening an
+        // intercept) or React unmounts the whole chain beneath the outlet.
         const reconciled = reconcileSegments({
           actor: "navigation",
           matched: ["R0"],
@@ -1107,9 +1106,9 @@ describe("segment-system", () => {
         });
 
         const mergedRoute = reconciled.mainSegments[0];
-        expect(mergedRoute).not.toBe(initial[0]);
+        expect(mergedRoute).toBe(initial[0]);
+        expect(mergedRoute.loading).toBe(loadingSkeleton);
         expect(mergedRoute.contentPromise).toBe(firstContent);
-        expect(mergedRoute.contentSource).toBe(component);
       });
     });
   });
