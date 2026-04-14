@@ -167,9 +167,16 @@ export function createPartialUpdater(
       segments = segmentIds ?? segmentState.currentSegmentIds;
     }
 
-    // For intercept revalidation, use the intercept source URL as previousUrl
+    // For intercept revalidation, use the intercept source URL as previousUrl.
+    // For leave-intercept, tx.currentUrl captures window.location.href at tx
+    // creation, which on popstate is already the destination URL and would
+    // tell the server "from == to". segmentState.currentUrl still points at
+    // the URL the cached segments render (the intercept URL), which is the
+    // correct "from" for the server's diff computation.
     const previousUrl =
-      interceptSourceUrl || tx.currentUrl || segmentState.currentUrl;
+      mode.type === "leave-intercept"
+        ? segmentState.currentUrl || tx.currentUrl
+        : interceptSourceUrl || tx.currentUrl || segmentState.currentUrl;
 
     debugLog(`\n[Browser] >>> NAVIGATION`);
     debugLog(`[Browser] From: ${previousUrl}`);
