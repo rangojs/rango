@@ -176,6 +176,12 @@ export function useFixture(options: {
   let isolatedViteCacheDir: string | undefined;
 
   test.beforeAll(async ({}, testInfo) => {
+    // Cold-start budget: spawning a server, running vite's dep optimizer on
+    // a fresh cache, waiting for a stable SSR response, and (in build mode)
+    // running `pnpm build` + `pnpm preview` together exceed the default
+    // test timeout on slower runners (notably inside containers where
+    // overlayfs slows node_modules/.vite writes).
+    testInfo.setTimeout(180_000);
     if (options.isolatedServer) {
       isolatedViteCacheDir = createIsolatedViteCacheDir(
         cwd,
