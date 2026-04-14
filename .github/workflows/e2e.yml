@@ -245,6 +245,8 @@ jobs:
         run: pnpm --filter @rangojs/router build
 
       - name: Run smoke tests
+        env:
+          TEST_DEBUG: "1"
         run: pnpm --filter @rangojs/router test --project=smoke
 
       - name: Upload test results
