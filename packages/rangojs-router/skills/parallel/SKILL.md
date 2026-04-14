@@ -237,25 +237,33 @@ A slot's `loading()` (whether from `handler.use` or explicit) makes that slot an
 
 The `parallel` mount site has the narrowest allow-list for `handler.use` items — slots cannot bring their own middleware or layout, only `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, and `transition`. See [skills/handler-use](../handler-use/SKILL.md) for the full table and merge rules.
 
-### Mount-site overrides are broadcast to every slot in the call
+### Two scopes for explicit `use`: shared (broadcast) and slot-local
 
-`parallel({...slots}, () => [...use])` runs the explicit `use()` callback **once per slot** ([dsl-helpers.ts](../../src/route-definition/dsl-helpers.ts)) — items in that callback land on every slot's entry, not just one. That works fine for items that accumulate (`loader`, `revalidate`, `errorBoundary`), but it **breaks the per-slot story for `loading()`** because `loading()` is a single assignment to the segment (last write wins).
+`parallel({...slots}, () => [...use])` runs the shared `use()` callback **once per slot** ([dsl-helpers.ts](../../src/route-definition/dsl-helpers.ts)) — items in that callback land on every slot's entry. That's the right behavior for the items the parallel allow-list permits and that accumulate (`loader`, `revalidate`, `errorBoundary`, `notFoundBoundary`, `transition`). (Slots cannot bring `middleware` or `layout` — see the allowed-types note above.)
+
+For single-assignment items like `loading()`, broadcasting overwrites every slot's `handler.use` default. Pass a **slot descriptor** `{ handler, use }` instead — items in the descriptor's `use` apply only to that slot:
 
 ```typescript
-// ❌ Both slots get <GenericSkeleton />, replacing each handler.use loading.
-parallel({ "@cart": Cart, "@notifs": Notifs }, () => [
-  loading(<GenericSkeleton />),
-]);
+// @cart gets a custom skeleton; @notifs keeps its handler.use default.
+parallel({
+  "@cart": {
+    handler: Cart,
+    use: () => [loading(<CustomCartSkeleton />)],
+  },
+  "@notifs": Notifs,
+});
 
-// ✅ Each slot keeps its own handler.use loading default.
-parallel({ "@cart": Cart, "@notifs": Notifs });
-
-// ✅ To override one slot's loading, mount it in its own parallel() call.
-parallel({ "@cart": Cart }, () => [loading(<CustomCartSkeleton />)]);
-parallel({ "@notifs": Notifs });
+// Opt one slot out of streaming while siblings still stream the broadcast.
+parallel(
+  {
+    "@cart": { handler: Cart, use: () => [loading(false)] },
+    "@notifs": Notifs,
+  },
+  () => [loading(<BroadcastSkeleton />)],
+);
 ```
 
-Same caveat applies to `loading(false)` — broadcast in a multi-slot call removes the skeleton from every slot. See [skills/handler-use § `loading()` is a special case](../handler-use/SKILL.md#loading-is-a-special-case--and-breaks-the-multi-slot-composition) for the full reasoning.
+Per-slot merge order is **handler.use → shared use → slot-local use**. Slot-local is the narrowest scope, so it wins for last-write-wins items. See [skills/handler-use § `loading()` is a single-assignment item — scope it correctly](../handler-use/SKILL.md#loading-is-a-single-assignment-item--scope-it-correctly) for the full reasoning.
 
 ## Slot Override Semantics
 

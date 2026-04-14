@@ -26,14 +26,18 @@ export const NamedRoutes = {
   "cacheIsolation.conditionGated": "/cache-isolation/condition-gated",
   "cacheIsolation.noAuthKey": "/cache-isolation/no-auth-key",
   "cacheIsolation.queryVariant": "/cache-isolation/query-variant",
-  "cacheScopeGuard.asyncLoaderReadAllowed": "/cache-scope-guard/async-loader-read-allowed",
+  "cacheScopeGuard.asyncLoaderReadAllowed":
+    "/cache-scope-guard/async-loader-read-allowed",
   "cacheScopeGuard.headerBlocked": "/cache-scope-guard/header-blocked",
   "cacheScopeGuard.index": "/cache-scope-guard",
-  "cacheScopeGuard.loaderCookieAllowed": "/cache-scope-guard/loader-cookie-allowed",
+  "cacheScopeGuard.loaderCookieAllowed":
+    "/cache-scope-guard/loader-cookie-allowed",
   "cacheScopeGuard.loaderReadAllowed": "/cache-scope-guard/loader-read-allowed",
-  "cacheScopeGuard.parallelReadBlocked": "/cache-scope-guard/parallel-read-blocked",
+  "cacheScopeGuard.parallelReadBlocked":
+    "/cache-scope-guard/parallel-read-blocked",
   "cacheScopeGuard.readBlocked": "/cache-scope-guard/read-blocked",
-  "cacheScopeGuard.reqCtxHeaderBlocked": "/cache-scope-guard/reqctx-header-blocked",
+  "cacheScopeGuard.reqCtxHeaderBlocked":
+    "/cache-scope-guard/reqctx-header-blocked",
   "cacheScopeGuard.reqCtxReadBlocked": "/cache-scope-guard/reqctx-read-blocked",
   "cacheScopeGuard.setAllowed": "/cache-scope-guard/set-allowed",
   "cacheScopeGuard.varBlocked": "/cache-scope-guard/var-blocked",
@@ -92,6 +96,8 @@ export const NamedRoutes = {
   "handlerUse.parallel": "/handler-use/parallel",
   "handlerUse.parallelOverride": "/handler-use/parallel-override",
   "handlerUse.parallelSlotOverride": "/handler-use/parallel-slot-override",
+  "handlerUse.slotDescriptor": "/handler-use/slot-descriptor",
+  "handlerUse.slotOptOut": "/handler-use/slot-opt-out",
   "hashNavigation.index": "/hash-navigation",
   "hookTests.formAction": "/hook-tests/form-action",
   "hookTests.index": "/hook-tests",
@@ -104,7 +110,10 @@ export const NamedRoutes = {
   "hookTests.useRouterTargetA": "/hook-tests/use-router/target-a",
   "hookTests.useRouterTargetB": "/hook-tests/use-router/target-b",
   "href.detail": "/href/:id",
-  "href.filtered": { path: "/href/filtered/:category", search: { q: "string", page: "number?", active: "boolean?" } },
+  "href.filtered": {
+    path: "/href/filtered/:category",
+    search: { q: "string", page: "number?", active: "boolean?" },
+  },
   "href.index": "/href",
   "href.nested.index": "/href/nested",
   "href.nullHandler.index": "/href/null-handler",
@@ -132,7 +141,8 @@ export const NamedRoutes = {
   "locale.list": "/:locale/blog",
   "locationState.index": "/location-state",
   "locationState.linkState": "/location-state/link-state",
-  "locationState.linkStatePlainTarget": "/location-state/link-state/plain-target",
+  "locationState.linkStatePlainTarget":
+    "/location-state/link-state/plain-target",
   "locationState.linkStateTarget": "/location-state/link-state/target",
   "locationState.mwRedirect": "/location-state/mw-redirect",
   "locationState.other": "/location-state/other",
@@ -160,9 +170,11 @@ export const NamedRoutes = {
   "middlewareTest.params": "/middleware-test/params/:paramId",
   "middlewareTest.protected": "/middleware-test/protected",
   "middlewareTest.protectedDashboard": "/middleware-test/protected/dashboard",
-  "middlewareTest.routeCookiesAfterNext": "/middleware-test/route-cookies-after-next",
+  "middlewareTest.routeCookiesAfterNext":
+    "/middleware-test/route-cookies-after-next",
   "middlewareTest.routeLevel": "/middleware-test/route-level",
-  "middlewareTest.routeLevelWithParams": "/middleware-test/route-level/:routeId",
+  "middlewareTest.routeLevelWithParams":
+    "/middleware-test/route-level/:routeId",
   "middlewareTest.routeShortcircuit": "/middleware-test/route-shortcircuit",
   "middlewareTest.sharedVars": "/middleware-test/shared-vars",
   "middlewareWrapping.array": "/middleware-wrapping/array",
@@ -206,7 +218,8 @@ export const NamedRoutes = {
   "responseCache.responseCache.json": "/response-cache/cached-json",
   "responseCache.responseCache.jsonQuery": "/response-cache/cached-json-query",
   "responseCache.responseCache.md": "/response-cache/cached-md",
-  "responseCache.responseCache.routeCb": "/response-cache/cb-test/with-route-cb",
+  "responseCache.responseCache.routeCb":
+    "/response-cache/cb-test/with-route-cb",
   "responseCache.responseCache.text": "/response-cache/cached-text",
   "responseCache.responseCache.uncached": "/response-cache/uncached-json",
   "responseCache.responseCache.xml": "/response-cache/cached-xml",
@@ -225,8 +238,14 @@ export const NamedRoutes = {
   "reverseAutofill.settings": "/reverse-autofill/:tenantId/settings",
   "reverseAutofill.user": "/reverse-autofill/:tenantId/users/:userId",
   reverseFallbackTest: "/reverse-fallback-test",
-  "search.detail": { path: "/search/:category", search: { q: "string?", active: "boolean?" } },
-  "search.index": { path: "/search", search: { q: "string", page: "number?", sort: "string?" } },
+  "search.detail": {
+    path: "/search/:category",
+    search: { q: "string?", active: "boolean?" },
+  },
+  "search.index": {
+    path: "/search",
+    search: { q: "string", page: "number?", sort: "string?" },
+  },
   shopPlayground: "/shop-playground",
   slow: "/slow",
   "slowProduct.detail": "/slow-product/:productId",
@@ -250,22 +269,31 @@ export const NamedRoutes = {
   "transformCases.index": "/transform-cases",
   "transformCases.prerendered": "/transform-cases/prerendered",
   "transformCases.state": "/transform-cases/state",
-  "useCacheTest.loaderSegmentPages.loaderSegmentPage": { path: "/use-cache-test/loader-segments/:pageId", search: { page: "number?" } },
+  "useCacheTest.loaderSegmentPages.loaderSegmentPage": {
+    path: "/use-cache-test/loader-segments/:pageId",
+    search: { page: "number?" },
+  },
   "useCacheTest.useCacheTest.basic": "/use-cache-test/basic",
   "useCacheTest.useCacheTest.brandCheck": "/use-cache-test/brand-check",
   "useCacheTest.useCacheTest.cachedNode": "/use-cache-test/cached-node",
-  "useCacheTest.useCacheTest.cachedParentChildSet": "/use-cache-test/cached-parent-child-set",
+  "useCacheTest.useCacheTest.cachedParentChildSet":
+    "/use-cache-test/cached-parent-child-set",
   "useCacheTest.useCacheTest.guardCookies": "/use-cache-test/guard-cookies",
-  "useCacheTest.useCacheTest.guardCtxHeadersSet": "/use-cache-test/guard-ctx-headers-set",
+  "useCacheTest.useCacheTest.guardCtxHeadersSet":
+    "/use-cache-test/guard-ctx-headers-set",
   "useCacheTest.useCacheTest.guardCtxSet": "/use-cache-test/guard-ctx-set",
   "useCacheTest.useCacheTest.guardHeaders": "/use-cache-test/guard-headers",
   "useCacheTest.useCacheTest.inlineHandler": "/use-cache-test/inline-handler",
   "useCacheTest.useCacheTest.inlineLayout": "/use-cache-test/inline-layout",
-  "useCacheTest.useCacheTest.inlineParams": "/use-cache-test/inline-params/:slug",
+  "useCacheTest.useCacheTest.inlineParams":
+    "/use-cache-test/inline-params/:slug",
   "useCacheTest.useCacheTest.interceptIndex": "/use-cache-test/intercept-index",
-  "useCacheTest.useCacheTest.interceptTarget": "/use-cache-test/intercept-target/:id",
-  "useCacheTest.useCacheTest.interleaveAction": "/use-cache-test/interleave-action",
-  "useCacheTest.useCacheTest.interleaveSlots": "/use-cache-test/interleave-slots",
+  "useCacheTest.useCacheTest.interceptTarget":
+    "/use-cache-test/intercept-target/:id",
+  "useCacheTest.useCacheTest.interleaveAction":
+    "/use-cache-test/interleave-action",
+  "useCacheTest.useCacheTest.interleaveSlots":
+    "/use-cache-test/interleave-slots",
   "useCacheTest.useCacheTest.jsonCached": "/use-cache-test/json-cached/:id",
   "useCacheTest.useCacheTest.namedProfile": "/use-cache-test/named-profile",
   "useCacheTest.useCacheTest.plainData": "/use-cache-test/plain-data",
