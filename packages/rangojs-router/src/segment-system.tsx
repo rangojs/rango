@@ -2,11 +2,7 @@ import * as React from "react";
 import { createElement, type ReactNode, type ComponentType } from "react";
 import { OutletProvider } from "./client.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
-import type {
-  ResolvedSegment,
-  LoaderDataResult,
-  RootLayoutProps,
-} from "./types.js";
+import type { ResolvedSegment, RootLayoutProps } from "./types.js";
 import { isLoaderDataResult } from "./types.js";
 import { invariant } from "./errors.js";
 import {
@@ -274,14 +270,32 @@ export async function renderSegments(
       resolvedComponent = await component;
     }
 
+    // Memoize the content Promise across renders. When the component is a
+    // non-Promise (already resolved), Promise.resolve creates a new pending
+    // thenable each render and Suspender's use() re-suspends briefly even
+    // though the value is synchronously available. Reusing the same Promise
+    // ref keeps React's use() in "known fulfilled" state after first render.
+    const buildContentPromise = (): Promise<ReactNode> => {
+      if (resolvedComponent instanceof Promise) {
+        return resolvedComponent;
+      }
+      if (
+        node.segment.contentPromise !== undefined &&
+        node.segment.contentSource === resolvedComponent
+      ) {
+        return node.segment.contentPromise;
+      }
+      const promise = Promise.resolve(resolvedComponent);
+      node.segment.contentPromise = promise;
+      node.segment.contentSource = resolvedComponent;
+      return promise;
+    };
+
     let nodeContent: ReactNode =
       loading !== null && loading !== undefined && loading !== false
         ? createElement(RouteContentWrapper, {
             key: `suspense-loading-${id}`,
-            content:
-              resolvedComponent instanceof Promise
-                ? resolvedComponent
-                : Promise.resolve(resolvedComponent),
+            content: buildContentPromise(),
             fallback: loading,
             segmentId: id,
           })
@@ -305,8 +319,25 @@ export async function renderSegments(
 
     // Prepare loader data if there are loaders
     const loaderIds = loaderEntries.map((loader) => loader.loaderId!);
-    const loaderDataPromise =
-      loaderEntries.length > 0
+
+    // Memoize the aggregate Promise.all across renders. A fresh Promise.all
+    // starts pending even when every input is already fulfilled (it needs
+    // one microtask to settle), which causes React's use() inside
+    // LoaderBoundary to suspend and briefly commit the fallback — the flicker
+    // seen when opening/closing intercepts while the main route's loaders
+    // haven't actually changed. Reusing the same aggregate ref when the
+    // underlying loader.loaderData references are unchanged keeps the promise
+    // in React's "known fulfilled" state after the first render.
+    const layoutLoaderSources = loaderEntries.map(
+      (loader) => loader.loaderData,
+    );
+    const shouldReuseLoaderPromise =
+      node.segment.loaderDataPromise !== undefined &&
+      hasSameReferences(node.segment.layoutLoaderSources, layoutLoaderSources);
+
+    const loaderDataPromise = shouldReuseLoaderPromise
+      ? node.segment.loaderDataPromise!
+      : loaderEntries.length > 0
         ? Promise.all(
             loaderEntries.map((loader) =>
               loader.loaderData instanceof Promise
@@ -315,6 +346,9 @@ export async function renderSegments(
             ),
           )
         : Promise.resolve([]);
+
+    node.segment.loaderDataPromise = loaderDataPromise;
+    node.segment.layoutLoaderSources = layoutLoaderSources;
 
     // Use LoaderBoundary when loading is defined to maintain consistent tree structure
     // This ensures cached segments (which may not have loader segments) have the same

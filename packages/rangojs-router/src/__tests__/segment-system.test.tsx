@@ -929,5 +929,93 @@ describe("segment-system", () => {
         await firstPromise;
       });
     });
+
+    describe("layout/route loader memoization", () => {
+      // Regression guard for the intercept-flicker bug: reopening/closing an
+      // intercept re-renders the background route, and a fresh Promise.all
+      // would re-suspend LoaderBoundary and briefly commit the loading
+      // skeleton even when the underlying loader data is already resolved.
+      it("reuses the aggregate loaderDataPromise across rerenders when loader sources are unchanged", async () => {
+        const loadingSkeleton = createElement("div", null, "Loading route");
+        const loaderData = Promise.resolve({ foo: "bar" });
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0R0",
+            type: "route",
+            loading: loadingSkeleton,
+          }),
+          seg({
+            id: "L0R0D0.data",
+            type: "loader",
+            loaderId: "route-loader",
+            loaderData,
+          }),
+        ];
+
+        await renderSegments(segments);
+        const firstPromise = segments[1].loaderDataPromise;
+
+        await renderSegments(segments);
+        const secondPromise = segments[1].loaderDataPromise;
+
+        expect(firstPromise).toBeInstanceOf(Promise);
+        expect(secondPromise).toBe(firstPromise);
+      });
+
+      it("creates a new aggregate loaderDataPromise when a loader.loaderData ref changes", async () => {
+        const loadingSkeleton = createElement("div", null, "Loading route");
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0R0",
+            type: "route",
+            loading: loadingSkeleton,
+          }),
+          seg({
+            id: "L0R0D0.data",
+            type: "loader",
+            loaderId: "route-loader",
+            loaderData: Promise.resolve({ foo: 1 }),
+          }),
+        ];
+
+        await renderSegments(segments);
+        const firstPromise = segments[1].loaderDataPromise;
+
+        segments[2] = {
+          ...segments[2],
+          loaderData: Promise.resolve({ foo: 2 }),
+        };
+
+        await renderSegments(segments);
+        const secondPromise = segments[1].loaderDataPromise;
+
+        expect(firstPromise).toBeInstanceOf(Promise);
+        expect(secondPromise).not.toBe(firstPromise);
+      });
+
+      it("reuses a stable content promise for non-Promise components across rerenders", async () => {
+        const loadingSkeleton = createElement("div", null, "Loading route");
+        const component = createElement("div", null, "route-body");
+        const segments: ResolvedSegment[] = [
+          seg({
+            id: "R0",
+            type: "route",
+            component,
+            loading: loadingSkeleton,
+          }),
+        ];
+
+        await renderSegments(segments);
+        const firstPromise = segments[0].contentPromise;
+
+        await renderSegments(segments);
+        const secondPromise = segments[0].contentPromise;
+
+        expect(firstPromise).toBeInstanceOf(Promise);
+        expect(secondPromise).toBe(firstPromise);
+      });
+    });
   });
 });
