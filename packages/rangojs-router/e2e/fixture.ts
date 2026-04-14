@@ -45,7 +45,11 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
 
       child.stdout!.on("data", (data) => {
         stdout += stripVTControlCharacters(String(data));
-        const match = stdout.match(/http:\/\/localhost:(\d+)/);
+        // Vite reports the resolved bind address, which is `localhost` when
+        // the runtime's DNS resolves it to IPv6 first but `127.0.0.1` when
+        // forced ipv4-first (e.g., via NODE_OPTIONS=--dns-result-order=ipv4first
+        // in CI containers where /etc/hosts orders ::1 before 127.0.0.1).
+        const match = stdout.match(/http:\/\/(?:localhost|127\.0\.0\.1):(\d+)/);
         if (match) {
           clearTimeout(timeout);
           resolve(Number(match[1]));
