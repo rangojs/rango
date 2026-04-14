@@ -60,6 +60,9 @@ const HandlerUsePage: Handler<"/handler-use"> = async (ctx) => {
       <Link to="/handler-use/slot-opt-out" data-testid="link-to-slot-opt-out">
         Go to slot opt-out test
       </Link>
+      <Link to="/handler-use/three-layer" data-testid="link-to-three-layer">
+        Go to three-layer merge test
+      </Link>
     </div>
   );
 };
@@ -256,6 +259,46 @@ const SlotOptOutPage: Handler<"/handler-use/slot-opt-out"> = () => (
   </div>
 );
 
+// -- Three-layer merge regression (handler.use + shared + slot-local) --------
+
+// Distinct loaders, one per layer, so we can observe each layer's effect in
+// the rendered output. If any layer silently stops flowing through, one of
+// the three markers disappears from the DOM.
+export const ThreeLayerHandlerLoader = createLoader(async () => ({
+  mark: "three-layer-handler",
+}));
+export const ThreeLayerSharedLoader = createLoader(async () => ({
+  mark: "three-layer-shared",
+}));
+export const ThreeLayerSlotLocalLoader = createLoader(async () => ({
+  mark: "three-layer-slot-local",
+}));
+
+const ThreeLayerSidebar: Handler = async (ctx) => {
+  const h = await ctx.use(ThreeLayerHandlerLoader);
+  const s = await ctx.use(ThreeLayerSharedLoader);
+  const l = await ctx.use(ThreeLayerSlotLocalLoader);
+  return (
+    <aside data-testid="three-layer-sidebar">
+      <span data-testid="three-layer-handler-mark">{h.mark}</span>
+      <span data-testid="three-layer-shared-mark">{s.mark}</span>
+      <span data-testid="three-layer-slot-local-mark">{l.mark}</span>
+    </aside>
+  );
+};
+// handler.use layer — this loader must flow through to ctx.use on the slot
+ThreeLayerSidebar.use = () => [loader(ThreeLayerHandlerLoader)];
+
+const ThreeLayerPage: Handler<"/handler-use/three-layer"> = () => (
+  <div data-testid="three-layer-page">
+    <h1 data-testid="three-layer-title">Three-Layer Merge Test</h1>
+    <ParallelOutlet name="@sidebar" />
+    <Link to="/handler-use" data-testid="link-back-three-layer">
+      Back
+    </Link>
+  </div>
+);
+
 // ---------------------------------------------------------------------------
 // Route patterns
 // ---------------------------------------------------------------------------
@@ -344,6 +387,24 @@ export const handlerUsePatterns = urls(({ path, layout, parallel }) => [
             </div>,
           ),
         ],
+      ),
+    ]),
+
+    // Three-layer merge regression: all three layers must flow through to
+    // the slot entry so the handler can ctx.use() each loader and render
+    // all three marks. Each layer is observable — if any layer regresses,
+    // one of the three data-testid spans disappears from the DOM.
+    path("/three-layer", ThreeLayerPage, { name: "threeLayer" }, () => [
+      parallel(
+        {
+          "@sidebar": {
+            handler: ThreeLayerSidebar,
+            // slot-local layer
+            use: () => [loader(ThreeLayerSlotLocalLoader)],
+          },
+        },
+        // shared layer (broadcast, but only one slot here)
+        () => [loader(ThreeLayerSharedLoader)],
       ),
     ]),
   ]),
