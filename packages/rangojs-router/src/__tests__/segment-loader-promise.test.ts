@@ -91,9 +91,11 @@ describe("getMemoizedLoaderPromise", () => {
     expect(xAgain).toBe(x);
   });
 
-  it("falls through without caching when the first loaderData is a primitive", () => {
-    // Primitive first source can't key a WeakMap — helper still returns a
-    // correct Promise.all, just without memoization. Validate correctness.
+  it("memoizes when the first loaderData is a primitive via the fallback cache", () => {
+    // Primitive first sources can't key a WeakMap, so they land in a Map
+    // fallback. Loaders returning plain-value data (strings, numbers) still
+    // benefit from memoization — otherwise a fresh Promise.all each render
+    // would reintroduce the flicker this helper exists to prevent.
     const first = getMemoizedLoaderPromise([
       loaderSeg("D0.a", "primitive-a"),
       loaderSeg("D0.b", "primitive-b"),
@@ -104,7 +106,32 @@ describe("getMemoizedLoaderPromise", () => {
     ]);
 
     expect(first).toBeInstanceOf(Promise);
-    expect(second).toBeInstanceOf(Promise);
+    expect(second).toBe(first);
+  });
+
+  it("invalidates the primitive-keyed aggregate when a later source ref changes", () => {
+    const first = getMemoizedLoaderPromise([
+      loaderSeg("D1.a", "shared-a"),
+      loaderSeg("D1.b", "tail-first"),
+    ]);
+    const second = getMemoizedLoaderPromise([
+      loaderSeg("D1.a", "shared-a"),
+      loaderSeg("D1.b", "tail-second"),
+    ]);
+
     expect(second).not.toBe(first);
+  });
+
+  it("memoizes when first loaderData is null (null-data loader)", () => {
+    const first = getMemoizedLoaderPromise([
+      loaderSeg("D2.a", null),
+      loaderSeg("D2.b", "tail"),
+    ]);
+    const second = getMemoizedLoaderPromise([
+      loaderSeg("D2.a", null),
+      loaderSeg("D2.b", "tail"),
+    ]);
+
+    expect(second).toBe(first);
   });
 });

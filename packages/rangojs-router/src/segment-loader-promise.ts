@@ -5,11 +5,15 @@ import type { ResolvedSegment } from "./types.js";
  * `loaderData` reference. Each entry holds the source refs it was built from
  * plus the resulting Promise/array; lookup scans entries for the matching
  * source array (typically a single entry, since distinct loader groups rarely
- * share a first source).
+ * share a first source). Object first-refs live in a WeakMap (auto-GC);
+ * primitive first-refs (strings/numbers/booleans/null) live in a Map so
+ * loaders that resolve to primitive data are memoized too — bounded in
+ * practice by the application's loader set.
  *
  * Keying externally means reconciliation's fresh segment objects no longer
  * drop memoization — the cache survives as long as the underlying loader
- * segments do, and GC collects entries when those loaders are released.
+ * segments do, and GC collects entries when those loaders are released
+ * (object keys only).
  *
  * Browser-only. On the server each SSR render needs a fresh Promise so
  * Suspense can actually suspend and emit the loading fallback HTML before
@@ -25,8 +29,11 @@ interface LoaderCacheEntry {
   promise: Promise<any[]> | any[];
 }
 
-const loaderPromiseCache = IS_BROWSER
+const objectLoaderCache = IS_BROWSER
   ? new WeakMap<object, LoaderCacheEntry[]>()
+  : null;
+const primitiveLoaderCache = IS_BROWSER
+  ? new Map<unknown, LoaderCacheEntry[]>()
   : null;
 
 // In the browser, a single shared empty aggregate is safe (and desirable) —
@@ -62,6 +69,12 @@ function buildLoaderPromise(loaders: ResolvedSegment[]): Promise<any[]> {
   );
 }
 
+function isObjectLike(value: unknown): value is object {
+  return (
+    value !== null && (typeof value === "object" || typeof value === "function")
+  );
+}
+
 /**
  * Memoize an aggregate Promise.all for a set of loader segments. Reusing the
  * same aggregate across renders — invalidated only when any underlying
@@ -78,23 +91,16 @@ export function getMemoizedLoaderPromise(
   if (loaders.length === 0) {
     return SHARED_EMPTY_LOADER_PROMISE ?? buildLoaderPromise(loaders);
   }
-  if (!loaderPromiseCache) {
+  if (!objectLoaderCache || !primitiveLoaderCache) {
     return buildLoaderPromise(loaders);
   }
 
   const sources = loaders.map((loader) => loader.loaderData);
   const first = sources[0];
+  const entries = isObjectLike(first)
+    ? objectLoaderCache.get(first)
+    : primitiveLoaderCache.get(first);
 
-  // Primitive first source can't key a WeakMap. Rare in practice (loader data
-  // is typically an object or a Promise); fall through to an uncached build.
-  if (
-    first === null ||
-    (typeof first !== "object" && typeof first !== "function")
-  ) {
-    return buildLoaderPromise(loaders);
-  }
-
-  const entries = loaderPromiseCache.get(first as object);
   if (entries) {
     for (const entry of entries) {
       if (hasSameReferences(entry.sources, sources)) {
@@ -107,8 +113,10 @@ export function getMemoizedLoaderPromise(
   const newEntry: LoaderCacheEntry = { sources, promise };
   if (entries) {
     entries.push(newEntry);
+  } else if (isObjectLike(first)) {
+    objectLoaderCache.set(first, [newEntry]);
   } else {
-    loaderPromiseCache.set(first as object, [newEntry]);
+    primitiveLoaderCache.set(first, [newEntry]);
   }
   return promise;
 }
