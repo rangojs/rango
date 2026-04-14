@@ -195,6 +195,29 @@ test.describe("handler.use (dev)", () => {
       "slow-panel-data",
     );
   });
+
+  test("slot descriptor three-layer merge: handler.use + shared use + slot-local use all flow through", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Regression guard for the full three-layer merge. Each layer registers
+    // a distinct loader; the slot handler ctx.use()'s all three and renders
+    // each mark. If any layer silently stops flowing through to the slot
+    // entry, one of the three marks disappears.
+    await page.goto(f.url("/handler-use/three-layer"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("three-layer-handler-mark")).toHaveText(
+      "three-layer-handler",
+    );
+    await expect(page.getByTestId("three-layer-shared-mark")).toHaveText(
+      "three-layer-shared",
+    );
+    await expect(page.getByTestId("three-layer-slot-local-mark")).toHaveText(
+      "three-layer-slot-local",
+    );
+  });
 });
 
 // -- Production build --------------------------------------------------------
@@ -380,6 +403,25 @@ test.describe("handler.use (production)", () => {
     );
     await expect(page.getByTestId("descriptor-panel-section")).toHaveText(
       "slow-panel-data",
+    );
+  });
+
+  test("slot descriptor three-layer merge: handler.use + shared use + slot-local use all flow through", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/handler-use/three-layer"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("three-layer-handler-mark")).toHaveText(
+      "three-layer-handler",
+    );
+    await expect(page.getByTestId("three-layer-shared-mark")).toHaveText(
+      "three-layer-shared",
+    );
+    await expect(page.getByTestId("three-layer-slot-local-mark")).toHaveText(
+      "three-layer-slot-local",
     );
   });
 });
