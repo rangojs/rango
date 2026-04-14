@@ -137,16 +137,45 @@ export const urlpatterns = urls(({ path, layout, middleware }) => [
 ## Middleware with Multiple Handlers
 
 ```typescript
-// Spread multiple middleware from a single export
+// Group multiple middleware in an array
 export const shopMiddleware = [loggerMiddleware, mockAuthMiddleware];
 
-// In routes
+// In routes — pass the array directly
 layout(<ShopLayout />, () => [
-  middleware(...shopMiddleware),
+  middleware(shopMiddleware),
 
   path("/shop", ShopIndex, { name: "shop" }),
 ])
 ```
+
+## Wrapping Middleware (Scoped to Children)
+
+Use the wrapping form to scope middleware to a subset of routes without
+introducing a visible layout:
+
+```typescript
+urls(({ path, middleware }) => [
+  // authMw only applies to /admin and /admin/settings
+  middleware(authMw, () => [
+    path("/admin", AdminPage, { name: "admin" }),
+    path("/admin/settings", SettingsPage, { name: "settings" }),
+  ]),
+
+  // Public route — no authMw
+  path("/", HomePage, { name: "home" }),
+]);
+```
+
+Multiple middleware with wrapping:
+
+```typescript
+middleware([authMw, loggingMw], () => [
+  path("/admin", AdminPage, { name: "admin" }),
+]);
+```
+
+This creates a transparent layout (`<Outlet />`) that carries the middleware.
+The middleware does not affect sibling routes outside the callback.
 
 ## Middleware Context
 
