@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, vi } from "vitest";
 import { createElement, type ReactNode, type ReactElement } from "react";
 import type { ResolvedSegment } from "../types";
@@ -953,11 +954,19 @@ describe("segment-system", () => {
           }),
         ];
 
-        await renderSegments(segments);
-        const firstPromise = segments[1].loaderDataPromise;
+        const firstResult = await renderSegments(segments);
+        const firstBoundary = collectByType(
+          toTreeNode(firstResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        const firstPromise = firstBoundary.props.loaderDataPromise;
 
-        await renderSegments(segments);
-        const secondPromise = segments[1].loaderDataPromise;
+        const secondResult = await renderSegments(segments);
+        const secondBoundary = collectByType(
+          toTreeNode(secondResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        const secondPromise = secondBoundary.props.loaderDataPromise;
 
         expect(firstPromise).toBeInstanceOf(Promise);
         expect(secondPromise).toBe(firstPromise);
@@ -980,27 +989,35 @@ describe("segment-system", () => {
           }),
         ];
 
-        await renderSegments(segments);
-        const firstPromise = segments[1].loaderDataPromise;
+        const firstResult = await renderSegments(segments);
+        const firstBoundary = collectByType(
+          toTreeNode(firstResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        const firstPromise = firstBoundary.props.loaderDataPromise;
 
         segments[2] = {
           ...segments[2],
           loaderData: Promise.resolve({ foo: 2 }),
         };
 
-        await renderSegments(segments);
-        const secondPromise = segments[1].loaderDataPromise;
+        const secondResult = await renderSegments(segments);
+        const secondBoundary = collectByType(
+          toTreeNode(secondResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        const secondPromise = secondBoundary.props.loaderDataPromise;
 
         expect(firstPromise).toBeInstanceOf(Promise);
         expect(secondPromise).not.toBe(firstPromise);
       });
 
       // Regression guard: reconcileSegments produces fresh segment refs on
-      // many paths (in-diff spread, loading-strip, mergeSegmentLoaders). If
-      // memoization is tied to the exact segment ref, the realistic flow —
-      // reconcile then render — recreates Promise wrappers every navigation
-      // and the intercept flicker returns. These tests run segments through
-      // reconcile between renders to simulate the real browser path.
+      // many paths (in-diff spread, mergeSegmentLoaders). Memoization now
+      // lives in a module-level WeakMap keyed on loaderData/component refs
+      // (not on the segment), so it survives reconcile inherently — this
+      // integration test proves the render → reconcile → render path keeps
+      // the aggregate Promise stable end to end.
       it("preserves the memoized loader promise across a reconcile that spreads the segment", async () => {
         const { reconcileSegments } =
           await import("../browser/segment-reconciler");
@@ -1021,8 +1038,12 @@ describe("segment-system", () => {
           }),
         ];
 
-        await renderSegments(initial);
-        const firstPromise = initial[1].loaderDataPromise;
+        const firstResult = await renderSegments(initial);
+        const firstBoundary = collectByType(
+          toTreeNode(firstResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        const firstPromise = firstBoundary.props.loaderDataPromise;
         expect(firstPromise).toBeInstanceOf(Promise);
 
         // Simulate navigation where the server returns a fresh copy of L0R0
@@ -1045,13 +1066,13 @@ describe("segment-system", () => {
           (s) => s.id === "L0R0",
         )!;
         expect(mergedRoute).not.toBe(initial[1]);
-        expect(mergedRoute.loaderDataPromise).toBe(firstPromise);
-        expect(mergedRoute.layoutLoaderSources).toBe(
-          initial[1].layoutLoaderSources,
-        );
 
-        await renderSegments(reconciled.mainSegments);
-        expect(mergedRoute.loaderDataPromise).toBe(firstPromise);
+        const secondResult = await renderSegments(reconciled.mainSegments);
+        const secondBoundary = collectByType(
+          toTreeNode(secondResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        expect(secondBoundary.props.loaderDataPromise).toBe(firstPromise);
       });
 
       it("keeps the cached segment ref when reconciling cached-only entries with truthy loading", async () => {
@@ -1068,8 +1089,12 @@ describe("segment-system", () => {
           }),
         ];
 
-        await renderSegments(initial);
-        const firstContent = initial[0].contentPromise;
+        const firstResult = await renderSegments(initial);
+        const firstWrapper = collectByType(
+          toTreeNode(firstResult),
+          MockRouteContentWrapper,
+        )[0];
+        const firstContent = firstWrapper.props.content;
         expect(firstContent).toBeInstanceOf(Promise);
 
         // Cached-only entries stay as-is: renderSegments must stay in the
@@ -1086,7 +1111,13 @@ describe("segment-system", () => {
         const mergedRoute = reconciled.mainSegments[0];
         expect(mergedRoute).toBe(initial[0]);
         expect(mergedRoute.loading).toBe(loadingSkeleton);
-        expect(mergedRoute.contentPromise).toBe(firstContent);
+
+        const secondResult = await renderSegments(reconciled.mainSegments);
+        const secondWrapper = collectByType(
+          toTreeNode(secondResult),
+          MockRouteContentWrapper,
+        )[0];
+        expect(secondWrapper.props.content).toBe(firstContent);
       });
     });
   });
