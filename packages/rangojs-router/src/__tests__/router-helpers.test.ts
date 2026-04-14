@@ -555,6 +555,96 @@ describe("createReverse", () => {
       "/category/shoes/",
     );
   });
+
+  // Regression: consecutive optional middle params like /:a?/:b?/:productId
+  // must collapse into a single slash when omitted, not leave "///id".
+  describe("consecutive optional middle params", () => {
+    const r = createReverse({
+      leadingOptionals: "/:a?/:b?/:productId",
+      prefixedOptionals: "/shop/:a?/:b?/:productId",
+      tripleOptionals: "/:a?/:b?/:c?/end",
+      constrainedOptionals: "/:locale(en|gb)?/:region(us|eu)?/:productId",
+    });
+
+    it("omits all optionals, keeps required tail", () => {
+      expect(r("leadingOptionals" as any, { productId: "id" })).toBe("/id");
+      expect(r("prefixedOptionals" as any, { productId: "id" })).toBe(
+        "/shop/id",
+      );
+      expect(r("tripleOptionals" as any, {})).toBe("/end");
+    });
+
+    it("provides only the first optional", () => {
+      expect(r("leadingOptionals" as any, { a: "x", productId: "id" })).toBe(
+        "/x/id",
+      );
+      expect(r("prefixedOptionals" as any, { a: "x", productId: "id" })).toBe(
+        "/shop/x/id",
+      );
+    });
+
+    it("provides only the second optional", () => {
+      expect(r("leadingOptionals" as any, { b: "y", productId: "id" })).toBe(
+        "/y/id",
+      );
+      expect(r("prefixedOptionals" as any, { b: "y", productId: "id" })).toBe(
+        "/shop/y/id",
+      );
+    });
+
+    it("provides first and third optional (skips middle)", () => {
+      expect(r("tripleOptionals" as any, { a: "x", c: "z" })).toBe("/x/z/end");
+    });
+
+    it("provides all optionals", () => {
+      expect(
+        r("leadingOptionals" as any, { a: "x", b: "y", productId: "id" }),
+      ).toBe("/x/y/id");
+      expect(
+        r("prefixedOptionals" as any, { a: "x", b: "y", productId: "id" }),
+      ).toBe("/shop/x/y/id");
+    });
+
+    it("omits all constrained optionals, keeps required tail", () => {
+      expect(r("constrainedOptionals" as any, { productId: "id" })).toBe("/id");
+    });
+
+    it("provides one constrained optional", () => {
+      expect(
+        r("constrainedOptionals" as any, { locale: "en", productId: "id" }),
+      ).toBe("/en/id");
+      expect(
+        r("constrainedOptionals" as any, { region: "us", productId: "id" }),
+      ).toBe("/us/id");
+    });
+
+    // Regression: the trie matcher fills unmatched optional params with "".
+    // If reverse treats "" as a valid value, unmatched optionals leave
+    // empty slots and the URL becomes e.g. "///////id.html".
+    it("treats empty-string optionals as omitted (trie fill behaviour)", () => {
+      const trieParams = {
+        b1: "",
+        b2: "",
+        b3: "",
+        b4: "",
+        b5: "",
+        b6: "",
+        productId: "SB8046_NavyBlue",
+      };
+      const r2 = createReverse({
+        pdp: "/:b1?/:b2?/:b3?/:b4?/:b5?/:b6?/:productId.html",
+      });
+      expect(r2("pdp" as any, trieParams)).toBe("/SB8046_NavyBlue.html");
+    });
+
+    it("empty-string mid optional collapses around a provided neighbour", () => {
+      const r2 = createReverse({
+        x: "/:a?/:b?/:c?/end",
+      });
+      // Only :b has a real value; :a and :c come back as "" from the trie.
+      expect(r2("x" as any, { a: "", b: "mid", c: "" })).toBe("/mid/end");
+    });
+  });
 });
 
 // ========================================================================
@@ -673,5 +763,90 @@ describe("resolveRouteName (via createHandlerContext.reverse)", () => {
     expect(() => reverse("product.detail" as any)).toThrow(
       'Missing param "productId"',
     );
+  });
+
+  // Regression: consecutive optional middle params must collapse into single
+  // slashes through ctx.reverse, not produce "///id".
+  describe("consecutive optional middle params via ctx.reverse", () => {
+    const optionalRouteMap: Record<string, string> = {
+      "shop.product": "/shop/:a?/:b?/:productId",
+      "shop.nested": "/:a?/:b?/:c?/end",
+    };
+
+    it("omits all optionals, keeps required tail", async () => {
+      const reverse = await makeReverse(optionalRouteMap);
+      expect(reverse("shop.product" as any, { productId: "id" })).toBe(
+        "/shop/id",
+      );
+      expect(reverse("shop.nested" as any, {} as any)).toBe("/end");
+    });
+
+    it("provides only the first optional", async () => {
+      const reverse = await makeReverse(optionalRouteMap);
+      expect(reverse("shop.product" as any, { a: "x", productId: "id" })).toBe(
+        "/shop/x/id",
+      );
+    });
+
+    it("provides only the second optional", async () => {
+      const reverse = await makeReverse(optionalRouteMap);
+      expect(reverse("shop.product" as any, { b: "y", productId: "id" })).toBe(
+        "/shop/y/id",
+      );
+    });
+
+    it("provides first and third optional (skips middle)", async () => {
+      const reverse = await makeReverse(optionalRouteMap);
+      expect(reverse("shop.nested" as any, { a: "x", c: "z" })).toBe(
+        "/x/z/end",
+      );
+    });
+
+    it("provides all optionals", async () => {
+      const reverse = await makeReverse(optionalRouteMap);
+      expect(
+        reverse("shop.product" as any, {
+          a: "x",
+          b: "y",
+          productId: "id",
+        }),
+      ).toBe("/shop/x/y/id");
+    });
+
+    it("inherits current params and merges overrides without extra slashes", async () => {
+      const reverse = await makeReverse(optionalRouteMap, "shop.product", {
+        productId: "old",
+      });
+      expect(reverse("shop.product" as any, { productId: "new" })).toBe(
+        "/shop/new",
+      );
+      expect(
+        reverse("shop.product" as any, { a: "cat", productId: "new" }),
+      ).toBe("/shop/cat/new");
+    });
+
+    // Regression: the trie matcher fills unmatched optional params with "",
+    // which lands in currentParams. Without empty-string handling, the
+    // reverse would emit "///////id.html" (see reverse.ts regex cleanup).
+    it("empty-string optionals in currentParams collapse (trie fill bug)", async () => {
+      const reverse = await makeReverse(
+        {
+          product: "/:b1?/:b2?/:b3?/:b4?/:b5?/:b6?/:productId.html",
+        },
+        "product",
+        {
+          b1: "",
+          b2: "",
+          b3: "",
+          b4: "",
+          b5: "",
+          b6: "",
+          productId: "existing",
+        },
+      );
+      expect(reverse("product" as any, { productId: "SB8046_NavyBlue" })).toBe(
+        "/SB8046_NavyBlue.html",
+      );
+    });
   });
 });

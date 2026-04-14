@@ -311,7 +311,10 @@ export function createReverse<TRoutes extends Record<string, string>>(
         /:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?(\?)/g,
         (_, key, _constraint, optional) => {
           const value = params[key];
-          if (value === undefined) {
+          // Empty string is treated as omitted — the trie matcher fills
+          // unmatched optional params with "" (not undefined), so reverse
+          // must collapse those segments instead of leaving empty slots.
+          if (value === undefined || value === "") {
             hadOmittedOptional = true;
             return "";
           }

@@ -41,14 +41,28 @@ export function substituteRouteParams(
   let result = pattern;
   let hadOmittedOptional = false;
 
-  // First pass: substitute provided params
+  // First pass: substitute provided params.
+  // Empty string on an optional placeholder is treated as omitted (the trie
+  // matcher fills unmatched optionals with "" — letting the second pass
+  // strip them keeps slash cleanup consistent). Empty string on required
+  // `:key` or wildcard `*key` still substitutes, matching prior behaviour.
   for (const [key, value] of Object.entries(params)) {
     const escaped = escapeRegExp(key);
-    result = result.replace(
-      new RegExp(`:${escaped}(\\([^)]*\\))?\\??`),
-      encode(value),
-    );
-    result = result.replace(`*${key}`, encode(value));
+    if (value === "") {
+      // Only replace required placeholders (negative lookahead for `?`);
+      // leave `:key?` for the second pass.
+      result = result.replace(
+        new RegExp(`:${escaped}(\\([^)]*\\))?(?!\\?)`),
+        "",
+      );
+      result = result.replace(`*${key}`, "");
+    } else {
+      result = result.replace(
+        new RegExp(`:${escaped}(\\([^)]*\\))?\\??`),
+        encode(value),
+      );
+      result = result.replace(`*${key}`, encode(value));
+    }
   }
 
   // Second pass: strip remaining optional param placeholders not in params
