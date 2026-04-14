@@ -24,7 +24,13 @@ export const test = base.extend<{}, DevServerFixture>({
           if (process.env.TEST_DEBUG) {
             console.log(styleText("cyan", label), str);
           }
-          const match = stdout.match(/http:\/\/localhost:(\d+)/);
+          // Also match 127.0.0.1 because vite prints the resolved bind
+          // address, which is 127.0.0.1 when Node's DNS order is ipv4first
+          // (set in CI to work around the container /etc/hosts preferring
+          // ::1 for localhost while vite binds to 127.0.0.1 only).
+          const match = stdout.match(
+            /http:\/\/(?:localhost|127\.0\.0\.1):(\d+)/,
+          );
           if (match) {
             resolve(Number(match[1]));
           }

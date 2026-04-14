@@ -36,7 +36,9 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
     return new Promise((resolve) => {
       child.stdout!.on("data", (data) => {
         stdout += stripVTControlCharacters(String(data));
-        const match = stdout.match(/http:\/\/localhost:(\d+)/);
+        // Also match 127.0.0.1 — vite prints the resolved bind address,
+        // which is 127.0.0.1 under NODE_OPTIONS=--dns-result-order=ipv4first.
+        const match = stdout.match(/http:\/\/(?:localhost|127\.0\.0\.1):(\d+)/);
         if (match) {
           resolve(Number(match[1]));
         }
