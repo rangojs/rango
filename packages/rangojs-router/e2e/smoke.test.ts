@@ -26,6 +26,14 @@ import { waitForHydration, expectNoPageError } from "./helper";
 
 const E2E_BASIC_ROOT = "./e2e/e2e-basic";
 
+// File-level serial mode: the beforeAll below builds e2e-basic into a
+// shared dist/ that both describes' servers serve from. With
+// fullyParallel every worker runs this beforeAll in parallel and races
+// on the dist directory — the first preview starts OK, then another
+// worker's `pnpm build` wipes dist and the running preview crashes
+// with ERR_MODULE_NOT_FOUND. Serial pins the file to one worker.
+test.describe.configure({ mode: "serial" });
+
 // Build once for the entire file — both dev and production reuse it.
 // Dev mode doesn't need a build, but production does.
 test.beforeAll(async () => {
