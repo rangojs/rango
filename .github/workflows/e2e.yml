@@ -331,10 +331,12 @@ jobs:
           # HMR projects use useFixture() to start their own dev server,
           # so skip dependency projects (dev, build, warmup) that would
           # re-run hundreds of unrelated tests and blow the timeout.
+          # POSIX case — container jobs default to sh, which doesn't
+          # support bash's [[ ... == pattern ]].
           NO_DEPS_FLAG=""
-          if [[ "${{ matrix.project }}" == hmr-* ]]; then
-            NO_DEPS_FLAG="--no-deps"
-          fi
+          case "${{ matrix.project }}" in
+            hmr-*) NO_DEPS_FLAG="--no-deps" ;;
+          esac
           if [ -n "${{ matrix.shard }}" ]; then
             pnpm --filter @rangojs/router test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.shardTotal }} $WORKERS_FLAG $NO_DEPS_FLAG
           else
