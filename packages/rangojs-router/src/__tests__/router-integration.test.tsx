@@ -1465,4 +1465,113 @@ describe("route tree inspection", () => {
       current = current.parent;
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Sibling include shortCode collision
+  //
+  // Two sibling include()s whose first child is a route used to get the same
+  // shortCode because include() only reserved a slot in the `layout` counter
+  // between siblings. When both included patterns' first child was a path()
+  // (not a layout()), their routes collided (e.g., both M0L0L0C0R1), making
+  // client-side navigation between them a no-op (server diff stayed empty).
+  // -------------------------------------------------------------------------
+
+  it("sibling includes with route-only children get distinct route shortCodes", () => {
+    const pagesPatterns = urls<any>(({ path }) => [
+      path("/", ProductList, { name: "index" }),
+      path("/about", AboutPage, { name: "about" }),
+    ]);
+
+    const catalogPatterns = urls<any>(({ path }) => [
+      path("/shop", ProductList, { name: "shop.index" }),
+      path("/product/:id", ProductDetail, { name: "product" }),
+    ]);
+
+    const tree = buildRouteTree(
+      urls(({ path, include }) => [
+        path("/", HomePage, { name: "home" }),
+        include("/pages", pagesPatterns, { name: "pages" }),
+        include("", catalogPatterns, { name: "" }),
+      ]),
+    );
+
+    const homeId = tree.segmentId("home");
+    const pagesIndexId = tree.segmentId("pages.index");
+    const shopId = tree.segmentId("shop.index");
+
+    expect(homeId).toBeDefined();
+    expect(pagesIndexId).toBeDefined();
+    expect(shopId).toBeDefined();
+
+    // All three routes share the same parent in the DSL (the outer layout),
+    // so they must each get a unique route shortCode.
+    expect(new Set([homeId, pagesIndexId, shopId]).size).toBe(3);
+  });
+
+  it("sibling includes with route-only children under cache() get distinct route shortCodes", () => {
+    const pagesPatterns = urls<any>(({ path }) => [
+      path("/", ProductList, { name: "index" }),
+    ]);
+
+    const catalogPatterns = urls<any>(({ path }) => [
+      path("/shop", ProductList, { name: "shop.index" }),
+    ]);
+
+    // Reproduces the commerce-salesforce urls.tsx layout:
+    //   cache(() => [ path("/"), include("/pages", ...), include("", ...) ])
+    // The cache() wrapper creates a C0 parent; both includes should snapshot
+    // distinct route counters under that parent.
+    const tree = buildRouteTree(
+      urls(({ path, cache, include }) => [
+        cache({ ttl: 60 }, () => [
+          path("/", HomePage, { name: "home" }),
+          include("/pages", pagesPatterns, { name: "pages" }),
+          include("", catalogPatterns, { name: "" }),
+        ]),
+      ]),
+    );
+
+    const homeId = tree.segmentId("home");
+    const pagesIndexId = tree.segmentId("pages.index");
+    const shopId = tree.segmentId("shop.index");
+
+    expect(homeId).toBeDefined();
+    expect(pagesIndexId).toBeDefined();
+    expect(shopId).toBeDefined();
+    expect(new Set([homeId, pagesIndexId, shopId]).size).toBe(3);
+
+    // All three should carry the cache marker (C) in the shortCode, confirming
+    // they share the cache parent rather than being siblings of it.
+    expect(homeId).toMatch(/C\d+R\d+/);
+    expect(pagesIndexId).toMatch(/C\d+R\d+/);
+    expect(shopId).toMatch(/C\d+R\d+/);
+  });
+
+  it("three sibling includes with route-first children all get distinct shortCodes", () => {
+    const aPatterns = urls<any>(({ path }) => [
+      path("/", ProductList, { name: "index" }),
+    ]);
+    const bPatterns = urls<any>(({ path }) => [
+      path("/", ProductList, { name: "index" }),
+    ]);
+    const cPatterns = urls<any>(({ path }) => [
+      path("/", ProductList, { name: "index" }),
+    ]);
+
+    const tree = buildRouteTree(
+      urls(({ include }) => [
+        include("/a", aPatterns, { name: "a" }),
+        include("/b", bPatterns, { name: "b" }),
+        include("/c", cPatterns, { name: "c" }),
+      ]),
+    );
+
+    const ids = [
+      tree.segmentId("a.index"),
+      tree.segmentId("b.index"),
+      tree.segmentId("c.index"),
+    ];
+    expect(ids.every(Boolean)).toBe(true);
+    expect(new Set(ids).size).toBe(3);
+  });
 });

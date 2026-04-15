@@ -154,15 +154,28 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
     // sibling entries (e.g., BlogLayout and ArticlesLayout under NavLayout).
     const capturedCounters = { ...ctx.counters };
 
-    // Reserve a layout slot in the parent's counter so sibling lazy includes
-    // produce different shortCode indices for their root layout.
+    // Reserve a slot in every counter type the included patterns' first
+    // child might consume, so sibling lazy includes produce different
+    // shortCode indices regardless of whether the first child is a layout,
+    // route, parallel, cache, or loader.
+    //
     // Without this, consecutive include() calls capture identical counters
-    // and their first child layouts get the same shortCode (e.g., both M0L0L0),
-    // causing the client partial-update diff to see no changes on navigation.
+    // and their first children get the same shortCode (e.g., both
+    // M0L0L0C0R1 when two includes both start with a path()), causing the
+    // client partial-update diff to see no changes on navigation between
+    // routes in different includes.
     if (capturedParent?.shortCode) {
-      const layoutCounterKey = `${capturedParent.shortCode}_layout`;
-      ctx.counters[layoutCounterKey] ??= 0;
-      ctx.counters[layoutCounterKey]++;
+      for (const type of [
+        "layout",
+        "route",
+        "parallel",
+        "cache",
+        "loader",
+      ] as const) {
+        const counterKey = `${capturedParent.shortCode}_${type}`;
+        ctx.counters[counterKey] ??= 0;
+        ctx.counters[counterKey]++;
+      }
     }
 
     // Compute rootScoped at capture time, mirroring the logic in runWithPrefixes.
