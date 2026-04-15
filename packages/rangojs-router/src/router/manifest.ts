@@ -149,10 +149,10 @@ export async function loadManifest(
 
     // Propagate includeScope from lazyContext so that direct-descendant
     // shortCodes of this include use the correct scoped counter namespace
-    // on every manifest rebuild.
-    if (lazyContext?.includeScope !== undefined) {
-      Store.includeScope = lazyContext.includeScope;
-    }
+    // on every manifest rebuild. Always write (including clearing to
+    // undefined) so a prior lazy build's scope cannot leak into a later
+    // non-lazy build on the same ALS-backed Store.
+    Store.includeScope = lazyContext?.includeScope;
 
     const handlerExecStart = performance.now();
     const useItems = await getContext().runWithStore(

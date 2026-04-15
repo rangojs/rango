@@ -398,5 +398,83 @@ describe("lazy include parent isolation", () => {
         },
       );
     });
+
+    // Regression: loadManifest() calls within a single RSCRouterContext.run
+    // share the same ALS-backed Store (via getOrCreateStore). A lazy
+    // manifest build sets Store.includeScope; a subsequent non-lazy build
+    // on the same store must see includeScope cleared, otherwise its
+    // top-level routes get a stale "I..." scope baked into their shortCode.
+    it("does not leak includeScope from a lazy build into a later non-lazy build", async () => {
+      const sharedParent = makeSyntheticRoot();
+
+      const scopedPatterns = urls<any>(({ path }) => [
+        path("/", ProductList, { name: "index" }),
+      ]);
+
+      const plainPatterns = urls<any>(({ path }) => [
+        path("/", DashboardPage, { name: "plain" }),
+      ]);
+
+      const scopedRouteEntry: RouteEntry = {
+        prefix: "/scoped",
+        staticPrefix: "/scoped",
+        routes: { "scoped.index": "/scoped/" } as any,
+        handler: scopedPatterns.handler,
+        mountIndex: 10,
+        lazy: true,
+        lazyEvaluated: false,
+        lazyPatterns: scopedPatterns,
+        lazyContext: {
+          urlPrefix: "",
+          namePrefix: "scoped",
+          parent: sharedParent,
+          counters: {},
+          includeScope: "I0",
+        },
+      } as unknown as RouteEntry;
+
+      // Non-lazy entry (plain route under the same shared parent). Its
+      // lazyContext is absent, so Store.includeScope must be cleared
+      // before the manifest handler runs.
+      const plainRouteEntry: RouteEntry = {
+        prefix: "/plain",
+        staticPrefix: "/plain",
+        routes: { plain: "/plain/" } as any,
+        handler: plainPatterns.handler,
+        mountIndex: 11,
+        lazy: false,
+      } as unknown as RouteEntry;
+
+      await RSCRouterContext.run(
+        {
+          manifest: new Map(),
+          patterns: new Map(),
+          patternsByPrefix: new Map(),
+          trailingSlash: new Map(),
+          namespace: "root",
+          parent: sharedParent,
+          counters: {},
+          mountIndex: 0,
+        },
+        async () => {
+          const scopedManifest = await loadManifest(
+            scopedRouteEntry,
+            "scoped.index",
+            "/scoped/",
+          );
+          // Scoped build: route shortCode must carry the I0 scope.
+          expect(scopedManifest.shortCode).toMatch(/I0/);
+
+          const plainManifest = await loadManifest(
+            plainRouteEntry,
+            "plain",
+            "/plain/",
+          );
+          // Non-lazy build immediately after: route shortCode must NOT
+          // carry any stale I-scope token from the previous build.
+          expect(plainManifest.shortCode).not.toMatch(/I\d/);
+        },
+      );
+    });
   });
 });
