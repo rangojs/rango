@@ -8,6 +8,7 @@ import { getContext, RSCRouterContext } from "../../server/context.js";
 import { evaluateLazyEntry } from "../lazy-includes.js";
 import { loadManifest, clearManifestCache } from "../manifest.js";
 import type { MiddlewareFn } from "../middleware.js";
+import { isRouteRootScoped } from "../../route-map-builder.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -473,6 +474,76 @@ describe("lazy include parent isolation", () => {
           // Non-lazy build immediately after: route shortCode must NOT
           // carry any stale I-scope token from the previous build.
           expect(plainManifest.shortCode).not.toMatch(/I\d/);
+        },
+      );
+    });
+
+    // Regression: Store.rootScoped had the same leak shape as
+    // Store.includeScope — a lazy build of a named-include entry leaves
+    // rootScoped=false behind, and the next non-lazy build on the same
+    // ALS-backed Store reads that stale value through getRootScoped(),
+    // mis-registering its plain routes as non-root-scoped and breaking
+    // dot-local reverse resolution.
+    it("does not leak rootScoped from a lazy named-include build into a later non-lazy build", async () => {
+      const sharedParent = makeSyntheticRoot();
+
+      // A lazy entry whose captured context declares rootScoped=false,
+      // mirroring what include("/account", accountUrls, { name: "account" })
+      // produces at DSL time.
+      const namedIncludePatterns = urls<any>(({ path }) => [
+        path("/", ProductList, { name: "dashboard" }),
+      ]);
+
+      // A non-lazy plain entry that should end up root-scoped.
+      const plainPatterns = urls<any>(({ path }) => [
+        path("/ping", DashboardPage, { name: "rootScopeLeakPing" }),
+      ]);
+
+      const namedLazyEntry: RouteEntry = {
+        prefix: "/account",
+        staticPrefix: "/account",
+        routes: { "account.dashboard": "/account/" } as any,
+        handler: namedIncludePatterns.handler,
+        mountIndex: 20,
+        lazy: true,
+        lazyEvaluated: false,
+        lazyPatterns: namedIncludePatterns,
+        lazyContext: {
+          urlPrefix: "",
+          namePrefix: "account",
+          parent: sharedParent,
+          counters: {},
+          rootScoped: false,
+        },
+      } as unknown as RouteEntry;
+
+      const plainEntry: RouteEntry = {
+        prefix: "/ping",
+        staticPrefix: "/ping",
+        routes: { rootScopeLeakPing: "/ping" } as any,
+        handler: plainPatterns.handler,
+        mountIndex: 21,
+        lazy: false,
+      } as unknown as RouteEntry;
+
+      await RSCRouterContext.run(
+        {
+          manifest: new Map(),
+          patterns: new Map(),
+          patternsByPrefix: new Map(),
+          trailingSlash: new Map(),
+          namespace: "root",
+          parent: sharedParent,
+          counters: {},
+          mountIndex: 0,
+        },
+        async () => {
+          await loadManifest(namedLazyEntry, "account.dashboard", "/account/");
+          await loadManifest(plainEntry, "rootScopeLeakPing", "/ping");
+
+          // Plain route at root level must register as root-scoped (true),
+          // not inherit the prior lazy build's rootScoped=false.
+          expect(isRouteRootScoped("rootScopeLeakPing")).toBe(true);
         },
       );
     });

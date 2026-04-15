@@ -142,10 +142,13 @@ export async function loadManifest(
 
     // Propagate rootScoped from lazyContext so that routes inside
     // nested { name: "sub" } under { name: "" } keep inherited root scope
-    // when the manifest is rebuilt on each request.
-    if (lazyContext?.rootScoped !== undefined) {
-      Store.rootScoped = lazyContext.rootScoped;
-    }
+    // when the manifest is rebuilt on each request. Always write
+    // (including clearing to undefined, which makes getRootScoped()
+    // return its true default) so a prior lazy build's scope cannot leak
+    // into a later non-lazy build on the same ALS-backed Store — which
+    // would otherwise mis-register plain routes as non-root-scoped and
+    // break dot-local reverse resolution.
+    Store.rootScoped = lazyContext?.rootScoped;
 
     // Propagate includeScope from lazyContext so that direct-descendant
     // shortCodes of this include use the correct scoped counter namespace
