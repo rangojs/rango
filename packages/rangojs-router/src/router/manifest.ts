@@ -126,9 +126,8 @@ export async function loadManifest(
     // were created during pattern extraction.  This prevents shortCode
     // collisions between lazy and non-lazy entries under the same parent
     // (e.g., ArticlesLayout and BlogLayout both under NavLayout).
-    if (lazyContext && (lazyContext as any).counters) {
-      const captured = (lazyContext as any).counters as Record<string, number>;
-      for (const [key, value] of Object.entries(captured)) {
+    if (lazyContext?.counters) {
+      for (const [key, value] of Object.entries(lazyContext.counters)) {
         Store.counters[key] = Math.max(Store.counters[key] ?? 0, value);
       }
     }
@@ -136,8 +135,7 @@ export async function loadManifest(
     // Propagate cache profiles for DSL-time cache("profileName") resolution.
     // Non-lazy entries carry profiles directly; lazy entries carry them
     // in the captured lazyContext from include() time.
-    const entryProfiles =
-      entry.cacheProfiles ?? (lazyContext as any)?.cacheProfiles;
+    const entryProfiles = entry.cacheProfiles ?? lazyContext?.cacheProfiles;
     if (entryProfiles) {
       Store.cacheProfiles = entryProfiles;
     }
@@ -145,8 +143,15 @@ export async function loadManifest(
     // Propagate rootScoped from lazyContext so that routes inside
     // nested { name: "sub" } under { name: "" } keep inherited root scope
     // when the manifest is rebuilt on each request.
-    if (lazyContext && (lazyContext as any).rootScoped !== undefined) {
-      Store.rootScoped = (lazyContext as any).rootScoped;
+    if (lazyContext?.rootScoped !== undefined) {
+      Store.rootScoped = lazyContext.rootScoped;
+    }
+
+    // Propagate includeScope from lazyContext so that direct-descendant
+    // shortCodes of this include use the correct scoped counter namespace
+    // on every manifest rebuild.
+    if (lazyContext?.includeScope !== undefined) {
+      Store.includeScope = lazyContext.includeScope;
     }
 
     const handlerExecStart = performance.now();

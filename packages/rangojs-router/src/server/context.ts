@@ -280,6 +280,22 @@ interface HelperContext {
   /** True when resolving handlers inside a cache() DSL boundary.
    *  Read by ctx.get() to guard non-cacheable variable reads. */
   insideCacheScope?: boolean;
+  /**
+   * Include scope string applied to direct-descendant shortCodes.
+   *
+   * Each `include(...)` call allocates a sibling-positional token like `I0`,
+   * `I1` from its parent's include counter and stores the composed scope
+   * (`${parentScope}I${idx}`) in its lazyContext. When the include's handler
+   * evaluates lazily, the store's `includeScope` is set from that context so
+   * every direct-descendant shortCode is generated as
+   * `${parent.shortCode}${includeScope}${prefix}${index}` — preventing
+   * collisions with siblings declared outside the include.
+   *
+   * The scope is NOT propagated through `store.run(...)`, so layouts /
+   * parallels / caches inside the include absorb the scope into their own
+   * shortCodes and their children start fresh.
+   */
+  includeScope?: string;
 }
 // Use a global symbol key so the AsyncLocalStorage instance survives HMR
 // module re-evaluation. Without this, Vite's RSC module runner may create
@@ -382,6 +398,8 @@ export const getContext = (): {
       const mountPrefix =
         store.mountIndex !== undefined ? `M${store.mountIndex}` : "";
 
+      const includeScope = store.includeScope ?? "";
+
       if (!parent) {
         // Root entry: prefix with mount index and use mount-scoped counter
         const counterKey = mountPrefix
@@ -392,12 +410,16 @@ export const getContext = (): {
         store.counters[counterKey] = index + 1;
         return `${mountPrefix}${prefix}${index}`;
       } else {
-        // Child entry: use parent-scoped counter (parent already has M prefix)
-        const counterKey = `${parent.shortCode}_${type}`;
+        // Child entry: use parent-scoped counter with includeScope appended.
+        // When we're evaluating a lazy include's direct children, includeScope
+        // is a per-include token like "I0" / "I1I0" that partitions the
+        // parent's counter namespace so routes inside one include cannot
+        // collide with siblings declared outside it.
+        const counterKey = `${parent.shortCode}${includeScope}_${type}`;
         store.counters[counterKey] ??= 0;
         const index = store.counters[counterKey];
         store.counters[counterKey] = index + 1;
-        return `${parent.shortCode}${prefix}${index}`;
+        return `${parent.shortCode}${includeScope}${prefix}${index}`;
       }
     },
     runWithStore: <T>(
@@ -424,6 +446,7 @@ export const getContext = (): {
           rootScoped: store.rootScoped,
           trackedIncludes: store.trackedIncludes,
           cacheProfiles: store.cacheProfiles,
+          includeScope: store.includeScope,
         },
         callback,
       );

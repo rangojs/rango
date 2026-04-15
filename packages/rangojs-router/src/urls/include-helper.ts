@@ -4,7 +4,6 @@ import {
   runWithPrefixes,
   getUrlPrefix,
   getNamePrefix,
-  getRootScoped,
 } from "../server/context";
 import {
   INTERNAL_INCLUDE_SCOPE_PREFIX,
@@ -149,34 +148,31 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
       });
     }
 
-    // Snapshot parent's counters so lazy manifest generation starts
-    // at the correct index, preventing shortCode collisions with
-    // sibling entries (e.g., BlogLayout and ArticlesLayout under NavLayout).
-    const capturedCounters = { ...ctx.counters };
-
-    // Reserve a slot in every counter type the included patterns' first
-    // child might consume, so sibling lazy includes produce different
-    // shortCode indices regardless of whether the first child is a layout,
-    // route, parallel, cache, or loader.
+    // Allocate an include-scope token for this include() call. The token is
+    // appended to the parent's shortCode prefix whenever the include's
+    // direct-descendant shortCodes are generated (see getShortCode in
+    // context.ts), partitioning the parent's counter namespace so routes
+    // inside an include cannot collide with siblings declared outside it.
     //
-    // Without this, consecutive include() calls capture identical counters
-    // and their first children get the same shortCode (e.g., both
-    // M0L0L0C0R1 when two includes both start with a path()), causing the
-    // client partial-update diff to see no changes on navigation between
-    // routes in different includes.
+    // Scopes compose: a nested include inside an outer include with scope
+    // "I0" allocates against the `${parent.shortCode}I0_include` counter
+    // and produces scope "I0I0", "I0I1", etc.
+    const parentScope = ctx.includeScope ?? "";
+    let includeScope = parentScope;
     if (capturedParent?.shortCode) {
-      for (const type of [
-        "layout",
-        "route",
-        "parallel",
-        "cache",
-        "loader",
-      ] as const) {
-        const counterKey = `${capturedParent.shortCode}_${type}`;
-        ctx.counters[counterKey] ??= 0;
-        ctx.counters[counterKey]++;
-      }
+      const includeCounterKey = `${capturedParent.shortCode}${parentScope}_include`;
+      ctx.counters[includeCounterKey] ??= 0;
+      const includeIdx = ctx.counters[includeCounterKey];
+      ctx.counters[includeCounterKey] = includeIdx + 1;
+      includeScope = `${parentScope}I${includeIdx}`;
     }
+
+    // Snapshot parent's counters AFTER allocating the include scope so lazy
+    // manifest generation starts with the same counter state this include
+    // observed — its descendants still get fresh per-scope counters because
+    // they key off `${parent.shortCode}${includeScope}_*` (not shared with
+    // siblings outside the include).
+    const capturedCounters = { ...ctx.counters };
 
     // Compute rootScoped at capture time, mirroring the logic in runWithPrefixes.
     // This ensures lazy evaluation restores the correct scope state.
@@ -204,6 +200,7 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
         counters: capturedCounters,
         cacheProfiles: ctx.cacheProfiles,
         rootScoped: capturedRootScoped,
+        includeScope,
       },
     } as IncludeItem;
   };

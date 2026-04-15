@@ -176,6 +176,13 @@ export type IncludeItem = {
     >;
     /** Root scope flag for dot-local reverse resolution */
     rootScoped?: boolean;
+    /**
+     * Positional include scope token composed from the parent scope plus this
+     * include's sibling index (`${parentScope}I${idx}`). Applied to direct-
+     * descendant shortCodes during lazy evaluation so routes inside the
+     * include cannot collide with siblings declared outside it.
+     */
+    includeScope?: string;
   };
   [IncludeBrand]: void;
 };

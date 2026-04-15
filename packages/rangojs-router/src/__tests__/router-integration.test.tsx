@@ -1540,11 +1540,19 @@ describe("route tree inspection", () => {
     expect(shopId).toBeDefined();
     expect(new Set([homeId, pagesIndexId, shopId]).size).toBe(3);
 
-    // All three should carry the cache marker (C) in the shortCode, confirming
-    // they share the cache parent rather than being siblings of it.
-    expect(homeId).toMatch(/C\d+R\d+/);
-    expect(pagesIndexId).toMatch(/C\d+R\d+/);
-    expect(shopId).toMatch(/C\d+R\d+/);
+    // All three should be under the cache (contain `C<n>`), confirming they
+    // share the cache parent rather than being siblings of it.
+    expect(homeId).toMatch(/C\d+/);
+    expect(pagesIndexId).toMatch(/C\d+/);
+    expect(shopId).toMatch(/C\d+/);
+
+    // Routes inside sibling includes carry a positional include scope
+    // (`I<idx>`) that separates them from each other and from the direct
+    // cache child. Home (direct child) has no `I`; the two include'd routes
+    // do, with distinct indices.
+    expect(homeId).not.toMatch(/I\d+/);
+    expect(pagesIndexId).toMatch(/I\d+R/);
+    expect(shopId).toMatch(/I\d+R/);
   });
 
   it("three sibling includes with route-first children all get distinct shortCodes", () => {
@@ -1573,5 +1581,109 @@ describe("route tree inspection", () => {
     ];
     expect(ids.every(Boolean)).toBe(true);
     expect(new Set(ids).size).toBe(3);
+  });
+
+  // Regression for the real-world commerce-salesforce repro:
+  // include() with multiple routes, followed by a sibling path() declared
+  // AFTER the include. Pre-fix, the include's 2nd/3rd/... routes would
+  // collide with the sibling path()s on shortCode because the include's
+  // children shared the parent's route counter namespace.
+  it("include with multiple routes does not collide with sibling routes declared after", () => {
+    const authPatterns = urls<any>(({ path }) => [
+      path("/login", HomePage, { name: "login" }),
+      path("/logout", HomePage, { name: "logout" }),
+      path("/register", HomePage, { name: "register" }),
+      path("/reset-password", HomePage, { name: "resetPassword" }),
+    ]);
+
+    const tree = buildRouteTree(
+      urls(({ path, include }) => [
+        include("", authPatterns, { name: "" }),
+        path("/basket", ProductList, { name: "basket" }),
+        path("/checkout", AboutPage, { name: "checkout" }),
+        path("/confirmation", AboutPage, { name: "confirmation" }),
+      ]),
+    );
+
+    const ids = [
+      tree.segmentId("login"),
+      tree.segmentId("logout"),
+      tree.segmentId("register"),
+      tree.segmentId("resetPassword"),
+      tree.segmentId("basket"),
+      tree.segmentId("checkout"),
+      tree.segmentId("confirmation"),
+    ];
+    expect(ids.every(Boolean)).toBe(true);
+    expect(new Set(ids).size).toBe(7);
+
+    // The four auth routes (inside the include) share the same I-scope;
+    // the three direct siblings after the include have no I-scope.
+    expect(tree.segmentId("login")).toMatch(/I\d+R/);
+    expect(tree.segmentId("resetPassword")).toMatch(/I\d+R/);
+    expect(tree.segmentId("basket")).not.toMatch(/I\d+R/);
+    expect(tree.segmentId("checkout")).not.toMatch(/I\d+R/);
+  });
+
+  // Regression: a layout inside an include absorbs the include scope into
+  // its own shortCode, so its children DO NOT get the scope appended again
+  // (no doubling like M0L0L0I0L0I0R0 — should be M0L0L0I0L0R0).
+  it("layout inside include absorbs include scope, children do not duplicate it", () => {
+    const shopPatterns = urls<any>(({ path, layout }) => [
+      layout(ShopLayout, () => [
+        path("/", ProductList, { name: "index" }),
+        path("/:slug", ProductDetail, { name: "detail" }),
+      ]),
+    ]);
+
+    const tree = buildRouteTree(
+      urls(({ include }) => [include("/shop", shopPatterns, { name: "shop" })]),
+    );
+
+    const indexId = tree.segmentId("shop.index");
+    const detailId = tree.segmentId("shop.detail");
+    expect(indexId).toBeDefined();
+    expect(detailId).toBeDefined();
+
+    // Layout absorbed the I-scope; routes under it should only carry the
+    // scope once (inside the layout's shortCode), not doubled.
+    const indexMatches = indexId!.match(/I\d+/g) ?? [];
+    const detailMatches = detailId!.match(/I\d+/g) ?? [];
+    expect(indexMatches.length).toBe(1);
+    expect(detailMatches.length).toBe(1);
+  });
+
+  // Regression: nested include inside an include composes scope correctly.
+  // The inner include's scope is allocated against the outer scope's counter
+  // namespace, producing a composed token like "I0I0" rather than replacing.
+  it("nested include inside include composes scope (I0I0...)", () => {
+    const innerPatterns = urls<any>(({ path }) => [
+      path("/", ProductList, { name: "index" }),
+    ]);
+
+    const outerPatterns = urls<any>(({ path, include }) => [
+      path("/outer", HomePage, { name: "outerIndex" }),
+      include("/inner", innerPatterns, { name: "inner" }),
+    ]);
+
+    const tree = buildRouteTree(
+      urls(({ include }) => [
+        include("/outer", outerPatterns, { name: "outer" }),
+      ]),
+    );
+
+    const outerIndexId = tree.segmentId("outer.outerIndex");
+    const innerIndexId = tree.segmentId("outer.inner.index");
+
+    expect(outerIndexId).toBeDefined();
+    expect(innerIndexId).toBeDefined();
+    expect(outerIndexId).not.toBe(innerIndexId);
+
+    // outer.outerIndex is a direct child of the outer include → one I-scope.
+    // outer.inner.index is inside a nested include → two composed I-scopes.
+    const outerScopes = outerIndexId!.match(/I\d+/g) ?? [];
+    const innerScopes = innerIndexId!.match(/I\d+/g) ?? [];
+    expect(outerScopes.length).toBe(1);
+    expect(innerScopes.length).toBe(2);
   });
 });
