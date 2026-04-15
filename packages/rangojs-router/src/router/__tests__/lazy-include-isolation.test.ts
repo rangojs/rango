@@ -547,5 +547,79 @@ describe("lazy include parent isolation", () => {
         },
       );
     });
+
+    // Regression: Store.cacheProfiles has the same cross-build leak shape
+    // as includeScope/rootScoped. A lazy manifest build whose captured
+    // lazyContext carries a profile map would write it into the shared
+    // ALS-backed Store; a later non-lazy build on the same Store must
+    // clear the map, otherwise a cache("name") call in its urls would
+    // silently resolve against an unrelated entry's profile.
+    it("does not leak cacheProfiles from a lazy build into a later non-lazy build", async () => {
+      const sharedParent = makeSyntheticRoot();
+
+      const lazyProfilePatterns = urls<any>(({ path }) => [
+        path("/", ProductList, { name: "index" }),
+      ]);
+      const plainPatterns = urls<any>(({ path }) => [
+        path("/", DashboardPage, { name: "plain" }),
+      ]);
+
+      const lazyProfileEntry: RouteEntry = {
+        prefix: "/cached",
+        staticPrefix: "/cached",
+        routes: { "cached.index": "/cached/" } as any,
+        handler: lazyProfilePatterns.handler,
+        mountIndex: 30,
+        lazy: true,
+        lazyEvaluated: false,
+        lazyPatterns: lazyProfilePatterns,
+        lazyContext: {
+          urlPrefix: "",
+          namePrefix: "cached",
+          parent: sharedParent,
+          counters: {},
+          cacheProfiles: { shortCache: { ttl: 30 } },
+        },
+      } as unknown as RouteEntry;
+
+      // Non-lazy entry with no cacheProfiles. After its loadManifest(),
+      // the shared Store must no longer expose the lazy entry's profiles.
+      const plainEntry: RouteEntry = {
+        prefix: "/plain",
+        staticPrefix: "/plain",
+        routes: { plain: "/plain/" } as any,
+        handler: plainPatterns.handler,
+        mountIndex: 31,
+        lazy: false,
+      } as unknown as RouteEntry;
+
+      await RSCRouterContext.run(
+        {
+          manifest: new Map(),
+          patterns: new Map(),
+          patternsByPrefix: new Map(),
+          trailingSlash: new Map(),
+          namespace: "root",
+          parent: sharedParent,
+          counters: {},
+          mountIndex: 0,
+        },
+        async () => {
+          await loadManifest(lazyProfileEntry, "cached.index", "/cached/");
+
+          // Sanity check: during/after the lazy build, the Store carried
+          // the profile map. (If this fails, the test premise is broken.)
+          const storeAfterLazy = getContext().getOrCreateStore();
+          expect(storeAfterLazy.cacheProfiles?.shortCache).toBeDefined();
+
+          await loadManifest(plainEntry, "plain", "/plain/");
+
+          // After the plain build the ALS-backed Store must not carry
+          // the prior lazy build's profile map.
+          const storeAfterPlain = getContext().getOrCreateStore();
+          expect(storeAfterPlain.cacheProfiles).toBeUndefined();
+        },
+      );
+    });
   });
 });
