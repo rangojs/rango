@@ -19,7 +19,10 @@ import {
 } from "../build/generate-route-types.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
 import { createVirtualStubPlugin } from "./plugins/virtual-stub-plugin.js";
-import { createCloudflareProtocolStubPlugin } from "./plugins/cloudflare-protocol-stub.js";
+import {
+  BUILD_ENV_GLOBAL_KEY,
+  createCloudflareProtocolStubPlugin,
+} from "./plugins/cloudflare-protocol-stub.js";
 import {
   exposeInternalIds,
   exposeRouterId,
@@ -179,6 +182,11 @@ async function acquireBuildEnv(
 
   s.resolvedBuildEnv = result.env;
   s.buildEnvDispose = result.dispose ?? null;
+  // Bridge the resolved env into `cloudflare:workers`'s stubbed `env`
+  // export so user code that does `import { env } from "cloudflare:workers"`
+  // sees the real bindings proxy during discovery + prerender instead of
+  // an empty object. The stub reads this global at module-evaluation time.
+  (globalThis as Record<string, unknown>)[BUILD_ENV_GLOBAL_KEY] = result.env;
   return true;
 }
 
@@ -195,6 +203,7 @@ async function releaseBuildEnv(s: DiscoveryState): Promise<void> {
     s.buildEnvDispose = null;
   }
   s.resolvedBuildEnv = undefined;
+  delete (globalThis as Record<string, unknown>)[BUILD_ENV_GLOBAL_KEY];
 }
 
 /**

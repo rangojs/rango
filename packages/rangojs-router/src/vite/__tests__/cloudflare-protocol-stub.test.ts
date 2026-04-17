@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterEach } from "vitest";
 import { parseAst } from "vite";
-import { createCloudflareProtocolStubPlugin } from "../plugins/cloudflare-protocol-stub.js";
+import {
+  BUILD_ENV_GLOBAL_KEY,
+  createCloudflareProtocolStubPlugin,
+} from "../plugins/cloudflare-protocol-stub.js";
 
 type TransformResult = { code: string; map: null } | null;
 
@@ -224,6 +227,47 @@ describe("createCloudflareProtocolStubPlugin", () => {
       const p = make();
       expect(p.load("react")).toBeNull();
       expect(p.load("\0stub:virtual:rsc-router/foo")).toBeNull();
+    });
+  });
+
+  describe("cloudflare:workers env injection from globalThis", () => {
+    afterEach(() => {
+      delete (globalThis as Record<string, unknown>)[BUILD_ENV_GLOBAL_KEY];
+    });
+
+    it("stub source references globalThis[BUILD_ENV_GLOBAL_KEY] for env", () => {
+      const p = make();
+      const code = p.load(`\0${VIRT}workers`)!;
+      expect(code).toContain("globalThis");
+      expect(code).toContain(JSON.stringify(BUILD_ENV_GLOBAL_KEY));
+      expect(code).toContain("?? {}");
+    });
+
+    it("env falls back to {} when globalThis key is unset", async () => {
+      delete (globalThis as Record<string, unknown>)[BUILD_ENV_GLOBAL_KEY];
+      const p = make();
+      // Append a nonce comment so every test gets a unique data: URL — Node
+      // caches modules by URL, so without this, subsequent imports in this
+      // suite would return whatever the first import captured.
+      const code = p.load(`\0${VIRT}workers`)! + `\n/* ${Math.random()} */\n`;
+      const url = `data:text/javascript;base64,${Buffer.from(code).toString(
+        "base64",
+      )}`;
+      const mod = (await import(url)) as { env: object };
+      expect(mod.env).toEqual({});
+    });
+
+    it("env reads the real bindings proxy when globalThis is populated", async () => {
+      const sentinel = { MY_KV: { get: () => "real-value" } };
+      (globalThis as Record<string, unknown>)[BUILD_ENV_GLOBAL_KEY] = sentinel;
+      const p = make();
+      const code = p.load(`\0${VIRT}workers`)! + `\n/* ${Math.random()} */\n`;
+      const url = `data:text/javascript;base64,${Buffer.from(code).toString(
+        "base64",
+      )}`;
+      const mod = (await import(url)) as { env: typeof sentinel };
+      expect(mod.env).toBe(sentinel);
+      expect(mod.env.MY_KV.get()).toBe("real-value");
     });
   });
 });

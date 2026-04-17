@@ -4,6 +4,25 @@ const VIRTUAL_PREFIX = "virtual:rango-cloudflare-stub-";
 const NULL_PREFIX = "\0" + VIRTUAL_PREFIX;
 const CF_PREFIX = "cloudflare:";
 
+/**
+ * `globalThis` key the `cloudflare:workers` stub reads to populate its
+ * `env` export. Router discovery sets this to the resolved `buildEnv`
+ * proxy (from `wrangler.getPlatformProxy()` when `buildEnv: "auto"` is
+ * configured, or a user-supplied object otherwise) before importing the
+ * worker entry, and clears it after discovery disposes the proxy. When
+ * unset, the stub's `env` falls back to `{}`.
+ *
+ * Using `globalThis` is the only cross-module bridge that works here:
+ * the stub's `load` hook returns source text, not a live closure, but
+ * the stub module is evaluated in the same Node process as the
+ * discovery plugin — so reading a global at module-evaluation time
+ * reaches whatever the plugin assigned there. A symbol key would be
+ * cleaner in-process but awkward to name from the stub source.
+ *
+ * @internal
+ */
+export const BUILD_ENV_GLOBAL_KEY = "__rango_build_env__";
+
 const SOURCE_EXT_RE = /\.[mc]?[jt]sx?$/;
 
 const IMPORT_NODE_TYPES = new Set([
@@ -27,7 +46,7 @@ export class DurableObject { constructor(_ctx, _env) {} }
 export class WorkerEntrypoint { constructor(_ctx, _env) {} }
 export class WorkflowEntrypoint { constructor(_ctx, _env) {} }
 export class RpcTarget {}
-export const env = {};
+export const env = globalThis[${JSON.stringify(BUILD_ENV_GLOBAL_KEY)}] ?? {};
 export default {};
 `,
   "cloudflare:email": `
