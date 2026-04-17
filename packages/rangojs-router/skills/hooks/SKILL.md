@@ -593,6 +593,12 @@ function ProductPage() {
   return <h1>Product {params.productId}</h1>;
 }
 
+// Annotate the expected shape via a generic
+function ProductPageTyped() {
+  const { productId } = useParams<{ productId: string }>();
+  return <h1>Product {productId}</h1>;
+}
+
 // With selector for performance (re-renders only when selected value changes)
 function ProductId() {
   const productId = useParams((p) => p.productId);
@@ -600,7 +606,7 @@ function ProductId() {
 }
 ```
 
-Returns merged params from all matched route segments. Updates on navigation commit (not during pending navigation).
+Returns merged params from all matched route segments as a `Readonly<T>` map. Updates on navigation commit (not during pending navigation).
 
 ### usePathname()
 
@@ -685,20 +691,20 @@ See `/links` for full URL generation guide including server-side `ctx.reverse`.
 
 ## Hook Summary
 
-| Hook                 | Purpose                           | Returns                                         |
-| -------------------- | --------------------------------- | ----------------------------------------------- |
-| `useParams()`        | Route params                      | `Record<string, string>` or selected value      |
-| `usePathname()`      | Current pathname                  | `string`                                        |
-| `useSearchParams()`  | URL search params                 | `ReadonlyURLSearchParams`                       |
-| `useHref()`          | Mount-aware href                  | `(path) => string`                              |
-| `useMount()`         | Current include() mount path      | `string`                                        |
-| `useNavigation()`    | Reactive navigation state         | state, location, isStreaming                    |
-| `useRouter()`        | Stable router actions             | push, replace, refresh, prefetch, back, forward |
-| `useSegments()`      | URL path & segment IDs            | path, segmentIds, location                      |
-| `useLinkStatus()`    | Link pending state                | { pending }                                     |
-| `useLoader()`        | Loader data (strict)              | data, isLoading, error                          |
-| `useFetchLoader()`   | Loader with on-demand fetch       | data, load, isLoading                           |
-| `useHandle()`        | Accumulated handle data           | T (handle type)                                 |
-| `useAction()`        | Server action state               | state, error, result                            |
-| `useLocationState()` | History state (persists or flash) | T \| undefined                                  |
-| `useClientCache()`   | Cache control                     | { clear }                                       |
+| Hook                 | Purpose                           | Returns                                                            |
+| -------------------- | --------------------------------- | ------------------------------------------------------------------ |
+| `useParams()`        | Route params                      | `Readonly<T>` (default `Record<string, string>`) or selected value |
+| `usePathname()`      | Current pathname                  | `string`                                                           |
+| `useSearchParams()`  | URL search params                 | `ReadonlyURLSearchParams`                                          |
+| `useHref()`          | Mount-aware href                  | `(path) => string`                                                 |
+| `useMount()`         | Current include() mount path      | `string`                                                           |
+| `useNavigation()`    | Reactive navigation state         | state, location, isStreaming                                       |
+| `useRouter()`        | Stable router actions             | push, replace, refresh, prefetch, back, forward                    |
+| `useSegments()`      | URL path & segment IDs            | path, segmentIds, location                                         |
+| `useLinkStatus()`    | Link pending state                | { pending }                                                        |
+| `useLoader()`        | Loader data (strict)              | data, isLoading, error                                             |
+| `useFetchLoader()`   | Loader with on-demand fetch       | data, load, isLoading                                              |
+| `useHandle()`        | Accumulated handle data           | T (handle type)                                                    |
+| `useAction()`        | Server action state               | state, error, result                                               |
+| `useLocationState()` | History state (persists or flash) | T \| undefined                                                     |
+| `useClientCache()`   | Cache control                     | { clear }                                                          |
