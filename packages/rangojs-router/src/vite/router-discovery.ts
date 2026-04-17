@@ -10,7 +10,7 @@ import type { Plugin } from "vite";
 import { createServer as createViteServer } from "vite";
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { createRequire, register } from "node:module";
 import { pathToFileURL } from "node:url";
 import {
   formatNestedRouterConflictError,
@@ -49,6 +49,40 @@ import { resetStagedBuildAssets } from "./utils/prerender-utils.js";
 export { VIRTUAL_ROUTES_MANIFEST_ID };
 
 // ============================================================================
+// Node ESM Loader Hook Registration
+// ============================================================================
+
+/**
+ * Registers a Node ESM loader hook that resolves `cloudflare:*` specifiers
+ * to a data: URL stub. Belt-and-suspenders alongside the Vite transform:
+ * the transform catches imports that flow through Vite's plugin pipeline;
+ * the Node loader catches imports that bypass Vite entirely (e.g. when a
+ * tsx-style loader is active, or when a module runner delegates to Node's
+ * native ESM loader).
+ *
+ * Registration is process-global and one-shot. Once a loader is registered
+ * it cannot be unregistered on Node < 22.1, and persists for the process
+ * lifetime. That's fine because the hook only intercepts `cloudflare:*`
+ * specifiers — everything else passes through via `nextResolve()`.
+ */
+let loaderHookRegistered = false;
+function ensureCloudflareProtocolLoaderRegistered(): void {
+  if (loaderHookRegistered) return;
+  loaderHookRegistered = true;
+  try {
+    register(
+      new URL("./plugins/cloudflare-protocol-loader-hook.mjs", import.meta.url),
+    );
+  } catch (err: any) {
+    // register() requires Node 18.19+ / 20.6+. Older Node still has the
+    // Vite transform as primary defense.
+    console.warn(
+      `[rsc-router] Could not register Node ESM loader hook for cloudflare:* imports (${err?.message ?? err}). Falling back to Vite transform only.`,
+    );
+  }
+}
+
+// ============================================================================
 // Temp Server Factory
 // ============================================================================
 
@@ -67,6 +101,9 @@ async function createTempRscServer(
   state: DiscoveryState,
   options: { forceBuild?: boolean; cacheDir?: string } = {},
 ) {
+  // Install the Node ESM loader hook before any module evaluation — it
+  // intercepts `cloudflare:*` imports that bypass Vite's plugin pipeline.
+  ensureCloudflareProtocolLoaderRegistered();
   const { default: rsc } = await import("@vitejs/plugin-rsc");
   return createViteServer({
     root: state.projectRoot,

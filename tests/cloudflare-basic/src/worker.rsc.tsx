@@ -1,15 +1,12 @@
 /// <reference types="@cloudflare/workers-types" />
-import { DurableObject } from "cloudflare:workers";
 import { router } from "./router.js";
 import type { AppBindings } from "./env.js";
 
-// Reproduces the `cloudflare:workers` discovery failure. Discovery imports this
-// file in a Node temp Vite server; `cloudflare:` isn't resolvable there.
-export class Counter extends DurableObject {
-  async increment() {
-    return 1;
-  }
-}
+// Regression fixture for the `cloudflare:workers` discovery failure.
+// The DO class lives in a subdirectory (mirroring real CF projects'
+// shape) so the `cloudflare:workers` import is transitive through the
+// module graph, not at the worker entry's top level.
+export { Counter } from "./workers/durableObject/index.js";
 
 export default {
   async fetch(request, env, ctx) {
