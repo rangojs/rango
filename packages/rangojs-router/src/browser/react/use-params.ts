@@ -16,11 +16,21 @@ import { shallowEqual } from "./shallow-equal.js";
  * const params = useParams();
  * // { productId: "123" }
  *
+ * // Annotate the expected shape via a generic
+ * const { productId } = useParams<{ productId: string }>();
+ *
  * // With selector
  * const productId = useParams(p => p.productId);
  * ```
  */
-export function useParams(): Record<string, string>;
+// `T extends object` (not `Record<string, string | undefined>`) so that
+// interface shapes pass the constraint — interfaces lack an implicit
+// index signature and would otherwise be rejected. The generic is a
+// shape annotation, not a runtime check; the body always returns the
+// underlying params map unchanged.
+export function useParams<
+  T extends object = Record<string, string>,
+>(): Readonly<T>;
 export function useParams<T>(
   selector: (params: Record<string, string>) => T,
 ): T;

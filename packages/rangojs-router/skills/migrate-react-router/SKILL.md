@@ -635,6 +635,7 @@ layout(<ShopLayout />, () => [
 | `useLocation().pathname`                  | `usePathname()` from `@rangojs/router/client`                                    |
 | `useSearchParams()`                       | `useSearchParams()` from `@rangojs/router/client`                                |
 | `useParams()`                             | `useParams()` from `@rangojs/router/client` (or `ctx.params` in server handlers) |
+| `useParams<T>()`                          | `useParams<T>()` — same generic annotation pattern                               |
 | `<NavLink>`                               | `<Link>` with `usePathname()` for active state                                   |
 
 ### useNavigate → useRouter
