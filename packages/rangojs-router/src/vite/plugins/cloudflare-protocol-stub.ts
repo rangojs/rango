@@ -65,6 +65,15 @@ export default {};
 `,
 };
 
+// Policy: unknown `cloudflare:*` specifiers resolve permissively (empty
+// default export) rather than throwing. We prioritize dependency-graph
+// resilience over strict validation of user imports because third-party
+// packages can pull `cloudflare:*` modules we haven't curated, and
+// discovery should not fail just because those modules appear in the graph.
+// Tradeoff: unsupported user-authored `cloudflare:*` imports may fail later
+// with a generic JS/module error instead of a tailored rango-branded hint.
+// The test below pins this behavior so dependency compatibility is not
+// regressed accidentally.
 const FALLBACK_STUB = `export default {};\n`;
 
 interface AstNode {

@@ -216,6 +216,10 @@ describe("createCloudflareProtocolStubPlugin", () => {
       expect(new MyEmail()).toBeInstanceOf(email.EmailMessage);
     });
 
+    // Policy pin: unknown `cloudflare:*` specifiers stay permissive.
+    // Changing this to `throw` would improve first-party error clarity, but it
+    // would also regress discovery for dependency graphs that transitively pull
+    // uncurated Cloudflare protocol modules.
     it("falls back to an empty default export for unknown cloudflare:* modules", () => {
       const p = make();
       const code = p.load(`\0${VIRT}something-new`)!;
