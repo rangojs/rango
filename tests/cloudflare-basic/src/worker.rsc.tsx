@@ -1,6 +1,15 @@
 /// <reference types="@cloudflare/workers-types" />
+import { DurableObject } from "cloudflare:workers";
 import { router } from "./router.js";
 import type { AppBindings } from "./env.js";
+
+// Reproduces the `cloudflare:workers` discovery failure. Discovery imports this
+// file in a Node temp Vite server; `cloudflare:` isn't resolvable there.
+export class Counter extends DurableObject {
+  async increment() {
+    return 1;
+  }
+}
 
 export default {
   async fetch(request, env, ctx) {

@@ -19,6 +19,7 @@ import {
 } from "../build/generate-route-types.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
 import { createVirtualStubPlugin } from "./plugins/virtual-stub-plugin.js";
+import { createCloudflareProtocolStubPlugin } from "./plugins/cloudflare-protocol-stub.js";
 import {
   exposeInternalIds,
   exposeRouterId,
@@ -88,6 +89,7 @@ async function createTempRscServer(
       ...(options.forceBuild ? [hashClientRefs(state.projectRoot)] : []),
       createVersionPlugin(),
       createVirtualStubPlugin(),
+      createCloudflareProtocolStubPlugin(),
       // Dev prerender must use dev-mode IDs (path-based) to match the workerd
       // runtime. forceBuild produces hashed IDs for production bundle consistency.
       exposeInternalIds(options.forceBuild ? { forceBuild: true } : undefined),
