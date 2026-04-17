@@ -13,6 +13,41 @@ const IMPORT_NODE_TYPES = new Set([
   "ExportAllDeclaration",
 ]);
 
+// Keep in sync with `STUBS` in cloudflare-protocol-loader-hook.mjs —
+// both paths (Vite transform and Node loader) need to hand out the same
+// classes. Unknown `cloudflare:*` modules fall back to an empty default
+// export so third-party packages (e.g. the Cloudflare Agents SDK) can
+// pull them into the graph without crashing discovery. Discovery only
+// evaluates module top-level code — no handlers run — so missing named
+// exports only fail if something does `class X extends Missing {}` at
+// module scope, which is rare outside the already-stubbed classes.
+const STUBS: Record<string, string> = {
+  "cloudflare:workers": `
+export class DurableObject { constructor(_ctx, _env) {} }
+export class WorkerEntrypoint { constructor(_ctx, _env) {} }
+export class WorkflowEntrypoint { constructor(_ctx, _env) {} }
+export class RpcTarget {}
+export const env = {};
+export default {};
+`,
+  "cloudflare:email": `
+export class EmailMessage { constructor(_from, _to, _raw) {} }
+export default {};
+`,
+  "cloudflare:sockets": `
+export function connect() { return {}; }
+export default {};
+`,
+  "cloudflare:workflows": `
+export class NonRetryableError extends Error {
+  constructor(message, name) { super(message); this.name = name ?? "NonRetryableError"; }
+}
+export default {};
+`,
+};
+
+const FALLBACK_STUB = `export default {};\n`;
+
 interface AstNode {
   type: string;
   start?: number;
@@ -23,7 +58,7 @@ interface AstNode {
 }
 
 /**
- * Stubs `cloudflare:workers` for the discovery-time Node Vite server.
+ * Stubs `cloudflare:*` imports for the discovery-time Node Vite server.
  *
  * Discovery only evaluates user module top-level code — it never invokes
  * DurableObject / WorkerEntrypoint / Workflow handlers — so empty base
@@ -43,17 +78,24 @@ interface AstNode {
  * text are never mutated — the walker only looks at the four import
  * node types.
  *
+ * The transform runs on user source AND on compiled node_modules
+ * output: real-world CF packages (e.g. the Cloudflare Agents SDK)
+ * ship compiled JS that contains `import ... from "cloudflare:email"`
+ * and similar, so excluding node_modules would leave those imports
+ * unrewritten. Cost is small because the early exit (`code.includes`)
+ * skips files with no cloudflare: mention.
+ *
  * The plugin intentionally runs at Vite's default ordering (no
  * `enforce: "pre"`) so TS/JSX has already been compiled to plain JS
  * by the time `this.parse` runs — acorn doesn't understand
  * non-standard syntax.
  *
- * Only `cloudflare:workers` is stubbed — the one that appears in
- * top-level `extends` positions in practice. Any other `cloudflare:*`
- * specifier throws a descriptive error at load time, which is strictly
- * more informative than silently returning an empty default (which
- * would still throw `undefined is not a constructor` at class-extend
- * time).
+ * `cloudflare:workers`, `cloudflare:email`, `cloudflare:sockets`, and
+ * `cloudflare:workflows` each get curated stubs with the well-known
+ * symbols that appear in top-level `extends` positions. Any other
+ * `cloudflare:*` specifier falls back to an empty default export —
+ * discovery never executes the handlers, so an empty module is safe
+ * for anything the graph pulls in transitively.
  *
  * Only registered in the discovery temp server, not the user's runtime
  * config.
@@ -63,7 +105,6 @@ export function createCloudflareProtocolStubPlugin(): Plugin {
   return {
     name: "@rangojs/router:cloudflare-protocol-stub",
     transform(code, id) {
-      if (id.includes("/node_modules/")) return null;
       const cleanId = id.split("?")[0] ?? id;
       if (!SOURCE_EXT_RE.test(cleanId)) return null;
       if (!code.includes(CF_PREFIX)) return null;
@@ -121,15 +162,8 @@ export function createCloudflareProtocolStubPlugin(): Plugin {
     load(id) {
       if (!id.startsWith(NULL_PREFIX)) return null;
       const submodule = id.slice(NULL_PREFIX.length);
-      if (submodule === "workers") {
-        return CLOUDFLARE_WORKERS_STUB;
-      }
-      throw new Error(
-        `[rsc-router] Unsupported \`cloudflare:${submodule}\` import encountered during router discovery. ` +
-          `Only \`cloudflare:workers\` is stubbed today. ` +
-          `Add a stub for \`cloudflare:${submodule}\` in packages/rangojs-router/src/vite/plugins/cloudflare-protocol-stub.ts, ` +
-          `or move the import out of the module graph that reaches the worker entry.`,
-      );
+      const specifier = CF_PREFIX + submodule;
+      return STUBS[specifier] ?? FALLBACK_STUB;
     },
   };
 }
@@ -150,12 +184,3 @@ function walk(node: unknown, visit: (n: AstNode) => void): void {
     walk(n[key], visit);
   }
 }
-
-const CLOUDFLARE_WORKERS_STUB = `
-export class DurableObject { constructor(_ctx, _env) {} }
-export class WorkerEntrypoint { constructor(_ctx, _env) {} }
-export class WorkflowEntrypoint { constructor(_ctx, _env) {} }
-export class RpcTarget {}
-export const env = {};
-export default {};
-`;

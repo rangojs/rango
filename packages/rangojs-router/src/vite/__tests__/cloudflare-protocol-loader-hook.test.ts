@@ -15,6 +15,22 @@ describe("cloudflare-protocol-loader-hook", () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  it("short-circuits cloudflare:email / sockets / workflows", async () => {
+    const next = vi.fn(() => {
+      throw new Error("nextResolve should not be called");
+    });
+    for (const spec of [
+      "cloudflare:email",
+      "cloudflare:sockets",
+      "cloudflare:workflows",
+    ]) {
+      const result = await resolve(spec, {}, next);
+      expect(result.shortCircuit).toBe(true);
+      expect(result.url).toMatch(/^data:text\/javascript;base64,/);
+    }
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it("the data URL payload is executable ESM with extendable base classes", async () => {
     const result = await resolve("cloudflare:workers", {}, () => {
       throw new Error("should not fall through");
@@ -31,14 +47,26 @@ describe("cloudflare-protocol-loader-hook", () => {
     expect(mod.env).toEqual({});
   });
 
-  it("throws for unsupported cloudflare:* specifiers", async () => {
-    const next = vi.fn();
-    await expect(resolve("cloudflare:email", {}, next)).rejects.toThrow(
-      /Unsupported `cloudflare:email`/,
-    );
-    await expect(resolve("cloudflare:sockets", {}, next)).rejects.toThrow(
-      /cloudflare-protocol-loader-hook\.mjs/,
-    );
+  it("cloudflare:email stub exports EmailMessage that can be extended", async () => {
+    const result = await resolve("cloudflare:email", {}, () => {
+      throw new Error("should not fall through");
+    });
+    const mod = (await import(result.url)) as {
+      EmailMessage: new (...args: unknown[]) => object;
+    };
+    class MyEmail extends mod.EmailMessage {}
+    expect(new MyEmail()).toBeInstanceOf(mod.EmailMessage);
+  });
+
+  it("short-circuits unknown cloudflare:* specifiers to a permissive empty stub", async () => {
+    const next = vi.fn(() => {
+      throw new Error("nextResolve should not be called");
+    });
+    const result = await resolve("cloudflare:something-new", {}, next);
+    expect(result.shortCircuit).toBe(true);
+    expect(result.format).toBe("module");
+    const mod = (await import(result.url)) as { default: unknown };
+    expect(mod.default).toEqual({});
     expect(next).not.toHaveBeenCalled();
   });
 

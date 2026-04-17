@@ -12,11 +12,10 @@ const HOOK_URL = pathToFileURL(
 
 /**
  * Verifies the loader hook works when the module graph bypasses Vite
- * entirely — i.e. the exact scenario that motivated adding the hook on
- * top of the Vite transform. Spawns a Node subprocess that registers the
- * hook and then does a bare `import("cloudflare:workers")` via Node's
- * native ESM loader. Without the hook this fails with ERR_UNSUPPORTED…
- * With the hook it returns our stub classes.
+ * entirely — the exact scenario that motivated adding the hook on top
+ * of the Vite transform. Spawns a Node subprocess that registers the
+ * hook and then does a bare `import("cloudflare:*")` via Node's native
+ * ESM loader. Without the hook this fails with ERR_MODULE_NOT_FOUND.
  */
 describe("cloudflare-protocol-loader-hook (integration via child Node)", () => {
   it("resolves cloudflare:workers when registered as a Node loader", async () => {
@@ -46,22 +45,38 @@ describe("cloudflare-protocol-loader-hook (integration via child Node)", () => {
     });
   });
 
-  it("surfaces a descriptive error for unsupported cloudflare:* specifiers", async () => {
+  it("resolves cloudflare:email so third-party packages (e.g. agents SDK) don't break", async () => {
     const script = `
       import { register } from "node:module";
       register(${JSON.stringify(HOOK_URL)});
-      try {
-        await import("cloudflare:email");
-        console.log("NO_ERROR");
-      } catch (err) {
-        console.log(err.message);
-      }
+      const mod = await import("cloudflare:email");
+      class MyEmail extends mod.EmailMessage {}
+      console.log(JSON.stringify({
+        emailMessage: new MyEmail() instanceof mod.EmailMessage,
+      }));
     `;
     const { stdout } = await execFileP(
       process.execPath,
       ["--input-type=module", "-e", script],
       { timeout: 15_000 },
     );
-    expect(stdout).toMatch(/Unsupported `cloudflare:email`/);
+    expect(JSON.parse(stdout.trim())).toEqual({ emailMessage: true });
+  });
+
+  it("resolves unknown cloudflare:* specifiers to a permissive empty stub", async () => {
+    const script = `
+      import { register } from "node:module";
+      register(${JSON.stringify(HOOK_URL)});
+      const mod = await import("cloudflare:something-new");
+      console.log(JSON.stringify({
+        defaultIsEmpty: Object.keys(mod.default).length === 0,
+      }));
+    `;
+    const { stdout } = await execFileP(
+      process.execPath,
+      ["--input-type=module", "-e", script],
+      { timeout: 15_000 },
+    );
+    expect(JSON.parse(stdout.trim())).toEqual({ defaultIsEmpty: true });
   });
 });

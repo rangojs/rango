@@ -18,9 +18,6 @@ function make(): PluginWithHooks {
   return createCloudflareProtocolStubPlugin() as unknown as PluginWithHooks;
 }
 
-// Every transform call needs a Rollup/Vite plugin context with a .parse()
-// method. Production code gets this automatically from Vite; tests provide
-// their own using Vite's re-exported parser.
 const ctx = { parse: parseAst };
 
 function runTransform(src: string, id: string): TransformResult {
@@ -54,7 +51,6 @@ describe("createCloudflareProtocolStubPlugin", () => {
     it("leaves dynamic imports with non-literal specifiers alone", () => {
       const src = `const m = await import("cloudflare:" + name);\n`;
       const result = runTransform(src, "/app/src/worker.js");
-      // BinaryExpression source is not a Literal, so no rewrite.
       expect(result).toBeNull();
     });
 
@@ -83,8 +79,23 @@ describe("createCloudflareProtocolStubPlugin", () => {
       );
     });
 
-    // Regression guards: AST-based rewriting means these could never match
-    // by construction, but kept as documented expected behavior.
+    // Real-world case: the Cloudflare Agents SDK ships compiled JS under
+    // node_modules/agents/dist that contains `cloudflare:email` imports.
+    // The transform must cover those paths — excluding node_modules would
+    // leave the imports unrewritten and push the failure downstream.
+    it("rewrites imports in node_modules too", () => {
+      const src = `import { EmailMessage } from "cloudflare:email";\n`;
+      const result = runTransform(
+        src,
+        "/proj/node_modules/agents/dist/index.js",
+      );
+      expect(result?.code).toBe(
+        `import { EmailMessage } from "${VIRT}email";\n`,
+      );
+    });
+
+    // AST-based rewriting — the following can never match by construction,
+    // kept as documented expected behavior.
     it("does NOT rewrite cloudflare:* inside string literals", () => {
       const src = `const s = "import(\\"cloudflare:workers\\")";\n`;
       const result = runTransform(src, "/app/src/worker.js");
@@ -109,25 +120,8 @@ describe("createCloudflareProtocolStubPlugin", () => {
       expect(result).toBeNull();
     });
 
-    it("rewrites only the real import when it coexists with a string literal lookalike", () => {
-      const src =
-        `const note = "avoid importing from cloudflare:workers directly";\n` +
-        `import { DurableObject } from "cloudflare:workers";\n`;
-      const result = runTransform(src, "/app/src/worker.js");
-      expect(result?.code).toBe(
-        `const note = "avoid importing from cloudflare:workers directly";\n` +
-          `import { DurableObject } from "${VIRT}workers";\n`,
-      );
-    });
-
     it("skips files without any cloudflare: mention (cheap early exit)", () => {
       const result = runTransform(`export const x = 1;\n`, "/app/src/foo.js");
-      expect(result).toBeNull();
-    });
-
-    it("skips node_modules", () => {
-      const src = `import { DurableObject } from "cloudflare:workers";\n`;
-      const result = runTransform(src, "/proj/node_modules/pkg/dist/index.js");
       expect(result).toBeNull();
     });
 
@@ -166,7 +160,7 @@ describe("createCloudflareProtocolStubPlugin", () => {
       expect(p.resolveId("cloudflare:workers")).toBeNull();
     });
 
-    it("emits cloudflare:workers stub with extendable base classes", () => {
+    it("cloudflare:workers stub has extendable DO / Worker / Workflow classes", () => {
       const p = make();
       const code = p.load(`\0${VIRT}workers`)!;
       expect(code).toContain("export class DurableObject");
@@ -176,32 +170,54 @@ describe("createCloudflareProtocolStubPlugin", () => {
       expect(code).toContain("export const env");
     });
 
-    it("cloudflare:workers stub is valid ESM whose classes can be extended", async () => {
+    it("cloudflare:email stub exports EmailMessage", () => {
       const p = make();
-      const code = p.load(`\0${VIRT}workers`)!;
-      const url = `data:text/javascript;base64,${Buffer.from(code).toString(
-        "base64",
-      )}`;
-      const mod = (await import(url)) as {
-        DurableObject: new (...args: unknown[]) => object;
-        WorkerEntrypoint: new (...args: unknown[]) => object;
-        env: object;
-      };
-      class MyDO extends mod.DurableObject {}
-      class MyWE extends mod.WorkerEntrypoint {}
-      expect(new MyDO()).toBeInstanceOf(mod.DurableObject);
-      expect(new MyWE()).toBeInstanceOf(mod.WorkerEntrypoint);
-      expect(mod.env).toEqual({});
+      const code = p.load(`\0${VIRT}email`)!;
+      expect(code).toContain("export class EmailMessage");
     });
 
-    it("throws a descriptive error for unsupported cloudflare:* modules", () => {
+    it("cloudflare:sockets stub exports connect", () => {
       const p = make();
-      expect(() => p.load(`\0${VIRT}email`)).toThrow(
-        /Unsupported `cloudflare:email`/,
-      );
-      expect(() => p.load(`\0${VIRT}something-new`)).toThrow(
-        /cloudflare-protocol-stub\.ts/,
-      );
+      const code = p.load(`\0${VIRT}sockets`)!;
+      expect(code).toContain("export function connect");
+    });
+
+    it("cloudflare:workflows stub exports NonRetryableError", () => {
+      const p = make();
+      const code = p.load(`\0${VIRT}workflows`)!;
+      expect(code).toContain("export class NonRetryableError");
+    });
+
+    it("stubs are valid ESM whose classes can be extended", async () => {
+      const p = make();
+      const load = async (spec: string) => {
+        const code = p.load(`\0${VIRT}${spec}`)!;
+        const url = `data:text/javascript;base64,${Buffer.from(code).toString(
+          "base64",
+        )}`;
+        return import(url);
+      };
+      const workers = (await load("workers")) as {
+        DurableObject: new (...args: unknown[]) => object;
+        WorkerEntrypoint: new (...args: unknown[]) => object;
+      };
+      class MyDO extends workers.DurableObject {}
+      class MyWE extends workers.WorkerEntrypoint {}
+      expect(new MyDO()).toBeInstanceOf(workers.DurableObject);
+      expect(new MyWE()).toBeInstanceOf(workers.WorkerEntrypoint);
+
+      const email = (await load("email")) as {
+        EmailMessage: new (...args: unknown[]) => object;
+      };
+      class MyEmail extends email.EmailMessage {}
+      expect(new MyEmail()).toBeInstanceOf(email.EmailMessage);
+    });
+
+    it("falls back to an empty default export for unknown cloudflare:* modules", () => {
+      const p = make();
+      const code = p.load(`\0${VIRT}something-new`)!;
+      expect(code).toContain("export default {}");
+      expect(code).not.toContain("throw");
     });
 
     it("returns null from load for non-stub ids", () => {
