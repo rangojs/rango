@@ -308,3 +308,25 @@ export const shopPatterns = urls(({ path, layout, parallel, loader, revalidate }
   ]),
 ]);
 ```
+
+## Handler-attached `.use`
+
+Layout handlers can carry their own middleware, default parallels, and includes via `.use` so a layout becomes a self-contained unit reusable across mount sites.
+
+```typescript
+const AdminLayout: Handler = (ctx) => {
+  const user = ctx.get(CurrentUser);
+  return <Admin user={user} />;
+};
+AdminLayout.use = () => [
+  middleware(requireAdmin),
+  parallel({ "@adminNotifs": AdminNotifsSlot }),
+];
+
+// Mount site declares structure only; defaults travel with the layout.
+layout(AdminLayout, () => [
+  path("/admin", AdminIndex, { name: "admin.index" }),
+]);
+```
+
+Allowed item types in a layout's `.use` mirror the layout `use()` callback (the broadest set). Explicit `use()` at the mount site merges with `handler.use` (handler defaults first, explicit second). See [skills/handler-use](../handler-use/SKILL.md) for merge order and per-mount-site allowed types.

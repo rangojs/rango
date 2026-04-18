@@ -391,6 +391,29 @@ export async function alsScopeAction(): Promise<void> {
 }
 
 /**
+ * Action that sets context variables via both string key (AppVariables)
+ * and typed createVar token. Tests that both approaches survive the
+ * action → revalidation boundary.
+ */
+export async function actionSetCtxVar(): Promise<void> {
+  const ctx = getRequestContext();
+  const { ActionCtxTypedVar } = await import("./urls/action-ctx-set.js");
+  ctx.set("actionCtxValue", "set-by-action");
+  ctx.set(ActionCtxTypedVar, "typed-by-action");
+}
+
+/**
+ * Form-based variant for progressive enhancement testing.
+ * Works with native HTML form POST (no-JS).
+ */
+export async function actionSetCtxVarForm(_formData: FormData): Promise<void> {
+  const ctx = getRequestContext();
+  const { ActionCtxTypedVar } = await import("./urls/action-ctx-set.js");
+  ctx.set("actionCtxValue", "set-by-action");
+  ctx.set(ActionCtxTypedVar, "typed-by-action");
+}
+
+/**
  * Auth boundary test action. Mutates state (sets a cookie) to prove the action
  * executed. Route middleware does NOT guard this — only global middleware does.
  */

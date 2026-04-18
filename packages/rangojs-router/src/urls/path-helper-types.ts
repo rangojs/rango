@@ -233,12 +233,27 @@ export type PathHelpers<TEnv> = {
   include: IncludeFn<TEnv>;
 
   /**
-   * Define parallel routes that render simultaneously in named slots
+   * Define parallel routes that render simultaneously in named slots.
+   *
+   * A slot value can be a Handler / ReactNode / StaticHandlerDefinition
+   * (legacy form, broadcast use applies to every slot) or a slot descriptor
+   * `{ handler, use? }` whose `use` is scoped to that slot only. Per-slot
+   * merge order is `handler.use` → shared `use` → slot-local `use`, with
+   * narrowest scope winning for last-write-wins items like `loading()`.
    */
   parallel: <
     TSlots extends Record<
       `@${string}`,
-      Handler<any, any, TEnv> | ReactNode | StaticHandlerDefinition
+      | Handler<any, any, TEnv>
+      | ReactNode
+      | StaticHandlerDefinition
+      | {
+          handler:
+            | Handler<any, any, TEnv>
+            | ReactNode
+            | StaticHandlerDefinition;
+          use?: () => ParallelUseItem[];
+        }
     >,
   >(
     slots: TSlots,
@@ -264,9 +279,20 @@ export type PathHelpers<TEnv> = {
       ) => InterceptItem;
 
   /**
-   * Attach middleware to the current route/layout
+   * Attach middleware to the current route/layout, or wrap child segments
    */
-  middleware: (...fns: MiddlewareFn<TEnv>[]) => MiddlewareItem;
+  middleware: {
+    (fn: MiddlewareFn<TEnv>): MiddlewareItem;
+    (
+      fn: MiddlewareFn<TEnv>,
+      children: () => UseItems<LayoutUseItem>,
+    ): MiddlewareItem;
+    (fns: MiddlewareFn<TEnv>[]): MiddlewareItem;
+    (
+      fns: MiddlewareFn<TEnv>[],
+      children: () => UseItems<LayoutUseItem>,
+    ): MiddlewareItem;
+  };
 
   /**
    * Control when a segment should revalidate during navigation

@@ -123,7 +123,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   "@main": async (ctx) => <MainContent data={ctx.use(DataLoader)} />,
    * })
    *
-   * // With loaders and loading states
+   * // With loaders and loading states (broadcast to every slot)
    * parallel({
    *   "@analytics": AnalyticsPanel,
    *   "@metrics": MetricsPanel,
@@ -131,12 +131,36 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   loader(DashboardLoader),
    *   loading(<DashboardSkeleton />),
    * ])
+   *
+   * // Per-slot scoped use via slot descriptor — for single-assignment items
+   * // like loading() that should not broadcast to siblings.
+   * parallel({
+   *   "@meta": MetaSlot,
+   *   "@sidebar": {
+   *     handler: SidebarSlot,
+   *     use: () => [loading(<SidebarSkeleton />)],
+   *   },
+   * })
    * ```
    * @param slots - Object with slot names (prefixed with @) mapped to handlers
+   *                or `{ handler, use? }` slot descriptors.
    * @param use - Optional callback for loaders, loading, revalidate, etc.
+   *              Items here apply to every slot in the call (broadcast).
+   *              For per-slot single-assignment items, use the slot descriptor's
+   *              own `use` callback — slot-local items run after the broadcast,
+   *              so they take precedence on `loading()` and other last-write-wins
+   *              fields.
    */
   parallel: <
-    TSlots extends Record<`@${string}`, Handler<any, any, TEnv> | ReactNode>,
+    TSlots extends Record<
+      `@${string}`,
+      | Handler<any, any, TEnv>
+      | ReactNode
+      | {
+          handler: Handler<any, any, TEnv> | ReactNode;
+          use?: () => UseItems<ParallelUseItem>;
+        }
+    >,
   >(
     slots: TSlots,
     use?: () => UseItems<ParallelUseItem>,
@@ -182,21 +206,41 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
     ): InterceptItem;
   };
   /**
-   * Attach middleware to the current route/layout
-   * ```typescript
-   * middleware(async (ctx, next) => {
-   *   const session = await getSession(ctx.request);
-   *   if (!session) return redirect("/login");
-   *   ctx.set("user", session.user);
-   *   next();
-   * })
+   * Attach middleware to the current route/layout, or wrap child segments
    *
-   * // Chain multiple middleware
-   * middleware(authMiddleware, loggingMiddleware, rateLimitMiddleware)
+   * **Sibling mode** — attaches middleware to the parent entry:
+   * ```typescript
+   * layout(<DashboardShell />, () => [
+   *   middleware(authMiddleware),
+   *   middleware([authMiddleware, loggingMiddleware]),
+   *   path("/", DashboardPage),
+   * ])
    * ```
-   * @param fns - One or more middleware functions to execute in order
+   *
+   * **Wrapping mode** — scopes middleware to the children only:
+   * ```typescript
+   * middleware(authMiddleware, () => [
+   *   path("/dashboard", DashboardPage),
+   *   path("/settings", SettingsPage),
+   * ])
+   *
+   * middleware([authMiddleware, loggingMiddleware], () => [
+   *   path("/admin", AdminPage),
+   * ])
+   * ```
    */
-  middleware: (...fns: MiddlewareFn<TEnv>[]) => MiddlewareItem;
+  middleware: {
+    (fn: MiddlewareFn<TEnv>): MiddlewareItem;
+    (
+      fn: MiddlewareFn<TEnv>,
+      children: () => UseItems<LayoutUseItem>,
+    ): MiddlewareItem;
+    (fns: MiddlewareFn<TEnv>[]): MiddlewareItem;
+    (
+      fns: MiddlewareFn<TEnv>[],
+      children: () => UseItems<LayoutUseItem>,
+    ): MiddlewareItem;
+  };
   /**
    * Control when a segment should revalidate during navigation
    * ```typescript

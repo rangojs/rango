@@ -21,6 +21,83 @@ import {
 } from "./route-content-wrapper.js";
 import { OutletProvider } from "./outlet-provider.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
+import { getMemoizedContentPromise } from "./segment-content-promise.js";
+
+/**
+ * Render the content for a named parallel/intercept slot segment.
+ *
+ * Shared by Outlet (with `name` prop) and ParallelOutlet — both resolve a
+ * segment from context.parallel by slot name and then render it through the
+ * same layout/loader/mountPath wrapping pipeline.
+ */
+function renderSlotContent(segment: ResolvedSegment | null): ReactNode {
+  if (!segment) return null;
+
+  const content: ReactNode =
+    segment.loading || segment.component instanceof Promise ? (
+      <RouteContentWrapper
+        content={getMemoizedContentPromise(segment.component)}
+        fallback={segment.loading}
+        segmentId={segment.id}
+      />
+    ) : (
+      (segment.component ?? null)
+    );
+
+  const hasOwnLoaders = !!(segment.loaderDataPromise && segment.loaderIds);
+  const loaderWrapped = hasOwnLoaders ? (
+    <LoaderBoundary
+      loaderDataPromise={segment.loaderDataPromise!}
+      loaderIds={segment.loaderIds!}
+      fallback={segment.loading}
+      outletKey={segment.id + "-loader"}
+      outletContent={null}
+      segment={segment}
+    >
+      {content}
+    </LoaderBoundary>
+  ) : null;
+
+  let result: ReactNode;
+  if (segment.layout) {
+    // Layout renders immediately; if loaders exist, the LoaderBoundary becomes
+    // the outlet content so layout's <Outlet /> suspends until loaders resolve.
+    result = (
+      <OutletProvider
+        content={hasOwnLoaders ? loaderWrapped : content}
+        segment={segment}
+      >
+        {segment.layout}
+      </OutletProvider>
+    );
+  } else if (hasOwnLoaders) {
+    // No layout but has loaders — wrap content with LoaderBoundary for useLoader context.
+    // Common for intercept routes that use useLoader without a custom layout.
+    result = loaderWrapped;
+  } else {
+    result = content;
+  }
+
+  if (segment.mountPath) {
+    return (
+      <MountContextProvider value={segment.mountPath}>
+        {result}
+      </MountContextProvider>
+    );
+  }
+
+  return result;
+}
+
+function useSlotSegment(
+  context: OutletContextValue | null,
+  name: `@${string}` | undefined,
+): ResolvedSegment | null {
+  return useMemo(() => {
+    if (!name || !context?.parallel) return null;
+    return context.parallel.find((seg) => seg.slot === name) ?? null;
+  }, [context, name]);
+}
 
 /**
  * Outlet component - renders child content in layouts
@@ -61,95 +138,10 @@ import { MountContextProvider } from "./browser/react/mount-context.js";
  */
 export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
   const context = useContext(OutletContext);
+  const namedSegment = useSlotSegment(context, name);
 
-  // If name provided, render parallel/intercept content for that slot
   if (name) {
-    const segment = context?.parallel?.find((seg) => seg.slot === name) ?? null;
-
-    if (!segment) return null;
-
-    // Determine the content to render
-    let content: ReactNode;
-    if (segment.loading || segment.component instanceof Promise) {
-      // Use RouteContentWrapper to handle Suspense wrapping properly
-      content = (
-        <RouteContentWrapper
-          content={
-            segment.component instanceof Promise
-              ? segment.component
-              : Promise.resolve(segment.component)
-          }
-          fallback={segment.loading}
-          segmentId={segment.id}
-        />
-      );
-    } else {
-      content = segment.component ?? null;
-    }
-
-    let result: ReactNode;
-
-    // If segment has a layout, wrap appropriately
-    if (segment.layout) {
-      // Check if this segment has loaders that need streaming
-      // The layout renders immediately, LoaderBoundary becomes the outlet content
-      // When layout renders <Outlet />, it gets the LoaderBoundary which suspends
-      if (segment.loaderDataPromise && segment.loaderIds) {
-        const loaderAwareContent = (
-          <LoaderBoundary
-            loaderDataPromise={segment.loaderDataPromise}
-            loaderIds={segment.loaderIds}
-            fallback={segment.loading}
-            outletKey={segment.id + "-loader"}
-            outletContent={null}
-            segment={segment}
-          >
-            {content}
-          </LoaderBoundary>
-        );
-
-        result = (
-          <OutletProvider content={loaderAwareContent} segment={segment}>
-            {segment.layout}
-          </OutletProvider>
-        );
-      } else {
-        // No loaders - wrap in OutletProvider so layout can use <Outlet />
-        result = (
-          <OutletProvider content={content} segment={segment}>
-            {segment.layout}
-          </OutletProvider>
-        );
-      }
-    } else if (segment.loaderDataPromise && segment.loaderIds) {
-      // No layout but has loaders - wrap content with LoaderBoundary for useLoader context
-      // This is common for intercept routes that use useLoader without a custom layout
-      result = (
-        <LoaderBoundary
-          loaderDataPromise={segment.loaderDataPromise}
-          loaderIds={segment.loaderIds}
-          fallback={segment.loading}
-          outletKey={segment.id + "-loader"}
-          outletContent={null}
-          segment={segment}
-        >
-          {content}
-        </LoaderBoundary>
-      );
-    } else {
-      result = content;
-    }
-
-    // Wrap with MountContextProvider for include() scoped parallel/intercept slots
-    if (segment.mountPath) {
-      return (
-        <MountContextProvider value={segment.mountPath}>
-          {result}
-        </MountContextProvider>
-      );
-    }
-
-    return result;
+    return renderSlotContent(namedSegment);
   }
 
   // Default: render child content
@@ -163,6 +155,7 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
 
   return content;
 }
+
 /**
  * ParallelOutlet component - renders content for a named parallel slot
  *
@@ -187,94 +180,9 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
  */
 export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
   const context = useContext(OutletContext);
-  const segment = useMemo(() => {
-    if (!context?.parallel) return null;
-    return context.parallel.find((seg) => seg.slot === name) ?? null;
-  }, [context, name]);
+  const segment = useSlotSegment(context, name);
 
-  if (!segment) return null;
-
-  // Determine the content to render
-  let content: ReactNode;
-  if (segment.loading || segment.component instanceof Promise) {
-    // Use RouteContentWrapper to handle Suspense wrapping properly
-    content = (
-      <RouteContentWrapper
-        content={
-          segment.component instanceof Promise
-            ? segment.component
-            : Promise.resolve(segment.component)
-        }
-        fallback={segment.loading}
-        segmentId={segment.id}
-      />
-    );
-  } else {
-    content = segment.component ?? null;
-  }
-
-  let result: ReactNode;
-
-  // If segment has a layout, wrap appropriately
-  if (segment.layout) {
-    // Check if this segment has loaders that need streaming
-    // The layout renders immediately, LoaderBoundary becomes the outlet content
-    if (segment.loaderDataPromise && segment.loaderIds) {
-      const loaderAwareContent = (
-        <LoaderBoundary
-          loaderDataPromise={segment.loaderDataPromise}
-          loaderIds={segment.loaderIds}
-          fallback={segment.loading}
-          outletKey={segment.id + "-loader"}
-          outletContent={null}
-          segment={segment}
-        >
-          {content}
-        </LoaderBoundary>
-      );
-
-      result = (
-        <OutletProvider content={loaderAwareContent} segment={segment}>
-          {segment.layout}
-        </OutletProvider>
-      );
-    } else {
-      // No loaders - wrap in OutletProvider so layout can use <Outlet />
-      result = (
-        <OutletProvider content={content} segment={segment}>
-          {segment.layout}
-        </OutletProvider>
-      );
-    }
-  } else if (segment.loaderDataPromise && segment.loaderIds) {
-    // No layout but has loaders - wrap content with LoaderBoundary for useLoader context
-    // This is common for intercept routes that use useLoader without a custom layout
-    result = (
-      <LoaderBoundary
-        loaderDataPromise={segment.loaderDataPromise}
-        loaderIds={segment.loaderIds}
-        fallback={segment.loading}
-        outletKey={segment.id + "-loader"}
-        outletContent={null}
-        segment={segment}
-      >
-        {content}
-      </LoaderBoundary>
-    );
-  } else {
-    result = content;
-  }
-
-  // Wrap with MountContextProvider for include() scoped parallel/intercept slots
-  if (segment.mountPath) {
-    return (
-      <MountContextProvider value={segment.mountPath}>
-        {result}
-      </MountContextProvider>
-    );
-  }
-
-  return result;
+  return renderSlotContent(segment);
 }
 
 // OutletProvider is defined in outlet-provider.tsx to break a circular

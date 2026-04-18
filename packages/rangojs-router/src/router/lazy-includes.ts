@@ -125,9 +125,8 @@ export function evaluateLazyEntry<TEnv = any>(
   // Merge captured counters from include() to maintain consistent
   // shortCode indices with sibling entries from pattern extraction
   const lazyCounters: Record<string, number> = {};
-  if (lazyContext && (lazyContext as any).counters) {
-    const captured = (lazyContext as any).counters as Record<string, number>;
-    for (const [key, value] of Object.entries(captured)) {
+  if (lazyContext?.counters) {
+    for (const [key, value] of Object.entries(lazyContext.counters)) {
       lazyCounters[key] = value;
     }
   }
@@ -141,8 +140,9 @@ export function evaluateLazyEntry<TEnv = any>(
       namespace: "lazy",
       parent: getIsolatedLazyParent(lazyContext?.parent as EntryData | null),
       counters: lazyCounters,
-      cacheProfiles: (lazyContext as any)?.cacheProfiles,
-      rootScoped: (lazyContext as any)?.rootScoped,
+      cacheProfiles: lazyContext?.cacheProfiles,
+      rootScoped: lazyContext?.rootScoped,
+      includeScope: lazyContext?.includeScope,
     },
     () => {
       // Run the lazy patterns handler with the original context prefixes

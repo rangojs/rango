@@ -165,7 +165,11 @@ describe("segment-reconciler", () => {
         expect(result.segments[0].loading).toBe("skeleton");
       });
 
-      it("clears truthy loading on cached segments not in server response", () => {
+      it("preserves truthy loading on cached segments not in server response", () => {
+        // Truthy loading is kept so renderSegments stays in the LoaderBoundary
+        // branch — flipping to the plain OutletProvider branch would remount
+        // the entire LoaderBoundary > Suspense > LoaderResolver >
+        // RouteContentWrapper chain on every intercept/back navigation.
         const cached = seg("L0", {
           type: "layout",
           loading: "skeleton" as any,
@@ -179,7 +183,8 @@ describe("segment-reconciler", () => {
           cachedSegments: [cached],
         });
 
-        expect(result.segments[0].loading).toBeUndefined();
+        expect(result.segments[0].loading).toBe("skeleton");
+        expect(result.segments[0]).toBe(cached);
       });
 
       it("preserves loading=false on cached segments not in server response", () => {
@@ -262,7 +267,7 @@ describe("segment-reconciler", () => {
         expect(result.segments[0].loading).toBe(false);
       });
 
-      it("clears truthy loading on cached segments not in server response", () => {
+      it("preserves truthy loading on cached segments not in server response", () => {
         const cached = seg("L0", {
           type: "layout",
           loading: "skeleton" as any,
@@ -276,7 +281,8 @@ describe("segment-reconciler", () => {
           cachedSegments: [cached],
         });
 
-        expect(result.segments[0].loading).toBeUndefined();
+        expect(result.segments[0].loading).toBe("skeleton");
+        expect(result.segments[0]).toBe(cached);
       });
 
       it("preserves truthy loading on cached parallel segments not in server response", () => {
@@ -811,6 +817,40 @@ describe("segment-reconciler", () => {
       const result = reconcileErrorSegments([], [seg("L0R0")]);
 
       expect(result.segments).toHaveLength(0);
+    });
+  });
+
+  describe("server-provided loader promises", () => {
+    // Memoization used to live on the segment itself and required explicit
+    // preservation through reconcile. Now the memo cache is a module-level
+    // WeakMap keyed on component/loaderData refs (see segment-content-promise
+    // and segment-loader-promise), so reconcile is free to produce fresh
+    // merged objects — the cache survives independently.
+    it("does not overwrite a server-provided loaderDataPromise with the cached one (parallel intercept)", () => {
+      const cachedPromise = Promise.resolve([{ stale: true }]);
+      const freshPromise = Promise.resolve([{ fresh: true }]);
+      const cached = seg("L0.@modal", {
+        type: "parallel",
+        slot: "@modal",
+        loaderDataPromise: cachedPromise,
+        loaderIds: ["modal-loader"],
+      });
+      const server = seg("L0.@modal", {
+        type: "parallel",
+        slot: "@modal",
+        loaderDataPromise: freshPromise,
+        loaderIds: ["modal-loader"],
+      });
+
+      const result = reconcileSegments({
+        actor: "navigation",
+        matched: ["L0.@modal"],
+        diff: ["L0.@modal"],
+        serverSegments: [server],
+        cachedSegments: [cached],
+      });
+
+      expect(result.segments[0].loaderDataPromise).toBe(freshPromise);
     });
   });
 });

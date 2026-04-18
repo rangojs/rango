@@ -418,6 +418,15 @@ export function createNavigationBridge(
         eventController.abortAllActions();
       }
 
+      // Popstate that exits an intercept to a non-intercept destination. The
+      // fallback fetch path below needs `leave-intercept` mode so it filters
+      // the cached @modal segment from the request and forces a re-render —
+      // otherwise a cache-miss popstate whose server response has an empty
+      // diff hits the "no changes" branch in partial-update and the modal
+      // stays on screen.
+      const isLeavingIntercept =
+        !isIntercept && currentInterceptSource !== null;
+
       // Compute history key from URL (with intercept suffix if applicable)
       const historyKey = generateHistoryKey(url, { intercept: isIntercept });
 
@@ -568,7 +577,11 @@ export function createNavigationBridge(
             intercept: isIntercept,
             interceptSourceUrl,
           }),
-          isIntercept ? { type: "navigate", interceptSourceUrl } : undefined,
+          isIntercept
+            ? { type: "navigate", interceptSourceUrl }
+            : isLeavingIntercept
+              ? { type: "leave-intercept" }
+              : undefined,
         );
         // Restore scroll position after fetch completes
         handleNavigationEnd({ restore: true, isStreaming });

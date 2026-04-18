@@ -116,8 +116,8 @@ export const shopPatterns = urls(
     revalidate(shopGlobalRevalidation),
 
     // Global middleware
-    middleware(...shopLoggerMiddleware),
-    middleware(...mockAuthMiddleware),
+    middleware(shopLoggerMiddleware),
+    middleware(mockAuthMiddleware),
 
     // Global loaders
     loader(UserLoader),
@@ -225,7 +225,7 @@ export const shopPatterns = urls(
         },
         () => [
           loading(<CheckoutSkeleton />),
-          middleware(...requireAuthMiddleware),
+          middleware(requireAuthMiddleware),
 
           path(
             "/checkout",
@@ -276,7 +276,7 @@ export const shopPatterns = urls(
           "/account/orders",
           AccountOrdersRoute,
           { name: "account.orders" },
-          () => [middleware(...permissionsMiddleware)],
+          () => [middleware(permissionsMiddleware)],
         ),
 
         path(

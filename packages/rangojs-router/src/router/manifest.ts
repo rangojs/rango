@@ -126,28 +126,37 @@ export async function loadManifest(
     // were created during pattern extraction.  This prevents shortCode
     // collisions between lazy and non-lazy entries under the same parent
     // (e.g., ArticlesLayout and BlogLayout both under NavLayout).
-    if (lazyContext && (lazyContext as any).counters) {
-      const captured = (lazyContext as any).counters as Record<string, number>;
-      for (const [key, value] of Object.entries(captured)) {
+    if (lazyContext?.counters) {
+      for (const [key, value] of Object.entries(lazyContext.counters)) {
         Store.counters[key] = Math.max(Store.counters[key] ?? 0, value);
       }
     }
 
     // Propagate cache profiles for DSL-time cache("profileName") resolution.
     // Non-lazy entries carry profiles directly; lazy entries carry them
-    // in the captured lazyContext from include() time.
-    const entryProfiles =
-      entry.cacheProfiles ?? (lazyContext as any)?.cacheProfiles;
-    if (entryProfiles) {
-      Store.cacheProfiles = entryProfiles;
-    }
+    // in the captured lazyContext from include() time. Always write
+    // (including clearing to undefined) so a prior lazy build's profile
+    // map cannot leak into a later non-lazy build on the same ALS-backed
+    // Store — which would otherwise let cache("name") resolve a profile
+    // from an unrelated entry.
+    Store.cacheProfiles = entry.cacheProfiles ?? lazyContext?.cacheProfiles;
 
     // Propagate rootScoped from lazyContext so that routes inside
     // nested { name: "sub" } under { name: "" } keep inherited root scope
-    // when the manifest is rebuilt on each request.
-    if (lazyContext && (lazyContext as any).rootScoped !== undefined) {
-      Store.rootScoped = (lazyContext as any).rootScoped;
-    }
+    // when the manifest is rebuilt on each request. Always write
+    // (including clearing to undefined, which makes getRootScoped()
+    // return its true default) so a prior lazy build's scope cannot leak
+    // into a later non-lazy build on the same ALS-backed Store — which
+    // would otherwise mis-register plain routes as non-root-scoped and
+    // break dot-local reverse resolution.
+    Store.rootScoped = lazyContext?.rootScoped;
+
+    // Propagate includeScope from lazyContext so that direct-descendant
+    // shortCodes of this include use the correct scoped counter namespace
+    // on every manifest rebuild. Always write (including clearing to
+    // undefined) so a prior lazy build's scope cannot leak into a later
+    // non-lazy build on the same ALS-backed Store.
+    Store.includeScope = lazyContext?.includeScope;
 
     const handlerExecStart = performance.now();
     const useItems = await getContext().runWithStore(

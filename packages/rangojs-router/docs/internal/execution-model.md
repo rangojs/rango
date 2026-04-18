@@ -176,6 +176,17 @@ Route middleware does **not** wrap action execution. Actions see only
 request-scoped bindings from `router.use(...)`. This is a hard contract
 boundary, not an accident.
 
+Route middleware has two placement modes:
+
+- **Sibling mode** — `middleware(fn)` or `middleware([fn1, fn2])` attaches
+  middleware to the parent entry (layout, path, etc.).
+- **Wrapping mode** — `middleware(fn, () => [...])` or
+  `middleware([fn1, fn2], () => [...])` creates a transparent layout that
+  scopes the middleware to its children only.
+
+The variadic form `middleware(fn1, fn2, fn3)` is not supported. Use
+`middleware([fn1, fn2, fn3])` to pass multiple middleware.
+
 ### Intercept scope
 
 Bindings set by intercept middleware are visible only to the intercept
@@ -412,6 +423,11 @@ urls(({ path, layout }) => [
   auth guards, request ownership, coarse policy checks.
 - Use route middleware for render-level concerns:
   context shaping for handlers/layouts, render headers, route-scoped cookies.
+- Use wrapping middleware to scope middleware to a subset of routes
+  without introducing a visible layout:
+  `middleware(authMw, () => [path("/admin", AdminPage)])`.
+  This creates a transparent layout (renders `<Outlet />`) that carries
+  the middleware only for its children.
 
 ## PE vs JS Parity Expectations
 

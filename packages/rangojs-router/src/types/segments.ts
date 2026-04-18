@@ -56,7 +56,6 @@ export interface ResolvedSegment {
   // Intercept loader fields (for streaming loader data in parallel segments)
   loaderDataPromise?: Promise<any[]> | any[]; // Loader data promise or resolved array
   loaderIds?: string[]; // IDs ($$id) of loaders for this segment
-  parallelLoaderSources?: any[]; // Internal: preserves stable aggregate promise across renders
   // Error-specific fields
   error?: ErrorInfo; // For error segments: the error information
   // NotFound-specific fields

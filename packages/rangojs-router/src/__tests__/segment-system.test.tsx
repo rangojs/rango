@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, vi } from "vitest";
 import { createElement, type ReactNode, type ReactElement } from "react";
 import type { ResolvedSegment } from "../types";
@@ -927,6 +928,196 @@ describe("segment-system", () => {
 
         resolveLoader({ sidebar: true });
         await firstPromise;
+      });
+    });
+
+    describe("layout/route loader memoization", () => {
+      // Regression guard for the intercept-flicker bug: reopening/closing an
+      // intercept re-renders the background route, and a fresh Promise.all
+      // would re-suspend LoaderBoundary and briefly commit the loading
+      // skeleton even when the underlying loader data is already resolved.
+      it("reuses the aggregate loaderDataPromise across rerenders when loader sources are unchanged", async () => {
+        const loadingSkeleton = createElement("div", null, "Loading route");
+        const loaderData = Promise.resolve({ foo: "bar" });
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0R0",
+            type: "route",
+            loading: loadingSkeleton,
+          }),
+          seg({
+            id: "L0R0D0.data",
+            type: "loader",
+            loaderId: "route-loader",
+            loaderData,
+          }),
+        ];
+
+        const firstResult = await renderSegments(segments);
+        const firstBoundary = collectByType(
+          toTreeNode(firstResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        const firstPromise = firstBoundary.props.loaderDataPromise;
+
+        const secondResult = await renderSegments(segments);
+        const secondBoundary = collectByType(
+          toTreeNode(secondResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        const secondPromise = secondBoundary.props.loaderDataPromise;
+
+        expect(firstPromise).toBeInstanceOf(Promise);
+        expect(secondPromise).toBe(firstPromise);
+      });
+
+      it("creates a new aggregate loaderDataPromise when a loader.loaderData ref changes", async () => {
+        const loadingSkeleton = createElement("div", null, "Loading route");
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0R0",
+            type: "route",
+            loading: loadingSkeleton,
+          }),
+          seg({
+            id: "L0R0D0.data",
+            type: "loader",
+            loaderId: "route-loader",
+            loaderData: Promise.resolve({ foo: 1 }),
+          }),
+        ];
+
+        const firstResult = await renderSegments(segments);
+        const firstBoundary = collectByType(
+          toTreeNode(firstResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        const firstPromise = firstBoundary.props.loaderDataPromise;
+
+        segments[2] = {
+          ...segments[2],
+          loaderData: Promise.resolve({ foo: 2 }),
+        };
+
+        const secondResult = await renderSegments(segments);
+        const secondBoundary = collectByType(
+          toTreeNode(secondResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        const secondPromise = secondBoundary.props.loaderDataPromise;
+
+        expect(firstPromise).toBeInstanceOf(Promise);
+        expect(secondPromise).not.toBe(firstPromise);
+      });
+
+      // Regression guard: reconcileSegments produces fresh segment refs on
+      // many paths (in-diff spread, mergeSegmentLoaders). Memoization now
+      // lives in a module-level WeakMap keyed on loaderData/component refs
+      // (not on the segment), so it survives reconcile inherently — this
+      // integration test proves the render → reconcile → render path keeps
+      // the aggregate Promise stable end to end.
+      it("preserves the memoized loader promise across a reconcile that spreads the segment", async () => {
+        const { reconcileSegments } =
+          await import("../browser/segment-reconciler");
+        const loadingSkeleton = createElement("div", null, "Loading route");
+        const loaderData = Promise.resolve({ foo: "bar" });
+        const initial: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0R0",
+            type: "route",
+            loading: loadingSkeleton,
+          }),
+          seg({
+            id: "L0R0D0.data",
+            type: "loader",
+            loaderId: "route-loader",
+            loaderData,
+          }),
+        ];
+
+        const firstResult = await renderSegments(initial);
+        const firstBoundary = collectByType(
+          toTreeNode(firstResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        const firstPromise = firstBoundary.props.loaderDataPromise;
+        expect(firstPromise).toBeInstanceOf(Promise);
+
+        // Simulate navigation where the server returns a fresh copy of L0R0
+        // in the diff (common for intercept/parallel updates). The reconciler
+        // produces a new segment ref; memoization must survive.
+        const freshRouteSeg = seg({
+          id: "L0R0",
+          type: "route",
+          loading: loadingSkeleton,
+        });
+        const reconciled = reconcileSegments({
+          actor: "navigation",
+          matched: ["L0", "L0R0", "L0R0D0.data"],
+          diff: ["L0R0"],
+          serverSegments: [freshRouteSeg],
+          cachedSegments: initial,
+        });
+
+        const mergedRoute = reconciled.mainSegments.find(
+          (s) => s.id === "L0R0",
+        )!;
+        expect(mergedRoute).not.toBe(initial[1]);
+
+        const secondResult = await renderSegments(reconciled.mainSegments);
+        const secondBoundary = collectByType(
+          toTreeNode(secondResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        expect(secondBoundary.props.loaderDataPromise).toBe(firstPromise);
+      });
+
+      it("keeps the cached segment ref when reconciling cached-only entries with truthy loading", async () => {
+        const { reconcileSegments } =
+          await import("../browser/segment-reconciler");
+        const loadingSkeleton = createElement("div", null, "Loading route");
+        const component = createElement("div", null, "route-body");
+        const initial: ResolvedSegment[] = [
+          seg({
+            id: "R0",
+            type: "route",
+            component,
+            loading: loadingSkeleton,
+          }),
+        ];
+
+        const firstResult = await renderSegments(initial);
+        const firstWrapper = collectByType(
+          toTreeNode(firstResult),
+          MockRouteContentWrapper,
+        )[0];
+        const firstContent = firstWrapper.props.content;
+        expect(firstContent).toBeInstanceOf(Promise);
+
+        // Cached-only entries stay as-is: renderSegments must stay in the
+        // LoaderBoundary branch across partial updates (e.g., opening an
+        // intercept) or React unmounts the whole chain beneath the outlet.
+        const reconciled = reconcileSegments({
+          actor: "navigation",
+          matched: ["R0"],
+          diff: [],
+          serverSegments: [],
+          cachedSegments: initial,
+        });
+
+        const mergedRoute = reconciled.mainSegments[0];
+        expect(mergedRoute).toBe(initial[0]);
+        expect(mergedRoute.loading).toBe(loadingSkeleton);
+
+        const secondResult = await renderSegments(reconciled.mainSegments);
+        const secondWrapper = collectByType(
+          toTreeNode(secondResult),
+          MockRouteContentWrapper,
+        )[0];
+        expect(secondWrapper.props.content).toBe(firstContent);
       });
     });
   });

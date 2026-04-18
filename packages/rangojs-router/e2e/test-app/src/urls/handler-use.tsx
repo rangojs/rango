@@ -51,6 +51,18 @@ const HandlerUsePage: Handler<"/handler-use"> = async (ctx) => {
       <Link to="/handler-use/parallel-override" data-testid="link-to-override">
         Go to override test
       </Link>
+      <Link
+        to="/handler-use/slot-descriptor"
+        data-testid="link-to-slot-descriptor"
+      >
+        Go to slot descriptor test
+      </Link>
+      <Link to="/handler-use/slot-opt-out" data-testid="link-to-slot-opt-out">
+        Go to slot opt-out test
+      </Link>
+      <Link to="/handler-use/three-layer" data-testid="link-to-three-layer">
+        Go to three-layer merge test
+      </Link>
     </div>
   );
 };
@@ -195,6 +207,98 @@ const RealSidebar: Handler = () => (
   </aside>
 );
 
+// -- Slot descriptor `{ handler, use }` for per-slot loading() ---------------
+
+// Two slow slots so we can observe the loading state per slot.
+export const SlowPanelLoader = createLoader(async () => {
+  await new Promise((r) => setTimeout(r, 300));
+  return { section: "slow-panel-data" };
+});
+
+const SlotDescriptorPage: Handler<"/handler-use/slot-descriptor"> = () => (
+  <div data-testid="slot-descriptor-page">
+    <h1 data-testid="slot-descriptor-title">Slot Descriptor Test</h1>
+    <ParallelOutlet name="@sidebar" />
+    <ParallelOutlet name="@panel" />
+    <Link to="/handler-use" data-testid="link-back-descriptor">
+      Back
+    </Link>
+  </div>
+);
+
+const DescriptorSidebar: Handler = async (ctx) => {
+  const data = await ctx.use(SlowSidebarLoader);
+  return (
+    <aside data-testid="descriptor-sidebar">
+      <p data-testid="descriptor-sidebar-section">{data.section}</p>
+    </aside>
+  );
+};
+DescriptorSidebar.use = () => [loader(SlowSidebarLoader)];
+
+const DescriptorPanel: Handler = async (ctx) => {
+  const data = await ctx.use(SlowPanelLoader);
+  return (
+    <section data-testid="descriptor-panel">
+      <p data-testid="descriptor-panel-section">{data.section}</p>
+    </section>
+  );
+};
+DescriptorPanel.use = () => [loader(SlowPanelLoader)];
+
+// -- Slot-local loading(false) opts one slot out while sibling streams -------
+
+const SlotOptOutPage: Handler<"/handler-use/slot-opt-out"> = () => (
+  <div data-testid="slot-opt-out-page">
+    <h1 data-testid="slot-opt-out-title">Slot Opt-Out Test</h1>
+    <ParallelOutlet name="@sidebar" />
+    <ParallelOutlet name="@panel" />
+    <Link to="/handler-use" data-testid="link-back-opt-out">
+      Back
+    </Link>
+  </div>
+);
+
+// -- Three-layer merge regression (handler.use + shared + slot-local) --------
+
+// Distinct loaders, one per layer, so we can observe each layer's effect in
+// the rendered output. If any layer silently stops flowing through, one of
+// the three markers disappears from the DOM.
+export const ThreeLayerHandlerLoader = createLoader(async () => ({
+  mark: "three-layer-handler",
+}));
+export const ThreeLayerSharedLoader = createLoader(async () => ({
+  mark: "three-layer-shared",
+}));
+export const ThreeLayerSlotLocalLoader = createLoader(async () => ({
+  mark: "three-layer-slot-local",
+}));
+
+const ThreeLayerSidebar: Handler = async (ctx) => {
+  const h = await ctx.use(ThreeLayerHandlerLoader);
+  const s = await ctx.use(ThreeLayerSharedLoader);
+  const l = await ctx.use(ThreeLayerSlotLocalLoader);
+  return (
+    <aside data-testid="three-layer-sidebar">
+      <span data-testid="three-layer-handler-mark">{h.mark}</span>
+      <span data-testid="three-layer-shared-mark">{s.mark}</span>
+      <span data-testid="three-layer-slot-local-mark">{l.mark}</span>
+    </aside>
+  );
+};
+// handler.use layer — this loader must flow through to ctx.use on the slot
+ThreeLayerSidebar.use = () => [loader(ThreeLayerHandlerLoader)];
+
+const ThreeLayerPage: Handler<"/handler-use/three-layer"> = () => (
+  <div data-testid="three-layer-page">
+    <h1 data-testid="three-layer-title">Three-Layer Merge Test</h1>
+    <ParallelOutlet name="@sidebar" />
+    <Link to="/handler-use" data-testid="link-back-three-layer">
+      Back
+    </Link>
+  </div>
+);
+
 // ---------------------------------------------------------------------------
 // Route patterns
 // ---------------------------------------------------------------------------
@@ -240,5 +344,68 @@ export const handlerUsePatterns = urls(({ path, layout, parallel }) => [
       { name: "parallelSlotOverride" },
       () => [parallel({ "@sidebar": RealSidebar })],
     ),
+
+    // Per-slot loading() via slot descriptor. @sidebar declares its own
+    // loading skeleton; @panel does not. Without slot-local use, putting
+    // loading() in the shared callback would broadcast it to both slots.
+    path(
+      "/slot-descriptor",
+      SlotDescriptorPage,
+      { name: "slotDescriptor" },
+      () => [
+        parallel({
+          "@sidebar": {
+            handler: DescriptorSidebar,
+            use: () => [
+              loading(
+                <div data-testid="descriptor-sidebar-loading">
+                  Sidebar loading…
+                </div>,
+              ),
+            ],
+          },
+          "@panel": DescriptorPanel,
+        }),
+      ],
+    ),
+
+    // @sidebar opts out of streaming (loading: false) via slot descriptor;
+    // @panel still gets the broadcast skeleton.
+    path("/slot-opt-out", SlotOptOutPage, { name: "slotOptOut" }, () => [
+      parallel(
+        {
+          "@sidebar": {
+            handler: DescriptorSidebar,
+            use: () => [loading(false)],
+          },
+          "@panel": DescriptorPanel,
+        },
+        () => [
+          loading(
+            <div data-testid="opt-out-broadcast-loading">
+              Broadcast loading…
+            </div>,
+          ),
+        ],
+      ),
+    ]),
+
+    // Three-layer merge regression: all three layers must flow through to
+    // the slot entry so the handler can ctx.use() each loader and render
+    // all three marks. Each layer is observable — if any layer regresses,
+    // one of the three data-testid spans disappears from the DOM.
+    path("/three-layer", ThreeLayerPage, { name: "threeLayer" }, () => [
+      parallel(
+        {
+          "@sidebar": {
+            handler: ThreeLayerSidebar,
+            // slot-local layer
+            use: () => [loader(ThreeLayerSlotLocalLoader)],
+          },
+        },
+        // shared layer (broadcast, but only one slot here)
+        () => [loader(ThreeLayerSharedLoader)],
+      ),
+    ]),
   ]),
 ]);

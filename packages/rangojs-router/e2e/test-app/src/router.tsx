@@ -66,6 +66,8 @@ export interface AppVariables {
   mwVarTest?: string;
   // use-cache parent-child set test variable
   childData?: string;
+  // Action → ctx.set → handler reads test variable
+  actionCtxValue?: string;
 }
 
 export type AppEnv = AppBindings;

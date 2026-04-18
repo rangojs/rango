@@ -8,10 +8,21 @@ export interface LazyIncludeContext {
   urlPrefix: string;
   namePrefix: string | undefined;
   parent: unknown; // EntryData - avoid circular import
+  /** Counter snapshot from pattern extraction for consistent shortCode indices */
+  counters?: Record<string, number>;
   cacheProfiles?: Record<
     string,
     import("../cache/profile-registry.js").CacheProfile
   >;
+  /** Root scope flag for dot-local reverse resolution */
+  rootScoped?: boolean;
+  /**
+   * Positional include scope token composed from the parent scope plus this
+   * include's sibling index (`${parentScope}I${idx}`). Applied to direct-
+   * descendant shortCodes during lazy evaluation so routes inside the
+   * include cannot collide with siblings declared outside it.
+   */
+  includeScope?: string;
 }
 
 /**
