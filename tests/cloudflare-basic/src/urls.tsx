@@ -58,6 +58,7 @@ import {
 } from "./pages/suffix-params-test.js";
 import { CookieOverlayPage } from "./pages/cookie-overlay.js";
 import { buildEnvPatterns } from "./pages/build-env-handler.js";
+import { buildEnvDirectPatterns } from "./pages/build-env-direct-handler.js";
 import { ActionLocationStatePage } from "./pages/action-location-state.js";
 import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
 
@@ -242,6 +243,9 @@ export const urlpatterns = urls(
       name: "productReviews",
     }),
     include("/build-env", buildEnvPatterns, { name: "buildEnv" }),
+    include("/build-env-direct", buildEnvDirectPatterns, {
+      name: "buildEnvDirect",
+    }),
     path("/*", CatchAllPage, { name: "catchAll" }),
 
     layout(<RootLayout />, () => [

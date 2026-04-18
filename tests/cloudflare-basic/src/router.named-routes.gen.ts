@@ -12,6 +12,7 @@ export const NamedRoutes = {
   blog: "/blog",
   blogPost: "/blog/:slug",
   "buildEnv.index": "/build-env",
+  "buildEnvDirect.index": "/build-env-direct",
   "buildSkip.article": "/build-skip/:slug",
   "buildSkip.staticSkip": "/build-skip/static-skip",
   "buildSkip.workingStatic": "/build-skip/working-static",

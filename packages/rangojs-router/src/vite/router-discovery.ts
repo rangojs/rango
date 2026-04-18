@@ -10,7 +10,7 @@ import type { Plugin } from "vite";
 import { createServer as createViteServer } from "vite";
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { createRequire, register } from "node:module";
 import { pathToFileURL } from "node:url";
 import {
   formatNestedRouterConflictError,
@@ -19,6 +19,10 @@ import {
 } from "../build/generate-route-types.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
 import { createVirtualStubPlugin } from "./plugins/virtual-stub-plugin.js";
+import {
+  BUILD_ENV_GLOBAL_KEY,
+  createCloudflareProtocolStubPlugin,
+} from "./plugins/cloudflare-protocol-stub.js";
 import {
   exposeInternalIds,
   exposeRouterId,
@@ -48,6 +52,49 @@ import { resetStagedBuildAssets } from "./utils/prerender-utils.js";
 export { VIRTUAL_ROUTES_MANIFEST_ID };
 
 // ============================================================================
+// Node ESM Loader Hook Registration
+// ============================================================================
+
+/**
+ * Registers a Node ESM loader hook that resolves `cloudflare:*` specifiers
+ * to a data: URL stub. Defense-in-depth alongside the Vite transform in
+ * `cloudflare-protocol-stub.ts`:
+ *
+ * - The Vite transform catches `cloudflare:*` imports in modules that flow
+ *   through Vite's plugin pipeline. That's the vast majority of cases.
+ * - The Node loader catches imports in modules that Vite/Rollup externalize
+ *   (e.g. the `partyserver` package, which has a top-level
+ *   `import { DurableObject, env } from "cloudflare:workers"` and ships
+ *   shapes plugin-rsc marks as external). Externalized modules are loaded
+ *   via Node's native ESM loader, which rejects URL schemes.
+ *
+ * Registration is process-global and one-shot. The hook only intercepts
+ * `cloudflare:*` specifiers; everything else passes through via
+ * `nextResolve()`. It runs in a separate worker thread (Node ESM loader
+ * architecture), so it can't read the `globalThis[BUILD_ENV_GLOBAL_KEY]`
+ * bridge that the Vite transform uses — the stubs served here always
+ * return `env = {}`. That's fine because externalized libraries don't
+ * typically access `env` at module top level; user source (where real
+ * `env` matters at build time) flows through the Vite transform.
+ */
+let loaderHookRegistered = false;
+function ensureCloudflareProtocolLoaderRegistered(): void {
+  if (loaderHookRegistered) return;
+  loaderHookRegistered = true;
+  try {
+    register(
+      new URL("./plugins/cloudflare-protocol-loader-hook.mjs", import.meta.url),
+    );
+  } catch (err: any) {
+    // register() requires Node 18.19+ / 20.6+. Older Node still has the
+    // Vite transform as primary defense.
+    console.warn(
+      `[rsc-router] Could not register Node ESM loader hook for cloudflare:* imports (${err?.message ?? err}). Falling back to Vite transform only.`,
+    );
+  }
+}
+
+// ============================================================================
 // Temp Server Factory
 // ============================================================================
 
@@ -66,6 +113,11 @@ async function createTempRscServer(
   state: DiscoveryState,
   options: { forceBuild?: boolean; cacheDir?: string } = {},
 ) {
+  // Install the Node ESM loader hook before any module evaluation so
+  // `cloudflare:*` specifiers in externalized/loader-delegated modules
+  // (e.g. packages plugin-rsc marks as external) resolve to stubs
+  // instead of crashing Node's native loader.
+  ensureCloudflareProtocolLoaderRegistered();
   const { default: rsc } = await import("@vitejs/plugin-rsc");
   return createViteServer({
     root: state.projectRoot,
@@ -88,6 +140,7 @@ async function createTempRscServer(
       ...(options.forceBuild ? [hashClientRefs(state.projectRoot)] : []),
       createVersionPlugin(),
       createVirtualStubPlugin(),
+      createCloudflareProtocolStubPlugin(),
       // Dev prerender must use dev-mode IDs (path-based) to match the workerd
       // runtime. forceBuild produces hashed IDs for production bundle consistency.
       exposeInternalIds(options.forceBuild ? { forceBuild: true } : undefined),
@@ -177,6 +230,11 @@ async function acquireBuildEnv(
 
   s.resolvedBuildEnv = result.env;
   s.buildEnvDispose = result.dispose ?? null;
+  // Bridge the resolved env into `cloudflare:workers`'s stubbed `env`
+  // export so user code that does `import { env } from "cloudflare:workers"`
+  // sees the real bindings proxy during discovery + prerender instead of
+  // an empty object. The stub reads this global at module-evaluation time.
+  (globalThis as Record<string, unknown>)[BUILD_ENV_GLOBAL_KEY] = result.env;
   return true;
 }
 
@@ -193,6 +251,7 @@ async function releaseBuildEnv(s: DiscoveryState): Promise<void> {
     s.buildEnvDispose = null;
   }
   s.resolvedBuildEnv = undefined;
+  delete (globalThis as Record<string, unknown>)[BUILD_ENV_GLOBAL_KEY];
 }
 
 /**
