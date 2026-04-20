@@ -6,6 +6,7 @@ const {
   consumePrefetchMock,
   consumeInflightPrefetchMock,
   buildPrefetchKeyMock,
+  buildSourceKeyMock,
 } = vi.hoisted(() => ({
   getRangoStateMock: vi.fn(() => "v1:abc"),
   consumePrefetchMock: vi.fn((_key?: string): Response | null => null),
@@ -15,6 +16,10 @@ const {
   buildPrefetchKeyMock: vi.fn(
     (source: string, target: URL) =>
       source + "\0" + target.pathname + target.search,
+  ),
+  buildSourceKeyMock: vi.fn(
+    (rangoState: string, sourceHref: string, target: URL) =>
+      rangoState + "\0" + sourceHref + "\0" + target.pathname + target.search,
   ),
 }));
 
@@ -26,6 +31,7 @@ vi.mock("../browser/prefetch/cache", () => ({
   consumePrefetch: consumePrefetchMock,
   consumeInflightPrefetch: consumeInflightPrefetchMock,
   buildPrefetchKey: buildPrefetchKeyMock,
+  buildSourceKey: buildSourceKeyMock,
 }));
 
 import { createNavigationClient } from "../browser/navigation-client";
@@ -265,10 +271,18 @@ describe("navigation-client", () => {
 
     it("falls back to wildcard key when exact key misses", async () => {
       const cachedBody = "wildcard-cached";
-      // Return null for exact key, response for wildcard key
+      // Hit only the wildcard slot (exactly one \0 after the rango state;
+      // source-scoped keys insert an extra \0<source>\0 segment).
       consumePrefetchMock.mockImplementation(
         (key?: string): Response | null => {
-          if (key?.startsWith("*\0")) return new Response(cachedBody);
+          if (!key) return null;
+          let nullCount = 0;
+          for (let i = 0; i < key.length; i++) {
+            if (key.charCodeAt(i) === 0) nullCount++;
+          }
+          if (nullCount === 1 && key.startsWith("v1:abc\0")) {
+            return new Response(cachedBody);
+          }
           return null;
         },
       );

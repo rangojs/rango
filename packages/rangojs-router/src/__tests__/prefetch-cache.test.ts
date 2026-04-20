@@ -15,6 +15,7 @@ vi.mock("../browser/rango-state", () => ({
 
 import {
   buildPrefetchKey,
+  buildSourceKey,
   clearPrefetchCache,
   clearPrefetchInflight,
   consumeInflightPrefetch,
@@ -37,10 +38,15 @@ describe("prefetch cache", () => {
     vi.restoreAllMocks();
   });
 
-  it("buildPrefetchKey includes source and target", () => {
+  it("buildPrefetchKey concatenates prefix and target (wildcard shape)", () => {
     const target = new URL("http://localhost/products?page=1");
-    expect(buildPrefetchKey("http://localhost/home", target)).toBe(
-      "http://localhost/home\0/products?page=1",
+    expect(buildPrefetchKey("v1:123", target)).toBe("v1:123\0/products?page=1");
+  });
+
+  it("buildSourceKey embeds rango state and source href (source-scoped shape)", () => {
+    const target = new URL("http://localhost/products?page=1");
+    expect(buildSourceKey("v1:123", "http://localhost/home", target)).toBe(
+      "v1:123\0http://localhost/home\0/products?page=1",
     );
   });
 
