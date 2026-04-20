@@ -204,6 +204,13 @@ export async function handleRscRendering<TEnv>(
       "content-type": "text/x-component;charset=utf-8",
       vary: "accept, X-Rango-State, X-RSC-Router-Client-Path",
     };
+    // Tell the client's prefetch cache to scope this response to its source
+    // URL (instead of the default source-agnostic wildcard). Intercept
+    // responses depend on the source page matching an intercept rule, so
+    // they must not be reused for navigations from other sources.
+    if (hasInterceptSlots) {
+      rscHeaders["x-rsc-prefetch-scope"] = "source";
+    }
     // Enable browser HTTP caching for prefetch responses only.
     // Requires X-Rango-Prefetch header (sent by Link prefetch fetch),
     // non-intercept context (intercept responses depend on source page),

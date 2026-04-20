@@ -109,9 +109,28 @@ export function enqueuePrefetch(
 }
 
 /**
+ * Normalize a URL-like string for keep-alive matching: parse against a
+ * placeholder origin and strip internal `_rsc_*` query params. Returns
+ * `pathname + search` so comparisons ignore hash and the internal params
+ * that prefetch appends to targets (`_rsc_partial`, `_rsc_segments`,
+ * `_rsc_v`, `_rsc_rid`, `_rsc_stale`).
+ */
+function normalizeForMatch(urlish: string): string {
+  try {
+    const u = new URL(urlish, "http://placeholder");
+    for (const k of [...u.searchParams.keys()]) {
+      if (k.startsWith("_rsc_")) u.searchParams.delete(k);
+    }
+    return u.pathname + u.search;
+  } catch {
+    return urlish;
+  }
+}
+
+/**
  * Cancel queued prefetches and abort in-flight ones that don't match
  * the current navigation target. If `keepUrl` is provided, the
- * executing prefetch whose key contains that URL is kept alive so
+ * executing prefetch whose key targets that URL is kept alive so
  * navigation can reuse its response via consumeInflightPrefetch.
  *
  * Called when a navigation starts via the NavigationProvider's
@@ -124,11 +143,23 @@ export function cancelAllPrefetches(keepUrl?: string | null): void {
   drainGeneration++;
 
   // Abort in-flight prefetches that aren't for the navigation target.
-  // Keys use format "sourceHref\0targetPathname+search" — match the
-  // target portion (after \0) against keepUrl.
+  // Key shapes (see prefetch/cache.ts buildPrefetchKey):
+  //   wildcard:      "rangoState\0/target?..."
+  //   source-scoped: "rangoState\0sourceHref\0/target?..."
+  // The target portion is always the final \0-delimited segment and
+  // includes internal `_rsc_*` params (from buildPrefetchUrl); keepUrl
+  // comes from NavigationProvider's pendingUrl which is the bare
+  // navigation target. Normalize both sides before comparing.
+  const normalizedKeep = keepUrl ? normalizeForMatch(keepUrl) : null;
   for (const [key, ac] of abortControllers) {
-    const target = key.split("\0")[1];
-    if (keepUrl && target && keepUrl.startsWith(target)) continue;
+    const lastNul = key.lastIndexOf("\0");
+    const target = lastNul >= 0 ? key.substring(lastNul + 1) : "";
+    if (
+      normalizedKeep &&
+      target &&
+      normalizeForMatch(target) === normalizedKeep
+    )
+      continue;
     ac.abort();
     abortControllers.delete(key);
     if (executing.delete(key)) {

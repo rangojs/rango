@@ -98,25 +98,30 @@ export interface LinkProps extends Omit<
    */
   prefetch?: PrefetchStrategy;
   /**
-   * Custom prefetch cache key for source-agnostic cache reuse.
-   * When set, prefetch responses are cached independently of the current
-   * page URL, so navigating to the same target from different source pages
-   * reuses the cached prefetch.
+   * Opt-in override for the prefetch cache scope.
    *
-   * - String: static group name (e.g., `"pages"`)
-   * - Function: receives current URL (`window.location.href`), returns a
-   *   normalized source key
+   * The default cache is source-agnostic: one shared entry per target,
+   * keyed on Rango state + target URL. This is correct for routes whose
+   * response shape doesn't depend on where the user navigates from.
+   *
+   * Set `":source"` when this Link's response would legitimately differ
+   * based on the source page — typically when the target route (or one
+   * of its layouts) uses a custom `revalidate()` handler that reads
+   * `currentUrl` / `currentParams`, and the wildcard entry would
+   * therefore serve the wrong diff to a navigation from a different
+   * source.
+   *
+   * Intercept responses are auto-scoped to the source via a server-side
+   * tag, so `":source"` is only needed for custom revalidation logic.
    *
    * @example
    * ```tsx
-   * // Static group — all "pages" links share one cache entry per target
-   * <Link to="/page/3" prefetch="hover" prefetchKey="pages" />
-   *
-   * // Normalize — strip trailing page number from source URL
-   * <Link to="/page/3" prefetch="hover" prefetchKey={(from) => from.replace(/\/\d+$/, '')} />
+   * // Route uses a `revalidate()` that branches on currentUrl — opt in
+   * // so prefetches don't bleed across source pages.
+   * <Link to="/dashboard" prefetch="hover" prefetchKey=":source" />
    * ```
    */
-  prefetchKey?: string | ((from: string) => string);
+  prefetchKey?: ":source";
   /**
    * State to pass to history.pushState/replaceState.
    * Accessible via useLocationState() hook.

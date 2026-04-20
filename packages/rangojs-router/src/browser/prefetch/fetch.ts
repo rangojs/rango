@@ -13,9 +13,10 @@
 
 import {
   buildPrefetchKey,
+  buildSourceKey,
   hasPrefetch,
   markPrefetchInflight,
-  setInflightPromise,
+  setInflightPromiseWithAliases,
   storePrefetch,
   clearPrefetchInflight,
   currentGeneration,
@@ -27,8 +28,8 @@ import { debugLog } from "../logging.js";
 
 /**
  * Check if a URL resolves to the current page (same pathname + search).
- * Used to prevent same-page prefetching with prefetchKey, which would
- * produce a trivial diff that corrupts the wildcard cache.
+ * Used to prevent same-page prefetching, which produces a trivial diff
+ * that would corrupt the (default wildcard) prefetch cache entry.
  */
 function isSamePage(url: string): boolean {
   try {
@@ -81,14 +82,33 @@ function buildPrefetchUrl(
  * one branch in the in-memory cache. The returned Promise resolves to the
  * sibling navigation branch (or null on failure) so navigation can safely
  * reuse an in-flight prefetch via consumeInflightPrefetch().
+ *
+ * Inflight + storage key selection:
+ *
+ * - `forceSourceScope` (Link opted in with `prefetchKey=":source"`): single
+ *   inflight registration under `sourceKey`; response stored under
+ *   `sourceKey`. No wildcard leak is possible.
+ *
+ * - Otherwise: dual inflight registration under both `wildcardKey` and
+ *   `sourceKey` so same-source navigations adopt directly via their own
+ *   source key. Storage key is chosen at response time from the
+ *   `X-RSC-Prefetch-Scope` header — `"source"` → `sourceKey` (intercept
+ *   modals etc.), anything else → `wildcardKey`. Cross-source navigations
+ *   that adopted via `wildcardKey` must bail out in `navigation-client.ts`
+ *   if the adopted response turns out to be source-scoped.
  */
 function executePrefetchFetch(
-  key: string,
+  wildcardKey: string,
+  sourceKey: string,
   fetchUrl: string,
+  forceSourceScope: boolean,
   signal?: AbortSignal,
 ): Promise<Response | null> {
   const gen = currentGeneration();
-  markPrefetchInflight(key);
+  const inflightKeys = forceSourceScope
+    ? [sourceKey]
+    : [wildcardKey, sourceKey];
+  for (const k of inflightKeys) markPrefetchInflight(k);
 
   const promise: Promise<Response | null> = fetch(fetchUrl, {
     priority: "low" as RequestPriority,
@@ -110,97 +130,153 @@ function executePrefetchFetch(
         status: response.status,
         statusText: response.statusText,
       };
-      storePrefetch(key, new Response(cacheStream, responseInit), gen);
+      let storageKey: string;
+      if (forceSourceScope) {
+        storageKey = sourceKey;
+      } else {
+        const scope = response.headers.get("x-rsc-prefetch-scope");
+        storageKey = scope === "source" ? sourceKey : wildcardKey;
+      }
+      storePrefetch(storageKey, new Response(cacheStream, responseInit), gen);
       return new Response(navStream, responseInit);
     })
     .catch(() => null)
     .finally(() => {
-      clearPrefetchInflight(key);
+      clearPrefetchInflight(inflightKeys[0]!);
     });
 
-  setInflightPromise(key, promise);
+  setInflightPromiseWithAliases(inflightKeys, promise);
   return promise;
+}
+
+/**
+ * Dedup check for prefetch entry presence.
+ *
+ * Forced `:source` must NOT dedupe against a pre-existing wildcard entry —
+ * otherwise the source slot would stay unpopulated and navigation from
+ * this source would fall through to the (potentially wrong) wildcard
+ * response, defeating the opt-out.
+ */
+function hasPrefetchHit(
+  forceSourceScope: boolean,
+  wildcardKey: string,
+  sourceKey: string,
+): boolean {
+  return forceSourceScope
+    ? hasPrefetch(sourceKey)
+    : hasPrefetch(wildcardKey) || hasPrefetch(sourceKey);
 }
 
 /**
  * Prefetch (direct): fetch with low priority and store in in-memory cache.
  * Used by hover strategy -- fires immediately without queueing.
+ *
+ * By default the wildcard key (Rango-state-keyed) is used for inflight
+ * dedup and for responses that are not source-sensitive; source-scoped
+ * storage is automatic when the server emits `X-RSC-Prefetch-Scope: source`.
+ *
+ * Pass `prefetchKey=":source"` to force source-scoped inflight + storage
+ * (e.g. when the target uses a custom `revalidate()` that reads
+ * `currentUrl` and the wildcard slot would serve the wrong diff).
  */
 export function prefetchDirect(
   url: string,
   segmentIds: string[],
   version?: string,
   routerId?: string,
-  prefetchKey?: string | ((from: string) => string),
+  prefetchKey?: ":source",
 ): void {
   if (!shouldPrefetch()) return;
 
   const targetUrl = buildPrefetchUrl(url, segmentIds, version, routerId);
   if (!targetUrl) return;
-  // Skip same-page prefetch with prefetchKey — a same-page diff is trivial
-  // and would corrupt the wildcard cache entry for cross-page navigation.
-  if (prefetchKey != null && isSamePage(url)) {
+  const forceSourceScope = prefetchKey === ":source";
+  // Skip same-page prefetch — a same-page diff is trivial and would corrupt
+  // the wildcard cache entry used for cross-page navigation.
+  // When `:source` is forced the entry is source-scoped (single-aliased to
+  // itself), so it cannot poison any shared slot — allow it.
+  if (!forceSourceScope && isSamePage(url)) {
     return;
   }
-  const key = buildPrefetchKey(window.location.href, targetUrl, prefetchKey);
-  if (hasPrefetch(key)) {
+  const sourceHref = window.location.href;
+  const rangoState = getRangoState();
+  const wildcardKey = buildPrefetchKey(rangoState, targetUrl);
+  const sourceKey = buildSourceKey(rangoState, sourceHref, targetUrl);
+  if (hasPrefetchHit(forceSourceScope, wildcardKey, sourceKey)) {
     debugLog("[prefetch] direct dedup (key already exists)", {
       url,
-      key,
-      prefetchKey: prefetchKey != null ? String(prefetchKey) : undefined,
+      wildcardKey,
+      sourceKey,
+      forceSourceScope,
     });
     return;
   }
   debugLog("[prefetch] direct fetch", {
     url,
-    key,
-    source: window.location.href,
-    prefetchKey: prefetchKey != null ? String(prefetchKey) : undefined,
+    wildcardKey,
+    sourceKey,
+    source: sourceHref,
+    forceSourceScope,
   });
-  executePrefetchFetch(key, targetUrl.toString());
+  executePrefetchFetch(
+    wildcardKey,
+    sourceKey,
+    targetUrl.toString(),
+    forceSourceScope,
+  );
 }
 
 /**
  * Prefetch (queued): goes through the concurrency-limited queue.
  * Used by viewport/render strategies to avoid flooding the server.
- * Returns the cache key for use in cleanup.
+ * Returns the inflight key (wildcard by default, source-scoped when
+ * `prefetchKey=":source"` is passed).
  */
 export function prefetchQueued(
   url: string,
   segmentIds: string[],
   version?: string,
   routerId?: string,
-  prefetchKey?: string | ((from: string) => string),
+  prefetchKey?: ":source",
 ): string {
   if (!shouldPrefetch()) return "";
   const targetUrl = buildPrefetchUrl(url, segmentIds, version, routerId);
   if (!targetUrl) return "";
-  // Skip same-page prefetch with prefetchKey — a same-page diff is trivial
-  // and would corrupt the wildcard cache entry for cross-page navigation.
-  if (prefetchKey != null && isSamePage(url)) {
+  const forceSourceScope = prefetchKey === ":source";
+  if (!forceSourceScope && isSamePage(url)) {
     return "";
   }
-  const key = buildPrefetchKey(window.location.href, targetUrl, prefetchKey);
-  if (hasPrefetch(key)) {
+  const sourceHref = window.location.href;
+  const rangoState = getRangoState();
+  const wildcardKey = buildPrefetchKey(rangoState, targetUrl);
+  const sourceKey = buildSourceKey(rangoState, sourceHref, targetUrl);
+  const queueKey = forceSourceScope ? sourceKey : wildcardKey;
+  if (hasPrefetchHit(forceSourceScope, wildcardKey, sourceKey)) {
     debugLog("[prefetch] queued dedup (key already exists)", {
       url,
-      key,
-      prefetchKey: prefetchKey != null ? String(prefetchKey) : undefined,
+      wildcardKey,
+      sourceKey,
+      forceSourceScope,
     });
-    return key;
+    return queueKey;
   }
   const fetchUrlStr = targetUrl.toString();
-  enqueuePrefetch(key, (signal) => {
+  enqueuePrefetch(queueKey, (signal) => {
     // Re-check at execution time: a hover-triggered prefetchDirect may
     // have started or completed this key while the item sat in the queue.
-    if (hasPrefetch(key)) return Promise.resolve();
-    // By execution time, the user may have navigated to the target page.
-    // A same-page prefetch produces a trivial diff that would overwrite
-    // the useful cross-page entry in the wildcard cache.
-    if (prefetchKey != null && isSamePage(url)) {
+    if (hasPrefetchHit(forceSourceScope, wildcardKey, sourceKey)) {
       return Promise.resolve();
     }
-    return executePrefetchFetch(key, fetchUrlStr, signal).then(() => {});
+    if (!forceSourceScope && isSamePage(url)) {
+      return Promise.resolve();
+    }
+    return executePrefetchFetch(
+      wildcardKey,
+      sourceKey,
+      fetchUrlStr,
+      forceSourceScope,
+      signal,
+    ).then(() => {});
   });
-  return key;
+  return queueKey;
 }
