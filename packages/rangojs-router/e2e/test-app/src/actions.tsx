@@ -414,6 +414,41 @@ export async function actionSetCtxVarForm(_formData: FormData): Promise<void> {
 }
 
 /**
+ * No-op action used to verify useParams survives the action → revalidation
+ * boundary. It intentionally touches no state; the client asserts that the
+ * params store is still populated after the server round-trip.
+ */
+export async function paramsAfterActionNoop(): Promise<void> {
+  await delay(50);
+}
+
+/**
+ * Form-compatible variant for progressive enhancement testing.
+ */
+export async function paramsAfterActionNoopForm(
+  _formData: FormData,
+): Promise<void> {
+  await delay(50);
+}
+
+/**
+ * Action that throws, used to exercise the action → error-boundary render
+ * path. Verifies that useParams remains populated when the server sends
+ * the partial error response (isError: true) for both JS and PE paths.
+ */
+export async function paramsAfterActionThrow(): Promise<void> {
+  await delay(50);
+  throw new Error("params-after-action boom");
+}
+
+export async function paramsAfterActionThrowForm(
+  _formData: FormData,
+): Promise<void> {
+  await delay(50);
+  throw new Error("params-after-action boom");
+}
+
+/**
  * Auth boundary test action. Mutates state (sets a cookie) to prove the action
  * executed. Route middleware does NOT guard this — only global middleware does.
  */

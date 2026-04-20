@@ -345,8 +345,12 @@ export function NavigationProvider({
         metadata: update.metadata,
       });
 
-      // Update route params
-      eventController.setParams(update.metadata.params ?? {});
+      // Update route params. Only reset when the server actually sends a params
+      // map — an absent `params` field means "no change" (e.g., legacy action
+      // responses that omitted params). Explicit `{}` still clears correctly.
+      if (update.metadata.params !== undefined) {
+        eventController.setParams(update.metadata.params);
+      }
 
       // Update handle data progressively as it streams in
       if (update.metadata.handles) {
