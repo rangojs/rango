@@ -26,6 +26,7 @@ import {
   finalizeResponse,
   isCacheableStatus,
   buildRouteMiddlewareEntries,
+  mergeStubHeadersAndFinalize,
 } from "./helpers.js";
 
 export interface ResponseRouteMatch {
@@ -96,6 +97,17 @@ export async function handleResponseRoute<TEnv>(
     // so that stub headers (cookies, custom headers set via ctx.header()) are included.
     // Use Headers (not Record<string, string>) to preserve duplicate entries like Set-Cookie.
     const rewrapResponse = (result: Response) => {
+      // WebSocket upgrades can't flow through `new Response()`: status 101 is
+      // outside the constructor's 200-599 range, and the Cloudflare-specific
+      // `webSocket` property would be lost on reconstruction. 204/205/304
+      // are intentionally NOT short-circuited — they're valid for the
+      // constructor and must honor ctx.setStatus() overrides.
+      const hasWebSocket =
+        (result as unknown as { webSocket?: unknown }).webSocket != null;
+      if (hasWebSocket || result.status === 101) {
+        return mergeStubHeadersAndFinalize(result);
+      }
+
       const headers = new Headers();
       result.headers.forEach((value, key) => {
         if (key.toLowerCase() === "set-cookie") {
