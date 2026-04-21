@@ -22,8 +22,7 @@ import type { UrlPatterns } from "./urls.js";
 import type { UrlBuilder } from "./urls/pattern-types.js";
 import { urls } from "./urls.js";
 import {
-  EntryData,
-  InterceptSelectorContext,
+  type EntryData,
   getContext,
   RSCRouterContext,
   type MetricsStore,

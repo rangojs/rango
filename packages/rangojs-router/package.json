@@ -135,7 +135,7 @@
   "scripts": {
     "build": "pnpm dlx esbuild src/vite/index.ts --bundle --format=esm --outfile=dist/vite/index.js --platform=node --packages=external && mkdir -p dist/vite/plugins && cp src/vite/plugins/cloudflare-protocol-loader-hook.mjs dist/vite/plugins/cloudflare-protocol-loader-hook.mjs && pnpm dlx esbuild src/bin/rango.ts --bundle --format=esm --outfile=dist/bin/rango.js --platform=node --packages=external --banner:js='#!/usr/bin/env node' && chmod +x dist/bin/rango.js",
     "prepublishOnly": "pnpm build",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.strict-check.json --noEmit",
     "test": "playwright test",
     "test:ui": "playwright test --ui",
     "test:unit": "vitest run",

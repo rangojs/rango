@@ -1,4 +1,4 @@
-import { Context, createContext, type ReactNode } from "react";
+import { type Context, createContext, type ReactNode } from "react";
 import type { ResolvedSegment } from "./types";
 
 export interface OutletContextValue {
