@@ -427,3 +427,31 @@ export type ChatStreamLoaderData = {
   totalWords: number;
   startedAt: string;
 };
+
+export type ReverseUrlsLoaderData = {
+  localIndex: string;
+  localStats: string;
+  globalHome: string;
+  globalBlogIndex: string;
+  parameterizedBlogPost: string;
+};
+
+/**
+ * ReverseUrlsLoader - exercises `ctx.reverse` from inside a loader.
+ *
+ * Mounted under include("/loaders", ..., { name: "loaders" }), so `.index`
+ * resolves within that scope. Global names resolve against the full route
+ * map; parameterized names accept an explicit params object.
+ */
+export const ReverseUrlsLoader = createLoader<ReverseUrlsLoaderData>(
+  async (ctx) => {
+    "use server";
+    return {
+      localIndex: ctx.reverse(".index"),
+      localStats: ctx.reverse(".stats"),
+      globalHome: ctx.reverse("home.index"),
+      globalBlogIndex: ctx.reverse("blog.index"),
+      parameterizedBlogPost: ctx.reverse("blog.post", { slug: "hello-world" }),
+    };
+  },
+);
