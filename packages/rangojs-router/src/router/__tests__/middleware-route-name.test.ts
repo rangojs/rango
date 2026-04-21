@@ -28,7 +28,7 @@ describe("MiddlewareContext.routeName", () => {
   });
 
   it("returns undefined when request context has no route name", () => {
-    reqCtxRef.value = {};
+    reqCtxRef.value = { waitUntil: () => {} };
     const ctx = createMiddlewareContext(
       new Request("http://localhost/test"),
       {},
@@ -40,7 +40,7 @@ describe("MiddlewareContext.routeName", () => {
   });
 
   it("returns the named route from request context", () => {
-    reqCtxRef.value = { _routeName: "blog.post" };
+    reqCtxRef.value = { _routeName: "blog.post", waitUntil: () => {} };
     const ctx = createMiddlewareContext(
       new Request("http://localhost/blog/hello"),
       {},
@@ -52,7 +52,7 @@ describe("MiddlewareContext.routeName", () => {
   });
 
   it("filters out auto-generated route names", () => {
-    reqCtxRef.value = { _routeName: "$path__health" };
+    reqCtxRef.value = { _routeName: "$path__health", waitUntil: () => {} };
     const ctx = createMiddlewareContext(
       new Request("http://localhost/health"),
       {},
@@ -65,7 +65,7 @@ describe("MiddlewareContext.routeName", () => {
 
   it("reflects route name that appears after context creation (global middleware)", () => {
     // Simulate global middleware: request context exists but no route matched yet.
-    reqCtxRef.value = {};
+    reqCtxRef.value = { waitUntil: () => {} };
     const ctx = createMiddlewareContext(
       new Request("http://localhost/blog/hello"),
       {},
@@ -78,7 +78,7 @@ describe("MiddlewareContext.routeName", () => {
     expect(ctx.routeName).toBeUndefined();
 
     // Simulate route matching populating the request context
-    reqCtxRef.value = { _routeName: "blog.post" };
+    reqCtxRef.value = { _routeName: "blog.post", waitUntil: () => {} };
 
     // After route matching: getter picks up the new value
     expect(ctx.routeName).toBe("blog.post");

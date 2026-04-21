@@ -1,0 +1,126 @@
+/**
+ * RequestScope: the fields every user-facing context shares.
+ *
+ * A handler, middleware, loader, response handler, and the ALS-bound
+ * RequestContext are all different phases of the same request, and they
+ * all carry the same set of request-scoped capabilities: the raw Request,
+ * the parsed URL pair (`url` is cleaned of internal `_rsc*` params,
+ * `originalUrl` retains them), pathname/searchParams, platform bindings
+ * (`env`), and two escape hatches for work that outlives the response
+ * (`waitUntil`) or needs the raw Cloudflare runtime object
+ * (`executionContext`).
+ *
+ * Each public context type intersects `RequestScope<TEnv>` with its own
+ * phase-specific fields (e.g. `params`/`reverse` on HandlerContext,
+ * `headers`/`header()` on MiddlewareContext). That keeps platform surface
+ * in one place and lets the next runtime escape hatch we need land in
+ * one file instead of four.
+ */
+
+import type { DefaultEnv } from "./global-namespace.js";
+
+/**
+ * Minimal subset of Cloudflare Workers' ExecutionContext that the router
+ * uses. Defined locally so the package does not depend on
+ * `@cloudflare/workers-types`. Consumers that want the full type can cast.
+ *
+ * On non-Cloudflare runtimes (Node, dev server, tests), this is undefined
+ * — portable apps should prefer `ctx.waitUntil(...)`, which degrades
+ * gracefully. `ctx.executionContext` is the escape hatch for libraries
+ * (MCP, Durable Object routing, etc.) that type their arguments as the
+ * raw ExecutionContext.
+ */
+export interface ExecutionContext {
+  waitUntil(promise: Promise<any>): void;
+  passThroughOnException(): void;
+}
+
+/**
+ * Fallback `waitUntil` body used when no Cloudflare `ExecutionContext`
+ * is available (Node, dev, tests). Runs the work fire-and-forget and
+ * logs errors so they don't silently swallow.
+ *
+ * Exported so every `waitUntil` call site degrades identically instead
+ * of inventing its own fallback policy.
+ */
+export function fireAndForgetWaitUntil(fn: () => Promise<void>): void {
+  fn().catch((err) =>
+    console.error("[waitUntil] Background task failed:", err),
+  );
+}
+
+/**
+ * Fields present on every user-facing request context.
+ *
+ * @template TEnv - Platform bindings type (Cloudflare env, etc.).
+ */
+export interface RequestScope<TEnv = DefaultEnv> {
+  /**
+   * The original incoming Request object (transport URL intact).
+   * Use `url` / `searchParams` for application logic — those have
+   * internal `_rsc*` params stripped. `request` preserves the raw URL
+   * when you need original headers, method, or body.
+   */
+  request: Request;
+
+  /**
+   * The request URL with internal `_rsc*` transport params stripped.
+   * Use this for routing, link generation, and display.
+   */
+  url: URL;
+
+  /**
+   * The original request URL with all parameters intact, including
+   * internal `_rsc*` transport params. Use `url` for application logic
+   * — this is only needed for advanced cases like debugging or custom
+   * cache keying.
+   */
+  originalUrl: URL;
+
+  /** URL pathname (same as `url.pathname`). */
+  pathname: string;
+
+  /**
+   * Query parameters from the URL (system params like `_rsc*` are
+   * filtered). Always a standard `URLSearchParams` instance.
+   */
+  searchParams: URLSearchParams;
+
+  /**
+   * Platform bindings (DB, KV, secrets, etc.). On Cloudflare Workers
+   * these are the `env` object passed to the Worker's `fetch()` handler.
+   */
+  env: TEnv;
+
+  /**
+   * Schedule work to run after the response is sent.
+   * On Cloudflare Workers, delegates to `executionContext.waitUntil()`.
+   * On Node / dev / tests, runs as fire-and-forget with error logging.
+   *
+   * @example
+   * ```typescript
+   * ctx.waitUntil(async () => {
+   *   await cacheStore.set(key, data, ttl);
+   * });
+   * ```
+   */
+  waitUntil(fn: () => Promise<void>): void;
+
+  /**
+   * Raw Cloudflare Workers `ExecutionContext`, when running on a
+   * Cloudflare-compatible runtime. Undefined elsewhere.
+   *
+   * Escape hatch for libraries that type their arguments as
+   * `ExecutionContext` (MCP `fetch`, `routeAgentRequest`, etc.).
+   * For the common "do work after the response" case, prefer
+   * `ctx.waitUntil(...)` — it is platform-neutral.
+   *
+   * @example
+   * ```typescript
+   * path.any("/mcp", (ctx) =>
+   *   emailMcp.fetch(ctx.request, ctx.env, ctx.executionContext!),
+   * );
+   * ```
+   */
+  executionContext?: ExecutionContext;
+}

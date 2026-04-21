@@ -172,6 +172,9 @@ export type { PublicRequestContext as RequestContext } from "./server/request-co
 import type { PublicRequestContext } from "./server/request-context.js";
 import type { DefaultEnv } from "./types/global-namespace.js";
 
+// Shared base for every user-facing request context (mirrors index.ts).
+export type { RequestScope, ExecutionContext } from "./types/request-scope.js";
+
 export const getRequestContext: <
   TEnv = DefaultEnv,
 >() => PublicRequestContext<TEnv> = _getRequestContextInternal;

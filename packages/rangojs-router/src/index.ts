@@ -264,6 +264,9 @@ export function transition(): never {
 // Request context type (safe for client)
 export type { PublicRequestContext as RequestContext } from "./server/request-context.js";
 
+// Shared base for every user-facing request context.
+export type { RequestScope, ExecutionContext } from "./types/request-scope.js";
+
 // Cookie store types (safe for client)
 export type {
   CookieStore,
