@@ -434,56 +434,32 @@ describe("optional parameters", () => {
 
 describe("constrained parameters", () => {
   describe("compilePattern", () => {
-    it("should match constrained param with valid value", () => {
-      const { regex, paramNames } = compilePattern("/:locale(en|gb)/blog");
-      expect(regex.test("/en/blog")).toBe(true);
-      expect(regex.test("/gb/blog")).toBe(true);
+    // Constraint values are captured by compilePattern and surfaced on the
+    // `constraints` field; findMatch validates them post-decode so that a
+    // constraint like `:lang(en GB)` still matches a URL-encoded value like
+    // `/en%20GB`. (Matching behavior is covered in "findMatch param
+    // extraction" below; these tests just pin the compile-step contract.)
+    it("should capture constraint list and param name", () => {
+      const { paramNames, constraints } = compilePattern(
+        "/:locale(en|gb)/blog",
+      );
       expect(paramNames).toEqual(["locale"]);
+      expect(constraints).toEqual({ locale: ["en", "gb"] });
     });
 
-    it("should not match constrained param with invalid value", () => {
-      const { regex } = compilePattern("/:locale(en|gb)/blog");
-      expect(regex.test("/de/blog")).toBe(false);
-      expect(regex.test("/us/blog")).toBe(false);
-    });
-
-    it("should handle optional + constrained params", () => {
-      const { regex, optionalParams } = compilePattern("/:locale(en|gb)?/blog");
-      expect(regex.test("/blog")).toBe(true);
-      expect(regex.test("/en/blog")).toBe(true);
-      expect(regex.test("/gb/blog")).toBe(true);
-      expect(regex.test("/de/blog")).toBe(false);
+    it("should capture constraint for optional + constrained params", () => {
+      const { paramNames, optionalParams, constraints } = compilePattern(
+        "/:locale(en|gb)?/blog",
+      );
+      expect(paramNames).toEqual(["locale"]);
       expect(optionalParams.has("locale")).toBe(true);
+      expect(constraints).toEqual({ locale: ["en", "gb"] });
     });
 
-    it("should handle multiple constrained values", () => {
-      const { regex } = compilePattern("/:type(post|page|comment)/edit");
-      expect(regex.test("/post/edit")).toBe(true);
-      expect(regex.test("/page/edit")).toBe(true);
-      expect(regex.test("/comment/edit")).toBe(true);
-      expect(regex.test("/user/edit")).toBe(false);
-    });
-
-    it("should escape regex metacharacters in constraint values", () => {
-      const { regex } = compilePattern("/:version(v1.0|v2.0)");
-      expect(regex.test("/v1.0")).toBe(true);
-      expect(regex.test("/v2.0")).toBe(true);
-      expect(regex.test("/v1x0")).toBe(false);
-      expect(regex.test("/v2X0")).toBe(false);
-    });
-
-    it("should escape plus and hash in constraint values", () => {
-      const { regex } = compilePattern("/:lang(c++|c#)");
-      expect(regex.test("/c++")).toBe(true);
-      expect(regex.test("/c#")).toBe(true);
-      expect(regex.test("/cxx")).toBe(false);
-    });
-
-    it("should escape metacharacters in optional constrained params", () => {
-      const { regex } = compilePattern("/:version(v1.0|v2.0)?/docs");
-      expect(regex.test("/v1.0/docs")).toBe(true);
-      expect(regex.test("/docs")).toBe(true);
-      expect(regex.test("/v1x0/docs")).toBe(false);
+    it("should preserve regex metacharacters verbatim in constraint list", () => {
+      const { constraints } = compilePattern("/:version(v1.0|v2.0)");
+      // Values stored as-is; no regex-escaping leaks into the stored list.
+      expect(constraints).toEqual({ version: ["v1.0", "v2.0"] });
     });
   });
 
@@ -530,6 +506,50 @@ describe("constrained parameters", () => {
       ];
       expect(findMatch("/v1x0/docs", entries)).toBeNull();
       expect(findMatch("/v2X0/docs", entries)).toBeNull();
+    });
+
+    it("should reject invalid constraint value even when captured by regex", () => {
+      const entries = [
+        createRouteEntry("", { localized: "/:locale(en|gb)/blog" }),
+      ];
+      // Regression: now that constrained params capture [^/]+ (and are
+      // validated post-decode), make sure the post-decode check still
+      // rejects values outside the allowed list.
+      expect(findMatch("/de/blog", entries)).toBeNull();
+      expect(findMatch("/us/blog", entries)).toBeNull();
+    });
+
+    it("should match constraint value that was URL-encoded in the pathname", () => {
+      // Parity with the trie path: `:lang(en US)` must match `/en%20US/foo`
+      // because the constraint list contains the decoded value.
+      const entries = [
+        createRouteEntry("", { localized: "/:lang(en US|en GB)/foo" }),
+      ];
+      const encoded = findMatch("/en%20US/foo", entries);
+      expect(encoded).not.toBeNull();
+      expect(encoded!.params).toEqual({ lang: "en US" });
+
+      const decoded = findMatch("/en US/foo", entries);
+      expect(decoded).not.toBeNull();
+      expect(decoded!.params).toEqual({ lang: "en US" });
+
+      // Value outside the constraint list still rejected.
+      expect(findMatch("/en%20CA/foo", entries)).toBeNull();
+    });
+
+    it("should fall through to a later route when an earlier constraint rejects", () => {
+      // Fall-through is the same whether rejection comes from regex miss
+      // or from post-decode constraint failure.
+      const entries = [
+        createRouteEntry("", {
+          localized: "/:locale(en|gb)/blog",
+          catchAll: "/:any/blog",
+        }),
+      ];
+      const result = findMatch("/de/blog", entries);
+      expect(result).not.toBeNull();
+      expect(result!.routeKey).toBe("catchAll");
+      expect(result!.params).toEqual({ any: "de" });
     });
   });
 });
