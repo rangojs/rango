@@ -1,16 +1,20 @@
 ---
 name: links
-description: URL generation with ctx.reverse (server), href (client), useHref (mounted), useMount, and scopedReverse
-argument-hint: [href|useHref|useMount|scopedReverse]
+description: URL generation with ctx.reverse (server default), href (client), useHref (mounted), useMount, and scopedReverse
+argument-hint: [ctx.reverse|href|useHref|useMount|scopedReverse]
 ---
 
 # Links & URL Generation
 
 @rangojs/router provides different href APIs for server and client contexts.
 
+**Default server API: `ctx.reverse()`.** Generate URLs from the handler context — it's typed, auto-fills mount params, and resolves local (`.name`) and absolute (`name.sub`) names.
+
+**`reverse()` is server-only.** It depends on the route manifest and handler context, neither of which are available in the browser. Client components receive URLs as props, loader data, or server-action return values — they never call `reverse` directly.
+
 ## Server: ctx.reverse()
 
-Available in route handlers via HandlerContext. Resolves named routes using the full route map.
+Available in route handlers via HandlerContext. Resolves named routes using the full route map. This is the default way to generate URLs on the server.
 
 ```typescript
 import { urls, scopedReverse } from "@rangojs/router";
@@ -103,7 +107,7 @@ path("/search", (ctx) => {
 
 ### scopedReverse() - type-safe ctx.reverse
 
-Wraps `ctx.reverse` with local route type information for autocomplete and validation:
+Wraps `ctx.reverse` with local route type information for autocomplete and validation. Runtime behavior is identical to `ctx.reverse` — `scopedReverse` is a type-only cast. The same dot-prefix rule applies: local names use `.name`, global names use `name.sub`.
 
 ```typescript
 import { scopedReverse } from "@rangojs/router";
@@ -111,18 +115,74 @@ import { scopedReverse } from "@rangojs/router";
 path("/product/:slug", (ctx) => {
   const reverse = scopedReverse<typeof shopPatterns>(ctx.reverse);
 
-  reverse("cart");                        // Type-safe local name
-  reverse("product", { slug: "widget" }); // Type-safe with params
-  reverse("blog.post");                   // Absolute names (dot notation) always allowed
-  reverse("/about");                      // Path-based always allowed
+  reverse(".cart");                        // Local name (dot-prefixed) — resolves in include scope
+  reverse(".product", { slug: "widget" }); // Local name with params
+  reverse("blog.post", { slug: "hi" });    // Global name (dotted) — full route map
 
   return <ProductPage slug={ctx.params.slug} />;
 }, { name: "product" })
 ```
 
+`reverse()` does not accept raw path strings (`"/about"`). For static paths in client components, use `href("/about")`; on the server, look up the route by name.
+
+## Client components: receive URLs as props
+
+`reverse()` is not available inside `"use client"` modules — there is no handler context and no route manifest in the browser bundle. Generate the URL on the server and hand it to the client component.
+
+Three patterns, in order of preference:
+
+```tsx
+// 1. Pass as a prop from a server component
+// server
+function BlogPostPage(ctx: HandlerContext) {
+  return <ShareButton url={ctx.reverse(".post", { slug: ctx.params.slug })} />;
+}
+
+// client
+"use client";
+export function ShareButton({ url }: { url: string }) {
+  return <button onClick={() => navigator.clipboard.writeText(url)}>Share</button>;
+}
+```
+
+```tsx
+// 2. Return from a loader (attached to the route via the DSL)
+// server — loaders/nav.ts
+export const NavLoader = createLoader((ctx) => ({
+  home: ctx.reverse("home"),
+  blog: ctx.reverse("blog.index"),
+}));
+
+// server — urls.tsx: attach the loader so useLoader has data in context
+const urlpatterns = urls(({ path, loader }) => [
+  path("/", HomePage, { name: "home" }, () => [loader(NavLoader)]),
+]);
+
+// client
+"use client";
+function Nav() {
+  const { data } = useLoader(NavLoader);
+  return <Link to={data.home}>Home</Link>;
+}
+```
+
+`useLoader()` requires the loader to be attached to an active route. If you need on-demand fetching instead, use `useFetchLoader()`.
+
+```tsx
+// 3. Return from a server action
+// server
+"use server";
+export async function getProductUrl(slug: string) {
+  const ctx = getRequestContext();
+  return ctx.reverse("product", { slug });
+}
+```
+
+For static path strings (not named routes), client components can use `href()` — see below.
+
 ## Client: href()
 
-Plain function for absolute path-based URLs. No hook needed - works anywhere.
+Plain function for absolute path-based URLs. No hook needed - works anywhere in client components. `href()` validates paths at compile time, but does **not** resolve named routes — for named routes, use one of the patterns above.
 
 ```typescript
 "use client";
@@ -189,11 +249,14 @@ function MountInfo() {
 
 | Context          | API                             | Resolves                        | Use for                             |
 | ---------------- | ------------------------------- | ------------------------------- | ----------------------------------- |
-| Server handler   | `ctx.reverse("name")`           | Named routes (local + absolute) | Server-side URL generation          |
+| Server handler   | `ctx.reverse("name")`           | Named routes (local + absolute) | **Default** server-side URL generation |
 | Server handler   | `scopedReverse<T>(ctx.reverse)` | Same, with type safety          | Type-safe server URLs               |
-| Client component | `href("/path")`                 | Absolute paths                  | Global navigation                   |
+| Client component | (URL passed as prop / loader data / action return) | Named routes | Any URL derived from a named route — generate on server, pass in |
+| Client component | `href("/path")`                 | Absolute paths (static strings) | Static navigation where no named-route lookup is needed |
 | Client component | `useHref()`                     | Mount-prefixed paths            | Local navigation inside `include()` |
 | Client component | `useMount()`                    | Raw mount path                  | Custom mount-aware logic            |
+
+> `reverse()` is server-only. Client components never import or call it — they receive the already-resolved string.
 
 ## Complete example: mounted module
 

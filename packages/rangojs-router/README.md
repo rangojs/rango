@@ -161,12 +161,17 @@ const urlpatterns = urls(({ path }) => [
 ]);
 ```
 
-Use `reverse()` as the default way to link to routes:
+Use `ctx.reverse()` from handler context as the default way to link to routes from server code:
 
 ```tsx
-router.reverse("product", { slug: "widget" }); // "/product/widget"
-router.reverse("search", undefined, { q: "rsc" }); // "/search?q=rsc"
+const ProductPage: Handler<"product"> = (ctx) => {
+  const url = ctx.reverse("product", { slug: "widget" }); // "/product/widget"
+  const searchUrl = ctx.reverse("search", undefined, { q: "rsc" }); // "/search?q=rsc"
+  return <Link to={url}>Widget</Link>;
+};
 ```
+
+`router.reverse()` (exported from the router module) is the same function without a handler context, useful in scripts or tests. In request code, prefer `ctx.reverse()` — it auto-fills mount params from the current match.
 
 ### Composable URL Modules
 
@@ -479,39 +484,62 @@ const urlpatterns = urls(({ path, loader }) => [
 
 ## Navigation & Links
 
-### Named Routes with `reverse()` (Server Components)
+### Named Routes with `ctx.reverse()` (Server)
 
-In server components, use `reverse()` to generate URLs by route name:
+In server components and handlers, use `ctx.reverse()` to generate URLs by route name. This is the default — it is typed, auto-fills mount params from the current match, and resolves both local (`.name`) and absolute (`name.sub`) names:
 
 ```tsx
 import { Link } from "@rangojs/router/client";
-import { reverse } from "./router";
+import type { Handler } from "@rangojs/router";
 
-function BlogIndex() {
-  return (
-    <nav>
-      <Link to={reverse("home")}>Home</Link>
-      <Link to={reverse("blogPost", { slug: "my-post" })}>My Post</Link>
-      <Link to={reverse("about")}>About</Link>
-    </nav>
-  );
-}
-```
-
-`reverse()` is type-safe — route names and required params are checked at compile time. Included routes use dotted names: `reverse("api.health")`.
-
-Handlers also have `ctx.reverse()` directly on the context:
-
-```tsx
 const BlogPostPage: Handler<"blogPost"> = (ctx) => {
   const backUrl = ctx.reverse("blog");
   return <Link to={backUrl}>Back to blog</Link>;
 };
 ```
 
+`reverse()` is type-safe — route names and required params are checked at compile time. Included routes use dotted names: `ctx.reverse("api.health")`.
+
+For scripts, tests, or other code without a handler context, import the router-level `reverse`:
+
+```tsx
+import { reverse } from "./router";
+reverse("blogPost", { slug: "my-post" });
+```
+
+### Client Components
+
+**`reverse()` is server-only.** It depends on the route manifest and handler context — neither is available in the browser bundle. Client components receive URLs as props, loader data, or server-action return values:
+
+```tsx
+// server
+function BlogIndex(ctx: HandlerContext) {
+  return (
+    <Nav
+      home={ctx.reverse("home")}
+      post={ctx.reverse("blogPost", { slug: "my-post" })}
+    />
+  );
+}
+
+// client
+"use client";
+import { Link } from "@rangojs/router/client";
+export function Nav({ home, post }: { home: string; post: string }) {
+  return (
+    <nav>
+      <Link to={home}>Home</Link>
+      <Link to={post}>My Post</Link>
+    </nav>
+  );
+}
+```
+
+For client-side navigation to static paths (no named-route lookup), use `href()` — see below. For URLs tied to named routes, always generate on the server and pass the string in.
+
 ### `href()` for Path Validation (Client Components)
 
-In client components, use `href()` for compile-time path validation:
+In client components, use `href()` for compile-time path validation on static path strings:
 
 ```tsx
 "use client";
