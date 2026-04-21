@@ -416,11 +416,22 @@ describe("createReverseFunction", () => {
       expect(() => reverse(".user")).toThrow('Missing param "userId"');
     });
 
-    it("should URL-encode auto-filled param values", () => {
+    it("should encode unsafe chars in auto-filled param values", () => {
       const reverse = createReverseFunction(routeMap, "tenant.index", {
         tenantId: "hello world",
       });
+      // Space must be encoded.
       expect(reverse(".settings")).toBe("/tenant/hello%20world/settings");
+    });
+
+    it("should keep path-legal chars readable in auto-filled params", () => {
+      // @ is legal in a path segment; reverse must not over-encode it
+      // (e.g. a mailbox ID used as a tenant key should stay human-readable
+      // in the address bar).
+      const reverse = createReverseFunction(routeMap, "tenant.index", {
+        tenantId: "ivo@example.com",
+      });
+      expect(reverse(".settings")).toBe("/tenant/ivo@example.com/settings");
     });
   });
 

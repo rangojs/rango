@@ -108,13 +108,17 @@ describe("tryTrieMatch", () => {
       expect(tryTrieMatch(trie, "//about")).toBeNull();
     });
 
-    it("treats percent-encoded slash in a segment as a literal value", () => {
+    it("decodes percent-encoded slash in a segment to a literal value", () => {
       const trie = buildTestTrie({
         "blog.post": "/blog/:slug",
       });
 
+      // Params are decoded at the extraction boundary so apps see the
+      // raw string value ("hello/world") not the URL-encoded form. This
+      // matches Express/React Router/Fastify/Koa and keeps round-trips
+      // through reverse (which re-encodes) stable.
       const result = tryTrieMatch(trie, "/blog/hello%2Fworld");
-      expect(result?.params).toEqual({ slug: "hello%2Fworld" });
+      expect(result?.params).toEqual({ slug: "hello/world" });
     });
 
     it("treats empty pathname as root match", () => {
@@ -134,14 +138,34 @@ describe("tryTrieMatch", () => {
       expect(result?.params["*"]).toHaveLength(8000);
     });
 
-    it("captures percent-encoded characters in param values", () => {
+    it("decodes percent-encoded characters in param values", () => {
       const trie = buildTestTrie({
         "user.profile": "/user/:name",
       });
 
-      // The trie matches against the raw pathname; encoding is the caller's concern
       const result = tryTrieMatch(trie, "/user/hello%20world");
-      expect(result?.params).toEqual({ name: "hello%20world" });
+      expect(result?.params).toEqual({ name: "hello world" });
+    });
+
+    it("preserves malformed percent-encoding as the raw string", () => {
+      const trie = buildTestTrie({
+        "user.profile": "/user/:name",
+      });
+
+      // Standalone % (not a valid escape) would throw from decodeURIComponent;
+      // safeDecodeURIComponent falls back to the raw value so the handler can
+      // decide how to respond instead of the router crashing.
+      const result = tryTrieMatch(trie, "/user/broken%ZZ");
+      expect(result?.params).toEqual({ name: "broken%ZZ" });
+    });
+
+    it("decodes reserved characters in param values (e.g. @ in emails)", () => {
+      const trie = buildTestTrie({
+        "mailbox.show": "/mailbox/:mailboxId",
+      });
+
+      const result = tryTrieMatch(trie, "/mailbox/ivo%40example.com");
+      expect(result?.params).toEqual({ mailboxId: "ivo@example.com" });
     });
   });
 

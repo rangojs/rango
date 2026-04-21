@@ -7,6 +7,7 @@
 import type { RouteEntry, TrailingSlashMode } from "../types";
 import type { EntryData } from "../server/context";
 import { debugLog, isRouterDebugEnabled } from "./logging.js";
+import { safeDecodeURIComponent } from "./url-params.js";
 
 /**
  * Parsed segment info
@@ -82,6 +83,13 @@ export interface CompiledPattern {
   paramNames: string[];
   optionalParams: Set<string>;
   hasTrailingSlash: boolean;
+  /**
+   * Param-name → allowed values for constrained params (e.g. `:lang(en|gb)`).
+   * Validated against the **decoded** param value after regex extraction so
+   * a URL like `/en%20GB` still matches `:lang(en GB)` — matching the trie
+   * path's behavior (trie-matching.ts:validateAndBuild).
+   */
+  constraints?: Record<string, string[]>;
 }
 
 // Module-level cache for compiled patterns. Route patterns are a finite set
@@ -142,6 +150,7 @@ export function compilePattern(pattern: string): CompiledPattern {
   const segments = parsePattern(normalizedPattern);
   const paramNames: string[] = [];
   const optionalParams = new Set<string>();
+  let constraints: Record<string, string[]> | undefined;
 
   let regexPattern = "";
 
@@ -152,11 +161,14 @@ export function compilePattern(pattern: string): CompiledPattern {
     } else if (segment.type === "param") {
       paramNames.push(segment.value);
       const suffixPattern = segment.suffix ? escapeRegex(segment.suffix) : "";
-      const valuePattern = segment.constraint
-        ? `(${segment.constraint.map(escapeRegex).join("|")})`
-        : segment.suffix
-          ? "([^/]+?)"
-          : "([^/]+)";
+      // Constrained params capture anything here; the allowed values are
+      // checked post-decode in findMatch so URL-encoded constraint values
+      // (e.g. `:lang(en GB)` via `/en%20GB`) still match.
+      const valuePattern = segment.suffix ? "([^/]+?)" : "([^/]+)";
+
+      if (segment.constraint) {
+        (constraints ??= {})[segment.value] = segment.constraint;
+      }
 
       if (segment.optional) {
         optionalParams.add(segment.value);
@@ -186,7 +198,31 @@ export function compilePattern(pattern: string): CompiledPattern {
     paramNames,
     optionalParams,
     hasTrailingSlash,
+    ...(constraints ? { constraints } : {}),
   };
+}
+
+/**
+ * Validate decoded params against a compiled pattern's constraints.
+ * Returns false if any constrained param has a non-empty value not in the
+ * allowed list (empty-string = absent optional, which is allowed).
+ */
+function satisfiesConstraints(
+  params: Record<string, string>,
+  constraints: Record<string, string[]> | undefined,
+): boolean {
+  if (!constraints) return true;
+  for (const name in constraints) {
+    const value = params[name];
+    if (
+      value !== undefined &&
+      value !== "" &&
+      !constraints[name].includes(value)
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -392,8 +428,13 @@ export function findMatch<TEnv>(
         fullPattern = entry.prefix + pattern;
       }
 
-      const { regex, paramNames, optionalParams, hasTrailingSlash } =
-        getCompiledPattern(fullPattern);
+      const {
+        regex,
+        paramNames,
+        optionalParams,
+        hasTrailingSlash,
+        constraints,
+      } = getCompiledPattern(fullPattern);
 
       // Get trailing slash mode for this route (per-route config or pattern-based)
       const trailingSlashMode: TrailingSlashMode | undefined =
@@ -412,8 +453,14 @@ export function findMatch<TEnv>(
       if (match) {
         const params: Record<string, string> = {};
         paramNames.forEach((name, index) => {
-          params[name] = match[index + 1] ?? "";
+          params[name] = safeDecodeURIComponent(match[index + 1] ?? "");
         });
+
+        // Validate constraints against decoded values; a failure falls
+        // through to the next route so other patterns can still match.
+        if (!satisfiesConstraints(params, constraints)) {
+          continue;
+        }
 
         if (effectiveDebug) {
           debugLog("findMatch", "matched route", {
@@ -467,8 +514,12 @@ export function findMatch<TEnv>(
       if (altMatch) {
         const params: Record<string, string> = {};
         paramNames.forEach((name, index) => {
-          params[name] = altMatch[index + 1] ?? "";
+          params[name] = safeDecodeURIComponent(altMatch[index + 1] ?? "");
         });
+
+        if (!satisfiesConstraints(params, constraints)) {
+          continue;
+        }
 
         // Determine redirect behavior based on mode
         if (trailingSlashMode === "ignore") {

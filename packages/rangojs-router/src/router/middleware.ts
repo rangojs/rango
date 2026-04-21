@@ -10,6 +10,7 @@
  */
 
 import { contextGet, contextSet } from "../context-var.js";
+import { safeDecodeURIComponent } from "./url-params.js";
 import type {
   CollectedMiddleware,
   MiddlewareCollectableEntry,
@@ -113,7 +114,12 @@ function escapeRegex(str: string): string {
 }
 
 /**
- * Extract params from a pathname using a pattern's regex and param names
+ * Extract params from a pathname using a pattern's regex and param names.
+ *
+ * Values are URL-decoded so apps see the raw string (e.g. "ivo@example.com")
+ * instead of the percent-encoded form ("ivo%40example.com"). This matches the
+ * contract assumed by ctx.reverse (which re-encodes) and aligns with
+ * Express/React Router/Fastify/Koa.
  */
 export function extractParams(
   pathname: string,
@@ -125,7 +131,7 @@ export function extractParams(
 
   const params: Record<string, string> = {};
   for (let i = 0; i < paramNames.length; i++) {
-    params[paramNames[i]] = match[i + 1] || "";
+    params[paramNames[i]] = safeDecodeURIComponent(match[i + 1] || "");
   }
   return params;
 }

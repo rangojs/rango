@@ -106,6 +106,22 @@ describe("middleware", () => {
       const params = extractParams("/posts/123", regex, paramNames);
       expect(params).toEqual({});
     });
+
+    it("should URL-decode param values", () => {
+      const { regex, paramNames } = parsePattern("/mailbox/:id");
+      const params = extractParams(
+        "/mailbox/ivo%40example.com",
+        regex,
+        paramNames,
+      );
+      expect(params).toEqual({ id: "ivo@example.com" });
+    });
+
+    it("should preserve malformed percent-encoding as raw", () => {
+      const { regex, paramNames } = parsePattern("/users/:id");
+      const params = extractParams("/users/broken%ZZ", regex, paramNames);
+      expect(params).toEqual({ id: "broken%ZZ" });
+    });
   });
 
   describe("parseCookies", () => {

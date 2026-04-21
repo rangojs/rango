@@ -6,6 +6,7 @@
  */
 
 import type { TrieNode, TrieLeaf } from "../build/route-trie.js";
+import { safeDecodeURIComponent } from "./url-params.js";
 
 export interface TrieMatchResult {
   /** Route name */
@@ -173,20 +174,25 @@ function validateAndBuild(
   originalPathname: string,
   pathnameHasTrailingSlash: boolean,
 ): TrieMatchResult | null {
-  // Build named params by zipping leaf.pa with positional paramValues
+  // Build named params by zipping leaf.pa with positional paramValues.
+  // Params are URL-decoded at this boundary so ctx.params holds the values
+  // apps expect (matching Express/React Router) and round-trip cleanly
+  // through ctx.reverse.
   const params: Record<string, string> = {};
   if (leaf.pa) {
     for (let i = 0; i < leaf.pa.length && i < paramValues.length; i++) {
-      params[leaf.pa[i]] = paramValues[i];
+      params[leaf.pa[i]] = safeDecodeURIComponent(paramValues[i]);
     }
   }
 
   // Add wildcard param (wildcard leaves have pn from TrieNode.w type)
   if (wildcardValue !== undefined && "pn" in leaf) {
-    params[(leaf as TrieLeaf & { pn: string }).pn] = wildcardValue;
+    params[(leaf as TrieLeaf & { pn: string }).pn] =
+      safeDecodeURIComponent(wildcardValue);
   }
 
-  // Validate constraints
+  // Validate constraints against decoded values so constraint lists can be
+  // written in decoded form (e.g. ["en-GB", "en US"]).
   if (leaf.cv) {
     for (const paramName in leaf.cv) {
       const allowed = leaf.cv[paramName]!;

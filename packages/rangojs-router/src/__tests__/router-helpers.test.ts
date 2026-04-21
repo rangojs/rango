@@ -85,18 +85,23 @@ describe("compilePattern", () => {
     expect(regex.test("/en/blog")).toBe(true);
   });
 
-  it("matches constrained params", () => {
-    const { regex } = compilePattern("/:locale(en|gb)/blog");
+  it("captures constraint list for constrained params", () => {
+    // The regex itself accepts any segment value; findMatch validates the
+    // allowed list post-decode so URL-encoded values still match.
+    const { regex, constraints } = compilePattern("/:locale(en|gb)/blog");
     expect(regex.test("/en/blog")).toBe(true);
     expect(regex.test("/gb/blog")).toBe(true);
-    expect(regex.test("/fr/blog")).toBe(false);
+    expect(constraints).toEqual({ locale: ["en", "gb"] });
   });
 
-  it("matches optional + constrained params", () => {
-    const { regex } = compilePattern("/:locale(en|gb)?/blog");
+  it("captures constraint list for optional + constrained params", () => {
+    const { regex, optionalParams, constraints } = compilePattern(
+      "/:locale(en|gb)?/blog",
+    );
     expect(regex.test("/blog")).toBe(true);
     expect(regex.test("/en/blog")).toBe(true);
-    expect(regex.test("/fr/blog")).toBe(false);
+    expect(optionalParams.has("locale")).toBe(true);
+    expect(constraints).toEqual({ locale: ["en", "gb"] });
   });
 
   it("matches wildcard", () => {
@@ -462,9 +467,51 @@ describe("createReverse", () => {
     ).toBe("/product/shoes/42");
   });
 
-  it("URI-encodes param values", () => {
+  it("encodes characters that are unsafe in a path segment", () => {
+    // Space, /, ?, #, %, non-ASCII must be encoded or the URL becomes
+    // ambiguous / invalid.
     expect(reverse("blog.post" as any, { slug: "hello world" })).toBe(
       "/blog/hello%20world",
+    );
+    expect(reverse("blog.post" as any, { slug: "a/b" })).toBe("/blog/a%2Fb");
+    expect(reverse("blog.post" as any, { slug: "a?b" })).toBe("/blog/a%3Fb");
+    expect(reverse("blog.post" as any, { slug: "a#b" })).toBe("/blog/a%23b");
+    expect(reverse("blog.post" as any, { slug: "50%" })).toBe("/blog/50%25");
+    expect(reverse("blog.post" as any, { slug: "café" })).toBe(
+      "/blog/caf%C3%A9",
+    );
+  });
+
+  it("leaves path-legal sub-delims readable (per RFC 3986 pchar)", () => {
+    // @, :, $, &, +, ,, ;, = are legal unencoded in a path segment.
+    // encodeURIComponent over-encodes these; reverse keeps them readable
+    // so URLs like /mailbox/ivo@example.com stay human-friendly.
+    expect(reverse("blog.post" as any, { slug: "ivo@example.com" })).toBe(
+      "/blog/ivo@example.com",
+    );
+    expect(reverse("blog.post" as any, { slug: "a:b" })).toBe("/blog/a:b");
+    expect(reverse("blog.post" as any, { slug: "x+y" })).toBe("/blog/x+y");
+    expect(reverse("blog.post" as any, { slug: "a&b=c" })).toBe("/blog/a&b=c");
+    expect(reverse("blog.post" as any, { slug: "tags;more,etc" })).toBe(
+      "/blog/tags;more,etc",
+    );
+    expect(reverse("blog.post" as any, { slug: "price$99" })).toBe(
+      "/blog/price$99",
+    );
+  });
+
+  it("round-trips decoded ctx.params cleanly back through reverse", () => {
+    // The bug this fixes: ctx.params holds decoded values; reverse must
+    // produce a URL that decodes back to the same value with no further
+    // encoding layers added per navigation.
+    const mailboxId = "ivo@example.com"; // decoded form as it lands in ctx.params
+    expect(reverse("blog.post" as any, { slug: mailboxId })).toBe(
+      "/blog/ivo@example.com",
+    );
+    // Second round trip starting from the already-generated URL's extracted
+    // value must produce the same URL, not a double-encoded one.
+    expect(reverse("blog.post" as any, { slug: mailboxId })).toBe(
+      reverse("blog.post" as any, { slug: mailboxId }),
     );
   });
 

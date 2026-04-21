@@ -1,6 +1,7 @@
 import type { ExtractParams } from "./types.js";
 import type { SearchSchema, ResolveSearchSchema } from "./search-params.js";
 import { serializeSearchParams } from "./search-params.js";
+import { encodePathSegment } from "./router/url-params.js";
 
 /**
  * Sanitize prefix string by removing leading slash
@@ -318,7 +319,7 @@ export function createReverse<TRoutes extends Record<string, string>>(
             hadOmittedOptional = true;
             return "";
           }
-          return encodeURIComponent(value);
+          return encodePathSegment(value);
         },
       );
       // Second pass: required params (no trailing ?)
@@ -329,7 +330,7 @@ export function createReverse<TRoutes extends Record<string, string>>(
           if (value === undefined) {
             throw new Error(`Missing param "${key}" for route "${name}"`);
           }
-          return encodeURIComponent(value);
+          return encodePathSegment(value);
         },
       );
       // Clean up slashes only when an optional param was actually omitted,
