@@ -28,6 +28,7 @@ import { NonceContext } from "./nonce-context.js";
 import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
 import { cancelAllPrefetches } from "../prefetch/queue.js";
 import { handleNavigationEnd } from "../scroll-restoration.js";
+import type { AppShellRef } from "../app-shell.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -133,15 +134,23 @@ export interface NavigationProviderProps {
   warmupEnabled?: boolean;
 
   /**
-   * App version from server payload (stable, immutable).
-   * Forwarded to context for cache key building.
+   * App version from server payload.
+   * Used only as a fallback when `appShellRef` is not supplied.
    */
   version?: string;
 
   /**
    * URL prefix for all routes (from createRouter({ basename })).
+   * Used only as a fallback when `appShellRef` is not supplied.
    */
   basename?: string;
+
+  /**
+   * Live app-shell ref. When provided, the context's `basename` and `version`
+   * properties become live getters that track app-switch updates without
+   * invalidating the memoized context value.
+   */
+  appShellRef?: AppShellRef;
 }
 
 /**
@@ -175,6 +184,7 @@ export function NavigationProvider({
   warmupEnabled,
   version,
   basename,
+  appShellRef,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
   const [payload, setPayload] = useState(initialPayload);
@@ -196,18 +206,39 @@ export function NavigationProvider({
     await bridge.refresh();
   }, []);
 
-  // Context value is stable (store, eventController, navigate, refresh never change)
-  const contextValue = useMemo<NavigationStoreContextValue>(
-    () => ({
+  // Context value is stable (store, eventController, navigate, refresh never
+  // change). When an appShellRef is supplied, `basename` and `version` are
+  // installed as live getters so app-switch transitions (which update the ref)
+  // propagate to consumers without forcing a tree-wide rerender.
+  const contextValue = useMemo<NavigationStoreContextValue>(() => {
+    if (appShellRef) {
+      const value = {
+        store,
+        eventController,
+        navigate,
+        refresh,
+      } as NavigationStoreContextValue;
+      Object.defineProperty(value, "basename", {
+        configurable: true,
+        enumerable: true,
+        get: () => appShellRef.get().basename,
+      });
+      Object.defineProperty(value, "version", {
+        configurable: true,
+        enumerable: true,
+        get: () => appShellRef.get().version,
+      });
+      return value;
+    }
+    return {
       store,
       eventController,
       navigate,
       refresh,
       version,
       basename,
-    }),
-    [],
-  );
+    };
+  }, []);
 
   // Connection warmup: keep TLS alive after idle periods.
   // After 60s of no user interaction, marks connection as "cold".
@@ -402,7 +433,11 @@ export function NavigationProvider({
   // Build the content tree
   let content = <RootErrorBoundary>{root}</RootErrorBoundary>;
 
-  // Wrap with ThemeProvider when theme is enabled
+  // Wrap with ThemeProvider when theme is enabled. The ThemeProvider is
+  // document-lifetime: its config comes from the initial load and does NOT
+  // swap on cross-app transitions, because the ThemeProvider sits above the
+  // segment tree and a smooth (no-reload) app switch cannot safely remount
+  // it. A new theme config only takes effect on a full document load.
   if (themeConfig) {
     content = (
       <ThemeProvider config={themeConfig} initialTheme={initialTheme}>

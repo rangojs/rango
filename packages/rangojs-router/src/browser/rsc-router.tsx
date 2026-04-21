@@ -28,6 +28,7 @@ import {
   isInterceptSegment,
   splitInterceptSegments,
 } from "./intercept-utils.js";
+import { createAppShellRef } from "./app-shell.js";
 
 // Vite HMR types are provided by vite/client
 
@@ -114,6 +115,13 @@ export interface BrowserAppContext {
   warmupEnabled?: boolean;
   /** App version for prefetch version mismatch detection */
   version?: string;
+  /**
+   * Live app-shell ref. Cross-app navigations replace its contents so the
+   * NavigationProvider and renderSegments pick up the target app's
+   * rootLayout, basename, and version without consumer rerenders. Theme,
+   * warmup, and prefetch TTL are document-lifetime (see AppShell).
+   */
+  appShellRef?: import("./app-shell.js").AppShellRef;
 }
 
 // Module-level state for the initialized app
@@ -204,13 +212,23 @@ export async function initBrowserApp(
   // Create composable utilities
   const client = createNavigationClient(deps);
 
-  // Extract rootLayout and version from metadata for browser-side re-renders
-  const rootLayout = initialPayload.metadata?.rootLayout;
+  // Capture the per-router app-shell so cross-app navigations can replace
+  // it atomically. rootLayout, basename, and version live here and are
+  // read through the ref at call time rather than closed over. Theme,
+  // warmup, and prefetch TTL are deliberately excluded — they are
+  // document-lifetime and stay stable across smooth cross-app transitions.
   const version = initialPayload.metadata?.version;
+  const appShellRef = createAppShellRef({
+    routerId: initialPayload.metadata?.routerId,
+    rootLayout: initialPayload.metadata?.rootLayout,
+    basename: initialPayload.metadata?.basename,
+    version,
+  });
 
   // Initialize the localStorage state key for cache invalidation.
-  // Uses the build version so a new deploy automatically busts all cached prefetches.
-  initRangoState(version ?? "0");
+  // The build version busts cached prefetches on deploy; the routerId
+  // namespaces the key so sibling apps on the same origin don't collide.
+  initRangoState(version ?? "0", initialPayload.metadata?.routerId);
   setAppVersion(version);
 
   // Initialize the in-memory prefetch cache TTL from server config.
@@ -220,11 +238,17 @@ export async function initBrowserApp(
     initPrefetchCache(prefetchCacheTTL);
   }
 
-  // Create a bound renderSegments that includes rootLayout
+  // Create a bound renderSegments that reads rootLayout through the shell
+  // ref. On app switch the ref is updated before the tree re-renders, so
+  // the new app's Document (rootLayout) replaces the previous one.
   const renderSegments = (
     segments: ResolvedSegment[],
     options?: RenderSegmentsOptions,
-  ) => baseRenderSegments(segments, { ...options, rootLayout });
+  ) =>
+    baseRenderSegments(segments, {
+      ...options,
+      rootLayout: appShellRef.get().rootLayout,
+    });
 
   // Lazy reference for navigation bridge — the action bridge is created first
   // but may need to trigger SPA navigation for action redirects.
@@ -256,6 +280,7 @@ export async function initBrowserApp(
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
     version: version,
+    appShellRef,
   });
 
   // Connect action redirect → navigation bridge (now that both are initialized)
@@ -416,6 +441,7 @@ export async function initBrowserApp(
     initialTheme: effectiveInitialTheme,
     warmupEnabled: initialPayload.metadata?.warmupEnabled ?? true,
     version,
+    appShellRef,
   };
   browserAppContext = context;
 
@@ -481,6 +507,7 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
     initialTheme,
     warmupEnabled,
     version,
+    appShellRef,
   } = getBrowserAppContext();
 
   // Signal that the React tree has hydrated. useEffect only fires after
@@ -501,6 +528,7 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
       warmupEnabled={warmupEnabled}
       version={version}
       basename={initialPayload.metadata?.basename}
+      appShellRef={appShellRef}
     />
   );
 }

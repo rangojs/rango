@@ -10,6 +10,26 @@ import { waitForHydration } from "./helper";
  * updated X-Rango-State header on subsequent navigations.
  */
 
+// rango-state is stored under a per-router namespaced localStorage key
+// (`rango-state:{routerId}`). These helpers locate the app-specific key
+// without hard-coding the router id.
+async function findRangoStateKey(page: Page): Promise<string> {
+  return await page.evaluate(() => {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key === "rango-state" || key?.startsWith("rango-state:")) {
+        return key;
+      }
+    }
+    return "rango-state";
+  });
+}
+
+async function readRangoState(page: Page): Promise<string | null> {
+  const key = await findRangoStateKey(page);
+  return await page.evaluate((k) => localStorage.getItem(k), key);
+}
+
 async function testCrossTabInvalidation(
   context: BrowserContext,
   baseUrl: string,
@@ -25,15 +45,12 @@ async function testCrossTabInvalidation(
   await waitForHydration(pageB);
 
   // Read the initial rango-state from localStorage
-  const initialState = await pageA.evaluate(() =>
-    localStorage.getItem("rango-state"),
-  );
+  const rangoKey = await findRangoStateKey(pageA);
+  const initialState = await readRangoState(pageA);
   expect(initialState).toBeTruthy();
 
   // Verify pageB has the same initial state
-  const pageBInitialState = await pageB.evaluate(() =>
-    localStorage.getItem("rango-state"),
-  );
+  const pageBInitialState = await readRangoState(pageB);
   expect(pageBInitialState).toBe(initialState);
 
   // Intercept the next partial navigation request from pageB to capture X-Rango-State
@@ -51,16 +68,14 @@ async function testCrossTabInvalidation(
   const newState = `${initialState!.split(":")[0]}:${Date.now() + 999999}`;
   await pageA.evaluate(
     ([key, val]) => localStorage.setItem(key, val),
-    ["rango-state", newState],
+    [rangoKey, newState],
   );
 
   // Small wait to ensure the storage event fires and propagates
   await pageB.waitForTimeout(100);
 
   // Verify localStorage is updated in both tabs
-  const pageBUpdatedState = await pageB.evaluate(() =>
-    localStorage.getItem("rango-state"),
-  );
+  const pageBUpdatedState = await readRangoState(pageB);
   expect(pageBUpdatedState).toBe(newState);
 
   // Now trigger a client-side navigation in pageB by clicking a link

@@ -13,6 +13,10 @@ import type { RouterInstance, RouterNavigateOptions } from "../types.js";
  * useRouter() do not re-render on navigation state changes.
  * For reactive navigation state, use useNavigation() instead.
  *
+ * Methods read `basename` from the live context on each call so that
+ * cross-app navigation (app-switch) sees the current app's basename
+ * rather than the one captured at mount time.
+ *
  * @example
  * ```tsx
  * const router = useRouter();
@@ -29,7 +33,10 @@ export function useRouter(): RouterInstance {
     throw new Error("useRouter must be used within NavigationProvider");
   }
 
-  // Stable reference: ctx is itself stable (NavigationProvider memoizes with [])
+  // Stable reference: ctx itself is stable, and reads on each method call
+  // pick up live basename values from the context (backed by a live ref
+  // in NavigationProvider), so app-switch transitions are reflected without
+  // recreating this object.
   return useMemo<RouterInstance>(() => {
     /** Prefix a root-relative path with basename if not already prefixed. */
     function withBasename(url: string): string {

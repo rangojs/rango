@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
 import {
   waitForHydration,
@@ -8,6 +8,28 @@ import {
 } from "./helper";
 
 test.describe.configure({ mode: "serial" });
+
+// rango-state is stored under `rango-state:{routerId}` so sibling apps on
+// the same origin don't collide. Find the namespaced key without hard-coding
+// the router id.
+async function findRangoStateKey(page: Page): Promise<string> {
+  return await page.evaluate(() => {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key === "rango-state" || key?.startsWith("rango-state:")) {
+        return key;
+      }
+    }
+    return "rango-state";
+  });
+}
+
+async function readRangoStateAt(
+  page: Page,
+  key: string,
+): Promise<string | null> {
+  return await page.evaluate((k) => localStorage.getItem(k), key);
+}
 
 // ----- DEV MODE -----
 
@@ -340,6 +362,130 @@ test.describe("multi-router (dev)", () => {
       const crossAppRid = new URL(crossAppReq!).searchParams.get("_rsc_rid");
       expect(crossAppRid).toBe(appARid); // client still thinks it's app-a
     });
+
+    test("cross-app SPA navigation swaps rootLayout without full reload", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+
+      // Baseline: app-a's Document-rendered shell marker is present.
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "a",
+      );
+
+      await using __ = await expectNoReload(page);
+
+      await testId(page, "app-a-nav-app-b").click();
+      await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
+
+      // After app switch, the Document (rootLayout) must be app-b's, not
+      // app-a's closure-captured one.
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "b",
+      );
+    });
+
+    test("back navigation across apps restores previous rootLayout", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+
+      await testId(page, "app-a-nav-app-b").click();
+      await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "b",
+      );
+
+      await page.goBack();
+      await expect(testId(page, "app-a-home")).toBeVisible({ timeout: 10000 });
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "a",
+      );
+    });
+
+    test("cross-tab app isolation: tab2 invalidating A does not clobber tab1's B state", async ({
+      context,
+    }) => {
+      // Two tabs in the same origin share localStorage. Tab 1 smooth-
+      // switches A → B; tab 2 stays in A and simulates a server action
+      // invalidation (writes a rotated A token to app A's namespaced key).
+      // The storage event fires in tab 1, but tab 1 is listening on app B's
+      // key, so its in-memory state must not be overwritten — and its next
+      // SPA request must send B's token, not the rotated A token.
+      const tab1 = await context.newPage();
+      const tab2 = await context.newPage();
+      try {
+        await tab1.goto(f.url("/app-a"));
+        await waitForHydration(tab1);
+        await tab2.goto(f.url("/app-a"));
+        await waitForHydration(tab2);
+
+        const appAKey = await findRangoStateKey(tab2);
+        expect(appAKey).toMatch(/^rango-state:/);
+        const appAInitial = await readRangoStateAt(tab2, appAKey);
+        expect(appAInitial).toBeTruthy();
+
+        // Tab 1: smooth cross-app switch A → B
+        await testId(tab1, "app-a-nav-app-b").click();
+        await expect(testId(tab1, "app-b-home")).toBeVisible({
+          timeout: 10000,
+        });
+        await expect(testId(tab1, "app-shell-marker")).toHaveAttribute(
+          "data-app-shell",
+          "b",
+        );
+
+        // Smooth switch does NOT write localStorage (by design), so we can't
+        // observe tab 1's new namespace via `findRangoStateKey` — localStorage
+        // still holds only app A's key. The behavior we really care about is
+        // that tab 1's in-memory state is isolated from tab 2's writes; that
+        // is asserted below via the sent X-Rango-State header.
+
+        const tab1HeaderPromise = new Promise<string | null>((resolve) => {
+          tab1.on("request", (req) => {
+            const header = req.headerValue("x-rango-state");
+            if (req.url().includes("_rsc_partial") && header) {
+              resolve(header);
+            }
+          });
+        });
+
+        // Tab 2 (still in A) writes a rotated A token — simulating a
+        // server action invalidation. This fires a `storage` event in tab 1,
+        // but the key is app A's namespace, which tab 1 ignores.
+        const rotatedAState = `${appAInitial!.split(":")[0]}:${Date.now() + 999999}`;
+        await tab2.evaluate(
+          ([key, val]) => localStorage.setItem(key, val),
+          [appAKey, rotatedAState],
+        );
+        await tab1.waitForTimeout(150);
+
+        // Tab 1's next SPA navigation must use its own B token, not the
+        // rotated A token. The version prefix MAY match (shared build), so
+        // we compare the full string — only a key-namespace leak would
+        // cause `rotatedAState` to appear here.
+        await testId(tab1, "app-b-nav-page").click();
+        await expect(testId(tab1, "app-b-page")).toBeVisible({
+          timeout: 10000,
+        });
+
+        const sent = await tab1HeaderPromise;
+        expect(sent).not.toBe(rotatedAState);
+      } finally {
+        await tab1.close();
+        await tab2.close();
+      }
+    });
   });
 });
 
@@ -621,6 +767,113 @@ test.describe("multi-router (production)", () => {
       expect(crossAppReq).toBeTruthy();
       const crossAppRid = new URL(crossAppReq!).searchParams.get("_rsc_rid");
       expect(crossAppRid).toBe(appARid);
+    });
+
+    test("cross-app SPA navigation swaps rootLayout without full reload", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "a",
+      );
+
+      await using __ = await expectNoReload(page);
+
+      await testId(page, "app-a-nav-app-b").click();
+      await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
+
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "b",
+      );
+    });
+
+    test("back navigation across apps restores previous rootLayout", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+
+      await testId(page, "app-a-nav-app-b").click();
+      await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "b",
+      );
+
+      await page.goBack();
+      await expect(testId(page, "app-a-home")).toBeVisible({ timeout: 10000 });
+      await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+        "data-app-shell",
+        "a",
+      );
+    });
+
+    test("cross-tab app isolation: tab2 invalidating A does not clobber tab1's B state", async ({
+      context,
+    }) => {
+      const tab1 = await context.newPage();
+      const tab2 = await context.newPage();
+      try {
+        await tab1.goto(f.url("/app-a"));
+        await waitForHydration(tab1);
+        await tab2.goto(f.url("/app-a"));
+        await waitForHydration(tab2);
+
+        const appAKey = await findRangoStateKey(tab2);
+        expect(appAKey).toMatch(/^rango-state:/);
+        const appAInitial = await readRangoStateAt(tab2, appAKey);
+        expect(appAInitial).toBeTruthy();
+
+        await testId(tab1, "app-a-nav-app-b").click();
+        await expect(testId(tab1, "app-b-home")).toBeVisible({
+          timeout: 10000,
+        });
+        await expect(testId(tab1, "app-shell-marker")).toHaveAttribute(
+          "data-app-shell",
+          "b",
+        );
+
+        // Smooth switch does NOT write localStorage (by design), so we can't
+        // observe tab 1's new namespace via `findRangoStateKey` — localStorage
+        // still holds only app A's key. The behavior we really care about is
+        // that tab 1's in-memory state is isolated from tab 2's writes; that
+        // is asserted below via the sent X-Rango-State header.
+
+        const tab1HeaderPromise = new Promise<string | null>((resolve) => {
+          tab1.on("request", (req) => {
+            const header = req.headerValue("x-rango-state");
+            if (req.url().includes("_rsc_partial") && header) {
+              resolve(header);
+            }
+          });
+        });
+
+        const rotatedAState = `${appAInitial!.split(":")[0]}:${Date.now() + 999999}`;
+        await tab2.evaluate(
+          ([key, val]) => localStorage.setItem(key, val),
+          [appAKey, rotatedAState],
+        );
+        await tab1.waitForTimeout(150);
+
+        await testId(tab1, "app-b-nav-page").click();
+        await expect(testId(tab1, "app-b-page")).toBeVisible({
+          timeout: 10000,
+        });
+
+        const sent = await tab1HeaderPromise;
+        expect(sent).not.toBe(rotatedAState);
+      } finally {
+        await tab1.close();
+        await tab2.close();
+      }
     });
   });
 });
