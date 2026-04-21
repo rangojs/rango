@@ -131,22 +131,28 @@ path("/product/:slug", (ctx) => {
 
 Three patterns, in order of preference:
 
+1. Pass as a prop from a server component:
+
 ```tsx
-// 1. Pass as a prop from a server component
 // server
 function BlogPostPage(ctx: HandlerContext) {
   return <ShareButton url={ctx.reverse(".post", { slug: ctx.params.slug })} />;
 }
-
-// client
-"use client";
-export function ShareButton({ url }: { url: string }) {
-  return <button onClick={() => navigator.clipboard.writeText(url)}>Share</button>;
-}
 ```
 
 ```tsx
-// 2. Return from a loader (attached to the route via the DSL)
+"use client";
+
+export function ShareButton({ url }: { url: string }) {
+  return (
+    <button onClick={() => navigator.clipboard.writeText(url)}>Share</button>
+  );
+}
+```
+
+2. Return from a loader (attached to the route via the DSL):
+
+```tsx
 // server — loaders/nav.ts
 export const NavLoader = createLoader((ctx) => ({
   home: ctx.reverse("home"),
@@ -157,9 +163,11 @@ export const NavLoader = createLoader((ctx) => ({
 const urlpatterns = urls(({ path, loader }) => [
   path("/", HomePage, { name: "home" }, () => [loader(NavLoader)]),
 ]);
+```
 
-// client
+```tsx
 "use client";
+
 function Nav() {
   const { data } = useLoader(NavLoader);
   return <Link to={data.home}>Home</Link>;
@@ -168,10 +176,11 @@ function Nav() {
 
 `useLoader()` requires the loader to be attached to an active route. If you need on-demand fetching instead, use `useFetchLoader()`.
 
+3. Return from a server action:
+
 ```tsx
-// 3. Return from a server action
-// server
 "use server";
+
 export async function getProductUrl(slug: string) {
   const ctx = getRequestContext();
   return ctx.reverse("product", { slug });
@@ -247,14 +256,14 @@ function MountInfo() {
 
 ## When to use what
 
-| Context          | API                             | Resolves                        | Use for                             |
-| ---------------- | ------------------------------- | ------------------------------- | ----------------------------------- |
-| Server handler   | `ctx.reverse("name")`           | Named routes (local + absolute) | **Default** server-side URL generation |
-| Server handler   | `scopedReverse<T>(ctx.reverse)` | Same, with type safety          | Type-safe server URLs               |
-| Client component | (URL passed as prop / loader data / action return) | Named routes | Any URL derived from a named route — generate on server, pass in |
-| Client component | `href("/path")`                 | Absolute paths (static strings) | Static navigation where no named-route lookup is needed |
-| Client component | `useHref()`                     | Mount-prefixed paths            | Local navigation inside `include()` |
-| Client component | `useMount()`                    | Raw mount path                  | Custom mount-aware logic            |
+| Context          | API                                                | Resolves                        | Use for                                                          |
+| ---------------- | -------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------- |
+| Server handler   | `ctx.reverse("name")`                              | Named routes (local + absolute) | **Default** server-side URL generation                           |
+| Server handler   | `scopedReverse<T>(ctx.reverse)`                    | Same, with type safety          | Type-safe server URLs                                            |
+| Client component | (URL passed as prop / loader data / action return) | Named routes                    | Any URL derived from a named route — generate on server, pass in |
+| Client component | `href("/path")`                                    | Absolute paths (static strings) | Static navigation where no named-route lookup is needed          |
+| Client component | `useHref()`                                        | Mount-prefixed paths            | Local navigation inside `include()`                              |
+| Client component | `useMount()`                                       | Raw mount path                  | Custom mount-aware logic                                         |
 
 > `reverse()` is server-only. Client components never import or call it — they receive the already-resolved string.
 
