@@ -523,7 +523,7 @@ function BlogIndex(ctx: HandlerContext) {
 }
 
 // client
-"use client";
+("use client");
 import { Link } from "@rangojs/router/client";
 export function Nav({ home, post }: { home: string; post: string }) {
   return (

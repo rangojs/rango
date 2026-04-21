@@ -139,9 +139,11 @@ function BlogPostPage(ctx: HandlerContext) {
 }
 
 // client
-"use client";
+("use client");
 export function ShareButton({ url }: { url: string }) {
-  return <button onClick={() => navigator.clipboard.writeText(url)}>Share</button>;
+  return (
+    <button onClick={() => navigator.clipboard.writeText(url)}>Share</button>
+  );
 }
 ```
 
@@ -159,7 +161,7 @@ const urlpatterns = urls(({ path, loader }) => [
 ]);
 
 // client
-"use client";
+("use client");
 function Nav() {
   const { data } = useLoader(NavLoader);
   return <Link to={data.home}>Home</Link>;
@@ -247,14 +249,14 @@ function MountInfo() {
 
 ## When to use what
 
-| Context          | API                             | Resolves                        | Use for                             |
-| ---------------- | ------------------------------- | ------------------------------- | ----------------------------------- |
-| Server handler   | `ctx.reverse("name")`           | Named routes (local + absolute) | **Default** server-side URL generation |
-| Server handler   | `scopedReverse<T>(ctx.reverse)` | Same, with type safety          | Type-safe server URLs               |
-| Client component | (URL passed as prop / loader data / action return) | Named routes | Any URL derived from a named route — generate on server, pass in |
-| Client component | `href("/path")`                 | Absolute paths (static strings) | Static navigation where no named-route lookup is needed |
-| Client component | `useHref()`                     | Mount-prefixed paths            | Local navigation inside `include()` |
-| Client component | `useMount()`                    | Raw mount path                  | Custom mount-aware logic            |
+| Context          | API                                                | Resolves                        | Use for                                                          |
+| ---------------- | -------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------- |
+| Server handler   | `ctx.reverse("name")`                              | Named routes (local + absolute) | **Default** server-side URL generation                           |
+| Server handler   | `scopedReverse<T>(ctx.reverse)`                    | Same, with type safety          | Type-safe server URLs                                            |
+| Client component | (URL passed as prop / loader data / action return) | Named routes                    | Any URL derived from a named route — generate on server, pass in |
+| Client component | `href("/path")`                                    | Absolute paths (static strings) | Static navigation where no named-route lookup is needed          |
+| Client component | `useHref()`                                        | Mount-prefixed paths            | Local navigation inside `include()`                              |
+| Client component | `useMount()`                                       | Raw mount path                  | Custom mount-aware logic                                         |
 
 > `reverse()` is server-only. Client components never import or call it — they receive the already-resolved string.
 
