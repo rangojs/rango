@@ -27,7 +27,7 @@ Enforcement sites:
     client-side navigation snapshot lookups).
   - **Manifest-load time**, inside async `loadManifest`:
     `src/router/manifest.ts:183`. This one runs in an async context and
-    *could* await, but it is reached only AFTER `findMatch` has already
+    _could_ await, but it is reached only AFTER `findMatch` has already
     resolved the match — so making it async does not help the match-time
     blocker.
 
