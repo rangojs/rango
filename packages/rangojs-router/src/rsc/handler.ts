@@ -31,6 +31,7 @@ import {
   interceptRedirectForPartial,
   buildRouteMiddlewareEntries,
 } from "./helpers.js";
+import { isWebSocketUpgradeResponse } from "../response-utils.js";
 import {
   handleResponseRoute,
   type ResponseRouteMatch,
@@ -533,7 +534,9 @@ export function createRSCHandler<
       }
 
       const fullTiming = timingParts.join(", ");
-      if (fullTiming) response.headers.set("Server-Timing", fullTiming);
+      if (fullTiming && !isWebSocketUpgradeResponse(response)) {
+        response.headers.set("Server-Timing", fullTiming);
+      }
 
       return response;
     });
@@ -804,7 +807,7 @@ export function createRSCHandler<
         );
       }
       const response = responseOutcome.result;
-      if (plan.negotiated) {
+      if (plan.negotiated && !isWebSocketUpgradeResponse(response)) {
         response.headers.append("Vary", "Accept");
       }
       return response;
@@ -1014,7 +1017,7 @@ export function createRSCHandler<
             nonce,
           );
         }
-        if (negotiated) {
+        if (negotiated && !isWebSocketUpgradeResponse(response)) {
           response.headers.append("Vary", "Accept");
         }
         return response;

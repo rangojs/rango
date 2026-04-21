@@ -400,6 +400,14 @@ path(
 Multiple response types can share the same URL pattern. See `/mime-routes` for the
 full content negotiation API (Accept header matching, Vary: Accept, multi-variant routes).
 
+## Long-Lived Responses (SSE / WebSocket)
+
+For Server-Sent Events (`path.stream`) and WebSocket upgrades (`path.any`
+returning a 101 / `webSocket` Response), see `/streams-and-websockets`.
+Upgrade responses flow through without reconstruction; `Vary` and
+`Server-Timing` are skipped, and stub headers are applied in place on a
+best-effort basis.
+
 ## How It Works
 
 1. `path.json()` tags the route at the trie level with a MIME type
