@@ -12,6 +12,7 @@ import { VIRTUAL_IDS } from "./plugins/virtual-entries.js";
 import {
   getExcludeDeps,
   getPackageAliases,
+  getPublishedPackageName,
 } from "./utils/package-resolution.js";
 import { findRouterFiles } from "../build/generate-route-types.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
@@ -72,6 +73,13 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
     "@vitejs/plugin-rsc/vendor/react-server-dom/client.browser",
   ];
 
+  // Vite supports a nested `A > B` syntax in optimizeDeps.include that resolves
+  // B from A's location. We anchor transitive deps (rsc-html-stream,
+  // @vitejs/plugin-rsc/vendor/*) to @rangojs/router so pnpm consumers — where
+  // these aren't visible at the app root — can still pre-bundle them.
+  const pkg = getPublishedPackageName();
+  const nested = (spec: string) => `${pkg} > ${spec}`;
+
   // Mutable ref for router path (node preset only).
   // Set immediately when user-specified, or populated by the auto-discover
   // config() hook using Vite's resolved root.
@@ -126,7 +134,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
               // Pre-bundle rsc-html-stream to prevent discovery during first request
               // Exclude rsc-router modules to ensure same Context instance
               optimizeDeps: {
-                include: ["rsc-html-stream/client"],
+                include: [nested("rsc-html-stream/client")],
                 exclude: excludeDeps,
                 esbuildOptions: sharedEsbuildOptions,
               },
@@ -151,8 +159,10 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   "react-dom/static.edge",
                   "react/jsx-runtime",
                   "react/jsx-dev-runtime",
-                  "rsc-html-stream/server",
-                  "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
+                  nested("rsc-html-stream/server"),
+                  nested(
+                    "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
+                  ),
                 ],
                 exclude: excludeDeps,
                 esbuildOptions: sharedEsbuildOptions,
@@ -167,7 +177,9 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   "react",
                   "react/jsx-runtime",
                   "react/jsx-dev-runtime",
-                  "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
+                  nested(
+                    "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
+                  ),
                 ],
                 exclude: excludeDeps,
                 esbuildOptions: sharedEsbuildOptions,
@@ -280,7 +292,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   "react-dom",
                   "react/jsx-runtime",
                   "react/jsx-dev-runtime",
-                  "rsc-html-stream/client",
+                  nested("rsc-html-stream/client"),
                 ],
                 exclude: excludeDeps,
                 esbuildOptions: sharedEsbuildOptions,
@@ -297,7 +309,9 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   "react-dom/static.edge",
                   "react/jsx-runtime",
                   "react/jsx-dev-runtime",
-                  "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
+                  nested(
+                    "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
+                  ),
                 ],
                 exclude: excludeDeps,
                 esbuildOptions: sharedEsbuildOptions,
@@ -310,7 +324,9 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   "react",
                   "react/jsx-runtime",
                   "react/jsx-dev-runtime",
-                  "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
+                  nested(
+                    "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
+                  ),
                 ],
                 esbuildOptions: sharedEsbuildOptions,
               },
