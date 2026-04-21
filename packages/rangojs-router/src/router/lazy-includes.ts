@@ -1,7 +1,7 @@
 import { registerRouteMap } from "../route-map-builder.js";
 import { extractStaticPrefix } from "./pattern-matching.js";
 import {
-  EntryData,
+  type EntryData,
   RSCRouterContext,
   runWithPrefixes,
   getIsolatedLazyParent,

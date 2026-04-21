@@ -11,6 +11,7 @@
 
 import { contextGet, contextSet } from "../context-var.js";
 import { safeDecodeURIComponent } from "./url-params.js";
+import { fireAndForgetWaitUntil } from "../types/request-scope.js";
 import type {
   CollectedMiddleware,
   MiddlewareCollectableEntry,
@@ -186,14 +187,22 @@ export function createMiddlewareContext<TEnv>(
     return responseHolder.response;
   };
 
+  // Capture reqCtx once: the request-scoped platform fields
+  // (originalUrl, executionContext, waitUntil) are immutable per request,
+  // so snapshotting beats re-reading ALS on every access. The lazy getters
+  // below (routeName, theme, setTheme) stay lazy because those can change
+  // during `await next()`.
+  const reqCtx = _getRequestContext();
   return {
     request,
     url,
-    originalUrl: new URL(request.url),
+    originalUrl: reqCtx?.originalUrl ?? new URL(request.url),
     pathname: url.pathname,
     searchParams: url.searchParams,
     env: env as MiddlewareContext<TEnv>["env"],
     params,
+    executionContext: reqCtx?.executionContext,
+    waitUntil: reqCtx ? reqCtx.waitUntil.bind(reqCtx) : fireAndForgetWaitUntil,
     // Getter: re-derives from request context on each access so that global
     // middleware sees the matched route name after await next().
     get routeName(): MiddlewareContext<TEnv>["routeName"] {

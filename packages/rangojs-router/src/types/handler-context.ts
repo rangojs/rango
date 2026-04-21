@@ -20,6 +20,7 @@ import type {
 } from "./route-config.js";
 import type { LoaderDefinition } from "./loader-types.js";
 import type { UseItems, HandlerUseItem } from "../route-types.js";
+import type { RequestScope } from "./request-scope.js";
 
 // Re-export MiddlewareFn for internal/advanced use
 export type { MiddlewareFn } from "../router/middleware.js";
@@ -195,7 +196,7 @@ export type HandlerContext<
   TEnv = DefaultEnv,
   TSearch extends SearchSchema = {},
   TRouteMap = never,
-> = {
+> = RequestScope<TEnv> & {
   /**
    * Route parameters extracted from the URL pattern.
    * Type-safe when using Handler<"/path/:param"> or Handler<{ param: string }>.
@@ -216,43 +217,10 @@ export type HandlerContext<
    */
   dev: boolean;
   /**
-   * The original incoming Request object (transport URL intact).
-   * Use `ctx.url` / `ctx.searchParams` for application logic — those have
-   * internal `_rsc*` params stripped. `ctx.request` preserves the raw URL
-   * for cases where you need original headers, method, or body.
-   */
-  request: Request;
-  /**
-   * Query parameters from the URL (system params like `_rsc*` are filtered).
-   * Always a standard URLSearchParams instance.
-   */
-  searchParams: URLSearchParams;
-  /**
    * Typed search parameters parsed from URL query string via the route's
    * search schema. Empty object when no schema is defined.
    */
   search: {} extends TSearch ? {} : ResolveSearchSchema<TSearch>;
-  /**
-   * The pathname portion of the request URL.
-   */
-  pathname: string;
-  /**
-   * The full URL object (with internal `_rsc*` params stripped).
-   * Use this for application logic — routing, link generation, display.
-   */
-  url: URL;
-  /**
-   * The original request URL with all parameters intact, including
-   * internal `_rsc*` transport params. Use `ctx.url` for application
-   * logic — this is only needed for advanced cases like debugging
-   * or custom cache keying.
-   */
-  originalUrl: URL;
-  /**
-   * Platform bindings (DB, KV, secrets, etc.).
-   * Access resources like `ctx.env.DB`, `ctx.env.KV`.
-   */
-  env: TEnv;
   /**
    * Type-safe getter for middleware variables.
    * Preferred way to read middleware-injected variables.

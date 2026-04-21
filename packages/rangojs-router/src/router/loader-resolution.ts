@@ -266,7 +266,10 @@ function createLoaderExecutor<TEnv>(
       search: (ctx as any).search,
       pathname: ctx.pathname,
       url: ctx.url,
+      originalUrl: ctx.originalUrl,
       env: ctx.env,
+      waitUntil: ctx.waitUntil.bind(ctx),
+      executionContext: ctx.executionContext,
       get: ((keyOrVar: any) =>
         contextGet(variables, keyOrVar)) as typeof ctx.get,
       use: ((item: LoaderDefinition<any, any> | Handle<any, any>) => {

@@ -67,13 +67,11 @@ export const MAX_REVALIDATION_INTERVAL = 30;
 // Types
 // ============================================================================
 
-/**
- * Cloudflare Workers ExecutionContext (subset we need)
- */
-export interface ExecutionContext {
-  waitUntil(promise: Promise<any>): void;
-  passThroughOnException(): void;
-}
+// Re-exported from the canonical home so cf-cache-store consumers keep
+// importing `ExecutionContext` from this module without a second interface
+// drifting over time.
+export type { ExecutionContext } from "../../types/request-scope.js";
+import type { ExecutionContext } from "../../types/request-scope.js";
 
 /**
  * Minimal Cloudflare KV Namespace interface.

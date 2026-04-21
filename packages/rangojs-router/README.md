@@ -526,6 +526,7 @@ function BlogIndex(ctx: HandlerContext) {
 ```tsx
 "use client";
 import { Link } from "@rangojs/router/client";
+
 export function Nav({ home, post }: { home: string; post: string }) {
   return (
     <nav>

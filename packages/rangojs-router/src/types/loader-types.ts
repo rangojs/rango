@@ -8,6 +8,7 @@ import type {
   DefaultReverseRouteMap,
   DefaultVars,
 } from "./global-namespace.js";
+import type { RequestScope } from "./request-scope.js";
 
 /**
  * Context passed to loader functions during execution
@@ -39,7 +40,7 @@ export type LoaderContext<
   TEnv = DefaultEnv,
   TBody = unknown,
   TSearch extends SearchSchema = {},
-> = {
+> = RequestScope<TEnv> & {
   params: TParams;
   /**
    * Route params extracted from the URL pattern match (server-side only).
@@ -48,12 +49,7 @@ export type LoaderContext<
    * resource scoping.
    */
   routeParams: Record<string, string>;
-  request: Request;
-  searchParams: URLSearchParams;
   search: {} extends TSearch ? {} : ResolveSearchSchema<TSearch>;
-  pathname: string;
-  url: URL;
-  env: TEnv;
   get: {
     <T>(contextVar: ContextVar<T>): T | undefined;
   } & (<K extends keyof DefaultVars>(key: K) => DefaultVars[K]);

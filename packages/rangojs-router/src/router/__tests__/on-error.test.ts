@@ -7,7 +7,7 @@ import type {
 } from "../../types";
 import {
   wrapLoaderWithErrorHandling,
-  LoaderErrorCallback,
+  type LoaderErrorCallback,
 } from "../loader-resolution";
 import { invokeOnError, type InvokeOnErrorContext } from "../error-handling";
 

@@ -131,8 +131,9 @@ path("/product/:slug", (ctx) => {
 
 Three patterns, in order of preference:
 
+1. Pass as a prop from a server component:
+
 ```tsx
-// 1. Pass as a prop from a server component
 // server
 function BlogPostPage(ctx: HandlerContext) {
   return <ShareButton url={ctx.reverse(".post", { slug: ctx.params.slug })} />;
@@ -141,6 +142,7 @@ function BlogPostPage(ctx: HandlerContext) {
 
 ```tsx
 "use client";
+
 export function ShareButton({ url }: { url: string }) {
   return (
     <button onClick={() => navigator.clipboard.writeText(url)}>Share</button>
@@ -148,8 +150,9 @@ export function ShareButton({ url }: { url: string }) {
 }
 ```
 
+2. Return from a loader (attached to the route via the DSL):
+
 ```tsx
-// 2. Return from a loader (attached to the route via the DSL)
 // server — loaders/nav.ts
 export const NavLoader = createLoader((ctx) => ({
   home: ctx.reverse("home"),
@@ -164,6 +167,7 @@ const urlpatterns = urls(({ path, loader }) => [
 
 ```tsx
 "use client";
+
 function Nav() {
   const { data } = useLoader(NavLoader);
   return <Link to={data.home}>Home</Link>;
@@ -172,10 +176,11 @@ function Nav() {
 
 `useLoader()` requires the loader to be attached to an active route. If you need on-demand fetching instead, use `useFetchLoader()`.
 
+3. Return from a server action:
+
 ```tsx
-// 3. Return from a server action
-// server
 "use server";
+
 export async function getProductUrl(slug: string) {
   const ctx = getRequestContext();
   return ctx.reverse("product", { slug });

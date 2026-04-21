@@ -24,6 +24,7 @@ export const NamedRoutes = {
   "kanban.card": "/kanban/card/:cardId",
   "kanban.index": "/kanban",
   "loaders.index": "/loaders",
+  "loaders.reverse": "/loaders/reverse",
   "loaders.stats": "/loaders/stats",
   "magazine.article": "/magazine/:slug",
   "magazine.author": "/magazine/author/:authorSlug",

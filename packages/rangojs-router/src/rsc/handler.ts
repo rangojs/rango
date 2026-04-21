@@ -57,6 +57,7 @@ import {
   getRouterTrie,
 } from "../route-map-builder.js";
 import type { HandlerContext } from "./handler-context.js";
+import type { SegmentCacheStore } from "../cache/types.js";
 import { buildRouterTrieFromUrlpatterns } from "./manifest-init.js";
 import { handleProgressiveEnhancement } from "./progressive-enhancement.js";
 import {
@@ -353,7 +354,7 @@ export function createRSCHandler<
     // Resolve cache store configuration
     // Priority: options.cache (handler override) > router.cache (router default)
     // Store is enabled only if: config provided, enabled, and no ?__no_cache query param
-    let cacheStore = undefined;
+    let cacheStore: SegmentCacheStore | undefined;
     const cacheOption = options.cache ?? router.cache;
     if (cacheOption && !url.searchParams.has("__no_cache")) {
       const cacheConfig =
