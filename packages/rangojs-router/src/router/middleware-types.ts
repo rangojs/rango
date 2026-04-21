@@ -14,6 +14,7 @@ import type {
 import type { ScopedReverseFunction } from "../reverse.js";
 import type { Theme } from "../theme/types.js";
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
+import type { RequestScope } from "../types/request-scope.js";
 
 /**
  * Get variable function type
@@ -57,28 +58,7 @@ export interface CookieOptions {
 export interface MiddlewareContext<
   TEnv = any,
   TParams = Record<string, string>,
-> {
-  /** Original request */
-  request: Request;
-
-  /** Parsed URL (with internal `_rsc*` params stripped) */
-  url: URL;
-
-  /**
-   * The original request URL with all parameters intact, including
-   * internal `_rsc*` transport params.
-   */
-  originalUrl: URL;
-
-  /** URL pathname */
-  pathname: string;
-
-  /** URL search params */
-  searchParams: URLSearchParams;
-
-  /** Platform bindings (Cloudflare, etc.) */
-  env: TEnv;
-
+> extends RequestScope<TEnv> {
   /** URL params extracted from route/middleware pattern */
   params: TParams;
 

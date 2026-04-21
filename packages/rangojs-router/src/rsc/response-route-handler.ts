@@ -80,10 +80,13 @@ export async function handleResponseRoute<TEnv>(
     env,
     searchParams: cleanUrl.searchParams,
     url: cleanUrl,
+    originalUrl: reqCtx.originalUrl,
     pathname: url.pathname,
     reverse: createReverseFunction(handlerCtx.getRequiredRouteMap()),
     get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
     header: (name: string, value: string) => reqCtx.header(name, value),
+    waitUntil: reqCtx.waitUntil.bind(reqCtx),
+    executionContext: reqCtx.executionContext,
     _responseType: preview.responseType,
   };
   // Brand with taint symbol so "use cache" detects it as request-scoped
