@@ -13,6 +13,7 @@ import {
   interceptRedirectForPartial,
   carryOverRedirectHeaders,
 } from "../helpers.js";
+import { isWebSocketUpgradeResponse } from "../../response-utils.js";
 
 describe("createResponseWithMergedHeaders", () => {
   it("should create response without context", () => {
@@ -992,5 +993,98 @@ describe("carryOverRedirectHeaders", () => {
 
     expect(target.headers.get("content-type")).toBe("text/x-component");
     expect(target.headers.get("X-Source")).toBe("original");
+  });
+});
+
+describe("isWebSocketUpgradeResponse", () => {
+  // Node's Response constructor rejects status outside 200–599 (RangeError),
+  // so we fabricate an upgrade-style Response by overriding `.status` on a
+  // real Response instance. This mirrors what workerd produces for a real WS
+  // upgrade via `acceptWebSocket` / `handleWebSocketUpgrade` / the `agents`
+  // library's `routeAgentRequest`.
+  const fabricate = (opts: { status101?: boolean; webSocket?: unknown }) => {
+    const response = new Response(null, { status: 200 });
+    if (opts.status101) {
+      Object.defineProperty(response, "status", {
+        value: 101,
+        configurable: true,
+      });
+    }
+    if (opts.webSocket !== undefined) {
+      Object.defineProperty(response, "webSocket", {
+        value: opts.webSocket,
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      });
+    }
+    return response;
+  };
+
+  it("returns true for status 101", () => {
+    const response = fabricate({ status101: true });
+    expect(isWebSocketUpgradeResponse(response)).toBe(true);
+  });
+
+  it("returns true when a webSocket property is attached (workerd pattern)", () => {
+    // Status 200 + webSocket property — the workerd response shape where
+    // we cannot rely on status alone because workerd relaxes the 200–599
+    // range but consumers may not see the final 101 yet.
+    const response = fabricate({ webSocket: { stub: "ws" } });
+    expect(isWebSocketUpgradeResponse(response)).toBe(true);
+  });
+
+  it("returns true for both status 101 and webSocket property together", () => {
+    const response = fabricate({ status101: true, webSocket: { stub: "ws" } });
+    expect(isWebSocketUpgradeResponse(response)).toBe(true);
+  });
+
+  it("returns false for an ordinary 200 JSON response", () => {
+    const response = new Response('{"ok":true}', {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+    expect(isWebSocketUpgradeResponse(response)).toBe(false);
+  });
+
+  it("returns false for a streaming SSE-style 200 response (no webSocket property)", () => {
+    // SSE uses text/event-stream + ReadableStream body + status 200 — it
+    // must NOT be treated as an upgrade. This guards against a regression
+    // where the check accidentally matches streaming bodies.
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("data: hello\n\n"));
+        controller.close();
+      },
+    });
+    const response = new Response(stream, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+    expect(isWebSocketUpgradeResponse(response)).toBe(false);
+  });
+
+  it("returns false for 3xx redirects", () => {
+    const response = new Response(null, {
+      status: 302,
+      headers: { location: "/elsewhere" },
+    });
+    expect(isWebSocketUpgradeResponse(response)).toBe(false);
+  });
+
+  it("returns false for error responses (4xx, 5xx)", () => {
+    expect(
+      isWebSocketUpgradeResponse(new Response(null, { status: 404 })),
+    ).toBe(false);
+    expect(
+      isWebSocketUpgradeResponse(new Response(null, { status: 500 })),
+    ).toBe(false);
+  });
+
+  it("ignores a webSocket property explicitly set to null", () => {
+    // `!= null` must exclude both undefined and null — avoid a false-positive
+    // when some library sets `response.webSocket = null` as a sentinel.
+    const response = fabricate({ webSocket: null });
+    expect(isWebSocketUpgradeResponse(response)).toBe(false);
   });
 });
