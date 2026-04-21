@@ -19,6 +19,7 @@ import {
 } from "./response-adapter.js";
 import {
   buildPrefetchKey,
+  buildSourceKey,
   consumeInflightPrefetch,
   consumePrefetch,
 } from "./prefetch/cache.js";
@@ -30,8 +31,10 @@ import {
  * deserializing the response using the RSC runtime.
  *
  * Checks the in-memory prefetch cache before making a network request.
- * The cache key is source-dependent (includes the previous URL) so
- * prefetch responses match the exact diff the server would produce.
+ * Tries the source-scoped key first (populated when the server tagged
+ * the response as source-sensitive via `X-RSC-Prefetch-Scope: source`)
+ * and falls back to the Rango-state-keyed wildcard slot used for the
+ * common source-agnostic case.
  *
  * @param deps - RSC browser dependencies (createFromFetch)
  * @returns NavigationClient instance
@@ -93,17 +96,19 @@ export function createNavigationClient(
         fetchUrl.searchParams.set("_rsc_rid", routerId);
       }
 
-      // Check completed in-memory prefetch cache before making a network request.
-      // The cache key includes the source URL (previousUrl) because the
-      // server's diff response depends on the source page context.
+      // Check completed in-memory prefetch cache before making a network
+      // request. Try the source-scoped key first (populated when the server
+      // tagged the prefetch response as source-sensitive, e.g. intercepts,
+      // or when a Link opted in with `prefetchKey=":source"`), then fall
+      // back to the wildcard slot shared across source pages.
+      // Both keys embed the Rango state, so state rotation (deploy or
+      // server-action invalidation) auto-invalidates both scopes.
       // Skip cache for stale revalidation (needs fresh data), HMR (needs
       // fresh modules), and intercept contexts (source-dependent responses).
-      //
       const canUsePrefetch = !staleRevalidation && !hmr && !interceptSourceUrl;
-      const cacheKey = buildPrefetchKey(previousUrl, fetchUrl);
-      // Wildcard key matches prefetch entries stored with a custom prefetchKey
-      // (Link's prefetchKey prop stores under "*" instead of the source URL).
-      const wildcardKey = "*\0" + fetchUrl.pathname + fetchUrl.search;
+      const rangoState = getRangoState();
+      const wildcardKey = buildPrefetchKey(rangoState, fetchUrl);
+      const cacheKey = buildSourceKey(rangoState, previousUrl, fetchUrl);
 
       let cachedResponse: Response | null = null;
       let hitKey: string | null = null;
@@ -244,10 +249,28 @@ export function createNavigationClient(
             wildcard: hitKey === wildcardKey,
           });
         }
+        const adoptedViaWildcard = hitKey === wildcardKey;
         responsePromise = inflightResponsePromise.then(async (response) => {
           if (!response) {
             if (tx) {
               browserDebugLog(tx, "inflight prefetch unavailable, refetching");
+            }
+            return doFreshFetch();
+          }
+
+          // Cross-source safety: an inflight promise adopted via the
+          // wildcard key may turn out to be source-scoped (server emitted
+          // `X-RSC-Prefetch-Scope: source`), which means it was built for
+          // a different source page. Discard and refetch.
+          if (
+            adoptedViaWildcard &&
+            response.headers.get("x-rsc-prefetch-scope") === "source"
+          ) {
+            if (tx) {
+              browserDebugLog(
+                tx,
+                "wildcard inflight turned out source-scoped, refetching",
+              );
             }
             return doFreshFetch();
           }

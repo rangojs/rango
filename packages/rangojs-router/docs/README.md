@@ -62,3 +62,6 @@ details, but they are not the first stop for learning the public API.
 
 - [Prerender passthrough action plan](./internal/prerender-passthrough-action-plan.md)
   - superseded — documents the migration from `{ passthrough: true }` to `Passthrough()` wrapper
+- [Why include() is synchronous](./internal/why-includes-is-sync.md) -
+  design rationale for the `UrlPatterns`-only `include()` signature and
+  the trie/reverse-map/type-gen/prerender invariants it protects

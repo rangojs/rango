@@ -152,6 +152,74 @@ describe("response-route-handler", () => {
     });
   });
 
+  describe("rewrapResponse handles WebSocket upgrade responses", () => {
+    it("preserves the webSocket property on WebSocket upgrade responses", async () => {
+      const handlerCtx = createMockHandlerCtx();
+      const testEnv = createTestEnv();
+      const ctx = createRequestContext(testEnv);
+
+      // Simulate a Cloudflare Workers WebSocket upgrade response.
+      // Can't actually construct status 101 in Node (out of range), so use
+      // the webSocket-property sentinel on a status-200 Response — the
+      // short-circuit must still return the same object with the property
+      // intact.
+      const fakeSocket = { accept: () => {} };
+      const original = new Response(null, { status: 200 });
+      (original as unknown as { webSocket: unknown }).webSocket = fakeSocket;
+
+      const preview: ResponseRouteMatch = {
+        responseType: "any",
+        handler: () => original,
+        params: {},
+      };
+
+      const response = await runWithRequestContext(ctx, () =>
+        handleResponseRoute(
+          handlerCtx,
+          preview,
+          testEnv.request,
+          testEnv.env,
+          testEnv.url,
+          testEnv.variables,
+        ),
+      );
+
+      expect((response as unknown as { webSocket: unknown }).webSocket).toBe(
+        fakeSocket,
+      );
+    });
+  });
+
+  describe("rewrapResponse honors ctx.setStatus() override on null-body responses", () => {
+    it("applies setStatus(404) when handler returns 204", async () => {
+      const handlerCtx = createMockHandlerCtx();
+      const testEnv = createTestEnv();
+      const ctx = createRequestContext(testEnv);
+
+      const preview: ResponseRouteMatch = {
+        responseType: "any",
+        handler: () => {
+          ctx.setStatus(404);
+          return new Response(null, { status: 204 });
+        },
+        params: {},
+      };
+
+      const response = await runWithRequestContext(ctx, () =>
+        handleResponseRoute(
+          handlerCtx,
+          preview,
+          testEnv.request,
+          testEnv.env,
+          testEnv.url,
+          testEnv.variables,
+        ),
+      );
+
+      expect(response.status).toBe(404);
+    });
+  });
+
   describe("onResponse callbacks run on uncached response routes", () => {
     it("fires onResponse callback for uncached response route", async () => {
       const handlerCtx = createMockHandlerCtx();

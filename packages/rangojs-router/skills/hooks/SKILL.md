@@ -687,7 +687,7 @@ function MountInfo() {
 }
 ```
 
-See `/links` for full URL generation guide including server-side `ctx.reverse`.
+See `/links` for full URL generation guide. The default server API is `ctx.reverse()`; in client components, receive URLs as props, loader data, or server-action return values — `reverse()` is not available in the browser.
 
 ## Hook Summary
 

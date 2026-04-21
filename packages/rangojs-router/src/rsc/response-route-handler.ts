@@ -26,7 +26,9 @@ import {
   finalizeResponse,
   isCacheableStatus,
   buildRouteMiddlewareEntries,
+  mergeStubHeadersAndFinalize,
 } from "./helpers.js";
+import { isWebSocketUpgradeResponse } from "../response-utils.js";
 
 export interface ResponseRouteMatch {
   responseType: string;
@@ -96,6 +98,12 @@ export async function handleResponseRoute<TEnv>(
     // so that stub headers (cookies, custom headers set via ctx.header()) are included.
     // Use Headers (not Record<string, string>) to preserve duplicate entries like Set-Cookie.
     const rewrapResponse = (result: Response) => {
+      // 204/205/304 are NOT short-circuited — they're valid for the Response
+      // constructor and must honor ctx.setStatus() overrides. Only upgrade
+      // responses (status 101 / `webSocket` property) bypass reconstruction.
+      if (isWebSocketUpgradeResponse(result)) {
+        return mergeStubHeadersAndFinalize(result);
+      }
       const headers = new Headers();
       result.headers.forEach((value, key) => {
         if (key.toLowerCase() === "set-cookie") {
@@ -196,7 +204,9 @@ export async function handleResponseRoute<TEnv>(
   // Wrap callHandler to append Vary: Accept on content-negotiated responses
   const callHandlerWithVary = async () => {
     const response = await callHandler();
-    if (preview.negotiated) {
+    if (preview.negotiated && !isWebSocketUpgradeResponse(response)) {
+      // Skip Vary on upgrade responses: headers are semantically immutable
+      // on some runtimes, and Vary is meaningless for a 101 response.
       response.headers.append("Vary", "Accept");
     }
     return response;
