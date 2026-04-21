@@ -14,6 +14,22 @@ import { waitForHydration } from "./helper";
  * (keyed by the old X-Rango-State via Vary) will miss, forcing fresh data.
  */
 
+// rango-state is stored under a per-router namespaced localStorage key
+// (`rango-state:{routerId}`) so sibling apps on the same origin don't
+// collide. Legacy single-app setups still use the unnamespaced key. The
+// helper locates whichever key the app wrote.
+async function readRangoState(page: Page): Promise<string | null> {
+  return await page.evaluate(() => {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key === "rango-state" || key?.startsWith("rango-state:")) {
+        return localStorage.getItem(key);
+      }
+    }
+    return null;
+  });
+}
+
 async function testRangoStateRotatesAfterAction(
   page: Page,
   url: (path: string) => string,
@@ -23,9 +39,7 @@ async function testRangoStateRotatesAfterAction(
   await waitForHydration(page);
 
   // Read the initial rango-state from localStorage
-  const initialState = await page.evaluate(() =>
-    localStorage.getItem("rango-state"),
-  );
+  const initialState = await readRangoState(page);
   expect(initialState).toBeTruthy();
   const [initialVersion, initialTimestamp] = initialState!.split(":");
   expect(initialVersion).toBeTruthy();
@@ -42,9 +56,7 @@ async function testRangoStateRotatesAfterAction(
   );
 
   // Read the rotated rango-state
-  const rotatedState = await page.evaluate(() =>
-    localStorage.getItem("rango-state"),
-  );
+  const rotatedState = await readRangoState(page);
   expect(rotatedState).toBeTruthy();
   const [rotatedVersion, rotatedTimestamp] = rotatedState!.split(":");
 
@@ -78,9 +90,7 @@ async function testRangoStateSurvivesRefresh(
   await page.goto(url("/"));
   await waitForHydration(page);
 
-  const initialState = await page.evaluate(() =>
-    localStorage.getItem("rango-state"),
-  );
+  const initialState = await readRangoState(page);
   expect(initialState).toBeTruthy();
 
   // Full page refresh
@@ -88,9 +98,7 @@ async function testRangoStateSurvivesRefresh(
   await waitForHydration(page);
 
   // rango-state should be preserved (same version prefix → kept by initRangoState)
-  const afterRefresh = await page.evaluate(() =>
-    localStorage.getItem("rango-state"),
-  );
+  const afterRefresh = await readRangoState(page);
   expect(afterRefresh).toBe(initialState);
 }
 
@@ -101,9 +109,7 @@ async function testInvalidatedStateSurvivesRefresh(
   await page.goto(url("/loader-cookie/action-sets-cookie"));
   await waitForHydration(page);
 
-  const initialState = await page.evaluate(() =>
-    localStorage.getItem("rango-state"),
-  );
+  const initialState = await readRangoState(page);
 
   // Trigger action to rotate the state
   await page.click('[data-testid="action-set-cookie-btn"]');
@@ -111,18 +117,14 @@ async function testInvalidatedStateSurvivesRefresh(
     '[data-testid="action-set-cookie-btn"]:not([disabled])',
   );
 
-  const rotatedState = await page.evaluate(() =>
-    localStorage.getItem("rango-state"),
-  );
+  const rotatedState = await readRangoState(page);
   expect(rotatedState).not.toBe(initialState);
 
   // Refresh the page — rotated state should survive (same version prefix)
   await page.reload();
   await waitForHydration(page);
 
-  const afterRefresh = await page.evaluate(() =>
-    localStorage.getItem("rango-state"),
-  );
+  const afterRefresh = await readRangoState(page);
   expect(afterRefresh).toBe(rotatedState);
 
   // Navigation after refresh should still use the rotated state

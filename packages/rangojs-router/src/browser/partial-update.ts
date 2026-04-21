@@ -41,6 +41,13 @@ export interface PartialUpdateConfig {
   ) => Promise<ReactNode> | ReactNode;
   /** RSC version getter — returns the current version (may change after HMR) */
   getVersion?: () => string | undefined;
+  /**
+   * Replace the active app-shell when a cross-app navigation is detected.
+   * Called before the full-update tree replacement renders, so the new
+   * payload's rootLayout, basename, and version are picked up. Theme,
+   * warmup, and prefetch TTL are not part of the shell — see AppShell.
+   */
+  applyAppShell?: (next: import("./app-shell.js").AppShell) => void;
 }
 
 /**
@@ -110,6 +117,7 @@ export function createPartialUpdater(
     onUpdate,
     renderSegments,
     getVersion = () => undefined,
+    applyAppShell,
   } = config;
 
   /**
@@ -228,7 +236,12 @@ export function createPartialUpdater(
     // Detect app switch: if routerId changed, the navigation crossed into
     // a different router (e.g., via host router path mount). Downgrade
     // partial to full so the entire tree is replaced without reconciliation
-    // against stale segments from the previous app.
+    // against stale segments from the previous app, and replace the app
+    // shell (rootLayout, basename, version) so the target app's document
+    // and router config take effect instead of remaining captured from the
+    // initial load. Theme, warmup, and prefetch TTL are intentionally
+    // document-lifetime (see AppShell doc); a new document navigation
+    // applies them.
     if (payload.metadata?.routerId) {
       const prevRouterId = store.getRouterId?.();
       if (prevRouterId && prevRouterId !== payload.metadata.routerId) {
@@ -236,6 +249,12 @@ export function createPartialUpdater(
           `[Browser] App switch detected (${prevRouterId} → ${payload.metadata.routerId}), forcing full update`,
         );
         payload.metadata.isPartial = false;
+        applyAppShell?.({
+          routerId: payload.metadata.routerId,
+          rootLayout: payload.metadata.rootLayout,
+          basename: payload.metadata.basename,
+          version: payload.metadata.version,
+        });
       }
       store.setRouterId?.(payload.metadata.routerId);
     }
