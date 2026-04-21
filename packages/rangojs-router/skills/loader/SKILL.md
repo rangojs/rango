@@ -139,7 +139,29 @@ same memoized result — loaders never run twice per request.
 
 ## Loader Context
 
-Loaders receive the same context as route handlers:
+Loaders receive the same context shape as route handlers.
+
+### Full field surface
+
+| Field          | Type                           | Notes                                                                                               |
+| -------------- | ------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `params`       | `TParams`                      | Merged route + explicit loader params; overridable by fetchable `load({ params })`.                 |
+| `routeParams`  | `Record<string, string>`       | Server-trusted route params from URL pattern matching; cannot be overridden.                        |
+| `request`      | `Request`                      | The incoming `Request` (headers, method, body, `signal` for abort).                                 |
+| `url`          | `URL`                          | Parsed request URL.                                                                                 |
+| `pathname`     | `string`                       | URL pathname (shortcut for `ctx.url.pathname`).                                                     |
+| `searchParams` | `URLSearchParams`              | Shortcut for `ctx.url.searchParams`.                                                                |
+| `search`       | `ResolveSearchSchema<TSearch>` | Typed query params when a search schema is declared on the route; `{}` otherwise.                   |
+| `env`          | `TEnv`                         | Plain bindings from `createRouter<TEnv>()` (DB, KV, secrets, etc.).                                 |
+| `get`          | `(key \| ContextVar) => value` | Reads variables/context-vars set by middleware.                                                     |
+| `use`          | `(loader \| handle) => T`      | Access another loader's data (Promise) or a handle's collected data (after `await ctx.rendered()`). |
+| `rendered`     | `() => Promise<void>`          | **Experimental.** DSL loaders only — waits for non-loader segments before reading handle data.      |
+| `method`       | `string`                       | HTTP method. `"GET"` for SSR loader runs; reflects real method for fetchable loaders.               |
+| `body`         | `TBody \| undefined`           | Parsed request body for fetchable POST/PUT/PATCH/DELETE calls.                                      |
+| `formData`     | `FormData \| undefined`        | Present when a fetchable loader is invoked via form submission.                                     |
+| `reverse`      | `ScopedReverseFunction`        | Generate type-checked URLs from route names (same scoped semantics as route handlers).              |
+
+### Example
 
 ```typescript
 export const ProductLoader = createLoader(async (ctx) => {
@@ -163,9 +185,20 @@ export const ProductLoader = createLoader(async (ctx) => {
   // Variables set by middleware (from RSCRouter.Vars augmentation)
   const user = ctx.get("user");
 
-  return { product: await fetchProduct(slug) };
+  // Type-checked URLs for payloads. `.name` resolves within the current
+  // include() scope; a bare `name` resolves globally. See /route and
+  // /typesafety for scope rules and route-name autocomplete.
+  const detailUrl = ctx.reverse(".detail", { slug });
+
+  return {
+    product: await fetchProduct(slug),
+    links: { self: detailUrl },
+  };
 });
 ```
+
+See `/route` for the full handler-context contract (shared with loaders) and
+`/typesafety` for route-name typing that powers `ctx.reverse` autocomplete.
 
 ### params vs routeParams
 
