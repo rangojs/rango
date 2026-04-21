@@ -298,9 +298,11 @@ path("/dashboard", (ctx) => {
   push({ label: "Dashboard", href: "/dashboard" });
   return <DashboardNav handle={Breadcrumbs} />;
 });
+```
 
+```tsx
 // Client component — typeof infers the full Handle<T> type
-("use client");
+"use client";
 import { useHandle, type Breadcrumbs } from "@rangojs/router/client";
 
 function DashboardNav({ handle }: { handle: typeof Breadcrumbs }) {

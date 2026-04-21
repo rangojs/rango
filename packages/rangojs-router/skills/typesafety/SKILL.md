@@ -462,9 +462,11 @@ export const ProductLoader = createLoader(async (ctx) => {
 });
 
 // Built-in Breadcrumbs — or any custom handle created with createHandle()
+```
 
+```tsx
 // Client component — typeof infers all generics
-("use client");
+"use client";
 import { useLoader, useHandle, type Breadcrumbs } from "@rangojs/router/client";
 import type { ProductLoader } from "../loaders";
 

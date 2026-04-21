@@ -137,9 +137,10 @@ Three patterns, in order of preference:
 function BlogPostPage(ctx: HandlerContext) {
   return <ShareButton url={ctx.reverse(".post", { slug: ctx.params.slug })} />;
 }
+```
 
-// client
-("use client");
+```tsx
+"use client";
 export function ShareButton({ url }: { url: string }) {
   return (
     <button onClick={() => navigator.clipboard.writeText(url)}>Share</button>
@@ -159,9 +160,10 @@ export const NavLoader = createLoader((ctx) => ({
 const urlpatterns = urls(({ path, loader }) => [
   path("/", HomePage, { name: "home" }, () => [loader(NavLoader)]),
 ]);
+```
 
-// client
-("use client");
+```tsx
+"use client";
 function Nav() {
   const { data } = useLoader(NavLoader);
   return <Link to={data.home}>Home</Link>;
