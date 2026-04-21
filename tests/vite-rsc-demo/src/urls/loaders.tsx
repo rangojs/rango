@@ -2,9 +2,13 @@ import { urls, Meta } from "@rangojs/router";
 import {
   LoadersDemoLayout,
   LoadersIndexPage,
+  LoadersReversePage,
   LoadersStatsPage,
 } from "../pages/loaders-demo.js";
-import { UsersLoader } from "../handlers/loaders-demo/loaders.js";
+import {
+  ReverseUrlsLoader,
+  UsersLoader,
+} from "../handlers/loaders-demo/loaders.js";
 
 export const loadersPatterns = urls(({ path, layout, loader, revalidate }) => [
   layout(
@@ -27,6 +31,9 @@ export const loadersPatterns = urls(({ path, layout, loader, revalidate }) => [
 
       path("/", LoadersIndexPage, { name: "index" }),
       path("/stats", LoadersStatsPage, { name: "stats" }),
+      path("/reverse", LoadersReversePage, { name: "reverse" }, () => [
+        loader(ReverseUrlsLoader),
+      ]),
     ],
   ),
 ]);

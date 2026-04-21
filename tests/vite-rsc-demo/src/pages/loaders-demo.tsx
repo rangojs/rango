@@ -11,6 +11,7 @@ import {
   NotesManager,
   FileUploader,
   ChatStream,
+  ReverseUrlsDisplay,
 } from "../handlers/loaders-demo/components.js";
 import { reverse } from "../router.js";
 
@@ -69,6 +70,18 @@ export function LoadersDemoLayout() {
           >
             Stats (useFetchLoader)
           </Link>
+          <Link
+            to={reverse("loaders.reverse")}
+            style={{
+              padding: "0.5rem 1rem",
+              background: "#10b981",
+              color: "white",
+              borderRadius: "6px",
+              textDecoration: "none",
+            }}
+          >
+            Reverse (ctx.reverse)
+          </Link>
         </nav>
 
         <Outlet />
@@ -126,6 +139,22 @@ export function LoadersIndexPage() {
           Notice how the call count increments - the loader runs on each
           navigation.
         </div>
+      </div>
+    </DebugSegmentWrapper>
+  );
+}
+
+export function LoadersReversePage() {
+  return (
+    <DebugSegmentWrapper type="route" name="Loaders Reverse">
+      <div>
+        <h2>ctx.reverse inside a loader</h2>
+        <p style={{ color: "#6b7280", marginBottom: "1.5rem" }}>
+          The <code>ReverseUrlsLoader</code> runs on the server and calls{" "}
+          <code>ctx.reverse</code> to resolve URLs for local, global, and
+          parameterized named routes.
+        </p>
+        <ReverseUrlsDisplay />
       </div>
     </DebugSegmentWrapper>
   );
