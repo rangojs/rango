@@ -324,6 +324,18 @@ export async function revalidationContractAction(): Promise<void> {
 }
 
 /**
+ * No-op action used by the loader handler.use e2e fixture to trigger the
+ * router's default "revalidate on action" flow. If the loader's
+ * handler.use-attached revalidate rule is honored, the loader must not rerun.
+ */
+export async function handlerUseLoaderAction(): Promise<void> {
+  cookies().set("handler-use-loader-action", "fired", {
+    path: "/",
+    maxAge: 86400,
+  });
+}
+
+/**
  * Middleware chain test action.
  * Sets a cookie, a context variable, and a response header.
  * Exercises action writes across all three channels so the

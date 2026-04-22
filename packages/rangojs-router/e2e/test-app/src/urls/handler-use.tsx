@@ -7,9 +7,14 @@ import {
   loading,
   revalidate,
   parallel,
+  intercept,
+  layout,
+  when,
+  cookies,
 } from "@rangojs/router";
 import { Outlet, ParallelOutlet, Link } from "@rangojs/router/client";
 import type { Handler } from "@rangojs/router";
+import { handlerUseLoaderAction } from "../actions.js";
 
 // ---------------------------------------------------------------------------
 // Loaders & context vars
@@ -299,6 +304,90 @@ const ThreeLayerPage: Handler<"/handler-use/three-layer"> = () => (
   </div>
 );
 
+// -- Loader handler.use: revalidate rule attaches and is invoked on action
+
+// Module-scoped spy — the router calls our revalidate rule when the page
+// revalidates after an action, but only if handler.use on the loader
+// definition is honored at mount time. `ctx.use` bypasses the skip decision,
+// so we observe attachment via invocation count rather than loader-rerun.
+let revalidateCallCount = 0;
+
+export const StableLoader = createLoader(async () => ({
+  ts: `${Date.now()}-${Math.random()}`,
+}));
+StableLoader.use = () => [
+  revalidate(() => {
+    revalidateCallCount += 1;
+    return false;
+  }),
+];
+
+const LoaderHandlerUsePage: Handler<"/handler-use/loader-use"> = async (
+  ctx,
+) => {
+  await ctx.use(StableLoader);
+  const actionCookie =
+    cookies().get("handler-use-loader-action")?.value ?? "none";
+  return (
+    <div data-testid="loader-use-page">
+      <h1 data-testid="loader-use-title">Loader Handler Use Test</h1>
+      <p data-testid="loader-use-reval-count">{revalidateCallCount}</p>
+      <p data-testid="loader-use-action-cookie">{actionCookie}</p>
+      <form action={handlerUseLoaderAction}>
+        <button type="submit" data-testid="loader-use-action-btn">
+          Trigger action
+        </button>
+      </form>
+    </div>
+  );
+};
+
+// -- Intercept handler.use: middleware attached via .use fires on intercept --
+
+const InterceptMwVar = createVar<string>();
+
+const InterceptModalLayout: Handler = () => (
+  <div data-testid="intercept-modal-layout">
+    <Outlet />
+    <ParallelOutlet name="@modal" />
+  </div>
+);
+
+const InterceptSourcePage: Handler<"/handler-use/intercept-source"> = () => (
+  <div data-testid="intercept-source-page">
+    <h2 data-testid="intercept-source-title">Intercept Source</h2>
+    <Link
+      to="/handler-use/intercept-target"
+      data-testid="link-intercept-target"
+    >
+      Open Target
+    </Link>
+  </div>
+);
+
+const InterceptTargetPage: Handler<"/handler-use/intercept-target"> = () => (
+  <div data-testid="intercept-target-page">
+    <h2 data-testid="intercept-target-title">Intercept Target (full)</h2>
+  </div>
+);
+
+// Intercept handler with .use — middleware sets a context var the handler reads.
+// If intercept() honors handler.use, the rendered value reflects the mw write.
+const InterceptedModal: Handler = (ctx) => {
+  const value = ctx.get(InterceptMwVar);
+  return (
+    <div data-testid="intercepted-modal">
+      <span data-testid="intercepted-modal-value">{value ?? "NO-VALUE"}</span>
+    </div>
+  );
+};
+InterceptedModal.use = () => [
+  middleware(async (ctx, next) => {
+    ctx.set(InterceptMwVar, "intercept-mw-ran");
+    await next();
+  }),
+];
+
 // ---------------------------------------------------------------------------
 // Route patterns
 // ---------------------------------------------------------------------------
@@ -406,6 +495,31 @@ export const handlerUsePatterns = urls(({ path, layout, parallel }) => [
         // shared layer (broadcast, but only one slot here)
         () => [loader(ThreeLayerSharedLoader)],
       ),
+    ]),
+
+    // Loader handler.use: revalidate rule attached on the loader definition
+    // must reach the loader entry so the router invokes it during an
+    // action-triggered revalidation. The page renders the rule's call count.
+    path("/loader-use", LoaderHandlerUsePage, { name: "loaderUse" }, () => [
+      loader(StableLoader),
+    ]),
+
+    // Intercept handler.use: middleware attached on the intercept handler must
+    // flow through to the intercept entry so it runs when the intercept fires.
+    // The handler reads the mw-set ctx var; if handler.use is ignored, the
+    // rendered value is "NO-VALUE" instead of "intercept-mw-ran".
+    layout(InterceptModalLayout, () => [
+      path("/intercept-source", InterceptSourcePage, {
+        name: "interceptSource",
+      }),
+      path("/intercept-target", InterceptTargetPage, {
+        name: "interceptTarget",
+      }),
+      intercept("@modal", ".interceptTarget", InterceptedModal, () => [
+        when(({ from }) =>
+          from.pathname.startsWith("/handler-use/intercept-source"),
+        ),
+      ]),
     ]),
   ]),
 ]);
