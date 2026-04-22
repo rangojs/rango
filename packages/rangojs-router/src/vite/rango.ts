@@ -13,6 +13,7 @@ import {
   getExcludeDeps,
   getPackageAliases,
   getPublishedPackageName,
+  getVendorAliases,
 } from "./utils/package-resolution.js";
 import { findRouterFiles } from "../build/generate-route-types.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
@@ -60,16 +61,23 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
 
   const plugins: PluginOption[] = [];
 
-  // Get package resolution info (workspace vs npm install)
-  const rangoAliases = getPackageAliases();
+  // Get package resolution info (workspace vs npm install).
+  // Vendor aliases redirect the bare plugin-rsc vendor specs (which plugin-rsc
+  // itself injects into optimizeDeps.include) to absolute paths resolved from
+  // this package — so strict-pnpm consumers don't hit "Failed to resolve
+  // dependency" warnings when those deps aren't hoisted to their app root.
+  const rangoAliases = { ...getPackageAliases(), ...getVendorAliases() };
   const excludeDeps = [
     ...getExcludeDeps(),
-    // The public browser entry re-exports the RSDW browser client.
-    // Excluding both keeps Vite from freezing the unpatched bundle into
-    // .vite/deps before our source transforms run.
+    // plugin-rsc itself injects these into the client env's
+    // optimizeDeps.include, which overrides exclude for the dep's own
+    // pre-bundle entry. What exclude still controls is how *other*
+    // pre-bundled deps treat imports of these specs (external vs inlined)
+    // via esbuildCjsExternalPlugin. The cjs-to-esm transform in
+    // plugins/cjs-to-esm.ts is the fallback for strict-pnpm consumers,
+    // where client.browser's bare include fails to resolve and Vite ends up
+    // serving the raw CJS file at dev-serve time.
     "@vitejs/plugin-rsc/browser",
-    // Keep the browser RSDW client out of Vite's dep optimizer so our
-    // cjs-to-esm transform can patch the real file.
     "@vitejs/plugin-rsc/vendor/react-server-dom/client.browser",
   ];
 

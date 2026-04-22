@@ -6,8 +6,11 @@
  */
 
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import packageJson from "../../../package.json";
+
+const require = createRequire(import.meta.url);
 
 /**
  * The canonical name used in virtual entries (without scope)
@@ -117,5 +120,42 @@ export function getPackageAliases(): Record<string, string> {
     aliases[`${VIRTUAL_PACKAGE_NAME}${subpath}`] = `${packageName}${subpath}`;
   }
 
+  return aliases;
+}
+
+/**
+ * Plugin-rsc pushes bare specs like
+ * `@vitejs/plugin-rsc/vendor/react-server-dom/client.edge` into
+ * `optimizeDeps.include` for the ssr and rsc environments. In strict pnpm
+ * consumer apps, `@vitejs/plugin-rsc` is only reachable from @rangojs/router's
+ * node_modules, so Vite's optimizer — which resolves from the project root —
+ * can't find them and emits "Failed to resolve dependency" warnings.
+ *
+ * We resolve those specs from this plugin's location (where plugin-rsc is
+ * guaranteed to be installed as our dep) and expose them as `resolve.alias`
+ * entries. The optimizer's resolver honors aliases, so the bare specs map to
+ * absolute paths and resolve cleanly.
+ */
+export function getVendorAliases(): Record<string, string> {
+  // client.browser is intentionally NOT aliased. plugin-rsc injects it into
+  // the client env's optimizeDeps.include; Vite's manual-include path resolves
+  // and pre-bundles regardless of optimizeDeps.exclude, so aliasing would
+  // trigger esbuild pre-bundling of the CJS vendor file and bypass the
+  // cjs-to-esm transform that patches `require('react'|'react-dom')` into
+  // real ESM imports. The consumer may still see a single "Failed to resolve"
+  // warning for client.browser; runtime resolution from plugin-rsc's own
+  // importer works because Vite resolves relative to the importer (not root).
+  const specs = [
+    "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
+    "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
+  ];
+  const aliases: Record<string, string> = {};
+  for (const spec of specs) {
+    try {
+      aliases[spec] = require.resolve(spec);
+    } catch {
+      // Spec unresolvable (unexpected but non-fatal — Vite will warn as before).
+    }
+  }
   return aliases;
 }
