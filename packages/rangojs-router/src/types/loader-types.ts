@@ -3,6 +3,7 @@ import type { Handle } from "../handle.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import type { ScopedReverseFunction } from "../reverse.js";
 import type { SearchSchema, ResolveSearchSchema } from "../search-params.js";
+import type { UseItems, LoaderUseItem } from "../route-types.js";
 import type {
   DefaultEnv,
   DefaultReverseRouteMap,
@@ -203,4 +204,6 @@ export type LoaderDefinition<
   __brand: "loader";
   $$id: string; // Injected by Vite plugin (exposeInternalIds) - unique identifier
   fn?: LoaderFn<T, TParams, any>; // Optional - server-side only, stored in registry for RSC
+  /** Composable default DSL items merged when the loader is mounted. */
+  use?: () => UseItems<LoaderUseItem>;
 };

@@ -304,6 +304,15 @@ const cache: RouteHelpers<any, any>["cache"] = (
     return { name: namespace, type: "cache" } as CacheItem;
   }
 
+  // Inside a loader() use() callback, only the direct form — cache()/cache(opts)/
+  // cache("profile") — writes cache config to the loader entry. The wrapper
+  // form creates a structural cache boundary with its own children scope, which
+  // has no effect on the loader and would silently no-op.
+  invariant(
+    !(ctx.parent && (ctx.parent as any).type === "loader"),
+    "cache() wrapper form is not valid inside loader() use(). Use cache({...}) without children to configure the loader's cache.",
+  );
+
   // With children: create a cache entry (like layout with caching semantics)
   const namespace = `${ctx.namespace}.${cacheIndex}`;
   const cacheShortCode = store.getShortCode("cache");
@@ -750,8 +759,12 @@ const loaderFn: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
     revalidate: [] as ShouldRevalidateFn<any, any>[],
   };
 
-  // If use() callback provided, run it to collect revalidation rules and cache config
-  if (use && typeof use === "function") {
+  // Merge handler.use defaults (attached to the loader definition) with explicit use
+  const handlerUseFn = resolveHandlerUse(loaderDef);
+  const mergedUse = mergeHandlerUse(handlerUseFn, use, "loader");
+
+  // If any use callback is in effect, run it to collect revalidation rules and cache config
+  if (mergedUse) {
     // Temporarily set context for revalidate()/cache() calls to target this loader
     const originalParent = ctx.parent;
     // Create a temporary "parent" with type "loader" so cache() can detect it.
@@ -764,7 +777,7 @@ const loaderFn: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
     };
     ctx.parent = tempParent as EntryData;
 
-    const result = use()?.flat(3);
+    const result = mergedUse()?.flat(3);
 
     // Copy cache config only if cache() was called during the use() callback.
     // The spread from originalParent may carry an inherited .cache from

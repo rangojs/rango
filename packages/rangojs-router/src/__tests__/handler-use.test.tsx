@@ -79,6 +79,24 @@ describe("resolveHandlerUse", () => {
     };
     expect(resolveHandlerUse(def)).toBe(useFn);
   });
+
+  it("returns .use from LoaderDefinition", () => {
+    const useFn = () => [];
+    const def = {
+      __brand: "loader" as const,
+      $$id: "test-loader",
+      use: useFn,
+    };
+    expect(resolveHandlerUse(def)).toBe(useFn);
+  });
+
+  it("returns undefined from LoaderDefinition without .use", () => {
+    const def = {
+      __brand: "loader" as const,
+      $$id: "test-loader",
+    };
+    expect(resolveHandlerUse(def)).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -171,6 +189,27 @@ describe("validateHandlerUseItems", () => {
     expect(() =>
       validateHandlerUseItems([makeItem("layout")], "response"),
     ).toThrow(/handler\.use\(\) returned layout\(\).*response\(\)/);
+  });
+
+  it("passes revalidate + cache for loader mount", () => {
+    expect(() =>
+      validateHandlerUseItems(
+        [makeItem("revalidate"), makeItem("cache")],
+        "loader",
+      ),
+    ).not.toThrow();
+  });
+
+  it("throws for middleware in loader mount", () => {
+    expect(() =>
+      validateHandlerUseItems([makeItem("middleware")], "loader"),
+    ).toThrow(/handler\.use\(\) returned middleware\(\).*loader\(\)/);
+  });
+
+  it("throws for loader in loader mount", () => {
+    expect(() =>
+      validateHandlerUseItems([makeItem("loader")], "loader"),
+    ).toThrow(/handler\.use\(\) returned loader\(\).*loader\(\)/);
   });
 
   it("skips null/undefined items", () => {
