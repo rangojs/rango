@@ -1,4 +1,7 @@
 import type { Plugin } from "vite";
+import { createRangoDebugger, NS } from "../debug.js";
+
+const debug = createRangoDebugger(NS.transform);
 
 /**
  * Transform CJS vendor files from @vitejs/plugin-rsc to ESM for browser compatibility.
@@ -21,6 +24,7 @@ export function createCjsToEsmPlugin(): Plugin {
           ? "./cjs/react-server-dom-webpack-client.browser.production.js"
           : "./cjs/react-server-dom-webpack-client.browser.development.js";
 
+        debug?.("cjs-to-esm entry redirect %s", id);
         return {
           code: `export * from "${cjsFile}";`,
           map: null,
@@ -81,6 +85,7 @@ export function createCjsToEsmPlugin(): Plugin {
         // Reconstruct with license at the top
         transformed = license + "\n" + transformed;
 
+        debug?.("cjs-to-esm body rewrite %s", id);
         return {
           code: transformed,
           map: null,

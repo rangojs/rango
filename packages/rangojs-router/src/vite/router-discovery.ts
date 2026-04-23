@@ -48,6 +48,12 @@ import {
 } from "./discovery/virtual-module-codegen.js";
 import { postprocessBundle } from "./discovery/bundle-postprocess.js";
 import { resetStagedBuildAssets } from "./utils/prerender-utils.js";
+import { createRangoDebugger, timed, timedSync, NS } from "./debug.js";
+
+const debugDiscovery = createRangoDebugger(NS.discovery);
+const debugRoutes = createRangoDebugger(NS.routes);
+const debugBuild = createRangoDebugger(NS.build);
+const debugDev = createRangoDebugger(NS.dev);
 
 export { VIRTUAL_ROUTES_MANIFEST_ID };
 
@@ -403,23 +409,35 @@ export function createRouterDiscoveryPlugin(
       }
 
       const discover = async () => {
+        const discoverStart = performance.now();
         const rscEnv = (server.environments as any)?.rsc;
         if (!rscEnv?.runner) {
           // Cloudflare dev: no module runner available (workerd-based RSC env).
           // Set devServerOrigin so the virtual module can inject __PRERENDER_DEV_URL
           // for on-demand prerender via the /__rsc_prerender endpoint.
+          debugDiscovery?.("dev: no rsc runner (cloudflare path)");
           s.devServerOrigin = getDevServerOrigin();
 
           // Create a temp Node.js server to run runtime discovery and generate
           // named route types (static parser can't resolve factory calls).
           try {
             // Acquire build-time env bindings for dev prerender
-            await acquireBuildEnv(s, viteCommand, viteMode);
+            await timed(debugDiscovery, "acquireBuildEnv", () =>
+              acquireBuildEnv(s, viteCommand, viteMode),
+            );
 
-            const tempRscEnv = await getOrCreateTempServer();
+            const tempRscEnv = await timed(
+              debugDiscovery,
+              "getOrCreateTempServer",
+              () => getOrCreateTempServer(),
+            );
             if (tempRscEnv) {
-              await discoverRouters(s, tempRscEnv);
-              writeRouteTypesFiles(s);
+              await timed(debugDiscovery, "discoverRouters (cloudflare)", () =>
+                discoverRouters(s, tempRscEnv),
+              );
+              timedSync(debugDiscovery, "writeRouteTypesFiles", () =>
+                writeRouteTypesFiles(s),
+              );
             }
           } catch (err: any) {
             console.warn(
@@ -427,24 +445,35 @@ export function createRouterDiscoveryPlugin(
             );
           }
 
+          debugDiscovery?.(
+            "dev discovery done (%sms)",
+            (performance.now() - discoverStart).toFixed(1),
+          );
           resolveDiscovery!();
           return;
         }
 
         try {
           // Acquire build-time env bindings for dev prerender (Node.js path)
-          await acquireBuildEnv(s, viteCommand, viteMode);
+          debugDiscovery?.("dev: node path start");
+          await timed(debugDiscovery, "acquireBuildEnv", () =>
+            acquireBuildEnv(s, viteCommand, viteMode),
+          );
 
           // Set the readiness gate BEFORE discovery so early requests
           // block until manifest is populated
-          const serverMod = await rscEnv.runner.import(
-            "@rangojs/router/server",
+          const serverMod = await timed(
+            debugDiscovery,
+            "import @rangojs/router/server",
+            () => rscEnv.runner.import("@rangojs/router/server"),
           );
           if (serverMod?.setManifestReadyPromise) {
             serverMod.setManifestReadyPromise(discoveryPromise);
           }
 
-          await discoverRouters(s, rscEnv);
+          await timed(debugDiscovery, "discoverRouters", () =>
+            discoverRouters(s, rscEnv),
+          );
 
           // Store server origin for dev prerender endpoint (virtual module injection)
           s.devServerOrigin = getDevServerOrigin();
@@ -454,15 +483,23 @@ export function createRouterDiscoveryPlugin(
           // routes (e.g. Array.from loops) that the static parser cannot see.
           // writeRouteTypesFiles() only writes when content changes, so this
           // won't cause unnecessary HMR triggers.
-          writeRouteTypesFiles(s);
+          timedSync(debugDiscovery, "writeRouteTypesFiles", () =>
+            writeRouteTypesFiles(s),
+          );
 
           // Populate the route map and per-router data in the RSC env
-          await propagateDiscoveryState(rscEnv);
+          await timed(debugDiscovery, "propagateDiscoveryState", () =>
+            propagateDiscoveryState(rscEnv),
+          );
         } catch (err: any) {
           console.warn(
             `[rsc-router] Router discovery failed: ${err.message}\n${err.stack}`,
           );
         } finally {
+          debugDiscovery?.(
+            "dev discovery done (%sms)",
+            (performance.now() - discoverStart).toFixed(1),
+          );
           resolveDiscovery!();
         }
       };
@@ -529,6 +566,17 @@ export function createRouterDiscoveryPlugin(
       };
 
       server.middlewares.use("/__rsc_prerender", async (req: any, res: any) => {
+        const reqStart = debugDev ? performance.now() : 0;
+        const logResult = (status: number, note: string) => {
+          debugDev?.(
+            "/__rsc_prerender %s -> %d %s (%sms)",
+            req.url,
+            status,
+            note,
+            (performance.now() - reqStart).toFixed(1),
+          );
+        };
+
         if (s.discoveryDone) await s.discoveryDone;
 
         const url = new URL(req.url || "/", "http://localhost");
@@ -536,6 +584,7 @@ export function createRouterDiscoveryPlugin(
         if (!pathname) {
           res.statusCode = 400;
           res.end("Missing pathname");
+          logResult(400, "missing pathname");
           return;
         }
 
@@ -559,6 +608,7 @@ export function createRouterDiscoveryPlugin(
             );
             res.statusCode = 500;
             res.end(`Prerender handler error: ${err.message}`);
+            logResult(500, "module refresh failed");
             return;
           }
         } else {
@@ -577,6 +627,7 @@ export function createRouterDiscoveryPlugin(
         if (!registry || registry.size === 0) {
           res.statusCode = 503;
           res.end("Prerender runner not available");
+          logResult(503, "no registry");
           return;
         }
 
@@ -615,6 +666,7 @@ export function createRouterDiscoveryPlugin(
               payload = { segments: result.segments, handles: result.handles };
             }
             res.end(JSON.stringify(payload));
+            logResult(200, `match ${result.routeName}`);
             return;
           } catch (err: any) {
             console.warn(
@@ -625,6 +677,7 @@ export function createRouterDiscoveryPlugin(
 
         res.statusCode = 404;
         res.end("No prerender match");
+        logResult(404, "no match");
       });
 
       // Watch url module and router files for changes and regenerate named-routes.gen.ts.
@@ -672,15 +725,26 @@ export function createRouterDiscoveryPlugin(
           const rscEnv = (server.environments as any)?.rsc;
           if (!rscEnv?.runner || runtimeRediscoveryInProgress) return;
           runtimeRediscoveryInProgress = true;
+          const hmrStart = performance.now();
           try {
-            await discoverRouters(s, rscEnv);
-            writeRouteTypesFiles(s);
-            await propagateDiscoveryState(rscEnv);
+            await timed(debugDiscovery, "hmr discoverRouters", () =>
+              discoverRouters(s, rscEnv),
+            );
+            timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
+              writeRouteTypesFiles(s),
+            );
+            await timed(debugDiscovery, "hmr propagateDiscoveryState", () =>
+              propagateDiscoveryState(rscEnv),
+            );
           } catch (err: any) {
             console.warn(
               `[rsc-router] Runtime re-discovery failed: ${err.message}`,
             );
           } finally {
+            debugDiscovery?.(
+              "hmr re-discovery done (%sms)",
+              (performance.now() - hmrStart).toFixed(1),
+            );
             runtimeRediscoveryInProgress = false;
           }
         };
@@ -689,6 +753,7 @@ export function createRouterDiscoveryPlugin(
           clearTimeout(routeChangeTimer);
           routeChangeTimer = setTimeout(() => {
             routeChangeTimer = undefined;
+            const regenStart = debugDiscovery ? performance.now() : 0;
             try {
               writeCombinedRouteTypesWithTracking(s);
               if (s.perRouterManifests.length > 0) {
@@ -699,6 +764,10 @@ export function createRouterDiscoveryPlugin(
                 `[rsc-router] Route regeneration error: ${err.message}`,
               );
             }
+            debugDiscovery?.(
+              "watcher: regenerated gen files (%sms)",
+              (performance.now() - regenStart).toFixed(1),
+            );
             // Async: re-run runtime discovery to refresh factory-generated
             // routes that the static parser cannot resolve.
             if (s.perRouterManifests.length > 0) {
@@ -733,6 +802,12 @@ export function createRouterDiscoveryPlugin(
             const hasUrls = source.includes("urls(");
             const hasCreateRouter = /\bcreateRouter\s*[<(]/.test(source);
             if (!hasUrls && !hasCreateRouter) return;
+            debugDiscovery?.(
+              "watcher: %s matches (urls=%s, router=%s)",
+              filePath,
+              hasUrls,
+              hasCreateRouter,
+            );
             // Invalidate cache when a router file changes (new router added/removed)
             if (hasCreateRouter) {
               const nestedRouterConflict = findNestedRouterConflict([
@@ -777,13 +852,23 @@ export function createRouterDiscoveryPlugin(
     async buildStart() {
       if (!s.isBuildMode) return;
       // Only run once across environment builds
-      if (s.mergedRouteManifest !== null) return;
+      if (s.mergedRouteManifest !== null) {
+        debugDiscovery?.(
+          "build: skip (already discovered, env=%s)",
+          this.environment?.name ?? "?",
+        );
+        return;
+      }
+      const buildStartTime = performance.now();
+      debugDiscovery?.("build: start (env=%s)", this.environment?.name ?? "?");
       resetStagedBuildAssets(s.projectRoot);
       s.prerenderManifestEntries = null;
       s.staticManifestEntries = null;
 
       // Acquire build-time env bindings if configured
-      await acquireBuildEnv(s, viteCommand, viteMode);
+      await timed(debugDiscovery, "build acquireBuildEnv", () =>
+        acquireBuildEnv(s, viteCommand, viteMode),
+      );
 
       let tempServer: any = null;
       // Signal to user-space code (e.g. reverse.ts) that build-time discovery
@@ -792,7 +877,11 @@ export function createRouterDiscoveryPlugin(
       // between the vite plugin and user code loaded via runner.import().
       (globalThis as any).__rscRouterDiscoveryActive = true;
       try {
-        tempServer = await createTempRscServer(s, { forceBuild: true });
+        tempServer = await timed(
+          debugDiscovery,
+          "build createTempRscServer",
+          () => createTempRscServer(s, { forceBuild: true }),
+        );
 
         const rscEnv = (tempServer.environments as any)?.rsc;
         if (!rscEnv?.runner) {
@@ -812,11 +901,15 @@ export function createRouterDiscoveryPlugin(
           s.resolvedStaticModules = tempIdsPlugin.api.staticHandlerModules;
         }
 
-        await discoverRouters(s, rscEnv);
+        await timed(debugDiscovery, "build discoverRouters", () =>
+          discoverRouters(s, rscEnv),
+        );
         // Update named-routes.gen.ts from runtime discovery.
         // The runtime manifest includes dynamically generated routes
         // that the static parser cannot extract from source code.
-        writeRouteTypesFiles(s);
+        timedSync(debugDiscovery, "build writeRouteTypesFiles", () =>
+          writeRouteTypesFiles(s),
+        );
       } catch (err: any) {
         // Extract the user source file from the stack trace (skip internal frames)
         const sourceFile = err.stack
@@ -841,9 +934,15 @@ export function createRouterDiscoveryPlugin(
       } finally {
         delete (globalThis as any).__rscRouterDiscoveryActive;
         if (tempServer) {
-          await tempServer.close();
+          await timed(debugDiscovery, "build tempServer.close", () =>
+            tempServer.close(),
+          );
         }
         await releaseBuildEnv(s);
+        debugDiscovery?.(
+          "build discovery done (%sms)",
+          (performance.now() - buildStartTime).toFixed(1),
+        );
       }
     },
 
@@ -867,19 +966,38 @@ export function createRouterDiscoveryPlugin(
         // This is critical for Cloudflare dev where the worker runs in a separate
         // Miniflare process and can only receive manifest data via the virtual module.
         if (s.discoveryDone) {
-          await s.discoveryDone;
+          await timed(
+            debugRoutes,
+            "await discoveryDone (manifest)",
+            () => s.discoveryDone,
+          );
         }
-        return generateRoutesManifestModule(s);
+        const code = await timed(
+          debugRoutes,
+          "generateRoutesManifestModule",
+          () => generateRoutesManifestModule(s),
+        );
+        debugRoutes?.("manifest module emitted (%d bytes)", code?.length ?? 0);
+        return code;
       }
       // Per-router virtual modules: pure data exports (no side effects).
       // ensureRouterManifest() imports the module and stores the data.
       const perRouterPrefix = "\0" + VIRTUAL_ROUTES_MANIFEST_ID + "/";
       if (id.startsWith(perRouterPrefix)) {
         if (s.discoveryDone) {
-          await s.discoveryDone;
+          await timed(
+            debugRoutes,
+            "await discoveryDone (per-router)",
+            () => s.discoveryDone,
+          );
         }
         const routerId = id.slice(perRouterPrefix.length);
-        return generatePerRouterModule(s, routerId);
+        const code = await timed(
+          debugRoutes,
+          `generatePerRouterModule ${routerId}`,
+          () => generatePerRouterModule(s, routerId),
+        );
+        return code;
       }
       // virtual:rsc-router/prerender-paths load handler removed
       return null;
@@ -889,6 +1007,7 @@ export function createRouterDiscoveryPlugin(
     // Used by closeBundle for handler code eviction and prerender data injection.
     generateBundle(_options: any, bundle: any) {
       if (this.environment?.name !== "rsc") return;
+      const genStart = debugBuild ? performance.now() : 0;
 
       // Record RSC entry chunk filename for closeBundle injection
       for (const [fileName, chunk] of Object.entries(bundle) as [
@@ -901,8 +1020,13 @@ export function createRouterDiscoveryPlugin(
         }
       }
 
-      if (!s.resolvedPrerenderModules?.size && !s.resolvedStaticModules?.size)
+      if (!s.resolvedPrerenderModules?.size && !s.resolvedStaticModules?.size) {
+        debugBuild?.(
+          "generateBundle (rsc): no handlers to scan (%sms)",
+          (performance.now() - genStart).toFixed(1),
+        );
         return;
+      }
 
       // Clear maps at the start of each RSC generateBundle pass.
       // Vite 6 multi-environment builds run RSC twice (analysis + production);
@@ -957,6 +1081,14 @@ export function createRouterDiscoveryPlugin(
           }
         }
       }
+
+      debugBuild?.(
+        "generateBundle (rsc): scanned %d chunks, %d prerender chunk(s), %d static chunk(s) (%sms)",
+        Object.keys(bundle).length,
+        s.handlerChunkInfoMap.size,
+        s.staticHandlerChunkInfoMap.size,
+        (performance.now() - genStart).toFixed(1),
+      );
     },
 
     // Build-time pre-rendering: evict handler code and inject collected prerender data.
@@ -970,7 +1102,9 @@ export function createRouterDiscoveryPlugin(
         // Only run for the RSC environment — other environments (client, ssr) have
         // no prerender/static data to process and would just do redundant file I/O.
         if (this.environment && this.environment.name !== "rsc") return;
-        postprocessBundle(s);
+        timedSync(debugBuild, "closeBundle postprocessBundle", () =>
+          postprocessBundle(s),
+        );
       },
     },
   };

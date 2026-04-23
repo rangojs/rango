@@ -16,6 +16,9 @@ import {
   stageBuildAssetModule,
 } from "../utils/prerender-utils.js";
 import type { DiscoveryState } from "./state.js";
+import { createRangoDebugger, NS } from "../debug.js";
+
+const debug = createRangoDebugger(NS.prerender);
 
 /**
  * Expand prerender routes into concrete URLs and render them via the
@@ -29,6 +32,12 @@ export async function expandPrerenderRoutes(
   allManifests: Array<{ id: string; manifest: any }>,
 ): Promise<void> {
   if (!state.opts?.enableBuildPrerender || !state.isBuildMode) return;
+
+  const overallStart = debug ? performance.now() : 0;
+  debug?.(
+    "expandPrerenderRoutes: start (%d router manifest(s))",
+    allManifests.length,
+  );
 
   type PrerenderEntry = {
     urlPath: string;
@@ -99,6 +108,7 @@ export async function expandPrerenderRoutes(
         } else {
           // Dynamic route: call getParams() to enumerate param combinations
           if (def?.getParams) {
+            const getParamsStart = debug ? performance.now() : 0;
             try {
               const buildVars: Record<string, any> = {};
               const buildEnv = state.resolvedBuildEnv;
@@ -118,6 +128,12 @@ export async function expandPrerenderRoutes(
                 },
               };
               const paramsList = await def.getParams(getParamsCtx);
+              debug?.(
+                "getParams %s -> %d params (%sms)",
+                routeName,
+                paramsList.length,
+                (performance.now() - getParamsStart).toFixed(1),
+              );
               const concurrency = def.options?.concurrency ?? 1;
               const hasBuildVars =
                 Object.keys(buildVars).length > 0 ||
@@ -191,7 +207,13 @@ export async function expandPrerenderRoutes(
     }
   }
 
-  if (entries.length === 0) return;
+  if (entries.length === 0) {
+    debug?.(
+      "no prerender entries (done in %sms)",
+      (performance.now() - overallStart).toFixed(1),
+    );
+    return;
+  }
 
   // Determine the max concurrency for the log header
   const maxConcurrency = Math.max(...entries.map((e) => e.concurrency));
@@ -199,6 +221,11 @@ export async function expandPrerenderRoutes(
     maxConcurrency > 1 ? ` (concurrency: ${maxConcurrency})` : "";
   console.log(
     `[rsc-router] Pre-rendering ${entries.length} URL(s)${concurrencyNote}...`,
+  );
+  debug?.(
+    "prerender loop: %d entries, max concurrency %d",
+    entries.length,
+    maxConcurrency,
   );
 
   const { hashParams } = await rscEnv.runner.import("@rangojs/router/build");
@@ -317,6 +344,13 @@ export async function expandPrerenderRoutes(
   console.log(
     `[rsc-router] Pre-render complete: ${parts.join(", ")} (${totalElapsed}ms total)`,
   );
+  debug?.(
+    "expandPrerenderRoutes done: %d done, %d skipped, %sms (overall %sms)",
+    doneCount,
+    skipCount,
+    totalElapsed,
+    (performance.now() - overallStart).toFixed(1),
+  );
 }
 
 /**
@@ -336,6 +370,12 @@ export async function renderStaticHandlers(
     !state.resolvedStaticModules?.size
   )
     return;
+
+  const overallStart = debug ? performance.now() : 0;
+  debug?.(
+    "renderStaticHandlers: start (%d static module(s))",
+    state.resolvedStaticModules.size,
+  );
 
   const manifestEntries: Record<string, string> = {};
   let staticDone = 0;
@@ -435,5 +475,12 @@ export async function renderStaticHandlers(
   if (staticSkip > 0) staticParts.push(`${staticSkip} skipped`);
   console.log(
     `[rsc-router] Static render complete: ${staticParts.join(", ")} (${totalStaticElapsed}ms total)`,
+  );
+  debug?.(
+    "renderStaticHandlers done: %d done, %d skipped, %sms (overall %sms)",
+    staticDone,
+    staticSkip,
+    totalStaticElapsed,
+    (performance.now() - overallStart).toFixed(1),
   );
 }

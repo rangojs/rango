@@ -14,6 +14,9 @@
 
 import type { Plugin } from "vite";
 import { readFile } from "node:fs/promises";
+import { createRangoDebugger, createCounter, NS } from "../debug.js";
+
+const debug = createRangoDebugger(NS.transform);
 
 const RSDW_PATCH_RE =
   /((?:var|let|const)\s+\w+\s*=\s*root\._children\s*,\s*(\w+)\s*=\s*root\._debugInfo\s*[;,])/;
@@ -69,20 +72,25 @@ export function performanceTracksOptimizeDepsPlugin(): {
 }
 
 export function performanceTracksPlugin(): Plugin {
+  const counter = createCounter(debug, "performance-tracks");
   return {
     name: "@rangojs/router:performance-tracks",
 
+    buildEnd() {
+      counter?.flush();
+    },
+
     transform(code, id) {
       if (!id.includes("react-server-dom") || !id.includes("client")) return;
-      const patched = patchRsdwClientDebugInfoRecovery(code);
-      if (!patched.debugInfoVar) return;
-      if (process.env.INTERNAL_RANGO_DEBUG)
-        console.log(
-          "[perf-tracks] patched RSDW client (var:",
-          patched.debugInfoVar,
-          ")",
-        );
-      return patched.code;
+      const start = counter ? performance.now() : 0;
+      try {
+        const patched = patchRsdwClientDebugInfoRecovery(code);
+        if (!patched.debugInfoVar) return;
+        debug?.("patched RSDW client (var: %s)", patched.debugInfoVar);
+        return patched.code;
+      } finally {
+        counter?.record(id, performance.now() - start);
+      }
     },
   };
 }

@@ -29,6 +29,9 @@ import { createVersionInjectorPlugin } from "./plugins/version-injector.js";
 import { createCjsToEsmPlugin } from "./plugins/cjs-to-esm.js";
 import { createRouterDiscoveryPlugin } from "./router-discovery.js";
 import { performanceTracksPlugin } from "./plugins/performance-tracks.js";
+import { createRangoDebugger, NS } from "./debug.js";
+
+const debugConfig = createRangoDebugger(NS.config);
 
 /**
  * Vite plugin for @rangojs/router.
@@ -55,9 +58,11 @@ import { performanceTracksPlugin } from "./plugins/performance-tracks.js";
  * ```
  */
 export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
+  const rangoStart = performance.now();
   const resolvedOptions: RangoOptions = options ?? { preset: "node" };
   const preset = resolvedOptions.preset ?? "node";
   const showBanner = resolvedOptions.banner ?? true;
+  debugConfig?.("rango(%s) setup start", preset);
 
   const plugins: PluginOption[] = [];
 
@@ -482,5 +487,11 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
     }),
   );
 
+  debugConfig?.(
+    "rango(%s) setup done: %d plugin(s) (%sms)",
+    preset,
+    plugins.length,
+    (performance.now() - rangoStart).toFixed(1),
+  );
   return plugins;
 }

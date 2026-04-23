@@ -20,6 +20,9 @@ import {
   expandPrerenderRoutes,
   renderStaticHandlers,
 } from "./prerender-collection.js";
+import { createRangoDebugger, timed, NS } from "../debug.js";
+
+const debug = createRangoDebugger(NS.discovery);
 
 /**
  * Import the user's entry via RSC runner, generate manifests for each
@@ -38,10 +41,16 @@ export async function discoverRouters(
   // Import the entry file via RSC environment.
   // For node preset: this is the router file (createRouter() registers in RouterRegistry).
   // For cloudflare preset: this is the worker entry (which imports the router).
-  await rscEnv.runner.import(state.resolvedEntryPath);
+  await timed(debug, "inner: import entry", () =>
+    rscEnv.runner.import(state.resolvedEntryPath),
+  );
 
   // Import the router package to access the registry
-  const serverMod = await rscEnv.runner.import("@rangojs/router/server");
+  const serverMod = await timed(
+    debug,
+    "inner: import @rangojs/router/server",
+    () => rscEnv.runner.import("@rangojs/router/server"),
+  );
   let registry: Map<string, any> = serverMod.RouterRegistry;
 
   if (!registry || registry.size === 0) {
@@ -100,8 +109,14 @@ export async function discoverRouters(
   }
 
   // Import build utilities for manifest generation
-  const buildMod = await rscEnv.runner.import("@rangojs/router/build");
+  const buildMod = await timed(
+    debug,
+    "inner: import @rangojs/router/build",
+    () => rscEnv.runner.import("@rangojs/router/build"),
+  );
   const generateManifestFull = buildMod.generateManifestFull;
+
+  debug?.("inner: found %d router(s) in registry", registry.size);
 
   const nestedRouterConflict = findNestedRouterConflict(
     [...registry.values()]
@@ -130,6 +145,7 @@ export async function discoverRouters(
   // Collect all manifests for trie building (avoid re-running generateManifest)
   const allManifests: Array<{ id: string; manifest: any }> = [];
 
+  const manifestGenStart = debug ? performance.now() : 0;
   for (const [id, router] of registry) {
     if (!router.urlpatterns || !generateManifestFull) {
       continue;
@@ -234,8 +250,15 @@ export async function discoverRouters(
     }
   }
 
+  debug?.(
+    "inner: generated manifests for %d router(s) (%sms)",
+    allManifests.length,
+    (performance.now() - manifestGenStart).toFixed(1),
+  );
+
   // Build route trie from merged manifest + ancestry
   let newMergedRouteTrie: any = null;
+  const trieStart = debug ? performance.now() : 0;
   if (Object.keys(newMergedRouteManifest).length > 0) {
     const buildRouteTrie = buildMod.buildRouteTrie;
     if (buildRouteTrie && mergedRouteAncestry) {
@@ -328,6 +351,11 @@ export async function discoverRouters(
       }
     }
   }
+
+  debug?.(
+    "inner: trie build done (%sms)",
+    (performance.now() - trieStart).toFixed(1),
+  );
 
   // Commit all local state to the shared discovery state atomically.
   // This ensures a failed re-discovery (e.g. from a transient module
