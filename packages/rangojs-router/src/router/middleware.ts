@@ -447,8 +447,16 @@ export async function executeMiddleware<TEnv>(
     try {
       result = await entry.handler(ctx, wrappedNext);
     } catch (error) {
-      finishMiddleware();
-      throw error;
+      // Thrown Response is short-circuit control flow, not an error.
+      // Fall through to the `if (result instanceof Response)` branch below
+      // so stub headers and request-context cookies merge as they do for
+      // an explicit `return new Response(...)`. Real errors propagate.
+      if (error instanceof Response) {
+        result = error;
+      } else {
+        finishMiddleware();
+        throw error;
+      }
     }
     finishMiddleware();
 
@@ -641,7 +649,18 @@ export async function executeInterceptMiddleware<TEnv>(
       return next();
     };
 
-    const result = await middleware(ctx, guardedNext);
+    let result: Response | void;
+    try {
+      result = await middleware(ctx, guardedNext);
+    } catch (error) {
+      // Thrown Response is short-circuit control flow, parity with the
+      // explicit-return path below. Real errors propagate.
+      if (error instanceof Response) {
+        result = error;
+      } else {
+        throw error;
+      }
+    }
 
     if (result instanceof Response) {
       earlyResponse = result;
