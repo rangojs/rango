@@ -36,6 +36,24 @@ export const router = createRouter<AppBindings>({
 })
   // Document cache middleware - caches full responses based on Cache-Control headers
   .use(createDocumentCacheMiddleware())
+  // Regression repro: top-level middleware throwing a Response must short-circuit
+  // under miniflare the same way it does on Node — before the fix, the throw
+  // leaked past executeMiddleware and miniflare stringified it as 500.
+  .use("/__test/global-mw-throw-response", async () => {
+    throw new Response("throw-response-body", {
+      status: 418,
+      headers: { "x-throw-response": "applied" },
+    });
+  })
+  // Sanity repro: returning a Response from top-level middleware. Already
+  // worked pre-fix via middleware.ts short-circuit. Paired with the throw
+  // case so the contrast is verified under miniflare.
+  .use("/__test/global-mw-return-response", async () => {
+    return new Response("return-response-body", {
+      status: 418,
+      headers: { "x-return-response": "applied" },
+    });
+  })
   // Register all routes
   .routes(urlpatterns);
 
