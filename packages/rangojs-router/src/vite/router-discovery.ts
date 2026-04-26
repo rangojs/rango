@@ -384,8 +384,25 @@ export function createRouterDiscoveryPlugin(
 
       async function getOrCreateTempServer(): Promise<any | null> {
         if (prerenderNodeRegistry) {
+          debugDiscovery?.("getOrCreateTempServer: cached temp runner reused");
           return (prerenderTempServer.environments as any)?.rsc ?? null;
         }
+        // Mirror the build-path contract (router-discovery.ts ~line 878):
+        // set __rscRouterDiscoveryActive before running user modules so any
+        // module-level router.reverse() calls return a placeholder instead
+        // of throwing. The temp Vite server's module runner has its own
+        // module context; the flag must be on globalThis to cross that
+        // boundary. Cleared in finally so the dev request handlers run with
+        // strict reverse() semantics afterwards.
+        const flagAlreadySet = !!(globalThis as any).__rscRouterDiscoveryActive;
+        if (!flagAlreadySet) {
+          (globalThis as any).__rscRouterDiscoveryActive = true;
+        }
+        debugDiscovery?.(
+          "getOrCreateTempServer: __rscRouterDiscoveryActive=%s entry=%s",
+          (globalThis as any).__rscRouterDiscoveryActive ?? false,
+          s.resolvedEntryPath ?? "(unset)",
+        );
         try {
           prerenderTempServer = await createTempRscServer(s, {
             cacheDir: "node_modules/.vite_prerender",
@@ -393,17 +410,43 @@ export function createRouterDiscoveryPlugin(
 
           const tempRscEnv = (prerenderTempServer.environments as any)?.rsc;
           if (tempRscEnv?.runner) {
+            debugDiscovery?.(
+              "getOrCreateTempServer: importing entry (flag=%s)",
+              (globalThis as any).__rscRouterDiscoveryActive ?? false,
+            );
             await tempRscEnv.runner.import(s.resolvedEntryPath!);
+            debugDiscovery?.(
+              "getOrCreateTempServer: entry import OK, fetching RouterRegistry",
+            );
             const serverMod = await tempRscEnv.runner.import(
               "@rangojs/router/server",
             );
             prerenderNodeRegistry = serverMod.RouterRegistry;
+            debugDiscovery?.(
+              "getOrCreateTempServer: registry size=%d",
+              prerenderNodeRegistry?.size ?? 0,
+            );
             return tempRscEnv;
           }
+          debugDiscovery?.(
+            "getOrCreateTempServer: tempRscEnv.runner unavailable",
+          );
         } catch (err: any) {
+          debugDiscovery?.(
+            "getOrCreateTempServer: FAILED message=%s flag=%s",
+            err.message,
+            (globalThis as any).__rscRouterDiscoveryActive ?? false,
+          );
           console.warn(
             `[rsc-router] Failed to create temp runner: ${err.message}`,
           );
+        } finally {
+          if (!flagAlreadySet) {
+            delete (globalThis as any).__rscRouterDiscoveryActive;
+            debugDiscovery?.(
+              "getOrCreateTempServer: cleared __rscRouterDiscoveryActive",
+            );
+          }
         }
         return null;
       }
@@ -415,7 +458,10 @@ export function createRouterDiscoveryPlugin(
           // Cloudflare dev: no module runner available (workerd-based RSC env).
           // Set devServerOrigin so the virtual module can inject __PRERENDER_DEV_URL
           // for on-demand prerender via the /__rsc_prerender endpoint.
-          debugDiscovery?.("dev: no rsc runner (cloudflare path)");
+          debugDiscovery?.(
+            "dev: cloudflare path start, __rscRouterDiscoveryActive=%s",
+            (globalThis as any).__rscRouterDiscoveryActive ?? false,
+          );
           s.devServerOrigin = getDevServerOrigin();
 
           // Create a temp Node.js server to run runtime discovery and generate
