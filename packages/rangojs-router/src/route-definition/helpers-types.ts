@@ -259,7 +259,12 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   ({ defaultShouldRevalidate: true })
    * )
    * ```
-   * @param fn - Function that returns boolean (hard) or { defaultShouldRevalidate } (soft)
+   * @param fn - Function returning either:
+   *   - `boolean` (hard decision — short-circuits the chain),
+   *   - `{ defaultShouldRevalidate: boolean }` (soft — updates the suggestion
+   *     for downstream revalidators),
+   *   - or nothing / `null` / `undefined` (defer — leaves the suggestion
+   *     unchanged and continues to the next revalidator).
    */
   revalidate: (fn: ShouldRevalidateFn<any, TEnv>) => RevalidateItem;
   /**

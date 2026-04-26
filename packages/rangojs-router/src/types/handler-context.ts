@@ -471,13 +471,16 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
  * **Return Types:**
  * - `boolean` - Hard decision: immediately returns this value (short-circuits)
  * - `{ defaultShouldRevalidate: boolean }` - Soft decision: updates suggestion for next revalidator
+ * - `void` / `null` / `undefined` - Defer to the current suggestion (no opinion); the
+ *   loop continues to the next revalidator without changing the running default
  *
  * **Execution Flow:**
  * 1. Start with built-in `defaultShouldRevalidate` (true if params changed)
  * 2. Execute global revalidators first, then route-specific
  * 3. Hard decision (boolean): stop immediately and use that value
  * 4. Soft decision (object): update suggestion and continue to next revalidator
- * 5. If all return soft decisions: use the final suggestion
+ * 5. Defer (`void` / `null` / `undefined`): leave suggestion unchanged and continue
+ * 6. If no hard decision was returned: use the final running suggestion
  *
  * @param args.currentParams - Previous route params (generic by default, can be narrowed)
  * @param args.currentUrl - Previous URL
@@ -489,7 +492,8 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
  * @param args.formData - Form data from action (future support)
  * @param args.formMethod - HTTP method from action (future support)
  *
- * @returns Hard decision (boolean) or soft suggestion (object)
+ * @returns Hard decision (boolean), soft suggestion (object), or defer
+ *   (`void` / `null` / `undefined`) to keep the running suggestion as-is.
  *
  * @example
  * ```typescript
@@ -514,8 +518,9 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
  * a segment (layout, route, parallel slot, or loader) should be re-rendered.
  *
  * Return `true` to re-render, `false` to skip (keep client's current version),
- * or `{ defaultShouldRevalidate: boolean }` to override the default for
- * downstream segments.
+ * `{ defaultShouldRevalidate: boolean }` to update the running suggestion for
+ * downstream revalidators, or nothing (`void` / `null` / `undefined`) to defer
+ * to the current suggestion without changing it.
  *
  * @example
  * ```ts
@@ -615,7 +620,7 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
    * action that may have mutated backend state.
    */
   stale?: boolean;
-}) => boolean | { defaultShouldRevalidate: boolean };
+}) => boolean | { defaultShouldRevalidate: boolean } | null | void;
 
 // MiddlewareFn is imported from "../router/middleware.js" and re-exported
 

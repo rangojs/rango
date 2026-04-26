@@ -347,6 +347,13 @@ Revalidating only the parallel does not re-run outer handlers/layouts.
 If the slot reads `ctx.get()` data established above it, opt the outer
 segment into revalidation as well.
 
+A `revalidate()` callback may return a hard `boolean`, a soft
+`{ defaultShouldRevalidate }` object, or nothing (`void` / `null` /
+`undefined`) to defer to the next revalidator. See
+[loader/SKILL.md#revalidate-return-shapes](../loader/SKILL.md#revalidate-return-shapes)
+for the full contract — it's the same across `loader()`, `path()`,
+`layout()`, `parallel()`, and `intercept()`.
+
 ### Revalidation Contracts for Parallel Dependencies
 
 Prefer named revalidation contracts shared by both the upstream producer and
