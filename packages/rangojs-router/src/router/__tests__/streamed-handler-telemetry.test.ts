@@ -308,7 +308,6 @@ describe("streamed handler telemetry (handler.error emission)", () => {
           ctx.url,
           ctx.url,
           "blog",
-          new Map(),
           false,
           deps,
         );
