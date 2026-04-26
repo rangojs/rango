@@ -248,6 +248,37 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ]);
 ```
 
+### `revalidate()` return shapes
+
+A `revalidate(fn)` callback can return one of four shapes. The chain
+processes revalidators in order; each call's return controls how the
+chain continues:
+
+```typescript
+// 1) Hard decision — short-circuits the chain, used as the final answer.
+revalidate(() => true);
+revalidate(({ actionId }) => actionId?.includes("Cart") ?? false);
+
+// 2) Soft decision — updates the running suggestion for downstream
+//    revalidators on the same segment, chain continues.
+revalidate(({ defaultShouldRevalidate }) => ({
+  defaultShouldRevalidate: !defaultShouldRevalidate,
+}));
+
+// 3) Defer (no opinion) — leaves the running suggestion unchanged and
+//    continues to the next revalidator. Implicit return / null /
+//    undefined are all equivalent and consumer-friendly.
+revalidate(({ actionId }) => {
+  if (actionId?.includes("Cart")) return true; // hard for this branch only
+  // implicit return — let downstream revalidators or the segment default decide
+});
+revalidate(() => undefined); // explicit defer
+revalidate(() => null); // explicit defer
+```
+
+If every revalidator on a segment defers, the segment-type default
+(e.g. params-changed for routes, `false` for parallels) is used.
+
 ### Revalidation Contracts for Loader Dependencies
 
 If a loader reads `ctx.get()` data produced by an outer handler/layout, share
