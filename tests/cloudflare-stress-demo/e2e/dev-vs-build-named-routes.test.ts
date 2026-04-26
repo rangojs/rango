@@ -136,6 +136,149 @@ test.describe("dev vs build named-routes parity", () => {
       "dev's gen file must match build's byte-for-byte — drift indicates a discovery path is missing routes",
     ).toBe(buildGen);
   });
+
+  test("HMR rediscovery preserves the full gen file (cold → touch → second runtime write)", async ({}, testInfo) => {
+    // Two consecutive runtime-discovery cycles + dev cold start is ~3-5s of
+    // wall-clock work; bump the per-test timeout above playwright's 60s
+    // default so the wait-for-write timeouts don't trip first.
+    testInfo.setTimeout(120_000);
+    const buildGen = await fs.readFile(genFilePath, "utf-8");
+    expect(buildGen.length).toBeGreaterThan(10_000);
+
+    let dev: ChildProcess | null = null;
+    let buffer = "";
+    // Count `[rsc-router] Router "X" -> N routes (...)` log lines — fired
+    // unconditionally by discoverRouters() once per cycle, so the count is
+    // a reliable signal of "runtime discovery completed" across both cold
+    // start and HMR. (The "Generated route types -> " write log only fires
+    // when the gen file's bytes change, and HMR rediscovery writes
+    // identical bytes when routes haven't actually changed.)
+    let discoveryCount = 0;
+    const discoveryWaiters: Array<{
+      target: number;
+      resolve: () => void;
+      reject: (e: Error) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }> = [];
+
+    const waitForDiscoveries = (n: number, label: string) =>
+      new Promise<void>((resolve, reject) => {
+        if (discoveryCount >= n) return resolve();
+        const timeout = setTimeout(() => {
+          reject(
+            new Error(
+              `timed out waiting for runtime discovery #${n} (${label}); ` +
+                `seen=${discoveryCount}\n--- captured ---\n${tail(buffer)}`,
+            ),
+          );
+        }, 90_000);
+        discoveryWaiters.push({ target: n, resolve, reject, timeout });
+      });
+
+    try {
+      await fs.writeFile(
+        genFilePath,
+        "// dirty marker — dev must regenerate\n",
+      );
+
+      dev = spawn("pnpm", ["dev"], {
+        cwd: process.cwd(),
+        env: { ...process.env, FORCE_COLOR: "0" },
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
+      });
+
+      const onData = (chunk: Buffer) => {
+        buffer += chunk.toString();
+        const lastNewline = buffer.lastIndexOf("\n");
+        if (lastNewline < 0) return;
+        // Scan complete-line region only (chunk-safe — see fixture pattern
+        // notes). Count occurrences of the per-router discovery summary log
+        // line that discoverRouters() emits unconditionally on every cycle.
+        const completeRegion = buffer.slice(0, lastNewline + 1);
+        const matches =
+          completeRegion.match(
+            /\[rsc-router\] Router "[^"]+" -> \d+ routes/g,
+          ) ?? [];
+        const newCount = matches.length;
+        if (newCount > discoveryCount) {
+          discoveryCount = newCount;
+          for (const w of discoveryWaiters.slice()) {
+            if (discoveryCount >= w.target) {
+              clearTimeout(w.timeout);
+              w.resolve();
+              discoveryWaiters.splice(discoveryWaiters.indexOf(w), 1);
+            }
+          }
+        }
+      };
+      dev.stdout?.on("data", onData);
+      dev.stderr?.on("data", onData);
+
+      let unexpectedExit: Error | null = null;
+      dev.on("exit", (code, signal) => {
+        if (signal === "SIGTERM" || signal === "SIGKILL") return;
+        unexpectedExit = new Error(
+          `dev exited unexpectedly (code=${code}, signal=${signal})\n` +
+            `--- captured ---\n${tail(buffer)}`,
+        );
+        for (const w of discoveryWaiters.slice()) {
+          clearTimeout(w.timeout);
+          w.reject(unexpectedExit);
+        }
+        discoveryWaiters.length = 0;
+      });
+
+      // 1. Cold-start runtime discovery completes.
+      await waitForDiscoveries(1, "cold-start");
+      // Settling pause: cold-start triggers workerd reloads (the manifest
+      // virtual module change cascades through). Touching too early races
+      // against that fan-out and chokidar can drop the watcher event.
+      // 2.5s covers the observed ~2.5s "VITE ready" milestone.
+      await new Promise((r) => setTimeout(r, 2500));
+      const coldGen = await fs.readFile(genFilePath, "utf-8");
+      expect(coldGen).toBe(buildGen);
+
+      // 2. Trigger HMR by appending a no-op whitespace edit to a route
+      //    source file. Vite/chokidar normalizes some file-system events,
+      //    so a tiny content change is the most reliable cross-platform way
+      //    to fire a `change` event without altering parsed route output.
+      const sourceFile = path.resolve("./src/shop-patterns.tsx");
+      const sourceContent = await fs.readFile(sourceFile, "utf-8");
+      const restoreOriginal = async () => {
+        await fs.writeFile(sourceFile, sourceContent);
+      };
+      try {
+        await fs.writeFile(sourceFile, sourceContent + "\n");
+
+        // 3. Second runtime discovery completes (HMR rediscovery via temp runner).
+        await waitForDiscoveries(2, "post-HMR");
+        await new Promise((r) => setTimeout(r, 200));
+
+        // 4. Process must still be alive — pre-fix, workerd would have hit
+        //    `Unknown route: shop.product.item42` against a partial 19-route
+        //    gen file written by the static parser and exited.
+        expect(
+          unexpectedExit,
+          "dev exited during HMR rediscovery — gen file likely shrank and workerd crashed",
+        ).toBeNull();
+        expect(dev.exitCode).toBeNull();
+
+        // 5. Gen file matches build byte-for-byte AFTER HMR.
+        const postHmrGen = await fs.readFile(genFilePath, "utf-8");
+        expect(
+          postHmrGen,
+          "dev's gen file after HMR must still match build — runtime rediscovery should restore factory routes",
+        ).toBe(buildGen);
+      } finally {
+        // Always restore the source file even if assertions failed.
+        await restoreOriginal();
+      }
+    } finally {
+      await killProcessTree(dev);
+      await fs.writeFile(genFilePath, buildGen);
+    }
+  });
 });
 
 /**

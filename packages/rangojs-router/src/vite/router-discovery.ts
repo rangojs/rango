@@ -360,6 +360,22 @@ export function createRouterDiscoveryPlugin(
         resolveDiscovery = resolve;
       });
 
+      // Resettable manifest-readiness gate. The virtual:rsc-router/routes-manifest
+      // module's `load()` awaits `s.discoveryDone`; we replace the promise on
+      // each rediscovery cycle so workerd's HMR reloads block until the new
+      // gen file is fully written. Set ASAP (before any async work or manifest
+      // invalidation) — the cold-start gate is created here too, so the same
+      // mechanism powers both flows.
+      let gateResolver: () => void = () => {};
+      const beginDiscoveryGate = (): void => {
+        s.discoveryDone = new Promise<void>((resolve) => {
+          gateResolver = resolve;
+        });
+      };
+      const resolveDiscoveryGate = (): void => {
+        gateResolver();
+      };
+
       // Compute dev server origin from resolved URLs (preferred) or config port (fallback).
       // Called after discovery (or in the load hook) when the server may be listening.
       const getDevServerOrigin = () =>
@@ -551,10 +567,14 @@ export function createRouterDiscoveryPlugin(
       };
 
       // Schedule after all plugins have finished configureServer.
-      // Store the promise so the virtual module's load hook can await it.
-      s.discoveryDone = new Promise<void>((resolve) => {
-        setTimeout(() => discover().then(resolve, resolve), 0);
-      });
+      // The gate (s.discoveryDone) is reset via beginDiscoveryGate() and
+      // resolved when discover() finishes, so the virtual manifest module's
+      // load() awaits the populated state.
+      beginDiscoveryGate();
+      setTimeout(
+        () => discover().then(resolveDiscoveryGate, resolveDiscoveryGate),
+        0,
+      );
 
       // Dev-mode on-demand prerender endpoint.
       // When workerd hits a prerender route, it fetches this endpoint instead of
@@ -768,20 +788,59 @@ export function createRouterDiscoveryPlugin(
         // static parser cannot see are refreshed after source changes.
         let runtimeRediscoveryInProgress = false;
         const refreshRuntimeDiscovery = async () => {
+          if (runtimeRediscoveryInProgress) return;
           const rscEnv = (server.environments as any)?.rsc;
-          if (!rscEnv?.runner || runtimeRediscoveryInProgress) return;
+          const hasMainRunner = !!rscEnv?.runner;
+          // Cloudflare HMR has no main RSC runner (workerd is a separate
+          // runtime). When we have a populated runtime manifest from cold
+          // start, we can re-discover via the temp Node runner — the same
+          // mechanism getOrCreateTempServer() uses at startup. Without a
+          // populated manifest there's nothing useful to do, so bail.
+          if (!hasMainRunner && s.perRouterManifests.length === 0) return;
           runtimeRediscoveryInProgress = true;
           const hmrStart = performance.now();
           try {
-            await timed(debugDiscovery, "hmr discoverRouters", () =>
-              discoverRouters(s, rscEnv),
-            );
-            timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
-              writeRouteTypesFiles(s),
-            );
-            await timed(debugDiscovery, "hmr propagateDiscoveryState", () =>
-              propagateDiscoveryState(rscEnv),
-            );
+            if (hasMainRunner) {
+              await timed(debugDiscovery, "hmr discoverRouters", () =>
+                discoverRouters(s, rscEnv),
+              );
+              timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
+                writeRouteTypesFiles(s),
+              );
+              await timed(debugDiscovery, "hmr propagateDiscoveryState", () =>
+                propagateDiscoveryState(rscEnv),
+              );
+            } else {
+              // Cloudflare HMR: close+recreate the temp Node server so its
+              // module graph re-reads the freshly edited source. Both
+              // prerenderTempServer AND prerenderNodeRegistry must be nulled
+              // because getOrCreateTempServer() short-circuits on a cached
+              // registry and would never refresh otherwise.
+              if (prerenderTempServer) {
+                debugDiscovery?.("hmr: closing cached temp server");
+                await prerenderTempServer.close().catch(() => {});
+                prerenderTempServer = null;
+                prerenderNodeRegistry = null;
+              }
+              const tempRscEnv = await timed(
+                debugDiscovery,
+                "hmr getOrCreateTempServer (cloudflare)",
+                () => getOrCreateTempServer(),
+              );
+              if (!tempRscEnv) {
+                throw new Error(
+                  "temp runner unavailable for cloudflare HMR rediscovery",
+                );
+              }
+              await timed(
+                debugDiscovery,
+                "hmr discoverRouters (cloudflare)",
+                () => discoverRouters(s, tempRscEnv),
+              );
+              timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
+                writeRouteTypesFiles(s),
+              );
+            }
           } catch (err: any) {
             console.warn(
               `[rsc-router] Runtime re-discovery failed: ${err.message}`,
@@ -792,6 +851,10 @@ export function createRouterDiscoveryPlugin(
               (performance.now() - hmrStart).toFixed(1),
             );
             runtimeRediscoveryInProgress = false;
+            // Resolve the gate so the manifest virtual module's load() —
+            // which the workerd HMR reload is awaiting — unblocks against
+            // the freshly-written gen file.
+            resolveDiscoveryGate();
           }
         };
 
@@ -800,10 +863,27 @@ export function createRouterDiscoveryPlugin(
           routeChangeTimer = setTimeout(() => {
             routeChangeTimer = undefined;
             const regenStart = debugDiscovery ? performance.now() : 0;
+            const rscEnv = (server.environments as any)?.rsc;
+            const skipStaticWrite =
+              !rscEnv?.runner && s.perRouterManifests.length > 0;
             try {
-              writeCombinedRouteTypesWithTracking(s);
-              if (s.perRouterManifests.length > 0) {
-                supplementGenFilesWithRuntimeRoutes(s);
+              // In cloudflare dev with a populated runtime manifest, the
+              // static parser produces a strictly smaller (and actively
+              // wrong) gen file — supplementGenFilesWithRuntimeRoutes can
+              // only restore factory-only prefixes, and apps with mixed
+              // static+factory routes under shared prefixes (cf-stress)
+              // collapse to the 19-route static view. Skip the static
+              // write entirely; runtime rediscovery below will overwrite
+              // the gen file with the authoritative manifest.
+              if (skipStaticWrite) {
+                debugDiscovery?.(
+                  "watcher: skipping static write (cloudflare HMR — runtime rediscovery owns gen file)",
+                );
+              } else {
+                writeCombinedRouteTypesWithTracking(s);
+                if (s.perRouterManifests.length > 0) {
+                  supplementGenFilesWithRuntimeRoutes(s);
+                }
               }
             } catch (err: any) {
               console.error(
@@ -815,12 +895,16 @@ export function createRouterDiscoveryPlugin(
               (performance.now() - regenStart).toFixed(1),
             );
             // Async: re-run runtime discovery to refresh factory-generated
-            // routes that the static parser cannot resolve.
+            // routes that the static parser cannot resolve. Resolves the
+            // discovery gate when complete.
             if (s.perRouterManifests.length > 0) {
               refreshRuntimeDiscovery().catch((err: any) => {
                 console.warn(
                   `[rsc-router] Runtime re-discovery error: ${err.message}`,
                 );
+                // Even on error, unblock the gate so workerd's reload
+                // doesn't hang indefinitely against the previous manifest.
+                resolveDiscoveryGate();
               });
             }
           }, 100);
@@ -867,6 +951,16 @@ export function createRouterDiscoveryPlugin(
                 return;
               }
               s.cachedRouterFiles = undefined;
+            }
+            // Reset the manifest gate IMMEDIATELY (before the 100ms debounce
+            // and any downstream HMR fanout). If we waited until the
+            // debounced timer fired, a workerd reload triggered by the same
+            // source change could observe `s.discoveryDone` still resolved
+            // from cold-start, race ahead of rediscovery, and read a partial
+            // gen file. Resolved by refreshRuntimeDiscovery() once the new
+            // gen file is written.
+            if (s.perRouterManifests.length > 0) {
+              beginDiscoveryGate();
             }
             scheduleRouteRegeneration();
           } catch {
