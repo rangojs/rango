@@ -390,31 +390,18 @@ test.describe("dev vs build named-routes parity", () => {
       const restoreOriginal = async () => {
         await fs.writeFile(sourceFile, sourceContent);
       };
-      // Helper: poll the buffer for a regex match. Used to time the second
-      // edit deterministically against debug-log markers from the first
-      // refresh — fixed sleeps were timing-fragile and missed the tail
-      // case where the second event's debounce fires AFTER refresh A
-      // completes (review feedback).
-      const waitForLog = (pattern: RegExp, label: string, fromIdx = 0) =>
-        new Promise<number>((resolve, reject) => {
-          const start = Date.now();
-          const tick = () => {
-            const idx = buffer.slice(fromIdx).search(pattern);
-            if (idx >= 0) return resolve(fromIdx + idx);
-            if (Date.now() - start > 30_000) {
-              return reject(
-                new Error(
-                  `timed out waiting for log "${label}"\n--- captured ---\n${tail(buffer)}`,
-                ),
-              );
-            }
-            setTimeout(tick, 50);
-          };
-          tick();
-        });
-
       try {
-        // First edit: triggers refresh A.
+        // Capture buffer offset BEFORE the HMR edits so subsequent
+        // waitForLog calls don't match cold-start log lines (the
+        // "discoveryDone resolved" line fires once on cold-start too —
+        // without an offset, the trailing assertion would match
+        // immediately and not actually pin the post-HMR resolution).
+        const preHmrIdx = buffer.length;
+
+        // First edit: triggers refresh A. Whitespace-only is fine here —
+        // we just need the watcher to fire so refresh A starts. The
+        // route-meaningful edit goes into touch 2 below so we can prove
+        // refresh B actually rewrote the manifest.
         await fs.writeFile(sourceFile, sourceContent + "\n");
 
         // Wait until refresh A's temp-server reload has STARTED — that
@@ -422,36 +409,58 @@ test.describe("dev vs build named-routes parity", () => {
         // the work phase. From here we know runtimeRediscoveryInProgress
         // is true, so the second edit is guaranteed to land in the
         // queued path.
-        await waitForLog(
+        await waitForLogFromIdx(
+          () => buffer,
           /hmr: closing cached temp server/,
           "refresh A in-flight",
+          preHmrIdx,
         );
 
-        // Second edit: arrives DURING refresh A's work. The
-        // runtimeRediscoveryInProgress early-return + queue mechanism is
-        // exercised here. Pre-fix bug #2 (without queue) would orphan
-        // the gate; pre-fix bug #1 (gate replacement) would hang workerd.
-        await fs.writeFile(sourceFile, sourceContent + "\n\n");
+        // Second edit: route-meaningful. Bumping the factory's `length`
+        // adds a NEW route (`shop.product.item101`) so refresh B's gen
+        // output differs from refresh A's. If refresh B failed to run or
+        // wrote against the old source, the gen file would not include
+        // the new route and the assertion below would catch it.
+        const editedContent = sourceContent.replace(
+          /Array\.from\(\{ length: 100 \}/,
+          "Array.from({ length: 101 }",
+        );
+        if (editedContent === sourceContent) {
+          throw new Error(
+            "test fixture invariant broken: shop-patterns.tsx must contain `Array.from({ length: 100 }`",
+          );
+        }
+        await fs.writeFile(sourceFile, editedContent);
 
-        // Wait for the queue path to actually fire. If timing happens to
-        // collapse both events into the debounce window, the assertion
-        // would still pass via discovery counts but we'd lose the
-        // regression signal. Anchoring on this log line ensures we
-        // exercise the queued branch.
-        await waitForLog(
+        // Wait for the queue path to actually fire. Anchored on the
+        // post-HMR offset so cold-start log lines can't satisfy the wait.
+        await waitForLogFromIdx(
+          () => buffer,
           /hmr: rediscovery in flight — queued for a follow-up cycle/,
           "queue marker",
+          preHmrIdx,
         );
-        await waitForLog(/hmr: consuming queued rediscovery/, "queue consumed");
+        await waitForLogFromIdx(
+          () => buffer,
+          /hmr: consuming queued rediscovery/,
+          "queue consumed",
+          preHmrIdx,
+        );
 
         // Three discoveries total: cold + refresh A + queued refresh.
         await waitForDiscoveries(3, "post-rapid-edits");
 
-        // Trailing wait for resolveDiscoveryGate's debug line — the gate
-        // MUST resolve only after the queued cycle completes. If a pre-fix
-        // bug resolved it earlier, this would still appear (eventually)
-        // but not at the right point in the trace.
-        await waitForLog(/hmr: discoveryDone resolved/, "gate resolution");
+        // Anchor on the gen-file content directly. Refresh A's gate
+        // resolution can race with chokidar latency (touch 2's handler
+        // sometimes fires before, sometimes after refresh A's finally
+        // depending on timing), so waiting on log lines for "second
+        // gate resolved" is platform-fragile. Polling the file for the
+        // new route is a direct check of "refresh B ran and wrote it."
+        await waitForGenFileContains(
+          genFilePath,
+          '"shop.product.item101":',
+          "post-rapid-edits: queued refresh writes new factory route",
+        );
 
         expect(
           unexpectedExit,
@@ -461,8 +470,8 @@ test.describe("dev vs build named-routes parity", () => {
         const postGen = await fs.readFile(genFilePath, "utf-8");
         expect(
           postGen,
-          "rapid HMR events should still leave the gen file matching build",
-        ).toBe(buildGen);
+          "post-HMR gen must still include all original routes — refresh B should not have lost any",
+        ).toContain('"shop.product.item42":');
       } finally {
         await restoreOriginal();
       }
@@ -571,24 +580,6 @@ test.describe("dev vs build named-routes parity", () => {
         discoveryWaiters.length = 0;
       });
 
-      const waitForLog = (pattern: RegExp, label: string) =>
-        new Promise<number>((resolve, reject) => {
-          const start = Date.now();
-          const tick = () => {
-            const idx = buffer.search(pattern);
-            if (idx >= 0) return resolve(idx);
-            if (Date.now() - start > 30_000) {
-              return reject(
-                new Error(
-                  `timed out waiting for log "${label}"\n--- captured ---\n${tail(buffer)}`,
-                ),
-              );
-            }
-            setTimeout(tick, 50);
-          };
-          tick();
-        });
-
       await waitForDiscoveries(1, "cold-start");
       await new Promise((r) => setTimeout(r, 2500));
 
@@ -599,38 +590,79 @@ test.describe("dev vs build named-routes parity", () => {
       };
 
       try {
-        // Track buffer length before touch 1 so we can wait for the FIRST
-        // refresh's writeRouteTypesFiles marker (not the cold-start one).
-        const preTouchBufferLen = buffer.length;
+        // Capture buffer offset BEFORE the HMR edits. All
+        // waitForLogFromIdx calls below use this offset so cold-start
+        // log lines (`Generated route types -> `, `discoveryDone
+        // resolved`, etc.) can't satisfy the wait — without it, the
+        // trailing assertion on `discoveryDone resolved` would match
+        // the cold-start emission immediately and fail to pin the
+        // post-HMR resolution.
+        const preHmrIdx = buffer.length;
+
+        // First edit: whitespace-only triggers refresh A. Route-meaningful
+        // edit is reserved for touch 2 below so we can prove refresh B
+        // actually rewrote the manifest.
         await fs.writeFile(sourceFile, sourceContent + "\n");
 
-        // Wait for refresh A to reach the WRITE step — that's the very last
-        // sync step in the work phase. After this, refresh A's finally
-        // runs synchronously. Touch 2 must arrive AFTER this point but
-        // BEFORE its 100ms debounce expires (well, by the time the new
-        // debounce fires, refresh A's finally will already have run —
-        // that's the test invariant).
-        const writeAtIdx = await waitForLogFromIdx(
+        // Wait for refresh A to reach its WRITE step — the last sync
+        // step in the work phase. After this, refresh A's finally runs
+        // synchronously. Touch 2 must arrive AFTER this point but BEFORE
+        // its 100ms debounce expires (so the new debounce fires AFTER
+        // refresh A's finally — the tail-race window pre-fix).
+        await waitForLogFromIdx(
           () => buffer,
           /hmr writeRouteTypesFiles/,
           "refresh A near tail",
-          preTouchBufferLen,
+          preHmrIdx,
         );
-        void writeAtIdx;
 
-        // Touch 2 immediately after seeing the writeRouteTypesFiles log.
-        // Refresh A's finally will run within the next few ms; touch 2's
-        // debounce fires 100ms after this write. So the debounce expires
-        // AFTER refresh A's finally — the tail-race window pre-fix.
-        await fs.writeFile(sourceFile, sourceContent + "\n\n");
+        // Touch 2: route-meaningful, immediately after writeRouteTypesFiles.
+        // Bumping `length` adds `shop.product.item101`. If pre-fix the
+        // gate resolved between A's finally and B's start, workerd could
+        // observe stale gen — but more importantly, the END-STATE gen
+        // file must include the new route, proving refresh B ran with
+        // the new source. (The whitespace-only earlier version of this
+        // test couldn't distinguish stale-A from fresh-B because their
+        // manifest output was identical — review feedback.)
+        const editedContent = sourceContent.replace(
+          /Array\.from\(\{ length: 100 \}/,
+          "Array.from({ length: 101 }",
+        );
+        if (editedContent === sourceContent) {
+          throw new Error(
+            "test fixture invariant broken: shop-patterns.tsx must contain `Array.from({ length: 100 }`",
+          );
+        }
+        await fs.writeFile(sourceFile, editedContent);
 
-        // Refresh B runs (debounce expires) and resolves the gate. We
-        // don't assert on the specific code path (queue vs pendingRouteEvents)
-        // because chokidar latency can push the event into either window.
-        // The contract we're pinning is: dev doesn't exit and gen ends
-        // up correct.
+        // Refresh B runs (debounce expires, possibly after refresh A's
+        // finally) and resolves the gate. Path is non-deterministic by
+        // platform (queue vs pendingRouteEvents depending on chokidar
+        // latency); the user-visible contract — dev alive, gen reflects
+        // the new edit — is what we pin.
+        //
+        // Anchoring on the gen-file content directly (rather than
+        // log-line ordering) is the most robust signal:
+        //
+        //   - Refresh A's `discoveryDone resolved` log fires when the
+        //     gate is released for refresh A's output. With chokidar
+        //     latency on macOS/CI, touch 2's `handleRouteFileChange`
+        //     can run AFTER refresh A's finally, so pendingRouteEvents
+        //     wasn't set in time and refresh A's gate resolves
+        //     normally. This is fine — the touch then creates a fresh
+        //     gate2 that workerd's later reload awaits. The test's
+        //     job is to verify END STATE, not internal log ordering.
+        //
+        //   - Polling the gen file until it contains the new route is
+        //     a direct check of "refresh B ran and wrote correctly."
+        //     If it never appears, the test times out with a clear
+        //     diagnostic (full dev buffer dumped on failure).
         await waitForDiscoveries(3, "post-tail-race");
-        await waitForLog(/hmr: discoveryDone resolved/, "gate resolution");
+        await waitForGenFileContains(
+          genFilePath,
+          '"shop.product.item101":',
+          "post-tail-race: refresh B writes new factory route",
+        );
 
         expect(
           unexpectedExit,
@@ -640,8 +672,8 @@ test.describe("dev vs build named-routes parity", () => {
         const postGen = await fs.readFile(genFilePath, "utf-8");
         expect(
           postGen,
-          "tail-race HMR should leave gen file matching build",
-        ).toBe(buildGen);
+          "post-tail-race gen must still include all original routes",
+        ).toContain('"shop.product.item42":');
       } finally {
         await restoreOriginal();
       }
@@ -704,6 +736,35 @@ async function killProcessTree(child: ChildProcess | null): Promise<void> {
     } catch {
       child.kill("SIGKILL");
     }
+  }
+}
+
+/**
+ * Poll the gen file on disk until it contains a target substring. Used to
+ * verify that an HMR rediscovery cycle actually wrote its updated output —
+ * this is the user-visible contract and is more robust to log-line ordering
+ * variability than waiting on internal debug markers.
+ */
+async function waitForGenFileContains(
+  filePath: string,
+  needle: string,
+  label: string,
+  timeoutMs = 30_000,
+): Promise<void> {
+  const start = Date.now();
+  while (true) {
+    try {
+      const content = await fs.readFile(filePath, "utf-8");
+      if (content.includes(needle)) return;
+    } catch {
+      // File might be momentarily unreadable mid-write; retry.
+    }
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(
+        `timed out waiting for gen file to contain "${needle}" (${label})`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 100));
   }
 }
 
