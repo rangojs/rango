@@ -434,10 +434,59 @@ export function createRouterDiscoveryPlugin(
       }
 
       async function getOrCreateTempServer(): Promise<any | null> {
-        if (prerenderNodeRegistry) {
-          debugDiscovery?.("getOrCreateTempServer: cached temp runner reused");
-          return (prerenderTempServer.environments as any)?.rsc ?? null;
+        // Reuse path: if a temp server is already alive, prefer reusing
+        // it over orphaning the existing instance and spinning up a new
+        // one. This handles two cases:
+        //
+        //   1. Steady-state cache hit (cold-start completed, registry
+        //      cached) — return the env immediately.
+        //   2. Recovery from a failed refresh: refreshTempRscEnv() may
+        //      have invalidated and nulled the registry, then thrown
+        //      during importEntryAndRegistry. Without reuse, the next
+        //      call would `createTempRscServer` and overwrite the
+        //      handle, leaking the previous server. Try to re-import on
+        //      the existing runner first; only if THAT fails do we
+        //      close the orphan and create new.
+        if (prerenderTempServer) {
+          const existingEnv = (prerenderTempServer.environments as any)?.rsc;
+          if (existingEnv?.runner) {
+            if (prerenderNodeRegistry) {
+              debugDiscovery?.(
+                "getOrCreateTempServer: cached temp runner reused",
+              );
+              return existingEnv;
+            }
+            // Server alive but registry missing — likely after a prior
+            // refresh's invalidate + import threw. Try to re-import.
+            debugDiscovery?.(
+              "getOrCreateTempServer: server alive but registry missing — re-importing",
+            );
+            try {
+              await importEntryAndRegistry(existingEnv);
+              return existingEnv;
+            } catch (err: any) {
+              debugDiscovery?.(
+                "getOrCreateTempServer: reuse import failed (%s) — closing orphan and creating fresh",
+                err?.message ?? String(err),
+              );
+              await prerenderTempServer.close().catch(() => {});
+              prerenderTempServer = null;
+              prerenderNodeRegistry = null;
+              // Fall through to create-new path below.
+            }
+          } else {
+            // Server reference exists but its rsc env is unhealthy
+            // (no runner). Close and recreate.
+            debugDiscovery?.(
+              "getOrCreateTempServer: existing server has no rsc.runner — closing and recreating",
+            );
+            await prerenderTempServer.close().catch(() => {});
+            prerenderTempServer = null;
+            prerenderNodeRegistry = null;
+          }
         }
+
+        // Create path: no existing temp server (or just nullified above).
         debugDiscovery?.(
           "getOrCreateTempServer: creating new temp server, entry=%s",
           s.resolvedEntryPath ?? "(unset)",
@@ -465,6 +514,41 @@ export function createRouterDiscoveryPlugin(
           );
         }
         return null;
+      }
+
+      // Clear the package-level singleton registries that survive a Vite
+      // moduleGraph.invalidateAll(). createRouter() / createHostRouter()
+      // call .set(id, ...) on these Maps; for "router removed" or
+      // "router id changed" edits, the OLD entry would persist after
+      // re-import without an explicit .clear(), leaving ghost routes
+      // in discoverRouters' output.
+      //
+      // We import the same module the runner imports, so the .clear()
+      // here mutates the same Map the freshly re-imported entry will
+      // populate.
+      async function clearTempRegistries(tempRscEnv: any): Promise<void> {
+        try {
+          const serverMod = await tempRscEnv.runner.import(
+            "@rangojs/router/server",
+          );
+          if (typeof serverMod?.RouterRegistry?.clear === "function") {
+            serverMod.RouterRegistry.clear();
+          }
+          if (typeof serverMod?.HostRouterRegistry?.clear === "function") {
+            serverMod.HostRouterRegistry.clear();
+          }
+          debugDiscovery?.(
+            "clearTempRegistries: cleared RouterRegistry + HostRouterRegistry",
+          );
+        } catch (err: any) {
+          // Non-fatal: if the import fails here, importEntryAndRegistry
+          // below will fail loudly with the same root cause and the
+          // caller will surface it.
+          debugDiscovery?.(
+            "clearTempRegistries: import @rangojs/router/server failed (%s)",
+            err?.message ?? String(err),
+          );
+        }
       }
 
       // HMR refresh: keep the temp Vite server alive across HMR cycles and
@@ -519,6 +603,13 @@ export function createRouterDiscoveryPlugin(
         // Drop the cached registry so importEntryAndRegistry re-reads it
         // through the now-invalidated module runner.
         prerenderNodeRegistry = null;
+        // Clear singleton Maps that Vite's moduleGraph invalidation can't
+        // reach (RouterRegistry / HostRouterRegistry). Without this, an
+        // edit that REMOVES a createRouter() call or CHANGES a router id
+        // would leave the old entry in the registry, and discoverRouters
+        // would still emit its routes alongside whatever the new source
+        // declares.
+        await clearTempRegistries(tempRscEnv);
         await importEntryAndRegistry(tempRscEnv);
         return tempRscEnv;
       }

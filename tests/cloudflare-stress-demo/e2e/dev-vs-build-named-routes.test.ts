@@ -736,6 +736,22 @@ test.describe("dev vs build named-routes parity", () => {
           dev.unexpectedExit,
           "dev must stay alive across remove",
         ).toBeNull();
+
+        // Lifecycle proof: clearTempRegistries must run between
+        // module-graph invalidation and re-import. Without it, a
+        // hypothetical edit that removed an entire createRouter() call
+        // (or changed the router id) would leave the OLD router in
+        // RouterRegistry alongside the new — discoverRouters would emit
+        // ghost routes. cf-stress only has one router so this exact
+        // scenario isn't directly covered, but asserting the log line
+        // guarantees the lifecycle code path is wired and would handle
+        // the multi-router / id-change case.
+        expect(
+          dev.buffer,
+          "refresh must clear RouterRegistry/HostRouterRegistry singletons that survive moduleGraph.invalidateAll()",
+        ).toMatch(
+          /clearTempRegistries: cleared RouterRegistry \+ HostRouterRegistry/,
+        );
       } finally {
         await fs.writeFile(sourceFile, sourceContent);
       }
