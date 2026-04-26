@@ -59,6 +59,14 @@ interface EvaluateRevalidationOptions<TEnv> {
   stale?: boolean;
   /** Trace source hint for the revalidation trace */
   traceSource?: RevalidationTraceEntry["source"];
+  /**
+   * Override the segment-type-derived default. When set, the value is used as
+   * the seed `defaultShouldRevalidate` passed to user revalidate fns and the
+   * reason flows into the trace. Callers use this when client-knowledge
+   * (e.g. parallel slot not in clientSegmentIds) should dictate the seed
+   * instead of the params/method-based heuristic.
+   */
+  defaultOverride?: { value: boolean; reason: string };
 }
 
 /**
@@ -81,6 +89,7 @@ export async function evaluateRevalidation<TEnv>(
     actionContext,
     stale,
     traceSource,
+    defaultOverride,
   } = options;
   const nextParams = segment.params || {};
   const paramsChanged = !paramsEqual(nextParams, prevParams);
@@ -110,7 +119,12 @@ export async function evaluateRevalidation<TEnv>(
   let defaultShouldRevalidate: boolean;
   let defaultReason: string;
 
-  if (request.method === "POST") {
+  if (defaultOverride) {
+    // Caller injected the seed (e.g. parallel slot not in clientSegmentIds).
+    // Skip the type-derived heuristic — caller knows better in this context.
+    defaultShouldRevalidate = defaultOverride.value;
+    defaultReason = defaultOverride.reason;
+  } else if (request.method === "POST") {
     // Actions: revalidate segments that belong to the route, skip parent chain
     if (segment.type === "route") {
       // Route segment always revalidates on actions

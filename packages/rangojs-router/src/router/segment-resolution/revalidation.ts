@@ -89,6 +89,27 @@ function observeStreamedHandler(
   });
 }
 
+/**
+ * Trace a parallel slot that's being force-rendered on a full refetch (client
+ * has no cached state). User revalidate fns are bypassed in this case — see
+ * the call sites for the load-bearing rationale.
+ */
+function traceFullRefetchedParallelSlot(
+  parallelId: string,
+  belongsToRoute: boolean,
+): void {
+  if (!isTraceActive()) return;
+  pushRevalidationTraceEntry({
+    segmentId: parallelId,
+    segmentType: "parallel",
+    belongsToRoute,
+    source: "parallel",
+    defaultShouldRevalidate: true,
+    finalShouldRevalidate: true,
+    reason: "full-refetch",
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Revalidation telemetry helper
 // ---------------------------------------------------------------------------
@@ -448,44 +469,30 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
 
     const isFullRefetch = clientSegmentIds.size === 0;
     const isNewParent = !clientSegmentIds.has(entry.shortCode);
-    if (
-      isFullRefetch ||
-      clientSegmentIds.has(parallelId) ||
-      belongsToRoute ||
-      isNewParent
-    ) {
-      matchedIds.push(parallelId);
-    }
+    // Always announce the slot in matchedIds — it's unconditionally appended
+    // to `segments` below, and a segment present in segments but missing from
+    // matched lets the client prune it (then it's missing from clientSegmentIds
+    // on the next request, perpetuating the staleness).
+    matchedIds.push(parallelId);
 
-    const shouldResolve = await (async () => {
-      if (isFullRefetch) {
-        if (isTraceActive()) {
-          pushRevalidationTraceEntry({
-            segmentId: parallelId,
-            segmentType: "parallel",
-            belongsToRoute,
-            source: "parallel",
-            defaultShouldRevalidate: true,
-            finalShouldRevalidate: true,
-            reason: "full-refetch",
-          });
-        }
-        return true;
-      }
+    let shouldResolve: boolean;
+    if (isFullRefetch) {
+      // Client has nothing cached — slot MUST render. User revalidate fns are
+      // bypassed here because returning false would leave the segment blank
+      // with no client-side fallback.
+      traceFullRefetchedParallelSlot(parallelId, belongsToRoute);
+      shouldResolve = true;
+    } else {
+      // For non-empty client sets, consult user revalidate fns. When the slot
+      // is unknown to the client, override the type-derived default so the
+      // soft chain seeds with the right "new segment" / "parent-chain" value.
+      let defaultOverride: { value: boolean; reason: string } | undefined;
       if (!clientSegmentIds.has(parallelId)) {
-        const result = belongsToRoute || isNewParent;
-        if (isTraceActive()) {
-          pushRevalidationTraceEntry({
-            segmentId: parallelId,
-            segmentType: "parallel",
-            belongsToRoute,
-            source: "parallel",
-            defaultShouldRevalidate: result,
-            finalShouldRevalidate: result,
-            reason: result ? "new-segment" : "skip-parent-chain",
-          });
-        }
-        return result;
+        const value = belongsToRoute || isNewParent;
+        defaultOverride = {
+          value,
+          reason: value ? "new-segment" : "skip-parent-chain",
+        };
       }
 
       const dummySegment: ResolvedSegment = {
@@ -503,7 +510,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
           : {}),
       };
 
-      return await evaluateRevalidation({
+      shouldResolve = await evaluateRevalidation({
         segment: dummySegment,
         prevParams,
         getPrevSegment: null,
@@ -519,8 +526,9 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         actionContext,
         stale,
         traceSource: "parallel",
+        defaultOverride,
       });
-    })();
+    }
     emitRevalidationDecision(
       parallelId,
       context.pathname,
@@ -868,7 +876,6 @@ export async function resolveSegmentWithRevalidation<TEnv>(
         prevUrl,
         nextUrl,
         routeKey,
-        loaderPromises,
         true,
         deps,
         actionContext,
@@ -953,7 +960,6 @@ export async function resolveSegmentWithRevalidation<TEnv>(
         prevUrl,
         nextUrl,
         routeKey,
-        loaderPromises,
         false,
         deps,
         actionContext,
@@ -980,7 +986,6 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   prevUrl: URL,
   nextUrl: URL,
   routeKey: string,
-  loaderPromises: Map<string, Promise<any>>,
   belongsToRoute: boolean,
   deps: SegmentResolutionDeps<TEnv>,
   actionContext?: ActionContext,
@@ -1166,21 +1171,20 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     const parallelId = `${orphan.shortCode}.${slot}`;
     matchedIds.push(parallelId);
 
-    const shouldResolve = await (async () => {
-      if (!clientSegmentIds.has(parallelId)) {
-        if (isTraceActive()) {
-          pushRevalidationTraceEntry({
-            segmentId: parallelId,
-            segmentType: "parallel",
-            belongsToRoute,
-            source: "parallel",
-            defaultShouldRevalidate: true,
-            finalShouldRevalidate: true,
-            reason: "new-segment",
-          });
-        }
-        return true;
-      }
+    const isFullRefetch = clientSegmentIds.size === 0;
+    let shouldResolve: boolean;
+    if (isFullRefetch) {
+      // Same load-bearing rationale as the main parallel path: full refetch
+      // means the client has nothing to fall back to, so the slot must render.
+      traceFullRefetchedParallelSlot(parallelId, belongsToRoute);
+      shouldResolve = true;
+    } else {
+      // When slot is unknown to the client, seed the soft chain with `true`
+      // (orphan parallels always belong to the route — we want them rendered
+      // unless the user explicitly opts out via revalidate()).
+      const defaultOverride = clientSegmentIds.has(parallelId)
+        ? undefined
+        : { value: true, reason: "new-segment" };
 
       const dummySegment: ResolvedSegment = {
         id: parallelId,
@@ -1197,7 +1201,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
           : {}),
       };
 
-      return await evaluateRevalidation({
+      shouldResolve = await evaluateRevalidation({
         segment: dummySegment,
         prevParams,
         getPrevSegment: null,
@@ -1213,8 +1217,9 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         actionContext,
         stale,
         traceSource: "parallel",
+        defaultOverride,
       });
-    })();
+    }
     emitRevalidationDecision(
       parallelId,
       context.pathname,
