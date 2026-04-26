@@ -479,7 +479,8 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
  * 2. Execute global revalidators first, then route-specific
  * 3. Hard decision (boolean): stop immediately and use that value
  * 4. Soft decision (object): update suggestion and continue to next revalidator
- * 5. If all return soft decisions: use the final suggestion
+ * 5. Defer (`void` / `null` / `undefined`): leave suggestion unchanged and continue
+ * 6. If no hard decision was returned: use the final running suggestion
  *
  * @param args.currentParams - Previous route params (generic by default, can be narrowed)
  * @param args.currentUrl - Previous URL
@@ -491,7 +492,8 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
  * @param args.formData - Form data from action (future support)
  * @param args.formMethod - HTTP method from action (future support)
  *
- * @returns Hard decision (boolean) or soft suggestion (object)
+ * @returns Hard decision (boolean), soft suggestion (object), or defer
+ *   (`void` / `null` / `undefined`) to keep the running suggestion as-is.
  *
  * @example
  * ```typescript
