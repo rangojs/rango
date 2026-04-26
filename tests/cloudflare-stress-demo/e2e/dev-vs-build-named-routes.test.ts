@@ -390,44 +390,73 @@ test.describe("dev vs build named-routes parity", () => {
       const restoreOriginal = async () => {
         await fs.writeFile(sourceFile, sourceContent);
       };
+      // Helper: poll the buffer for a regex match. Used to time the second
+      // edit deterministically against debug-log markers from the first
+      // refresh — fixed sleeps were timing-fragile and missed the tail
+      // case where the second event's debounce fires AFTER refresh A
+      // completes (review feedback).
+      const waitForLog = (pattern: RegExp, label: string, fromIdx = 0) =>
+        new Promise<number>((resolve, reject) => {
+          const start = Date.now();
+          const tick = () => {
+            const idx = buffer.slice(fromIdx).search(pattern);
+            if (idx >= 0) return resolve(fromIdx + idx);
+            if (Date.now() - start > 30_000) {
+              return reject(
+                new Error(
+                  `timed out waiting for log "${label}"\n--- captured ---\n${tail(buffer)}`,
+                ),
+              );
+            }
+            setTimeout(tick, 50);
+          };
+          tick();
+        });
+
       try {
-        // First edit: triggers the in-flight rediscovery (~700ms).
+        // First edit: triggers refresh A.
         await fs.writeFile(sourceFile, sourceContent + "\n");
-        // Wait long enough for the first refresh to enter its work phase
-        // (debounce 100ms + ~50ms into work).
-        await new Promise((r) => setTimeout(r, 200));
-        // Second edit: arrives DURING the first refresh's work. The bugs
-        // we're guarding against trigger only on this overlap.
+
+        // Wait until refresh A's temp-server reload has STARTED — that
+        // log fires after the 100ms debounce and at the very beginning of
+        // the work phase. From here we know runtimeRediscoveryInProgress
+        // is true, so the second edit is guaranteed to land in the
+        // queued path.
+        await waitForLog(
+          /hmr: closing cached temp server/,
+          "refresh A in-flight",
+        );
+
+        // Second edit: arrives DURING refresh A's work. The
+        // runtimeRediscoveryInProgress early-return + queue mechanism is
+        // exercised here. Pre-fix bug #2 (without queue) would orphan
+        // the gate; pre-fix bug #1 (gate replacement) would hang workerd.
         await fs.writeFile(sourceFile, sourceContent + "\n\n");
 
-        // Pre-fix bug #2 (orphaned gate): the second beginDiscoveryGate()
-        // creates a fresh pending promise but the early-return path of
-        // refreshRuntimeDiscovery never resolves it. Even if discovery
-        // would have happened anyway, workerd's manifest virtual module
-        // load() hangs. With the queue fix, the second cycle runs and
-        // resolves the gate at the tail. We expect AT LEAST 2 HMR cycles
-        // (i.e. discoveryCount >= 3 including cold).
+        // Wait for the queue path to actually fire. If timing happens to
+        // collapse both events into the debounce window, the assertion
+        // would still pass via discovery counts but we'd lose the
+        // regression signal. Anchoring on this log line ensures we
+        // exercise the queued branch.
+        await waitForLog(
+          /hmr: rediscovery in flight — queued for a follow-up cycle/,
+          "queue marker",
+        );
+        await waitForLog(/hmr: consuming queued rediscovery/, "queue consumed");
+
+        // Three discoveries total: cold + refresh A + queued refresh.
         await waitForDiscoveries(3, "post-rapid-edits");
 
-        // Allow a moment for the trailing finally to run resolveDiscoveryGate.
-        await new Promise((r) => setTimeout(r, 200));
+        // Trailing wait for resolveDiscoveryGate's debug line — the gate
+        // MUST resolve only after the queued cycle completes. If a pre-fix
+        // bug resolved it earlier, this would still appear (eventually)
+        // but not at the right point in the trace.
+        await waitForLog(/hmr: discoveryDone resolved/, "gate resolution");
 
         expect(
           unexpectedExit,
           "dev exited during rapid-event rediscovery — gate likely orphaned",
         ).toBeNull();
-
-        // Pin that the queue path actually fired. If timing happened to
-        // collapse both events into the debounce window (only 1 cycle), the
-        // assertion above would still pass — but we'd lose the regression
-        // signal. The "in flight — queued" + "consuming queued rediscovery"
-        // pair is emitted via DEBUG=rango:discovery, which we set on the
-        // spawn for this test specifically.
-        expect(
-          buffer,
-          "queue path should have been exercised by rapid edits — if not, the timing window collapsed and this test isn't actually testing the bug it guards",
-        ).toMatch(/hmr: rediscovery in flight — queued for a follow-up cycle/);
-        expect(buffer).toMatch(/hmr: consuming queued rediscovery/);
 
         const postGen = await fs.readFile(genFilePath, "utf-8");
         expect(
@@ -442,7 +471,213 @@ test.describe("dev vs build named-routes parity", () => {
       await fs.writeFile(genFilePath, buildGen);
     }
   });
+
+  test("rapid edits near refresh tail keep gen file consistent", async ({}, testInfo) => {
+    // Regression test for the tail-race window flagged in code review:
+    // an event arriving in refresh A's tail (after writeRouteTypesFiles)
+    // whose debounce fires AFTER A's finally would, pre-fix, leave the
+    // gate resolved while refresh B was still inbound — the workerd
+    // window between A's resolve and B's start could read stale gen.
+    //
+    // Fix: handleRouteFileChange sets `pendingRouteEvents` at event time;
+    // refresh's finally holds the gate pending if the flag is set even
+    // when nothing is queued.
+    //
+    // The exact timing window is hard to hit reliably across platforms
+    // (chokidar latency varies ~50–200ms on macOS/Linux/CI), so this
+    // test focuses on the user-visible contract: dev stays alive across
+    // a touch right at the refresh tail, and the gen file ends up
+    // matching build. The internal `pendingRouteEvents` path is exercised
+    // probabilistically depending on chokidar timing, and the fix is
+    // verified by code reasoning (held gate vs prematurely resolved
+    // gate) plus the queue-path test above which proves
+    // beginDiscoveryGate idempotency.
+    testInfo.setTimeout(120_000);
+    const buildGen = await fs.readFile(genFilePath, "utf-8");
+
+    let dev: ChildProcess | null = null;
+    let buffer = "";
+    let discoveryCount = 0;
+    const discoveryWaiters: Array<{
+      target: number;
+      resolve: () => void;
+      reject: (e: Error) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }> = [];
+    const waitForDiscoveries = (n: number, label: string) =>
+      new Promise<void>((resolve, reject) => {
+        if (discoveryCount >= n) return resolve();
+        const timeout = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `timed out waiting for runtime discovery #${n} (${label}); ` +
+                  `seen=${discoveryCount}\n--- captured ---\n${tail(buffer)}`,
+              ),
+            ),
+          90_000,
+        );
+        discoveryWaiters.push({ target: n, resolve, reject, timeout });
+      });
+
+    try {
+      await fs.writeFile(genFilePath, "// dirty marker\n");
+      dev = spawn("pnpm", ["dev"], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          FORCE_COLOR: "0",
+          DEBUG: "rango:discovery",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
+      });
+
+      const onData = (chunk: Buffer) => {
+        buffer += chunk.toString();
+        const lastNewline = buffer.lastIndexOf("\n");
+        if (lastNewline < 0) return;
+        const completeRegion = buffer.slice(0, lastNewline + 1);
+        const matches =
+          completeRegion.match(
+            /\[rsc-router\] Router "[^"]+" -> \d+ routes/g,
+          ) ?? [];
+        const newCount = matches.length;
+        if (newCount > discoveryCount) {
+          discoveryCount = newCount;
+          for (const w of discoveryWaiters.slice()) {
+            if (discoveryCount >= w.target) {
+              clearTimeout(w.timeout);
+              w.resolve();
+              discoveryWaiters.splice(discoveryWaiters.indexOf(w), 1);
+            }
+          }
+        }
+      };
+      dev.stdout?.on("data", onData);
+      dev.stderr?.on("data", onData);
+
+      let unexpectedExit: Error | null = null;
+      dev.on("exit", (code, signal) => {
+        if (signal === "SIGTERM" || signal === "SIGKILL") return;
+        unexpectedExit = new Error(
+          `dev exited unexpectedly (code=${code}, signal=${signal})\n` +
+            `--- captured ---\n${tail(buffer)}`,
+        );
+        for (const w of discoveryWaiters.slice()) {
+          clearTimeout(w.timeout);
+          w.reject(unexpectedExit);
+        }
+        discoveryWaiters.length = 0;
+      });
+
+      const waitForLog = (pattern: RegExp, label: string) =>
+        new Promise<number>((resolve, reject) => {
+          const start = Date.now();
+          const tick = () => {
+            const idx = buffer.search(pattern);
+            if (idx >= 0) return resolve(idx);
+            if (Date.now() - start > 30_000) {
+              return reject(
+                new Error(
+                  `timed out waiting for log "${label}"\n--- captured ---\n${tail(buffer)}`,
+                ),
+              );
+            }
+            setTimeout(tick, 50);
+          };
+          tick();
+        });
+
+      await waitForDiscoveries(1, "cold-start");
+      await new Promise((r) => setTimeout(r, 2500));
+
+      const sourceFile = path.resolve("./src/shop-patterns.tsx");
+      const sourceContent = await fs.readFile(sourceFile, "utf-8");
+      const restoreOriginal = async () => {
+        await fs.writeFile(sourceFile, sourceContent);
+      };
+
+      try {
+        // Track buffer length before touch 1 so we can wait for the FIRST
+        // refresh's writeRouteTypesFiles marker (not the cold-start one).
+        const preTouchBufferLen = buffer.length;
+        await fs.writeFile(sourceFile, sourceContent + "\n");
+
+        // Wait for refresh A to reach the WRITE step — that's the very last
+        // sync step in the work phase. After this, refresh A's finally
+        // runs synchronously. Touch 2 must arrive AFTER this point but
+        // BEFORE its 100ms debounce expires (well, by the time the new
+        // debounce fires, refresh A's finally will already have run —
+        // that's the test invariant).
+        const writeAtIdx = await waitForLogFromIdx(
+          () => buffer,
+          /hmr writeRouteTypesFiles/,
+          "refresh A near tail",
+          preTouchBufferLen,
+        );
+        void writeAtIdx;
+
+        // Touch 2 immediately after seeing the writeRouteTypesFiles log.
+        // Refresh A's finally will run within the next few ms; touch 2's
+        // debounce fires 100ms after this write. So the debounce expires
+        // AFTER refresh A's finally — the tail-race window pre-fix.
+        await fs.writeFile(sourceFile, sourceContent + "\n\n");
+
+        // Refresh B runs (debounce expires) and resolves the gate. We
+        // don't assert on the specific code path (queue vs pendingRouteEvents)
+        // because chokidar latency can push the event into either window.
+        // The contract we're pinning is: dev doesn't exit and gen ends
+        // up correct.
+        await waitForDiscoveries(3, "post-tail-race");
+        await waitForLog(/hmr: discoveryDone resolved/, "gate resolution");
+
+        expect(
+          unexpectedExit,
+          "dev exited during tail-race — gate likely resolved against stale gen",
+        ).toBeNull();
+
+        const postGen = await fs.readFile(genFilePath, "utf-8");
+        expect(
+          postGen,
+          "tail-race HMR should leave gen file matching build",
+        ).toBe(buildGen);
+      } finally {
+        await restoreOriginal();
+      }
+    } finally {
+      await killProcessTree(dev);
+      await fs.writeFile(genFilePath, buildGen);
+    }
+  });
 });
+
+/**
+ * Poll a getter for the current buffer content until a regex matches at or
+ * after `fromIdx`. Used by tests that need to wait for a NEW occurrence of a
+ * log line without matching prior cold-start instances.
+ */
+async function waitForLogFromIdx(
+  getBuffer: () => string,
+  pattern: RegExp,
+  label: string,
+  fromIdx: number,
+  timeoutMs = 30_000,
+): Promise<number> {
+  const start = Date.now();
+  while (true) {
+    const buf = getBuffer();
+    const slice = buf.slice(fromIdx);
+    const m = slice.search(pattern);
+    if (m >= 0) return fromIdx + m;
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(
+        `timed out waiting for log "${label}" after offset ${fromIdx}\n--- captured ---\n${tail(buf)}`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
 
 /**
  * Kill the dev child and its descendants. `pnpm` spawns vite, vite spawns

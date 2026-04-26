@@ -384,6 +384,7 @@ export function createRouterDiscoveryPlugin(
       const resolveDiscoveryGate = (): void => {
         if (!gatePending) return;
         gatePending = false;
+        debugDiscovery?.("hmr: discoveryDone resolved");
         gateResolver();
       };
 
@@ -798,16 +799,27 @@ export function createRouterDiscoveryPlugin(
         // Re-run runtime discovery so factory-generated routes that the
         // static parser cannot see are refreshed after source changes.
         //
-        // Queue invariant: if a rediscovery is already in flight when a new
-        // route-source event arrives, set `runtimeRediscoveryQueued` instead
-        // of starting a parallel run. The active run's `finally` consumes
-        // the queue and re-runs (without resolving the gate yet), so the
-        // single open gate covers all queued work. Without this, the second
-        // beginDiscoveryGate() (from handleRouteFileChange) would create a
-        // pending promise that nothing resolves — workerd's manifest load()
-        // would hang.
+        // Three pieces of state cooperate to keep the discovery gate
+        // accurate across watcher fan-out:
+        //
+        //   - runtimeRediscoveryInProgress: a refresh's main work loop is
+        //     currently executing.
+        //   - runtimeRediscoveryQueued: a refresh was attempted while one
+        //     was already in flight; the active run consumes this in its
+        //     finally and recurses.
+        //   - pendingRouteEvents: a route-file event has been received
+        //     (gate already reset) but the corresponding refresh hasn't
+        //     started yet — i.e. the debounce hasn't fired. Set in
+        //     handleRouteFileChange, cleared at the start of the refresh
+        //     main path. Refresh's finally MUST keep the gate pending if
+        //     this flag is true, otherwise an event whose debounce fires
+        //     AFTER the active refresh completes (the "tail-race" window)
+        //     would observe a resolved gate, let workerd through against
+        //     stale gen, and only then trigger its own (now ungated)
+        //     refresh. Caught in code review.
         let runtimeRediscoveryInProgress = false;
         let runtimeRediscoveryQueued = false;
+        let pendingRouteEvents = false;
         const refreshRuntimeDiscovery = async () => {
           if (runtimeRediscoveryInProgress) {
             runtimeRediscoveryQueued = true;
@@ -816,6 +828,11 @@ export function createRouterDiscoveryPlugin(
             );
             return;
           }
+          // Snapshot: about to process the events that triggered this run.
+          // Any event arriving from now on re-sets the flag, and refresh's
+          // finally will hold the gate pending until the next cycle picks
+          // them up.
+          pendingRouteEvents = false;
           const rscEnv = (server.environments as any)?.rsc;
           const hasMainRunner = !!rscEnv?.runner;
           // Cloudflare HMR has no main RSC runner (workerd is a separate
@@ -878,13 +895,18 @@ export function createRouterDiscoveryPlugin(
               (performance.now() - hmrStart).toFixed(1),
             );
             runtimeRediscoveryInProgress = false;
-            // If new route-source events arrived while we were running,
-            // consume the queue with another cycle — and DON'T resolve the
-            // gate yet, since the current pending promise still represents
-            // "discovery is not yet up to date." Without this, the second
-            // beginDiscoveryGate() from the queued event would never see
-            // its resolver called. Resolution only happens at the tail of
-            // the last cycle, when no further work is queued.
+            // Three cases:
+            //   1. queued: another refresh was attempted while we were
+            //      running. Recurse to consume — gate stays pending.
+            //   2. pending events but not queued: a watcher event arrived
+            //      whose debounce hasn't fired yet. The future debounce
+            //      callback will start a fresh refresh cycle that picks
+            //      this event up. We MUST hold the gate pending until
+            //      that cycle completes — otherwise workerd reloads
+            //      between now and then observe a resolved gate against
+            //      stale gen. (Tail-race fix.)
+            //   3. neither: no further work — resolve the gate so the
+            //      manifest virtual module's load() unblocks workerd.
             if (runtimeRediscoveryQueued) {
               runtimeRediscoveryQueued = false;
               debugDiscovery?.("hmr: consuming queued rediscovery");
@@ -896,6 +918,13 @@ export function createRouterDiscoveryPlugin(
                 // outside the inner try/catch, unblock the gate.
                 resolveDiscoveryGate();
               });
+            } else if (pendingRouteEvents) {
+              debugDiscovery?.(
+                "hmr: holding gate for pending events (debounce not yet fired)",
+              );
+              // Don't resolve. The scheduled debounce will fire and call
+              // refreshRuntimeDiscovery again; that cycle's finally will
+              // consume the gate.
             } else {
               // Resolve the gate so the manifest virtual module's load() —
               // which the workerd HMR reload is awaiting — unblocks
@@ -1006,7 +1035,15 @@ export function createRouterDiscoveryPlugin(
             // from cold-start, race ahead of rediscovery, and read a partial
             // gen file. Resolved by refreshRuntimeDiscovery() once the new
             // gen file is written.
+            //
+            // Mark `pendingRouteEvents` so refresh's finally knows there's
+            // unprocessed work even if `runtimeRediscoveryQueued` doesn't
+            // catch it (the tail-race window: event arrives during refresh
+            // A's tail, A's finally runs BEFORE the event's debounce fires,
+            // so queued is still false but the gate would otherwise resolve
+            // prematurely).
             if (s.perRouterManifests.length > 0) {
+              pendingRouteEvents = true;
               beginDiscoveryGate();
             }
             scheduleRouteRegeneration();
