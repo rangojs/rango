@@ -471,6 +471,8 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
  * **Return Types:**
  * - `boolean` - Hard decision: immediately returns this value (short-circuits)
  * - `{ defaultShouldRevalidate: boolean }` - Soft decision: updates suggestion for next revalidator
+ * - `void` / `null` / `undefined` - Defer to the current suggestion (no opinion); the
+ *   loop continues to the next revalidator without changing the running default
  *
  * **Execution Flow:**
  * 1. Start with built-in `defaultShouldRevalidate` (true if params changed)
@@ -514,8 +516,9 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
  * a segment (layout, route, parallel slot, or loader) should be re-rendered.
  *
  * Return `true` to re-render, `false` to skip (keep client's current version),
- * or `{ defaultShouldRevalidate: boolean }` to override the default for
- * downstream segments.
+ * `{ defaultShouldRevalidate: boolean }` to update the running suggestion for
+ * downstream revalidators, or nothing (`void` / `null` / `undefined`) to defer
+ * to the current suggestion without changing it.
  *
  * @example
  * ```ts
@@ -615,7 +618,7 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
    * action that may have mutated backend state.
    */
   stale?: boolean;
-}) => boolean | { defaultShouldRevalidate: boolean };
+}) => boolean | { defaultShouldRevalidate: boolean } | null | void;
 
 // MiddlewareFn is imported from "../router/middleware.js" and re-exported
 

@@ -52,6 +52,7 @@ import {
 } from "../segment-resolution/revalidation.js";
 import type { EntryData } from "../../server/context.js";
 import type { SegmentResolutionDeps } from "../types.js";
+import type { ShouldRevalidateFn } from "../../types/handler-context.js";
 
 function makeDeps(): SegmentResolutionDeps<any> {
   return {
@@ -321,6 +322,81 @@ describe("parallel revalidate() fns invocation matrix (main path)", () => {
     // fn2 NOT called because fn1 hard-returned — but the fact that fn1 is
     // called at all is the regression check.
     expect(fn2).toHaveBeenCalledTimes(0);
+  });
+
+  it("void / undefined / null return defers to current suggestion and continues the chain", async () => {
+    // Dual coverage:
+    //
+    // 1) TS REGRESSION — the explicit `: ShouldRevalidateFn<any, any>`
+    //    annotations on voidReturn/undefinedReturn/nullReturn force tsc to
+    //    check that the return type accepts `void` (implicit no-return),
+    //    `undefined`, and `null`. If someone reverts the type back to
+    //    `boolean | { defaultShouldRevalidate: boolean }`, these three
+    //    lines will fail to compile, surfacing the regression at typecheck
+    //    time before any test runs. Do not remove the annotations to "make
+    //    it terser" — they're load-bearing for the type contract.
+    //
+    // 2) RUNTIME — the chain must keep iterating past each "no opinion"
+    //    return and let the trailing fn set the final answer. evaluateRevalidation
+    //    treats null/undefined as "defer to current default" (revalidation.ts).
+    const voidReturn: ShouldRevalidateFn<any, any> = vi.fn(() => {
+      // implicit return — consumer-friendly shorthand
+    });
+    const undefinedReturn: ShouldRevalidateFn<any, any> = vi.fn(
+      () => undefined,
+    );
+    const nullReturn: ShouldRevalidateFn<any, any> = vi.fn(() => null);
+    const deciding = vi.fn(() => true);
+
+    const parallelEntry = {
+      id: "layout.parallel",
+      type: "parallel",
+      shortCode: "L0P0",
+      handler: { "@panel": () => null },
+      loader: [],
+      layout: [],
+      parallel: {},
+      intercept: [],
+      middleware: [],
+      revalidate: [voidReturn, undefinedReturn, nullReturn, deciding],
+      errorBoundary: [],
+      notFoundBoundary: [],
+    } as any;
+    const layout = {
+      id: "layout",
+      type: "layout",
+      shortCode: "L0",
+      handler: () => null,
+      loader: [],
+      layout: [],
+      parallel: { "@panel": parallelEntry },
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+      handle: [],
+    } as any;
+    const clientIds = new Set(["L0", "L0.@panel"]);
+
+    await resolveParallelSegmentsWithRevalidation(
+      layout,
+      params,
+      makeContext(),
+      false,
+      clientIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      "mailbox.email",
+      makeDeps(),
+    );
+
+    expect(voidReturn).toHaveBeenCalledTimes(1);
+    expect(undefinedReturn).toHaveBeenCalledTimes(1);
+    expect(nullReturn).toHaveBeenCalledTimes(1);
+    expect(deciding).toHaveBeenCalledTimes(1);
   });
 });
 
