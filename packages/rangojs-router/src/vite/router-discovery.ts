@@ -361,18 +361,29 @@ export function createRouterDiscoveryPlugin(
       });
 
       // Resettable manifest-readiness gate. The virtual:rsc-router/routes-manifest
-      // module's `load()` awaits `s.discoveryDone`; we replace the promise on
-      // each rediscovery cycle so workerd's HMR reloads block until the new
-      // gen file is fully written. Set ASAP (before any async work or manifest
-      // invalidation) — the cold-start gate is created here too, so the same
-      // mechanism powers both flows.
+      // module's `load()` awaits `s.discoveryDone`; we replace the promise
+      // when a fresh discovery cycle starts so workerd's HMR reloads block
+      // until the new gen file is fully written. The cold-start gate is
+      // created here too, so the same mechanism powers both flows.
+      //
+      // Idempotency invariant: if a gate is already pending, beginDiscoveryGate()
+      // MUST NOT replace the promise. File watchers can fire multiple
+      // change/add events for a single save (atomic-save flows, polling on
+      // CI), and workerd may already be awaiting the previous promise; if
+      // we overwrote the resolver, the original promise would become
+      // un-resolvable and workerd's load() would hang forever.
       let gateResolver: () => void = () => {};
+      let gatePending = false;
       const beginDiscoveryGate = (): void => {
+        if (gatePending) return;
         s.discoveryDone = new Promise<void>((resolve) => {
           gateResolver = resolve;
         });
+        gatePending = true;
       };
       const resolveDiscoveryGate = (): void => {
+        if (!gatePending) return;
+        gatePending = false;
         gateResolver();
       };
 
@@ -786,9 +797,25 @@ export function createRouterDiscoveryPlugin(
 
         // Re-run runtime discovery so factory-generated routes that the
         // static parser cannot see are refreshed after source changes.
+        //
+        // Queue invariant: if a rediscovery is already in flight when a new
+        // route-source event arrives, set `runtimeRediscoveryQueued` instead
+        // of starting a parallel run. The active run's `finally` consumes
+        // the queue and re-runs (without resolving the gate yet), so the
+        // single open gate covers all queued work. Without this, the second
+        // beginDiscoveryGate() (from handleRouteFileChange) would create a
+        // pending promise that nothing resolves — workerd's manifest load()
+        // would hang.
         let runtimeRediscoveryInProgress = false;
+        let runtimeRediscoveryQueued = false;
         const refreshRuntimeDiscovery = async () => {
-          if (runtimeRediscoveryInProgress) return;
+          if (runtimeRediscoveryInProgress) {
+            runtimeRediscoveryQueued = true;
+            debugDiscovery?.(
+              "hmr: rediscovery in flight — queued for a follow-up cycle",
+            );
+            return;
+          }
           const rscEnv = (server.environments as any)?.rsc;
           const hasMainRunner = !!rscEnv?.runner;
           // Cloudflare HMR has no main RSC runner (workerd is a separate
@@ -851,10 +878,30 @@ export function createRouterDiscoveryPlugin(
               (performance.now() - hmrStart).toFixed(1),
             );
             runtimeRediscoveryInProgress = false;
-            // Resolve the gate so the manifest virtual module's load() —
-            // which the workerd HMR reload is awaiting — unblocks against
-            // the freshly-written gen file.
-            resolveDiscoveryGate();
+            // If new route-source events arrived while we were running,
+            // consume the queue with another cycle — and DON'T resolve the
+            // gate yet, since the current pending promise still represents
+            // "discovery is not yet up to date." Without this, the second
+            // beginDiscoveryGate() from the queued event would never see
+            // its resolver called. Resolution only happens at the tail of
+            // the last cycle, when no further work is queued.
+            if (runtimeRediscoveryQueued) {
+              runtimeRediscoveryQueued = false;
+              debugDiscovery?.("hmr: consuming queued rediscovery");
+              refreshRuntimeDiscovery().catch((err: any) => {
+                console.warn(
+                  `[rsc-router] Queued runtime re-discovery error: ${err.message}`,
+                );
+                // Belt-and-suspenders: even if the queued run faulted
+                // outside the inner try/catch, unblock the gate.
+                resolveDiscoveryGate();
+              });
+            } else {
+              // Resolve the gate so the manifest virtual module's load() —
+              // which the workerd HMR reload is awaiting — unblocks
+              // against the freshly-written gen file.
+              resolveDiscoveryGate();
+            }
           }
         };
 

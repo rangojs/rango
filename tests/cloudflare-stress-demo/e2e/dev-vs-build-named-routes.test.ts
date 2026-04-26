@@ -279,6 +279,169 @@ test.describe("dev vs build named-routes parity", () => {
       await fs.writeFile(genFilePath, buildGen);
     }
   });
+
+  test("rapid duplicate route-file events don't orphan the discovery gate", async ({}, testInfo) => {
+    // Two-shot regression test for the gate-state bugs the reviewer flagged:
+    //
+    //   1. beginDiscoveryGate() must reuse an already-pending gate. File
+    //      watchers can fire multiple events for a single save (atomic-save
+    //      flows, polling on CI) and workerd may already be awaiting the
+    //      previous promise. If we replace the resolver, the original promise
+    //      becomes un-resolvable and workerd's manifest load() hangs.
+    //
+    //   2. The runtimeRediscoveryInProgress early-return must not orphan a
+    //      newly-created gate. If a second route-file event arrives mid-
+    //      rediscovery, handleRouteFileChange resets the gate AGAIN — and the
+    //      pre-fix early-return path resolved nothing. The fix queues a
+    //      follow-up cycle and resolves the gate only at the tail.
+    //
+    // The test triggers two source edits with a delay tuned to land the
+    // second event during the first rediscovery's in-flight window
+    // (rediscovery is ~700ms, debounce is 100ms, so 200ms between touches
+    // keeps the second one inside the first cycle's work). Pre-fix, this
+    // hangs dev's gen file or leaves workerd stuck on the manifest load.
+    testInfo.setTimeout(120_000);
+    const buildGen = await fs.readFile(genFilePath, "utf-8");
+
+    let dev: ChildProcess | null = null;
+    let buffer = "";
+    let discoveryCount = 0;
+    const discoveryWaiters: Array<{
+      target: number;
+      resolve: () => void;
+      reject: (e: Error) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }> = [];
+    const waitForDiscoveries = (n: number, label: string) =>
+      new Promise<void>((resolve, reject) => {
+        if (discoveryCount >= n) return resolve();
+        const timeout = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `timed out waiting for runtime discovery #${n} (${label}); ` +
+                  `seen=${discoveryCount}\n--- captured ---\n${tail(buffer)}`,
+              ),
+            ),
+          90_000,
+        );
+        discoveryWaiters.push({ target: n, resolve, reject, timeout });
+      });
+
+    try {
+      await fs.writeFile(genFilePath, "// dirty marker\n");
+
+      dev = spawn("pnpm", ["dev"], {
+        cwd: process.cwd(),
+        // DEBUG=rango:discovery surfaces the "consuming queued rediscovery"
+        // log line that proves the queue path actually ran.
+        env: {
+          ...process.env,
+          FORCE_COLOR: "0",
+          DEBUG: "rango:discovery",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
+      });
+
+      const onData = (chunk: Buffer) => {
+        buffer += chunk.toString();
+        const lastNewline = buffer.lastIndexOf("\n");
+        if (lastNewline < 0) return;
+        const completeRegion = buffer.slice(0, lastNewline + 1);
+        const matches =
+          completeRegion.match(
+            /\[rsc-router\] Router "[^"]+" -> \d+ routes/g,
+          ) ?? [];
+        const newCount = matches.length;
+        if (newCount > discoveryCount) {
+          discoveryCount = newCount;
+          for (const w of discoveryWaiters.slice()) {
+            if (discoveryCount >= w.target) {
+              clearTimeout(w.timeout);
+              w.resolve();
+              discoveryWaiters.splice(discoveryWaiters.indexOf(w), 1);
+            }
+          }
+        }
+      };
+      dev.stdout?.on("data", onData);
+      dev.stderr?.on("data", onData);
+
+      let unexpectedExit: Error | null = null;
+      dev.on("exit", (code, signal) => {
+        if (signal === "SIGTERM" || signal === "SIGKILL") return;
+        unexpectedExit = new Error(
+          `dev exited unexpectedly (code=${code}, signal=${signal})\n` +
+            `--- captured ---\n${tail(buffer)}`,
+        );
+        for (const w of discoveryWaiters.slice()) {
+          clearTimeout(w.timeout);
+          w.reject(unexpectedExit);
+        }
+        discoveryWaiters.length = 0;
+      });
+
+      await waitForDiscoveries(1, "cold-start");
+      await new Promise((r) => setTimeout(r, 2500));
+
+      const sourceFile = path.resolve("./src/shop-patterns.tsx");
+      const sourceContent = await fs.readFile(sourceFile, "utf-8");
+      const restoreOriginal = async () => {
+        await fs.writeFile(sourceFile, sourceContent);
+      };
+      try {
+        // First edit: triggers the in-flight rediscovery (~700ms).
+        await fs.writeFile(sourceFile, sourceContent + "\n");
+        // Wait long enough for the first refresh to enter its work phase
+        // (debounce 100ms + ~50ms into work).
+        await new Promise((r) => setTimeout(r, 200));
+        // Second edit: arrives DURING the first refresh's work. The bugs
+        // we're guarding against trigger only on this overlap.
+        await fs.writeFile(sourceFile, sourceContent + "\n\n");
+
+        // Pre-fix bug #2 (orphaned gate): the second beginDiscoveryGate()
+        // creates a fresh pending promise but the early-return path of
+        // refreshRuntimeDiscovery never resolves it. Even if discovery
+        // would have happened anyway, workerd's manifest virtual module
+        // load() hangs. With the queue fix, the second cycle runs and
+        // resolves the gate at the tail. We expect AT LEAST 2 HMR cycles
+        // (i.e. discoveryCount >= 3 including cold).
+        await waitForDiscoveries(3, "post-rapid-edits");
+
+        // Allow a moment for the trailing finally to run resolveDiscoveryGate.
+        await new Promise((r) => setTimeout(r, 200));
+
+        expect(
+          unexpectedExit,
+          "dev exited during rapid-event rediscovery — gate likely orphaned",
+        ).toBeNull();
+
+        // Pin that the queue path actually fired. If timing happened to
+        // collapse both events into the debounce window (only 1 cycle), the
+        // assertion above would still pass — but we'd lose the regression
+        // signal. The "in flight — queued" + "consuming queued rediscovery"
+        // pair is emitted via DEBUG=rango:discovery, which we set on the
+        // spawn for this test specifically.
+        expect(
+          buffer,
+          "queue path should have been exercised by rapid edits — if not, the timing window collapsed and this test isn't actually testing the bug it guards",
+        ).toMatch(/hmr: rediscovery in flight — queued for a follow-up cycle/);
+        expect(buffer).toMatch(/hmr: consuming queued rediscovery/);
+
+        const postGen = await fs.readFile(genFilePath, "utf-8");
+        expect(
+          postGen,
+          "rapid HMR events should still leave the gen file matching build",
+        ).toBe(buildGen);
+      } finally {
+        await restoreOriginal();
+      }
+    } finally {
+      await killProcessTree(dev);
+      await fs.writeFile(genFilePath, buildGen);
+    }
+  });
 });
 
 /**
