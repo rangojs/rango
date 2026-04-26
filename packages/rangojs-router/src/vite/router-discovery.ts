@@ -394,25 +394,52 @@ export function createRouterDiscoveryPlugin(
         releaseBuildEnv(s).catch(() => {});
       });
 
+      // Mirror the build-path contract (router-discovery.ts ~line 878):
+      // set __rscRouterDiscoveryActive before running user modules so any
+      // module-level router.reverse() calls return a placeholder instead
+      // of throwing. The temp Vite server's module runner has its own
+      // module context; the flag must be on globalThis to cross that
+      // boundary. Cleared in finally so the dev request handlers run with
+      // strict reverse() semantics afterwards.
+      async function importEntryAndRegistry(tempRscEnv: any): Promise<void> {
+        const flagAlreadySet = !!(globalThis as any).__rscRouterDiscoveryActive;
+        if (!flagAlreadySet) {
+          (globalThis as any).__rscRouterDiscoveryActive = true;
+        }
+        try {
+          debugDiscovery?.(
+            "importEntryAndRegistry: importing entry (flag=%s)",
+            (globalThis as any).__rscRouterDiscoveryActive ?? false,
+          );
+          await tempRscEnv.runner.import(s.resolvedEntryPath!);
+          debugDiscovery?.(
+            "importEntryAndRegistry: entry import OK, fetching RouterRegistry",
+          );
+          const serverMod = await tempRscEnv.runner.import(
+            "@rangojs/router/server",
+          );
+          prerenderNodeRegistry = serverMod.RouterRegistry;
+          debugDiscovery?.(
+            "importEntryAndRegistry: registry size=%d",
+            prerenderNodeRegistry?.size ?? 0,
+          );
+        } finally {
+          if (!flagAlreadySet) {
+            delete (globalThis as any).__rscRouterDiscoveryActive;
+            debugDiscovery?.(
+              "importEntryAndRegistry: cleared __rscRouterDiscoveryActive",
+            );
+          }
+        }
+      }
+
       async function getOrCreateTempServer(): Promise<any | null> {
         if (prerenderNodeRegistry) {
           debugDiscovery?.("getOrCreateTempServer: cached temp runner reused");
           return (prerenderTempServer.environments as any)?.rsc ?? null;
         }
-        // Mirror the build-path contract (router-discovery.ts ~line 878):
-        // set __rscRouterDiscoveryActive before running user modules so any
-        // module-level router.reverse() calls return a placeholder instead
-        // of throwing. The temp Vite server's module runner has its own
-        // module context; the flag must be on globalThis to cross that
-        // boundary. Cleared in finally so the dev request handlers run with
-        // strict reverse() semantics afterwards.
-        const flagAlreadySet = !!(globalThis as any).__rscRouterDiscoveryActive;
-        if (!flagAlreadySet) {
-          (globalThis as any).__rscRouterDiscoveryActive = true;
-        }
         debugDiscovery?.(
-          "getOrCreateTempServer: __rscRouterDiscoveryActive=%s entry=%s",
-          (globalThis as any).__rscRouterDiscoveryActive ?? false,
+          "getOrCreateTempServer: creating new temp server, entry=%s",
           s.resolvedEntryPath ?? "(unset)",
         );
         try {
@@ -422,22 +449,7 @@ export function createRouterDiscoveryPlugin(
 
           const tempRscEnv = (prerenderTempServer.environments as any)?.rsc;
           if (tempRscEnv?.runner) {
-            debugDiscovery?.(
-              "getOrCreateTempServer: importing entry (flag=%s)",
-              (globalThis as any).__rscRouterDiscoveryActive ?? false,
-            );
-            await tempRscEnv.runner.import(s.resolvedEntryPath!);
-            debugDiscovery?.(
-              "getOrCreateTempServer: entry import OK, fetching RouterRegistry",
-            );
-            const serverMod = await tempRscEnv.runner.import(
-              "@rangojs/router/server",
-            );
-            prerenderNodeRegistry = serverMod.RouterRegistry;
-            debugDiscovery?.(
-              "getOrCreateTempServer: registry size=%d",
-              prerenderNodeRegistry?.size ?? 0,
-            );
+            await importEntryAndRegistry(tempRscEnv);
             return tempRscEnv;
           }
           debugDiscovery?.(
@@ -445,22 +457,70 @@ export function createRouterDiscoveryPlugin(
           );
         } catch (err: any) {
           debugDiscovery?.(
-            "getOrCreateTempServer: FAILED message=%s flag=%s",
+            "getOrCreateTempServer: FAILED message=%s",
             err.message,
-            (globalThis as any).__rscRouterDiscoveryActive ?? false,
           );
           console.warn(
             `[rsc-router] Failed to create temp runner: ${err.message}`,
           );
-        } finally {
-          if (!flagAlreadySet) {
-            delete (globalThis as any).__rscRouterDiscoveryActive;
-            debugDiscovery?.(
-              "getOrCreateTempServer: cleared __rscRouterDiscoveryActive",
-            );
-          }
         }
         return null;
+      }
+
+      // HMR refresh: keep the temp Vite server alive across HMR cycles and
+      // invalidate its module graph instead of close+recreate. Closing the
+      // temp server during workerd's first post-cold-start module-fetch
+      // window disrupted the main dev server's transport — the user-visible
+      // symptom was a `transport was disconnected, cannot call "fetchModule"`
+      // error on the first urls.tsx edit (workerd's cache was cold, so its
+      // eval was still in flight when our close() ran). Module-graph
+      // invalidation is the architecturally cleaner refresh: same Vite
+      // instance, same transport, fresh source.
+      //
+      // Falls back to close+recreate when neither the env-level nor
+      // server-level moduleGraph exposes invalidateAll() (defensive — Vite
+      // versions / preset configurations may differ in which graph carries
+      // the module-runner cache).
+      async function refreshTempRscEnv(): Promise<any | null> {
+        let tempRscEnv = await getOrCreateTempServer();
+        if (!tempRscEnv) return null;
+
+        // Module-runner cache is on the per-environment graph in Vite 6+;
+        // older / non-environments setups carry it on the server graph.
+        // Try env first, server second.
+        const envGraph = (tempRscEnv as any).moduleGraph;
+        const serverGraph = (prerenderTempServer as any)?.moduleGraph;
+        const target = envGraph?.invalidateAll
+          ? envGraph
+          : serverGraph?.invalidateAll
+            ? serverGraph
+            : null;
+
+        if (!target) {
+          // No invalidate method available — fall back to close+recreate.
+          // This preserves the previous behavior in case a Vite version
+          // doesn't expose invalidateAll on either graph.
+          debugDiscovery?.(
+            "refreshTempRscEnv: invalidateAll unavailable on env+server graphs, falling back to close+recreate",
+          );
+          if (prerenderTempServer) {
+            await prerenderTempServer.close().catch(() => {});
+            prerenderTempServer = null;
+            prerenderNodeRegistry = null;
+          }
+          return await getOrCreateTempServer();
+        }
+
+        debugDiscovery?.(
+          "refreshTempRscEnv: invalidating module graph (%s)",
+          envGraph?.invalidateAll ? "env" : "server",
+        );
+        target.invalidateAll();
+        // Drop the cached registry so importEntryAndRegistry re-reads it
+        // through the now-invalidated module runner.
+        prerenderNodeRegistry = null;
+        await importEntryAndRegistry(tempRscEnv);
+        return tempRscEnv;
       }
 
       const discover = async () => {
@@ -809,21 +869,15 @@ export function createRouterDiscoveryPlugin(
                   propagateDiscoveryState(rscEnv),
                 );
               } else {
-                // Cloudflare HMR: close+recreate the temp Node server so its
-                // module graph re-reads the freshly edited source. Both
-                // prerenderTempServer AND prerenderNodeRegistry must be nulled
-                // because getOrCreateTempServer() short-circuits on a cached
-                // registry and would never refresh otherwise.
-                if (prerenderTempServer) {
-                  debugDiscovery?.("hmr: closing cached temp server");
-                  await prerenderTempServer.close().catch(() => {});
-                  prerenderTempServer = null;
-                  prerenderNodeRegistry = null;
-                }
+                // Cloudflare HMR: invalidate the temp server's RSC module
+                // graph (or close+recreate as a fallback) so the runner
+                // re-reads the freshly edited source. Keeping the same
+                // Vite instance alive avoids disrupting workerd's transport
+                // during the first post-cold-start module-fetch window.
                 const tempRscEnv = await timed(
                   debugDiscovery,
-                  "hmr getOrCreateTempServer (cloudflare)",
-                  () => getOrCreateTempServer(),
+                  "hmr refreshTempRscEnv (cloudflare)",
+                  () => refreshTempRscEnv(),
                 );
                 if (!tempRscEnv) {
                   throw new Error(

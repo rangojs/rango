@@ -411,7 +411,7 @@ test.describe("dev vs build named-routes parity", () => {
         // queued path.
         await waitForLogFromIdx(
           () => buffer,
-          /hmr: closing cached temp server/,
+          /refreshTempRscEnv: invalidating module graph/,
           "refresh A in-flight",
           preHmrIdx,
         );
@@ -684,7 +684,302 @@ test.describe("dev vs build named-routes parity", () => {
       await fs.writeFile(genFilePath, buildGen);
     }
   });
+
+  test("HMR remove factory route — invalidation drops it from gen", async ({}, testInfo) => {
+    // Module-graph invalidation must drop entries that no longer exist in
+    // the source, not just ADD new ones. Bump factory `length: 100 → 101`
+    // first (to introduce item101), then back to `length: 100` (item101
+    // must disappear). If invalidation is incomplete and the runner
+    // serves cached source, the post-remove gen file would still contain
+    // item101 and this test would fail.
+    testInfo.setTimeout(120_000);
+    const buildGen = await fs.readFile(genFilePath, "utf-8");
+
+    const dev = await runDevAndWaitForRediscovery(buildGen);
+    try {
+      const sourceFile = path.resolve("./src/shop-patterns.tsx");
+      const sourceContent = await fs.readFile(sourceFile, "utf-8");
+      try {
+        // Step 1: add item101 by bumping length.
+        const withExtra = sourceContent.replace(
+          /Array\.from\(\{ length: 100 \}/,
+          "Array.from({ length: 101 }",
+        );
+        if (withExtra === sourceContent) {
+          throw new Error(
+            "fixture invariant: shop-patterns.tsx must contain `Array.from({ length: 100 }`",
+          );
+        }
+        await fs.writeFile(sourceFile, withExtra);
+        await waitForGenFileContains(
+          genFilePath,
+          '"shop.product.item101":',
+          "add: item101 should appear",
+          () => dev.buffer,
+        );
+
+        // Step 2: remove item101 by reverting length.
+        await fs.writeFile(sourceFile, sourceContent);
+        await waitForGenFileMissing(
+          genFilePath,
+          '"shop.product.item101":',
+          "remove: item101 should disappear after invalidation",
+          () => dev.buffer,
+        );
+
+        const postGen = await fs.readFile(genFilePath, "utf-8");
+        expect(
+          postGen,
+          "post-remove gen must still include the unaffected route — invalidation should not be too aggressive",
+        ).toContain('"shop.product.item42":');
+        expect(
+          dev.unexpectedExit,
+          "dev must stay alive across remove",
+        ).toBeNull();
+      } finally {
+        await fs.writeFile(sourceFile, sourceContent);
+      }
+    } finally {
+      await killProcessTree(dev.proc);
+      await fs.writeFile(genFilePath, buildGen);
+    }
+  });
+
+  test("HMR rename factory route — old names disappear, new appear", async ({}, testInfo) => {
+    // Rename `name: \`item${i + 1}\`` → `name: \`product${i + 1}\``.
+    // Pre-fix module-graph staleness would either (a) keep both old and
+    // new names (additive — runner saw both versions) or (b) keep only
+    // old (no update). Post-fix: old gone, new present.
+    testInfo.setTimeout(120_000);
+    const buildGen = await fs.readFile(genFilePath, "utf-8");
+
+    const dev = await runDevAndWaitForRediscovery(buildGen);
+    try {
+      const sourceFile = path.resolve("./src/shop-patterns.tsx");
+      const sourceContent = await fs.readFile(sourceFile, "utf-8");
+      try {
+        const renamed = sourceContent.replace(
+          /name: `item\$\{i \+ 1\}`/,
+          "name: `product${i + 1}`",
+        );
+        if (renamed === sourceContent) {
+          throw new Error(
+            "fixture invariant: shop-patterns.tsx must contain ``name: `item${i + 1}` ``",
+          );
+        }
+        await fs.writeFile(sourceFile, renamed);
+
+        // New name must appear.
+        await waitForGenFileContains(
+          genFilePath,
+          '"shop.product.product1":',
+          "rename: new name `product1` should appear",
+          () => dev.buffer,
+        );
+
+        // Old name must disappear.
+        await waitForGenFileMissing(
+          genFilePath,
+          '"shop.product.item42":',
+          "rename: old name `item42` should disappear after invalidation",
+          () => dev.buffer,
+        );
+
+        expect(
+          dev.unexpectedExit,
+          "dev must stay alive across rename",
+        ).toBeNull();
+      } finally {
+        await fs.writeFile(sourceFile, sourceContent);
+      }
+    } finally {
+      await killProcessTree(dev.proc);
+      await fs.writeFile(genFilePath, buildGen);
+    }
+  });
+
+  test("first urls.tsx edit after cold start does NOT log `transport was disconnected`", async ({}, testInfo) => {
+    // Before module-graph invalidation: closing+recreating the temp Vite
+    // server during workerd's first post-cold-start module-fetch window
+    // disrupted the main dev server's transport, surfacing a
+    // `transport was disconnected, cannot call "fetchModule"` error
+    // (workerd's eval was in flight at /router/manifest.ts:9 when our
+    // close() happened). With invalidateAll, the same Vite instance stays
+    // alive and the transport is undisturbed.
+    //
+    // urls.tsx is the right target because it's high in the import graph
+    // → vite issues a full reload of worker-entry → workerd's cold cache
+    // is what gets exercised.
+    testInfo.setTimeout(120_000);
+    const buildGen = await fs.readFile(genFilePath, "utf-8");
+
+    const dev = await runDevAndWaitForRediscovery(buildGen);
+    try {
+      const sourceFile = path.resolve("./src/urls.tsx");
+      const sourceContent = await fs.readFile(sourceFile, "utf-8");
+      try {
+        const preEditIdx = dev.buffer.length;
+        // Whitespace-only edit is fine — we're testing the transport
+        // window, not route correctness.
+        await fs.writeFile(sourceFile, sourceContent + "\n");
+
+        // Wait for the HMR cycle to complete via the discoveryDone log.
+        await waitForLogFromIdx(
+          () => dev.buffer,
+          /hmr: discoveryDone resolved/,
+          "post-urls-edit gate resolution",
+          preEditIdx,
+        );
+
+        const postEditSlice = dev.buffer.slice(preEditIdx);
+        expect(
+          postEditSlice,
+          "first urls.tsx edit must not surface a transport-disconnect error",
+        ).not.toMatch(/transport was disconnected/);
+        // Also verify our invalidation path actually fired (vs the close
+        // +recreate fallback). If invalidate was unavailable on this
+        // Vite version, this test would still pass via the fallback —
+        // and the assertion above would still be the user-visible
+        // contract — so we don't fail when the fallback path is used,
+        // but we DO log it for diagnosability.
+        if (
+          !/refreshTempRscEnv: invalidating module graph/.test(postEditSlice)
+        ) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            "[test] refreshTempRscEnv took the close+recreate fallback path — verify Vite's moduleGraph.invalidateAll API hasn't moved",
+          );
+        }
+        expect(dev.unexpectedExit).toBeNull();
+      } finally {
+        await fs.writeFile(sourceFile, sourceContent);
+      }
+    } finally {
+      await killProcessTree(dev.proc);
+      await fs.writeFile(genFilePath, buildGen);
+    }
+  });
 });
+
+interface DevHandle {
+  proc: ChildProcess;
+  buffer: string;
+  /** Mutable: assigned if the dev process exits unexpectedly. */
+  unexpectedExit: Error | null;
+}
+
+/**
+ * Spawn `pnpm dev`, wait for cold-start runtime discovery + a 2.5s settle,
+ * and return a handle whose `buffer` accumulates all dev stdout/stderr.
+ * The buffer is captured by reference so callers can splice from a known
+ * offset (`preEditIdx`) for HMR-only assertions.
+ */
+async function runDevAndWaitForRediscovery(
+  buildGen: string,
+): Promise<DevHandle> {
+  await fs.writeFile(genFilePath, "// dirty marker\n");
+  const handle: { buffer: string; unexpectedExit: Error | null } = {
+    buffer: "",
+    unexpectedExit: null,
+  };
+
+  const proc = spawn("pnpm", ["dev"], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      FORCE_COLOR: "0",
+      DEBUG: "rango:discovery",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+  });
+
+  let coldDiscovery!: () => void;
+  let coldDiscoveryReject!: (e: Error) => void;
+  const coldDone = new Promise<void>((resolve, reject) => {
+    coldDiscovery = resolve;
+    coldDiscoveryReject = reject;
+  });
+  let discoverySeen = false;
+
+  const onData = (chunk: Buffer) => {
+    handle.buffer += chunk.toString();
+    if (
+      !discoverySeen &&
+      /\[rsc-router\] Router "[^"]+" -> \d+ routes/.test(handle.buffer)
+    ) {
+      discoverySeen = true;
+      coldDiscovery();
+    }
+  };
+  proc.stdout?.on("data", onData);
+  proc.stderr?.on("data", onData);
+
+  proc.on("exit", (code, signal) => {
+    if (signal === "SIGTERM" || signal === "SIGKILL") return;
+    handle.unexpectedExit = new Error(
+      `dev exited unexpectedly (code=${code}, signal=${signal})\n` +
+        `--- captured ---\n${tail(handle.buffer)}`,
+    );
+    if (!discoverySeen) coldDiscoveryReject(handle.unexpectedExit);
+  });
+
+  await Promise.race([
+    coldDone,
+    new Promise<void>((_, reject) =>
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              `dev cold-start runtime discovery did not complete within 90s\n` +
+                `--- captured ---\n${tail(handle.buffer)}`,
+            ),
+          ),
+        90_000,
+      ),
+    ),
+  ]);
+  // Settle pause matching the existing tests — vite reload fan-out
+  // continues for a couple seconds after the first discovery line.
+  await new Promise((r) => setTimeout(r, 2500));
+
+  return {
+    proc,
+    get buffer() {
+      return handle.buffer;
+    },
+    get unexpectedExit() {
+      return handle.unexpectedExit;
+    },
+  } as DevHandle;
+}
+
+async function waitForGenFileMissing(
+  filePath: string,
+  needle: string,
+  label: string,
+  getBuffer?: () => string,
+  timeoutMs = 30_000,
+): Promise<void> {
+  const start = Date.now();
+  while (true) {
+    try {
+      const content = await fs.readFile(filePath, "utf-8");
+      if (!content.includes(needle)) return;
+    } catch {
+      // retry
+    }
+    if (Date.now() - start > timeoutMs) {
+      const bufTail = getBuffer
+        ? `\n--- captured ---\n${tail(getBuffer())}`
+        : "";
+      throw new Error(
+        `timed out waiting for gen file to NOT contain "${needle}" (${label})${bufTail}`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
 
 /**
  * Poll a getter for the current buffer content until a regex matches at or
