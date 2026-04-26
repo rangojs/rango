@@ -613,7 +613,9 @@ export const urlpatterns = urls(
       // PR #482 regression: parallel slot revalidate() fns survive sibling
       // action + nav (action pruned slot from client matched set, next nav
       // skipped revalidate fns)
-      include("/", parallelRevalAfterActionPatterns),
+      include("/", parallelRevalAfterActionPatterns, {
+        name: "parallelRevalAfterAction",
+      }),
 
       // Skip test patterns (prerender + static skip/error handling)
       include("/build-skip", buildSkipPatterns, { name: "buildSkip" }),
