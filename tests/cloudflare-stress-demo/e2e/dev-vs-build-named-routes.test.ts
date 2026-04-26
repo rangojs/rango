@@ -460,6 +460,7 @@ test.describe("dev vs build named-routes parity", () => {
           genFilePath,
           '"shop.product.item101":',
           "post-rapid-edits: queued refresh writes new factory route",
+          () => buffer,
         );
 
         expect(
@@ -662,6 +663,7 @@ test.describe("dev vs build named-routes parity", () => {
           genFilePath,
           '"shop.product.item101":',
           "post-tail-race: refresh B writes new factory route",
+          () => buffer,
         );
 
         expect(
@@ -744,11 +746,15 @@ async function killProcessTree(child: ChildProcess | null): Promise<void> {
  * verify that an HMR rediscovery cycle actually wrote its updated output —
  * this is the user-visible contract and is more robust to log-line ordering
  * variability than waiting on internal debug markers.
+ *
+ * On timeout the captured dev stdout/stderr is appended (when a buffer
+ * getter is provided) so the failure is diagnosable without re-running.
  */
 async function waitForGenFileContains(
   filePath: string,
   needle: string,
   label: string,
+  getBuffer?: () => string,
   timeoutMs = 30_000,
 ): Promise<void> {
   const start = Date.now();
@@ -760,8 +766,11 @@ async function waitForGenFileContains(
       // File might be momentarily unreadable mid-write; retry.
     }
     if (Date.now() - start > timeoutMs) {
+      const bufTail = getBuffer
+        ? `\n--- captured ---\n${tail(getBuffer())}`
+        : "";
       throw new Error(
-        `timed out waiting for gen file to contain "${needle}" (${label})`,
+        `timed out waiting for gen file to contain "${needle}" (${label})${bufTail}`,
       );
     }
     await new Promise((r) => setTimeout(r, 100));

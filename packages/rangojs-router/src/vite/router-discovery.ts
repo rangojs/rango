@@ -47,6 +47,7 @@ import {
   generatePerRouterModule,
 } from "./discovery/virtual-module-codegen.js";
 import { postprocessBundle } from "./discovery/bundle-postprocess.js";
+import { createDiscoveryGate } from "./discovery/gate-state.js";
 import { resetStagedBuildAssets } from "./utils/prerender-utils.js";
 import { createRangoDebugger, timed, timedSync, NS } from "./debug.js";
 
@@ -360,33 +361,16 @@ export function createRouterDiscoveryPlugin(
         resolveDiscovery = resolve;
       });
 
-      // Resettable manifest-readiness gate. The virtual:rsc-router/routes-manifest
-      // module's `load()` awaits `s.discoveryDone`; we replace the promise
-      // when a fresh discovery cycle starts so workerd's HMR reloads block
-      // until the new gen file is fully written. The cold-start gate is
-      // created here too, so the same mechanism powers both flows.
-      //
-      // Idempotency invariant: if a gate is already pending, beginDiscoveryGate()
-      // MUST NOT replace the promise. File watchers can fire multiple
-      // change/add events for a single save (atomic-save flows, polling on
-      // CI), and workerd may already be awaiting the previous promise; if
-      // we overwrote the resolver, the original promise would become
-      // un-resolvable and workerd's load() would hang forever.
-      let gateResolver: () => void = () => {};
-      let gatePending = false;
-      const beginDiscoveryGate = (): void => {
-        if (gatePending) return;
-        s.discoveryDone = new Promise<void>((resolve) => {
-          gateResolver = resolve;
-        });
-        gatePending = true;
-      };
-      const resolveDiscoveryGate = (): void => {
-        if (!gatePending) return;
-        gatePending = false;
-        debugDiscovery?.("hmr: discoveryDone resolved");
-        gateResolver();
-      };
+      // Manifest-readiness gate + rediscovery scheduler.
+      // The virtual:rsc-router/routes-manifest module's `load()` hook
+      // awaits `s.discoveryDone`; the gate is reset on each discovery
+      // cycle so workerd's HMR reloads block until the new gen file is
+      // written. State machine + transitions are extracted into
+      // ./discovery/gate-state.ts and unit-tested there — see the
+      // module's JSDoc for the four-flag contract.
+      const gate = createDiscoveryGate(s, debugDiscovery);
+      const beginDiscoveryGate = gate.beginGate;
+      const resolveDiscoveryGate = gate.resolveGate;
 
       // Compute dev server origin from resolved URLs (preferred) or config port (fallback).
       // Called after discovery (or in the load hook) when the server may be listening.
@@ -798,140 +782,74 @@ export function createRouterDiscoveryPlugin(
 
         // Re-run runtime discovery so factory-generated routes that the
         // static parser cannot see are refreshed after source changes.
-        //
-        // Three pieces of state cooperate to keep the discovery gate
-        // accurate across watcher fan-out:
-        //
-        //   - runtimeRediscoveryInProgress: a refresh's main work loop is
-        //     currently executing.
-        //   - runtimeRediscoveryQueued: a refresh was attempted while one
-        //     was already in flight; the active run consumes this in its
-        //     finally and recurses.
-        //   - pendingRouteEvents: a route-file event has been received
-        //     (gate already reset) but the corresponding refresh hasn't
-        //     started yet — i.e. the debounce hasn't fired. Set in
-        //     handleRouteFileChange, cleared at the start of the refresh
-        //     main path. Refresh's finally MUST keep the gate pending if
-        //     this flag is true, otherwise an event whose debounce fires
-        //     AFTER the active refresh completes (the "tail-race" window)
-        //     would observe a resolved gate, let workerd through against
-        //     stale gen, and only then trigger its own (now ungated)
-        //     refresh. Caught in code review.
-        let runtimeRediscoveryInProgress = false;
-        let runtimeRediscoveryQueued = false;
-        let pendingRouteEvents = false;
+        // The state-machine concerns (queued/pending/gatePending) are
+        // owned by the gate created above (./discovery/gate-state.ts).
+        // Here we provide just the env-specific work.
         const refreshRuntimeDiscovery = async () => {
-          if (runtimeRediscoveryInProgress) {
-            runtimeRediscoveryQueued = true;
-            debugDiscovery?.(
-              "hmr: rediscovery in flight — queued for a follow-up cycle",
-            );
-            return;
-          }
-          // Snapshot: about to process the events that triggered this run.
-          // Any event arriving from now on re-sets the flag, and refresh's
-          // finally will hold the gate pending until the next cycle picks
-          // them up.
-          pendingRouteEvents = false;
           const rscEnv = (server.environments as any)?.rsc;
           const hasMainRunner = !!rscEnv?.runner;
           // Cloudflare HMR has no main RSC runner (workerd is a separate
           // runtime). When we have a populated runtime manifest from cold
           // start, we can re-discover via the temp Node runner — the same
           // mechanism getOrCreateTempServer() uses at startup. Without a
-          // populated manifest there's nothing useful to do, so bail.
+          // populated manifest there's nothing useful to do, so bail
+          // before involving the gate machine at all.
           if (!hasMainRunner && s.perRouterManifests.length === 0) return;
-          runtimeRediscoveryInProgress = true;
-          const hmrStart = performance.now();
-          try {
-            if (hasMainRunner) {
-              await timed(debugDiscovery, "hmr discoverRouters", () =>
-                discoverRouters(s, rscEnv),
-              );
-              timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
-                writeRouteTypesFiles(s),
-              );
-              await timed(debugDiscovery, "hmr propagateDiscoveryState", () =>
-                propagateDiscoveryState(rscEnv),
-              );
-            } else {
-              // Cloudflare HMR: close+recreate the temp Node server so its
-              // module graph re-reads the freshly edited source. Both
-              // prerenderTempServer AND prerenderNodeRegistry must be nulled
-              // because getOrCreateTempServer() short-circuits on a cached
-              // registry and would never refresh otherwise.
-              if (prerenderTempServer) {
-                debugDiscovery?.("hmr: closing cached temp server");
-                await prerenderTempServer.close().catch(() => {});
-                prerenderTempServer = null;
-                prerenderNodeRegistry = null;
-              }
-              const tempRscEnv = await timed(
-                debugDiscovery,
-                "hmr getOrCreateTempServer (cloudflare)",
-                () => getOrCreateTempServer(),
-              );
-              if (!tempRscEnv) {
-                throw new Error(
-                  "temp runner unavailable for cloudflare HMR rediscovery",
+          await gate.runRefreshCycle(async () => {
+            const hmrStart = performance.now();
+            try {
+              if (hasMainRunner) {
+                await timed(debugDiscovery, "hmr discoverRouters", () =>
+                  discoverRouters(s, rscEnv),
+                );
+                timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
+                  writeRouteTypesFiles(s),
+                );
+                await timed(debugDiscovery, "hmr propagateDiscoveryState", () =>
+                  propagateDiscoveryState(rscEnv),
+                );
+              } else {
+                // Cloudflare HMR: close+recreate the temp Node server so its
+                // module graph re-reads the freshly edited source. Both
+                // prerenderTempServer AND prerenderNodeRegistry must be nulled
+                // because getOrCreateTempServer() short-circuits on a cached
+                // registry and would never refresh otherwise.
+                if (prerenderTempServer) {
+                  debugDiscovery?.("hmr: closing cached temp server");
+                  await prerenderTempServer.close().catch(() => {});
+                  prerenderTempServer = null;
+                  prerenderNodeRegistry = null;
+                }
+                const tempRscEnv = await timed(
+                  debugDiscovery,
+                  "hmr getOrCreateTempServer (cloudflare)",
+                  () => getOrCreateTempServer(),
+                );
+                if (!tempRscEnv) {
+                  throw new Error(
+                    "temp runner unavailable for cloudflare HMR rediscovery",
+                  );
+                }
+                await timed(
+                  debugDiscovery,
+                  "hmr discoverRouters (cloudflare)",
+                  () => discoverRouters(s, tempRscEnv),
+                );
+                timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
+                  writeRouteTypesFiles(s),
                 );
               }
-              await timed(
-                debugDiscovery,
-                "hmr discoverRouters (cloudflare)",
-                () => discoverRouters(s, tempRscEnv),
+            } catch (err: any) {
+              console.warn(
+                `[rsc-router] Runtime re-discovery failed: ${err.message}`,
               );
-              timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
-                writeRouteTypesFiles(s),
-              );
-            }
-          } catch (err: any) {
-            console.warn(
-              `[rsc-router] Runtime re-discovery failed: ${err.message}`,
-            );
-          } finally {
-            debugDiscovery?.(
-              "hmr re-discovery done (%sms)",
-              (performance.now() - hmrStart).toFixed(1),
-            );
-            runtimeRediscoveryInProgress = false;
-            // Three cases:
-            //   1. queued: another refresh was attempted while we were
-            //      running. Recurse to consume — gate stays pending.
-            //   2. pending events but not queued: a watcher event arrived
-            //      whose debounce hasn't fired yet. The future debounce
-            //      callback will start a fresh refresh cycle that picks
-            //      this event up. We MUST hold the gate pending until
-            //      that cycle completes — otherwise workerd reloads
-            //      between now and then observe a resolved gate against
-            //      stale gen. (Tail-race fix.)
-            //   3. neither: no further work — resolve the gate so the
-            //      manifest virtual module's load() unblocks workerd.
-            if (runtimeRediscoveryQueued) {
-              runtimeRediscoveryQueued = false;
-              debugDiscovery?.("hmr: consuming queued rediscovery");
-              refreshRuntimeDiscovery().catch((err: any) => {
-                console.warn(
-                  `[rsc-router] Queued runtime re-discovery error: ${err.message}`,
-                );
-                // Belt-and-suspenders: even if the queued run faulted
-                // outside the inner try/catch, unblock the gate.
-                resolveDiscoveryGate();
-              });
-            } else if (pendingRouteEvents) {
+            } finally {
               debugDiscovery?.(
-                "hmr: holding gate for pending events (debounce not yet fired)",
+                "hmr re-discovery done (%sms)",
+                (performance.now() - hmrStart).toFixed(1),
               );
-              // Don't resolve. The scheduled debounce will fire and call
-              // refreshRuntimeDiscovery again; that cycle's finally will
-              // consume the gate.
-            } else {
-              // Resolve the gate so the manifest virtual module's load() —
-              // which the workerd HMR reload is awaiting — unblocks
-              // against the freshly-written gen file.
-              resolveDiscoveryGate();
             }
-          }
+          });
         };
 
         const scheduleRouteRegeneration = () => {
@@ -1028,23 +946,16 @@ export function createRouterDiscoveryPlugin(
               }
               s.cachedRouterFiles = undefined;
             }
-            // Reset the manifest gate IMMEDIATELY (before the 100ms debounce
-            // and any downstream HMR fanout). If we waited until the
-            // debounced timer fired, a workerd reload triggered by the same
-            // source change could observe `s.discoveryDone` still resolved
-            // from cold-start, race ahead of rediscovery, and read a partial
-            // gen file. Resolved by refreshRuntimeDiscovery() once the new
-            // gen file is written.
-            //
-            // Mark `pendingRouteEvents` so refresh's finally knows there's
-            // unprocessed work even if `runtimeRediscoveryQueued` doesn't
-            // catch it (the tail-race window: event arrives during refresh
-            // A's tail, A's finally runs BEFORE the event's debounce fires,
-            // so queued is still false but the gate would otherwise resolve
-            // prematurely).
+            // Note the event in the gate machine IMMEDIATELY (before the
+            // 100ms debounce and any downstream HMR fanout). This sets
+            // both `pendingEvents` (so refresh's finally holds the gate
+            // through the tail window even if no rediscovery is queued)
+            // and resets `discoveryDone` to a fresh pending promise (so
+            // workerd reloads triggered by the same source change can't
+            // observe a stale resolved gate from cold-start). Resolved
+            // by the trailing refreshRuntimeDiscovery() cycle.
             if (s.perRouterManifests.length > 0) {
-              pendingRouteEvents = true;
-              beginDiscoveryGate();
+              gate.noteRouteEvent();
             }
             scheduleRouteRegeneration();
           } catch {
