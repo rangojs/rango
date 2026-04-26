@@ -67,6 +67,7 @@ import { renderedBarrierPatterns } from "./urls/rendered-barrier.js";
 import { cacheScopeGuardPatterns } from "./urls/cache-scope-guard.js";
 import { colocatedLoaderPrerenderPatterns } from "./urls/colocated-loader-prerender.js";
 import { parallelLoaderRevalPatterns } from "./urls/parallel-loader-reval.js";
+import { parallelRevalAfterActionPatterns } from "./urls/parallel-reval-after-action.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -608,6 +609,11 @@ export const urlpatterns = urls(
 
       // parallel loader revalidation on orphan layout regression test
       include("/", parallelLoaderRevalPatterns),
+
+      // PR #482 regression: parallel slot revalidate() fns survive sibling
+      // action + nav (action pruned slot from client matched set, next nav
+      // skipped revalidate fns)
+      include("/", parallelRevalAfterActionPatterns),
 
       // Skip test patterns (prerender + static skip/error handling)
       include("/build-skip", buildSkipPatterns, { name: "buildSkip" }),
