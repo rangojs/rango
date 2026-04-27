@@ -62,6 +62,14 @@ export interface ResolvedSegment {
   notFoundInfo?: NotFoundInfo; // For notFound segments: the not found information
   // Mount path from include() scope, used for MountContext.Provider wrapping
   mountPath?: string;
+  /**
+   * @internal Server-side marker: true when the segment's handler actually ran
+   * this request (not skipped via the revalidate cache path). Used by
+   * match-result.ts to populate `MatchResult.resolvedIds` for client-side
+   * handle-bucket cleanup. Stripped from the wire payload before serialization
+   * — never reaches the client.
+   */
+  _handlerRan?: boolean;
 }
 
 /**
@@ -116,6 +124,15 @@ export interface MatchResult {
   segments: ResolvedSegment[];
   matched: string[];
   diff: string[];
+  /**
+   * Every segment id whose handler actually ran on the server this request,
+   * including ones with `component === null` that get filtered out of
+   * `segments`/`diff` to avoid wasted bytes. Drives the client's handle-
+   * cleanup pass — a slot that re-resolves and pushes nothing must clear
+   * its previous handle bucket, but `diff` doesn't carry it because the
+   * segment payload doesn't either. A superset of `diff`.
+   */
+  resolvedIds: string[];
   /**
    * Merged route params from all matched segments
    * Available for use by the handler after route matching

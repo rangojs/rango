@@ -467,3 +467,79 @@ test.describe("parallel-meta-cache-regression (production)", () => {
     await expect(page).toHaveTitle("Product A | Test Store");
   });
 });
+
+// ============================================================================
+// Stale-bucket cleanup: layout-mounted parallel slot returning null on
+// revalidation must clear the slot's previous handle data (no stuck title).
+// ============================================================================
+
+function staleBucketSuite(mode: "dev" | "build") {
+  const f = useFixture({ root: "./e2e/test-app", mode });
+
+  test("hard load with :item shows item title", async ({ page }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/parallel-meta-stale/foo"));
+    await waitForHydration(page);
+    await expect(page).toHaveTitle("Foo | Stale Test");
+  });
+
+  test("hard load index uses layout default (no slot push)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/parallel-meta-stale"));
+    await waitForHydration(page);
+    await expect(page).toHaveTitle("Stale Test");
+  });
+
+  test("soft nav from item to index drops the slot's stale title", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/parallel-meta-stale/foo"));
+    await waitForHydration(page);
+    await expect(page).toHaveTitle("Foo | Stale Test");
+
+    // Soft-nav to index. The slot revalidates (item changed from "foo" to
+    // undefined), the handler runs but returns null without pushing Meta.
+    // Without the cleanup fix, the slot's previous Meta bucket (Foo) lingers
+    // and the title stays "Foo | Stale Test" instead of "Stale Test".
+    await page.getByTestId("pm-stale-link-index").click();
+    await expect(page.getByTestId("pm-stale-index")).toBeVisible();
+    await expect(page).toHaveTitle("Stale Test");
+  });
+
+  test("soft nav between two items replaces the slot's title", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/parallel-meta-stale/foo"));
+    await waitForHydration(page);
+    await expect(page).toHaveTitle("Foo | Stale Test");
+
+    await page.getByTestId("pm-stale-link-bar").click();
+    await expect(page.getByTestId("pm-stale-item")).toContainText("Item: bar");
+    await expect(page).toHaveTitle("Bar | Stale Test");
+  });
+
+  test("soft nav from index to item adds the slot's title", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/parallel-meta-stale"));
+    await waitForHydration(page);
+    await expect(page).toHaveTitle("Stale Test");
+
+    await page.getByTestId("pm-stale-link-foo").click();
+    await expect(page.getByTestId("pm-stale-item")).toContainText("Item: foo");
+    await expect(page).toHaveTitle("Foo | Stale Test");
+  });
+}
+
+test.describe("parallel-meta-stale-cleanup", () => {
+  staleBucketSuite("dev");
+});
+
+test.describe("parallel-meta-stale-cleanup (production)", () => {
+  staleBucketSuite("build");
+});

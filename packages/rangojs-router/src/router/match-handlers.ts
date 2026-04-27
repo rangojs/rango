@@ -196,6 +196,7 @@ export function createMatchHandlers<TEnv = any>(
               segments: [],
               matched: [],
               diff: [],
+              resolvedIds: [],
               params: {},
               redirect: result.redirectUrl,
             };

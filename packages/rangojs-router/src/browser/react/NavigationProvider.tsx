@@ -47,10 +47,22 @@ async function processHandles(
     store: NavigationStore;
     matched?: string[];
     isPartial?: boolean;
+    /** Server's `resolvedIds`: every segment re-resolved this request,
+     *  including null-component ones excluded from `diff`/`segments`.
+     *  Drives cleanup of stale handle buckets when a re-resolved segment
+     *  pushed nothing. */
+    resolvedIds?: string[];
     historyKey: string;
   },
 ): Promise<void> {
-  const { eventController, store, matched, isPartial, historyKey } = opts;
+  const {
+    eventController,
+    store,
+    matched,
+    isPartial,
+    resolvedIds,
+    historyKey,
+  } = opts;
 
   let yieldCount = 0;
   for await (const handleData of handlesGenerator) {
@@ -65,7 +77,7 @@ async function processHandles(
     }
 
     yieldCount++;
-    eventController.setHandleData(handleData, matched, isPartial);
+    eventController.setHandleData(handleData, matched, isPartial, resolvedIds);
   }
 
   // Check again before final updates
@@ -73,12 +85,11 @@ async function processHandles(
     return;
   }
 
-  // For partial updates where the generator yielded nothing (cached handlers),
-  // we still need to update the segment order to clean up stale handle data.
-  // This happens when navigating away from a route - the handlers for the new
-  // route might not push any breadcrumbs, but we still need to remove the old ones.
+  // For partial updates where the generator yielded nothing (every
+  // re-resolved handler pushed nothing), still call setHandleData so the
+  // cleanup pass can clear out stale buckets for those segments.
   if (yieldCount === 0 && matched) {
-    eventController.setHandleData({}, matched, true);
+    eventController.setHandleData({}, matched, true, resolvedIds);
   }
 
   // After handles processing completes, update the cache's handleData.
@@ -394,6 +405,7 @@ export function NavigationProvider({
           store,
           matched: update.metadata.matched,
           isPartial: update.metadata.isPartial,
+          resolvedIds: update.metadata.resolvedIds,
           historyKey,
         }).catch((err) =>
           console.error("[NavigationProvider] Error consuming handles:", err),
@@ -412,6 +424,7 @@ export function NavigationProvider({
           {}, // Empty data - all existing data not in matched will be cleaned up
           update.metadata.matched,
           true, // partial update - will clean up segments not in matched
+          update.metadata.resolvedIds,
         );
       }
     });
