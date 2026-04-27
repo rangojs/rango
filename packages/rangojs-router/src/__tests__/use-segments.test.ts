@@ -54,13 +54,15 @@ const mockedUseContext = vi.mocked(useContext);
 
 function createMockEventController() {
   const location = new URL("http://localhost/shop/products");
-  // segmentOrder is a stable reference, matching real event controller behavior
-  // where handleSegmentOrder identity only changes on setHandleData calls.
+  // Stable references — real controller only swaps these on setHandleData.
+  // useSegments() reads `routeSegmentIds`; `segmentOrder` is exposed for the
+  // handle-collection consumer and may include parallel slot ids.
   const segmentOrder = ["L0", "L0L1"];
+  const routeSegmentIds = ["L0", "L0L1"];
   return {
     getState: () => ({ location }),
     getLocation: () => location,
-    getHandleState: () => ({ segmentOrder }),
+    getHandleState: () => ({ segmentOrder, routeSegmentIds }),
     subscribe: vi.fn(() => vi.fn()),
     subscribeToHandles: vi.fn(() => vi.fn()),
   };
@@ -192,6 +194,32 @@ describe("useSegments", () => {
         segmentIds: ["L0", "L0L1"],
       }),
     );
+  });
+
+  /**
+   * Regression: useSegments().segmentIds is documented as "layouts and routes
+   * only" but historically read from the same controller field that drives
+   * handle collection. After the parallel-slot fix the handle order retains
+   * parallel ids so per-bucket merge works; useSegments must not leak those
+   * to consumers — its contract is unchanged.
+   */
+  it("segmentIds excludes parallel slot ids and loader sub-ids", () => {
+    const location = new URL("http://localhost/inbox/email-1");
+    const ec = {
+      getState: () => ({ location }),
+      getLocation: () => location,
+      getHandleState: () => ({
+        segmentOrder: ["L0", "L0.@panel", "R0", "R0.@meta"],
+        routeSegmentIds: ["L0", "R0"],
+      }),
+      subscribe: vi.fn(() => vi.fn()),
+      subscribeToHandles: vi.fn(() => vi.fn()),
+    };
+    mockedUseContext.mockReturnValue({ eventController: ec } as any);
+
+    const state = useSegments() as { segmentIds: readonly string[] };
+
+    expect(state.segmentIds).toEqual(["L0", "R0"]);
   });
 
   it("does not loop for composite selectors returning wrapped arrays", () => {

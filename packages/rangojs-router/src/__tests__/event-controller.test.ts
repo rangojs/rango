@@ -615,18 +615,91 @@ describe("createEventController", () => {
       expect(state.data.title["seg.3"]).toEqual(["C"]);
     });
 
-    it("filterSegmentOrder excludes parallels (.@) and loaders (D digit)", () => {
+    it("filterSegmentOrder keeps parallels (.@) and drops loaders (D digit)", () => {
       const ctrl = createController();
       ctrl.setHandleData({}, [
         "root",
-        "layout.@sidebar",
+        "root.@sidebar",
         "page",
-        "D1.loader",
+        "page.@modal",
+        "M0L0D1.loader",
         "content",
       ]);
 
       const state = ctrl.getHandleState();
-      expect(state.segmentOrder).toEqual(["root", "page", "content"]);
+      expect(state.segmentOrder).toEqual([
+        "root",
+        "root.@sidebar",
+        "page",
+        "page.@modal",
+        "content",
+      ]);
+    });
+
+    /**
+     * Regression: route-mounted parallels emit BEFORE the route segment in
+     * matched order ([R0.@panel, R0]). filterSegmentOrder must reorder so
+     * the slot id appears AFTER the route id, otherwise collectHandleData's
+     * later-wins semantics let the route's Meta override the slot's.
+     */
+    it("route-mounted slot id is normalized to follow the route id", () => {
+      const ctrl = createController();
+      ctrl.setHandleData({}, ["L0", "R0.@panel", "R0"]);
+      const state = ctrl.getHandleState();
+      expect(state.segmentOrder).toEqual(["L0", "R0", "R0.@panel"]);
+    });
+
+    /**
+     * Regression: a layout-mounted parallel slot must not stomp the parent
+     * layout's handle data on a slot-only revalidation.
+     *
+     * Original repro shape: layout pushes a Meta title-template under "L0";
+     * a parallel slot mounted at the same layout (e.g. an email panel) pushes
+     * the email-detail Meta. When the user soft-navs between two emails, only
+     * the slot revalidates — the layout is cached and does not rerun. The
+     * partial-update payload therefore contains only the slot's push.
+     *
+     * If parent and slot share the segment id "L0", the per-bucket merge
+     * replaces the L0 array entirely with the slot's push, dropping the
+     * layout's title template/default. With slot-keyed pushes ("L0.@panel"),
+     * the layout's L0 bucket is preserved while the slot's bucket updates.
+     *
+     * For this contract to hold, filterSegmentOrder() must retain parallel
+     * slot ids (otherwise the cleanup phase deletes them, defeating the
+     * separation).
+     */
+    it("layout-mounted slot revalidation preserves layout's bucket (separate slot identity)", () => {
+      const ctrl = createController();
+
+      // Initial load: layout (L0) pushes the title template; slot (L0.@panel)
+      // pushes the email-detail title.
+      ctrl.setHandleData(
+        {
+          Meta: {
+            L0: [{ title: { template: "%s | Inbox", default: "Inbox" } }],
+            "L0.@panel": [{ title: "Email A subject" }],
+          },
+        },
+        ["L0", "L0.@panel"],
+      );
+
+      // Slot-only revalidation (parent layout cached, did not rerun): the
+      // partial payload contains only the slot's new push.
+      ctrl.setHandleData(
+        { Meta: { "L0.@panel": [{ title: "Email B subject" }] } },
+        ["L0", "L0.@panel"],
+        true,
+      );
+
+      const state = ctrl.getHandleState();
+      expect(state.data.Meta.L0).toEqual([
+        { title: { template: "%s | Inbox", default: "Inbox" } },
+      ]);
+      expect(state.data.Meta["L0.@panel"]).toEqual([
+        { title: "Email B subject" },
+      ]);
+      // Slot id must survive the filter so cleanup doesn't drop it.
+      expect(state.segmentOrder).toEqual(["L0", "L0.@panel"]);
     });
   });
 

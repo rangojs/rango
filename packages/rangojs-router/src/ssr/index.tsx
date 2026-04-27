@@ -162,9 +162,13 @@ function createSsrEventController(opts: {
 }): EventController {
   const location = new URL(opts.pathname, "http://localhost");
   let params = opts.params ?? {};
+  const rawMatched = opts.matched ?? [];
   const handleState = {
     data: opts.handleData ?? {},
-    segmentOrder: filterSegmentOrder(opts.matched ?? []),
+    segmentOrder: filterSegmentOrder(rawMatched),
+    routeSegmentIds: rawMatched.filter(
+      (id) => !id.includes(".@") && !/D\d+\./.test(id),
+    ),
   };
   const state: DerivedNavigationState = {
     state: "idle",
