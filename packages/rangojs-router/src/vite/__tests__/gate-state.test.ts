@@ -279,4 +279,84 @@ describe("createDiscoveryGate", () => {
     expect(gate.state().gatePending).toBe(false);
     expect(await isSettled(s.discoveryDone)).toBe(true);
   });
+
+  it("resolveGate is deferred when runRefreshCycle is in flight (cold-start race)", async () => {
+    // The cold-start race the reviewer identified: cold-start does
+    //
+    //   beginGate()
+    //   setTimeout(() => discover().then(resolveGate, resolveGate), 0)
+    //
+    // resolveGate previously only checked gatePending. If a user edits a
+    // route file between `discoverRouters` committing s.perRouterManifests
+    // and discover() returning, the HMR watcher's debounce can fire before
+    // the cold-start `then(resolveGate)` callback — runRefreshCycle then
+    // sets inProgress=true and starts work. When cold-start's resolveGate
+    // subsequently fires, it would naively settle the gate while the HMR
+    // cycle is still mid-flight; workerd's manifest load() unblocks
+    // against the stale cold-start gen.
+    //
+    // The fix: resolveGate defers when inProgress | queued | pendingEvents
+    // is set. The cycle's finally calls resolveGate again at the tail —
+    // and that one actually resolves.
+    const s: Owner = { discoveryDone: null };
+    const gate = createDiscoveryGate(s);
+
+    // Cold-start: open the gate, schedule discover().
+    gate.beginGate();
+
+    // User edit during cold-start.
+    gate.noteRouteEvent();
+    expect(gate.state().pendingEvents).toBe(true);
+
+    // HMR debounce fires (cold-start's discover() is still running).
+    let finishWork: () => void;
+    const work = new Promise<void>((resolve) => {
+      finishWork = resolve;
+    });
+    const cycle = gate.runRefreshCycle(() => work);
+    expect(gate.state().inProgress).toBe(true);
+
+    // Cold-start's discover().then(resolveGate) callback fires NOW.
+    // Pre-fix: this would settle the gate immediately.
+    // Post-fix: deferred — work is in flight.
+    gate.resolveGate();
+    expect(gate.state().gatePending).toBe(true);
+    expect(await isSettled(s.discoveryDone)).toBe(false);
+
+    // HMR cycle completes — its finally calls resolveGate, which now
+    // sees no in-flight work and settles for real.
+    finishWork!();
+    await cycle;
+
+    expect(gate.state().gatePending).toBe(false);
+    expect(await isSettled(s.discoveryDone)).toBe(true);
+  });
+
+  it("resolveGate is deferred when pendingEvents is true (event arrived between discover finish and resolve)", async () => {
+    // Same shape as above but the in-flight signal is pendingEvents
+    // instead of inProgress: cold-start's discover() finishes, the user
+    // edit arrives BEFORE its 100ms debounce, then resolveGate fires.
+    // Without the pendingEvents check, resolveGate would settle and the
+    // about-to-fire HMR cycle would have nothing to coordinate against.
+    const s: Owner = { discoveryDone: null };
+    const gate = createDiscoveryGate(s);
+
+    gate.beginGate();
+    gate.noteRouteEvent(); // user edit landed before debounce expired
+
+    // No runRefreshCycle yet — debounce hasn't fired.
+    expect(gate.state().inProgress).toBe(false);
+    expect(gate.state().pendingEvents).toBe(true);
+
+    // Cold-start's resolveGate fires here — must defer.
+    gate.resolveGate();
+    expect(gate.state().gatePending).toBe(true);
+    expect(await isSettled(s.discoveryDone)).toBe(false);
+
+    // Debounce now fires → runRefreshCycle starts → resolves at tail.
+    await gate.runRefreshCycle(async () => {});
+
+    expect(gate.state().gatePending).toBe(false);
+    expect(await isSettled(s.discoveryDone)).toBe(true);
+  });
 });

@@ -99,6 +99,22 @@ export function createDiscoveryGate(
 
   const resolveGate = (): void => {
     if (!gatePending) return;
+    // Defer resolution while a refresh cycle is in flight or queued, or
+    // while an unprocessed route-file event is pending its debounce.
+    // Without this guard, cold-start's `discover().then(resolveGate)`
+    // could fire while an HMR-triggered runRefreshCycle is mid-flight,
+    // prematurely unblocking workerd's manifest load() against the
+    // stale cold-start gen. The active cycle's `finally` calls
+    // resolveGate again at the tail and finishes the resolution then.
+    if (inProgress || queued || pendingEvents) {
+      debug?.(
+        "hmr: resolveGate deferred — work in flight (inProgress=%s queued=%s pendingEvents=%s)",
+        inProgress,
+        queued,
+        pendingEvents,
+      );
+      return;
+    }
     gatePending = false;
     debug?.("hmr: discoveryDone resolved");
     gateResolver();
