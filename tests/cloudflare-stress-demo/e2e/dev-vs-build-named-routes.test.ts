@@ -875,6 +875,61 @@ test.describe("dev vs build named-routes parity", () => {
       await fs.writeFile(genFilePath, buildGen);
     }
   });
+
+  test("single source edit produces exactly one `[vite] program reload`", async ({}, testInfo) => {
+    // Regression: prior to handleHotUpdate suppression, every HMR cycle
+    // emitted TWO program reloads — one from the user's source edit, and a
+    // second from vite's chokidar detecting our subsequent gen-file write
+    // (writeRouteTypesFiles after refreshTempRscEnv). The duplicate cycle
+    // was harmless but visible to users as a duplicate "HMR: version
+    // changed" event on the client.
+    //
+    // Our handleHotUpdate hook returns [] for paths in selfWrittenGenFiles,
+    // dropping the cascade. This test asserts ONE program reload per edit.
+    testInfo.setTimeout(120_000);
+    const buildGen = await fs.readFile(genFilePath, "utf-8");
+
+    const dev = await runDevAndWaitForRediscovery(buildGen);
+    try {
+      const sourceFile = path.resolve("./src/urls.tsx");
+      const sourceContent = await fs.readFile(sourceFile, "utf-8");
+      try {
+        const preEditIdx = dev.buffer.length;
+        await fs.writeFile(sourceFile, sourceContent + "\n");
+
+        // Wait for the HMR cycle to complete (gate resolves AFTER the gen
+        // file is written, so any cascade from that write would fire
+        // before/around this point).
+        await waitForLogFromIdx(
+          () => dev.buffer,
+          /hmr: discoveryDone resolved/,
+          "post-edit gate resolution",
+          preEditIdx,
+        );
+
+        // Grace window for the gen-file fs event to surface in vite's HMR
+        // pipeline AFTER the gate resolves. handleHotUpdate fires
+        // synchronously when the watcher detects the change; 1500ms is
+        // generous even on slow CI inotify.
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+
+        const postEditSlice = dev.buffer.slice(preEditIdx);
+        const reloadCount = (
+          postEditSlice.match(/\[vite\] program reload/g) ?? []
+        ).length;
+        expect(
+          reloadCount,
+          `single source edit should produce exactly one [vite] program reload, got ${reloadCount}.\n--- buffer slice ---\n${postEditSlice}\n--- end slice ---`,
+        ).toBe(1);
+        expect(dev.unexpectedExit).toBeNull();
+      } finally {
+        await fs.writeFile(sourceFile, sourceContent);
+      }
+    } finally {
+      await killProcessTree(dev.proc);
+      await fs.writeFile(genFilePath, buildGen);
+    }
+  });
 });
 
 interface DevHandle {

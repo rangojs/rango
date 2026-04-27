@@ -35,7 +35,10 @@ import {
   type DiscoveryState,
   type PluginOptions,
 } from "./discovery/state.js";
-import { consumeSelfGenWrite } from "./discovery/self-gen-tracking.js";
+import {
+  consumeSelfGenWrite,
+  peekSelfGenWrite,
+} from "./discovery/self-gen-tracking.js";
 import { discoverRouters } from "./discovery/discover-routers.js";
 import {
   writeCombinedRouteTypesWithTracking,
@@ -1223,6 +1226,35 @@ export function createRouterDiscoveryPlugin(
           "build discovery done (%sms)",
           (performance.now() - buildStartTime).toFixed(1),
         );
+      }
+    },
+
+    // Suppress vite's HMR cascade for our own gen-file writes.
+    //
+    // After every cf HMR cycle, refreshTempRscEnv → writeRouteTypesFiles
+    // writes the configured gen files (default `router.named-routes.gen.ts`,
+    // but the source filenames and gen suffix are user-configurable). The
+    // chokidar watcher then fires twice independently: our
+    // `handleRouteFileChange` (already short-circuited by
+    // `consumeSelfGenWrite` inside `maybeHandleGeneratedRouteFileMutation`),
+    // AND vite's own HMR pipeline (which invalidates the gen file's
+    // importers and triggers a second workerd full reload — visible to the
+    // user as a duplicate "[RSCRouter] HMR: version changed" on the client).
+    //
+    // `peekSelfGenWrite` is the authoritative filter: its map only contains
+    // paths that `markSelfGenWrite` has registered, so it natively works
+    // for any configured gen-file name. It is non-consuming so the chokidar
+    // handler that fires later can still consume the same entry. Returning
+    // [] tells vite "no modules invalidated by this change" — safe because
+    // `s.perRouterManifests` is already up-to-date (the write that just
+    // happened is the consequence of our just-completed rediscovery).
+    handleHotUpdate(ctx) {
+      if (peekSelfGenWrite(s, ctx.file)) {
+        debugDiscovery?.(
+          "handleHotUpdate: suppressing self-write HMR cascade for %s",
+          ctx.file,
+        );
+        return [];
       }
     },
 
