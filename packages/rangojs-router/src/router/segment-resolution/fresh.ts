@@ -515,6 +515,14 @@ export async function resolveParallelEntry<TEnv>(
       if (handler === undefined) {
         continue;
       }
+      // Pin `_currentSegmentId` to the slot's own id so handle pushes from
+      // inside the slot handler get their own bucket in the HandleStore.
+      // Parent-keying would collapse them into the parent layout's bucket;
+      // the partial-update merge then replaces the parent's bucket on a
+      // slot-only revalidation and drops layout-pushed Meta/Breadcrumbs.
+      // filterSegmentOrder() retains slot ids so the client preserves them.
+      (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+        `${parentShortCode}.${slot}`;
       const doneParallelHandler = track(
         `handler:${parallelEntry.id}.${slot}`,
         2,

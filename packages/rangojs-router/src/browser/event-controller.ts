@@ -113,11 +113,24 @@ export type ActionStateListener = (state: TrackedActionState) => void;
 export type HandleListener = () => void;
 
 /**
- * Internal handle state stored in controller
+ * Internal handle state stored in controller.
+ *
+ * Two segment lists are exposed because they serve different consumers:
+ *
+ * - `segmentOrder` drives handle collection (collectHandleData). Includes
+ *   parallel slot ids and reorders them after their parent so later-wins
+ *   collect functions (e.g. Meta) get the right precedence.
+ * - `routeSegmentIds` is the layouts-and-routes-only list documented by
+ *   `useSegments().segmentIds`. Parallels and loader sub-ids are stripped;
+ *   raw matched order is preserved.
+ *
+ * Both are derived from the same `matched` input on each setHandleData call
+ * so they stay in sync.
  */
 export interface HandleState {
   data: HandleData;
   segmentOrder: string[];
+  routeSegmentIds: string[];
 }
 
 /**
@@ -300,6 +313,7 @@ export function createEventController(
   // Handle data from RSC payload
   let handleData: HandleData = {};
   let handleSegmentOrder: string[] = [];
+  let routeSegmentIds: string[] = [];
 
   // Merged route params from current match
   let routeParams: Record<string, string> = {};
@@ -745,7 +759,13 @@ export function createEventController(
     matched?: string[],
     isPartial?: boolean,
   ): void {
-    const newSegmentOrder = filterSegmentOrder(matched ?? []);
+    const rawMatched = matched ?? [];
+    const newSegmentOrder = filterSegmentOrder(rawMatched);
+    // Separate list for useSegments(): "layouts and routes only" — strip
+    // parallels (".@") and loader sub-ids (D digit) without reordering.
+    const newRouteSegmentIds = rawMatched.filter(
+      (id) => !id.includes(".@") && !/D\d+\./.test(id),
+    );
 
     if (isPartial && newSegmentOrder.length > 0) {
       // Partial update: merge new data with existing
@@ -770,6 +790,7 @@ export function createEventController(
       handleData = data;
     }
     handleSegmentOrder = newSegmentOrder;
+    routeSegmentIds = newRouteSegmentIds;
 
     notifyHandles();
   }
@@ -778,6 +799,7 @@ export function createEventController(
     return {
       data: handleData,
       segmentOrder: handleSegmentOrder,
+      routeSegmentIds,
     };
   }
 

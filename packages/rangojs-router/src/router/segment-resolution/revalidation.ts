@@ -549,29 +549,36 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         // Handler evicted (production static slot) but static lookup missed.
         // Nothing to render — use null so the client keeps its cached version.
         component = null;
-      } else if (hasLoadingFallback) {
-        const result =
-          typeof handler === "function" ? handler(context) : handler;
-        if (result instanceof Promise) {
-          const tracked = deps.trackHandler(result, {
-            segmentId: parallelId,
-            segmentType: "parallel",
-          });
-          observeStreamedHandler(
-            tracked,
-            parallelId,
-            "parallel",
-            context.pathname,
-            routeKey,
-            params,
-          );
-          component = tracked as ReactNode;
-        } else {
-          component = result as ReactNode;
-        }
       } else {
-        component =
-          typeof handler === "function" ? await handler(context) : handler;
+        // Slot-keyed pushes — slot owns its own bucket, parent layout owns
+        // its own. On slot-only revalidations the partial merge updates only
+        // the slot's bucket; the parent's bucket stays intact.
+        (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+          parallelId;
+        if (hasLoadingFallback) {
+          const result =
+            typeof handler === "function" ? handler(context) : handler;
+          if (result instanceof Promise) {
+            const tracked = deps.trackHandler(result, {
+              segmentId: parallelId,
+              segmentType: "parallel",
+            });
+            observeStreamedHandler(
+              tracked,
+              parallelId,
+              "parallel",
+              context.pathname,
+              routeKey,
+              params,
+            );
+            component = tracked as ReactNode;
+          } else {
+            component = result as ReactNode;
+          }
+        } else {
+          component =
+            typeof handler === "function" ? await handler(context) : handler;
+        }
       }
     }
 
@@ -1239,29 +1246,34 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       } else if (handler === undefined) {
         // Handler evicted (production static slot) but static lookup missed.
         component = null;
-      } else if (hasLoadingFallback) {
-        const result =
-          typeof handler === "function" ? handler(context) : handler;
-        if (result instanceof Promise) {
-          const tracked = deps.trackHandler(result, {
-            segmentId: parallelId,
-            segmentType: "parallel",
-          });
-          observeStreamedHandler(
-            tracked,
-            parallelId,
-            "parallel",
-            context.pathname,
-            routeKey,
-            params,
-          );
-          component = tracked as ReactNode;
-        } else {
-          component = result as ReactNode;
-        }
       } else {
-        component =
-          typeof handler === "function" ? await handler(context) : handler;
+        // Slot-keyed pushes — see resolveParallelSegmentsWithRevalidation.
+        (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+          parallelId;
+        if (hasLoadingFallback) {
+          const result =
+            typeof handler === "function" ? handler(context) : handler;
+          if (result instanceof Promise) {
+            const tracked = deps.trackHandler(result, {
+              segmentId: parallelId,
+              segmentType: "parallel",
+            });
+            observeStreamedHandler(
+              tracked,
+              parallelId,
+              "parallel",
+              context.pathname,
+              routeKey,
+              params,
+            );
+            component = tracked as ReactNode;
+          } else {
+            component = result as ReactNode;
+          }
+        } else {
+          component =
+            typeof handler === "function" ? await handler(context) : handler;
+        }
       }
     }
 
