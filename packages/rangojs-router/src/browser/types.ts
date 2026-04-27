@@ -39,6 +39,12 @@ export interface RscMetadata {
   isError?: boolean;
   matched?: string[];
   diff?: string[];
+  /**
+   * All segment ids re-resolved on the server, including null-component
+   * ones excluded from `segments`/`diff`. Drives client-side handle-bucket
+   * cleanup. Superset of `diff`. See MatchResult.resolvedIds.
+   */
+  resolvedIds?: string[];
   /** Merged route params from the matched route */
   params?: Record<string, string>;
   /**

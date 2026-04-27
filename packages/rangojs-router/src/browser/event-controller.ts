@@ -215,6 +215,14 @@ export interface EventController {
     data: HandleData,
     matched?: string[],
     isPartial?: boolean,
+    /**
+     * Segment ids that were re-resolved on the server this request (the
+     * partial response's `diff`). On a partial update, any existing bucket
+     * keyed under one of these ids that has no incoming entry is treated as
+     * stale and cleared. Without this, a parallel slot that revalidates but
+     * pushes nothing leaves its previous bucket in place forever.
+     */
+    resolvedIds?: string[],
   ): void;
   getHandleState(): HandleState;
 
@@ -758,6 +766,7 @@ export function createEventController(
     data: HandleData,
     matched?: string[],
     isPartial?: boolean,
+    resolvedIds?: string[],
   ): void {
     const rawMatched = matched ?? [];
     const newSegmentOrder = filterSegmentOrder(rawMatched);
@@ -777,10 +786,19 @@ export function createEventController(
           handleData[handleName][segmentId] = data[handleName][segmentId];
         }
       }
-      // Clean up data from segments no longer in the matched list
+      const resolvedIdSet =
+        resolvedIds && resolvedIds.length > 0 ? new Set(resolvedIds) : null;
+      // Cleanup pass:
+      //   a) segment dropped from the match list — delete its bucket.
+      //   b) segment was re-resolved this request but pushed nothing for
+      //      this handle — its previous bucket is stale.
+      // (a) is the existing behavior; (b) requires resolvedIds.
       for (const handleName of Object.keys(handleData)) {
         for (const segmentId of Object.keys(handleData[handleName])) {
-          if (!newSegmentOrder.includes(segmentId)) {
+          const droppedFromMatch = !newSegmentOrder.includes(segmentId);
+          const reresolvedWithoutPush =
+            resolvedIdSet?.has(segmentId) && !data[handleName]?.[segmentId];
+          if (droppedFromMatch || reresolvedWithoutPush) {
             delete handleData[handleName][segmentId];
           }
         }

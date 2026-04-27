@@ -550,6 +550,7 @@ export async function matchError<TEnv>(
     segments: [errorSegment],
     matched: matchedIds,
     diff: [errorSegment.id],
+    resolvedIds: [errorSegment.id],
     params: matched.params,
   };
 }

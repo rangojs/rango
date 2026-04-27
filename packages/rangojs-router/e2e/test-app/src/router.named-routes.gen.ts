@@ -187,6 +187,8 @@ export const NamedRoutes = {
   "ns.nsChild": "/ns-reverse",
   "parallelMeta.index": "/parallel-meta",
   "parallelMeta.product": "/parallel-meta/:slug",
+  "parallelMetaStale.index": "/parallel-meta-stale",
+  "parallelMetaStale.item": "/parallel-meta-stale/:item",
   "parallelRevalAfterAction.revalAfterActionPageA": "/parallel-reval-after-action/page-a",
   "parallelRevalAfterAction.revalAfterActionPageB": "/parallel-reval-after-action/page-b",
   "paramsAfterAction.error": "/params-after-action/error/:postId/section/:section",

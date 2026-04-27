@@ -537,8 +537,11 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
     );
 
     let component: ReactNode | undefined;
+    let handlerRan = false;
     if (shouldResolve) {
       component = await tryStaticSlot(parallelEntry, slot, parallelId);
+      // tryStaticSlot returning a value means the static cache supplied the
+      // component — handler did NOT run. handlerRan stays false.
     }
     if (component === undefined) {
       const hasLoadingFallback =
@@ -555,6 +558,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         // the slot's bucket; the parent's bucket stays intact.
         (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
           parallelId;
+        handlerRan = true;
         if (hasLoadingFallback) {
           const result =
             typeof handler === "function" ? handler(context) : handler;
@@ -592,6 +596,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       transition: parallelEntry.transition,
       params,
       slot,
+      _handlerRan: handlerRan,
       belongsToRoute,
       parallelName: `${parallelEntry.id}.${slot}`,
       ...(parallelEntry.mountPath
@@ -646,6 +651,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
 ): Promise<{ segment: ResolvedSegment; matchedId: string }> {
   const matchedId = entry.shortCode;
 
+  let handlerRan = false;
   const component = await revalidate(
     async () => {
       const hasSegment = clientSegmentIds.has(entry.shortCode);
@@ -722,6 +728,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       return shouldRevalidate;
     },
     async () => {
+      handlerRan = true;
       const doneHandler = track(`handler:${entry.id}`, 2);
       (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
         entry.shortCode;
@@ -803,6 +810,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       ? { layoutName: entry.id }
       : {}),
     ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
+    _handlerRan: handlerRan,
   };
 
   return { segment, matchedId };
@@ -1235,6 +1243,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     );
 
     let component: ReactNode | undefined;
+    let handlerRan = false;
     if (shouldResolve) {
       component = await tryStaticSlot(parallelEntry, slot, parallelId);
     }
@@ -1250,6 +1259,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         // Slot-keyed pushes — see resolveParallelSegmentsWithRevalidation.
         (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
           parallelId;
+        handlerRan = true;
         if (hasLoadingFallback) {
           const result =
             typeof handler === "function" ? handler(context) : handler;
@@ -1287,6 +1297,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       transition: parallelEntry.transition,
       params,
       slot,
+      _handlerRan: handlerRan,
       belongsToRoute,
       parallelName: `${parallelEntry.id}.${slot}`,
       ...(parallelEntry.mountPath

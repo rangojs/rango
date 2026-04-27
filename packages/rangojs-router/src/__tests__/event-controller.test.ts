@@ -701,6 +701,81 @@ describe("createEventController", () => {
       // Slot id must survive the filter so cleanup doesn't drop it.
       expect(state.segmentOrder).toEqual(["L0", "L0.@panel"]);
     });
+
+    /**
+     * Regression: a parallel slot that re-resolves on revalidation but
+     * pushes nothing (e.g. emailDetailHandler returns null when :emailId is
+     * absent) leaves its previous bucket in place — the response carries no
+     * entry to replace it with, and the existing match-list cleanup keeps
+     * the id because the slot is still matched.
+     *
+     * The fix: setHandleData receives `resolvedIds` (server's `diff`) and
+     * additionally clears any (handle, segmentId) where segmentId was
+     * re-resolved this request but produced no incoming data for that
+     * handle.
+     */
+    it("partial update clears stale buckets for re-resolved segments that pushed nothing", () => {
+      const ctrl = createController();
+
+      // Initial load: layout pushes its template; slot pushes Email A title.
+      ctrl.setHandleData(
+        {
+          Meta: {
+            L0: [{ title: { template: "%s | Inbox", default: "Inbox" } }],
+            "L0.@panel": [{ title: "Email A subject" }],
+          },
+        },
+        ["L0", "L0.@panel"],
+      );
+
+      // Soft-nav to a path with no :emailId. Slot revalidates but the
+      // handler returns null without pushing. Server response has nothing
+      // for the slot; diff still includes the slot id (it WAS re-resolved).
+      ctrl.setHandleData({}, ["L0", "L0.@panel"], true, ["L0.@panel"]);
+
+      const state = ctrl.getHandleState();
+      // Layout's bucket preserved — not in resolvedIds, layout was cached.
+      expect(state.data.Meta.L0).toEqual([
+        { title: { template: "%s | Inbox", default: "Inbox" } },
+      ]);
+      // Slot's bucket cleared — was re-resolved but pushed nothing.
+      expect(state.data.Meta["L0.@panel"]).toBeUndefined();
+    });
+
+    it("partial update without resolvedIds keeps the existing match-only cleanup behavior", () => {
+      // Backwards-compat: callers that don't supply resolvedIds (e.g. the
+      // initial bootstrap) still get the previous semantics — only segments
+      // that fell out of the matched list are cleaned up.
+      const ctrl = createController();
+      ctrl.setHandleData(
+        { Meta: { L0: [{ title: "A" }], "L0.@panel": [{ title: "Slot" }] } },
+        ["L0", "L0.@panel"],
+      );
+      ctrl.setHandleData({}, ["L0", "L0.@panel"], true);
+      const state = ctrl.getHandleState();
+      expect(state.data.Meta.L0).toEqual([{ title: "A" }]);
+      expect(state.data.Meta["L0.@panel"]).toEqual([{ title: "Slot" }]);
+    });
+
+    it("resolvedIds for a layout that re-runs but stops pushing a handle clears that handle's bucket", () => {
+      // Wider applicability: not specific to parallel slots. If a layout
+      // previously pushed Breadcrumbs but on revalidation only pushes Meta,
+      // its Breadcrumbs bucket should be cleared.
+      const ctrl = createController();
+      ctrl.setHandleData(
+        {
+          Meta: { L0: [{ title: "Old" }] },
+          Breadcrumbs: { L0: [{ label: "Home" }] },
+        },
+        ["L0"],
+      );
+      ctrl.setHandleData({ Meta: { L0: [{ title: "New" }] } }, ["L0"], true, [
+        "L0",
+      ]);
+      const state = ctrl.getHandleState();
+      expect(state.data.Meta.L0).toEqual([{ title: "New" }]);
+      expect(state.data.Breadcrumbs?.L0).toBeUndefined();
+    });
   });
 
   // ======================================================================

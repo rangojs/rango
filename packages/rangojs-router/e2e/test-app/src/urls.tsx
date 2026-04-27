@@ -63,6 +63,7 @@ import { streamModePatterns } from "./urls/stream-mode.js";
 import { devDebugPatterns, devInfoHandler } from "./urls/dev-routes.js";
 import { contextDedupPatterns } from "./urls/context-dedup.js";
 import { parallelMetaPatterns } from "./urls/parallel-meta.js";
+import { parallelMetaStalePatterns } from "./urls/parallel-meta-stale.js";
 import { renderedBarrierPatterns } from "./urls/rendered-barrier.js";
 import { cacheScopeGuardPatterns } from "./urls/cache-scope-guard.js";
 import { colocatedLoaderPrerenderPatterns } from "./urls/colocated-loader-prerender.js";
@@ -1041,6 +1042,13 @@ export const urlpatterns = urls(
       // @meta parallel slot pattern (handles from parallel slots)
       include("/parallel-meta", parallelMetaPatterns, {
         name: "parallelMeta",
+      }),
+
+      // Layout-mounted parallel slot that conditionally pushes Meta —
+      // exercises the stale-handle-bucket cleanup on slot revalidation
+      // when the slot returns null without pushing.
+      include("/parallel-meta-stale", parallelMetaStalePatterns, {
+        name: "parallelMetaStale",
       }),
 
       // notFound() without a notFoundBoundary — should render 404, not error

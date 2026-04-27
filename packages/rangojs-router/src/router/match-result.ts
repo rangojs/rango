@@ -270,10 +270,29 @@ export function buildMatchResult<TEnv>(
   const matchedIds =
     removedIds.size > 0 ? allIds.filter((id) => !removedIds.has(id)) : allIds;
 
+  // resolvedIds: every segment whose handler actually ran this request.
+  // For full-match every segment is fresh; for partial-match we filter by
+  // the internal `_handlerRan` flag set in revalidation.ts. Drives the
+  // client's handle-bucket cleanup — a slot that re-resolved and pushed
+  // nothing must have its previous handle data cleared, but `diff` won't
+  // carry it because the segment payload skips null-component cached
+  // segments to save bytes.
+  const resolvedIds = ctx.isFullMatch
+    ? allSegments.map((s) => s.id)
+    : allSegments.filter((s) => s._handlerRan).map((s) => s.id);
+
+  // Strip internal-only fields from the segments going on the wire.
+  const cleanedSegments = dedupedSegments.map((s) => {
+    if (s._handlerRan === undefined) return s;
+    const { _handlerRan: _drop, ...rest } = s;
+    return rest as ResolvedSegment;
+  });
+
   return {
-    segments: dedupedSegments,
+    segments: cleanedSegments,
     matched: matchedIds,
-    diff: dedupedSegments.map((s) => s.id),
+    diff: cleanedSegments.map((s) => s.id),
+    resolvedIds,
     params: ctx.matched.params,
     routeName: ctx.routeKey,
     slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
