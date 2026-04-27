@@ -35,7 +35,10 @@ import {
   type DiscoveryState,
   type PluginOptions,
 } from "./discovery/state.js";
-import { consumeSelfGenWrite } from "./discovery/self-gen-tracking.js";
+import {
+  consumeSelfGenWrite,
+  peekSelfGenWrite,
+} from "./discovery/self-gen-tracking.js";
 import { discoverRouters } from "./discovery/discover-routers.js";
 import {
   writeCombinedRouteTypesWithTracking,
@@ -47,6 +50,7 @@ import {
   generatePerRouterModule,
 } from "./discovery/virtual-module-codegen.js";
 import { postprocessBundle } from "./discovery/bundle-postprocess.js";
+import { createDiscoveryGate } from "./discovery/gate-state.js";
 import { resetStagedBuildAssets } from "./utils/prerender-utils.js";
 import { createRangoDebugger, timed, timedSync, NS } from "./debug.js";
 
@@ -360,6 +364,17 @@ export function createRouterDiscoveryPlugin(
         resolveDiscovery = resolve;
       });
 
+      // Manifest-readiness gate + rediscovery scheduler.
+      // The virtual:rsc-router/routes-manifest module's `load()` hook
+      // awaits `s.discoveryDone`; the gate is reset on each discovery
+      // cycle so workerd's HMR reloads block until the new gen file is
+      // written. State machine + transitions are extracted into
+      // ./discovery/gate-state.ts and unit-tested there — see the
+      // module's JSDoc for the four-flag contract.
+      const gate = createDiscoveryGate(s, debugDiscovery);
+      const beginDiscoveryGate = gate.beginGate;
+      const resolveDiscoveryGate = gate.resolveGate;
+
       // Compute dev server origin from resolved URLs (preferred) or config port (fallback).
       // Called after discovery (or in the load hook) when the server may be listening.
       const getDevServerOrigin = () =>
@@ -382,25 +397,101 @@ export function createRouterDiscoveryPlugin(
         releaseBuildEnv(s).catch(() => {});
       });
 
-      async function getOrCreateTempServer(): Promise<any | null> {
-        if (prerenderNodeRegistry) {
-          debugDiscovery?.("getOrCreateTempServer: cached temp runner reused");
-          return (prerenderTempServer.environments as any)?.rsc ?? null;
-        }
-        // Mirror the build-path contract (router-discovery.ts ~line 878):
-        // set __rscRouterDiscoveryActive before running user modules so any
-        // module-level router.reverse() calls return a placeholder instead
-        // of throwing. The temp Vite server's module runner has its own
-        // module context; the flag must be on globalThis to cross that
-        // boundary. Cleared in finally so the dev request handlers run with
-        // strict reverse() semantics afterwards.
+      // Mirror the build-path contract (router-discovery.ts ~line 878):
+      // set __rscRouterDiscoveryActive before running user modules so any
+      // module-level router.reverse() calls return a placeholder instead
+      // of throwing. The temp Vite server's module runner has its own
+      // module context; the flag must be on globalThis to cross that
+      // boundary. Cleared in finally so the dev request handlers run with
+      // strict reverse() semantics afterwards.
+      async function importEntryAndRegistry(tempRscEnv: any): Promise<void> {
         const flagAlreadySet = !!(globalThis as any).__rscRouterDiscoveryActive;
         if (!flagAlreadySet) {
           (globalThis as any).__rscRouterDiscoveryActive = true;
         }
+        try {
+          debugDiscovery?.(
+            "importEntryAndRegistry: importing entry (flag=%s)",
+            (globalThis as any).__rscRouterDiscoveryActive ?? false,
+          );
+          await tempRscEnv.runner.import(s.resolvedEntryPath!);
+          debugDiscovery?.(
+            "importEntryAndRegistry: entry import OK, fetching RouterRegistry",
+          );
+          const serverMod = await tempRscEnv.runner.import(
+            "@rangojs/router/server",
+          );
+          prerenderNodeRegistry = serverMod.RouterRegistry;
+          debugDiscovery?.(
+            "importEntryAndRegistry: registry size=%d",
+            prerenderNodeRegistry?.size ?? 0,
+          );
+        } finally {
+          if (!flagAlreadySet) {
+            delete (globalThis as any).__rscRouterDiscoveryActive;
+            debugDiscovery?.(
+              "importEntryAndRegistry: cleared __rscRouterDiscoveryActive",
+            );
+          }
+        }
+      }
+
+      async function getOrCreateTempServer(): Promise<any | null> {
+        // Reuse path: if a temp server is already alive, prefer reusing
+        // it over orphaning the existing instance and spinning up a new
+        // one. This handles two cases:
+        //
+        //   1. Steady-state cache hit (cold-start completed, registry
+        //      cached) — return the env immediately.
+        //   2. Recovery from a failed refresh: refreshTempRscEnv() may
+        //      have invalidated and nulled the registry, then thrown
+        //      during importEntryAndRegistry. Without reuse, the next
+        //      call would `createTempRscServer` and overwrite the
+        //      handle, leaking the previous server. Try to re-import on
+        //      the existing runner first; only if THAT fails do we
+        //      close the orphan and create new.
+        if (prerenderTempServer) {
+          const existingEnv = (prerenderTempServer.environments as any)?.rsc;
+          if (existingEnv?.runner) {
+            if (prerenderNodeRegistry) {
+              debugDiscovery?.(
+                "getOrCreateTempServer: cached temp runner reused",
+              );
+              return existingEnv;
+            }
+            // Server alive but registry missing — likely after a prior
+            // refresh's invalidate + import threw. Try to re-import.
+            debugDiscovery?.(
+              "getOrCreateTempServer: server alive but registry missing — re-importing",
+            );
+            try {
+              await importEntryAndRegistry(existingEnv);
+              return existingEnv;
+            } catch (err: any) {
+              debugDiscovery?.(
+                "getOrCreateTempServer: reuse import failed (%s) — closing orphan and creating fresh",
+                err?.message ?? String(err),
+              );
+              await prerenderTempServer.close().catch(() => {});
+              prerenderTempServer = null;
+              prerenderNodeRegistry = null;
+              // Fall through to create-new path below.
+            }
+          } else {
+            // Server reference exists but its rsc env is unhealthy
+            // (no runner). Close and recreate.
+            debugDiscovery?.(
+              "getOrCreateTempServer: existing server has no rsc.runner — closing and recreating",
+            );
+            await prerenderTempServer.close().catch(() => {});
+            prerenderTempServer = null;
+            prerenderNodeRegistry = null;
+          }
+        }
+
+        // Create path: no existing temp server (or just nullified above).
         debugDiscovery?.(
-          "getOrCreateTempServer: __rscRouterDiscoveryActive=%s entry=%s",
-          (globalThis as any).__rscRouterDiscoveryActive ?? false,
+          "getOrCreateTempServer: creating new temp server, entry=%s",
           s.resolvedEntryPath ?? "(unset)",
         );
         try {
@@ -410,22 +501,7 @@ export function createRouterDiscoveryPlugin(
 
           const tempRscEnv = (prerenderTempServer.environments as any)?.rsc;
           if (tempRscEnv?.runner) {
-            debugDiscovery?.(
-              "getOrCreateTempServer: importing entry (flag=%s)",
-              (globalThis as any).__rscRouterDiscoveryActive ?? false,
-            );
-            await tempRscEnv.runner.import(s.resolvedEntryPath!);
-            debugDiscovery?.(
-              "getOrCreateTempServer: entry import OK, fetching RouterRegistry",
-            );
-            const serverMod = await tempRscEnv.runner.import(
-              "@rangojs/router/server",
-            );
-            prerenderNodeRegistry = serverMod.RouterRegistry;
-            debugDiscovery?.(
-              "getOrCreateTempServer: registry size=%d",
-              prerenderNodeRegistry?.size ?? 0,
-            );
+            await importEntryAndRegistry(tempRscEnv);
             return tempRscEnv;
           }
           debugDiscovery?.(
@@ -433,22 +509,112 @@ export function createRouterDiscoveryPlugin(
           );
         } catch (err: any) {
           debugDiscovery?.(
-            "getOrCreateTempServer: FAILED message=%s flag=%s",
+            "getOrCreateTempServer: FAILED message=%s",
             err.message,
-            (globalThis as any).__rscRouterDiscoveryActive ?? false,
           );
           console.warn(
             `[rsc-router] Failed to create temp runner: ${err.message}`,
           );
-        } finally {
-          if (!flagAlreadySet) {
-            delete (globalThis as any).__rscRouterDiscoveryActive;
-            debugDiscovery?.(
-              "getOrCreateTempServer: cleared __rscRouterDiscoveryActive",
-            );
-          }
         }
         return null;
+      }
+
+      // Clear the package-level singleton registries that survive a Vite
+      // moduleGraph.invalidateAll(). createRouter() / createHostRouter()
+      // call .set(id, ...) on these Maps; for "router removed" or
+      // "router id changed" edits, the OLD entry would persist after
+      // re-import without an explicit .clear(), leaving ghost routes
+      // in discoverRouters' output.
+      //
+      // We import the same module the runner imports, so the .clear()
+      // here mutates the same Map the freshly re-imported entry will
+      // populate.
+      async function clearTempRegistries(tempRscEnv: any): Promise<void> {
+        try {
+          const serverMod = await tempRscEnv.runner.import(
+            "@rangojs/router/server",
+          );
+          if (typeof serverMod?.RouterRegistry?.clear === "function") {
+            serverMod.RouterRegistry.clear();
+          }
+          if (typeof serverMod?.HostRouterRegistry?.clear === "function") {
+            serverMod.HostRouterRegistry.clear();
+          }
+          debugDiscovery?.(
+            "clearTempRegistries: cleared RouterRegistry + HostRouterRegistry",
+          );
+        } catch (err: any) {
+          // Non-fatal: if the import fails here, importEntryAndRegistry
+          // below will fail loudly with the same root cause and the
+          // caller will surface it.
+          debugDiscovery?.(
+            "clearTempRegistries: import @rangojs/router/server failed (%s)",
+            err?.message ?? String(err),
+          );
+        }
+      }
+
+      // HMR refresh: keep the temp Vite server alive across HMR cycles and
+      // invalidate its module graph instead of close+recreate. Closing the
+      // temp server during workerd's first post-cold-start module-fetch
+      // window disrupted the main dev server's transport — the user-visible
+      // symptom was a `transport was disconnected, cannot call "fetchModule"`
+      // error on the first urls.tsx edit (workerd's cache was cold, so its
+      // eval was still in flight when our close() ran). Module-graph
+      // invalidation is the architecturally cleaner refresh: same Vite
+      // instance, same transport, fresh source.
+      //
+      // Falls back to close+recreate when neither the env-level nor
+      // server-level moduleGraph exposes invalidateAll() (defensive — Vite
+      // versions / preset configurations may differ in which graph carries
+      // the module-runner cache).
+      async function refreshTempRscEnv(): Promise<any | null> {
+        let tempRscEnv = await getOrCreateTempServer();
+        if (!tempRscEnv) return null;
+
+        // Module-runner cache is on the per-environment graph in Vite 6+;
+        // older / non-environments setups carry it on the server graph.
+        // Try env first, server second.
+        const envGraph = (tempRscEnv as any).moduleGraph;
+        const serverGraph = (prerenderTempServer as any)?.moduleGraph;
+        const target = envGraph?.invalidateAll
+          ? envGraph
+          : serverGraph?.invalidateAll
+            ? serverGraph
+            : null;
+
+        if (!target) {
+          // No invalidate method available — fall back to close+recreate.
+          // This preserves the previous behavior in case a Vite version
+          // doesn't expose invalidateAll on either graph.
+          debugDiscovery?.(
+            "refreshTempRscEnv: invalidateAll unavailable on env+server graphs, falling back to close+recreate",
+          );
+          if (prerenderTempServer) {
+            await prerenderTempServer.close().catch(() => {});
+            prerenderTempServer = null;
+            prerenderNodeRegistry = null;
+          }
+          return await getOrCreateTempServer();
+        }
+
+        debugDiscovery?.(
+          "refreshTempRscEnv: invalidating module graph (%s)",
+          envGraph?.invalidateAll ? "env" : "server",
+        );
+        target.invalidateAll();
+        // Drop the cached registry so importEntryAndRegistry re-reads it
+        // through the now-invalidated module runner.
+        prerenderNodeRegistry = null;
+        // Clear singleton Maps that Vite's moduleGraph invalidation can't
+        // reach (RouterRegistry / HostRouterRegistry). Without this, an
+        // edit that REMOVES a createRouter() call or CHANGES a router id
+        // would leave the old entry in the registry, and discoverRouters
+        // would still emit its routes alongside whatever the new source
+        // declares.
+        await clearTempRegistries(tempRscEnv);
+        await importEntryAndRegistry(tempRscEnv);
+        return tempRscEnv;
       }
 
       const discover = async () => {
@@ -551,10 +717,14 @@ export function createRouterDiscoveryPlugin(
       };
 
       // Schedule after all plugins have finished configureServer.
-      // Store the promise so the virtual module's load hook can await it.
-      s.discoveryDone = new Promise<void>((resolve) => {
-        setTimeout(() => discover().then(resolve, resolve), 0);
-      });
+      // The gate (s.discoveryDone) is reset via beginDiscoveryGate() and
+      // resolved when discover() finishes, so the virtual manifest module's
+      // load() awaits the populated state.
+      beginDiscoveryGate();
+      setTimeout(
+        () => discover().then(resolveDiscoveryGate, resolveDiscoveryGate),
+        0,
+      );
 
       // Dev-mode on-demand prerender endpoint.
       // When workerd hits a prerender route, it fetches this endpoint instead of
@@ -766,33 +936,68 @@ export function createRouterDiscoveryPlugin(
 
         // Re-run runtime discovery so factory-generated routes that the
         // static parser cannot see are refreshed after source changes.
-        let runtimeRediscoveryInProgress = false;
+        // The state-machine concerns (queued/pending/gatePending) are
+        // owned by the gate created above (./discovery/gate-state.ts).
+        // Here we provide just the env-specific work.
         const refreshRuntimeDiscovery = async () => {
           const rscEnv = (server.environments as any)?.rsc;
-          if (!rscEnv?.runner || runtimeRediscoveryInProgress) return;
-          runtimeRediscoveryInProgress = true;
-          const hmrStart = performance.now();
-          try {
-            await timed(debugDiscovery, "hmr discoverRouters", () =>
-              discoverRouters(s, rscEnv),
-            );
-            timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
-              writeRouteTypesFiles(s),
-            );
-            await timed(debugDiscovery, "hmr propagateDiscoveryState", () =>
-              propagateDiscoveryState(rscEnv),
-            );
-          } catch (err: any) {
-            console.warn(
-              `[rsc-router] Runtime re-discovery failed: ${err.message}`,
-            );
-          } finally {
-            debugDiscovery?.(
-              "hmr re-discovery done (%sms)",
-              (performance.now() - hmrStart).toFixed(1),
-            );
-            runtimeRediscoveryInProgress = false;
-          }
+          const hasMainRunner = !!rscEnv?.runner;
+          // Cloudflare HMR has no main RSC runner (workerd is a separate
+          // runtime). When we have a populated runtime manifest from cold
+          // start, we can re-discover via the temp Node runner — the same
+          // mechanism getOrCreateTempServer() uses at startup. Without a
+          // populated manifest there's nothing useful to do, so bail
+          // before involving the gate machine at all.
+          if (!hasMainRunner && s.perRouterManifests.length === 0) return;
+          await gate.runRefreshCycle(async () => {
+            const hmrStart = performance.now();
+            try {
+              if (hasMainRunner) {
+                await timed(debugDiscovery, "hmr discoverRouters", () =>
+                  discoverRouters(s, rscEnv),
+                );
+                timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
+                  writeRouteTypesFiles(s),
+                );
+                await timed(debugDiscovery, "hmr propagateDiscoveryState", () =>
+                  propagateDiscoveryState(rscEnv),
+                );
+              } else {
+                // Cloudflare HMR: invalidate the temp server's RSC module
+                // graph (or close+recreate as a fallback) so the runner
+                // re-reads the freshly edited source. Keeping the same
+                // Vite instance alive avoids disrupting workerd's transport
+                // during the first post-cold-start module-fetch window.
+                const tempRscEnv = await timed(
+                  debugDiscovery,
+                  "hmr refreshTempRscEnv (cloudflare)",
+                  () => refreshTempRscEnv(),
+                );
+                if (!tempRscEnv) {
+                  throw new Error(
+                    "temp runner unavailable for cloudflare HMR rediscovery",
+                  );
+                }
+                await timed(
+                  debugDiscovery,
+                  "hmr discoverRouters (cloudflare)",
+                  () => discoverRouters(s, tempRscEnv),
+                );
+                timedSync(debugDiscovery, "hmr writeRouteTypesFiles", () =>
+                  writeRouteTypesFiles(s),
+                );
+              }
+            } catch (err: any) {
+              console.warn(
+                `[rsc-router] Runtime re-discovery failed: ${err.message}`,
+              );
+            } finally {
+              debugDiscovery?.(
+                "hmr re-discovery done (%sms)",
+                (performance.now() - hmrStart).toFixed(1),
+              );
+            }
+          });
         };
 
         const scheduleRouteRegeneration = () => {
@@ -800,10 +1005,27 @@ export function createRouterDiscoveryPlugin(
           routeChangeTimer = setTimeout(() => {
             routeChangeTimer = undefined;
             const regenStart = debugDiscovery ? performance.now() : 0;
+            const rscEnv = (server.environments as any)?.rsc;
+            const skipStaticWrite =
+              !rscEnv?.runner && s.perRouterManifests.length > 0;
             try {
-              writeCombinedRouteTypesWithTracking(s);
-              if (s.perRouterManifests.length > 0) {
-                supplementGenFilesWithRuntimeRoutes(s);
+              // In cloudflare dev with a populated runtime manifest, the
+              // static parser produces a strictly smaller (and actively
+              // wrong) gen file — supplementGenFilesWithRuntimeRoutes can
+              // only restore factory-only prefixes, and apps with mixed
+              // static+factory routes under shared prefixes (cf-stress)
+              // collapse to the 19-route static view. Skip the static
+              // write entirely; runtime rediscovery below will overwrite
+              // the gen file with the authoritative manifest.
+              if (skipStaticWrite) {
+                debugDiscovery?.(
+                  "watcher: skipping static write (cloudflare HMR — runtime rediscovery owns gen file)",
+                );
+              } else {
+                writeCombinedRouteTypesWithTracking(s);
+                if (s.perRouterManifests.length > 0) {
+                  supplementGenFilesWithRuntimeRoutes(s);
+                }
               }
             } catch (err: any) {
               console.error(
@@ -815,12 +1037,16 @@ export function createRouterDiscoveryPlugin(
               (performance.now() - regenStart).toFixed(1),
             );
             // Async: re-run runtime discovery to refresh factory-generated
-            // routes that the static parser cannot resolve.
+            // routes that the static parser cannot resolve. Resolves the
+            // discovery gate when complete.
             if (s.perRouterManifests.length > 0) {
               refreshRuntimeDiscovery().catch((err: any) => {
                 console.warn(
                   `[rsc-router] Runtime re-discovery error: ${err.message}`,
                 );
+                // Even on error, unblock the gate so workerd's reload
+                // doesn't hang indefinitely against the previous manifest.
+                resolveDiscoveryGate();
               });
             }
           }, 100);
@@ -867,6 +1093,17 @@ export function createRouterDiscoveryPlugin(
                 return;
               }
               s.cachedRouterFiles = undefined;
+            }
+            // Note the event in the gate machine IMMEDIATELY (before the
+            // 100ms debounce and any downstream HMR fanout). This sets
+            // both `pendingEvents` (so refresh's finally holds the gate
+            // through the tail window even if no rediscovery is queued)
+            // and resets `discoveryDone` to a fresh pending promise (so
+            // workerd reloads triggered by the same source change can't
+            // observe a stale resolved gate from cold-start). Resolved
+            // by the trailing refreshRuntimeDiscovery() cycle.
+            if (s.perRouterManifests.length > 0) {
+              gate.noteRouteEvent();
             }
             scheduleRouteRegeneration();
           } catch {
@@ -989,6 +1226,35 @@ export function createRouterDiscoveryPlugin(
           "build discovery done (%sms)",
           (performance.now() - buildStartTime).toFixed(1),
         );
+      }
+    },
+
+    // Suppress vite's HMR cascade for our own gen-file writes.
+    //
+    // After every cf HMR cycle, refreshTempRscEnv → writeRouteTypesFiles
+    // writes the configured gen files (default `router.named-routes.gen.ts`,
+    // but the source filenames and gen suffix are user-configurable). The
+    // chokidar watcher then fires twice independently: our
+    // `handleRouteFileChange` (already short-circuited by
+    // `consumeSelfGenWrite` inside `maybeHandleGeneratedRouteFileMutation`),
+    // AND vite's own HMR pipeline (which invalidates the gen file's
+    // importers and triggers a second workerd full reload — visible to the
+    // user as a duplicate "[RSCRouter] HMR: version changed" on the client).
+    //
+    // `peekSelfGenWrite` is the authoritative filter: its map only contains
+    // paths that `markSelfGenWrite` has registered, so it natively works
+    // for any configured gen-file name. It is non-consuming so the chokidar
+    // handler that fires later can still consume the same entry. Returning
+    // [] tells vite "no modules invalidated by this change" — safe because
+    // `s.perRouterManifests` is already up-to-date (the write that just
+    // happened is the consequence of our just-completed rediscovery).
+    handleHotUpdate(ctx) {
+      if (peekSelfGenWrite(s, ctx.file)) {
+        debugDiscovery?.(
+          "handleHotUpdate: suppressing self-write HMR cascade for %s",
+          ctx.file,
+        );
+        return [];
       }
     },
 
