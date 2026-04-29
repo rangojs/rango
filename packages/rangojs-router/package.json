@@ -142,6 +142,7 @@
     "test:unit:watch": "vitest"
   },
   "dependencies": {
+    "@types/debug": "^4.1.12",
     "@vitejs/plugin-rsc": "^0.5.23",
     "debug": "^4.4.1",
     "magic-string": "^0.30.17",
@@ -150,7 +151,6 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",
-    "@types/debug": "^4.1.12",
     "@types/node": "^24.10.1",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
