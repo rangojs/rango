@@ -32,6 +32,8 @@ When the router has a `basename`, pattern-scoped `.use()` patterns are automatic
 
 Registered inside `urls()` callback. Wraps **rendering only** -- it does NOT wrap server action execution. Actions run before route middleware, so when route middleware executes during post-action revalidation, it can observe state that the action set (cookies, context variables, headers).
 
+> **Implication for auth:** route middleware cannot guard server actions. Use `router.use("/admin/*", requireAuth)` (global, scoped) for action protection, or check inside the action body. See `/server-actions` for action-side auth patterns.
+
 ```
 Request flow (with action):
   global mw -> action executes -> route mw -> layout -> handler -> loaders

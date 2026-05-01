@@ -10,6 +10,7 @@ Named-route RSC router with structural composability and type-safe partial rende
 - **Structural composability** — Attach routes, loaders, middleware, handles, caching, prerendering, and static generation without hiding the route tree
 - **Composable URL patterns** — Django-style `urls()` DSL with `path`, `layout`, `include`
 - **Data loaders** — `createLoader()` with automatic streaming and Suspense integration
+- **Server actions** — `"use server"` mutations with `useActionState`, `useOptimistic`, and per-segment + per-loader `revalidate()` rules
 - **Live data layer** — Pre-render or cache the UI shell while loaders stay live by default at request time
 - **Layouts & nesting** — Nested layouts with `<Outlet />` and parallel routes
 - **Segment-level caching** — `cache()` DSL with TTL/SWR and pluggable cache stores
@@ -481,6 +482,70 @@ const urlpatterns = urls(({ path, loader }) => [
   ]),
 ]);
 ```
+
+## Server Actions
+
+Server actions are React's RSC mutation primitive. Define them with the
+`"use server"` directive — Rango uses standard React 19 hooks
+(`useActionState`, `useFormStatus`, `useOptimistic`) with no framework wrapper.
+
+```tsx
+// app/actions/cart.ts
+"use server";
+
+import { getRequestContext } from "@rangojs/router";
+
+export async function addToCart(productId: string): Promise<void> {
+  const ctx = getRequestContext();
+  const userId = ctx.get("user").id;
+  await db.cart.insert({ userId, productId });
+}
+```
+
+```tsx
+// Client form with progressive enhancement + pending state
+"use client";
+import { useActionState } from "react";
+import { saveProfile } from "../actions/profile";
+
+export function ProfileForm() {
+  const [state, action, pending] = useActionState(saveProfile, null);
+  return (
+    <form action={action}>
+      <input name="name" defaultValue={state?.values?.name} />
+      {state?.errors?.name && <p role="alert">{state.errors.name}</p>}
+      <button disabled={pending}>{pending ? "Saving…" : "Save"}</button>
+    </form>
+  );
+}
+```
+
+After an action runs, matched route segments (path/layout/parallel/intercept)
+and loaders can re-render/re-resolve so the UI reflects the new state.
+Attach a `revalidate(({ actionId }) => ...)` rule on any segment or loader
+that owns data the action touched:
+
+```tsx
+urls(({ path, loader, revalidate }) => [
+  // Segment-level: re-render the cart page handler after cart actions.
+  // Nest loaders that belong to this route inside the same path() so the
+  // segment owns its data dependencies.
+  path("/cart", CartPage, { name: "cart" }, () => [
+    revalidate(
+      ({ actionId }) => actionId?.startsWith("src/actions/cart.ts#") ?? false,
+    ),
+    loader(CartLoader, () => [
+      revalidate(
+        ({ actionId }) => actionId?.startsWith("src/actions/cart.ts#") ?? false,
+      ),
+    ]),
+  ]),
+]);
+```
+
+For the full guide — validation with Zod, error handling, file uploads,
+`useOptimistic`, redirects, and progressive enhancement — see the
+`/server-actions` skill.
 
 ## Navigation & Links
 

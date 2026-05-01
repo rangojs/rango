@@ -187,6 +187,8 @@ export async function getProductUrl(slug: string) {
 }
 ```
 
+See `/server-actions` for the full action surface (`getRequestContext()` is the same context middleware and handlers use).
+
 For static path strings (not named routes), client components can use `href()` — see below.
 
 ## Client: href()

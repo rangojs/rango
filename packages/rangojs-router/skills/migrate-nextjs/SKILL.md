@@ -225,7 +225,7 @@ Loaders are Rango's live data layer. Use them when you need:
 
 - **Client-side data refresh** — `useLoader()` in client components for reactive data
 - **Per-loader caching** — opt in with `loader(MyLoader, () => [cache({ ttl: 60 })])`; loaders stay live by default
-- **Revalidation control** — `revalidate()` targets specific loaders after actions
+- **Revalidation control** — `revalidate()` targets specific segments and loaders after actions
 - **Loading skeletons** — `loading()` shows a Suspense fallback while loaders resolve
 
 ```typescript
@@ -462,6 +462,8 @@ children in their scope — handlers, loaders, and nested segments.
 Server actions work the same way — `"use server"` directive, `useActionState`, form actions. No migration needed for action logic.
 
 Key difference: in Rango, route middleware does NOT wrap action execution. Actions only see global middleware context. Use `getRequestContext()` in actions to access `ctx.set()`/`ctx.get()`.
+
+Next.js's `revalidatePath()` / `revalidateTag()` have no direct equivalent — Rango partially re-renders matched route segments (path/layout/parallel/intercept) and re-resolves their loaders, and you scope re-runs by attaching a `revalidate(({ actionId }) => ...)` rule to any segment or loader registration. See `/server-actions` for the full pattern (validation, error handling, file uploads) and `/loader` for revalidation rule semantics.
 
 ## 8. Metadata / Head
 

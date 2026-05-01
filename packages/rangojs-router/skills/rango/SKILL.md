@@ -16,6 +16,7 @@ Django-inspired RSC router with composable URL patterns, type-safe href, and ser
 | `/route`                | Define routes with `urls()` and `path()`                                   |
 | `/layout`               | Layouts that wrap child routes                                             |
 | `/loader`               | Data loaders with `createLoader()`                                         |
+| `/server-actions`       | Mutations with `"use server"`, useActionState, validation, revalidation    |
 | `/middleware`           | Request processing and authentication                                      |
 | `/intercept`            | Modal/slide-over patterns for soft navigation                              |
 | `/parallel`             | Multi-column layouts and sidebars                                          |

@@ -323,6 +323,11 @@ RSC serialization strips the `collect` function via `toJSON()`. On the client,
 
 ## Action Hooks
 
+For the full server-action guide (defining actions, `useActionState`,
+`useOptimistic`, validation, revalidation, error handling, file uploads),
+see `/server-actions`. `useAction()` below is a Rango-specific hook for
+tracking actions called outside a `<form action={...}>` flow.
+
 ### useAction()
 
 Track state of server action invocations:

@@ -6,7 +6,10 @@ argument-hint: [loader]
 
 # Data Loaders with loader()
 
-Loaders fetch data on the server and stream it to the client.
+Loaders fetch data on the server and stream it to the client. For mutations
+(writes triggered by forms or buttons), use server actions instead — see
+`/server-actions`. Loaders re-resolve after an action runs, so the typical
+flow is _action mutates → loader re-reads → UI updates_.
 
 ## Creating a Loader
 

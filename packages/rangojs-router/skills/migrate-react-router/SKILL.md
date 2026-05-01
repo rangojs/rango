@@ -483,6 +483,10 @@ Since Rango uses RSC server actions, all React action patterns work:
 `useActionState`, `useOptimistic`, `useTransition`, `startTransition`,
 and plain `<form action={serverAction}>`. No framework-specific hook needed.
 
+For the full guide — defining actions, validation with Zod, error handling,
+revalidation rules, file uploads, and progressive enhancement — see
+`/server-actions`.
+
 ### clientLoader / clientAction (framework mode)
 
 RR7 framework mode's `clientLoader` and `clientAction` run in the browser.
