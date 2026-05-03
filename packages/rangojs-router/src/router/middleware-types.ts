@@ -53,11 +53,14 @@ export interface CookieOptions {
  * Context passed to middleware
  *
  * @template TEnv - Environment type (bindings, variables) - defaults to any for internal flexibility
- * @template TParams - URL params type (typed for route middleware, Record<string, string> for global middleware)
+ * @template TParams - URL params type (typed for route middleware,
+ *   `Record<string, string | undefined>` for global middleware — absent
+ *   optional segments are omitted from the params record at runtime, so
+ *   the index signature must include `undefined`)
  */
 export interface MiddlewareContext<
   TEnv = any,
-  TParams = Record<string, string>,
+  TParams = Record<string, string | undefined>,
 > extends RequestScope<TEnv> {
   /** URL params extracted from route/middleware pattern */
   params: TParams;
@@ -149,7 +152,10 @@ export interface MiddlewareContext<
  * router.use((ctx, next) => {...}) // ctx is typed from router's TEnv
  * ```
  */
-export type MiddlewareFn<TEnv = any, TParams = Record<string, string>> = (
+export type MiddlewareFn<
+  TEnv = any,
+  TParams = Record<string, string | undefined>,
+> = (
   ctx: MiddlewareContext<TEnv, TParams>,
   next: () => Promise<Response>,
 ) => Response | void | Promise<Response | void>;
@@ -196,5 +202,8 @@ export interface MiddlewareCollectableEntry {
  */
 export interface CollectedMiddleware {
   handler: MiddlewareFn<any, any>;
+  // Internal shape only. The user-facing `MiddlewareContext.params` is
+  // typed `Record<string, string | undefined>` to reflect that absent
+  // optional segments are omitted from the params record at runtime.
   params: Record<string, string>;
 }

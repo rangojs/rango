@@ -15,7 +15,9 @@ export interface TrieMatchResult {
   sp: string;
   /** Matched route params */
   params: Record<string, string>;
-  /** Optional param names (absent params have empty string value) */
+  /** Optional param names declared on the route. Absent params are omitted
+   * from `params` (read as `undefined`), matching the
+   * `ExtractParams<"/:locale?/...">` type. */
   optionalParams?: string[];
   /** Ancestry shortCodes for layout pruning */
   ancestry: string[];
@@ -203,14 +205,11 @@ function validateAndBuild(
     }
   }
 
-  // Fill in empty strings for optional params that weren't matched
-  if (leaf.op) {
-    for (const name of leaf.op) {
-      if (!(name in params)) {
-        params[name] = "";
-      }
-    }
-  }
+  // Optional params that weren't matched are left absent from `params` so
+  // `ctx.params.locale` reads as `undefined`, matching the
+  // `ExtractParams<"/:locale?/...">` type (`{ locale?: string }`). Both
+  // internal consumers — the constraint check above and `reverse()` —
+  // already treat missing/undefined as the absent form.
 
   // Trailing slash handling
   const tsMode = leaf.ts as "never" | "always" | "ignore" | undefined;

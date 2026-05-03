@@ -33,6 +33,26 @@ urls(({ path }) => [
 ]);
 ```
 
+### Optional URL params at runtime
+
+Absent optional params are **omitted from `ctx.params`** — `ctx.params.<name>`
+reads as `undefined`, matching the `RouteParams<"name">` type
+(`{ query?: string }`). Use `??` to default and `=== undefined` to check
+absence:
+
+```typescript
+path("/search/:query?", (ctx) => {
+  const query = ctx.params.query ?? ""; // works — undefined coalesces
+  if (ctx.params.query === undefined) return <EmptySearch />;
+  return <Results query={ctx.params.query} />;
+}, { name: "search" });
+```
+
+For the common pattern of an optional locale prefix
+(`include("/:locale?", routes)`) and the wider react-intl integration —
+locale detection, fallback chains, URL generation with absent locale —
+see `/i18n`.
+
 ## Route Handler Patterns
 
 ### Component Function

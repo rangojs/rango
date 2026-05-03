@@ -287,6 +287,12 @@ type SP = RouteSearchParams<"search">;
 type P = RouteParams<"blogPost">;
 // { slug: string }
 
+// Optional URL params (`:slug?`) resolve to `string | undefined`
+// because absent segments are omitted from `ctx.params` at runtime.
+type C = RouteParams<"checkout">;
+// { step?: string }
+// → ctx.params.step is `string | undefined`; use `?? "default"` to coalesce.
+
 // Use in component props
 interface SearchResultsProps {
   params: RouteSearchParams<"search">;

@@ -45,12 +45,12 @@ describe("tryTrieMatch", () => {
     expect(result?.params).toEqual({});
   });
 
-  it("supports optional params with empty-string fill", () => {
+  it("leaves absent optional params undefined (omits the key from params)", () => {
     const trie = buildTestTrie({
       "shop.locale": "/shop/:locale(en|gb)?",
     });
 
-    expect(tryTrieMatch(trie, "/shop")?.params).toEqual({ locale: "" });
+    expect(tryTrieMatch(trie, "/shop")?.params).toEqual({});
     expect(tryTrieMatch(trie, "/shop/en")?.params).toEqual({ locale: "en" });
     expect(tryTrieMatch(trie, "/shop/fr")).toBeNull();
   });
@@ -183,15 +183,7 @@ describe("tryTrieMatch", () => {
 
       const result = tryTrieMatch(trie, "/shop/tops");
       expect(result?.routeKey).toBe("category");
-      expect(result?.params).toEqual({
-        b1: "",
-        b2: "",
-        b3: "",
-        b4: "",
-        b5: "",
-        b6: "",
-        categoryId: "tops",
-      });
+      expect(result?.params).toEqual({ categoryId: "tops" });
     });
 
     it("fills optionals left-to-right and binds the required tail to the last segment", () => {
@@ -201,11 +193,6 @@ describe("tryTrieMatch", () => {
 
       expect(tryTrieMatch(trie, "/shop/women/dresses")?.params).toEqual({
         b1: "women",
-        b2: "",
-        b3: "",
-        b4: "",
-        b5: "",
-        b6: "",
         categoryId: "dresses",
       });
 
@@ -214,10 +201,6 @@ describe("tryTrieMatch", () => {
       ).toEqual({
         b1: "women",
         b2: "clothing",
-        b3: "",
-        b4: "",
-        b5: "",
-        b6: "",
         categoryId: "dresses",
       });
     });
@@ -244,15 +227,10 @@ describe("tryTrieMatch", () => {
       });
 
       expect(tryTrieMatch(trie, "/shop/tops")?.params).toEqual({
-        b1: "",
-        b2: "",
-        b3: "",
         categoryId: "tops",
       });
       expect(tryTrieMatch(trie, "/shop/women/dresses")?.params).toEqual({
         b1: "women",
-        b2: "",
-        b3: "",
         categoryId: "dresses",
       });
       expect(tryTrieMatch(trie, "/shop/a/b/c/dresses")?.params).toEqual({
@@ -268,10 +246,7 @@ describe("tryTrieMatch", () => {
         x: "/:a?/:b",
       });
 
-      expect(tryTrieMatch(trie, "/only")?.params).toEqual({
-        a: "",
-        b: "only",
-      });
+      expect(tryTrieMatch(trie, "/only")?.params).toEqual({ b: "only" });
       expect(tryTrieMatch(trie, "/foo/bar")?.params).toEqual({
         a: "foo",
         b: "bar",
@@ -284,10 +259,7 @@ describe("tryTrieMatch", () => {
       });
 
       // optional absent → bind only :slug
-      expect(tryTrieMatch(trie, "/hello")?.params).toEqual({
-        locale: "",
-        slug: "hello",
-      });
+      expect(tryTrieMatch(trie, "/hello")?.params).toEqual({ slug: "hello" });
       // optional present, satisfies constraint
       expect(tryTrieMatch(trie, "/en/hello")?.params).toEqual({
         locale: "en",
@@ -305,15 +277,12 @@ describe("tryTrieMatch", () => {
       // 2 segments: only the two required slots are bound
       expect(tryTrieMatch(trie, "/X/Y")?.params).toEqual({
         nonopt: "X",
-        a: "",
-        b: "",
         nonopt2: "Y",
       });
-      // 3 segments: greedy-left fills :a, :b stays empty
+      // 3 segments: greedy-left fills :a, :b stays absent
       expect(tryTrieMatch(trie, "/X/Y/Z")?.params).toEqual({
         nonopt: "X",
         a: "Y",
-        b: "",
         nonopt2: "Z",
       });
       // 4 segments: both optionals filled

@@ -825,7 +825,7 @@ describe("middleware", () => {
     });
 
     it("should pass params to middleware context", async () => {
-      let receivedParams: Record<string, string> = {};
+      let receivedParams: Record<string, string | undefined> = {};
 
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         receivedParams = ctx.params;
@@ -1441,7 +1441,7 @@ describe("middleware", () => {
 
     it("should provide params to middleware context", async () => {
       const stubResponse = new Response(null, { status: 200 });
-      let capturedParams: Record<string, string> = {};
+      let capturedParams: Record<string, string | undefined> = {};
 
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         capturedParams = ctx.params;
@@ -1701,7 +1701,7 @@ describe("middleware", () => {
     });
 
     it("should provide params to middleware context", async () => {
-      let capturedParams: Record<string, string> = {};
+      let capturedParams: Record<string, string | undefined> = {};
 
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         capturedParams = ctx.params;
