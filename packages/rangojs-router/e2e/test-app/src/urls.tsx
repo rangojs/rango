@@ -33,6 +33,10 @@ import { apiShopPatterns } from "./urls/api-shop.js";
 import { locationStatePatterns } from "./urls/location-state.js";
 import { responseCachePatterns } from "./urls/response-cache.js";
 import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
+import {
+  optionalIncludePatterns,
+  constrainedOptionalIncludePatterns,
+} from "./urls/optional-include.js";
 import { handlerFirstPatterns } from "./urls/handler-first.js";
 import { handlerUsePatterns } from "./urls/handler-use.js";
 import { parallelLoaderInheritPatterns } from "./urls/parallel-loader-inherit.js";
@@ -722,6 +726,17 @@ export const urlpatterns = urls(
           name: "includeMw",
         }),
       ]),
+
+      // Optional include prefix regression coverage. The outer "/oi" static
+      // segment is needed to avoid colliding with HomePage at "/"; the
+      // optional locale lives at the include boundary so the joined patterns
+      // exercise the include + optional path-helper join logic end-to-end.
+      include("/oi/:locale?", optionalIncludePatterns, {
+        name: "optionalInclude",
+      }),
+      include("/coi/:locale(en|gb)?", constrainedOptionalIncludePatterns, {
+        name: "constrainedOptionalInclude",
+      }),
 
       // Shop playground page
       path(

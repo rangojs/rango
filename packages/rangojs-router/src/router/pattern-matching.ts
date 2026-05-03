@@ -188,6 +188,20 @@ export function compilePattern(pattern: string): CompiledPattern {
     regexPattern = "/";
   }
 
+  // Patterns of only optional segments (e.g. `/:locale?`, `/:a?/:b?`) need
+  // an explicit `/` alternative so a bare `/` matches the absent form. The
+  // optional template `(?:/X)?` matches `/X` or empty string, but pathnames
+  // are never empty. Arises from `include("/:locale?", routes)` + inner
+  // `path("/")`. Skip when an explicit trailing slash already anchors the
+  // match.
+  const hasOnlyOptionalSegments =
+    !hasTrailingSlash &&
+    segments.length > 0 &&
+    segments.every((segment) => segment.type === "param" && segment.optional);
+  if (hasOnlyOptionalSegments) {
+    regexPattern = `(?:/|${regexPattern})`;
+  }
+
   // Add trailing slash to regex if pattern has one
   if (hasTrailingSlash) {
     regexPattern += "/";
