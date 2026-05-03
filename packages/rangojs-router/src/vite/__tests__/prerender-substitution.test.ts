@@ -140,10 +140,11 @@ describe("substituteRouteParams", () => {
       ).toBe("/id");
     });
 
-    // Regression: the trie matcher fills unmatched optional params with "",
-    // and getParams() implementations may pass that through unchanged.
-    // Empty-string values for optionals must collapse, not leave empty slots.
-    it("treats empty-string optionals as omitted (trie fill behaviour)", () => {
+    // The trie matcher omits absent optional params from `params`, but
+    // user code (or `getParams()` returning a frozen shape) may still pass
+    // `""` explicitly. Empty-string values for optionals must collapse, not
+    // leave empty slots.
+    it("treats empty-string optionals as omitted (defensive: explicit '' from caller)", () => {
       expect(
         substituteRouteParams(
           "/:b1?/:b2?/:b3?/:b4?/:b5?/:b6?/:productId.html",

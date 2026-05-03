@@ -219,7 +219,9 @@ export function compilePattern(pattern: string): CompiledPattern {
 /**
  * Validate decoded params against a compiled pattern's constraints.
  * Returns false if any constrained param has a non-empty value not in the
- * allowed list (empty-string = absent optional, which is allowed).
+ * allowed list. Absent optionals (key missing or `undefined`) are allowed;
+ * `""` is also tolerated as "absent" so user-provided params or fixtures
+ * that pass empty strings explicitly behave the same way.
  */
 function satisfiesConstraints(
   params: Record<string, string>,
@@ -244,6 +246,27 @@ function satisfiesConstraints(
  */
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Build the named-params record from a regex match. Optional segments that
+ * didn't capture leave the corresponding group `undefined`; we skip those
+ * keys so `ctx.params.<name>` reads as `undefined` rather than `""`. This
+ * keeps the runtime aligned with the `ExtractParams` type and matches the
+ * trie matcher's contract (see `trie-matching.ts:validateAndBuild`).
+ */
+function buildParamsFromMatch(
+  match: RegExpExecArray,
+  paramNames: string[],
+): Record<string, string> {
+  const params: Record<string, string> = {};
+  paramNames.forEach((name, index) => {
+    const captured = match[index + 1];
+    if (captured !== undefined) {
+      params[name] = safeDecodeURIComponent(captured);
+    }
+  });
+  return params;
 }
 
 /**
@@ -297,8 +320,10 @@ export function extractStaticPrefix(pattern: string): string {
 /**
  * Match a pathname against registered routes
  *
- * Note: Optional params that are absent in the path will have empty string value.
- * Use the pattern definition to determine if a param is optional.
+ * Note: Optional params that are absent in the path are omitted from the
+ * returned `params` (read as `undefined`), matching the trie matcher and
+ * the `ExtractParams<"/:locale?/...">` type. Use the pattern definition or
+ * `optionalParams` to determine which keys are optional.
  *
  * Trailing slash handling (priority order):
  * 1. Per-route `trailingSlash` config from route()
@@ -465,10 +490,7 @@ export function findMatch<TEnv>(
       // Try exact match first
       const match = regex.exec(pathname);
       if (match) {
-        const params: Record<string, string> = {};
-        paramNames.forEach((name, index) => {
-          params[name] = safeDecodeURIComponent(match[index + 1] ?? "");
-        });
+        const params = buildParamsFromMatch(match, paramNames);
 
         // Validate constraints against decoded values; a failure falls
         // through to the next route so other patterns can still match.
@@ -526,10 +548,7 @@ export function findMatch<TEnv>(
       // Try alternate pathname (opposite trailing slash)
       const altMatch = regex.exec(alternatePathname);
       if (altMatch) {
-        const params: Record<string, string> = {};
-        paramNames.forEach((name, index) => {
-          params[name] = safeDecodeURIComponent(altMatch[index + 1] ?? "");
-        });
+        const params = buildParamsFromMatch(altMatch, paramNames);
 
         if (!satisfiesConstraints(params, constraints)) {
           continue;

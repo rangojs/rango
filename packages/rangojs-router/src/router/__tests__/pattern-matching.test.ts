@@ -403,11 +403,12 @@ describe("optional parameters", () => {
       expect(result!.optionalParams.has("locale")).toBe(true);
     });
 
-    it("should return empty string for optional param when absent", () => {
+    it("omits absent optional params from `params` (key not present)", () => {
       const entries = [createRouteEntry("", { blog: "/:locale?/blog" })];
       const result = findMatch("/blog", entries);
       expect(result).not.toBeNull();
-      expect(result!.params).toEqual({ locale: "" });
+      expect(result!.params).toEqual({});
+      expect(result!.params.locale).toBeUndefined();
       expect(result!.optionalParams.has("locale")).toBe(true);
     });
 
@@ -416,18 +417,25 @@ describe("optional parameters", () => {
         createRouteEntry("", { shop: "/:locale?/:region?/shop" }),
       ];
 
-      expect(findMatch("/shop", entries)!.params).toEqual({
-        locale: "",
-        region: "",
-      });
-      expect(findMatch("/en/shop", entries)!.params).toEqual({
-        locale: "en",
-        region: "",
-      });
+      expect(findMatch("/shop", entries)!.params).toEqual({});
+      expect(findMatch("/en/shop", entries)!.params).toEqual({ locale: "en" });
       expect(findMatch("/en/us/shop", entries)!.params).toEqual({
         locale: "en",
         region: "us",
       });
+    });
+
+    it("trailing-slash fallback also omits absent optional params (regression)", () => {
+      // `/blog/` doesn't exact-match the no-trailing-slash pattern, so the
+      // matcher tries the alternate pathname (`/blog`). The alternate-match
+      // branch must apply the same skip-undefined contract — historically it
+      // coalesced absent groups to `""` while the exact-match branch did not.
+      const entries = [createRouteEntry("", { blog: "/:locale?/blog" })];
+      const result = findMatch("/blog/", entries);
+      expect(result).not.toBeNull();
+      expect(result!.params).toEqual({});
+      expect(result!.params.locale).toBeUndefined();
+      expect(result!.redirectTo).toBe("/blog");
     });
   });
 
@@ -634,11 +642,12 @@ describe("constrained parameters", () => {
       expect(result!.optionalParams.has("locale")).toBe(true);
     });
 
-    it("should return empty string for optional + constrained param when absent", () => {
+    it("omits absent optional + constrained param from params", () => {
       const entries = [createRouteEntry("", { blog: "/:locale(en|gb)?/blog" })];
       const result = findMatch("/blog", entries);
       expect(result).not.toBeNull();
-      expect(result!.params).toEqual({ locale: "" });
+      expect(result!.params).toEqual({});
+      expect(result!.params.locale).toBeUndefined();
       expect(result!.optionalParams.has("locale")).toBe(true);
     });
 

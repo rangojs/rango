@@ -665,10 +665,12 @@ describe("createReverse", () => {
       ).toBe("/us/id");
     });
 
-    // Regression: the trie matcher fills unmatched optional params with "".
-    // If reverse treats "" as a valid value, unmatched optionals leave
-    // empty slots and the URL becomes e.g. "///////id.html".
-    it("treats empty-string optionals as omitted (trie fill behaviour)", () => {
+    // The trie matcher now omits absent optional params from `params`, but
+    // user code (or `getParams()` returning a frozen shape) may still pass
+    // `""` explicitly. `reverse` must treat `""` as "absent" — otherwise
+    // unmatched optionals leave empty slots and the URL becomes e.g.
+    // "///////id.html".
+    it("treats empty-string optionals as omitted (defensive: explicit '' from caller)", () => {
       const trieParams = {
         b1: "",
         b2: "",
