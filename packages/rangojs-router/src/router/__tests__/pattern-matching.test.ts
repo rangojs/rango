@@ -477,12 +477,14 @@ describe("optional parameters", () => {
       // Mirrors the include('/:locale?', routes) + path('/', Home) shape.
       // Fixture: include's `prefix` becomes the entry prefix; the inner '/'
       // pattern collapses via the joiner so the effective pattern is
-      // entry.prefix itself.
+      // entry.prefix itself. Absent optional params are omitted from
+      // `params` so `ctx.params.locale` reads as `undefined`.
       const entries = [createRouteEntry("/:locale?", { home: "/" })];
 
       const root = findMatch("/", entries);
       expect(root).not.toBeNull();
-      expect(root!.params).toEqual({ locale: "" });
+      expect(root!.params).toEqual({});
+      expect(root!.params.locale).toBeUndefined();
       expect(root!.optionalParams.has("locale")).toBe(true);
 
       const localized = findMatch("/en", entries);
@@ -497,7 +499,6 @@ describe("optional parameters", () => {
       const entries = [createRouteEntry("/:locale?", { category: "/c/:slug" })];
 
       expect(findMatch("/c/breads", entries)!.params).toEqual({
-        locale: "",
         slug: "breads",
       });
       expect(findMatch("/en/c/breads", entries)!.params).toEqual({
@@ -509,7 +510,7 @@ describe("optional parameters", () => {
     it("findMatch on a constrained optional include prefix rejects unknown locales", () => {
       const entries = [createRouteEntry("/:locale(en|gb)?", { home: "/" })];
 
-      expect(findMatch("/", entries)!.params).toEqual({ locale: "" });
+      expect(findMatch("/", entries)!.params).toEqual({});
       expect(findMatch("/en", entries)!.params).toEqual({ locale: "en" });
       expect(findMatch("/gb", entries)!.params).toEqual({ locale: "gb" });
       expect(findMatch("/fr", entries)).toBeNull(); // constraint rejection
@@ -545,7 +546,8 @@ describe("optional parameters", () => {
 
       const root = findMatch("/", entries);
       expect(root).not.toBeNull();
-      expect(root!.params).toEqual({ locale: "" });
+      expect(root!.params).toEqual({});
+      expect(root!.params.locale).toBeUndefined();
       expect(root!.redirectTo).toBeUndefined();
 
       const localizedSlash = findMatch("/en/", entries);
@@ -566,7 +568,7 @@ describe("optional parameters", () => {
 
       const root = findMatch("/", entries);
       expect(root).not.toBeNull();
-      expect(root!.params).toEqual({ locale: "" });
+      expect(root!.params).toEqual({});
       expect(root!.redirectTo).toBeUndefined(); // `/` is already canonical
 
       const localizedSlash = findMatch("/en/", entries);
@@ -582,7 +584,7 @@ describe("optional parameters", () => {
 
       const root = findMatch("/", entries);
       expect(root).not.toBeNull();
-      expect(root!.params).toEqual({ locale: "" });
+      expect(root!.params).toEqual({});
       expect(root!.redirectTo).toBeUndefined(); // `/` is its own canonical form
 
       const localizedNoSlash = findMatch("/en", entries);
