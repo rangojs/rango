@@ -874,10 +874,11 @@ describe("resolveRouteName (via createHandlerContext.reverse)", () => {
       ).toBe("/shop/cat/new");
     });
 
-    // Regression: the trie matcher fills unmatched optional params with "",
-    // which lands in currentParams. Without empty-string handling, the
-    // reverse would emit "///////id.html" (see reverse.ts regex cleanup).
-    it("empty-string optionals in currentParams collapse (trie fill bug)", async () => {
+    // The matcher omits absent optional params from `currentParams`, but
+    // user code or `getParams()` shapes may still pass `""` explicitly.
+    // Without empty-string handling, reverse would emit "///////id.html"
+    // (see reverse.ts slash cleanup).
+    it("empty-string optionals in currentParams collapse (defensive: explicit '' from caller)", async () => {
       const reverse = await makeReverse(
         {
           product: "/:b1?/:b2?/:b3?/:b4?/:b5?/:b6?/:productId.html",

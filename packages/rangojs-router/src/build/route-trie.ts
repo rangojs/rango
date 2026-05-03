@@ -20,7 +20,8 @@ export interface TrieLeaf {
   sp: string;
   /** Ancestry shortCodes from root to route [M0L0, M0L0L0, M0L0L0R499] */
   a: string[];
-  /** Optional param names (absent params get empty string value) */
+  /** Optional param names declared on the route. Absent params are
+   * omitted from the matched params record (read as `undefined`). */
   op?: string[];
   /** Constraint validation: paramName -> allowed values */
   cv?: Record<string, string[]>;

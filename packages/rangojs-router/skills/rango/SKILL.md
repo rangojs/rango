@@ -17,6 +17,7 @@ Django-inspired RSC router with composable URL patterns, type-safe href, and ser
 | `/layout`               | Layouts that wrap child routes                                             |
 | `/loader`               | Data loaders with `createLoader()`                                         |
 | `/server-actions`       | Mutations with `"use server"`, useActionState, validation, revalidation    |
+| `/i18n`                 | Locale routing with `:locale?`, resolution chains, react-intl integration  |
 | `/middleware`           | Request processing and authentication                                      |
 | `/intercept`            | Modal/slide-over patterns for soft navigation                              |
 | `/parallel`             | Multi-column layouts and sidebars                                          |

@@ -27,16 +27,19 @@ import { shallowEqual } from "./shallow-equal.js";
 // interface shapes pass the constraint — interfaces lack an implicit
 // index signature and would otherwise be rejected. The generic is a
 // shape annotation, not a runtime check; the body always returns the
-// underlying params map unchanged.
+// underlying params map unchanged. The default and selector input use
+// `string | undefined` because absent optional params are omitted from
+// the params record at runtime — the type must reflect that so callers
+// don't write `p.locale.length` and crash when the segment is absent.
 export function useParams<
-  T extends object = Record<string, string>,
+  T extends object = Record<string, string | undefined>,
 >(): Readonly<T>;
 export function useParams<T>(
-  selector: (params: Record<string, string>) => T,
+  selector: (params: Record<string, string | undefined>) => T,
 ): T;
 export function useParams<T>(
-  selector?: (params: Record<string, string>) => T,
-): T | Record<string, string> {
+  selector?: (params: Record<string, string | undefined>) => T,
+): T | Record<string, string | undefined> {
   const ctx = useContext(NavigationStoreContext);
 
   const [value, setValue] = useState<T | Record<string, string>>(() => {

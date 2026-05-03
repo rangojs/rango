@@ -22,12 +22,16 @@ const genericProbe = () => useParams<{ mailboxId: string }>();
 const interfaceProbe = () => useParams<MailboxParams>();
 const optionalGenericProbe = () => useParams<{ slug?: string }>();
 const stringSelectorProbe = () => useParams((p) => p.productId);
-const numberSelectorProbe = () => useParams((p) => p.productId.length);
+const numberSelectorProbe = () => useParams((p) => p.productId?.length ?? 0);
 
 describe("useParams types", () => {
-  it("defaults to Readonly<Record<string, string>>", () => {
+  it("defaults to Readonly<Record<string, string | undefined>>", () => {
+    // The default reflects the runtime: absent optional segments are
+    // omitted from the params record, so untyped reads must surface as
+    // `string | undefined`. Callers who know the shape pass an explicit
+    // generic (see `genericProbe` below).
     expectTypeOf<ReturnType<typeof defaultProbe>>().toEqualTypeOf<
-      Readonly<Record<string, string>>
+      Readonly<Record<string, string | undefined>>
     >();
   });
 
@@ -53,9 +57,14 @@ describe("useParams types", () => {
   });
 
   it("infers selector return type", () => {
-    expectTypeOf<
-      ReturnType<typeof stringSelectorProbe>
-    >().toEqualTypeOf<string>();
+    // Selectors receive `Record<string, string | undefined>` so untyped
+    // param reads are honest about the runtime — `p.productId` is
+    // `string | undefined`. Callers who want a non-optional view should
+    // narrow inside the selector or pass an explicit generic to
+    // `useParams<T>()`.
+    expectTypeOf<ReturnType<typeof stringSelectorProbe>>().toEqualTypeOf<
+      string | undefined
+    >();
     expectTypeOf<
       ReturnType<typeof numberSelectorProbe>
     >().toEqualTypeOf<number>();

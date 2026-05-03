@@ -176,9 +176,10 @@ export function createReverseFunction(
         /:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?(\?)/g,
         (_, key) => {
           const value = effectiveParams[key];
-          // Empty string is treated as omitted — the trie matcher fills
-          // unmatched optional params with "" (not undefined), so reverse
-          // must collapse those segments instead of leaving empty slots.
+          // The matcher omits absent optional params (so `value` is
+          // `undefined` here), but caller-supplied params or `getParams()`
+          // shapes may still pass `""` explicitly. Treat both as the
+          // absent form so the segment collapses cleanly.
           if (value === undefined || value === "") {
             hadOmittedOptional = true;
             return "";

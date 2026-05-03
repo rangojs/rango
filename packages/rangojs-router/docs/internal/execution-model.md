@@ -143,6 +143,23 @@ authorization or resource scoping (e.g., verifying the user owns the resource
 at the matched URL). Use `ctx.params` for general data fetching where
 client-provided params are acceptable.
 
+### URL params: absent optionals are `undefined`
+
+Absent optional segments (`:locale?`) are **omitted from the params record**
+at runtime — `ctx.params.locale` reads as `undefined`, not `""`. This
+matches the `RouteParams<"name">` type (`{ locale?: string }`) and the
+public `useParams()` default (`Record<string, string | undefined>`).
+
+| Pattern             | URL    | `ctx.params`         |
+| ------------------- | ------ | -------------------- |
+| `/:locale?`         | `/`    | `{}` (locale absent) |
+| `/:locale?`         | `/en`  | `{ locale: "en" }`   |
+| `/:locale?/c/:slug` | `/c/x` | `{ slug: "x" }`      |
+
+Internal consumers tolerate both forms — `satisfiesConstraints` and
+`reverse()` treat missing/undefined and `""` identically — so caller code
+or `getParams()` shapes that pass `""` explicitly continue to work.
+
 ## Async Context Propagation
 
 The router uses `AsyncLocalStorage` to maintain request context across all
