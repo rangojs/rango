@@ -14,7 +14,10 @@ const addTransitionType: ((type: string) => void) | undefined =
 import type { RenderSegmentsOptions } from "../segment-system.js";
 import { reconcileSegments } from "./segment-reconciler.js";
 import type { ReconcileActor } from "./segment-reconciler.js";
-import { hasActiveIntercept as hasActiveInterceptSlots } from "./intercept-utils.js";
+import {
+  hasActiveIntercept as hasActiveInterceptSlots,
+  isInterceptSegment,
+} from "./intercept-utils.js";
 import type { BoundTransaction } from "./navigation-transaction.js";
 import { ServerRedirect } from "../errors.js";
 import { debugLog } from "./logging.js";
@@ -26,6 +29,23 @@ function toScrollPayload(
   scroll: boolean | undefined,
 ): NonNullable<NavigationUpdate["scroll"]> {
   return { enabled: scroll !== false ? scroll : false };
+}
+
+/**
+ * Whether to wrap an update in startViewTransition.
+ *
+ * Intercept-driven updates only mutate the parallel slot — the main outlet
+ * shows the same content — so transitions on the underlying main segments
+ * shouldn't fire (otherwise their elements get hoisted above the modal).
+ */
+function shouldStartViewTransition(segments: ResolvedSegment[]): boolean {
+  let hasIntercept = false;
+  let hasTransition = false;
+  for (const s of segments) {
+    if (isInterceptSegment(s)) hasIntercept = true;
+    else if (s.transition) hasTransition = true;
+  }
+  return !hasIntercept && hasTransition;
 }
 
 /**
@@ -338,10 +358,7 @@ export function createPartialUpdater(
             scroll: toScrollPayload(commitScroll),
           };
 
-          const cachedHasTransition = existingSegments.some(
-            (s) => s.transition,
-          );
-          if (cachedHasTransition) {
+          if (shouldStartViewTransition(existingSegments)) {
             startTransition(() => {
               if (addTransitionType) {
                 addTransitionType("navigation");
@@ -527,7 +544,7 @@ export function createPartialUpdater(
 
       // Emit update to trigger React render.
       // Scroll info is included so NavigationProvider applies it after React commits.
-      const hasTransition = reconciled.mainSegments.some((s) => s.transition);
+      const hasTransition = shouldStartViewTransition(reconciled.segments);
       const scrollPayload = toScrollPayload(navScroll);
 
       if (mode.type === "action" || mode.type === "stale-revalidation") {
@@ -589,9 +606,7 @@ export function createPartialUpdater(
           })
         : tx.commit(segmentIds, segments);
 
-      const fullHasTransition = segments.some(
-        (s: ResolvedSegment) => s.transition,
-      );
+      const fullHasTransition = shouldStartViewTransition(segments);
       const fullScrollPayload = toScrollPayload(fullScroll);
 
       if (mode.type === "stale-revalidation") {
