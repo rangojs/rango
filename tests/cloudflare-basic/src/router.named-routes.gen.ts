@@ -21,6 +21,8 @@ export const NamedRoutes = {
   "composition.index": "/composition",
   cookieOverlay: "/cookie-overlay",
   counter: "/counter",
+  "cr.index": "/cr/:tenantId",
+  "cr.post": "/cr/:tenantId/posts/:postId",
   "docs.detail": "/docs/:slug",
   "docs.index": "/docs",
   "docs.raw": "/docs/:slug/raw",

@@ -20,6 +20,9 @@ export { useSegments, type SegmentsState } from "./use-segments.js";
 // Handle data hook
 export { useHandle } from "./use-handle.js";
 
+// Mount-aware reverse hook
+export { useReverse } from "./use-reverse.js";
+
 // Client cache controls hook
 export {
   useClientCache,

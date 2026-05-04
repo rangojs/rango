@@ -1,7 +1,7 @@
 ---
 name: links
-description: URL generation with ctx.reverse (server default), href (client), useHref (mounted), useMount, and scopedReverse
-argument-hint: [ctx.reverse|href|useHref|useMount|scopedReverse]
+description: URL generation with ctx.reverse (server default), href (client), useHref (mounted), useMount, useReverse, and scopedReverse
+argument-hint: [ctx.reverse|href|useHref|useMount|useReverse|scopedReverse]
 ---
 
 # Links & URL Generation
@@ -10,7 +10,12 @@ argument-hint: [ctx.reverse|href|useHref|useMount|scopedReverse]
 
 **Default server API: `ctx.reverse()`.** Generate URLs from the handler context — it's typed, auto-fills mount params, and resolves local (`.name`) and absolute (`name.sub`) names.
 
-**`reverse()` is server-only.** It depends on the route manifest and handler context, neither of which are available in the browser. Client components receive URLs as props, loader data, or server-action return values — they never call `reverse` directly.
+**On the client, two patterns:**
+
+1. **Receive URLs as props / loader data / action return.** The default. The server has the full route manifest and handler context — generate URLs there and hand strings to client components.
+2. **`useReverse(routes)`.** Import a generated `routes` map from a `urls()` module's `.gen.ts` and call `reverse(".name", params?)`. Mount-aware via `useMount()`, auto-fills params from `useParams()`, fully typed from the imported map. Use this when a client component needs to generate URLs into a known module without round-tripping through the server.
+
+`ctx.reverse()` itself is **server-only** — it depends on the full route manifest and handler context. Client components never import or call it.
 
 ## Server: ctx.reverse()
 
@@ -127,9 +132,7 @@ path("/product/:slug", (ctx) => {
 
 ## Client components: receive URLs as props
 
-`reverse()` is not available inside `"use client"` modules — there is no handler context and no route manifest in the browser bundle. Generate the URL on the server and hand it to the client component.
-
-Three patterns, in order of preference:
+`ctx.reverse()` is not available inside `"use client"` modules — there is no handler context in the browser bundle. For in-module names, prefer `useReverse(routes)` (see below) and import the relevant `urls/*.gen.js`. For cross-module URLs or one-off names, generate the URL on the server and hand it to the client component using one of these three patterns:
 
 1. Pass as a prop from a server component:
 
@@ -256,18 +259,159 @@ function MountInfo() {
 
 `useMount()` reads from `MountContext`, which is automatically set by `include()` in the segment tree.
 
+## Client: useReverse(routes)
+
+Hook that returns a typed local reverse function for a `routes` map imported from a generated `.gen.ts` next to a `urls()` module. The route map is the **exposure boundary** — `useReverse` only knows about names in that map, never the full app manifest.
+
+```tsx
+"use client";
+import { Link, useReverse } from "@rangojs/router/client";
+import { routes as blogRoutes } from "../urls/blog.gen.js";
+
+export function BlogNav() {
+  const reverse = useReverse(blogRoutes);
+
+  return (
+    <nav>
+      <Link to={reverse(".index")}>Blog</Link>
+      <Link to={reverse(".post", { postId: "hello" })}>Post</Link>
+    </nav>
+  );
+}
+```
+
+### How it resolves
+
+1. Strips the leading `.` and looks up the name in the imported `routes` map.
+2. Joins the local pattern with the surrounding `useMount()` value — the include's URL pattern.
+3. Substitutes params: explicit params from the call, then auto-filled from `useParams()` for anything still unresolved (mount params like `:tenantId` flow in this way).
+4. Appends a query string if a search object is passed and the route has a `search` schema.
+
+### Mount-relativity
+
+Patterns in the generated `routes` map are **mount-relative** — they're the patterns as defined inside the `urls()` module, _not_ the full app paths. Mount-joining happens at runtime via `useMount()`, so the same component works under any include:
+
+```typescript
+// urls/blog.tsx
+export const blogPatterns = urls(({ path }) => [
+  path("/", BlogIndex, { name: "index" }),
+  path("/:postId", BlogPost, { name: "post" }),
+]);
+
+// Generated urls/blog.gen.ts
+// export const routes = { index: "/", post: "/:postId" } as const;
+
+// urls.tsx — same module mounted twice
+include("/news", blogPatterns, { name: "news" }),    // <BlogNav> renders /news, /news/hello
+include("/journal", blogPatterns, { name: "diary" }), // <BlogNav> renders /journal, /journal/hello
+```
+
+The `/` pattern under a non-root mount collapses cleanly: under `/news`, `reverse(".index")` returns `/news` (no trailing slash), matching `ctx.reverse(".index")` on the server.
+
+### Auto-filled params (mount params)
+
+When the include itself carries `:params`, those are auto-filled from `useParams()` so the caller doesn't have to thread them through:
+
+```typescript
+// urls.tsx
+include("/tenant/:tenantId", clientReversePatterns, { name: "tenant" });
+```
+
+```tsx
+// At /tenant/acme/posts/p1, useParams() = { tenantId: "acme", postId: "p1" }
+const reverse = useReverse(clientReverseRoutes);
+
+reverse(".index"); // "/tenant/acme"
+reverse(".post", { postId: "p2" }); // "/tenant/acme/posts/p2"   (tenantId auto-filled)
+reverse(".post", { tenantId: "other", postId: "p2" }); // "/tenant/other/posts/p2" (explicit override)
+```
+
+Auto-fill follows soft navigation — when the matched route changes, `useReverse` re-renders with the new params.
+
+### Search schemas
+
+Routes declared with a `search` schema accept a typed search object as the third argument:
+
+```typescript
+// urls/blog.tsx
+path("/search", SearchPage, {
+  name: "search",
+  search: { q: "string", page: "number?" },
+}),
+
+// Generated as: search: { path: "/search", search: { q: "string", page: "number?" } }
+```
+
+```tsx
+const reverse = useReverse(blogRoutes);
+reverse(".search", {}, { q: "hello world", page: 2 });
+// "/news/search?q=hello%20world&page=2"
+```
+
+### Errors
+
+- Unknown name: throws `Unknown local route: ".not-a-route"`.
+- Missing required param: throws `Missing param "postId" for route ".detail"`.
+
+Both happen synchronously during `reverse()` — wrap calls in try/catch (or an ErrorBoundary if the throw happens during render) when you need to surface them as UI.
+
+### Names are dot-only on the client
+
+`useReverse` accepts only `.name` (and dotted variants like `.nested.index`). There is no global namespace on the client — the import IS the scope. To link into a different module, import that module's `routes`:
+
+```tsx
+import { routes as blogRoutes } from "../urls/blog.gen.js";
+import { routes as shopRoutes } from "../urls/shop.gen.js";
+
+function CrossNav() {
+  const blog = useReverse(blogRoutes);
+  const shop = useReverse(shopRoutes);
+  return (
+    <nav>
+      <Link to={blog(".index")}>Blog</Link>
+      <Link to={shop(".cart")}>Cart</Link>
+    </nav>
+  );
+}
+```
+
+### Codegen
+
+Each `urls()` module gets a sibling `.gen.ts` with the local route names and patterns, produced by `rango generate`:
+
+```bash
+pnpm exec rango generate src/urls/blog.tsx
+# or generate everything under a directory:
+pnpm exec rango generate src/urls --static
+```
+
+Don't edit the file by hand — re-run codegen when patterns change.
+
+**Today the Vite plugin only regenerates the router-level `*.named-routes.gen.ts`.** Per-module `urls/*.gen.ts` files are emitted only by the CLI (or `writePerModuleRouteTypesForFile` programmatically). Commit the generated files and re-run `rango generate` whenever a `urls()` module's `path()`/`include()` shape changes. A common workflow is to wire it into a `predev` script:
+
+```jsonc
+// package.json
+{
+  "scripts": {
+    "predev": "rango generate src",
+    "dev": "vite",
+  },
+}
+```
+
 ## When to use what
 
-| Context          | API                                                | Resolves                        | Use for                                                          |
-| ---------------- | -------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------- |
-| Server handler   | `ctx.reverse("name")`                              | Named routes (local + absolute) | **Default** server-side URL generation                           |
-| Server handler   | `scopedReverse<T>(ctx.reverse)`                    | Same, with type safety          | Type-safe server URLs                                            |
-| Client component | (URL passed as prop / loader data / action return) | Named routes                    | Any URL derived from a named route — generate on server, pass in |
-| Client component | `href("/path")`                                    | Absolute paths (static strings) | Static navigation where no named-route lookup is needed          |
-| Client component | `useHref()`                                        | Mount-prefixed paths            | Local navigation inside `include()`                              |
-| Client component | `useMount()`                                       | Raw mount path                  | Custom mount-aware logic                                         |
+| Context          | API                                                | Resolves                                  | Use for                                                          |
+| ---------------- | -------------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------- |
+| Server handler   | `ctx.reverse("name")`                              | Named routes (local + absolute)           | **Default** server-side URL generation                           |
+| Server handler   | `scopedReverse<T>(ctx.reverse)`                    | Same, with type safety                    | Type-safe server URLs                                            |
+| Client component | `useReverse(routes)`                               | Local names from an imported `routes` map | Typed in-module URL generation without round-tripping the server |
+| Client component | (URL passed as prop / loader data / action return) | Named routes                              | Cross-module URLs or one-off names you don't want to import      |
+| Client component | `href("/path")`                                    | Absolute paths (static strings)           | Static navigation where no named-route lookup is needed          |
+| Client component | `useHref()`                                        | Mount-prefixed paths                      | Local navigation inside `include()`                              |
+| Client component | `useMount()`                                       | Raw mount path                            | Custom mount-aware logic                                         |
 
-> `reverse()` is server-only. Client components never import or call it — they receive the already-resolved string.
+> `ctx.reverse()` is server-only. On the client, either generate URLs on the server and pass them in, or import the `routes` map and use `useReverse(routes)` for in-module names.
 
 ## Complete example: mounted module
 

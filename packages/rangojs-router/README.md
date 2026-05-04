@@ -602,7 +602,7 @@ export function Nav({ home, post }: { home: string; post: string }) {
 }
 ```
 
-For client-side navigation to static paths (no named-route lookup), use `href()` — see below. For URLs tied to named routes, always generate on the server and pass the string in.
+For client-side navigation to static paths (no named-route lookup), use `href()` — see below. For URLs tied to named routes, you have two options: import the per-module generated `routes` map and use `useReverse(routes)` for in-module names (see [`/links` skill](./skills/links/SKILL.md)), or generate the URL on the server and pass the string in for cross-module URLs.
 
 ### `href()` for Path Validation (Client Components)
 
