@@ -541,7 +541,14 @@ export function createNavigationBridge(
             },
             scroll: { restore: true, isStreaming },
           };
-          const hasTransition = cachedSegments.some((s) => s.transition);
+          // Intercept-driven popstate (entering OR leaving an intercept) only
+          // mutates the parallel slot; the main outlet shows the same content.
+          // Skip startViewTransition in those cases — same rationale as the
+          // intercept guard in partial-update.ts's hasTransition computation.
+          const hasTransition =
+            !isIntercept &&
+            !isLeavingIntercept &&
+            cachedSegments.some((s) => s.transition);
           if (hasTransition) {
             startTransition(() => {
               if (addTransitionType) {
