@@ -131,6 +131,47 @@ export interface RenderSegmentsOptions {
   rootLayout?: ComponentType<RootLayoutProps>;
 }
 
+function createViewTransitionBoundary(
+  transition: NonNullable<ResolvedSegment["transition"]>,
+  children: ReactNode,
+): ReactNode {
+  return createElement(ReactViewTransition, {
+    ...transition,
+    children,
+  });
+}
+
+function wrapDefaultOutletContent(
+  content: ReactNode,
+  transition: NonNullable<ResolvedSegment["transition"]>,
+): ReactNode {
+  if (!React.isValidElement(content)) {
+    return createViewTransitionBoundary(transition, content);
+  }
+
+  const props = content.props as any;
+
+  if (content.type === MountContextProvider) {
+    return React.cloneElement(content, {
+      children: wrapDefaultOutletContent(props.children, transition),
+    } as any);
+  }
+
+  if (content.type === OutletProvider && props.segment?.type === "layout") {
+    return React.cloneElement(content, {
+      content: wrapDefaultOutletContent(props.content, transition),
+    } as any);
+  }
+
+  if (content.type === LoaderBoundary && props.segment?.type === "layout") {
+    return React.cloneElement(content, {
+      outletContent: wrapDefaultOutletContent(props.outletContent, transition),
+    } as any);
+  }
+
+  return createViewTransitionBoundary(transition, content);
+}
+
 /**
  * Render segments into a React tree with proper layout nesting
  *
@@ -273,16 +314,26 @@ export async function renderSegments(
     // in transitions without adding custom animation classes. Named element-level
     // <ViewTransition> components inside (with name/share props) morph independently
     // from the parent's default cross-fade.
-    if (ReactViewTransition && node.segment.transition) {
-      nodeContent = createElement(ReactViewTransition, {
-        ...node.segment.transition,
-        children: nodeContent,
-      });
-    }
-
-    // Common props for OutletProvider
-    const outletContent: ReactNode =
+    //
+    // For layouts, wrap the outlet content (what `<Outlet />` renders) rather
+    // than the layout component itself. Parallel slots like `<ParallelOutlet
+    // name="@modal" />` read from a separate context channel and end up as
+    // siblings of the VT in the rendered tree, so modal mounts don't trigger a
+    // subtree update on the layout-level VT — which would otherwise make
+    // React's commit walker fire `document.startViewTransition` and apply
+    // view-transition-names to the underlying main subtree (cover/title/etc.).
+    let outletContent: ReactNode =
       node.segment.type === "layout" ? content : null;
+
+    const transition = node.segment.transition;
+
+    if (ReactViewTransition && transition) {
+      if (node.segment.type === "layout") {
+        outletContent = wrapDefaultOutletContent(outletContent, transition);
+      } else {
+        nodeContent = createViewTransitionBoundary(transition, nodeContent);
+      }
+    }
 
     // Prepare loader data if there are loaders
     const loaderIds = loaderEntries.map((loader) => loader.loaderId!);
