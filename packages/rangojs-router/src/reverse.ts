@@ -1,7 +1,7 @@
 import type { ExtractParams } from "./types.js";
 import type { SearchSchema, ResolveSearchSchema } from "./search-params.js";
 import { serializeSearchParams } from "./search-params.js";
-import { encodePathSegment } from "./router/url-params.js";
+import { substitutePatternParams } from "./router/substitute-pattern-params.js";
 
 /**
  * Sanitize prefix string by removing leading slash
@@ -220,6 +220,64 @@ export type ExtractLocalRoutes<TPatterns> = TPatterns extends {
     : Record<string, string>;
 
 /**
+ * Params accepted by `useReverse(routes)`. The route's own params are
+ * required, and additional string keys are permitted so callers can
+ * override values that would otherwise be auto-filled from the matched
+ * route's `useParams()` (e.g. an enclosing `:tenantId` mount segment).
+ */
+export type LocalReverseParams<TPattern extends string> =
+  ExtractParams<TPattern> & {
+    readonly [extra: string]: string | undefined;
+  };
+
+/**
+ * Type-safe local reverse function with dot-prefixed names only.
+ *
+ * Returned by `useReverse(routes)` on the client. The route map is the
+ * exposure boundary (a generated `routes` from a `urls()` module) and the
+ * scope is implicit from that import — there is no global namespace, so
+ * names must be dot-prefixed to mirror `ctx.reverse(".name")`.
+ *
+ * @example
+ * ```typescript
+ * const reverse = useReverse(blogRoutes);
+ * reverse(".index");                         // ✓ no params
+ * reverse(".post", { postId: "hello" });     // ✓ with params
+ * reverse(".search", {}, { q: "hi" });       // ✓ with search schema
+ * reverse(".typo");                          // ✗ compile error
+ * ```
+ */
+export type LocalReverseFunction<TLocalRoutes> = {
+  /**
+   * Dot-prefixed local route without params
+   */
+  <TName extends keyof TLocalRoutes & string>(
+    name: IsEmptyObject<
+      ExtractParams<RoutePatternFor<TLocalRoutes, TName>>
+    > extends true
+      ? `.${TName}`
+      : never,
+  ): string;
+
+  /**
+   * Dot-prefixed local route with params
+   */
+  <TName extends keyof TLocalRoutes & string>(
+    name: `.${TName}`,
+    params: LocalReverseParams<RoutePatternFor<TLocalRoutes, TName>>,
+  ): string;
+
+  /**
+   * Dot-prefixed local route with params and search
+   */
+  <TName extends keyof TLocalRoutes & string>(
+    name: `.${TName}`,
+    params: LocalReverseParams<RoutePatternFor<TLocalRoutes, TName>>,
+    search: ResolveSearchSchema<ExtractSearchSchema<TLocalRoutes, TName>>,
+  ): string;
+};
+
+/**
  * Extract the response data type for a named route from a UrlPatterns instance.
  * Re-exported from urls.ts for consumer convenience.
  */
@@ -302,46 +360,9 @@ export function createReverse<TRoutes extends Record<string, string>>(
       throw new Error(`Unknown route: ${name}`);
     }
 
-    let result = pattern;
-    if (params) {
-      // Replace :param placeholders with actual values
-      // Strip constraint syntax: :param(a|b) -> use "param" as key
-      // Optional params (:param?) are omitted when not provided
-      let hadOmittedOptional = false;
-      result = result.replace(
-        /:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?(\?)/g,
-        (_, key, _constraint, optional) => {
-          const value = params[key];
-          // The matcher omits absent optional params (so `value` is
-          // `undefined` here), but caller-supplied params or `getParams()`
-          // shapes may still pass `""` explicitly. Treat both as the
-          // absent form so the segment collapses cleanly.
-          if (value === undefined || value === "") {
-            hadOmittedOptional = true;
-            return "";
-          }
-          return encodePathSegment(value);
-        },
-      );
-      // Second pass: required params (no trailing ?)
-      result = result.replace(
-        /:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?(?!\?)/g,
-        (_, key) => {
-          const value = params[key];
-          if (value === undefined) {
-            throw new Error(`Missing param "${key}" for route "${name}"`);
-          }
-          return encodePathSegment(value);
-        },
-      );
-      // Clean up slashes only when an optional param was actually omitted,
-      // so intentional trailing-slash patterns like "/blog/" are preserved.
-      if (hadOmittedOptional) {
-        const hadTrailingSlash = pattern.length > 1 && pattern.endsWith("/");
-        result = result.replace(/\/\/+/g, "/").replace(/\/+$/, "") || "/";
-        if (hadTrailingSlash && !result.endsWith("/")) result += "/";
-      }
-    }
+    let result = params
+      ? substitutePatternParams(pattern, params, name)
+      : pattern;
 
     // Append search params as query string
     if (search) {

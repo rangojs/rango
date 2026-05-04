@@ -69,25 +69,26 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 
 ### Hooks
 
-| Hook                   | Purpose                          |
-| ---------------------- | -------------------------------- |
-| `useLoader`            | Access loader data               |
-| `useFetchLoader`       | Client-side fetch loader         |
-| `useNavigation`        | Navigation state                 |
-| `useRouter`            | Imperative navigation            |
-| `usePathname`          | Current pathname                 |
-| `useSearchParams`      | Search parameters                |
-| `useParams`            | Route params                     |
-| `useSegments`          | Segments state                   |
-| `useAction`            | Server action state tracking     |
-| `useHandle`            | Access handle data               |
-| `useLocationState`     | Navigation state persistence     |
-| `useClientCache`       | Client cache controls            |
-| `useLinkStatus`        | Link navigation status           |
-| `useMount`             | `include()` mount context        |
-| `useHref`              | Mount-aware href generation      |
-| `useScrollRestoration` | Scroll restoration control       |
-| `useTheme`             | Theme management (via `./theme`) |
+| Hook                   | Purpose                                 |
+| ---------------------- | --------------------------------------- |
+| `useLoader`            | Access loader data                      |
+| `useFetchLoader`       | Client-side fetch loader                |
+| `useNavigation`        | Navigation state                        |
+| `useRouter`            | Imperative navigation                   |
+| `usePathname`          | Current pathname                        |
+| `useSearchParams`      | Search parameters                       |
+| `useParams`            | Route params                            |
+| `useSegments`          | Segments state                          |
+| `useAction`            | Server action state tracking            |
+| `useHandle`            | Access handle data                      |
+| `useLocationState`     | Navigation state persistence            |
+| `useClientCache`       | Client cache controls                   |
+| `useLinkStatus`        | Link navigation status                  |
+| `useMount`             | `include()` mount context               |
+| `useHref`              | Mount-aware href generation             |
+| `useReverse`           | Local reverse for imported `routes` map |
+| `useScrollRestoration` | Scroll restoration control              |
+| `useTheme`             | Theme management (via `./theme`)        |
 
 ### Factories
 

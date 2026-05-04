@@ -43,6 +43,7 @@ import { parallelLoaderInheritPatterns } from "./urls/parallel-loader-inherit.js
 import { buildSkipPatterns } from "./urls/prerender-build-skip.js";
 import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
+import { clientReversePatterns } from "./urls/client-reverse.js";
 import { useCachePatterns } from "./urls/use-cache.js";
 import { prerenderLocalePatterns } from "./urls/prerender-locale.js";
 import { loaderReversePatterns } from "./urls/loader-reverse.js";
@@ -524,6 +525,11 @@ export const urlpatterns = urls(
       include("/unnamed-reverse", unnamedIncludeReversePatterns),
       include("/flat-reverse", flattenedIncludePatterns, { name: "" }),
       include("/ns-reverse", namedIncludePatterns, { name: "ns" }),
+
+      // Same patterns mounted twice under different prefixes — the
+      // useReverse(routes) e2e spec exercises the hook from these.
+      include("/cr/a/:tenantId", clientReversePatterns, { name: "crA" }),
+      include("/cr/b/:tenantId", clientReversePatterns, { name: "crB" }),
 
       // Search params test patterns
       include("/search", searchPatterns, { name: "search" }),

@@ -694,7 +694,27 @@ function MountInfo() {
 }
 ```
 
-See `/links` for full URL generation guide. The default server API is `ctx.reverse()`; in client components, receive URLs as props, loader data, or server-action return values — `reverse()` is not available in the browser.
+### useReverse(routes)
+
+Mount-aware local reverse for client components. Import the generated `routes` map from a `urls()` module's `.gen.ts` and call `reverse(".name", params?)`. Auto-fills params from `useParams()`; explicit params override.
+
+```tsx
+"use client";
+import { Link, useReverse } from "@rangojs/router/client";
+import { routes as blogRoutes } from "../urls/blog.gen.js";
+
+function BlogNav() {
+  const reverse = useReverse(blogRoutes);
+  return (
+    <nav>
+      <Link to={reverse(".index")}>Blog</Link>
+      <Link to={reverse(".post", { postId: "hello" })}>Post</Link>
+    </nav>
+  );
+}
+```
+
+See `/links` for the full URL generation guide. `ctx.reverse()` is server-only; on the client, prefer `useReverse(routes)` for in-module names and pass URLs as props for cross-module ones.
 
 ## Hook Summary
 
@@ -705,6 +725,7 @@ See `/links` for full URL generation guide. The default server API is `ctx.rever
 | `useSearchParams()`  | URL search params                 | `ReadonlyURLSearchParams`                                          |
 | `useHref()`          | Mount-aware href                  | `(path) => string`                                                 |
 | `useMount()`         | Current include() mount path      | `string`                                                           |
+| `useReverse()`       | Local reverse for imported routes | `(name, params?, search?) => string`                               |
 | `useNavigation()`    | Reactive navigation state         | state, location, isStreaming                                       |
 | `useRouter()`        | Stable router actions             | push, replace, refresh, prefetch, back, forward                    |
 | `useSegments()`      | URL path & segment IDs            | path, segmentIds, location                                         |

@@ -34,6 +34,7 @@ import {
   InlinePricingPage,
 } from "./pages/inline.js";
 import { articlesPatterns } from "./pages/articles.js";
+import { clientReversePatterns } from "./pages/client-reverse.js";
 import { guidesPatterns } from "./pages/guides.js";
 import { releasesPatterns } from "./pages/releases.js";
 import { staticContentPatterns } from "./pages/static-content-urls.js";
@@ -346,6 +347,9 @@ export const urlpatterns = urls(
         path("/inline/pricing", InlinePricingPage, { name: "inlinePricing" }),
         // Pre-rendered articles (static content, build-time rendering)
         include("/articles", articlesPatterns, { name: "articles" }),
+
+        // Client useReverse() coverage on the Cloudflare preset
+        include("/cr/:tenantId", clientReversePatterns, { name: "cr" }),
 
         // Pre-rendered guides with passthrough (known slugs pre-rendered, unknown slugs live)
         include("/guides", guidesPatterns, { name: "guides" }),
