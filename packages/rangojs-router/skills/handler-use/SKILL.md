@@ -59,6 +59,8 @@ Now `ProductPage` carries its loader, loading state, and response-header middlew
 | `intercept()`                                     | `middleware`, `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, `layout`, `route`, `when`, `transition`                  |
 | Response routes (`path.json()`, `path.text()`, …) | `middleware`, `cache`                                                                                                                          |
 
+For per-item semantics see the dedicated skills: [middleware](../middleware/SKILL.md), [loader](../loader/SKILL.md), [parallel](../parallel/SKILL.md), [intercept](../intercept/SKILL.md), [layout](../layout/SKILL.md), [view-transitions](../view-transitions/SKILL.md).
+
 If `handler.use()` returns a disallowed item for a mount site, registration throws:
 
 ```

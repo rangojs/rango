@@ -118,6 +118,8 @@ function ShopLayout() {
 }
 ```
 
+A layout's `transition()` config wraps the content that flows through `<Outlet />` — not the layout chrome itself, and not sibling `<ParallelOutlet />` slots. Stacking transitions across nested layouts collapses around the deepest default outlet content. See [skills/view-transitions](../view-transitions/SKILL.md) for the full wrap rules and intercept-modal interaction.
+
 ## Named Outlets
 
 For parallel routes, use named outlets:
