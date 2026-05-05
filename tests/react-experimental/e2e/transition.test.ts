@@ -95,6 +95,71 @@ test.describe("transition DSL (dev)", () => {
   });
 });
 
+// Regression: handleNavigationEnd's scrollToTop branch used to defer via
+// requestAnimationFrame. For navigations wrapped in a layout/route view
+// transition, the rAF callback fired AFTER startViewTransition's snapshot
+// capture — the live DOM scrolled but the captured snapshot was at the
+// previous scroll position, leaving the user-facing page visually
+// clamped at the source scrollY (often the new tree's max scroll on
+// tall→short navs). scrollToTop now runs synchronously inside
+// useLayoutEffect so the scroll lands before the snapshot.
+test.describe("scroll-to-top on forward nav under VT (dev)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "dev",
+  });
+
+  test("forward nav scrolls to top even when wrapped in a view transition", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/layout-tx-a"));
+    await waitForHydration(page);
+    await expect(testId(page, "layout-tx-a-page")).toBeVisible();
+
+    // Scroll down on the long source page (filler in /layout-tx-a)
+    await page.evaluate(() => window.scrollTo(0, 800));
+    await expect
+      .poll(async () => page.evaluate(() => window.scrollY))
+      .toBe(800);
+
+    // Forward to the short destination — VT fires (layout-level transition).
+    // After commit, scrollY should be 0.
+    await testId(page, "nav-layout-tx-b").click();
+    await expect(page).toHaveURL(/\/layout-tx-b/);
+    await expect(testId(page, "layout-tx-b-page")).toBeVisible();
+
+    await expect.poll(async () => page.evaluate(() => window.scrollY)).toBe(0);
+  });
+});
+
+test.describe("scroll-to-top on forward nav under VT (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test("forward nav scrolls to top even when wrapped in a view transition", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/layout-tx-a"));
+    await waitForHydration(page);
+    await expect(testId(page, "layout-tx-a-page")).toBeVisible();
+
+    await page.evaluate(() => window.scrollTo(0, 800));
+    await expect
+      .poll(async () => page.evaluate(() => window.scrollY))
+      .toBe(800);
+
+    await testId(page, "nav-layout-tx-b").click();
+    await expect(page).toHaveURL(/\/layout-tx-b/);
+    await expect(testId(page, "layout-tx-b-page")).toBeVisible();
+
+    await expect.poll(async () => page.evaluate(() => window.scrollY)).toBe(0);
+  });
+});
+
 test.describe("blog shared transitions (dev)", () => {
   const f = useFixture({
     root: ".",
