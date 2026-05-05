@@ -606,6 +606,13 @@ export const FileUploadLoader = createLoader(async (ctx) => {
 
 Client usage — see `/hooks useFetchLoader` for the full client-side pattern.
 
+> **Refetch sharing**: when the loader is registered on the route via
+> `loader()`, a plain `load()` call (no `params`, no `body`) broadcasts
+> the new value to every component reading the same loader id —
+> `useLoader` reads in layouts, pages, and parallel slots all converge.
+> Calls with `params` or a non-GET method stay local to the call site.
+> See `/hooks` → "Shared refetch behavior" for the full contract.
+
 ## Complete Example
 
 ```typescript

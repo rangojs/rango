@@ -190,6 +190,47 @@ function SearchResults() {
 }
 ```
 
+**Shared refetch behavior**:
+
+When the loader is registered on the route via `loader()`, a plain
+`load()` call (no options, or a trivially-defaulted GET with no
+`params` and no `body`) broadcasts its result to every component
+reading the same loader id. Layout, page, and parallel-slot reads
+all converge on the new value:
+
+```tsx
+// Layout button calls load() — the page read below sees the update too.
+function Layout() {
+  const { data, load } = useLoader(CartLoader);
+  return <button onClick={() => load()}>Refresh ({data.count})</button>;
+}
+function Page() {
+  const { data } = useLoader(CartLoader); // updates with the layout's load()
+  return <span>{data.count} items</span>;
+}
+```
+
+`isLoading` and `error` follow the same scope. `throwOnError: true`
+render-throws are scoped to the **originating** hook — sibling readers
+see the error in their `error` state but their boundaries are not
+triggered by someone else's failure. A successful follow-up `load()`
+clears the shared error.
+
+**`load()` calls that stay local** (no broadcast, per-hook state, same
+semantics as the old per-component `useState`):
+
+- `load({ params: { ... } })` — explicit params.
+- `load({ method: "POST", body })` — mutations.
+- Any `load()` on a `useFetchLoader(loader)` whose loader is **not**
+  registered on the current route. Two unrelated components calling
+  `load()` on the same fetchable-but-unregistered loader keep
+  independent results.
+
+So the search/list pattern still works — two components calling
+`load({ params: { q } })` with different `q` values each keep their
+own result; they do not collapse to last-write-wins through a shared
+store.
+
 **Load options**:
 
 ```tsx

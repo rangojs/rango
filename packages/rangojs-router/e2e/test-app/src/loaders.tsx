@@ -733,3 +733,59 @@ export const ActionCtxSetLoader = createLoader(async (ctx) => {
   const typedValue = ctx.get(ActionCtxTypedVar) ?? null;
   return { stringValue, typedValue };
 });
+
+// ============================================================================
+// Shared refetch loader
+// Counter-based loader for the shared-refetch regression test. Multiple
+// components on the same page read this loader; one of them calls load()
+// and the test asserts that ALL reading sites pick up the new count.
+// ============================================================================
+
+let sharedRefetchCount = 0;
+
+export const SharedRefetchLoader = createLoader(
+  async () => {
+    sharedRefetchCount++;
+    return { count: sharedRefetchCount };
+  },
+  true, // fetchable — required so client components can call load()
+);
+
+// Param-aware variant for the params-stay-local regression. Two components
+// call load({ params: { tag } }) with different tags; each component must
+// render its own tag, never overwriting the other through the shared store.
+let sharedRefetchParamCount = 0;
+
+export const SharedRefetchParamLoader = createLoader(async (ctx) => {
+  sharedRefetchParamCount++;
+  const tag = ctx.params.tag ?? "default";
+  return { tag, count: sharedRefetchParamCount };
+}, true);
+
+// Failing loader for the error-throw-scope guard. Registered on the
+// route so contextData is populated (required for the load() refetch
+// to go through the shared store post-fix). The first call (route SSR)
+// succeeds; subsequent calls — i.e. client refetches — throw. A
+// per-loader counter avoids cross-test interference in production
+// where the test-app preview server is shared.
+let sharedRefetchErrorCount = 0;
+
+export const SharedRefetchErrorLoader = createLoader(async () => {
+  sharedRefetchErrorCount++;
+  if (sharedRefetchErrorCount === 1) {
+    return { ok: true } as const;
+  }
+  throw new Error("shared-refetch-error: refetch failed by design");
+}, true);
+
+// Mixed-throwOnError variant: same SSR-success / refetch-fail behavior,
+// own counter so the two error-scenario tests don't share fail-state.
+let sharedRefetchErrorMixedCount = 0;
+
+export const SharedRefetchErrorMixedLoader = createLoader(async () => {
+  sharedRefetchErrorMixedCount++;
+  if (sharedRefetchErrorMixedCount === 1) {
+    return { ok: true } as const;
+  }
+  throw new Error("shared-refetch-error-mixed: refetch failed by design");
+}, true);
