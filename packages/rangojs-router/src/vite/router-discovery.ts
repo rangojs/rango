@@ -987,9 +987,24 @@ export function createRouterDiscoveryPlugin(
                   writeRouteTypesFiles(s),
                 );
               }
+              if (s.lastDiscoveryError) {
+                debugDiscovery?.(
+                  "hmr: cleared lastDiscoveryError (%s) after successful rediscovery",
+                  s.lastDiscoveryError.message,
+                );
+                s.lastDiscoveryError = null;
+              }
             } catch (err: any) {
+              s.lastDiscoveryError = {
+                message: err?.message ?? String(err),
+                at: Date.now(),
+              };
               console.warn(
                 `[rsc-router] Runtime re-discovery failed: ${err.message}`,
+              );
+              debugDiscovery?.(
+                "hmr: lastDiscoveryError set (%s) — manifest preserved at last-good; recovery mode active (any in-scan source change will trigger rediscovery)",
+                err?.message,
               );
             } finally {
               debugDiscovery?.(
@@ -1059,27 +1074,63 @@ export function createRouterDiscoveryPlugin(
             !filePath.endsWith(".tsx") &&
             !filePath.endsWith(".js") &&
             !filePath.endsWith(".jsx")
-          )
+          ) {
+            if (s.lastDiscoveryError) {
+              debugDiscovery?.(
+                "watcher: skip non-source %s [LASTERR %s]",
+                filePath,
+                s.lastDiscoveryError.message,
+              );
+            }
             return;
+          }
           // Apply scan filter as early-exit before reading file
-          if (s.scanFilter && !s.scanFilter(filePath)) return;
+          if (s.scanFilter && !s.scanFilter(filePath)) {
+            if (s.lastDiscoveryError) {
+              debugDiscovery?.(
+                "watcher: skip scan-filter %s [LASTERR %s]",
+                filePath,
+                s.lastDiscoveryError.message,
+              );
+            }
+            return;
+          }
+          // Recovery mode: when the previous HMR re-discovery failed, the
+          // import graph is incomplete and the manifest is stuck at the
+          // last-good state. The fix may land in a non-route file (e.g. a
+          // helper imported by the router, a missing module being created,
+          // or a "use client" component) that the narrow content sniff
+          // would otherwise filter out. While in recovery, treat any
+          // in-scan source change as a candidate for rediscovery; the
+          // tighter filter resumes once discovery succeeds again.
+          const inRecoveryMode = !!s.lastDiscoveryError;
           try {
             const source = readFileSync(filePath, "utf-8");
             const trimmed = source.trimStart();
-            if (
+            const isUseClient =
               trimmed.startsWith('"use client"') ||
-              trimmed.startsWith("'use client'")
-            )
-              return;
+              trimmed.startsWith("'use client'");
+            if (!inRecoveryMode && isUseClient) return;
             const hasUrls = source.includes("urls(");
             const hasCreateRouter = /\bcreateRouter\s*[<(]/.test(source);
-            if (!hasUrls && !hasCreateRouter) return;
-            debugDiscovery?.(
-              "watcher: %s matches (urls=%s, router=%s)",
-              filePath,
-              hasUrls,
-              hasCreateRouter,
-            );
+            if (!inRecoveryMode && !hasUrls && !hasCreateRouter) return;
+            if (inRecoveryMode) {
+              debugDiscovery?.(
+                "watcher: recovery rediscovery for %s (urls=%s, router=%s, useClient=%s) [LASTERR %s]",
+                filePath,
+                hasUrls,
+                hasCreateRouter,
+                isUseClient,
+                s.lastDiscoveryError!.message,
+              );
+            } else {
+              debugDiscovery?.(
+                "watcher: %s matches (urls=%s, router=%s)",
+                filePath,
+                hasUrls,
+                hasCreateRouter,
+              );
+            }
             // Invalidate cache when a router file changes (new router added/removed)
             if (hasCreateRouter) {
               const nestedRouterConflict = findNestedRouterConflict([
@@ -1106,7 +1157,15 @@ export function createRouterDiscoveryPlugin(
               gate.noteRouteEvent();
             }
             scheduleRouteRegeneration();
-          } catch {
+          } catch (readErr: any) {
+            if (s.lastDiscoveryError) {
+              debugDiscovery?.(
+                "watcher: read error %s: %s [LASTERR %s]",
+                filePath,
+                readErr?.message,
+                s.lastDiscoveryError.message,
+              );
+            }
             // Ignore read errors for deleted/moved files
           }
         };
