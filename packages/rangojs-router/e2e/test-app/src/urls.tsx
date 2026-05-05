@@ -14,6 +14,7 @@ import {
   trailingSlashPatterns,
 } from "./urls/meta.js";
 import { hooksPatterns } from "./urls/hooks.js";
+import { sharedRefetchPatterns } from "./urls/shared-refetch.js";
 import { middlewarePatterns } from "./urls/middleware.js";
 import { cachePatterns } from "./urls/cache.js";
 import { themePatterns } from "./urls/theme.js";
@@ -507,6 +508,9 @@ export const urlpatterns = urls(
 
       // Hook test patterns - already have their prefixes in paths
       include("/", hooksPatterns, { name: "" }),
+
+      // Shared-refetch regression scenario
+      include("/", sharedRefetchPatterns, { name: "" }),
 
       // Middleware test patterns
       include("/middleware-test", middlewarePatterns, {

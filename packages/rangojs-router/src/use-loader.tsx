@@ -12,7 +12,30 @@ import {
   type ReactNode,
 } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
+import { loaderStore, type LoaderEntry } from "./loader-store.js";
 import type { LoaderDefinition, LoadOptions } from "./types.js";
+
+/**
+ * Plain route-context refetch — a `load()` call with no options or a
+ * trivially-defaulted GET (no params, no body). Results from these are
+ * broadcast to every component reading the same loader id via the shared
+ * store, so a layout's refetch button updates page + parallel-slot reads
+ * automatically.
+ *
+ * Calls with explicit `params`, an explicit non-GET method, or a `body`
+ * stay local to the call site — that preserves the today-semantics of
+ * `useFetchLoader(SearchLoader).load({ params: { q } })` style code where
+ * each component owns its own fetched view.
+ */
+function isPlainRefetch(options: LoadOptions | undefined): boolean {
+  if (!options) return true;
+  if (options.method && options.method !== "GET") return false;
+  if (options.params && Object.keys(options.params).length > 0) return false;
+  if ("body" in options && (options as { body?: unknown }).body !== undefined) {
+    return false;
+  }
+  return true;
+}
 
 /**
  * Extract a specific loader's data from a content ReactNode.
@@ -132,12 +155,23 @@ function useLoaderInternal<T>(
 ): UseFetchLoaderResult<T> {
   const context = useContext(OutletContext);
 
-  // Get data from context (SSR/navigation)
-  const contextData = useMemo((): T | undefined => {
+  // Get data from context (SSR/navigation). `hasContextData` distinguishes
+  // "loader registered on the route, value happens to be undefined" from
+  // "loader is not in any parent's context at all". The shared store is
+  // only consulted when the loader really is in route context — that
+  // preserves per-component isolation for ad-hoc useFetchLoader callers
+  // who use the same fetchable loader without registering it.
+  const { contextData, hasContextData } = useMemo((): {
+    contextData: T | undefined;
+    hasContextData: boolean;
+  } => {
     let current: OutletContextValue | null | undefined = context;
     while (current) {
       if (current.loaderData && loader.$$id in current.loaderData) {
-        return current.loaderData[loader.$$id] as T;
+        return {
+          contextData: current.loaderData[loader.$$id] as T,
+          hasContextData: true,
+        };
       }
       // Check content element — the route's OutletProvider is rendered as
       // <Outlet /> content (a child), so its loaderData isn't in the parent
@@ -147,32 +181,102 @@ function useLoaderInternal<T>(
         loader.$$id,
       );
       if (contentData !== NOT_FOUND) {
-        return contentData as T;
+        return { contextData: contentData as T, hasContextData: true };
       }
       current = current.parent;
     }
-    return undefined;
+    return { contextData: undefined, hasContextData: false };
   }, [context, loader.$$id]);
 
-  // Local state for fetched data (from load() calls)
-  const [fetchedData, setFetchedData] = useState<T | undefined>(undefined);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-  const requestIdRef = useRef(0);
+  // Shared subscription: every component reading the same loader id sees
+  // the same snapshot, so a plain refetch from one component propagates to
+  // the others. Mirrors the convention used by useParams / useLinkStatus —
+  // useState seeded from the store, useEffect subscribes for updates and
+  // calls setState inside startTransition so subscriber re-renders don't
+  // trip Suspense fallbacks during a refetch (matches the per-hook
+  // startTransition the old code wrapped setFetchedData in).
+  const loaderId = loader.$$id;
+  const [sharedState, setSharedState] = useState<{
+    loaderId: string;
+    snapshot: LoaderEntry;
+  }>(() => ({
+    loaderId,
+    snapshot: loaderStore.getSnapshot(loaderId),
+  }));
+  const sharedSnapshot =
+    sharedState.loaderId === loaderId
+      ? sharedState.snapshot
+      : loaderStore.getSnapshot(loaderId);
+  useEffect(() => {
+    // Sync any value the store committed between this hook's lazy
+    // initializer and effect-time (e.g. a sibling that mounted earlier
+    // already triggered a load()).
+    const initial = loaderStore.getSnapshot(loaderId);
+    if (initial !== sharedSnapshot) {
+      startTransition(() => {
+        setSharedState({ loaderId, snapshot: initial });
+      });
+    }
+    return loaderStore.subscribe(loaderId, () => {
+      const next = loaderStore.getSnapshot(loaderId);
+      startTransition(() => {
+        setSharedState({ loaderId, snapshot: next });
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional:
+    // sharedSnapshot is captured for the one-shot init sync; we don't want
+    // to re-subscribe on every snapshot change.
+  }, [loaderId]);
 
-  // Track context data changes to reset fetched data on navigation
+  // Local state holds the result of:
+  //   - parameterized / mutation `load()` calls (load({ params }), POST,
+  //     etc.) — stay scoped so concurrent same-loader different-params
+  //     fetches don't clobber each other through the shared store;
+  //   - any `load()` made by hooks that are NOT in route context (i.e.
+  //     useFetchLoader of an unregistered loader) — keeping those local
+  //     prevents two unrelated components from accidentally sharing data
+  //     through the global store just because they reference the same
+  //     loader id.
+  const [localFetchedData, setLocalFetchedData] = useState<T | undefined>(
+    undefined,
+  );
+  const [localIsLoading, setLocalIsLoading] = useState(false);
+  const [localError, setLocalError] = useState<Error | null>(null);
+
+  // Local request id, mirrors the per-hook gating the previous
+  // implementation provided. Two quick parameterized loads from the same
+  // hook (e.g. load({ params: { q: "a" } }) then load({ params: { q: "b" } }))
+  // can resolve out of order — only the latest must commit.
+  const localRequestIdRef = useRef(0);
+
+  // Tracks the request id of the most recent SHARED load() this hook
+  // initiated. The render-throw rule below uses it to scope the throw
+  // to the originating hook only — sibling readers see the error in
+  // `error` but don't blow up their own boundaries.
+  const lastSharedRequestIdRef = useRef<number | null>(null);
+
+  // Reset on navigation. clear() bumps the entry's latest request id so
+  // any pre-navigation load() promise that resolves later fails its gate
+  // and is dropped — fixes the race where a stale fetch overwrites the
+  // new route's context.
   const prevContextDataRef = useRef(contextData);
   useEffect(() => {
     if (prevContextDataRef.current !== contextData) {
-      // Navigation happened, clear fetched data so context takes precedence
-      setFetchedData(undefined);
-      setError(null);
+      setLocalFetchedData(undefined);
+      setLocalIsLoading(false);
+      setLocalError(null);
+      lastSharedRequestIdRef.current = null;
+      loaderStore.clear(loaderId);
       prevContextDataRef.current = contextData;
     }
-  }, [contextData]);
+  }, [contextData, loaderId]);
 
-  // Data priority: fetched data (if any) > context data
-  const data = fetchedData ?? contextData;
+  // Read priority: a parameterized load() result overrides the shared
+  // snapshot; the shared snapshot overrides the server-seeded context.
+  const data =
+    localFetchedData ?? (sharedSnapshot.value as T | undefined) ?? contextData;
+  const isLoading = localIsLoading || sharedSnapshot.isLoading;
+  const error = localError ?? sharedSnapshot.error;
 
   const throwOnError = options?.throwOnError ?? true;
 
@@ -180,30 +284,47 @@ function useLoaderInternal<T>(
   // churn. loader.$$id can change if a reusable component receives a different
   // loader without remounting; data changes on every navigation. Refs keep the
   // callback stable while always reading the latest values.
-  const loaderIdRef = useRef(loader.$$id);
-  loaderIdRef.current = loader.$$id;
+  const loaderIdRef = useRef(loaderId);
+  loaderIdRef.current = loaderId;
   const dataRef = useRef(data);
   dataRef.current = data;
+  const hasContextDataRef = useRef(hasContextData);
+  hasContextDataRef.current = hasContextData;
 
   // Load function for fetching data via the ?_rsc_loader endpoint.
   // Supports GET (data fetching) and POST/PUT/PATCH/DELETE (mutations).
   const load = useCallback(
     async (loadOptions?: LoadOptions): Promise<T> => {
-      const requestId = ++requestIdRef.current;
-      const loaderId = loaderIdRef.current;
-      // Verify the loader has $$id
-      if (!loaderId) {
+      const id = loaderIdRef.current;
+      if (!id) {
         throw new Error(
           `Loader is missing $$id. Make sure the exposeLoaderId Vite plugin is enabled.`,
         );
       }
 
-      setIsLoading(true);
-      setError(null);
+      // Sharing the result is only correct when the loader is actually
+      // registered on the route — otherwise two unrelated components
+      // calling load() on the same fetchable loader would suddenly start
+      // overwriting each other's local view through the global store.
+      const shared = isPlainRefetch(loadOptions) && hasContextDataRef.current;
+      let sharedRequestId = -1;
+      let localRequestId = -1;
+      if (shared) {
+        sharedRequestId = loaderStore.reserveRequestId(id);
+        lastSharedRequestIdRef.current = sharedRequestId;
+        // beginRequest flips loading on AND clears any prior error so a
+        // throwOnError: false consumer doesn't keep showing the stale
+        // error during the retry. Gated on requestId === latest.
+        loaderStore.beginRequest(id, sharedRequestId);
+      } else {
+        localRequestId = ++localRequestIdRef.current;
+        setLocalIsLoading(true);
+        setLocalError(null);
+      }
 
       try {
         const url = new URL(window.location.href);
-        url.searchParams.set("_rsc_loader", loaderId);
+        url.searchParams.set("_rsc_loader", id);
 
         const method = loadOptions?.method ?? "GET";
         const isBodyMethod = method !== "GET";
@@ -284,16 +405,26 @@ function useLoaderInternal<T>(
         }
 
         const result = payload.loaderResult;
-        if (requestId === requestIdRef.current) {
+        if (shared) {
+          // finishData is gated on requestId; a stale response is dropped.
+          loaderStore.finishData(id, sharedRequestId, result);
+        } else if (localRequestId === localRequestIdRef.current) {
+          // Local-branch gate, mirrors the shared-branch requestId check:
+          // if a newer load() was issued from this hook before this one
+          // resolved, drop the stale result.
           startTransition(() => {
-            setFetchedData(result);
+            setLocalFetchedData(result);
+            setLocalIsLoading(false);
           });
         }
         return result;
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
-        if (requestId === requestIdRef.current) {
-          setError(err);
+        if (shared) {
+          loaderStore.finishError(id, sharedRequestId, err);
+        } else if (localRequestId === localRequestIdRef.current) {
+          setLocalError(err);
+          setLocalIsLoading(false);
         }
         if (throwOnError) {
           throw err;
@@ -302,18 +433,31 @@ function useLoaderInternal<T>(
         // successful value or undefined). Caller should check error state.
         return dataRef.current as T;
       } finally {
-        if (requestId === requestIdRef.current) {
-          setIsLoading(false);
+        if (shared) {
+          // setLoading is gated; only the latest request flips the flag off.
+          loaderStore.setLoading(id, sharedRequestId, false);
         }
       }
     },
     [throwOnError],
   );
 
-  // Throw during render if there's an error and throwOnError is true
-  // This allows ErrorBoundaries to catch async errors from load()
-  if (error && throwOnError) {
-    throw error;
+  // Throw during render if there's an error and throwOnError is true.
+  // - Local errors always belong to this hook, so always throw on opt-in.
+  // - Shared errors throw only when this hook initiated the failing
+  //   request (entry.requestId matches lastSharedRequestIdRef). Sibling
+  //   readers expose the error via `error` but do not throw, so a
+  //   throwOnError: true reader never explodes because of someone else's
+  //   throwOnError: false load() failure.
+  if (throwOnError) {
+    if (localError) throw localError;
+    if (
+      sharedSnapshot.error &&
+      lastSharedRequestIdRef.current !== null &&
+      sharedSnapshot.requestId === lastSharedRequestIdRef.current
+    ) {
+      throw sharedSnapshot.error;
+    }
   }
 
   return {
