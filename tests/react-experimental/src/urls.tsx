@@ -1,7 +1,7 @@
 import { urls, Static, Prerender } from "@rangojs/router";
 import { Meta } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
-import { Link, href } from "@rangojs/router/client";
+import { Link, href, Outlet } from "@rangojs/router/client";
 import { Counter } from "./components/Counter.js";
 import { Comments } from "./components/Comments.js";
 import { getCounter } from "./actions/counter.js";
@@ -565,6 +565,60 @@ function TransitionPageB(ctx: HandlerContext) {
         exit: {"{"} navigation: "slide-to-left", navigation-back:
         "slide-to-right" {"}"}
       </div>
+    </main>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Layout-level transition — pins back-nav firing when transition() is attached
+// at the layout segment.
+// ---------------------------------------------------------------------------
+
+function LayoutTxShell() {
+  return (
+    <div data-testid="layout-tx-shell">
+      <Outlet />
+    </div>
+  );
+}
+
+// Tall filler so scroll-to-top tests can move scrollY > 0 before navigating.
+function ScrollFiller() {
+  return (
+    <div
+      data-testid="scroll-filler"
+      style={{ height: "3000px", background: "linear-gradient(#eee, #ccc)" }}
+    />
+  );
+}
+
+function LayoutTxAPage(ctx: HandlerContext) {
+  const meta = ctx.use(Meta);
+  meta({ title: "Layout TX A" });
+  return (
+    <main data-testid="layout-tx-a-page">
+      <h1 data-testid="layout-tx-a-title">Layout TX Page A</h1>
+      {/* Mid-page link so a scroll-down position keeps the link in view —
+          Playwright's .click() would otherwise scroll it into view, resetting
+          scrollY before the click fires. */}
+      <div style={{ height: "600px" }} />
+      <Link to={href("/layout-tx-b")} data-testid="nav-layout-tx-b">
+        Go to B
+      </Link>
+      <ScrollFiller />
+    </main>
+  );
+}
+
+function LayoutTxBPage(ctx: HandlerContext) {
+  const meta = ctx.use(Meta);
+  meta({ title: "Layout TX B" });
+  return (
+    <main data-testid="layout-tx-b-page">
+      <h1 data-testid="layout-tx-b-title">Layout TX Page B</h1>
+      <Link to={href("/layout-tx-a")} data-testid="nav-layout-tx-a">
+        Go to A
+      </Link>
     </main>
   );
 }
@@ -1177,10 +1231,28 @@ function CardDetail(ctx: HandlerContext<{ slug: string }>) {
   );
 }
 
-export const urlpatterns = urls(({ path, transition, loader }) => [
+export const urlpatterns = urls(({ path, layout, transition, loader }) => [
   path("/", HomePage, { name: "home" }),
   path("/about", AboutPage, { name: "about" }),
   path("/counter", CounterPage, { name: "counter" }),
+
+  // Layout-level transition (no-children form, sibling of path()).
+  // Pins that back-nav fires the navigation-back transition type when the
+  // transition is attached at the LAYOUT segment, not the path segments.
+  layout(LayoutTxShell, () => [
+    transition({
+      enter: {
+        navigation: "slide-from-right",
+        "navigation-back": "slide-from-left",
+      },
+      exit: {
+        navigation: "slide-to-left",
+        "navigation-back": "slide-to-right",
+      },
+    }),
+    path("/layout-tx-a", LayoutTxAPage, { name: "layoutTx.a" }),
+    path("/layout-tx-b", LayoutTxBPage, { name: "layoutTx.b" }),
+  ]),
   transition({ enter: "fade-in", exit: "fade-out" }, () => [
     path("/static", StaticPage, { name: "static" }),
     path("/prerender", PrerenderedPage, { name: "prerender" }),
