@@ -89,9 +89,12 @@ export async function expectNoReload(page: Page) {
 
   return {
     [Symbol.asyncDispose]: async () => {
-      // Check if meta is preserved (no reload)
+      // Check if meta is preserved (no reload). Keep the timeout small so
+      // a real reload is reported quickly, but not so small that a busy
+      // page produces a spurious failure (which masks the real test error
+      // as a SuppressedError under `await using`).
       await expect(page.locator(`meta[name="x-reload-check"]`)).toBeAttached({
-        timeout: 1,
+        timeout: 100,
       });
       await page.evaluate(() => {
         document.querySelector(`meta[name="x-reload-check"]`)!.remove();
