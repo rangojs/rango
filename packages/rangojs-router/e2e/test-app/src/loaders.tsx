@@ -1,4 +1,5 @@
 import { createLoader, cookies } from "@rangojs/router";
+import { getCartQuantitySync } from "./cart-store.js";
 
 // Layout-level loader for segment tracking tests
 export const LayoutCountLoader = createLoader(async () => {
@@ -63,9 +64,7 @@ export const ProductDetailLoader = createLoader(async (ctx) => {
  */
 export const CartQuantityLoader = createLoader(async (ctx) => {
   const productId = ctx.params.productId!;
-  // Import dynamically to avoid "use server" directive issues
-  const { getCartQuantity } = await import("./actions.jsx");
-  const quantity = await getCartQuantity(productId);
+  const quantity = getCartQuantitySync(productId);
   return { productId, quantity };
 });
 

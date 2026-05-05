@@ -133,6 +133,7 @@ export function createVersionPlugin(): Plugin {
   let currentVersion = buildVersion;
   let isDev = false;
   let server: any = null;
+  let resolvedCacheDir: string | undefined;
   const clientModuleSignatures = new Map<string, ClientModuleSignature>();
 
   let versionCounter = 0;
@@ -157,6 +158,12 @@ export function createVersionPlugin(): Plugin {
 
     configResolved(config) {
       isDev = config.command === "serve";
+      // Capture the resolved cacheDir so we can ignore optimizer-output
+      // writes inside it. Vite resolves cacheDir against the project root,
+      // so this is a stable absolute path for the lifetime of the server.
+      resolvedCacheDir = config.cacheDir
+        ? String(config.cacheDir).replace(/\\/g, "/")
+        : undefined;
     },
 
     configureServer(devServer) {
@@ -214,6 +221,14 @@ export function createVersionPlugin(): Plugin {
 
       if (!isRscModule) return;
 
+      // Skip Vite's own pre-bundled dep cache writes. The optimizer rewrites
+      // files inside the configured `cacheDir` on every discovery cycle
+      // (and when other dev servers under the same cwd populate their own
+      // isolated cache dirs). These are not user-source changes, so bumping
+      // the app version on them produces spurious version mismatches that
+      // surface as forced reloads on in-flight actions.
+      if (isViteDepCachePath(ctx.file, resolvedCacheDir)) return;
+
       // Skip re-bumping when the version virtual module itself is invalidated
       // (our own bumpVersion() invalidates it, which re-triggers hotUpdate).
       if (
@@ -263,4 +278,46 @@ export function createVersionPlugin(): Plugin {
       bumpVersion("RSC module changed");
     },
   };
+}
+
+/**
+ * Match Vite's pre-bundled dep cache directories. These paths are rewritten
+ * by the dep optimizer (and by isolated test fixtures sharing the same cwd),
+ * not by user source changes, so they should not bump the app version (which
+ * would force a client reload mid-request).
+ *
+ * Two checks:
+ * 1. Anything inside the resolved `cacheDir` (precise — covers custom paths
+ *    like the `RANGO_E2E_VITE_CACHE_DIR` overrides in the test fixtures).
+ * 2. Heuristic match for any `node_modules/.vite*` directory or a
+ *    `.vite-isolated/` segment anywhere in the path. This catches the
+ *    *other* dev servers in the same cwd whose cacheDir we cannot read
+ *    (we only see config of the server we're attached to).
+ */
+export function isViteDepCachePath(
+  filePath: string | undefined,
+  cacheDir?: string,
+): boolean {
+  if (!filePath) return false;
+  const normalized = filePath.replace(/\\/g, "/");
+
+  if (cacheDir) {
+    const normalizedCacheDir = cacheDir.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (
+      normalized === normalizedCacheDir ||
+      normalized.startsWith(normalizedCacheDir + "/")
+    ) {
+      return true;
+    }
+  }
+
+  // Vite/optimizer convention: cache dirs always sit directly under
+  // `node_modules/` and start with `.vite` (e.g. `.vite`, `.vite-temp`,
+  // `.vite_rango_generate`, `.vite-e2e-test-app`). The `/.vite-isolated/`
+  // segment covers the test-fixture pattern that places the cache outside
+  // node_modules.
+  return (
+    /\/node_modules\/\.vite[^/]*\//.test(normalized) ||
+    normalized.includes("/.vite-isolated/")
+  );
 }

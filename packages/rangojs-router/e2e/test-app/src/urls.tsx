@@ -83,6 +83,7 @@ import {
   SlowProductDetailLoader,
 } from "./loaders.js";
 import { SlowProductLocationState } from "./location-states.js";
+import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import { Modal } from "./components/Modal.js";
 import { QuantityControl } from "./components/QuantityControl.js";
 import { SlowModalSkeleton } from "./components/SlowModalSkeleton.js";
@@ -787,20 +788,19 @@ export const urlpatterns = urls(
         },
       ),
 
-      // Test utils: read onError log (non-destructive)
+      // Test utils: read onError log (non-destructive).
+      // Imports from error-log.js (not router.js) so we can use a static
+      // import and avoid the dynamic-import / module-graph race that
+      // occasionally returned an empty log under concurrent SSR load.
       path.json(
         "/__test/last-error",
-        async () => {
-          const { onErrorLog } = await import("./router.js");
-          return onErrorLog.length > 0 ? [...onErrorLog] : null;
-        },
+        () => (onErrorLog.length > 0 ? [...onErrorLog] : null),
         { name: "testLastError" },
       ),
       // Test utils: clear onError log
       path.json(
         "/__test/clear-error-log",
-        async () => {
-          const { clearOnErrorLog } = await import("./router.js");
+        () => {
           clearOnErrorLog();
           return { cleared: true };
         },

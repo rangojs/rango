@@ -7,22 +7,12 @@ import {
 } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
+import { onErrorLog } from "./error-log.js";
 
 // App-level cache store with defaults
 export const cacheStore = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 120 },
 });
-
-// Store the last onError call for e2e test verification
-export interface OnErrorRecord {
-  phase: string;
-  message: string;
-  actionId?: string;
-}
-export const onErrorLog: OnErrorRecord[] = [];
-export function clearOnErrorLog() {
-  onErrorLog.length = 0;
-}
 
 /**
  * App-level bindings (platform resources like DB, KV, etc.)

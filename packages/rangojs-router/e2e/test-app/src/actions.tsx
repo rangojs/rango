@@ -3,38 +3,21 @@
 import { ReactNode } from "react";
 import { cookies, getRequestContext, redirect } from "@rangojs/router";
 import { FlashMessage } from "./location-states.js";
+import {
+  getCurrentCart,
+  getCartQuantitySync,
+  resetCurrentCart,
+} from "./cart-store.js";
 
 // Simulated delay helper
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// Cart state keyed by cart ID (cookie-based isolation for parallel tests)
-const carts: Map<string, Map<string, number>> = new Map();
-
-function getCartId(): string {
-  const jar = cookies();
-  let cartId = jar.get("cart-id")?.value;
-  if (!cartId) {
-    cartId = Math.random().toString(36).slice(2);
-    jar.set("cart-id", cartId, { path: "/" });
-  }
-  return cartId;
-}
-
-function getCart(cartId: string): Map<string, number> {
-  let cart = carts.get(cartId);
-  if (!cart) {
-    cart = new Map();
-    carts.set(cartId, cart);
-  }
-  return cart;
-}
 
 /**
  * Add item to cart - fire and forget pattern
  */
 export async function addToCart(productId: string): Promise<void> {
   await delay(100);
-  const cart = getCart(getCartId());
+  const cart = getCurrentCart();
   const current = cart.get(productId) || 0;
   cart.set(productId, current + 1);
 }
@@ -46,7 +29,7 @@ export async function addToCartWithResult(
   productId: string,
 ): Promise<{ success: boolean; quantity: number; message: string }> {
   await delay(100);
-  const cart = getCart(getCartId());
+  const cart = getCurrentCart();
   const current = cart.get(productId) || 0;
   const newQuantity = current + 1;
   cart.set(productId, newQuantity);
@@ -65,7 +48,7 @@ export async function updateQuantity(
   delta: number,
 ): Promise<{ quantity: number }> {
   await delay(50);
-  const cart = getCart(getCartId());
+  const cart = getCurrentCart();
   const current = cart.get(productId) || 0;
   const newQuantity = Math.max(0, current + delta);
   if (newQuantity === 0) {
@@ -80,8 +63,7 @@ export async function updateQuantity(
  * Get cart quantity for a product
  */
 export async function getCartQuantity(productId: string): Promise<number> {
-  const cart = getCart(getCartId());
-  return cart.get(productId) || 0;
+  return getCartQuantitySync(productId);
 }
 
 /**
@@ -101,8 +83,7 @@ export async function streamingAction(
  * Reset cart - for test cleanup
  */
 export async function resetCart(): Promise<void> {
-  const cartId = getCartId();
-  carts.delete(cartId);
+  resetCurrentCart();
 }
 
 // Dummy action for prerender client component tests

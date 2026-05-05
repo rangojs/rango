@@ -17,7 +17,7 @@ async function waitForOnError(
   page: import("@playwright/test").Page,
   errorUrl: string,
   expectedPhase: string,
-  timeout = 10000,
+  timeout = 20000,
 ): Promise<{ phase: string; message: string; actionId?: string }> {
   let result: any = null;
   await expect
@@ -67,8 +67,20 @@ function onErrorTests(f: ReturnType<typeof useFixture>) {
     // Clear any previous errors
     await page.request.get(f.url("/__test/clear-error-log"));
 
-    // Trigger action that throws
+    // Trigger action that throws and wait for the action's POST to complete
+    // before polling the error log. Server actions POST to the page URL with
+    // `?_rsc_action=<id>` — by the time that response returns, the server has
+    // already invoked the onError callback, so the log read becomes a single
+    // deterministic check rather than a poll racing the cold-loaded action
+    // endpoint.
+    const actionResponse = page.waitForResponse(
+      (resp) =>
+        resp.request().method() === "POST" &&
+        resp.url().includes("_rsc_action="),
+      { timeout: 30000 },
+    );
     await page.locator('[data-testid="throw-error-btn"]').click();
+    await actionResponse;
 
     const error = await waitForOnError(
       page,
