@@ -548,4 +548,90 @@ test.describe.serial("route-types-hmr", () => {
       expect(result["factoryHmr.gamma"]).toBeNull();
     }).toPass({ timeout: WATCHER_TIMEOUT });
   });
+
+  // -- Recovery mode test --
+  // Models the user-reported "stuck after recovery" pattern:
+  //   1. A route-file edit triggers HMR re-discovery.
+  //   2. Discovery throws because a non-route file in the import chain
+  //      (here: blog.handlers.tsx) has a syntax error.
+  //   3. The user fixes the non-route file. Without recovery mode, the
+  //      watcher silently skips this change (no urls()/createRouter
+  //      content match) and the manifest stays frozen at last-good.
+  //   4. With recovery mode, the watcher treats any in-scan source
+  //      change as a candidate while lastDiscoveryError is set, so the
+  //      handlers fix triggers rediscovery and the manifest unsticks.
+
+  test("recovery: helper-file fix after broken-import error re-runs discovery", async () => {
+    // Without isolatedServer this test cannot observe the dev server's
+    // stderr, so the wait-for-failure step below would silently degrade
+    // into a fixed sleep. Skip in that case rather than passing falsely.
+    test.skip(
+      !f.proc(),
+      "isolatedServer required to observe dev-server stderr for the failed-rediscovery marker",
+    );
+
+    // Sanity: the new route doesn't exist yet.
+    const before = await fs.readFile(genFilePath, "utf-8");
+    expect(before).not.toContain('"blog.recovered"');
+
+    // Snapshot stderr length so the wait below only matches a NEW
+    // failure produced by this test's writes, not a pre-existing one
+    // from earlier serial tests.
+    const proc = f.proc()!;
+    const stderrAtStart = proc.stderr().length;
+    const FAILURE_MARKER = "Runtime re-discovery failed";
+
+    // 1. Add a new route to blog.tsx AND break blog.handlers.tsx with
+    //    a syntax error in one shot. Both writes are debounced into a
+    //    single rediscovery cycle, which throws when the broken handlers
+    //    file is imported via the entry chain.
+    const modifiedBlogUrls = originalBlogContent.replace(
+      'path("/:postId", BlogPostHandler, { name: "post" }),',
+      `path("/:postId", BlogPostHandler, { name: "post" }),
+    path("/recovered", BlogPostHandler, { name: "recovered" }),`,
+    );
+    const brokenHandlers =
+      originalHandlersContent + "\n\n// recovery-test syntax error\n}}}}\n";
+    await fs.writeFile(blogUrlsPath, modifiedBlogUrls);
+    await fs.writeFile(handlersPath, brokenHandlers);
+
+    // 2. Wait until the dev server logs the rediscovery failure. Polling
+    //    on this marker (instead of a fixed sleep) ensures the test only
+    //    proceeds once recovery mode is actually entered — otherwise
+    //    a slow watcher could let the handlers fix in step 3 race ahead
+    //    and the test would pass via a normal (non-recovery) rediscovery.
+    await expect(async () => {
+      const fresh = proc.stderr().slice(stderrAtStart);
+      expect(fresh).toContain(FAILURE_MARKER);
+    }).toPass({ timeout: WATCHER_TIMEOUT });
+
+    // While in the broken state, the gen file must still be at last-good.
+    const duringErr = await fs.readFile(genFilePath, "utf-8");
+    expect(duringErr).not.toContain('"blog.recovered"');
+
+    try {
+      // 3. Fix blog.handlers.tsx WITHOUT re-touching blog.tsx. The
+      //    handlers file has no urls()/createRouter, so the pre-fix
+      //    watcher would skip it. Recovery mode must trigger
+      //    rediscovery anyway because lastDiscoveryError is set.
+      await fs.writeFile(handlersPath, originalHandlersContent);
+
+      // 4. Recovery rediscovery succeeds, gen file gets the new route.
+      await expect(async () => {
+        const gen = await fs.readFile(genFilePath, "utf-8");
+        expect(gen).toContain('"blog.recovered"');
+        expect(gen).toContain("/blog/recovered");
+      }).toPass({ timeout: WATCHER_TIMEOUT });
+
+      // Runtime manifest stays in sync after recovery.
+      await expect(async () => {
+        const result = await queryReverse(["blog.recovered"]);
+        expect(result["blog.recovered"]).toBe("/blog/recovered");
+      }).toPass({ timeout: RUNTIME_TIMEOUT });
+    } finally {
+      // Restore the route file (afterEach also does this; we do it
+      // here for promptness so a subsequent test sees a clean state).
+      await fs.writeFile(blogUrlsPath, originalBlogContent);
+    }
+  });
 });

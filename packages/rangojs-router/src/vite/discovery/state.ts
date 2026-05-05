@@ -76,6 +76,14 @@ export interface DiscoveryState {
   resolvedBuildEnv?: Record<string, unknown>;
   /** Cleanup function for build-time env resources (e.g., miniflare). */
   buildEnvDispose?: (() => Promise<void> | void) | null;
+
+  /**
+   * Set when the most recent HMR re-discovery threw. Cleared on the next
+   * successful discovery. Surfaced via debug logs so we can detect "manifest
+   * frozen at last-good after error → user fix in non-route file → no
+   * rediscovery trigger" scenarios.
+   */
+  lastDiscoveryError?: { message: string; at: number } | null;
 }
 
 export function createDiscoveryState(
@@ -113,5 +121,6 @@ export function createDiscoveryState(
     devServer: null,
     selfWrittenGenFiles: new Map(),
     SELF_WRITE_WINDOW_MS: 5_000,
+    lastDiscoveryError: null,
   };
 }
