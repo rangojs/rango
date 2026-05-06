@@ -291,6 +291,21 @@ test.describe("useRouter", () => {
       timeout: 5000,
     });
   });
+
+  test("back() on first session entry falls back to / instead of leaving host", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Land directly on the test page — no router-pushed history yet.
+    await page.goto(f.url("/hook-tests/use-router"));
+    await waitForHydration(page);
+
+    // Click back without any prior router.push — should redirect to /
+    // rather than calling history.back() and escaping the origin.
+    await testId(page, "router-back-btn").click();
+    await expect(page).toHaveURL(f.url("/"), { timeout: 5000 });
+  });
 });
 
 // ============================================================================
@@ -519,6 +534,18 @@ test.describe("useRouter (production)", () => {
       timeout: 5000,
     });
     await expect(page).toHaveURL(/\/hook-tests\/use-router\/target-a/);
+  });
+
+  test("back() on first session entry falls back to / instead of leaving host", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/hook-tests/use-router"));
+    await waitForHydration(page);
+
+    await testId(page, "router-back-btn").click();
+    await expect(page).toHaveURL(f.url("/"), { timeout: 5000 });
   });
 
   test("useRouter reference should be stable across renders", async ({

@@ -72,7 +72,20 @@ export function useRouter(): RouterInstance {
       },
 
       back(): void {
-        window.history.back();
+        // Avoid escaping the host on the first entry of this session.
+        // Prefer the Navigation API; fall back to the router-stamped
+        // history.state.idx (set by pushHistoryWithIdx) for older browsers.
+        const nav = (window as { navigation?: { canGoBack: boolean } })
+          .navigation;
+        const canGoBack =
+          nav && typeof nav.canGoBack === "boolean"
+            ? nav.canGoBack
+            : ((window.history.state as { idx?: number } | null)?.idx ?? 0) > 0;
+        if (canGoBack) {
+          window.history.back();
+        } else {
+          ctx.navigate(withBasename("/"), { replace: true });
+        }
       },
 
       forward(): void {
