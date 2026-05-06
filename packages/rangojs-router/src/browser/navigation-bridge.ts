@@ -13,7 +13,7 @@ import {
   createNavigationTransaction,
   resolveNavigationState,
 } from "./navigation-transaction.js";
-import { buildHistoryState } from "./history-state.js";
+import { buildHistoryState, pushHistoryWithIdx } from "./history-state.js";
 import {
   handleNavigationStart,
   handleNavigationEnd,
@@ -204,11 +204,7 @@ export function createNavigationBridge(
           },
           {},
         );
-        if (options.replace) {
-          window.history.replaceState(historyState, "", url);
-        } else {
-          window.history.pushState(historyState, "", url);
-        }
+        pushHistoryWithIdx(historyState, url, options?.replace ?? false);
 
         // Ensure new history entry has a scroll restoration key
         ensureHistoryKey();

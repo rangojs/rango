@@ -11,7 +11,7 @@ import {
 } from "./scroll-restoration.js";
 import type { EventController, NavigationHandle } from "./event-controller.js";
 import { debugLog } from "./logging.js";
-import { buildHistoryState } from "./history-state.js";
+import { buildHistoryState, pushHistoryWithIdx } from "./history-state.js";
 
 // Re-export for consumers that import from navigation-transaction
 export { resolveNavigationState } from "./history-state.js";
@@ -186,12 +186,8 @@ export function createNavigationTransaction(
     // Used to detect when location state is being cleared.
     const oldState = window.history.state;
 
-    // Update browser URL
-    if (replace) {
-      window.history.replaceState(historyState, "", url);
-    } else {
-      window.history.pushState(historyState, "", url);
-    }
+    // Update browser URL (stamps history.state.idx for back() first-entry detection)
+    pushHistoryWithIdx(historyState, url, replace ?? false);
     // Ensure new history entry has a scroll restoration key
     ensureHistoryKey();
 

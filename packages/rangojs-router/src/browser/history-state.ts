@@ -62,6 +62,27 @@ export function buildHistoryState(
 }
 
 /**
+ * Stamp an `idx` on the next history entry's state and call push/replaceState.
+ * Push increments the current idx; replace keeps it. Initial entry idx is 0.
+ * Used by useRouter().back() to detect "first entry in this session" without
+ * relying on the Navigation API.
+ */
+export function pushHistoryWithIdx(
+  state: Record<string, unknown> | null,
+  url: string,
+  replace: boolean,
+): void {
+  const oldIdx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+  const newIdx = replace ? oldIdx : oldIdx + 1;
+  const finalState = { ...(state ?? {}), idx: newIdx };
+  if (replace) {
+    window.history.replaceState(finalState, "", url);
+  } else {
+    window.history.pushState(finalState, "", url);
+  }
+}
+
+/**
  * Merge server-set location state into the current history entry.
  * Replaces the current history state and dispatches notification event
  * so useLocationState hooks re-read from history.state.
