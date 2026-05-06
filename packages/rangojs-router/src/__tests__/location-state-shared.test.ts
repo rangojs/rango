@@ -74,4 +74,157 @@ describe("location-state-shared", () => {
     ).toBe(false);
     expect(isLocationStateEntry(null)).toBe(false);
   });
+
+  describe("write()", () => {
+    it("writes value under the slot's key, merging with existing history.state", () => {
+      const ProductState = createLocationState<{ id: string }>();
+      (ProductState as any).__rsc_ls_key = "product";
+
+      const replaceState = vi.fn();
+      vi.stubGlobal("window", {
+        history: {
+          state: { __rango_key: "abc", other: { keep: true } },
+          replaceState,
+        },
+        location: { href: "https://example.test/page" },
+      });
+
+      ProductState.write({ id: "p1" });
+
+      expect(replaceState).toHaveBeenCalledTimes(1);
+      expect(replaceState).toHaveBeenCalledWith(
+        {
+          __rango_key: "abc",
+          other: { keep: true },
+          product: { id: "p1" },
+        },
+        "",
+        "https://example.test/page",
+      );
+    });
+
+    it("replaces the slot's value (no deep merge of T)", () => {
+      const ProductState = createLocationState<{ id: string; name?: string }>();
+      (ProductState as any).__rsc_ls_key = "product";
+
+      const replaceState = vi.fn();
+      vi.stubGlobal("window", {
+        history: {
+          state: { product: { id: "p1", name: "Widget" } },
+          replaceState,
+        },
+        location: { href: "https://example.test/page" },
+      });
+
+      ProductState.write({ id: "p2" });
+
+      expect(replaceState).toHaveBeenCalledWith(
+        { product: { id: "p2" } },
+        "",
+        "https://example.test/page",
+      );
+    });
+
+    it("handles null history.state by initializing a fresh dict", () => {
+      const ProductState = createLocationState<{ id: string }>();
+      (ProductState as any).__rsc_ls_key = "product";
+
+      const replaceState = vi.fn();
+      vi.stubGlobal("window", {
+        history: { state: null, replaceState },
+        location: { href: "https://example.test/page" },
+      });
+
+      ProductState.write({ id: "p1" });
+
+      expect(replaceState).toHaveBeenCalledWith(
+        { product: { id: "p1" } },
+        "",
+        "https://example.test/page",
+      );
+    });
+
+    it("throws on the server (no window)", () => {
+      const ProductState = createLocationState<{ id: string }>();
+      (ProductState as any).__rsc_ls_key = "product";
+
+      restoreWindow();
+      delete (globalThis as Record<string, unknown>).window;
+
+      expect(() => ProductState.write({ id: "p1" })).toThrow(
+        "LocationState.write() is client-only",
+      );
+    });
+  });
+
+  describe("delete()", () => {
+    it("removes only this slot's key, preserving other history.state entries", () => {
+      const ProductState = createLocationState<{ id: string }>();
+      (ProductState as any).__rsc_ls_key = "product";
+
+      const replaceState = vi.fn();
+      vi.stubGlobal("window", {
+        history: {
+          state: {
+            __rango_key: "abc",
+            product: { id: "p1" },
+            other: { keep: true },
+          },
+          replaceState,
+        },
+        location: { href: "https://example.test/page" },
+      });
+
+      ProductState.delete();
+
+      expect(replaceState).toHaveBeenCalledTimes(1);
+      expect(replaceState).toHaveBeenCalledWith(
+        { __rango_key: "abc", other: { keep: true } },
+        "",
+        "https://example.test/page",
+      );
+    });
+
+    it("is a no-op when the slot is absent", () => {
+      const ProductState = createLocationState<{ id: string }>();
+      (ProductState as any).__rsc_ls_key = "product";
+
+      const replaceState = vi.fn();
+      vi.stubGlobal("window", {
+        history: { state: { __rango_key: "abc" }, replaceState },
+        location: { href: "https://example.test/page" },
+      });
+
+      ProductState.delete();
+
+      expect(replaceState).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op when history.state is null", () => {
+      const ProductState = createLocationState<{ id: string }>();
+      (ProductState as any).__rsc_ls_key = "product";
+
+      const replaceState = vi.fn();
+      vi.stubGlobal("window", {
+        history: { state: null, replaceState },
+        location: { href: "https://example.test/page" },
+      });
+
+      ProductState.delete();
+
+      expect(replaceState).not.toHaveBeenCalled();
+    });
+
+    it("throws on the server (no window)", () => {
+      const ProductState = createLocationState<{ id: string }>();
+      (ProductState as any).__rsc_ls_key = "product";
+
+      restoreWindow();
+      delete (globalThis as Record<string, unknown>).window;
+
+      expect(() => ProductState.delete()).toThrow(
+        "LocationState.delete() is client-only",
+      );
+    });
+  });
 });

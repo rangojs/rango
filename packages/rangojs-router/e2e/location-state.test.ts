@@ -952,3 +952,164 @@ test.describe("stateful-navigation-superseded (production)", () => {
     expect(page.url()).toContain("/location-state/link-state/plain-target");
   });
 });
+
+/**
+ * LocationState.write() / .delete() — static, non-reactive client API.
+ *
+ * Contract under test:
+ *  1. write() persists across hard reload (history.state survives)
+ *  2. write() persists across back/forward
+ *  3. write() does not trigger useLocationState() readers (no event)
+ *  4. write() merges with existing history.state (router bookkeeping intact)
+ *  5. delete() removes the slot but leaves the rest of history.state
+ */
+function staticWriteSuite(f: ReturnType<typeof useFixture>) {
+  test("write persists across hard reload", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/static-write"));
+    await waitForHydration(page);
+
+    await page.locator('[data-testid="sw-write-a"]').click();
+    await expect(page.locator('[data-testid="sw-static-value"]')).toHaveText(
+      "alpha:1",
+    );
+
+    await page.reload();
+    await waitForHydration(page);
+
+    await expect(page.locator('[data-testid="sw-static-value"]')).toHaveText(
+      "alpha:1",
+    );
+  });
+
+  test("write persists across back/forward", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/static-write"));
+    await waitForHydration(page);
+
+    await page.locator('[data-testid="sw-write-b"]').click();
+    await expect(page.locator('[data-testid="sw-static-value"]')).toHaveText(
+      "beta:2",
+    );
+
+    await page.locator('[data-testid="sw-other-link"]').click();
+    await expect(page.locator('[data-testid="ls-other-page"]')).toBeVisible();
+
+    await goBack(page);
+    await expect(page.locator('[data-testid="ls-static-write"]')).toBeVisible();
+
+    // Fresh mount re-reads from history.state on the original entry.
+    await expect(page.locator('[data-testid="sw-static-value"]')).toHaveText(
+      "beta:2",
+    );
+  });
+
+  test("write is non-reactive: useLocationState does not update without nav", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/static-write"));
+    await waitForHydration(page);
+
+    // After mount, both surfaces show their "no value" rendering.
+    await expect(page.locator('[data-testid="sw-static-empty"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="sw-reactive-empty"]'),
+    ).toBeVisible();
+
+    await page.locator('[data-testid="sw-write-a"]').click();
+
+    await expect(page.locator('[data-testid="sw-static-value"]')).toHaveText(
+      "alpha:1",
+    );
+
+    // write() must not dispatch popstate or __rsc_locationstate; the
+    // reactive reader stays empty until the next real navigation.
+    await expect(
+      page.locator('[data-testid="sw-reactive-empty"]'),
+    ).toBeVisible();
+  });
+
+  test("write merges with existing history.state; delete only removes the slot", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/location-state/static-write"));
+    await waitForHydration(page);
+
+    // Seed an unrelated marker key so we can assert merge behavior
+    // independently of any router-managed keys (which may or may not be
+    // present on a direct page load).
+    await page.evaluate(() => {
+      window.history.replaceState(
+        { ...(window.history.state ?? {}), __test_marker: "preserve-me" },
+        "",
+      );
+    });
+    const beforeKeys = await page.evaluate(() =>
+      Object.keys(window.history.state ?? {}).sort(),
+    );
+    expect(beforeKeys).toContain("__test_marker");
+
+    await page.locator('[data-testid="sw-write-a"]').click();
+    await expect(page.locator('[data-testid="sw-static-value"]')).toHaveText(
+      "alpha:1",
+    );
+
+    const afterWrite = (await getHistoryState(page)) as Record<string, unknown>;
+    // All pre-existing keys still present.
+    for (const k of beforeKeys) {
+      expect(afterWrite).toHaveProperty(k);
+    }
+    expect(afterWrite.__test_marker).toBe("preserve-me");
+    // Exactly one new slot, holding the written value.
+    const writtenSlot = Object.entries(afterWrite).find(([k, v]) => {
+      if (beforeKeys.includes(k)) return false;
+      return (
+        v !== null &&
+        typeof v === "object" &&
+        "label" in v &&
+        (v as { label: unknown }).label === "alpha"
+      );
+    })?.[0];
+    expect(
+      writtenSlot,
+      "expected one new slot to hold the written value",
+    ).toBeDefined();
+
+    await page.locator('[data-testid="sw-delete"]').click();
+    await expect(page.locator('[data-testid="sw-static-empty"]')).toBeVisible();
+
+    const afterDelete = (await getHistoryState(page)) as Record<
+      string,
+      unknown
+    >;
+    // Pre-existing keys still intact.
+    for (const k of beforeKeys) {
+      expect(afterDelete).toHaveProperty(k);
+    }
+    expect(afterDelete.__test_marker).toBe("preserve-me");
+    // Slot we wrote is gone.
+    if (writtenSlot) {
+      expect(afterDelete).not.toHaveProperty(writtenSlot);
+    }
+
+    // Navigation still works after write+delete.
+    await page.locator('[data-testid="sw-index-link"]').click();
+    await expect(page.locator('[data-testid="ls-index"]')).toBeVisible();
+  });
+}
+
+test.describe("location-state.static-write", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+  staticWriteSuite(f);
+});
+
+test.describe("location-state.static-write (production)", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
+  staticWriteSuite(f);
+});

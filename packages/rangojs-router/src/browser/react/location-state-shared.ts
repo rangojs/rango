@@ -34,8 +34,43 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
   __rsc_ls_key: string;
   /** Whether this state auto-clears after first read */
   readonly __rsc_ls_flash: boolean;
-  /** Read the current value from history.state (client-side only, undefined during SSR) */
+  /**
+   * Read the current value from history.state.
+   *
+   * Returns undefined during SSR (no `window`). To stay hydration-safe, do
+   * NOT call read() inline during the initial render — the server returns
+   * undefined while the client may have a value preserved in history.state
+   * (e.g. after a hard reload of an entry that earlier called write()),
+   * which causes a hydration mismatch. Call read() inside an event handler
+   * or a useEffect post-mount instead, or use useLocationState() if you
+   * want React to manage subscription/hydration for you.
+   */
   read(): TState | undefined;
+  /**
+   * Statically write the value into the current history entry under this
+   * definition's key, preserving any other keys already on history.state
+   * (e.g. router bookkeeping, other LocationState slots).
+   *
+   * This is the non-reactive counterpart to read(): it does not dispatch any
+   * event, so components reading via useLocationState() will NOT re-render
+   * until the next navigation/popstate. Use it when you only need the value
+   * to be there on the next read() or on the next mount (including after
+   * back/forward and hard refresh of the same entry).
+   *
+   * Client-only: throws when called on the server (no history available).
+   */
+  write(value: TState): void;
+  /**
+   * Statically remove this definition's slot from the current history entry,
+   * leaving any other keys on history.state untouched. Idempotent: removing
+   * a slot that isn't present is a no-op.
+   *
+   * Same non-reactive semantics as write(): no event is dispatched, so
+   * useLocationState() readers will NOT re-render until the next navigation.
+   *
+   * Client-only: throws when called on the server (no history available).
+   */
+  delete(): void;
 }
 
 /**
@@ -70,6 +105,15 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
  *
  * // Read without hook (snapshot, client-side only)
  * const snap = ProductState.read();
+ *
+ * // Static write to current history entry (non-reactive, client-side only).
+ * // Survives back/forward and hard refresh; useLocationState() readers will
+ * // NOT see the new value until the next navigation. Pair with .read() or a
+ * // fresh mount.
+ * ProductState.write({ name: "Widget", price: 9.99 });
+ *
+ * // Manually clear the slot (non-reactive, client-side only).
+ * ProductState.delete();
  * ```
  */
 export function createLocationState<TState>(
@@ -124,6 +168,43 @@ export function createLocationState<TState>(
     value: (): TState | undefined => {
       if (typeof window === "undefined") return undefined;
       return window.history.state?.[getKey()] as TState | undefined;
+    },
+    enumerable: true,
+  });
+
+  Object.defineProperty(fn, "write", {
+    value: (value: TState): void => {
+      if (typeof window === "undefined") {
+        throw new Error(
+          "[rsc-router] LocationState.write() is client-only. " +
+            "It mutates window.history.state and cannot run on the server.",
+        );
+      }
+      const key = getKey();
+      const current = window.history.state ?? {};
+      window.history.replaceState(
+        { ...current, [key]: value },
+        "",
+        window.location.href,
+      );
+    },
+    enumerable: true,
+  });
+
+  Object.defineProperty(fn, "delete", {
+    value: (): void => {
+      if (typeof window === "undefined") {
+        throw new Error(
+          "[rsc-router] LocationState.delete() is client-only. " +
+            "It mutates window.history.state and cannot run on the server.",
+        );
+      }
+      const key = getKey();
+      const current = window.history.state;
+      if (current == null || !(key in current)) return;
+      const next = { ...current };
+      delete next[key];
+      window.history.replaceState(next, "", window.location.href);
     },
     enumerable: true,
   });
