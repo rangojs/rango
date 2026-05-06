@@ -552,6 +552,43 @@ const flash = FlashMessage.read();
 const product = ProductState.read();
 ```
 
+> **Hydration:** `.read()` returns `undefined` on the server but may return
+> a real value on the first client render (history state survives reload).
+> Do not call `.read()` directly during the initial render of a component;
+> call it from an event handler or inside a `useEffect` post-mount. For
+> reactive hydration-safe access, use `useLocationState()` instead.
+
+### .write() / .delete() (static, non-reactive)
+
+Static counterparts to `.read()`. Both mutate the current history entry's
+`history.state` via `replaceState`, preserving any other keys (router
+bookkeeping, other location state slots). Both are client-only; they throw
+when called on the server.
+
+Neither dispatches an event, so components reading via `useLocationState`
+will NOT re-render until the next navigation/popstate. Pair with `.read()`
+(or a fresh mount via back/forward/reload) instead.
+
+```tsx
+"use client";
+import { ProductState } from "./state";
+
+// Persisted across hard refresh and back/forward of this entry.
+ProductState.write({ name: "Widget", price: 9.99 });
+
+// Read later (or on next mount).
+const current = ProductState.read();
+
+// Manually clear the slot. Idempotent if it isn't set.
+ProductState.delete();
+```
+
+| Method      | Updates `history.state` | Fires `useLocationState` rerender | SSR behavior        |
+| ----------- | ----------------------- | --------------------------------- | ------------------- |
+| `.read()`   | no                      | n/a (returns snapshot)            | returns `undefined` |
+| `.write()`  | yes (replace this slot) | no                                | throws              |
+| `.delete()` | yes (remove this slot)  | no                                | throws              |
+
 ## Cache Hooks
 
 ### useClientCache()

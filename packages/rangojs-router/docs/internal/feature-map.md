@@ -175,8 +175,8 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
 
 ### Location State
 
-- `createLocationState()` -- typed state definitions
-- `useLocationState()` -- read/write navigation state
+- `createLocationState()` -- typed state definitions; each definition exposes `.read()`, `.write()`, and `.delete()` for static (non-reactive) access to its slot in `history.state`
+- `useLocationState()` -- reactive hook; updates on popstate / `__rsc_locationstate` (does NOT update on static `.write()` / `.delete()`)
 - `redirect()` integration with location state
 
 ### Handle Data

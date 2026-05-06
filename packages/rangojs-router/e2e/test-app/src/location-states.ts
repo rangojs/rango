@@ -27,3 +27,10 @@ export interface ServerInfoState {
 }
 
 export const ServerInfo = createLocationState<ServerInfoState>();
+
+export interface StaticWriteDemoState {
+  label: string;
+  count: number;
+}
+
+export const StaticWriteDemo = createLocationState<StaticWriteDemoState>();

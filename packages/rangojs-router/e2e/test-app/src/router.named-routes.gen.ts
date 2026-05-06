@@ -156,6 +156,7 @@ export const NamedRoutes = {
   "locationState.mwRedirect": "/location-state/mw-redirect",
   "locationState.other": "/location-state/other",
   "locationState.redirect303": "/location-state/redirect-303",
+  "locationState.staticWrite": "/location-state/static-write",
   "locationState.target": "/location-state/target",
   "locationState.triggerCtxState": "/location-state/trigger-ctx-state",
   "locationState.triggerRedirect": "/location-state/trigger-redirect",
