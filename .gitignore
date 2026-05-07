@@ -4,6 +4,7 @@ dist
 .wrangler
 playwright-report
 test-results
+bundle-stats
 
 # Lefthook local overrides
 lefthook-local.yml

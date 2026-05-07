@@ -2,6 +2,7 @@ import { cloudflare } from "@cloudflare/vite-plugin";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { rango } from "@rangojs/router/vite";
+import { analyze } from "../../tools/bundle-analyze";
 
 export default defineConfig({
   server: {
@@ -15,5 +16,6 @@ export default defineConfig({
       configPath: "./wrangler.json",
       viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
     }),
+    ...analyze(),
   ],
 });
