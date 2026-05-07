@@ -5,6 +5,7 @@ dist
 playwright-report
 test-results
 bundle-stats
+.DS_Store
 
 # Lefthook local overrides
 lefthook-local.yml

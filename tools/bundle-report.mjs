@@ -144,11 +144,24 @@ const SERVER_PATTERNS = [
   { name: "src/rsc/", re: /\/packages\/rangojs-router\/src\/rsc\// },
 ];
 
-console.log("\n## 2. Server-only modules in CLIENT bundles\n");
+// App-side heuristics. Heuristic only — file naming is a *signal*, not a
+// guarantee. Hits warrant manual review; misses don't prove cleanliness.
+const APP_SERVER_PATTERNS = [
+  { name: "node: built-in imports", re: /^node:[a-z]/ },
+  { name: "cloudflare: imports", re: /^cloudflare:/ },
+  { name: "*.server.{ts,tsx,js,jsx} convention", re: /\.server\.(tsx?|jsx?|mjs|cjs)$/ },
+  { name: "/db.* or /database/ paths", re: /\/(db|database)[./]/ },
+  { name: "/secrets, /credentials, /keys", re: /\/(secrets|credentials|keys?)\// },
+  { name: "common DB clients", re: /\/(pg|mysql2?|mongodb|mongoose|prisma|redis|ioredis|drizzle-orm)\// },
+  { name: "auth/server modules", re: /\/auth\.server\./ },
+  { name: "node-only npm packages", re: /\/(bcrypt|argon2|nodemailer|@sendgrid|googleapis|@aws-sdk)\// },
+];
+
+console.log("\n## 2. Router-internal server modules in CLIENT bundles\n");
 console.log(
-  "Modules from these paths SHOULD NOT contribute bytes to client. Reporting actual gzip bytes:\n",
+  "Modules from `@rangojs/router/src/{server,host,handlers,build,vite,rsc}` and the server-only `src/router/*` files SHOULD NOT contribute bytes to client. This audits ROUTER internals only — for app-owned leaks see Section 2b.\n",
 );
-let anyLeak = false;
+let anyRouterLeak = false;
 for (const app of apps) {
   const rows = results.get(`${app}/client`);
   if (!rows) continue;
@@ -164,10 +177,10 @@ for (const app of apps) {
   const reallyLeaking = found.filter((f) => f.totalRendered > 0 || f.totalGzip > 0);
   if (reallyLeaking.length === 0) {
     const names = found.map((f) => f.pat).join(", ");
-    console.log(`- **${app}**: ${found.length} server-pattern paths listed, all 0 bytes (tree-shaken stubs): ${names}`);
+    console.log(`- **${app}**: ${found.length} router-server paths listed, all 0 bytes (tree-shaken stubs): ${names}`);
   } else {
-    anyLeak = true;
-    console.log(`- **${app}** ⚠️ REAL LEAK:`);
+    anyRouterLeak = true;
+    console.log(`- **${app}** ⚠️ ROUTER LEAK:`);
     for (const f of reallyLeaking) {
       console.log(`    - ${f.pat}: ${fmt(f.totalGzip)} gzip / ${fmt(f.totalRendered)} rendered (${f.count} file(s))`);
       for (const file of f.files) {
@@ -178,7 +191,53 @@ for (const app of apps) {
     }
   }
 }
-if (!anyLeak) console.log("\n**Verdict: no server code leaks into client bundles.**");
+if (!anyRouterLeak)
+  console.log(
+    "\n**Verdict: no `@rangojs/router` server code leaks into client bundles.** (App-owned code: see Section 2b.)",
+  );
+
+console.log("\n## 2b. App-owned server-shaped modules in CLIENT bundles\n");
+console.log(
+  "Heuristic check for app code that *looks* server-only: `node:` imports, `*.server.ts` convention, common server packages, db/auth/secrets paths. Hits are not guaranteed leaks — confirm by inspecting the file. Misses don't prove cleanliness; some leaks won't match these patterns.\n",
+);
+let anyAppLeak = false;
+for (const app of apps) {
+  const rows = results.get(`${app}/client`);
+  if (!rows) continue;
+  const found = [];
+  for (const pat of APP_SERVER_PATTERNS) {
+    const matched = rows.filter((r) => {
+      // Skip @rangojs/router internals — those go in Section 2.
+      if (r.path.includes("/packages/rangojs-router/")) return false;
+      return pat.re.test(r.path);
+    });
+    if (matched.length === 0) continue;
+    const totalGzip = matched.reduce((a, r) => a + r.gzip, 0);
+    const totalRendered = matched.reduce((a, r) => a + r.rendered, 0);
+    found.push({ pat: pat.name, count: matched.length, totalGzip, totalRendered, files: matched });
+  }
+  if (found.length === 0) continue;
+  const reallyLeaking = found.filter((f) => f.totalRendered > 0 || f.totalGzip > 0);
+  if (reallyLeaking.length === 0) {
+    const names = found.map((f) => f.pat).join(", ");
+    console.log(`- **${app}**: ${found.length} app-server pattern paths listed, all 0 bytes (tree-shaken stubs): ${names}`);
+  } else {
+    anyAppLeak = true;
+    console.log(`- **${app}** ⚠️ APP LEAK CANDIDATE:`);
+    for (const f of reallyLeaking) {
+      console.log(`    - ${f.pat}: ${fmt(f.totalGzip)} gzip / ${fmt(f.totalRendered)} rendered (${f.count} file(s))`);
+      for (const file of f.files) {
+        if (file.gzip > 0 || file.rendered > 0) {
+          console.log(`        - ${shorten(file.path)} → ${fmt(file.gzip)} gz / ${fmt(file.rendered)} rendered`);
+        }
+      }
+    }
+  }
+}
+if (!anyAppLeak)
+  console.log(
+    "\n**Verdict: no app-owned server-shaped modules detected in client bundles.** (Heuristic — does not cover every leak shape.)",
+  );
 
 console.log("\n## 3. Cross-env duplication (same source file in multiple envs)\n");
 console.log("Some duplication is expected (React in client+ssr, segment-system on both). Flagging anything large:\n");
