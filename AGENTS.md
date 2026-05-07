@@ -75,8 +75,8 @@ Two failure modes that tree-shaking **cannot** catch — both have produced larg
 
 **Client-runtime optimizations investigated and rejected** (don't redo this without new information):
 
-- `browser/server-action-bridge.ts` (~3.5 KB gzip in client) — *cannot* lazy-load without adding a chunk fetch on first server-action invocation. Server actions are fundamental to almost every Rango app, so the win applies to a rare case while the cost hits the common one.
-- `theme/ThemeProvider.tsx` + `ThemeScript.tsx` + `theme/constants.ts` (~3 KB combined) — statically imported in `NavigationProvider.tsx` and conditionally wrapped. *Cannot* lazy-load: theme is FOUC-prevention, the class must be on `<html>` before first paint, so a chunk fetch before paint defeats the feature.
+- `browser/server-action-bridge.ts` (~3.5 KB gzip in client) — _cannot_ lazy-load without adding a chunk fetch on first server-action invocation. Server actions are fundamental to almost every Rango app, so the win applies to a rare case while the cost hits the common one.
+- `theme/ThemeProvider.tsx` + `ThemeScript.tsx` + `theme/constants.ts` (~3 KB combined) — statically imported in `NavigationProvider.tsx` and conditionally wrapped. _Cannot_ lazy-load: theme is FOUC-prevention, the class must be on `<html>` before first paint, so a chunk fetch before paint defeats the feature.
 - `browser/react/NavigationProvider.tsx` per-feature splitting (~1.9 KB) — internal feature gates (location-state, scroll restoration, view transitions) are context-shape and exist for type-checking regardless of configuration. Splitting into per-feature Providers is significant API churn for a sub-2 KB win.
 - `browser/partial-update.ts` (~2.8 KB) — shared RSC stream reconciler used on every navigation and every action response. Lazy-loading would add a chunk fetch before the first navigation; there is no path that improves cold-start.
 

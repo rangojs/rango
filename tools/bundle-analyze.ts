@@ -7,7 +7,11 @@ const ENVIRONMENTS = ["client", "ssr", "rsc"] as const;
 /**
  * Adds rollup-plugin-visualizer per Vite environment when RANGO_ANALYZE=1.
  *
- * Emits one HTML treemap per environment to `<projectRoot>/bundle-stats/<env>.html`.
+ * Per environment, emits both an HTML treemap (humans) and a raw-data JSON
+ * dump (the machine-readable input for `tools/bundle-report.mjs`):
+ *
+ *   <projectRoot>/bundle-stats/<env>.html
+ *   <projectRoot>/bundle-stats/<env>.json
  *
  * Note: visualizer's function-form options cache after the first call, so a
  * single plugin instance can't handle multi-output builds. We register a
@@ -17,19 +21,26 @@ const ENVIRONMENTS = ["client", "ssr", "rsc"] as const;
  */
 export function analyze(): PluginOption[] {
   if (!process.env.RANGO_ANALYZE) return [];
-  return ENVIRONMENTS.map((envName) => {
-    const inner = visualizer({
-      filename: join("bundle-stats", `${envName}.html`),
-      template: "treemap",
-      gzipSize: true,
-      brotliSize: true,
-    }) as Plugin;
-    return {
-      ...inner,
-      name: `analyze-${envName}`,
-      applyToEnvironment(environment) {
-        return environment.name === envName;
-      },
-    } as Plugin;
-  });
+  return ENVIRONMENTS.flatMap((envName) =>
+    (
+      [
+        { template: "treemap", ext: "html" },
+        { template: "raw-data", ext: "json" },
+      ] as const
+    ).map(({ template, ext }) => {
+      const inner = visualizer({
+        filename: join("bundle-stats", `${envName}.${ext}`),
+        template,
+        gzipSize: true,
+        brotliSize: true,
+      }) as Plugin;
+      return {
+        ...inner,
+        name: `analyze-${envName}-${template}`,
+        applyToEnvironment(environment) {
+          return environment.name === envName;
+        },
+      } as Plugin;
+    }),
+  );
 }

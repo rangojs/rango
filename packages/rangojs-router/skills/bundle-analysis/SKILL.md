@@ -13,11 +13,11 @@ Use this when you want **proof** that your Rango app is shipping the bundles you
 Your app builds in three Vite environments — `client`, `ssr`, and `rsc` — and each ships its own bundle. The most common bundle bugs in a Rango app are:
 
 1. **Server code leaking into the client.** A file that imports `node:fs`, calls a database, or contains action logic ends up in the client bundle because a client component pulled it in transitively. Symptom: your client bundle is much larger than expected, sometimes with imports that fail at runtime.
-2. **Both dev and prod React in the SSR/RSC bundle.** When `process.env.NODE_ENV` isn't folded at build time, React's CJS files ship both `.development.js` *and* `.production.js` variants — doubling React's footprint. The Cloudflare vite plugin folds NODE_ENV automatically; vanilla `vite build` does it for client but not always for SSR/RSC.
+2. **Both dev and prod React in the SSR/RSC bundle.** When `process.env.NODE_ENV` isn't folded at build time, React's CJS files ship both `.development.js` _and_ `.production.js` variants — doubling React's footprint. The Cloudflare vite plugin folds NODE_ENV automatically; vanilla `vite build` does it for client but not always for SSR/RSC.
 3. **An oversized routes-manifest in your RSC worker.** The `virtual:rsc-router/routes-manifest/<routerId>` chunk holds your route trie and precomputed entries — large only in proportion to your route count. If it's surprisingly big, you may have unintentionally generated routes (e.g., parametrized fixtures) that bloated the trie.
 4. **Inefficient client-reference grouping.** Each `"use client"` boundary becomes a chunk. Too many small client components = many tiny chunks; one giant client component = one giant chunk that defeats code-splitting.
 
-Tree-shaking does *not* catch (1) generated data inlined as string literals or (2) data-dependent conditionals like React's. You need a visualizer.
+Tree-shaking does _not_ catch (1) generated data inlined as string literals or (2) data-dependent conditionals like React's. You need a visualizer.
 
 ## Step 1: Install the visualizer
 
@@ -103,7 +103,7 @@ The treemap shows nested boxes; box area = uncompressed size. Hover for gzip/bro
 
 **Look for:**
 
-- **Your server code.** Any of your own files that contain database queries, secret keys, server actions implementation (not the action *reference*), or `node:` imports. If they appear in the client treemap with non-zero bytes, they leaked. Common causes:
+- **Your server code.** Any of your own files that contain database queries, secret keys, server actions implementation (not the action _reference_), or `node:` imports. If they appear in the client treemap with non-zero bytes, they leaked. Common causes:
   - A shared module that mixes client and server code without a `"use client"` or `"use server"` directive.
   - A barrel file (`index.ts`) that re-exports both client and server symbols. Tree-shaking should help, but `JSON.parse('{...}')` data and side-effecting top-level statements survive.
   - Client component imports a server-only utility through an indirect path (e.g., shared types file that pulls server modules).
@@ -116,7 +116,7 @@ The treemap shows nested boxes; box area = uncompressed size. Hover for gzip/bro
 **Look for:**
 
 - **`react-dom-server.edge.development-*.js`** (or any `*.development*.js` chunk). This is the dev/prod React doubling. Fix: add `define: { "process.env.NODE_ENV": '"production"' }` to your vite config (see Step 2).
-- **Your client components** appearing in SSR. They're *expected* here — SSR hydration needs to produce HTML for them. The same components show up in `client.html` too because the browser hydrates them. This is not a leak.
+- **Your client components** appearing in SSR. They're _expected_ here — SSR hydration needs to produce HTML for them. The same components show up in `client.html` too because the browser hydrates them. This is not a leak.
 - **Total SSR size**: a reasonable Rango SSR is ~140 KB gzip plus your app code. If it's >300 KB, almost always (1) dev/prod React duplication or (2) a giant data structure being inlined.
 
 ### Now check `rsc.html`
@@ -131,15 +131,15 @@ The treemap shows nested boxes; box area = uncompressed size. Hover for gzip/bro
 
 ## Step 5: Fix what you find
 
-| Finding | Fix |
-|---|---|
-| Your server code in `client.html` (non-zero bytes) | Audit the import chain. Add `"use server"` to server-only files. Move shared data out of barrel files. Use the `@rangojs/router/server` subpath for explicitly server APIs. |
-| Your server code in `client.html` listed but 0 bytes | Tree-shaking already eliminated it. Cosmetic. Leave it. |
-| `react-dom-server.edge.development-*.js` in SSR or RSC | Add the `define` block from Step 2 to your vite config. |
-| Routes-manifest > 100 KB gzip in RSC eager chunk | Update `@rangojs/router` to a release that includes the lazy-only manifest fix. |
-| Same package version present twice | Run `pnpm dedupe` (or `npm dedupe`). If the duplication persists, a transitive dep pins an incompatible version — open a PR upstream or pin the resolution. |
-| Client chunk > 500 KB gzip with a single dominant module | That module is your largest client component. Consider lazy-loading via dynamic `import()` or moving non-interactive parts to server components. |
-| Hundreds of tiny client chunks | You've sprinkled `"use client"` too liberally. Hoist directives to higher boundaries so React groups them. |
+| Finding                                                  | Fix                                                                                                                                                                         |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Your server code in `client.html` (non-zero bytes)       | Audit the import chain. Add `"use server"` to server-only files. Move shared data out of barrel files. Use the `@rangojs/router/server` subpath for explicitly server APIs. |
+| Your server code in `client.html` listed but 0 bytes     | Tree-shaking already eliminated it. Cosmetic. Leave it.                                                                                                                     |
+| `react-dom-server.edge.development-*.js` in SSR or RSC   | Add the `define` block from Step 2 to your vite config.                                                                                                                     |
+| Routes-manifest > 100 KB gzip in RSC eager chunk         | Update `@rangojs/router` to a release that includes the lazy-only manifest fix.                                                                                             |
+| Same package version present twice                       | Run `pnpm dedupe` (or `npm dedupe`). If the duplication persists, a transitive dep pins an incompatible version — open a PR upstream or pin the resolution.                 |
+| Client chunk > 500 KB gzip with a single dominant module | That module is your largest client component. Consider lazy-loading via dynamic `import()` or moving non-interactive parts to server components.                            |
+| Hundreds of tiny client chunks                           | You've sprinkled `"use client"` too liberally. Hoist directives to higher boundaries so React groups them.                                                                  |
 
 ## When to re-run
 
