@@ -58,7 +58,7 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
     }
 
     const lines = [
-      `import { setCachedManifest, setPrecomputedEntries, setRouteTrie, setRouterManifest, registerRouterManifestLoader, clearAllRouterData } from "@rangojs/router/server";`,
+      `import { setCachedManifest, setRouterManifest, registerRouterManifestLoader, clearAllRouterData } from "@rangojs/router/server";`,
       ...genFileImports,
       // Clear stale per-router cached data (manifest, trie, precomputed entries)
       // before re-populating. In Cloudflare dev mode, program reloads re-evaluate
@@ -101,28 +101,18 @@ export function generateRoutesManifestModule(state: DiscoveryState): string {
       }
     }
 
-    // In dev mode, skip trie and precomputed entries injection. These are
-    // computed once during initial discovery and become stale after route
-    // changes. A stale trie would incorrectly match removed routes. The
-    // handler falls back to Phase 2 regex matching against the live
-    // router.urlpatterns, which is always correct after a program reload.
-    // In build mode, the trie is always fresh (built from the final route
-    // tree) so it's safe to inject.
-    if (state.isBuildMode) {
-      if (
-        state.mergedPrecomputedEntries &&
-        state.mergedPrecomputedEntries.length > 0
-      ) {
-        lines.push(
-          `setPrecomputedEntries(${jsonParseExpression(state.mergedPrecomputedEntries)});`,
-        );
-      }
-      if (state.mergedRouteTrie) {
-        lines.push(
-          `setRouteTrie(${jsonParseExpression(state.mergedRouteTrie)});`,
-        );
-      }
-    }
+    // Per-router trie and precomputedEntries are NOT inlined eagerly.
+    // They live in the per-router lazy chunks (generatePerRouterModule) and
+    // are loaded via ensureRouterManifest(routerId), which is awaited before
+    // every request in router.fetch() and before findMatch is reached.
+    // Inlining the merged versions here would duplicate the per-router data
+    // (the merged trie/precomputedEntries equal the per-router data for
+    // single-router apps; for multi-router, the merged trie is dead code
+    // because find-match.ts only consumes per-router tries).
+    //
+    // In dev mode, the handler also falls back to Phase 2 regex matching
+    // against live router.urlpatterns, which is always correct after a
+    // program reload.
 
     // Register lazy loaders for per-router manifest modules.
     // Each import() uses a static string literal so Rollup creates separate chunks.
