@@ -20,6 +20,11 @@ import {
   expandPrerenderRoutes,
   renderStaticHandlers,
 } from "./prerender-collection.js";
+import {
+  resolveHostRouterHandlers,
+  DiscoveryError,
+  type CaughtDiscoveryError,
+} from "./discovery-errors.js";
 import { createRangoDebugger, timed, NS } from "../debug.js";
 
 const debug = createRangoDebugger(NS.discovery);
@@ -56,6 +61,12 @@ export async function discoverRouters(
   if (!registry || registry.size === 0) {
     // No RSC routers found directly. Check for host routers with lazy handlers
     // that need to be resolved to trigger sub-app createRouter() calls.
+    //
+    // Handler failures are collected rather than swallowed: when the registry
+    // is still empty afterwards, these errors (typically a sub-app whose router
+    // module failed to import) are the most likely cause and are surfaced in
+    // the terminal "No routers found" error below.
+    const discoveryErrors: CaughtDiscoveryError[] = [];
     try {
       const hostRegistry: Map<string, any> | undefined =
         serverMod.HostRouterRegistry;
@@ -65,23 +76,10 @@ export async function discoverRouters(
           `[rsc-router] Found ${hostRegistry.size} host router(s), resolving lazy handlers...`,
         );
 
-        for (const [, entry] of hostRegistry) {
-          for (const route of entry.routes) {
-            if (typeof route.handler === "function") {
-              try {
-                await route.handler();
-              } catch {
-                // Lazy handler may fail in temp server context, that's OK
-              }
-            }
-          }
-          if (entry.fallback && typeof entry.fallback.handler === "function") {
-            try {
-              await entry.fallback.handler();
-            } catch {
-              // Fallback handler may fail in temp server context
-            }
-          }
+        const handlerErrors = await resolveHostRouterHandlers(hostRegistry);
+        discoveryErrors.push(...handlerErrors);
+        for (const { context, error } of handlerErrors) {
+          debug?.("caught error while resolving %s: %O", context, error);
         }
 
         // Re-read RouterRegistry - sub-app createRouter() calls should have populated it
@@ -96,15 +94,15 @@ export async function discoverRouters(
           registry = freshRegistry;
         }
       }
-    } catch {
-      // Host-router discovery is best-effort; skip if unavailable
+    } catch (error) {
+      // Host-router discovery is best-effort; record the failure so it can be
+      // surfaced if no routers are found.
+      discoveryErrors.push({ context: "host-router discovery", error });
     }
 
     // If still no routers after host router resolution, fail
     if (!registry || registry.size === 0) {
-      throw new Error(
-        `[rsc-router] No routers found in registry after importing ${state.resolvedEntryPath}`,
-      );
+      throw new DiscoveryError(state.resolvedEntryPath, discoveryErrors);
     }
   }
 
