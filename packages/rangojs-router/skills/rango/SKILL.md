@@ -21,12 +21,19 @@ with the shape, then pick a primitive.
   - _stored-value freshness_ — `"use cache"`, `cache()`, loader `cache()`
   - _client-update selection_ — `revalidate()`
 - **Loaders are the live data layer** — fresh every request by default, even
-  inside a cached render. Opt into caching explicitly.
+  inside a cached render. They run **in parallel** right after middleware and
+  **stream**, so data latency overlaps first paint instead of blocking it (a
+  cache hit streams UI instantly while loaders resolve fresh alongside). Opt into
+  caching explicitly. See `/loader` → "Parallel and streaming".
 - **One identity, one store** — loaders, handles, cached fns, and actions are all
   `path#export`; all caches share one store; `revalidateTag` cuts across them.
 - **Type-safe end to end** — route names, params, search schemas, loader return
   types, context vars, and `href` / `reverse` are checked at compile time
   (`/typesafety`).
+- **See where time goes** — turn on `debugPerformance` early (router option, or
+  `ctx.debugPerformance()` in middleware for per-request opt-in). It prints a
+  per-request waterfall + `Server-Timing` header; loaders should overlap the
+  render bar, not serialize after it. See `/loader` → "See it: debugPerformance".
 
 Most features are **just-in-time**: the core is `urls()`, `path()`, `layout()`,
 `include()`, and `reverse()`. Caching, parallel routes, intercepts, prerender,
@@ -92,7 +99,7 @@ Same words, different jobs — this is the most common source of the
 | Next.js `revalidatePath` / `revalidateTag` | **Axis 1** (cache) | Cache busting. Rango's tag bust is `revalidateTag`; there is no `revalidatePath`.                                                                              |
 | React Router / Remix `shouldRevalidate`    | **Axis 2**         | This is the correct mental model for Rango's `revalidate()`.                                                                                                   |
 | HTTP `Cache-Control` / ISR                 | **Axis 1**         | Edge/document layer — see `/document-cache`. Separate from both `cache()` and `revalidate()`.                                                                  |
-| Remix/RR `loader`                          | live data          | Like Rango loaders, fresh per request. Rango additionally lets you cache a loader on demand.                                                                   |
+| Remix/RR `loader`                          | live data          | Like Rango loaders, fresh per request — but Rango loaders run in parallel and stream (latency overlaps first paint), and can opt into caching on demand.       |
 
 See `/cache-guide` for the axis-1 decision guide, `/loader` and `/route` for
 `revalidate()` (axis 2), and `/document-cache` for the edge layer.

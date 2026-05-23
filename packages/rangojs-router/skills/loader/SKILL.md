@@ -394,6 +394,64 @@ follows the same rule: at build time, loaders are skipped entirely (there is no
 real request context), and at runtime the worker resolves them fresh against
 the live database.
 
+### Parallel and streaming — latency overlaps first paint
+
+Loaders do not block the page. As the render pass begins — the pass that route
+middleware wraps, so loaders run right after middleware, not in a later
+phase — every matched loader is kicked off **concurrently** (internally a
+`Promise.all`), and each result is **streamed** to the client as its own RSC
+Flight chunk rather than awaited up front. Pair a loader with `loading()` (or a
+client `<Suspense>`) and the shell paints immediately while the data streams in.
+
+This is why **"cached UI still pays full data latency" is the wrong intuition**:
+on a `cache()` hit the UI segments stream instantly from cache while the live
+loaders resolve fresh **in parallel** — data latency _overlaps_ first paint
+instead of being added on top of it. (Without a `loading()` / `<Suspense>`
+boundary a parallel loader blocks its parent, so add one to keep the overlap.)
+
+If you come from a framework where the loader is a blocking step that runs
+before the response is built, this is the shift to internalize: here the
+response starts streaming first and loader data fills in.
+
+### See it: `debugPerformance`
+
+Turn on the per-request performance timeline early — it is the fastest way to
+confirm loaders overlap rather than serialize, and to find the real bottleneck
+locally instead of guessing:
+
+```typescript
+const router = createRouter({ document: Document, debugPerformance: true });
+```
+
+Or enable it per-request from middleware (e.g. only when `?debug` is present) by
+calling `ctx.debugPerformance()` **before** `await next()`. Each HTML request
+then prints a shared-axis waterfall (and emits a `Server-Timing` header):
+
+```
+[RSC Perf] GET /product/widget (24.53ms)
+start      dur  span                          timeline
+ 0.08ms  3.20ms  route-matching               |#####...................................|
+ 3.40ms  8.70ms  ssr-render-html              |.....##############.....................|
+ 3.42ms 11.90ms  loader:…#ProductLoader       |.....###################................|
+ 3.45ms 11.40ms  loader:…#ReviewsLoader        |.....##################.................|
+ 0.00ms 24.53ms  handler:total                |########################################|
+```
+
+How to read it:
+
+- **Humans:** scan the `#` bars on the shared axis. Bars that start at the same
+  offset and run side by side are executing **in parallel** — loaders should
+  overlap `ssr-render-html` / `render:total`, not sit alone to the right of
+  everything. A lone `loader:*` bar past the render bar is serialized latency to
+  chase. `handler:total` is the whole request; `render:total` is the render pass.
+- **LLMs / programmatic:** read each row as `{ start, dur, label }`. A loader
+  overlaps paint when its `[start, start+dur]` interval intersects
+  `render:total` / `ssr-render-html`. Flag a regression when a `loader:*`
+  interval is **disjoint from and starts after** `render:total`, or when its
+  `dur` approaches `handler:total` — that loader is on the critical path instead
+  of overlapping it. Two `loader:*` rows with near-equal `start` confirm
+  parallel execution.
+
 ### Opting a Loader into Caching
 
 To cache a specific loader's data, attach a `cache()` child:

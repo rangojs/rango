@@ -33,14 +33,21 @@ Registered inside `urls()` callback. Wraps **rendering only** -- it does NOT wra
 
 ```
 Request flow (with action):
-  global mw -> action executes -> route mw -> layout -> handler -> loaders
+  global mw -> action executes -> route mw -> render pass
 
 Request flow (no action):
-  global mw -> route mw -> layout -> handler -> loaders
+  global mw -> route mw -> render pass
 
 Progressive enhancement (no-JS form POST):
   global mw -> action executes -> route mw -> full page re-render
 ```
+
+The **render pass** resolves handler, layouts, parallels, and loaders together —
+it is not a handler-then-loaders sequence. Handler-first ordering is guaranteed
+only between a route handler and its child/orphan layouts and parallels (so
+`ctx.set` is visible); loaders run **concurrently** and stream their results, so
+their latency overlaps rendering rather than blocking it. See `/loader` →
+"Parallel and streaming".
 
 The contract is: **route middleware wraps rendering regardless of transport** (JS-enabled RSC stream or no-JS HTML). During PE re-render, route middleware observes action-set state (cookies, context variables) the same way it does during JS-enabled post-action revalidation.
 
