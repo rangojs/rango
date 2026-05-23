@@ -28,12 +28,42 @@ update, and `revalidate()` never reads, writes, or expires a cached value. If yo
 know React Router, `revalidate()` is `shouldRevalidate`, not `Cache-Control`. See
 `/rango` → "Coming from another framework" for the cross-framework mapping.
 
+## Fast choice
+
+Read this first; use the rest of the page when the choice has edge cases.
+
+1. Do you want to cache an entire route or group of routes?
+   **Yes** -> `cache()`
+2. Do you need runtime conditions, such as skip for authed users or key by
+   locale?
+   **Yes** -> `cache()` with `condition` / `key`
+3. Do you want to cache a data fetch or helper shared across routes?
+   **Yes** -> `"use cache"`
+4. Do you need different cache entries for different function arguments?
+   **Yes** -> `"use cache"` (keyed by args)
+5. Is the expensive part rendering a subtree?
+   **Yes** -> `cache()` (caches rendered segments)
+6. Is the expensive part one query inside a larger live handler?
+   **Yes** -> `"use cache"` on the query function
+
 ## Correctness & invalidation
 
 rango's caches are built so a hit can't serve wrong or stale-shaped data. These
 guarantees are mostly automatic — worth knowing so you don't reimplement
 protection the framework already gives you (or assume one it deliberately
 doesn't).
+
+There are two guard models to keep separate. Both block response side effects
+(`ctx.header()`, cookie writes) that would be lost on a hit; they differ in what
+else they allow:
+
+- **`cache()` boundary guard** (route-level) — fires while the handler runs on a
+  miss. `ctx.get(nonCacheableVar)` throws (a tainted value would be baked into the
+  cached segment) and response side effects (`ctx.header()`, `ctx.setCookie()`,
+  `ctx.setStatus()`, `ctx.onResponse()`) throw. `ctx.set()` of a cacheable var is
+  **allowed** — children are cached too and can read it.
+- **`"use cache"` exec-guard** (function-level) — stricter: inside the cached
+  function `cookies()`, `headers()`, `ctx.set()`, and `ctx.header()` all throw.
 
 ### Cross-deploy safety: version-segmented store keys
 
@@ -435,21 +465,6 @@ This attaches the cache config directly to the loader entry. The loader's
 data is cached independently from the route's segment cache. Loader caching
 supports custom keys, tags, SWR, conditional bypass, and per-loader store
 overrides — see `/loader` for the full reference.
-
-## Decision Flowchart
-
-1. Do you want to cache an entire route or group of routes?
-   **Yes** -> `cache()`
-2. Do you need runtime conditions (skip for auth users, key by locale)?
-   **Yes** -> `cache()` with `condition` / `key`
-3. Do you want to cache a data fetch shared across routes?
-   **Yes** -> `"use cache"`
-4. Do you need different cache entries for different arguments?
-   **Yes** -> `"use cache"` (keyed by args)
-5. Is the expensive part rendering, not data fetching?
-   **Yes** -> `cache()` (caches rendered segments)
-6. Is the expensive part a single query inside a larger handler?
-   **Yes** -> `"use cache"` on the query function
 
 ## See Also
 

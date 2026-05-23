@@ -17,7 +17,9 @@ Rango exposes two complementary observability surfaces:
 2. **Structured telemetry** (`telemetry`) — lifecycle events sent to a pluggable
    sink for production monitoring, OpenTelemetry, or custom metrics.
 
-See `packages/rangojs-router/docs/telemetry.md` for the complete event contract.
+The essentials are below. The exported `TelemetryEvent` union type
+(`import type { TelemetryEvent } from "@rangojs/router"`) is the full event
+contract — every event kind and its fields are typed there.
 
 ## Performance timeline
 
