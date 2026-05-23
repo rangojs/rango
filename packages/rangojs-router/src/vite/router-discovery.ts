@@ -1272,6 +1272,7 @@ export function createRouterDiscoveryPlugin(
           .join("\n");
         throw new Error(
           `[rsc-router] Build-time router discovery failed:\n${details}`,
+          { cause: err },
         );
       } finally {
         delete (globalThis as any).__rscRouterDiscoveryActive;
