@@ -468,19 +468,19 @@ export function transformInlineHandlers(
     handlerNames,
   );
 
-  // Track line occurrences for same-line collision handling
-  const lineCounts = new Map<number, number>();
-
   // Collect all import statements to prepend
   const importStatements: string[] = [];
 
-  for (const site of inlineSites) {
-    const lineCount = lineCounts.get(site.lineNumber) ?? 0;
-    lineCounts.set(site.lineNumber, lineCount + 1);
-
-    const hash = hashInlineId(filePath, site.lineNumber, lineCount);
+  for (const [siteIndex, site] of inlineSites.entries()) {
+    // Key the extracted handler on its source-order index (per fnName), NOT its
+    // line number. The id flows into BOTH the export name and the virtual module
+    // path (which hashId hashes for the runtime $$id), and line numbers shift
+    // between the prerender and production build contexts. The index is invariant
+    // to those shifts, keeping the prerender manifest key == the runtime id.
+    const hash = hashInlineId(filePath, fnName, siteIndex);
     const exportName = `__sh_${hash}`;
-    const virtualId = `\0${virtualPrefix}${filePath}:${site.lineNumber}${lineCount > 0 ? `:${lineCount}` : ""}`;
+    const idSuffix = `${filePath}:${fnName}:${siteIndex}`;
+    const virtualId = `\0${virtualPrefix}${idSuffix}`;
 
     // Extract the full handler call expression text
     const handlerCode = code.slice(site.callStart, site.callEnd);
@@ -498,7 +498,7 @@ export function transformInlineHandlers(
     s.overwrite(site.callStart, site.callEnd, exportName);
 
     // Build the import specifier for this virtual module
-    const importId = `${virtualPrefix}${filePath}:${site.lineNumber}${lineCount > 0 ? `:${lineCount}` : ""}`;
+    const importId = `${virtualPrefix}${idSuffix}`;
     importStatements.push(`import { ${exportName} } from "${importId}";`);
   }
 
