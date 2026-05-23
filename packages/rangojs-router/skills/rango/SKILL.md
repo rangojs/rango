@@ -140,6 +140,14 @@ by reference with `ctx.isAction(Action)` (rename-safe, where `CartActions` is an
 `import * as CartActions from "./actions/cart"`); see `/typesafety` → "Stable
 identity".
 
+**The source is the source of truth.** Structure, types, and update policy are
+visible and local in the tree — read top-down, no hidden global model to hold in
+your head. A snippet earns its place only if, from the code alone, you can answer:
+_what URLs exist and who owns them?_ (composition), _can I trust this reference
+without leaving the call site?_ (type-safety), _what re-renders after this
+action?_ (partial rendering). If any answer needs another file, it isn't legible
+yet.
+
 ## Skills
 
 Grouped by concern — read when you need to…

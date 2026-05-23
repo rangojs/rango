@@ -333,11 +333,14 @@ revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // se
 revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any action in the module
 ```
 
-`isAction()` returns a raw boolean, so pair it with `|| undefined` for the usual
-"revalidate on match, else defer" intent. It returns `false` on plain navigation
-and on non-matches, and resolves the reference the same way the router derives
-`actionId` (`$id` in production, `$$id` in dev), so it matches in both modes. The
-raw `actionId` string stays available as an escape hatch.
+`isAction()` is a method on the revalidate predicate's **context argument** —
+there is no standalone `isAction` import; you always reach it through the callback
+parameter (`revalidate((ctx) => ctx.isAction(...))`). It returns a raw boolean, so
+pair it with `|| undefined` for the usual "revalidate on match, else defer"
+intent. It returns `false` on plain navigation and on non-matches, and resolves
+the reference the same way the router derives `actionId` (`$id` in production,
+`$$id` in dev), so it matches in both modes. The raw `actionId` string stays
+available on the same context as an escape hatch.
 
 ### Revalidation Contracts for Loader Dependencies
 

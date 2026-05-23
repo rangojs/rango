@@ -90,6 +90,12 @@ const withAuth = () => [
 > selection, while its `cache()` controls stored-value freshness. They are
 > independent even when bundled in the same factory (`/cache-guide` → "Two axes").
 
+> **Keep factories small and intention-named.** The anti-pattern that kills
+> readability is over-bundling — a `withDefaults()` that secretly adds five
+> things — and factory-of-factories nesting (leaning on `.flat(3)`). Surprising
+> config stays inline; extract only the boring, repeated parts; compose by
+> _naming concerns_ (`withAuth()`, `withCaching()`), not by hiding them.
+
 ## Using Factories in Routes
 
 Place factory calls inside `path()` or `layout()` use callbacks. The returned arrays are flattened automatically (up to 3 levels):

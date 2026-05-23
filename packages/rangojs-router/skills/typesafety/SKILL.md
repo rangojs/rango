@@ -325,6 +325,12 @@ export const NamedRoutes = {
 } as const;
 ```
 
+You never open a `.gen.ts` by hand — the generated types exist only to make call
+sites honest. Treat the generated machinery as invisible: don't import from
+`*.gen.ts`, don't reach for `RSCRouter.GeneratedRouteMap` directly, and if a type
+error points at the generated map instead of your call site, that's a smell — fix
+the call site (or regenerate), never edit the generated file.
+
 ## Loader Type Safety
 
 Loaders have typed return values:
@@ -523,9 +529,10 @@ revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // se
 revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any action in the module
 ```
 
-`isAction()` returns a raw boolean — combine with `|| undefined` for the
-"revalidate on match, else defer" intent. It resolves the reference the same way
-the router derives `actionId` (`$id` in production, `$$id` in dev), so matching
+`ctx.isAction()` (only available on the revalidate predicate's context) returns a
+raw boolean — combine with `|| undefined` for the "revalidate on match, else
+defer" intent. It resolves the reference the same way the router derives
+`actionId` (`$id` in production, `$$id` in dev), so matching
 works in both modes. `actionId` stays available for advanced cases.
 
 ## Location State Type Safety
