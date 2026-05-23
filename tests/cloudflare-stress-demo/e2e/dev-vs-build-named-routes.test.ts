@@ -877,22 +877,23 @@ test.describe("dev vs build named-routes parity", () => {
     }
   });
 
-  test("single source edit produces exactly one worker-entry HMR update", async ({}, testInfo) => {
-    // Regression: prior to the hotUpdate suppression, every HMR cycle emitted
-    // TWO reloads — one from the user's source edit, and a second from vite's
-    // chokidar detecting our subsequent gen-file write (writeRouteTypesFiles
-    // after refreshTempRscEnv). The duplicate cycle was harmless but visible to
-    // users as a duplicate "HMR: version changed" event on the client.
+  test("single source edit produces exactly one HMR rediscovery cycle", async ({}, testInfo) => {
+    // Regression: prior to the hotUpdate suppression, every HMR cycle ran TWICE
+    // — once from the user's source edit, and again from vite's chokidar
+    // detecting our subsequent gen-file write (writeRouteTypesFiles after
+    // refreshTempRscEnv). The duplicate cycle was harmless but visible to users
+    // as a duplicate "HMR: version changed" event on the client.
     //
     // Our hotUpdate hook returns [] for paths in selfWrittenGenFiles, dropping
-    // the cascade. This test asserts ONE worker reload per edit.
+    // the cascade. This test asserts ONE HMR cycle per edit.
     //
-    // Vite 8 note: Vite 7 reloaded the worker via a full `[vite] program reload`;
-    // Vite 8 (Rolldown) does a granular `[vite] (rsc) hmr update` of the
-    // cloudflare worker-entry instead — that is the single-worker-reload signal
-    // we count here. (Vite 8 also emits two server-side "version updated" bumps
-    // per edit that coalesce into this one worker-entry update — benign: the
-    // client sees a single reload at the final version.)
+    // We count the router's own per-cycle marker (`hmr re-discovery done`)
+    // rather than a vite-native reload log. Vite 7 emitted `[vite] program
+    // reload`; Vite 8 (Rolldown) instead does a granular `[vite] (rsc) hmr
+    // update`, which is colorized AND is not reliably captured in the CI dev
+    // buffer (and the server-side "version updated" bump count differs between
+    // local and CI). `hmr re-discovery done` fires exactly once per HMR cycle in
+    // both environments, so a duplicate cascade would still surface as count 2.
     testInfo.setTimeout(120_000);
     const buildGen = await fs.readFile(genFilePath, "utf-8");
 
@@ -920,19 +921,15 @@ test.describe("dev vs build named-routes parity", () => {
         // generous even on slow CI inotify.
         await new Promise((resolve) => setTimeout(resolve, 1500));
 
-        // Strip ANSI: Vite 8 colorizes the `(rsc)` env label and the updated
-        // path, which would break a contiguous match against the raw buffer.
+        // Strip ANSI so the matcher and the failure dump are color-agnostic.
         const postEditSlice = stripVTControlCharacters(
           dev.buffer.slice(preEditIdx),
         );
-        const reloadCount = (
-          postEditSlice.match(
-            /\(rsc\) hmr update [^\n]*virtual:cloudflare\/worker-entry/g,
-          ) ?? []
-        ).length;
+        const cycleCount = (postEditSlice.match(/hmr re-discovery done/g) ?? [])
+          .length;
         expect(
-          reloadCount,
-          `single source edit should produce exactly one worker-entry HMR update, got ${reloadCount}.\n--- buffer slice ---\n${postEditSlice}\n--- end slice ---`,
+          cycleCount,
+          `single source edit should produce exactly one HMR rediscovery cycle, got ${cycleCount}.\n--- buffer slice ---\n${postEditSlice}\n--- end slice ---`,
         ).toBe(1);
         expect(dev.unexpectedExit).toBeNull();
       } finally {
