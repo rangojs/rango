@@ -12,6 +12,24 @@
  * registry empty, discovery reported the misleading "No routers found" message
  * with no trace of the underlying cause. The collected errors are now surfaced
  * via the `DiscoveryError` thrown at the end of discovery (issue #499).
+ *
+ * A host pattern can be mapped to a lazy module loader (`() => import(...)`) or
+ * to an inline request handler (`(request, input) => Response`). Only the lazy
+ * loaders should be invoked during discovery; an inline handler invoked without
+ * a Request dereferences `undefined` (e.g. `request.url`) and throws, which is
+ * unrelated to module resolution and must not be collected as an import failure.
+ *
+ * The two shapes are not distinguishable before invocation - both are plain
+ * functions on the registry entry with no tag, and arity alone is not a gate
+ * because a lazy loader may legally declare an (ignored) optional parameter,
+ * e.g. `(_request?: Request) => import("./app")` compiles to an arity-1
+ * function. They are therefore separated by what an argument-less invocation
+ * produces (see `triggerLazyImport`): a thenable result is a real import
+ * (awaited, its rejection collected); a non-thenable result is an inline
+ * handler that returned a value (ignored); a synchronous throw is split by
+ * arity - a declared-param handler is an inline handler crashing on the missing
+ * Request (ignored), while a zero-arity handler has no Request to dereference,
+ * so its throw is a genuine loader failure and is collected.
  */
 
 /** An error caught (and previously swallowed) while resolving host routers. */
@@ -39,11 +57,90 @@ function indent(text: string, pad: string): string {
     .join("\n");
 }
 
+/** Whether a value is thenable (a Promise or Promise-like). */
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
+
 /**
- * Invoke every lazy handler in the host registry to trigger sub-app
+ * Invoke one host route handler argument-less to trigger a lazy
+ * `() => import(...)` loader, collecting only genuine module-import failures.
+ *
+ * A handler is classified by what the argument-less invocation produces, since
+ * lazy loaders and inline request handlers are otherwise indistinguishable
+ * (arity is unreliable - a lazy loader may declare `(_request?) => import(...)`):
+ *
+ *   - Thenable result -> a real lazy import. Awaited; a rejection is a genuine
+ *     discovery failure (e.g. the sub-app module cannot be resolved) and is
+ *     collected under `context`. This covers both `() => import(...)` and a
+ *     param-declaring `(_request?) => import(...)`.
+ *   - Non-thenable result (a Response, URL, etc.) -> an inline handler that ran
+ *     to completion without a Request. Ignored; not a module load.
+ *   - Synchronous throw -> split by arity:
+ *       - declared params (arity >= 1): an inline request handler dereferencing
+ *         the missing Request (e.g. `request.url` on `undefined`). Ignored, so
+ *         it does not pollute the aggregated DiscoveryError.
+ *       - zero arity: no Request to dereference, so the throw is a genuine lazy
+ *         loader failure that happened before `import()` returned (e.g. a guard
+ *         `() => { assertEnv(); return import(...) }`). Collected, preserving
+ *         the cause for the "no routers found" error (issue #501).
+ *
+ * Residuals (both narrow, and at worst only mildly pollute an already-failing
+ * "no routers found" discovery): an async inline handler
+ * (`async (request) => { ...request... }`) returns a rejected promise
+ * indistinguishable from a failed import, so its error is collected; and a
+ * param-declaring lazy loader that throws *synchronously* before its import is
+ * treated as an inline crash and ignored. Eliminating either would require
+ * tagging lazy loaders at the public `map()` API, churning the documented
+ * `.map(() => import(...))` pattern.
+ */
+async function triggerLazyImport(
+  handler: () => unknown,
+  context: string,
+  errors: CaughtDiscoveryError[],
+): Promise<void> {
+  let result: unknown;
+  try {
+    result = handler();
+  } catch (error) {
+    // Synchronous throw. A declared-param handler is an inline request handler
+    // crashing on the missing Request (not a module-import failure) - ignore.
+    // A zero-arity handler has no Request to dereference, so the throw is a
+    // genuine lazy-loader failure that occurred before `import()` returned -
+    // collect it so the "no routers found" error keeps the real cause.
+    if (handler.length === 0) {
+      errors.push({ context, error });
+    }
+    return;
+  }
+  // A non-thenable return is an inline handler that produced a value (e.g. a
+  // Response) rather than a module import. Only thenables are awaited and their
+  // rejection collected as a real failure.
+  if (!isThenable(result)) {
+    return;
+  }
+  try {
+    await result;
+  } catch (error) {
+    errors.push({ context, error });
+  }
+}
+
+/**
+ * Invoke every lazy module loader in the host registry to trigger sub-app
  * createRouter() registration, collecting (not throwing) any failures.
  *
- * Failures are returned rather than thrown because some handlers legitimately
+ * Every function handler is invoked; lazy loaders vs inline request handlers
+ * are separated by `triggerLazyImport` based on the invocation result (a thenable
+ * is a real import, regardless of arity), with arity used only to classify a
+ * synchronous throw (a zero-arity throw is a real loader failure; a declared-param
+ * throw is an inline handler crashing on the missing Request).
+ *
+ * Failures are returned rather than thrown because some loaders legitimately
  * fail in the temporary discovery server context; the caller decides whether
  * the failures matter, which is only when discovery finds no routers at all.
  */
@@ -55,19 +152,19 @@ export async function resolveHostRouterHandlers(
   for (const [hostId, entry] of hostRegistry) {
     for (const route of entry.routes) {
       if (typeof route.handler === "function") {
-        try {
-          await route.handler();
-        } catch (error) {
-          errors.push({ context: `host "${hostId}" route handler`, error });
-        }
+        await triggerLazyImport(
+          route.handler as () => unknown,
+          `host "${hostId}" route handler`,
+          errors,
+        );
       }
     }
     if (entry.fallback && typeof entry.fallback.handler === "function") {
-      try {
-        await entry.fallback.handler();
-      } catch (error) {
-        errors.push({ context: `host "${hostId}" fallback handler`, error });
-      }
+      await triggerLazyImport(
+        entry.fallback.handler as () => unknown,
+        `host "${hostId}" fallback handler`,
+        errors,
+      );
     }
   }
 
