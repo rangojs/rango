@@ -2,6 +2,8 @@ import { urls } from "@rangojs/router";
 import { Meta, type HandlerContext } from "@rangojs/router";
 import { SiteLayout } from "./components/Layout.js";
 import { siteApiPatterns } from "./api.js";
+// #506 regression: nested lazy-include chain under a dynamic-param prefix.
+import { groupPatterns } from "./nested-include.js";
 
 function HomePage(ctx: HandlerContext) {
   const meta = ctx.use(Meta);
@@ -32,5 +34,8 @@ export const sitePatterns = urls(({ path, layout, include }) => [
     path("/", HomePage, { name: "home" }),
     path("/about", AboutPage, { name: "about" }),
     include("/api", siteApiPatterns, { name: "api" }),
+    // #506: nested lazy-include chain group -> section -> item -> leaf.
+    // group.index at /g/:id, group.section.item.leaf at /g/:id/sub/leaf.
+    include("/g", groupPatterns, { name: "group" }),
   ]),
 ]);
