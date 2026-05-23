@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 
 const genFilePath = path.resolve("./src/router.named-routes.gen.ts");
 
@@ -876,16 +877,22 @@ test.describe("dev vs build named-routes parity", () => {
     }
   });
 
-  test("single source edit produces exactly one `[vite] program reload`", async ({}, testInfo) => {
-    // Regression: prior to handleHotUpdate suppression, every HMR cycle
-    // emitted TWO program reloads — one from the user's source edit, and a
-    // second from vite's chokidar detecting our subsequent gen-file write
-    // (writeRouteTypesFiles after refreshTempRscEnv). The duplicate cycle
-    // was harmless but visible to users as a duplicate "HMR: version
-    // changed" event on the client.
+  test("single source edit produces exactly one worker-entry HMR update", async ({}, testInfo) => {
+    // Regression: prior to the hotUpdate suppression, every HMR cycle emitted
+    // TWO reloads — one from the user's source edit, and a second from vite's
+    // chokidar detecting our subsequent gen-file write (writeRouteTypesFiles
+    // after refreshTempRscEnv). The duplicate cycle was harmless but visible to
+    // users as a duplicate "HMR: version changed" event on the client.
     //
-    // Our handleHotUpdate hook returns [] for paths in selfWrittenGenFiles,
-    // dropping the cascade. This test asserts ONE program reload per edit.
+    // Our hotUpdate hook returns [] for paths in selfWrittenGenFiles, dropping
+    // the cascade. This test asserts ONE worker reload per edit.
+    //
+    // Vite 8 note: Vite 7 reloaded the worker via a full `[vite] program reload`;
+    // Vite 8 (Rolldown) does a granular `[vite] (rsc) hmr update` of the
+    // cloudflare worker-entry instead — that is the single-worker-reload signal
+    // we count here. (Vite 8 also emits two server-side "version updated" bumps
+    // per edit that coalesce into this one worker-entry update — benign: the
+    // client sees a single reload at the final version.)
     testInfo.setTimeout(120_000);
     const buildGen = await fs.readFile(genFilePath, "utf-8");
 
@@ -913,13 +920,19 @@ test.describe("dev vs build named-routes parity", () => {
         // generous even on slow CI inotify.
         await new Promise((resolve) => setTimeout(resolve, 1500));
 
-        const postEditSlice = dev.buffer.slice(preEditIdx);
+        // Strip ANSI: Vite 8 colorizes the `(rsc)` env label and the updated
+        // path, which would break a contiguous match against the raw buffer.
+        const postEditSlice = stripVTControlCharacters(
+          dev.buffer.slice(preEditIdx),
+        );
         const reloadCount = (
-          postEditSlice.match(/\[vite\] program reload/g) ?? []
+          postEditSlice.match(
+            /\(rsc\) hmr update [^\n]*virtual:cloudflare\/worker-entry/g,
+          ) ?? []
         ).length;
         expect(
           reloadCount,
-          `single source edit should produce exactly one [vite] program reload, got ${reloadCount}.\n--- buffer slice ---\n${postEditSlice}\n--- end slice ---`,
+          `single source edit should produce exactly one worker-entry HMR update, got ${reloadCount}.\n--- buffer slice ---\n${postEditSlice}\n--- end slice ---`,
         ).toBe(1);
         expect(dev.unexpectedExit).toBeNull();
       } finally {
