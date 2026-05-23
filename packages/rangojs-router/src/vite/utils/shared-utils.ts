@@ -6,39 +6,40 @@ import {
   VIRTUAL_ENTRY_BROWSER,
   VIRTUAL_ENTRY_SSR,
   getVirtualEntryRSC,
+  getVirtualVersionContent,
   VIRTUAL_IDS,
 } from "../plugins/virtual-entries.js";
 
 /**
- * esbuild plugin to provide rsc-router:version virtual module during optimization.
- * This is needed because esbuild runs during Vite's dependency optimization phase,
- * before Vite's plugin system can handle virtual modules.
+ * Rolldown plugin to provide the version virtual module during dependency
+ * optimization. Vite 8 optimizes deps with Rolldown (a Rollup-style plugin
+ * pipeline that is separate from the main plugin set), so this is a
+ * resolveId/load plugin under optimizeDeps.rolldownOptions. Any dep pulled into
+ * optimization that imports the version virtual module gets a "dev" stub here;
+ * the real VERSION is injected into runtime modules by the version plugin.
  */
-const versionEsbuildPlugin = {
+const versionRolldownPlugin = {
   name: "@rangojs/router-version",
-  setup(build: any): void {
-    build.onResolve({ filter: /^rsc-router:version$/ }, (args: any) => ({
-      path: args.path,
-      namespace: "@rangojs/router-virtual",
-    }));
-    build.onLoad(
-      { filter: /.*/, namespace: "@rangojs/router-virtual" },
-      () => ({
-        contents: `export const VERSION = "dev";`,
-        loader: "js",
-      }),
-    );
+  resolveId(id: string): string | undefined {
+    if (id === VIRTUAL_IDS.version) return "\0" + VIRTUAL_IDS.version;
+    return undefined;
+  },
+  load(id: string): string | undefined {
+    if (id === "\0" + VIRTUAL_IDS.version) {
+      return getVirtualVersionContent("dev");
+    }
+    return undefined;
   },
 };
 
 /**
- * Shared esbuild options for dependency optimization.
- * Includes the version stub plugin for all environments.
+ * Shared Rolldown options for dependency optimization (Vite 8).
+ * Includes the version stub plugin and the performance-tracks RSDW patch.
  */
-export const sharedEsbuildOptions: {
+export const sharedRolldownOptions: {
   plugins: any[];
 } = {
-  plugins: [versionEsbuildPlugin, performanceTracksOptimizeDepsPlugin()],
+  plugins: [versionRolldownPlugin, performanceTracksOptimizeDepsPlugin()],
 };
 
 /**

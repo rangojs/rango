@@ -48,25 +48,21 @@ export function patchRsdwClientDebugInfoRecovery(code: string): {
 
 export function performanceTracksOptimizeDepsPlugin(): {
   name: string;
-  setup(build: any): void;
+  load(id: string): Promise<{ code: string } | null>;
 } {
+  const RSDW_CLIENT_RE =
+    /react-server-dom-webpack-client\.browser\.(development|production)\.js$/;
   return {
     name: "@rangojs/router:performance-tracks-optimize-deps",
-    setup(build: any): void {
-      build.onLoad(
-        {
-          filter:
-            /react-server-dom-webpack-client\.browser\.(development|production)\.js$/,
-        },
-        async (args: { path: string }) => {
-          const code = await readFile(args.path, "utf8");
-          const patched = patchRsdwClientDebugInfoRecovery(code);
-          return {
-            contents: patched.code,
-            loader: "js",
-          };
-        },
-      );
+    // Vite 8 optimizes deps with Rolldown (Rollup-style plugin pipeline), so the
+    // pre-bundled RSDW client is patched via load() rather than esbuild's onLoad.
+    // Returning code overrides Rolldown's default filesystem read for the module.
+    async load(id: string): Promise<{ code: string } | null> {
+      const cleanId = id.split("?")[0] ?? id;
+      if (!RSDW_CLIENT_RE.test(cleanId)) return null;
+      const code = await readFile(cleanId, "utf8");
+      const patched = patchRsdwClientDebugInfoRecovery(code);
+      return { code: patched.code };
     },
   };
 }
