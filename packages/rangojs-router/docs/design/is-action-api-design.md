@@ -163,4 +163,4 @@ Per repo policy, e2e covers **both dev and production**:
 - `ctx.isAction` is the typed surface that makes renames break at compile time.
 - Pairs with the doc clarifications that keep the value-freshness ↔
   partial-render line legible (`/cache-guide` → "Two axes", `/rango` →
-  "Glossary").
+  "Coming from another framework").

@@ -57,36 +57,40 @@ To decide where something can live: **does it define a URL? structure, stays in
 
 ## Pick a primitive
 
-| I need to…                            | Use                              | Skill             |
-| ------------------------------------- | -------------------------------- | ----------------- |
-| render data fresh every request       | `loader()` + `useLoader()`       | /loader           |
-| cache a rendered subtree              | `cache()` on a segment           | /caching          |
-| cache one function/component's result | `"use cache"`                    | /use-cache        |
-| cache a loader's data                 | `loader(L, () => [cache()])`     | /loader, /caching |
-| re-render a segment after an action   | `revalidate()`                   | /loader           |
-| mutate                                | `"use server"` action            | /server-actions   |
-| share config across routes            | factory returning a helper array | /composability    |
-| compose a sub-app / module            | `include()`                      | /route            |
-| modal / soft navigation               | `intercept()`                    | /intercept        |
+| I need to…                            | Use                              | Skill                   |
+| ------------------------------------- | -------------------------------- | ----------------------- |
+| render data fresh every request       | `loader()` + `useLoader()`       | /loader                 |
+| cache a rendered subtree              | `cache()` on a segment           | /caching                |
+| cache one function/component's result | `"use cache"`                    | /use-cache              |
+| cache a loader's data                 | `loader(L, () => [cache()])`     | /loader, /caching       |
+| re-render a segment after an action   | `revalidate()`                   | /loader                 |
+| mutate                                | `"use server"` action            | /server-actions         |
+| share config across routes            | factory returning a helper array | /composability          |
+| compose a sub-app / module            | `include()`                      | /route                  |
+| modal / soft navigation               | `intercept()`                    | /intercept              |
+| pre-render a route at build time      | `Prerender(...)` wrapper         | /prerender              |
+| stream SSE / upgrade a WebSocket      | `path.stream()` / `path.any()`   | /streams-and-websockets |
 
 ## Invariants
 
 - `path()`/`include()` are always visible in `urls()`; config helpers are extractable.
 - **Cache decides freshness; `revalidate()` decides client-update.** Orthogonal; compose.
 - Loaders resolve fresh every request (even inside `cache()`) and never run twice/request.
-- Inside `"use cache"`: `cookies()`/`headers()` and response side-effects
-  (`ctx.header`/`setTheme`/`onResponse`/`setLocationState`) throw, and reading a
-  non-cacheable `createVar({ cache: false })` throws; `ctx.use(Handle)` is
-  captured on miss and replayed on hit (`ctx.set` of a cacheable var is allowed —
-  enforcement is at read time).
+- Inside `"use cache"`: `cookies()`/`headers()` and `ctx` side-effects
+  (`set`/`header`/`setTheme`/`onResponse`/`setLocationState`) throw; `ctx.use(Handle)`
+  is captured on miss and replayed on hit. (The non-cacheable read guard is a
+  separate `cache()`-boundary check — see the correctness bullet below.)
 - One identity `path#export` (`functionId`/`$$id`/`actionId`); one store;
   `revalidateTag` cuts across all cache mechanisms.
 - `useLoader` / `useHandle` / `useFetchLoader` are client-only.
 - Caches are correctness-first: persistent store keys are version-segmented (no
   cross-deploy drift), the forward/back cache is mutation-aware, and
-  `createVar({ cache: false })` throws on a **direct** read inside a cache scope
-  (a deliberately non-propagating guard). See `/cache-guide` → "Correctness &
-  invalidation".
+  `createVar({ cache: false })` throws on a **direct** read inside a `cache()`
+  boundary (a deliberately non-propagating guard). See `/cache-guide` →
+  "Correctness & invalidation".
+- Nested caches: the outer cache window bounds the inner — an inner shorter TTL
+  only applies when the enclosing cache recomputes; put a value in a loader if it
+  must be fresher. See `/cache-guide` → "Combining Both".
 
 ## Don't confuse
 
@@ -142,18 +146,21 @@ Grouped by concern — read when you need to…
 
 **Structure & routing** — shape URLs, layouts, navigation, and request processing:
 
-| Skill              | Description                                                                |
-| ------------------ | -------------------------------------------------------------------------- |
-| `/router-setup`    | Create and configure the RSC router                                        |
-| `/route`           | Define routes with `urls()`, `path()`, and `include()`                     |
-| `/layout`          | Layouts that wrap child routes                                             |
-| `/parallel`        | Multi-column layouts and sidebars                                          |
-| `/intercept`       | Modal/slide-over patterns for soft navigation                              |
-| `/middleware`      | Request processing and authentication                                      |
-| `/host-router`     | Multi-app host routing with domain/subdomain patterns                      |
-| `/links`           | URL generation: ctx.reverse, href, useHref, useMount, scopedReverse        |
-| `/response-routes` | JSON/text/HTML/XML/stream endpoints with `path.json()`, `path.text()`      |
-| `/mime-routes`     | Content negotiation — same URL, different response types via Accept header |
+| Skill                     | Description                                                                |
+| ------------------------- | -------------------------------------------------------------------------- |
+| `/router-setup`           | Create and configure the RSC router                                        |
+| `/route`                  | Define routes with `urls()`, `path()`, and `include()`                     |
+| `/layout`                 | Layouts that wrap child routes                                             |
+| `/parallel`               | Multi-column layouts and sidebars                                          |
+| `/intercept`              | Modal/slide-over patterns for soft navigation                              |
+| `/middleware`             | Request processing and authentication                                      |
+| `/host-router`            | Multi-app host routing with domain/subdomain patterns                      |
+| `/links`                  | URL generation: ctx.reverse, href, useHref, useMount, scopedReverse        |
+| `/response-routes`        | JSON/text/HTML/XML/stream endpoints with `path.json()`, `path.text()`      |
+| `/mime-routes`            | Content negotiation — same URL, different response types via Accept header |
+| `/streams-and-websockets` | SSE via `path.stream` and WebSocket upgrades via `path.any`                |
+| `/handler-use`            | Attach default loaders/middleware to a handler via `handler.use`           |
+| `/composability`          | Reusable route-helper factories (structure vs config)                      |
 
 **Data & caching** — fetch, mutate, and cache:
 
@@ -165,16 +172,19 @@ Grouped by concern — read when you need to…
 | `/use-cache`      | Function-level caching with `"use cache"` directive                     |
 | `/cache-guide`    | When to use `cache()` vs `"use cache"` — differences and decision guide |
 | `/document-cache` | Edge caching with Cache-Control headers                                 |
+| `/prerender`      | Pre-render route segments at build time (Passthrough live fallback)     |
 
 **Client & presentation** — build the client-side UX:
 
-| Skill       | Description                                                               |
-| ----------- | ------------------------------------------------------------------------- |
-| `/hooks`    | Client-side React hooks                                                   |
-| `/theme`    | Light/dark mode with FOUC prevention                                      |
-| `/i18n`     | Locale routing with `:locale?`, resolution chains, react-intl integration |
-| `/fonts`    | Load web fonts with preload hints                                         |
-| `/tailwind` | Set up Tailwind CSS v4 with `?url` imports                                |
+| Skill               | Description                                                               |
+| ------------------- | ------------------------------------------------------------------------- |
+| `/hooks`            | Client-side React hooks                                                   |
+| `/theme`            | Light/dark mode with FOUC prevention                                      |
+| `/i18n`             | Locale routing with `:locale?`, resolution chains, react-intl integration |
+| `/fonts`            | Load web fonts with preload hints                                         |
+| `/tailwind`         | Set up Tailwind CSS v4 with `?url` imports                                |
+| `/view-transitions` | React View Transitions on layouts, routes, and parallel slots             |
+| `/breadcrumbs`      | Built-in Breadcrumbs handle for breadcrumb navigation                     |
 
 **Setup, types & migration**:
 
@@ -184,6 +194,7 @@ Grouped by concern — read when you need to…
 | `/bundle-analysis`      | Audit your app's production bundle for server leaks and oversized chunks |
 | `/migrate-nextjs`       | Migrate a Next.js App Router project to Rango                            |
 | `/migrate-react-router` | Migrate a React Router / Remix project to Rango                          |
+| `/debug-manifest`       | Inspect route manifest structure                                         |
 
 ## Quick Start
 

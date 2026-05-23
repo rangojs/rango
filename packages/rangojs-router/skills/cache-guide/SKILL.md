@@ -67,10 +67,10 @@ solved on the partial-render axis.
 ### Request-scoped data: the `cache: false` taint
 
 `createVar({ cache: false })` (or a `ctx.set(var, v, { cache: false })` write)
-taints a value as request-scoped; reading it **directly** inside a cacheable
-scope throws — the guard against the catastrophic "serve user A's data to user B"
-bug. The guarantee is precise and intentionally narrow — see "Context Variable
-Cache Safety" below for exactly what it does and does not catch.
+taints a value as request-scoped; reading it **directly** with `ctx.get()` inside
+a `cache()` boundary throws — the guard against the catastrophic "serve user A's
+data to user B" bug. The guarantee is precise and intentionally narrow — see
+"Context Variable Cache Safety" below for exactly what it does and does not catch.
 
 ## Stale-while-revalidate (built in)
 
@@ -272,8 +272,9 @@ middleware(async (ctx, next) => {
 ## Context Variable Cache Safety
 
 Context variables created with `createVar()` are cacheable by default and can
-be read freely inside `cache()` and `"use cache"` scopes. Non-cacheable vars
-throw at read time to prevent request-specific data from being captured.
+be read freely inside cached scopes. A non-cacheable var throws when read
+**directly** with `ctx.get()` inside a `cache()` boundary — where the value would
+otherwise be serialized into the stored segment.
 
 There are two ways to mark a value as non-cacheable:
 
@@ -288,48 +289,63 @@ ctx.set(Theme, derivedTheme, { cache: false });
 "Least cacheable wins": if either the var definition or the `ctx.set()` call
 specifies `cache: false`, the value is non-cacheable.
 
-**Behavior inside cache scopes:**
+**Behavior inside a `cache()` boundary:**
 
-| Operation                           | Inside `cache()` / `"use cache"` |
-| ----------------------------------- | -------------------------------- |
-| `ctx.get(cacheableVar)`             | Allowed                          |
-| `ctx.get(nonCacheableVar)`          | Throws                           |
-| `ctx.set(var, value)` (cacheable)   | Allowed                          |
-| `ctx.header()`, `ctx.cookie()`, etc | Throws (response side effects)   |
+| Operation                           | Inside a `cache()` boundary                                  |
+| ----------------------------------- | ------------------------------------------------------------ |
+| `ctx.get(cacheableVar)`             | Allowed                                                      |
+| `ctx.get(nonCacheableVar)`          | Throws (would be baked in)                                   |
+| `ctx.set(var, value)` (cacheable)   | Allowed                                                      |
+| `ctx.header()` / `cookies()` writes | Run on miss, not replayed on hit (set in middleware instead) |
+
+(Inside a `"use cache"` function the scoping differs: `ctx.set`, `ctx.header()`,
+`cookies()`, and `headers()` **throw** via the cache-exec guard, while the
+`ctx.get(nonCacheableVar)` taint check above is tied to the `cache()` boundary —
+see "Headers and Cookies" and the precise guarantee below.)
 
 Write is dumb — `ctx.set()` stores the cache metadata but does not enforce.
 Enforcement happens at read time (`ctx.get()`), where ALS detects the cache
 scope and rejects non-cacheable reads.
 
-### The guarantee is precise — a direct read, not propagating
+### The guarantee is precise — a direct read inside `cache()`, not propagating
 
-The taint lives on the variable, and the guard fires only on `ctx.get(taintedVar)`
-**inside** a cache scope. A value **derived** from it and read **outside** the
-scope is not tracked:
+The guard fires on a **direct** `ctx.get(taintedVar)` **inside a `cache()`
+boundary** (the scope `isInsideCacheScope` detects). The taint lives on the
+variable; a value **derived** from it and read **outside** the boundary is not
+tracked:
 
 ```typescript
-// CAUGHT — direct read of a tainted var inside a cache scope
-async function Widget(ctx) {
-  "use cache";
-  const user = ctx.get(User); // throws: non-cacheable read inside cache scope
-}
+// CAUGHT — direct read of a tainted var inside a cache() boundary
+cache({ ttl: 60 }, () => [
+  path("/dashboard", (ctx) => {
+    const user = ctx.get(User); // throws: non-cacheable read inside cache()
+    return <Dashboard user={user} />;
+  }, { name: "dashboard" }),
+]);
 
-// NOT CAUGHT — derived outside, then cached
-function Page(ctx) {
-  // route handler, not a cache scope:
-  const name = ctx.get(User).name; // allowed here (outside any cache scope)
-  return <CachedGreeting name={name} />; // CachedGreeting ("use cache") now caches user data
-}
+// NOT CAUGHT — read outside the boundary, derived value cached
+layout((ctx) => {
+  const name = ctx.get(User).name; // allowed — this layout is not cached
+  ctx.set(UserName, name); // now a plain (cacheable) string
+  return <Outlet />;
+}, () => [
+  cache({ ttl: 60 }, () => [
+    // a child reads ctx.get(UserName) and silently caches user-derived data
+  ]),
+]);
 ```
 
 So do **not** read this as "you can't cache user data" — that overstates it and
 breeds the false confidence that makes the derived leak _more_ likely. The guard
 is deliberately non-propagating (propagation would cost a wrapper per derivation
-on the hot path). The pattern that stays safe is also the natural one: **read
-tainted context at the point of use, in the path that needs it (a loader or live
-segment) — never extract user data into a plain value and cache that.** Loaders
-are exempt because they run outside the cache scope and resolve fresh every
-request.
+on the hot path), and it is scoped to the `cache()` segment boundary — `"use
+cache"` functions guard request data differently (tainted `ctx`/`env`/`req` args
+are excluded from the cache key, and `cookies()` / `headers()` throw inside them;
+see "Headers and Cookies"). The pattern that stays safe is also the natural one:
+**read tainted context at the point of use, in the path that needs it (a loader or
+live segment) — never extract user data into a plain value and cache that.**
+Loaders are exempt because they run outside the cache scope and resolve fresh
+every request.
 
 ## Loaders Are Always Fresh
 

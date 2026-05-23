@@ -398,9 +398,9 @@ the live database.
 
 Loaders do not block the page. As the render pass begins — the pass that route
 middleware wraps, so loaders run right after middleware, not in a later
-phase — every matched loader is kicked off **concurrently** (internally a
-`Promise.all`), and each result is **streamed** to the client as its own RSC
-Flight chunk rather than awaited up front. Pair a loader with `loading()` (or a
+phase — every matched loader is kicked off **concurrently** (their promises start in the
+same tick), and each result is **streamed** to the client as its own RSC Flight
+chunk rather than awaited up front. Pair a loader with `loading()` (or a
 client `<Suspense>`) and the shell paints immediately while the data streams in.
 
 This is why **"cached UI still pays full data latency" is the wrong intuition**:
