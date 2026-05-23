@@ -2,7 +2,7 @@ import { registerRouteMap } from "../route-map-builder.js";
 import { extractStaticPrefix } from "./pattern-matching.js";
 import {
   type EntryData,
-  RSCRouterContext,
+  RangoContext,
   runWithPrefixes,
   getIsolatedLazyParent,
 } from "../server/context";
@@ -131,7 +131,7 @@ export function evaluateLazyEntry<TEnv = any>(
     }
   }
 
-  RSCRouterContext.run(
+  RangoContext.run(
     {
       manifest,
       patterns,

@@ -141,7 +141,7 @@ export function createVersionPlugin(): Plugin {
     // Use timestamp + counter to guarantee uniqueness even when multiple
     // bumps happen within the same millisecond (e.g. cascading HMR events).
     currentVersion = Date.now().toString(16) + String(++versionCounter);
-    console.log(`[rsc-router] ${reason}, version updated: ${currentVersion}`);
+    console.log(`[rango] ${reason}, version updated: ${currentVersion}`);
 
     const rscEnv = server?.environments?.rsc;
     const versionMod = rscEnv?.moduleGraph?.getModuleById(

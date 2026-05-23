@@ -11,7 +11,7 @@
 import type { UrlPatterns } from "../urls.js";
 import type { AllUseItems } from "../route-types.js";
 import { extractStaticPrefix } from "../router/pattern-matching.js";
-import { RSCRouterContext, runWithPrefixes } from "../server/context.js";
+import { RangoContext, runWithPrefixes } from "../server/context.js";
 import type { EntryData, TrackedInclude } from "../server/context.js";
 import type { TrailingSlashMode } from "../types.js";
 import { createRouteHelpers } from "../route-definition.js";
@@ -93,7 +93,7 @@ function buildPrefixTreeNode(
   const searchSchemasMap = new Map<string, Record<string, string>>();
   const trackedIncludes: TrackedInclude[] = [];
 
-  RSCRouterContext.run(
+  RangoContext.run(
     {
       manifest,
       patterns: patternsMap,
@@ -296,7 +296,7 @@ export function generateManifestFull<TEnv>(
   const searchSchemasMap = new Map<string, Record<string, string>>();
   const trackedIncludes: TrackedInclude[] = [];
 
-  RSCRouterContext.run(
+  RangoContext.run(
     {
       manifest,
       patterns: patternsMap,

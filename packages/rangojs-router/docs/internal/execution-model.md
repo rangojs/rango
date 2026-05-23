@@ -321,7 +321,7 @@ DSL loaders (registered with `loader()`) and handler-called loaders
     imported from `@rangojs/router`, which delegate to the request
     context. The cache-scope guard is bypassed via a dedicated
     `loaderScopeALS` that tracks loader execution separately from the
-    `insideCacheScope` flag on `RSCRouterContext`.
+    `insideCacheScope` flag on `RangoContext`.
   - This applies to all DSL loader resolution paths: fresh, revalidation,
     and intercept.
 

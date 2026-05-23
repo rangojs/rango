@@ -14,7 +14,7 @@ import {
 import { createElement, StrictMode } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { rscStream } from "@rangojs/router/internal/deps/html-stream-client";
-import { initBrowserApp, RSCRouter } from "@rangojs/router/browser";
+import { initBrowserApp, Rango } from "@rangojs/router/browser";
 
 async function initializeApp() {
   const deps = {
@@ -29,7 +29,7 @@ async function initializeApp() {
 
   hydrateRoot(
     document,
-    createElement(StrictMode, null, createElement(RSCRouter))
+    createElement(StrictMode, null, createElement(Rango))
   );
 }
 

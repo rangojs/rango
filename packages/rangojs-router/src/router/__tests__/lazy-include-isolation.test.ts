@@ -4,7 +4,7 @@ import { urls } from "../../urls.js";
 import { createLoader } from "../../loader.js";
 import type { RouteEntry } from "../../types.js";
 import type { EntryData } from "../../server/context.js";
-import { getContext, RSCRouterContext } from "../../server/context.js";
+import { getContext, RangoContext } from "../../server/context.js";
 import { evaluateLazyEntry } from "../lazy-includes.js";
 import { loadManifest, clearManifestCache } from "../manifest.js";
 import type { MiddlewareFn } from "../middleware.js";
@@ -255,8 +255,8 @@ describe("lazy include parent isolation", () => {
         },
       } as unknown as RouteEntry;
 
-      // loadManifest requires being inside RSCRouterContext
-      await RSCRouterContext.run(
+      // loadManifest requires being inside RangoContext
+      await RangoContext.run(
         {
           manifest: new Map(),
           patterns: new Map(),
@@ -356,7 +356,7 @@ describe("lazy include parent isolation", () => {
         },
       } as unknown as RouteEntry;
 
-      await RSCRouterContext.run(
+      await RangoContext.run(
         {
           manifest: new Map(),
           patterns: new Map(),
@@ -400,7 +400,7 @@ describe("lazy include parent isolation", () => {
       );
     });
 
-    // Regression: loadManifest() calls within a single RSCRouterContext.run
+    // Regression: loadManifest() calls within a single RangoContext.run
     // share the same ALS-backed Store (via getOrCreateStore). A lazy
     // manifest build sets Store.includeScope; a subsequent non-lazy build
     // on the same store must see includeScope cleared, otherwise its
@@ -446,7 +446,7 @@ describe("lazy include parent isolation", () => {
         lazy: false,
       } as unknown as RouteEntry;
 
-      await RSCRouterContext.run(
+      await RangoContext.run(
         {
           manifest: new Map(),
           patterns: new Map(),
@@ -526,7 +526,7 @@ describe("lazy include parent isolation", () => {
         lazy: false,
       } as unknown as RouteEntry;
 
-      await RSCRouterContext.run(
+      await RangoContext.run(
         {
           manifest: new Map(),
           patterns: new Map(),
@@ -593,7 +593,7 @@ describe("lazy include parent isolation", () => {
         lazy: false,
       } as unknown as RouteEntry;
 
-      await RSCRouterContext.run(
+      await RangoContext.run(
         {
           manifest: new Map(),
           patterns: new Map(),

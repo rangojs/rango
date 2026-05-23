@@ -126,7 +126,7 @@ export async function matchForPrerender<TEnv = any>(
             get env() {
               if (buildEnv !== undefined) return buildEnv;
               throw new Error(
-                "[rsc-router] ctx.env is not available during dev-mode getParams(). " +
+                "[rango] ctx.env is not available during dev-mode getParams(). " +
                   "Configure buildEnv in your rango() plugin options to enable build-time env access.",
               );
             },

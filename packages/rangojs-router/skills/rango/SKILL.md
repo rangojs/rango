@@ -266,6 +266,15 @@ Each file is classified by its contents:
 Directories are scanned recursively for `.ts`/`.tsx` files, skipping `node_modules`,
 dotfiles, and existing `.gen.` files.
 
+> The two generated files are **not interchangeable surfaces**.
+> `router.named-routes.gen.ts` augments the global `GeneratedRouteMap` for
+> named-route typing (`Handler<"name">`, `ctx.reverse("name")`, prerender).
+> Per-module `*.gen.ts` exports a local `routes` map for `useReverse(routes)`
+> and explicit local handler typing (`Handler<".name", routes>`). Neither
+> carries response payloads — response/MIME payload inference comes from
+> `typeof router.routeMap` via `RegisteredRoutes`, not `*.named-routes.gen.ts`.
+> See `/typesafety` for the full surface breakdown.
+
 ### Recursive includes
 
 The generator follows `include()` calls across files, resolving imports to build

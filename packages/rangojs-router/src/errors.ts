@@ -1,5 +1,5 @@
 /**
- * Custom error classes for RSC Router
+ * Custom error classes for Rango
  *
  * All errors include:
  * - Descriptive names for easy identification

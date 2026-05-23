@@ -67,3 +67,7 @@ details, but they are not the first stop for learning the public API.
 - [Why include() is synchronous](./internal/why-includes-is-sync.md) -
   design rationale for the `UrlPatterns`-only `include()` signature and
   the trie/reverse-map/type-gen/prerender invariants it protects
+- [Generated route type surfaces handoff](./internal/generated-route-type-surfaces-handoff.md) -
+  **completed audit** (findings applied to the skills/docs); retained as the
+  record of the three generated type surfaces — `GeneratedRouteMap`, per-module
+  `.gen.ts`, and `RegisteredRoutes` — and response/MIME payload inference

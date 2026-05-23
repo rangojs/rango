@@ -40,7 +40,7 @@ export interface MetricsStore {
   metrics: PerformanceMetric[];
 }
 // ============================================================================
-//  RSC Router Context
+//  Rango Context
 // ============================================================================
 
 /**
@@ -303,7 +303,7 @@ interface HelperContext {
 // hold references to the old instance — causing getStore() to return
 // undefined even inside a run() callback.
 const RSC_CONTEXT_KEY = Symbol.for("rangojs-router:rsc-context");
-export const RSCRouterContext: AsyncLocalStorage<HelperContext> = ((
+export const RangoContext: AsyncLocalStorage<HelperContext> = ((
   globalThis as any
 )[RSC_CONTEXT_KEY] ??= new AsyncLocalStorage<HelperContext>());
 
@@ -330,12 +330,12 @@ export const getContext = (): {
     callback: (...args: any[]) => T,
   ) => T;
 } => {
-  const context = RSCRouterContext;
+  const context = RangoContext;
 
   return {
     context,
     getOrCreateStore: (forRoute?: string): HelperContext => {
-      let store = RSCRouterContext.getStore();
+      let store = RangoContext.getStore();
       if (!store) {
         store = {
           manifest: new Map<string, EntryData>(),
@@ -355,7 +355,7 @@ export const getContext = (): {
       const store = context.getStore();
       if (!store) {
         throw new Error(
-          "RSC Router context store is not available. Make sure to run within RSC Router context.",
+          "Rango context store is not available. Make sure to run within Rango context.",
         );
       }
       return store;
@@ -372,7 +372,7 @@ export const getContext = (): {
       type: (string & {}) | "layout" | "parallel" | "middleware" | "revalidate",
     ) => {
       const store = context.getStore();
-      invariant(store, "No context RSCRouterContext available");
+      invariant(store, "No context RangoContext available");
       store.counters[type] ??= 0;
       const index = store.counters[type];
       store.counters[type] = index + 1;
@@ -382,7 +382,7 @@ export const getContext = (): {
       type: "layout" | "parallel" | "route" | "loader" | "cache",
     ) => {
       const store = context.getStore();
-      invariant(store, "No context RSCRouterContext available");
+      invariant(store, "No context RangoContext available");
 
       const parent = store.parent;
       const prefix =
@@ -502,7 +502,7 @@ export function runWithPrefixes<T>(
   namePrefix: string | undefined,
   callback: () => T,
 ): T {
-  const store = RSCRouterContext.getStore();
+  const store = RangoContext.getStore();
   if (!store) {
     throw new Error("runWithPrefixes must be called within router context");
   }
@@ -547,7 +547,7 @@ export function runWithPrefixes<T>(
         ? (store.rootScoped ?? false)
         : store.rootScoped;
 
-  return RSCRouterContext.run(
+  return RangoContext.run(
     {
       ...store,
       urlPrefix: combinedUrlPrefix,
@@ -562,7 +562,7 @@ export function runWithPrefixes<T>(
  * Get current URL prefix from context
  */
 export function getUrlPrefix(): string {
-  const store = RSCRouterContext.getStore();
+  const store = RangoContext.getStore();
   return store?.urlPrefix || "";
 }
 
@@ -570,7 +570,7 @@ export function getUrlPrefix(): string {
  * Get current name prefix from context
  */
 export function getNamePrefix(): string | undefined {
-  const store = RSCRouterContext.getStore();
+  const store = RangoContext.getStore();
   return store?.namePrefix;
 }
 
@@ -579,7 +579,7 @@ export function getNamePrefix(): string | undefined {
  * Returns true at root or inside { name: "" } includes, false inside named includes.
  */
 export function getRootScoped(): boolean {
-  const store = RSCRouterContext.getStore();
+  const store = RangoContext.getStore();
   return store?.rootScoped ?? true;
 }
 
@@ -676,7 +676,7 @@ export function getParallelSlotCount(
  * ```
  */
 export function track(label: string, depth?: number): () => void {
-  const store = RSCRouterContext.getStore();
+  const store = RangoContext.getStore();
 
   // No-op if context unavailable or metrics not enabled
   if (!store?.metrics?.enabled) {
@@ -699,8 +699,8 @@ export function track(label: string, depth?: number): () => void {
 
 /**
  * Separate ALS for tracking loader execution scope.
- * Uses a dedicated ALS (not RSCRouterContext) to avoid issues with
- * nested RSCRouterContext.run() calls in Vite's module runner.
+ * Uses a dedicated ALS (not RangoContext) to avoid issues with
+ * nested RangoContext.run() calls in Vite's module runner.
  */
 const LOADER_SCOPE_KEY = Symbol.for("rangojs-router:loader-scope");
 const loaderScopeALS: AsyncLocalStorage<{ active: true }> = ((
@@ -713,7 +713,7 @@ const loaderScopeALS: AsyncLocalStorage<{ active: true }> = ((
  * (never cached), so non-cacheable reads are safe.
  */
 export function isInsideCacheScope(): boolean {
-  if (RSCRouterContext.getStore()?.insideCacheScope !== true) return false;
+  if (RangoContext.getStore()?.insideCacheScope !== true) return false;
   // Loaders are always fresh — even inside a cache() boundary, the loader
   // function re-executes on every request. Skip the guard when running
   // inside a loader.

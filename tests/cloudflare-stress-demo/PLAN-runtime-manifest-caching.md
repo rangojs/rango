@@ -110,15 +110,15 @@ Test with stress demo:
 
 ## Files to Modify
 
-| File                                                         | Change                                     |
-| ------------------------------------------------------------ | ------------------------------------------ |
-| `packages/rangojs-router/src/server/route-manifest-cache.ts` | Make store optional                        |
-| `packages/rangojs-router/src/router.ts`                      | Add urlpatterns option to RSCRouterOptions |
-| `packages/rangojs-router/src/rsc/handler.ts`                 | Load manifest on first request             |
-| `packages/rangojs-router/src/vite/index.ts`                  | Remove createRouteManifestPlugin           |
-| `packages/rangojs-router/src/vite/virtual-entries.ts`        | Remove route-manifest import               |
-| `examples/cloudflare-stress-demo/src/worker.rsc.tsx`         | Use runtime manifest loading               |
-| `examples/cloudflare-stress-demo/vite.config.ts`             | Remove routeManifest option                |
+| File                                                         | Change                                 |
+| ------------------------------------------------------------ | -------------------------------------- |
+| `packages/rangojs-router/src/server/route-manifest-cache.ts` | Make store optional                    |
+| `packages/rangojs-router/src/router.ts`                      | Add urlpatterns option to RangoOptions |
+| `packages/rangojs-router/src/rsc/handler.ts`                 | Load manifest on first request         |
+| `packages/rangojs-router/src/vite/index.ts`                  | Remove createRouteManifestPlugin       |
+| `packages/rangojs-router/src/vite/virtual-entries.ts`        | Remove route-manifest import           |
+| `examples/cloudflare-stress-demo/src/worker.rsc.tsx`         | Use runtime manifest loading           |
+| `examples/cloudflare-stress-demo/vite.config.ts`             | Remove routeManifest option            |
 
 ## Files to Keep (for runtime use)
 

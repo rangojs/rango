@@ -1,7 +1,7 @@
 /**
  * Router Metrics Utilities
  *
- * Performance metrics collection and reporting for RSC Router.
+ * Performance metrics collection and reporting for Rango.
  */
 
 import type { MetricsStore, PerformanceMetric } from "../server/context";

@@ -16,7 +16,7 @@ import {
 } from "../server/context";
 import { invariant } from "../errors";
 import { isCachedFunction } from "../cache/taint.js";
-import { RSCRouterContext } from "../server/context";
+import { RangoContext } from "../server/context";
 import { isStaticHandler } from "../static-handler.js";
 import RootLayout from "../server/root-layout";
 import type {
@@ -232,7 +232,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
   } else if (typeof optionsOrChildren === "string") {
     // cache('profileName') or cache('profileName', () => [...])
     // Resolve from context-scoped profiles (set per-router via HelperContext).
-    const ctxStore = RSCRouterContext.getStore();
+    const ctxStore = RangoContext.getStore();
     const profile = ctxStore?.cacheProfiles?.[optionsOrChildren];
     invariant(
       profile,

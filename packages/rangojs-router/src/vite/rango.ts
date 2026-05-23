@@ -260,7 +260,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                 "  - " + (f.startsWith(root) ? f.slice(root.length + 1) : f),
             )
             .join("\n");
-          throw new Error(`[rsc-router] Multiple routers found:\n${list}`);
+          throw new Error(`[rango] Multiple routers found:\n${list}`);
         }
         // 0 found: routerRef.path stays undefined, warn at startup via discovery plugin
       },
@@ -378,7 +378,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
         if (rscMinimalCount > 1 && !hasWarnedDuplicate) {
           hasWarnedDuplicate = true;
           console.warn(
-            "[rsc-router] Duplicate @vitejs/plugin-rsc detected. " +
+            "[rango] Duplicate @vitejs/plugin-rsc detected. " +
               "Remove rsc() from your vite config — rango() includes it automatically.",
           );
         }

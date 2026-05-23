@@ -286,7 +286,7 @@ export const blogLoggerMiddleware: Middleware[] = [
 ];
 
 // Post revalidation - only revalidate when slug changes, not on search param changes
-export const postRevalidation: Revalidate<{ slug: string }, RSCRouter.Env> = ({
+export const postRevalidation: Revalidate<{ slug: string }, Rango.Env> = ({
   currentParams,
   nextParams,
   actionId,

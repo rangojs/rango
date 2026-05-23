@@ -43,7 +43,7 @@ export type { MiddlewareFn } from "../router/middleware.js";
  */
 export type ScopedRouteMap<
   TPrefix extends string,
-  TMap = RSCRouter.GeneratedRouteMap,
+  TMap = Rango.GeneratedRouteMap,
 > = {
   [K in keyof TMap as K extends `${TPrefix}.${infer Rest}`
     ? Rest
@@ -767,7 +767,7 @@ export type Revalidate<
  * Middleware function with typed params and environment
  *
  * @template TParams - Params object (defaults to generic)
- * @template TEnv - Environment type (defaults to global RSCRouter.Env)
+ * @template TEnv - Environment type (defaults to global Rango.Env)
  *
  * Note: Middleware cannot directly use route names for params typing because
  * middleware is defined during router setup, before RegisteredRoutes is populated.
@@ -775,7 +775,7 @@ export type Revalidate<
  *
  * @example
  * ```typescript
- * // Basic middleware (uses global RSCRouter.Env via module augmentation)
+ * // Basic middleware (uses global Rango.Env via module augmentation)
  * const middleware: Middleware = async (ctx, next) => {
  *   ctx.set("user", { id: "123" }); // Type-safe!
  *   await next();

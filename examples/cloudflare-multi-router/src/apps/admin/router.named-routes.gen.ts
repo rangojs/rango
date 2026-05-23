@@ -6,7 +6,7 @@ export const NamedRoutes = {
 } as const;
 
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface GeneratedRouteMap extends Readonly<typeof NamedRoutes> {}
   }
 }

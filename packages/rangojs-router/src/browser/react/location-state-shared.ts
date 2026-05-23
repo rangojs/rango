@@ -125,7 +125,7 @@ export function createLocationState<TState>(
   function getKey(): string {
     if (!_key && process.env.NODE_ENV === "development") {
       throw new Error(
-        "[rsc-router] createLocationState key not set. " +
+        "[rango] createLocationState key not set. " +
           "Make sure the exposeInternalIds Vite plugin is enabled and " +
           "the state is exported with: export const MyState = createLocationState(...)",
       );
@@ -176,7 +176,7 @@ export function createLocationState<TState>(
     value: (value: TState): void => {
       if (typeof window === "undefined") {
         throw new Error(
-          "[rsc-router] LocationState.write() is client-only. " +
+          "[rango] LocationState.write() is client-only. " +
             "It mutates window.history.state and cannot run on the server.",
         );
       }
@@ -195,7 +195,7 @@ export function createLocationState<TState>(
     value: (): void => {
       if (typeof window === "undefined") {
         throw new Error(
-          "[rsc-router] LocationState.delete() is client-only. " +
+          "[rango] LocationState.delete() is client-only. " +
             "It mutates window.history.state and cannot run on the server.",
         );
       }

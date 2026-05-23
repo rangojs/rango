@@ -69,9 +69,9 @@ type BuildReverseFunction = [DefaultReverseRouteMap] extends [
  * Default route map for Prerender named route resolution.
  * Uses GeneratedRouteMap (from gen file) to avoid circular dependencies.
  */
-type DefaultPrerenderRouteMap = keyof RSCRouter.GeneratedRouteMap extends never
+type DefaultPrerenderRouteMap = keyof Rango.GeneratedRouteMap extends never
   ? {}
-  : RSCRouter.GeneratedRouteMap;
+  : Rango.GeneratedRouteMap;
 
 /** Extract params from a route map entry (string pattern or { path } object). */
 type ExtractParamsFromEntry<TEntry> = TEntry extends string
@@ -378,7 +378,7 @@ export function Prerender<TParams extends Record<string, any>>(
 
   if (!id) {
     throw new Error(
-      "[rsc-router] Prerender: missing $$id. " +
+      "[rango] Prerender: missing $$id. " +
         "Ensure the exposeInternalIds Vite plugin is configured.",
     );
   }
@@ -499,7 +499,7 @@ export function Passthrough<
 ): PassthroughHandlerDefinition<TParams, TEnv> {
   if (!isPrerenderHandler(prerenderDef)) {
     throw new Error(
-      "[rsc-router] Passthrough: first argument must be a Prerender() definition.",
+      "[rango] Passthrough: first argument must be a Prerender() definition.",
     );
   }
   return {

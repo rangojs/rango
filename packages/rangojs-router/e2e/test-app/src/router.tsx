@@ -63,7 +63,7 @@ export interface AppVariables {
 export type AppEnv = AppBindings;
 
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface Env extends AppBindings {}
     interface Vars extends AppVariables {}
   }
@@ -71,7 +71,7 @@ declare global {
 
 /**
  * Global middleware - adds X-Global-Middleware header to all responses
- * Note: Middleware defaults to RSCRouter.Env (via DefaultEnv) so no type parameter needed
+ * Note: Middleware defaults to Rango.Env (via DefaultEnv) so no type parameter needed
  */
 const globalMiddleware: Middleware = async (ctx, next) => {
   const response = await next();

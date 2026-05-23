@@ -1,0 +1,6 @@
+{
+  // Isolated program for the admin sub-app: only this app's generated route map
+  // is in scope, so it cannot collide with the other apps' global augmentations.
+  "extends": "../../../tsconfig.base.json",
+  "include": ["**/*"]
+}

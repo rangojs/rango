@@ -776,6 +776,8 @@ function MountInfo() {
 
 Mount-aware local reverse for client components. Import the generated `routes` map from a `urls()` module's `.gen.ts` and call `reverse(".name", params?)`. Auto-fills params from `useParams()`; explicit params override.
 
+> Per-module `*.gen.ts` files are **CLI opt-in and not Vite-watched** — run `rango generate <urls-file>` (or wire it into `predev`) and re-run it whenever the module's routes change. See `/links` for the full generated-file setup and exposure-boundary rules.
+
 ```tsx
 "use client";
 import { Link, useReverse } from "@rangojs/router/client";

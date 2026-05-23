@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { urls } from "../urls.js";
 import { map } from "../route-definition.js";
-import { RSCRouterContext, type EntryData } from "../server/context.js";
+import { RangoContext, type EntryData } from "../server/context.js";
 import {
   layout,
   middleware,
@@ -29,7 +29,7 @@ function createContext() {
 
 function runInContext(ctx: ReturnType<typeof createContext>, fn: () => any) {
   let result: any;
-  RSCRouterContext.run(
+  RangoContext.run(
     {
       manifest: ctx.manifest,
       patterns: ctx.patterns,

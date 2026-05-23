@@ -7,7 +7,7 @@
  * ```typescript
  * // In env.ts or env.d.ts
  * declare global {
- *   namespace RSCRouter {
+ *   namespace Rango {
  *     interface Env extends AppBindings {}
  *     interface Vars extends AppVariables {}
  *   }
@@ -18,7 +18,7 @@
  * ```
  */
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     // eslint-disable-next-line @typescript-eslint/no-empty-interface
     interface Env {
       // Empty by default - users augment with their bindings (e.g., { DB: D1Database })
@@ -44,13 +44,25 @@ declare global {
 }
 
 /**
- * Get registered routes or fallback to generic Record<string, string>
- * When RSCRouter.RegisteredRoutes is augmented, provides autocomplete for route names
- * When not augmented, allows any string (no autocomplete)
+ * Route map for path-validation surfaces (`href`, `ValidPaths`, `PathResponse`).
+ *
+ * Resolution order:
+ * 1. `RegisteredRoutes` — manual `extends typeof router.routeMap`; richest map,
+ *    the only one carrying response-route payload metadata.
+ * 2. `GeneratedRouteMap` — auto-wired by `router.named-routes.gen.ts`; path +
+ *    search only. Lets `rango generate` alone enable `href()`/`ValidPaths` path
+ *    checking without a manual `RegisteredRoutes` declaration.
+ * 3. `Record<string, string>` — permissive fallback when nothing is registered.
+ *
+ * Referencing `GeneratedRouteMap` here is cycle-safe: it is declared in the
+ * standalone gen file with no imports, unlike `RegisteredRoutes extends typeof
+ * router.routeMap`.
  */
-export type GetRegisteredRoutes = keyof RSCRouter.RegisteredRoutes extends never
-  ? Record<string, string>
-  : RSCRouter.RegisteredRoutes;
+export type GetRegisteredRoutes = keyof Rango.RegisteredRoutes extends never
+  ? keyof Rango.GeneratedRouteMap extends never
+    ? Record<string, string>
+    : Rango.GeneratedRouteMap
+  : Rango.RegisteredRoutes;
 
 /**
  * Default route map for reverse() surfaces.
@@ -58,12 +70,11 @@ export type GetRegisteredRoutes = keyof RSCRouter.RegisteredRoutes extends never
  * cycles, but falls back to RegisteredRoutes for manual augmentation and then to
  * a permissive record when no route types are available.
  */
-export type DefaultReverseRouteMap =
-  keyof RSCRouter.GeneratedRouteMap extends never
-    ? keyof RSCRouter.RegisteredRoutes extends never
-      ? Record<string, string>
-      : RSCRouter.RegisteredRoutes
-    : RSCRouter.GeneratedRouteMap;
+export type DefaultReverseRouteMap = keyof Rango.GeneratedRouteMap extends never
+  ? keyof Rango.RegisteredRoutes extends never
+    ? Record<string, string>
+    : Rango.RegisteredRoutes
+  : Rango.GeneratedRouteMap;
 
 /**
  * Default route map for Handler type.
@@ -71,30 +82,32 @@ export type DefaultReverseRouteMap =
  * circular dependencies: router.tsx -> urls.tsx -> handler.tsx -> RegisteredRoutes -> router.tsx.
  * GeneratedRouteMap is declared in a standalone gen file with no imports.
  */
-export type DefaultHandlerRouteMap =
-  keyof RSCRouter.GeneratedRouteMap extends never
-    ? {}
-    : RSCRouter.GeneratedRouteMap;
+export type DefaultHandlerRouteMap = keyof Rango.GeneratedRouteMap extends never
+  ? {}
+  : Rango.GeneratedRouteMap;
 
 /**
- * Default environment type - uses global augmentation if available, any otherwise
+ * Default environment type - uses global augmentation if available.
+ *
+ * Falls back to `unknown` (not `any`) when `Rango.Env` is not augmented, so
+ * an app that forgets to register its bindings gets a compile error on
+ * `ctx.env.SOMETHING` instead of silently losing all env type-checking. Augment
+ * `Rango.Env` to type `ctx.env`.
  */
-export type DefaultEnv = keyof RSCRouter.Env extends never
-  ? any
-  : RSCRouter.Env;
+export type DefaultEnv = keyof Rango.Env extends never ? unknown : Rango.Env;
 
 /**
  * Default variables type - uses global augmentation if available, Record<string, any> otherwise
  */
-export type DefaultVars = keyof RSCRouter.Vars extends never
+export type DefaultVars = keyof Rango.Vars extends never
   ? Record<string, any>
-  : RSCRouter.Vars;
+  : Rango.Vars;
 
 /**
  * Default route name type for public `routeName` on contexts.
  * When GeneratedRouteMap is augmented, narrows to the known route names.
  * Otherwise falls back to `string` for untyped usage.
  */
-export type DefaultRouteName = keyof RSCRouter.GeneratedRouteMap extends never
+export type DefaultRouteName = keyof Rango.GeneratedRouteMap extends never
   ? string
-  : keyof RSCRouter.GeneratedRouteMap & string;
+  : keyof Rango.GeneratedRouteMap & string;

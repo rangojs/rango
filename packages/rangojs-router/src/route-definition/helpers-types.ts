@@ -198,10 +198,10 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
       use?: () => UseItems<InterceptUseItem>,
     ): InterceptItem;
     // Global: unprefixed, params inferred from global route map
-    <K extends keyof RSCRouter.GeneratedRouteMap & string>(
+    <K extends keyof Rango.GeneratedRouteMap & string>(
       slotName: `@${string}`,
       routeName: K,
-      handler: ReactNode | Handler<K, RSCRouter.GeneratedRouteMap, TEnv>,
+      handler: ReactNode | Handler<K, Rango.GeneratedRouteMap, TEnv>,
       use?: () => UseItems<InterceptUseItem>,
     ): InterceptItem;
   };

@@ -2,6 +2,12 @@
 
 ## Status: Implemented
 
+> **Historical note.** The local-map handler examples below use bare names
+> (`Handler<"index", routes>`, `href("post", ...)`) that reflect the API at the
+> time of writing. Current local-map handler typing requires **dot-prefixed**
+> local names — write `Handler<".index", routes>` and `ctx.reverse(".post", ...)`.
+> See `/typesafety` for the current contract.
+
 ## Problem
 
 The router currently generates three categories of `.gen.ts` files:

@@ -89,6 +89,40 @@ export interface UrlPatterns<
 }
 
 /**
+ * Extract the phantom env type carried by a UrlPatterns value.
+ */
+export type UrlPatternsEnv<T> =
+  T extends UrlPatterns<infer TEnv, any, any> ? TEnv : never;
+
+/**
+ * Guards `routes()` env compatibility without over-constraining.
+ *
+ * - An env-agnostic block (its env is `unknown` — e.g. a shared urls() module,
+ *   or an app that does not augment `Rango.Env`) attaches to any router.
+ * - A block carrying a concrete env is accepted only when the router env
+ *   (`TRouterEnv`) satisfies it; resolves to `never` otherwise, so a
+ *   `urls<{ DB: D1Database }>()` cannot be mounted on a `createRouter<{}>()`.
+ *
+ * Use as `patterns: T & EnvCompatible<T, TEnv>` so `T` still infers from the
+ * argument — a bare `EnvCompatible<T, TEnv>` parameter sits in a non-inferrable
+ * conditional position and would collapse `T` to its constraint.
+ *
+ * Known limitation: `TRouterEnv extends ...` distributes over a union router env,
+ * so a `urls<A>()` block is accepted on `createRouter<A | B>()` even though the
+ * `B` arm cannot supply `A`'s env. Suppressing distribution with
+ * `[TRouterEnv] extends [...]` would close that edge but breaks the common
+ * generic-`TEnv` call sites (a deferred type parameter can't resolve the tuple
+ * conditional, so the intersection stops reducing to `T`). A router has one env,
+ * so a union env is not a supported pattern; the distributive form is kept.
+ */
+export type EnvCompatible<TPatterns, TRouterEnv> =
+  unknown extends UrlPatternsEnv<TPatterns>
+    ? TPatterns
+    : TRouterEnv extends UrlPatternsEnv<TPatterns>
+      ? TPatterns
+      : never;
+
+/**
  * Options for include()
  */
 export interface IncludeOptions<TNamePrefix extends string = string> {

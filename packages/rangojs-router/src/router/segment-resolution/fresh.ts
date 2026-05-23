@@ -32,7 +32,7 @@ import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
 import {
   track,
-  RSCRouterContext,
+  RangoContext,
   runInsideLoaderScope,
 } from "../../server/context.js";
 
@@ -632,7 +632,7 @@ export async function resolveAllSegments<TEnv>(
     // can guard non-cacheable variable reads. Also guards response-level
     // side effects (headers.set). Persists for all descendant entries.
     if (entry.type === "cache") {
-      const store = RSCRouterContext.getStore();
+      const store = RangoContext.getStore();
       if (store) store.insideCacheScope = true;
     }
     const doneEntry = track(`segment:${entry.id}`, 1);

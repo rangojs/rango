@@ -1,5 +1,5 @@
 /**
- * RSC Router - RSC Entry Point
+ * Rango - RSC Entry Point
  *
  * This module provides RSC utilities for server-side rendering,
  * server actions, loader fetching, and progressive enhancement.

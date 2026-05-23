@@ -219,10 +219,7 @@ export function AdminSettingsPage() {
 }
 
 // Revalidation functions
-export const globalRevalidation: Revalidate<
-  GenericParams,
-  RSCRouter.Env
-> = () => {
+export const globalRevalidation: Revalidate<GenericParams, Rango.Env> = () => {
   console.log(
     "[Admin] Global: SOFT decision - suggest revalidate=true, continue...",
   );
@@ -231,7 +228,7 @@ export const globalRevalidation: Revalidate<
 
 export const settingsRevalidation: Revalidate<
   GenericParams,
-  RSCRouter.Env
+  Rango.Env
 > = () => {
   console.log("[Admin] Settings: HARD decision - never revalidate");
   return false;

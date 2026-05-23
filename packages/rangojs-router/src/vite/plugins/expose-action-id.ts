@@ -42,7 +42,7 @@ function getRscPluginApi(config: ResolvedConfig): RscPluginApi | undefined {
     );
     if (plugin) {
       console.warn(
-        `[rsc-router:expose-action-id] RSC plugin found by API structure (name: "${plugin.name}"). ` +
+        `[rango:expose-action-id] RSC plugin found by API structure (name: "${plugin.name}"). ` +
           `Consider updating the name lookup if the plugin was renamed.`,
       );
     }
@@ -287,7 +287,7 @@ export function exposeActionId(): Plugin {
 
       if (!rscPluginApi) {
         throw new Error(
-          "[rsc-router] Could not find @vitejs/plugin-rsc. " +
+          "[rango] Could not find @vitejs/plugin-rsc. " +
             "@rangojs/router requires the Vite RSC plugin, which is included automatically by rango().",
         );
       }

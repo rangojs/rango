@@ -108,6 +108,33 @@ path.text("/api/data", () => "plain text version", { name: "dataText" }),
 Without an RSC primary, there is no `text/html` candidate — the Accept header
 picks among the response-type candidates directly.
 
+## Type Safety For Negotiated Paths
+
+`router.named-routes.gen.ts` validates route names, params, search, `href()`, and
+`ValidPaths`, but it does not carry response payload metadata. For MIME or
+response payload types, use one of these surfaces:
+
+- `RouteResponse<typeof patterns, "routeName">` for a specific response variant
+  by route name. This is the clearest option when several MIME variants share
+  one URL pattern.
+- `PathResponse<"/products/:id">` for global URL-pattern lookup after the app
+  registers `typeof router.routeMap`:
+
+```typescript
+// router.tsx
+export const router = createRouter({ document: Document }).routes(urlpatterns);
+
+declare global {
+  namespace Rango {
+    interface RegisteredRoutes extends typeof router.routeMap {}
+  }
+}
+```
+
+`RegisteredRoutes` is what exposes the richer routeMap entries containing
+response payload metadata. Without it, URL-pattern response lookup has paths but
+no payloads, so response types resolve to `ResponseEnvelope<never>`.
+
 ## How It Works
 
 1. **Build time**: `buildRouteTrie()` calls `mergeLeaves()` when multiple routes share a pattern.

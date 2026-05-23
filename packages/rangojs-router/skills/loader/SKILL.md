@@ -185,7 +185,7 @@ export const ProductLoader = createLoader(async (ctx) => {
   // Request headers
   const auth = ctx.request.headers.get("Authorization");
 
-  // Variables set by middleware (from RSCRouter.Vars augmentation)
+  // Variables set by middleware (from Rango.Vars augmentation)
   const user = ctx.get("user");
 
   // Type-checked URLs for payloads. `.name` resolves within the current

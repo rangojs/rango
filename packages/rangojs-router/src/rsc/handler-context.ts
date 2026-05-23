@@ -6,14 +6,14 @@
  * RSC rendering) so they can be standalone modules without closure coupling.
  */
 
-import type { RSCRouterInternal } from "../router/router-interfaces.js";
+import type { RangoInternal } from "../router/router-interfaces.js";
 import type { ErrorPhase } from "../types.js";
 import type { InvokeOnErrorContext } from "../router/error-handling.js";
 import type { RSCDependencies, LoadSSRModule } from "./types.js";
 import type { SSRStreamMode } from "../router/router-options.js";
 
 export interface HandlerContext<TEnv = unknown> {
-  router: RSCRouterInternal<TEnv, any>;
+  router: RangoInternal<TEnv, any>;
   version: string;
   renderToReadableStream: RSCDependencies["renderToReadableStream"];
   decodeReply: RSCDependencies["decodeReply"];

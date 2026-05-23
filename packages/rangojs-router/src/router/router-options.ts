@@ -73,7 +73,7 @@ export interface RootLayoutProps {
 /**
  * Router configuration options
  */
-export interface RSCRouterOptions<TEnv = any> {
+export interface RangoOptions<TEnv = any> {
   /**
    * Unique identifier for this router instance.
    * Used to namespace static output files and route maps.
