@@ -358,16 +358,16 @@ Both error types propagate to the router's `onError` callback with phase
 The build produces per-URL timing logs:
 
 ```
-[rsc-router] Pre-rendering 12 URL(s) (concurrency: 4)...
-[rsc-router]   OK   /articles/hello            (42ms)
-[rsc-router]   PASS /articles/remote-only      (5ms) - live fallback
-[rsc-router]   SKIP /articles/draft-post       (3ms) - Article is a draft
-[rsc-router] Pre-render complete: 11 done, 1 skipped (1204ms total)
+[rango] Pre-rendering 12 URL(s) (concurrency: 4)...
+[rango]   OK   /articles/hello            (42ms)
+[rango]   PASS /articles/remote-only      (5ms) - live fallback
+[rango]   SKIP /articles/draft-post       (3ms) - Article is a draft
+[rango] Pre-render complete: 11 done, 1 skipped (1204ms total)
 
-[rsc-router] Rendering 3 static handler(s)...
-[rsc-router]   OK   DocsLayout                 (28ms)
-[rsc-router]   SKIP TocSidebar                 (1ms) - Not ready
-[rsc-router] Static render complete: 2 done, 1 skipped (120ms total)
+[rango] Rendering 3 static handler(s)...
+[rango]   OK   DocsLayout                 (28ms)
+[rango]   SKIP TocSidebar                 (1ms) - Not ready
+[rango] Static render complete: 2 done, 1 skipped (120ms total)
 ```
 
 A `FAIL` line is logged per-URL when a handler throws a non-Skip error. The
@@ -463,9 +463,9 @@ export const Product = Passthrough(ProductDef, async (ctx) => {
 Passthrough entries are logged distinctly:
 
 ```
-[rsc-router]   OK   /blog/a                          (42ms)
-[rsc-router]   PASS /blog/b                          (3ms) - live fallback
-[rsc-router]   OK   /blog/c                          (38ms)
+[rango]   OK   /blog/a                          (42ms)
+[rango]   PASS /blog/b                          (3ms) - live fallback
+[rango]   OK   /blog/c                          (38ms)
 ```
 
 ## Edge Cases and Constraints

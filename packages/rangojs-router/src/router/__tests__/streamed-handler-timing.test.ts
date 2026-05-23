@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { RSCRouterContext, track } from "../../server/context.js";
+import { RangoContext, track } from "../../server/context.js";
 import type { MetricsStore } from "../../server/context.js";
 import { runWithRouterContext } from "../router-context.js";
 import { resolveSegment, resolveParallelEntry } from "../segment-resolution";
@@ -14,7 +14,7 @@ function createMetrics(): MetricsStore {
 }
 
 function runWithMetrics<T>(metrics: MetricsStore, fn: () => T): T {
-  return RSCRouterContext.run(
+  return RangoContext.run(
     {
       manifest: new Map(),
       namespace: "",

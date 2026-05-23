@@ -23,7 +23,7 @@ Related docs:
 | `.`              | Root entrypoint with shared types/utilities plus server/RSC APIs selected via the `react-server` export condition: `createRouter`, `createLoader`, `redirect`, `cookies()`, `headers()`, route DSL, errors, helpers, URL/route utilities, reverse lookup. Default (non-RSC) entry also exports universal handles `Meta` and `Breadcrumbs` alongside `createHandle`. |
 | `./client`       | Client-side components and hooks (see [Client API](#client-api) below)                                                                                                                                                                                                                                                                                              |
 | `./vite`         | Public Vite plugin surface: `rango()`, `poke()`, and plugin option types                                                                                                                                                                                                                                                                                            |
-| `./browser`      | Browser bootstrap: `initBrowserApp`, `RSCRouter`, `InitBrowserAppOptions`                                                                                                                                                                                                                                                                                           |
+| `./browser`      | Browser bootstrap: `initBrowserApp`, `Rango`, `InitBrowserAppOptions`                                                                                                                                                                                                                                                                                               |
 | `./rsc`          | Advanced server request-pipeline APIs: `createRSCHandler`, request-context access, RSC handler types                                                                                                                                                                                                                                                                |
 | `./ssr`          | Advanced HTML rendering bridge: `createSSRHandler`, nonce/form-state/streamMode support                                                                                                                                                                                                                                                                             |
 | `./build`        | Manifest and route-type generators: `generateManifest`, `generateManifestFull`, `generateManifestCode`, `writePerModuleRouteTypes`, `generatePerModuleTypesSource`, `extractRoutesFromSource`, `buildRouteTrie`, `createScanFilter`, `hashParams`                                                                                                                   |
@@ -104,7 +104,7 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 
 ### Router Lifecycle
 
-Public API (`RSCRouter` interface):
+Public API (`Rango` interface):
 
 - `createRouter()` with `.routes()`, `.use()`, `.reverse()`, `.fetch()`
 - `routeMap`, warmup handling, document wrapper, global not-found/error defaults
@@ -112,7 +112,7 @@ Public API (`RSCRouter` interface):
 - Request timeouts via `timeout`/`timeouts`/`onTimeout` options
 - `basename` for sub-path deployments — auto-prefixes all routes, `reverse()`, `Link`, `redirect()`, `router.use()` patterns, and `useRouter()` navigation. `href()` is intentionally not basename-aware (raw path helper).
 
-Internal API (`RSCRouterInternal`, not exported):
+Internal API (`RangoInternal`, not exported):
 
 - `.match()`, `.matchPartial()`, `.matchError()`, `.previewMatch()`, `.matchForPrerender()`, `.renderStaticSegment()`
 - `allowDebugManifest`, `debugManifest()`

@@ -1,4 +1,4 @@
-import type { RSCRouterInternal } from "./router-interfaces.js";
+import type { RangoInternal } from "./router-interfaces.js";
 
 /**
  * Brand marker for identifying router instances at build time.
@@ -12,10 +12,7 @@ export const RSC_ROUTER_BRAND = "__rsc_router__" as const;
  * Used by the Vite plugin at build time to discover routers and extract
  * manifests, prefix trees, and pre-render candidates.
  */
-export const RouterRegistry: Map<
-  string,
-  RSCRouterInternal<any, any>
-> = new Map();
+export const RouterRegistry: Map<string, RangoInternal<any, any>> = new Map();
 
 export let routerAutoId = 0;
 

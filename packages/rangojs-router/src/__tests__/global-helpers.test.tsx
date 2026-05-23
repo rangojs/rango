@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { urls } from "../urls.js";
-import { RSCRouterContext, type EntryData } from "../server/context.js";
+import { RangoContext, type EntryData } from "../server/context.js";
 
 // These are the helpers we want to export globally from @rangojs/router.
 // Currently they're module-level consts in route-definition.ts.
@@ -36,7 +36,7 @@ function createContext() {
 
 function runInContext(ctx: ReturnType<typeof createContext>, fn: () => any) {
   let result: any;
-  RSCRouterContext.run(
+  RangoContext.run(
     {
       manifest: ctx.manifest,
       patterns: ctx.patterns,

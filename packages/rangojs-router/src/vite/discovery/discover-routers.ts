@@ -73,7 +73,7 @@ export async function discoverRouters(
 
       if (hostRegistry && hostRegistry.size > 0) {
         console.log(
-          `[rsc-router] Found ${hostRegistry.size} host router(s), resolving lazy handlers...`,
+          `[rango] Found ${hostRegistry.size} host router(s), resolving lazy handlers...`,
         );
 
         const handlerErrors = await resolveHostRouterHandlers(hostRegistry);
@@ -224,7 +224,7 @@ export async function discoverRouters(
     newPerRouterPrecomputedMap.set(id, routerPrecomputed);
 
     console.log(
-      `[rsc-router] Router "${id}" -> ${routeCount} routes ` +
+      `[rango] Router "${id}" -> ${routeCount} routes ` +
         `(${staticRoutes} static, ${dynamicRoutes} dynamic)`,
     );
   }
@@ -240,7 +240,7 @@ export async function discoverRouters(
     );
     if (autoIds.length > 1) {
       console.warn(
-        `[rsc-router] WARNING: ${autoIds.length} routers use auto-generated IDs (${autoIds.join(", ")}). ` +
+        `[rango] WARNING: ${autoIds.length} routers use auto-generated IDs (${autoIds.join(", ")}). ` +
           `In multi-router setups, each createRouter() must have an explicit \`id\` option ` +
           `to ensure per-router manifest data is matched correctly at runtime. ` +
           `Example: createRouter({ id: "site", ... })`,

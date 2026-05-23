@@ -54,7 +54,7 @@ export function findTsFiles(dir: string, filter?: ScanFilter): string[] {
     entries = readdirSync(dir, { withFileTypes: true });
   } catch (err) {
     console.warn(
-      `[rsc-router] Failed to scan directory ${dir}: ${(err as Error).message}`,
+      `[rango] Failed to scan directory ${dir}: ${(err as Error).message}`,
     );
     return results;
   }

@@ -17,7 +17,11 @@ import { urlpatterns } from "./urls/index.js";
  * Accessed via ctx.env
  */
 export interface AppBindings {
-  // Example for Cloudflare Workers:
+  // Plain environment variables (available in any deployment target).
+  // Declaring at least one member is what makes `ctx.env` / `Rango.Env`
+  // a concrete type instead of the unaugmented `unknown` fallback.
+  APP_NAME?: string;
+  // Example platform bindings for Cloudflare Workers:
   // DB?: D1Database;
   // KV?: KVNamespace;
   // STRIPE_KEY?: string;
@@ -50,7 +54,7 @@ export type AppEnv = AppBindings;
 type AppRoutes = typeof router.routeMap;
 
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface Env extends AppBindings {}
     interface Vars extends AppVariables {}
     interface RegisteredRoutes extends AppRoutes {}

@@ -36,7 +36,7 @@ Enforcement sites:
 Route-tree **metadata** is built eagerly at two separate phases, both of
 which walk `patterns.handler()` synchronously:
 
-1. **Runtime router registration** — `RSCRouter.routes(patternsOrBuilder)`
+1. **Runtime router registration** — `Rango.routes(patternsOrBuilder)`
    at `src/router.ts:682` walks the handler during router construction to
    extract route patterns, register the reverse map, and seed
    `routesEntries` used by `findMatch`.
@@ -92,7 +92,7 @@ population**, not route-name discovery. Specifically:
 - At init (both router construction and build discovery): patterns are
   walked to build trie + reverse map + types. Cheap, metadata-only.
 - At first matching request: `evaluateLazyEntry` runs the handler inside a
-  per-request `RSCRouterContext` to register handlers, loaders, cache
+  per-request `RangoContext` to register handlers, loaders, cache
   profiles, middleware chains, etc. This is the work lazy-by-default
   avoids on cold start.
 - On subsequent requests: the module-level manifest cache
@@ -128,7 +128,7 @@ generated type file, so deferring its module load does not leave shared
 metadata incomplete. A whole handler/app is a natural splitting unit; a
 single `include()` prefix inside a shared router is not.
 
-`RSCRouter.routes()` itself only accepts `UrlPatterns | UrlBuilder` (see
+`Rango.routes()` itself only accepts `UrlPatterns | UrlBuilder` (see
 `src/router.ts:682`) — it does **not** take a factory. Code-splitting
 below the host-router boundary requires host-level composition, not a
 widened `include()` signature.

@@ -140,7 +140,7 @@ type OptionalTrailingSlash<T extends string> = T extends `${infer Base}/`
 /**
  * Union of all valid paths from registered routes
  *
- * Generated from RSCRouter.RegisteredRoutes via module augmentation.
+ * Generated from Rango.RegisteredRoutes via module augmentation.
  * Allows optional query strings and hash fragments.
  */
 export type ValidPaths<TRoutes = GetRegisteredRoutes> =

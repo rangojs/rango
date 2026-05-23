@@ -68,7 +68,7 @@ export type {
 
 // Router options type (server-only, so import directly)
 export type {
-  RSCRouterOptions,
+  RangoOptions,
   SSRStreamMode,
   SSROptions,
   ResolveStreamingContext,
@@ -152,7 +152,7 @@ export {
 // Core router (server-side)
 export {
   createRouter,
-  type RSCRouter,
+  type Rango,
   type RootLayoutProps,
   type RouterRequestInput,
 } from "./router.js";

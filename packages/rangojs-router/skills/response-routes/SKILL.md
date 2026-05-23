@@ -238,7 +238,24 @@ type ProductsData = RouteResponse<typeof apiPatterns, "products">;
 
 ### PathResponse (global lookup by URL pattern)
 
-Look up response type from the merged route map by URL pattern:
+`PathResponse` reads from `RegisteredRoutes`, which carries response payload
+metadata. That surface is **not** auto-wired — without the augmentation below,
+`PathResponse` falls back to the generated path/search map, or to a permissive
+map when nothing is generated. Either way, it has no response payload metadata,
+so response routes resolve to `ResponseEnvelope<never>`:
+
+```typescript
+// router.tsx
+export const router = createRouter({ document: Document }).routes(urlpatterns);
+
+declare global {
+  namespace Rango {
+    interface RegisteredRoutes extends typeof router.routeMap {}
+  }
+}
+```
+
+With that in place, look up the response type by URL pattern:
 
 ```typescript
 import type { PathResponse } from "@rangojs/router/client";
@@ -251,6 +268,11 @@ type Health = PathResponse<"/api/health">;
 type Home = PathResponse<"/">;
 // = ResponseEnvelope<never>
 ```
+
+For local/scoped response typing without global augmentation, prefer
+`RouteResponse<typeof patterns, "routeName">` (see the section above) — it reads
+the response payload straight from the `urls()` patterns and needs no
+`RegisteredRoutes` wiring.
 
 ### ParamsFor with Response Routes
 
@@ -363,11 +385,13 @@ export const urlpatterns = urls(({ path, include }) => [
 import type { RouteResponse } from "@rangojs/router";
 import type { PathResponse, ParamsFor } from "@rangojs/router/client";
 
-// Scoped (before mount) -- use the module directly
+// Scoped (before mount) -- use the module directly, no global wiring needed
 type Stats = RouteResponse<typeof blogApiPatterns, "stats">;
 // = ResponseEnvelope<{ views: number; visitors: number }>
 
-// After mounting -- names get prefixed
+// After mounting -- names get prefixed.
+// PathResponse needs `RegisteredRoutes extends typeof router.routeMap` (see above),
+// otherwise it resolves to ResponseEnvelope<never>.
 type BlogStats = PathResponse<"/blog/api/stats">;
 // = ResponseEnvelope<{ views: number; visitors: number }>
 

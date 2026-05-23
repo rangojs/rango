@@ -263,6 +263,8 @@ function MountInfo() {
 
 Hook that returns a typed local reverse function for a `routes` map imported from a generated `.gen.ts` next to a `urls()` module. The route map is the **exposure boundary** — `useReverse` only knows about names in that map, never the full app manifest.
 
+> Import the per-module `routes` (e.g. `urls/blog.gen.ts`), **not** `router.named-routes.gen.ts`. The named-routes file is the whole app manifest and is server-only data — importing it into a client component pulls every route name into the client bundle.
+
 ```tsx
 "use client";
 import { Link, useReverse } from "@rangojs/router/client";

@@ -196,7 +196,7 @@ export const myMiddleware: Middleware = async (ctx, next) => {
   ctx.env.DB; // D1Database
   ctx.env.KV; // KVNamespace
 
-  // Set variables for downstream handlers (typed via RSCRouter.Vars)
+  // Set variables for downstream handlers (typed via Rango.Vars)
   ctx.set("user", { id: "123", name: "John" });
 
   // Continue to next middleware/handler
@@ -237,8 +237,8 @@ const Dashboard: Handler<"dashboard"> = (ctx) => {
 ```
 
 This works alongside `ctx.get("key")` / `ctx.set("key", value)` (global typing
-via RSCRouter.Vars augmentation). Use `createVar` for route-local or feature-scoped
-data; use RSCRouter.Vars for app-wide middleware state.
+via Rango.Vars augmentation). Use `createVar` for route-local or feature-scoped
+data; use Rango.Vars for app-wide middleware state.
 
 ## Redirect with State in Middleware
 

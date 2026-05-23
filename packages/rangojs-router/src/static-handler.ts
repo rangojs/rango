@@ -96,7 +96,7 @@ export function Static<TParams extends Record<string, any>>(
 
   if (!id) {
     throw new Error(
-      "[rsc-router] Static: missing $$id. " +
+      "[rango] Static: missing $$id. " +
         "Ensure the exposeInternalIds Vite plugin is configured.",
     );
   }

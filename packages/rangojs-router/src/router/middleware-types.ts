@@ -140,7 +140,7 @@ export interface MiddlewareContext<
  * @template TEnv - Environment type - defaults to any for internal flexibility
  * @template TParams - URL params type (typed for route middleware)
  *
- * When using middleware with global augmentation (RSCRouter.Env), explicitly
+ * When using middleware with global augmentation (Rango.Env), explicitly
  * annotate your middleware functions, or the types will be inferred from context:
  *
  * @example

@@ -61,7 +61,7 @@ function findRouterFilesRecursive(
     entries = readdirSync(dir, { withFileTypes: true });
   } catch (err) {
     console.warn(
-      `[rsc-router] Failed to scan directory ${dir}: ${(err as Error).message}`,
+      `[rango] Failed to scan directory ${dir}: ${(err as Error).message}`,
     );
     return;
   }
@@ -142,7 +142,7 @@ export function findNestedRouterConflict(
 
 export function formatNestedRouterConflictError(
   conflict: { ancestor: string; nested: string },
-  prefix = "[rsc-router]",
+  prefix = "[rango]",
 ): string {
   return (
     `${prefix} Nested router roots are not supported.\n` +
@@ -536,7 +536,7 @@ export function writeCombinedRouteTypes(
     if (existsSync(oldCombinedPath)) {
       unlinkSync(oldCombinedPath);
       console.log(
-        `[rsc-router] Removed stale combined route types: ${oldCombinedPath}`,
+        `[rango] Removed stale combined route types: ${oldCombinedPath}`,
       );
     }
   } catch {}
@@ -611,7 +611,7 @@ export function writeCombinedRouteTypes(
       }
       writeFileSync(outPath, source);
       console.log(
-        `[rsc-router] Generated route types (${Object.keys(result.routes).length} routes) -> ${outPath}`,
+        `[rango] Generated route types (${Object.keys(result.routes).length} routes) -> ${outPath}`,
       );
     }
   }

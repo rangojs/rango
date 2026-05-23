@@ -5,9 +5,8 @@ import path from "node:path";
 
 const genFilePath = path.resolve("./src/router.named-routes.gen.ts");
 
-const STATIC_PARSER_LINE =
-  /\[rsc-router\] Generated route types \(\d+ routes\) -> /;
-const RUNTIME_DISCOVERY_LINE = /\[rsc-router\] Generated route types -> /;
+const STATIC_PARSER_LINE = /\[rango\] Generated route types \(\d+ routes\) -> /;
+const RUNTIME_DISCOVERY_LINE = /\[rango\] Generated route types -> /;
 
 /**
  * Pins the contract that `pnpm dev`'s runtime discovery produces the same
@@ -147,7 +146,7 @@ test.describe("dev vs build named-routes parity", () => {
 
     let dev: ChildProcess | null = null;
     let buffer = "";
-    // Count `[rsc-router] Router "X" -> N routes (...)` log lines — fired
+    // Count `[rango] Router "X" -> N routes (...)` log lines — fired
     // unconditionally by discoverRouters() once per cycle, so the count is
     // a reliable signal of "runtime discovery completed" across both cold
     // start and HMR. (The "Generated route types -> " write log only fires
@@ -197,9 +196,7 @@ test.describe("dev vs build named-routes parity", () => {
         // line that discoverRouters() emits unconditionally on every cycle.
         const completeRegion = buffer.slice(0, lastNewline + 1);
         const matches =
-          completeRegion.match(
-            /\[rsc-router\] Router "[^"]+" -> \d+ routes/g,
-          ) ?? [];
+          completeRegion.match(/\[rango\] Router "[^"]+" -> \d+ routes/g) ?? [];
         const newCount = matches.length;
         if (newCount > discoveryCount) {
           discoveryCount = newCount;
@@ -350,9 +347,7 @@ test.describe("dev vs build named-routes parity", () => {
         if (lastNewline < 0) return;
         const completeRegion = buffer.slice(0, lastNewline + 1);
         const matches =
-          completeRegion.match(
-            /\[rsc-router\] Router "[^"]+" -> \d+ routes/g,
-          ) ?? [];
+          completeRegion.match(/\[rango\] Router "[^"]+" -> \d+ routes/g) ?? [];
         const newCount = matches.length;
         if (newCount > discoveryCount) {
           discoveryCount = newCount;
@@ -549,9 +544,7 @@ test.describe("dev vs build named-routes parity", () => {
         if (lastNewline < 0) return;
         const completeRegion = buffer.slice(0, lastNewline + 1);
         const matches =
-          completeRegion.match(
-            /\[rsc-router\] Router "[^"]+" -> \d+ routes/g,
-          ) ?? [];
+          completeRegion.match(/\[rango\] Router "[^"]+" -> \d+ routes/g) ?? [];
         const newCount = matches.length;
         if (newCount > discoveryCount) {
           discoveryCount = newCount;
@@ -977,7 +970,7 @@ async function runDevAndWaitForRediscovery(
     handle.buffer += chunk.toString();
     if (
       !discoverySeen &&
-      /\[rsc-router\] Router "[^"]+" -> \d+ routes/.test(handle.buffer)
+      /\[rango\] Router "[^"]+" -> \d+ routes/.test(handle.buffer)
     ) {
       discoverySeen = true;
       coldDiscovery();

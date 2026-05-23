@@ -37,7 +37,28 @@ available globally.
 - `typeof router.routeMap` — the real merged route map from your router
   instance, including response-route metadata such as `{ path, response }`.
 - `RegisteredRoutes` — manual global hook for exposing `typeof router.routeMap`
-  to utilities like `href()`, `ValidPaths`, and `PathResponse`.
+  to global utilities that need the exact router-builder map, especially
+  `PathResponse`.
+
+### Generated Route Type Surfaces
+
+There are three distinct typing surfaces. They are **not** interchangeable —
+pick the one that matches what you need to type:
+
+| Surface             | Source                                   | Scope  | Gives                                    | Does not give                                                                                    |
+| ------------------- | ---------------------------------------- | ------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `GeneratedRouteMap` | `router.named-routes.gen.ts` (auto)      | global | route names, path params, search schemas | response/MIME payloads                                                                           |
+| `routes`            | per-module `*.gen.ts` (`rango generate`) | local  | local names, params, search              | the global app map                                                                               |
+| `RegisteredRoutes`  | manual `extends typeof router.routeMap`  | global | paths, params, **response payloads**     | the `Handler`/`Prerender` default (those read `GeneratedRouteMap` to avoid a `router.tsx` cycle) |
+
+Key consequence: `href()` and `ValidPaths` are typed from whichever map is
+present — they prefer `RegisteredRoutes` when you wire it, otherwise fall back to
+the auto-generated `GeneratedRouteMap`, so **`rango generate` alone gives you
+path-checked `href()`** with no manual augmentation. Response and MIME payload
+inference is the exception: it comes only from `typeof router.routeMap` (via
+`RegisteredRoutes`), because `GeneratedRouteMap` carries paths + search but no
+payloads — so `PathResponse` resolves to `ResponseEnvelope<never>` until you wire
+`RegisteredRoutes`.
 
 Recommended setup:
 
@@ -50,13 +71,61 @@ import type { AppBindings, AppVars } from "./env";
 export const router = createRouter<AppBindings>({}).routes(urlpatterns);
 
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface Env extends AppBindings {}
     interface Vars extends AppVars {}
     interface RegisteredRoutes extends typeof router.routeMap {}
   }
 }
 ```
+
+### Single-App Setup Checklist
+
+For one app, keep the ambient types, generated named-routes file, and router
+instance in the same TypeScript program:
+
+```jsonc
+// tsconfig.json
+{
+  "compilerOptions": {
+    "strict": true,
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "noEmit": true,
+  },
+  "include": ["src"],
+  "files": ["src/router.tsx"],
+}
+```
+
+Then generate the route types from the router file:
+
+```bash
+npx rango generate src/router.tsx
+```
+
+This creates `src/router.named-routes.gen.ts`, which augments
+`Rango.GeneratedRouteMap`. Keep that generated file committed with the router
+source. The `files` entry keeps `router.tsx` in the program even when nothing
+imports it directly, so `Rango.Env`, `Rango.Vars`, and optional
+`Rango.RegisteredRoutes` augmentation are visible to handlers, loaders, actions,
+and client helpers.
+
+### Named Routes, `$$routeNames`, And `router.routeMap`
+
+There are two runtime/type surfaces with similar names:
+
+- `router.named-routes.gen.ts` exports `NamedRoutes` and augments
+  `Rango.GeneratedRouteMap`. The Vite plugin imports that file internally and
+  injects it as `$$routeNames` so `router.reverse` has the static route-name map.
+  App code should not pass or import `$$routeNames` directly.
+- `router.routeMap` is the public router instance property for type extraction.
+  Use `typeof router.routeMap` when augmenting `Rango.RegisteredRoutes` for
+  global response payload helpers such as `PathResponse`.
+
+Do not document or use a public `router.routeNames` API unless one is
+intentionally added. Today, the public extraction surface is `router.routeMap`;
+the generated file and `$$routeNames` are build machinery.
 
 ## Route Definition with Type-Safe Names
 
@@ -127,12 +196,15 @@ function ShopNav() {
 }
 ```
 
-`href()` and path-based response utilities read from `RegisteredRoutes`, so if
-you want them typed globally you should augment:
+`href()` and `ValidPaths` read from `RegisteredRoutes` when you augment it,
+otherwise from the auto-generated `GeneratedRouteMap` — so `rango generate` alone
+type-checks `href()` paths with no manual augmentation. The augmentation below is
+only needed for **`PathResponse`** (response-payload inference), which
+`GeneratedRouteMap` cannot provide:
 
 ```typescript
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface RegisteredRoutes extends typeof router.routeMap {}
   }
 }
@@ -155,7 +227,7 @@ export interface AppBindings {
   AI: Ai;
 }
 
-// Variables set by middleware — declared via module augmentation
+// Variables set by middleware — declared via global namespace augmentation
 export interface AppVariables {
   user?: { id: string; email: string; role: string };
   requestId?: string;
@@ -175,7 +247,7 @@ const router = createRouter<AppBindings>({
 
 // Register bindings and variables globally for implicit typing
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface Env extends AppBindings {}
     interface Vars extends AppVariables {}
   }
@@ -196,7 +268,7 @@ export const authMiddleware: Middleware = async (ctx, next) => {
 // loaders - typed context
 export const UserLoader = createLoader(async (ctx) => {
   const db = ctx.env.DB; // D1Database (plain bindings)
-  const userId = ctx.get("user")?.id; // from RSCRouter.Vars
+  const userId = ctx.get("user")?.id; // from Rango.Vars
   return db.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
 });
 ```
@@ -208,7 +280,7 @@ Register environment types globally for implicit typing:
 ```typescript
 // router.tsx
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface Env extends AppBindings {}
     interface Vars extends AppVariables {}
   }
@@ -220,8 +292,8 @@ Now handlers have typed context without explicit imports:
 ```typescript
 // In loaders
 export const DashboardLoader = createLoader(async (ctx) => {
-  // ctx.env.DB is typed from global RSCRouter.Env
-  // ctx.get("user") is typed from global RSCRouter.Vars
+  // ctx.env.DB is typed from global Rango.Env
+  // ctx.get("user") is typed from global Rango.Vars
   const user = ctx.get("user");
   return { user };
 });
@@ -259,14 +331,20 @@ This avoids circular references because `Handler` defaults to `GeneratedRouteMap
 (from `router.named-routes.gen.ts`) instead of `RegisteredRoutes` (which depends on `router.tsx`).
 
 You can also pass an explicit route map for per-module isolation (opt-in,
-after running `npx rango generate`):
+after running `npx rango generate`). With a local map, the route name is
+**dot-prefixed** so params and search resolve from `routes`, not the global map:
 
 ```typescript
 import type { Handler } from "@rangojs/router";
 import type { routes } from "./urls.gen.js";
 
-export const SearchPage: Handler<"search", routes> = (ctx) => { ... };
+export const SearchPage: Handler<".search", routes> = (ctx) => { ... };
 ```
+
+Note the difference: `Handler<"search">` (no dot) resolves against the global
+`GeneratedRouteMap`; `Handler<".search", routes>` resolves against the local
+`routes` map. Mixing them — `Handler<"search", routes>` — silently ignores
+`routes` for param/search inference and only uses it for local `ctx.reverse(".x")`.
 
 Supported types: `"string"`, `"number"`, `"boolean"`, with `?` suffix for optional.
 Values are automatically coerced from query string (e.g., `"2"` becomes `2` for numbers).
@@ -325,11 +403,18 @@ export const NamedRoutes = {
 } as const;
 ```
 
-You never open a `.gen.ts` by hand — the generated types exist only to make call
-sites honest. Treat the generated machinery as invisible: don't import from
-`*.gen.ts`, don't reach for `RSCRouter.GeneratedRouteMap` directly, and if a type
-error points at the generated map instead of your call site, that's a smell — fix
-the call site (or regenerate), never edit the generated file.
+You never open a `.gen.ts` by hand. Treat the generated types as call-site
+honesty checks, not modules to read:
+
+- **Do not import `router.named-routes.gen.ts` directly**, and don't reach for
+  `Rango.GeneratedRouteMap`. It is the whole-app manifest, auto-wired
+  globally — `Handler<"name">` and `ctx.reverse("name")` already see it.
+- **Per-module `*.gen.ts` imports are fine** — they are the opt-in local-route
+  pattern for `useReverse(routes)` and explicit local handler typing
+  (`Handler<".name", routes>`). See `/links`.
+
+If a type error points at a generated map instead of your call site, that's a
+smell — fix the call site (or regenerate), never edit the generated file.
 
 ## Loader Type Safety
 
@@ -420,9 +505,9 @@ export function PaginationLayout(ctx: any) {
 }
 ```
 
-### Why not just use RSCRouter.Vars?
+### Why not just use Rango.Vars?
 
-`RSCRouter.Vars` (via module augmentation) provides app-global typing for
+`Rango.Vars` (via global namespace augmentation) provides app-global typing for
 `ctx.get("key")` / `ctx.set("key", value)`. It works for middleware state
 shared app-wide. `createVar<T>()` is for route-local or feature-scoped
 context -- the producer and consumer import the same token, creating a
@@ -570,9 +655,37 @@ function ProductHeader() {
 
 ## Multi-Project tsconfig Setup
 
-For monorepos or multi-app setups, use a shared base tsconfig. Each app only needs
-to extend the base and add its `router.tsx` to `files` so TypeScript picks up the
-global type declarations (like `RSCRouter.Env`).
+For monorepos or multi-app setups, each app should have its own TypeScript
+program. Do not typecheck two Rango apps with different `Rango.Env`,
+`Rango.Vars`, or `Rango.RegisteredRoutes` declarations in one tsconfig, because
+ambient global interfaces merge across the whole program.
+
+### Multiple routers in one program
+
+`Rango.GeneratedRouteMap` is a **single global interface**. Each router's
+generated `router.named-routes.gen.ts` augments it, so two routers in the **same
+TS program** that define overlapping route names (e.g. both have a `home`) make
+the augmentations collide:
+
+```text
+Interface 'GeneratedRouteMap' cannot simultaneously extend ...
+Named property 'home' ... are not identical.
+```
+
+This is the multi-router / host-router case. Resolve it by:
+
+- **Separate TS programs** — give each router its own tsconfig (as below) so only
+  one generated map is in scope per program. Recommended.
+- **Unique route-name prefixes** — name routes per router (`appA.home`,
+  `appB.home`) so the merged global map has no duplicate keys.
+
+A single global generated map is a single-router convenience; global named-route
+typing across multiple routers in one program is not supported today (it would
+need per-router scoping in the generated map).
+
+Use a shared base tsconfig for common compiler options, then make every app
+tsconfig include its own source tree, its own `router.tsx`, and the generated
+`router.named-routes.gen.ts` that lives beside that router.
 
 ```jsonc
 // tsconfig.base.json (root)
@@ -611,10 +724,49 @@ global type declarations (like `RSCRouter.Env`).
 }
 ```
 
-The `files` array ensures `router.tsx` (which contains `declare global { namespace RSCRouter { interface Env; interface Vars } }`)
-is always included in the compilation even if nothing directly imports it. Route types come from the
-auto-generated `*.named-routes.gen.ts` file (via `rango generate`), not from manual declaration.
-Each app gets its own typed environment without interfering with other apps.
+Run generation per app:
+
+```bash
+npx rango generate apps/shop/src/router.tsx
+npx rango generate apps/blog/src/router.tsx
+```
+
+If an app has multiple tsconfigs (`tsconfig.app.json`, `tsconfig.test.json`,
+`tsconfig.worker.json`), every tsconfig that typechecks Rango handlers,
+components, loaders, actions, or client navigation must see the same app-local
+type surfaces:
+
+```jsonc
+// apps/shop/tsconfig.test.json
+{
+  "extends": "./tsconfig.json",
+  "include": ["src", "tests"],
+  "files": ["src/router.tsx"],
+}
+```
+
+The `files` array ensures `router.tsx` is always included even if nothing
+directly imports it. The generated `router.named-routes.gen.ts` is normally
+covered by `include: ["src"]`; if a tsconfig uses a narrow `include`, add the
+generated file explicitly. Each app gets its own typed environment and named
+route map without interfering with other apps.
+
+For response and MIME payload lookup in each app, augment `RegisteredRoutes`
+inside that app's router file:
+
+```typescript
+// apps/shop/src/router.tsx
+export const router = createRouter<ShopEnv>({ document: Document }).routes(
+  urlpatterns,
+);
+
+declare global {
+  namespace Rango {
+    interface Env extends ShopEnv {}
+    interface RegisteredRoutes extends typeof router.routeMap {}
+  }
+}
+```
 
 ## Complete Type-Safe Setup
 
@@ -650,7 +802,7 @@ const router = createRouter<AppBindings>({
 
 // Register bindings and variables globally for implicit typing
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface Env extends AppBindings {}
     interface Vars extends AppVariables {}
   }
@@ -661,13 +813,16 @@ export default router;
 
 // 4. Run `npx rango generate src/router.tsx` to generate
 //    router.named-routes.gen.ts (auto-registers GeneratedRouteMap globally).
-//    No manual RegisteredRoutes declaration needed.
+//    No manual RegisteredRoutes declaration is needed for named-route handlers,
+//    ctx.reverse, prerender, href(), or ValidPaths. Add `RegisteredRoutes
+//    extends typeof router.routeMap` when global response payload helpers such
+//    as PathResponse need the richer router.routeMap metadata.
 
 // 5. loaders/*.ts - Type-safe loaders
 export const ProductLoader = createLoader(async (ctx) => {
   // ctx.params: { slug: string }
-  // ctx.get("user"): User | undefined  (from RSCRouter.Vars)
-  // ctx.env.DB: D1Database  (plain bindings from RSCRouter.Env)
+  // ctx.get("user"): User | undefined  (from Rango.Vars)
+  // ctx.env.DB: D1Database  (plain bindings from Rango.Env)
   return { product: await fetchProduct(ctx.params.slug) };
 });
 

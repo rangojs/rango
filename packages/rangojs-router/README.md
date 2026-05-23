@@ -993,16 +993,16 @@ Auto-detects file type:
 
 ## Type Safety
 
-The Vite plugin automatically generates a `router.named-routes.gen.ts` file that globally registers route names, patterns, and search schemas via `RSCRouter.GeneratedRouteMap`. This powers server-side named-route typing such as `Handler<"name">`, `ctx.reverse()`, `getRequestContext().reverse()`, and `RouteParams<"name">` without any manual route registration. The gen file is updated on dev server startup, HMR, and production builds.
+The Vite plugin automatically generates a `router.named-routes.gen.ts` file that globally registers route names, patterns, and search schemas via `Rango.GeneratedRouteMap`. This powers server-side named-route typing such as `Handler<"name">`, `ctx.reverse()`, `getRequestContext().reverse()`, and `RouteParams<"name">` without any manual route registration. The gen file is updated on dev server startup, HMR, and production builds.
 
-Use the generated map by default. Augment `RSCRouter.RegisteredRoutes` only when you need the richer `typeof router.routeMap` shape globally, especially for response-aware and path-based utilities.
+Use the generated map by default. Augment `Rango.RegisteredRoutes` only when you need the richer `typeof router.routeMap` shape globally, especially for response-aware and path-based utilities.
 
 ```typescript
 // router.tsx
 const router = createRouter<AppBindings>({}).routes(urlpatterns);
 
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface Env extends AppEnv {}
     interface Vars extends AppVars {}
     interface RegisteredRoutes extends typeof router.routeMap {}

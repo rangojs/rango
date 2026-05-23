@@ -54,7 +54,7 @@ export async function waitForHydration(page: Page) {
     // Wait for DOM to be ready before checking hydration marker
     await page.waitForLoadState("domcontentloaded");
 
-    // RSCRouter sets data-hydrated on <html> after hydration via useEffect.
+    // Rango sets data-hydrated on <html> after hydration via useEffect.
     // This is a stable readiness signal that does not rely on React internals.
     await page.waitForFunction(
       () => document.documentElement.hasAttribute("data-hydrated"),
@@ -364,7 +364,7 @@ export function expectMaxTiming(elapsed: number, maximum: number) {
 //      - "[vite] page reload"               = full reload (something lacked an HMR boundary)
 //      - "[vite] connected."                = WebSocket reconnect (server restarted)
 //   4. For server-side HMR tracing, check the terminal for:
-//      - "[rsc-router] RSC module changed, version updated: ..." = RSC env detected a change
+//      - "[rango] RSC module changed, version updated: ..." = RSC env detected a change
 //
 // To debug HMR via WebSocket frames (sees raw Vite messages before console):
 //   - DevTools > Network > WS tab > select the Vite HMR connection > Messages
@@ -461,7 +461,7 @@ export async function writeFileAndAwaitHmr(
   const consoleHandler = (msg: ConsoleMessage) => {
     if (
       sawServerSignal &&
-      msg.text().includes("[RSCRouter] HMR: RSC stream complete")
+      msg.text().includes("[Rango] HMR: RSC stream complete")
     ) {
       sawBrowserStreamComplete = true;
     }

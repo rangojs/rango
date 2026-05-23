@@ -104,7 +104,7 @@ export function writeRouteTypesFiles(state: DiscoveryState): void {
     if (existsSync(oldCombinedPath)) {
       unlinkSync(oldCombinedPath);
       console.log(
-        `[rsc-router] Removed stale combined route types: ${oldCombinedPath}`,
+        `[rango] Removed stale combined route types: ${oldCombinedPath}`,
       );
     }
   } catch {}
@@ -122,7 +122,7 @@ export function writeRouteTypesFiles(state: DiscoveryState): void {
     // the wrong location, causing non-deterministic type resolution.
     if (sourceFile.includes("node_modules")) {
       throw new Error(
-        `[rsc-router] Router "${id}" has sourceFile inside node_modules: ${sourceFile}\n` +
+        `[rango] Router "${id}" has sourceFile inside node_modules: ${sourceFile}\n` +
           `This means createRouter() stack trace parsing matched a Vite internal frame.\n` +
           `Set an explicit \`id\` on createRouter() or check the call site.`,
       );
@@ -169,7 +169,7 @@ export function writeRouteTypesFiles(state: DiscoveryState): void {
     if (existing !== source) {
       markSelfGenWrite(state, outPath, source);
       writeFileSync(outPath, source);
-      console.log(`[rsc-router] Generated route types -> ${outPath}`);
+      console.log(`[rango] Generated route types -> ${outPath}`);
     }
   }
 }

@@ -41,20 +41,28 @@ export const NamedRoutes = {
   },
 } as const;
 
-// Module augmentation for typed Handler<"blog.post"> and href()
-declare module "@rangojs/router" {
-  interface GeneratedRouteMap {
-    /* ... */
+// Module augmentation for typed Handler<"blog.post"> and ctx.reverse("blog.post")
+declare global {
+  namespace Rango {
+    interface GeneratedRouteMap extends Readonly<typeof NamedRoutes> {}
   }
 }
 
 export type NamedRoutes = typeof NamedRoutes;
 ```
 
+The augmentation targets the global `Rango` namespace (not
+`declare module "@rangojs/router"`) and extends `Readonly<typeof NamedRoutes>`,
+so the generated `const` is the single source of truth for both runtime and types.
+
 **Dual purpose:**
 
-- **Runtime data** -- the virtual module imports `NamedRoutes` and calls `setCachedManifest()`
-- **Static types** -- TypeScript uses the `GeneratedRouteMap` augmentation for IDE autocomplete
+- **Runtime data** -- the virtual module imports `NamedRoutes` and calls `setCachedManifest()`; route matching/reverse flattens each entry to its string path.
+- **Static types** -- TypeScript uses the `GeneratedRouteMap` augmentation for IDE autocomplete, keeping the per-route search schemas.
+
+`NamedRoutes` stores **path + search** metadata only. Response payload metadata
+lives in the router builder type (`typeof router.routeMap`, exposed via
+`RegisteredRoutes`) and is **not** emitted into `router.named-routes.gen.ts`.
 
 **Two creation paths:**
 

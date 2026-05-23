@@ -103,7 +103,7 @@ function ensureCloudflareProtocolLoaderRegistered(): void {
     // register() requires Node 18.19+ / 20.6+. Older Node still has the
     // Vite transform as primary defense.
     console.warn(
-      `[rsc-router] Could not register Node ESM loader hook for cloudflare:* imports (${err?.message ?? err}). Falling back to Vite transform only.`,
+      `[rango] Could not register Node ESM loader hook for cloudflare:* imports (${err?.message ?? err}). Falling back to Vite transform only.`,
     );
   }
 }
@@ -203,7 +203,7 @@ async function resolveBuildEnv(
   if (option === "auto") {
     if (factoryCtx.preset !== "cloudflare") {
       throw new Error(
-        '[rsc-router] buildEnv: "auto" is only supported with preset: "cloudflare". ' +
+        '[rango] buildEnv: "auto" is only supported with preset: "cloudflare". ' +
           "Use a factory function or plain object for other presets.",
       );
     }
@@ -225,7 +225,7 @@ async function resolveBuildEnv(
       };
     } catch (err: any) {
       throw new Error(
-        '[rsc-router] buildEnv: "auto" requires wrangler to be installed.\n' +
+        '[rango] buildEnv: "auto" requires wrangler to be installed.\n' +
           `Install it with: pnpm add -D wrangler\n${err.message}`,
       );
     }
@@ -277,7 +277,7 @@ async function releaseBuildEnv(s: DiscoveryState): Promise<void> {
     try {
       await s.buildEnvDispose();
     } catch (err: any) {
-      console.warn(`[rsc-router] buildEnv dispose failed: ${err.message}`);
+      console.warn(`[rango] buildEnv dispose failed: ${err.message}`);
     }
     s.buildEnvDispose = null;
   }
@@ -543,9 +543,7 @@ export function createRouterDiscoveryPlugin(
             "getOrCreateTempServer: FAILED message=%s",
             err.message,
           );
-          console.warn(
-            `[rsc-router] Failed to create temp runner: ${err.message}`,
-          );
+          console.warn(`[rango] Failed to create temp runner: ${err.message}`);
         }
         return null;
       }
@@ -684,7 +682,7 @@ export function createRouterDiscoveryPlugin(
             }
           } catch (err: any) {
             console.warn(
-              `[rsc-router] Cloudflare dev discovery failed: ${err.message}\n${err.stack}`,
+              `[rango] Cloudflare dev discovery failed: ${err.message}\n${err.stack}`,
             );
           }
 
@@ -736,7 +734,7 @@ export function createRouterDiscoveryPlugin(
           );
         } catch (err: any) {
           console.warn(
-            `[rsc-router] Router discovery failed: ${err.message}\n${err.stack}`,
+            `[rango] Router discovery failed: ${err.message}\n${err.stack}`,
           );
         } finally {
           debugDiscovery?.(
@@ -851,7 +849,7 @@ export function createRouterDiscoveryPlugin(
             registry = serverMod.RouterRegistry ?? null;
           } catch (err: any) {
             console.warn(
-              `[rsc-router] Dev prerender module refresh failed: ${err.message}`,
+              `[rango] Dev prerender module refresh failed: ${err.message}`,
             );
             res.statusCode = 500;
             res.end(`Prerender handler error: ${err.message}`);
@@ -917,7 +915,7 @@ export function createRouterDiscoveryPlugin(
             return;
           } catch (err: any) {
             console.warn(
-              `[rsc-router] Dev prerender failed for ${pathname}: ${err.message}`,
+              `[rango] Dev prerender failed for ${pathname}: ${err.message}`,
             );
           }
         }
@@ -1031,7 +1029,7 @@ export function createRouterDiscoveryPlugin(
                 at: Date.now(),
               };
               console.warn(
-                `[rsc-router] Runtime re-discovery failed: ${err.message}`,
+                `[rango] Runtime re-discovery failed: ${err.message}`,
               );
               debugDiscovery?.(
                 "hmr: lastDiscoveryError set (%s) — manifest preserved at last-good; recovery mode active (any in-scan source change will trigger rediscovery)",
@@ -1074,9 +1072,7 @@ export function createRouterDiscoveryPlugin(
                 }
               }
             } catch (err: any) {
-              console.error(
-                `[rsc-router] Route regeneration error: ${err.message}`,
-              );
+              console.error(`[rango] Route regeneration error: ${err.message}`);
             }
             debugDiscovery?.(
               "watcher: regenerated gen files (%sms)",
@@ -1088,7 +1084,7 @@ export function createRouterDiscoveryPlugin(
             if (s.perRouterManifests.length > 0) {
               refreshRuntimeDiscovery().catch((err: any) => {
                 console.warn(
-                  `[rsc-router] Runtime re-discovery error: ${err.message}`,
+                  `[rango] Runtime re-discovery error: ${err.message}`,
                 );
                 // Even on error, unblock the gate so workerd's reload
                 // doesn't hang indefinitely against the previous manifest.
@@ -1259,7 +1255,7 @@ export function createRouterDiscoveryPlugin(
         const rscEnv = (tempServer.environments as any)?.rsc;
         if (!rscEnv?.runner) {
           console.warn(
-            "[rsc-router] RSC environment runner not available during build, skipping manifest generation",
+            "[rango] RSC environment runner not available during build, skipping manifest generation",
           );
           return;
         }
@@ -1302,7 +1298,7 @@ export function createRouterDiscoveryPlugin(
           .filter(Boolean)
           .join("\n");
         throw new Error(
-          `[rsc-router] Build-time router discovery failed:\n${details}`,
+          `[rango] Build-time router discovery failed:\n${details}`,
           { cause: err },
         );
       } finally {
@@ -1330,7 +1326,7 @@ export function createRouterDiscoveryPlugin(
     // `consumeSelfGenWrite` inside `maybeHandleGeneratedRouteFileMutation`),
     // AND vite's own HMR pipeline (which invalidates the gen file's
     // importers and triggers a second workerd full reload — visible to the
-    // user as a duplicate "[RSCRouter] HMR: version changed" on the client).
+    // user as a duplicate "[Rango] HMR: version changed" on the client).
     //
     // `peekSelfGenWrite` is the authoritative filter: its map only contains
     // paths that `markSelfGenWrite` has registered, so it natively works

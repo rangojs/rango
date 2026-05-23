@@ -97,7 +97,7 @@ export function createHandle<TData, TAccumulated = TData[]>(
 
   if (!handleId && process.env.NODE_ENV === "development") {
     throw new Error(
-      "[rsc-router] Handle is missing $$id. " +
+      "[rango] Handle is missing $$id. " +
         "Make sure the exposeInternalIds Vite plugin is enabled and " +
         "the handle is exported with: export const MyHandle = createHandle(...)",
     );
@@ -151,7 +151,7 @@ export function collectHandleData<TData, TAccumulated>(
   const collectFn = getCollectFn(handle.$$id);
   if (!collectFn && process.env.NODE_ENV !== "production") {
     console.warn(
-      `[rsc-router] Handle "${handle.$$id}" has no registered collect function. ` +
+      `[rango] Handle "${handle.$$id}" has no registered collect function. ` +
         `Falling back to flat array. Ensure the handle module is imported so ` +
         `createHandle() runs and registers the collect function.`,
     );

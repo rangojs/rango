@@ -128,7 +128,7 @@ export interface BrowserAppContext {
 let browserAppContext: BrowserAppContext | null = null;
 
 /**
- * Initialize the browser app. Must be called before rendering RSCRouter.
+ * Initialize the browser app. Must be called before rendering Rango.
  *
  * This function:
  * - Loads the initial RSC payload from the stream
@@ -325,11 +325,11 @@ export async function initBrowserApp(
         // full lifecycle (fetching + streaming, before commit) without
         // blocking on server actions.
         if (eventController.getState().isNavigating) {
-          console.log("[RSCRouter] HMR: Skipping — navigation in progress");
+          console.log("[Rango] HMR: Skipping — navigation in progress");
           return;
         }
 
-        console.log("[RSCRouter] HMR: Server update, refetching RSC");
+        console.log("[Rango] HMR: Server update, refetching RSC");
 
         const abort = new AbortController();
         hmrAbort = abort;
@@ -367,7 +367,7 @@ export async function initBrowserApp(
           const newVersion = payload.metadata.version;
           if (newVersion && newVersion !== version) {
             console.log(
-              "[RSCRouter] HMR: version changed",
+              "[Rango] HMR: version changed",
               version,
               "→",
               newVersion,
@@ -415,10 +415,10 @@ export async function initBrowserApp(
 
           await streamComplete;
           handle.complete(new URL(window.location.href));
-          console.log("[RSCRouter] HMR: RSC stream complete");
+          console.log("[Rango] HMR: RSC stream complete");
         } catch (err) {
           if (abort.signal.aborted) return;
-          console.warn("[RSCRouter] HMR: Refetch failed, reloading page", err);
+          console.warn("[Rango] HMR: Refetch failed, reloading page", err);
           window.location.reload();
           return;
         } finally {
@@ -430,7 +430,7 @@ export async function initBrowserApp(
     });
   }
 
-  // Store context for RSCRouter component
+  // Store context for Rango component
   const context: BrowserAppContext = {
     store,
     eventController,
@@ -454,7 +454,7 @@ export async function initBrowserApp(
 export function getBrowserAppContext(): BrowserAppContext {
   if (!browserAppContext) {
     throw new Error(
-      "RSCRouter: initBrowserApp() must be called before rendering RSCRouter",
+      "Rango: initBrowserApp() must be called before rendering Rango",
     );
   }
   return browserAppContext;
@@ -468,18 +468,18 @@ export function resetBrowserAppContext(): void {
 }
 
 /**
- * Props for the RSCRouter component
+ * Props for the Rango component
  */
-export interface RSCRouterProps {}
+export interface RangoProps {}
 
 /**
- * RSCRouter component - renders the RSC router with all internal wiring.
+ * Rango component - renders the RSC router with all internal wiring.
  *
  * Must be called after initBrowserApp() has completed.
  *
  * @example
  * ```tsx
- * import { initBrowserApp, RSCRouter } from "rsc-router/browser";
+ * import { initBrowserApp, Rango } from "rsc-router/browser";
  * import { rscStream } from "rsc-html-stream/client";
  * import * as rscBrowser from "@vitejs/plugin-rsc/browser";
  *
@@ -489,14 +489,14 @@ export interface RSCRouterProps {}
  *   hydrateRoot(
  *     document,
  *     <React.StrictMode>
- *       <RSCRouter />
+ *       <Rango />
  *     </React.StrictMode>
  *   );
  * }
  * main();
  * ```
  */
-export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
+export function Rango(_props: RangoProps): React.ReactElement {
   const {
     store,
     eventController,

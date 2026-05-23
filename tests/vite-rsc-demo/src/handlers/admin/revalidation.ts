@@ -1,10 +1,7 @@
 import type { Revalidate, GenericParams } from "@rangojs/router";
 
 // Global soft decision: suggests revalidation but allows override
-export const globalRevalidation: Revalidate<
-  GenericParams,
-  RSCRouter.Env
-> = () => {
+export const globalRevalidation: Revalidate<GenericParams, Rango.Env> = () => {
   console.log(
     "[Admin] Global: SOFT decision - suggest revalidate=true, continue...",
   );

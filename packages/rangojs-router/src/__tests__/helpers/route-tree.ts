@@ -11,7 +11,7 @@
 import React from "react";
 import type { urls } from "../../urls.js";
 import {
-  RSCRouterContext,
+  RangoContext,
   getParallelEntries,
   getParallelSlotCount,
   runWithPrefixes,
@@ -56,7 +56,7 @@ export interface InterceptInfo {
 /**
  * Build a route tree from url patterns for inspection.
  *
- * Executes the urls() handler inside RSCRouterContext and extracts
+ * Executes the urls() handler inside RangoContext and extracts
  * the manifest, patterns, and route entries. Lazy includes are
  * eagerly evaluated so the full tree is available.
  *
@@ -111,7 +111,7 @@ export function buildRouteTree(
 
   let handlerResult: AllUseItems[] = [];
 
-  RSCRouterContext.run(
+  RangoContext.run(
     {
       manifest,
       patterns,
@@ -142,7 +142,7 @@ export function buildRouteTree(
     }
 
     let lazyResult: AllUseItems[] = [];
-    RSCRouterContext.run(
+    RangoContext.run(
       {
         manifest: lazyManifest,
         patterns: lazyPatterns,

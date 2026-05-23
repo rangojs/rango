@@ -195,7 +195,7 @@ describe("formatNoRoutersError", () => {
   it("returns the bare message when there are no aggregated errors", () => {
     const msg = formatNoRoutersError("/app/router.tsx", []);
     expect(msg).toBe(
-      "[rsc-router] No routers found in registry after importing /app/router.tsx",
+      "[rango] No routers found in registry after importing /app/router.tsx",
     );
   });
 
@@ -209,7 +209,7 @@ describe("formatNoRoutersError", () => {
 
     // Base message is preserved for callers that match on it.
     expect(msg).toContain(
-      "[rsc-router] No routers found in registry after importing /app/worker.tsx",
+      "[rango] No routers found in registry after importing /app/worker.tsx",
     );
     // The real import error and its location are now included.
     expect(msg).toContain("Cannot find module './broken-sub-app'");
@@ -264,7 +264,7 @@ describe("DiscoveryError", () => {
     expect(err.name).toBe("DiscoveryError");
     // message-based callers (dev/HMR/build) still see the underlying cause.
     expect(err.message).toContain(
-      "[rsc-router] No routers found in registry after importing /app/worker.tsx",
+      "[rango] No routers found in registry after importing /app/worker.tsx",
     );
     expect(err.message).toContain("Cannot find module './broken-sub-app'");
   });
@@ -305,7 +305,7 @@ describe("DiscoveryError", () => {
 
     expect(err.cause).toBeUndefined();
     expect(err.message).toBe(
-      "[rsc-router] No routers found in registry after importing /app/router.tsx",
+      "[rango] No routers found in registry after importing /app/router.tsx",
     );
   });
 });

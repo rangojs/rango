@@ -5,10 +5,11 @@ import { href } from "@rangojs/router/client";
 /**
  * Demonstrates href() function for path-based URL resolution
  *
- * Shows path-based resolution:
- * 1. href("/about") -> "/about"
- * 2. href("/shop/cart") -> "/shop/cart"
- * 3. href("/blog/test") -> "/blog/test"
+ * Shows path-based resolution (routes are mounted under the /app basename, so
+ * href validates against the full, basename-prefixed paths):
+ * 1. href("/app/about") -> "/app/about"
+ * 2. href("/app/shop/cart") -> "/app/shop/cart"
+ * 3. href("/app/blog/test") -> "/app/blog/test"
  */
 export function UseHrefDemo() {
   return (
@@ -16,16 +17,18 @@ export function UseHrefDemo() {
       <h2>href() Demo</h2>
       <ul>
         <li data-testid="href-path">
-          Path-based: <code>href("/about")</code> →{" "}
-          <span data-testid="href-path-result">{href("/about")}</span>
+          Path-based: <code>href("/app/about")</code> →{" "}
+          <span data-testid="href-path-result">{href("/app/about")}</span>
         </li>
         <li data-testid="href-absolute">
-          Absolute path: <code>href("/shop/cart")</code> →{" "}
-          <span data-testid="href-absolute-result">{href("/shop/cart")}</span>
+          Absolute path: <code>href("/app/shop/cart")</code> →{" "}
+          <span data-testid="href-absolute-result">
+            {href("/app/shop/cart")}
+          </span>
         </li>
         <li data-testid="href-with-params">
-          With params: <code>href("/blog/test")</code> →{" "}
-          <span data-testid="href-params-result">{href("/blog/test")}</span>
+          With params: <code>href("/app/blog/test")</code> →{" "}
+          <span data-testid="href-params-result">{href("/app/blog/test")}</span>
         </li>
       </ul>
     </div>

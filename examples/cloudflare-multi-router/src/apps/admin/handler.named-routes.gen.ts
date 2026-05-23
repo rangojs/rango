@@ -2,7 +2,7 @@
 export {};
 
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface GeneratedRouteMap {
       home: "/";
       users: "/users";

@@ -284,7 +284,7 @@ export function buildUnsupportedShapeWarning(
   fnName: string,
 ): string {
   return [
-    `[rsc-router] Unsupported ${fnName} shape in "${filePath}".`,
+    `[rango] Unsupported ${fnName} shape in "${filePath}".`,
     `Supported shapes are:`,
     `  - export const X = ${fnName}(...)`,
     `  - const X = ${fnName}(...); export { X }`,

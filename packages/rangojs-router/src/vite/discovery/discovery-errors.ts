@@ -131,7 +131,7 @@ export function formatNoRoutersError(
   entryPath: string | undefined,
   errors: CaughtDiscoveryError[],
 ): string {
-  const base = `[rsc-router] No routers found in registry after importing ${entryPath}`;
+  const base = `[rango] No routers found in registry after importing ${entryPath}`;
   if (errors.length === 0) {
     return base;
   }

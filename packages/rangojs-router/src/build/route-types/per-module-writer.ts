@@ -106,7 +106,7 @@ export function writePerModuleRouteTypesForFile(filePath: string): void {
       if (varNames.length > 0 && !existsSync(genPath)) {
         writeFileSync(genPath, generatePerModuleTypesSource([]));
         console.log(
-          `[rsc-router] Generated route types (placeholder) -> ${genPath}`,
+          `[rango] Generated route types (placeholder) -> ${genPath}`,
         );
       }
       return;
@@ -118,11 +118,11 @@ export function writePerModuleRouteTypesForFile(filePath: string): void {
       : null;
     if (existing !== genSource) {
       writeFileSync(genPath, genSource);
-      console.log(`[rsc-router] Generated route types -> ${genPath}`);
+      console.log(`[rango] Generated route types -> ${genPath}`);
     }
   } catch (err) {
     console.warn(
-      `[rsc-router] Failed to generate route types for ${filePath}: ${(err as Error).message}`,
+      `[rango] Failed to generate route types for ${filePath}: ${(err as Error).message}`,
     );
   }
 }

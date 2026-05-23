@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { urls, type IncludeItem } from "../urls.js";
 import {
-  RSCRouterContext,
+  RangoContext,
   runWithPrefixes,
   type EntryData,
 } from "../server/context.js";
@@ -30,7 +30,7 @@ function evaluateLazyInclude(
   const namePrefix = includeItem._lazyContext?.namePrefix;
 
   let items: any[] = [];
-  RSCRouterContext.run(
+  RangoContext.run(
     {
       manifest,
       patterns,
@@ -84,7 +84,7 @@ describe("urls()", () => {
       ]);
 
       // Execute the handler within context to register routes
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -104,7 +104,7 @@ describe("urls()", () => {
         path("/about", () => <div>About</div>, { name: "about" }),
       ]);
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -125,7 +125,7 @@ describe("urls()", () => {
         path("/:slug", () => <div>Post</div>, { name: "post" }),
       ]);
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -150,7 +150,7 @@ describe("urls()", () => {
         ),
       ]);
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -175,7 +175,7 @@ describe("urls()", () => {
         ),
       ]);
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -210,7 +210,7 @@ describe("urls()", () => {
         ),
       ]);
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -247,7 +247,7 @@ describe("urls()", () => {
         }),
       ]);
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -275,7 +275,7 @@ describe("urls()", () => {
       const manifest = new Map();
       const patterns = new Map();
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -323,7 +323,7 @@ describe("urls()", () => {
 
       let capturedInclude: IncludeItem | undefined;
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -365,7 +365,7 @@ describe("urls()", () => {
 
       let capturedInclude: IncludeItem | undefined;
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -412,7 +412,7 @@ describe("urls()", () => {
 
       let capturedInclude: IncludeItem | undefined;
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -454,7 +454,7 @@ describe("urls()", () => {
 
       let capturedInclude: IncludeItem | undefined;
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -500,7 +500,7 @@ describe("urls()", () => {
 
       let capturedInclude: IncludeItem | undefined;
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -543,7 +543,7 @@ describe("urls()", () => {
 
       let capturedBlogInclude: IncludeItem | undefined;
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -601,7 +601,7 @@ describe("urls()", () => {
 
       let capturedIncludes: IncludeItem[] = [];
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -654,7 +654,7 @@ describe("urls()", () => {
       const patterns = new Map<string, string>();
       let captured: IncludeItem | undefined;
 
-      RSCRouterContext.run(
+      RangoContext.run(
         { manifest, patterns, namespace: "test", parent: null, counters: {} },
         () => {
           const p = urls(({ include }) => [include("/x", childPatterns)]);
@@ -682,7 +682,7 @@ describe("urls()", () => {
       const patterns = new Map<string, string>();
       let captured: IncludeItem | undefined;
 
-      RSCRouterContext.run(
+      RangoContext.run(
         { manifest, patterns, namespace: "test", parent: null, counters: {} },
         () => {
           const p = urls(({ include }) => [
@@ -713,7 +713,7 @@ describe("urls()", () => {
       const patterns = new Map<string, string>();
       let captured: IncludeItem | undefined;
 
-      RSCRouterContext.run(
+      RangoContext.run(
         { manifest, patterns, namespace: "test", parent: null, counters: {} },
         () => {
           const p = urls(({ include }) => [
@@ -750,7 +750,7 @@ describe("urls()", () => {
       const patterns = new Map<string, string>();
       let captured: IncludeItem | undefined;
 
-      RSCRouterContext.run(
+      RangoContext.run(
         { manifest, patterns, namespace: "test", parent: null, counters: {} },
         () => {
           const p = urls(({ include }) => [
@@ -790,7 +790,7 @@ describe("urls()", () => {
       const patterns = new Map<string, string>();
       let captured: IncludeItem | undefined;
 
-      RSCRouterContext.run(
+      RangoContext.run(
         { manifest, patterns, namespace: "test", parent: null, counters: {} },
         () => {
           const p = urls(({ include }) => [
@@ -820,7 +820,7 @@ describe("urls()", () => {
       const patterns = new Map<string, string>();
       let captured: IncludeItem | undefined;
 
-      RSCRouterContext.run(
+      RangoContext.run(
         { manifest, patterns, namespace: "test", parent: null, counters: {} },
         () => {
           const p = urls(({ include }) => [
@@ -856,7 +856,7 @@ describe("urls()", () => {
       const patterns = new Map<string, string>();
       const captured: IncludeItem[] = [];
 
-      RSCRouterContext.run(
+      RangoContext.run(
         { manifest, patterns, namespace: "test", parent: null, counters: {} },
         () => {
           const p = urls(({ include }) => [
@@ -903,7 +903,7 @@ describe("urls()", () => {
         path("/public", () => <div>Public</div>, { name: "public" }),
       ]);
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -944,7 +944,7 @@ describe("urls()", () => {
         ]),
       ]);
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -977,7 +977,7 @@ describe("urls()", () => {
         ),
       ]);
 
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns,
@@ -1007,7 +1007,7 @@ describe("urls()", () => {
       ]);
 
       expect(() =>
-        RSCRouterContext.run(
+        RangoContext.run(
           {
             manifest,
             patterns,
@@ -1030,7 +1030,7 @@ describe("urls()", () => {
       ]);
 
       expect(() =>
-        RSCRouterContext.run(
+        RangoContext.run(
           {
             manifest,
             patterns,
