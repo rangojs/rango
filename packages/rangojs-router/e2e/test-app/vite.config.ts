@@ -41,7 +41,7 @@ export default defineConfig(({ command }) => ({
     ...analyze(),
   ],
   define: productionDefines(command),
-  esbuild: {
+  oxc: {
     target: "es2022",
   },
   build: {
