@@ -119,6 +119,28 @@ export function getCalledIdentifierFromCall(callExpr: any): string | null {
   return null;
 }
 
+/**
+ * plugin-react's dev Fast Refresh wraps exports whose function body uses
+ * hook-like calls in a signature-registration call. A loader/handle that calls
+ * `ctx.use(...)` trips this heuristic, so `export const X = createLoader(...)`
+ * becomes `export const X = _s(createLoader(...), "<sig>", true)` — the create*
+ * call is the first argument of an unrelated wrapper call. Unwrap a single such
+ * layer so ID injection still targets the inner create* call. The `$$id`
+ * assignment is appended after the whole statement (against the export local),
+ * which is unaffected by the wrapper since `_s(x)` returns `x`.
+ */
+function unwrapSignatureWrappedCall(init: any, fnNameSet: Set<string>): any {
+  if (init?.type !== "CallExpression") return init;
+  const directId = getCalledIdentifierFromCall(init);
+  if (directId && fnNameSet.has(directId)) return init;
+  const firstArg = init.arguments?.[0];
+  if (firstArg?.type === "CallExpression") {
+    const innerId = getCalledIdentifierFromCall(firstArg);
+    if (innerId && fnNameSet.has(innerId)) return firstArg;
+  }
+  return init;
+}
+
 export function collectCreateExportBindingsFallback(
   code: string,
   fnNames: string[],
@@ -196,7 +218,7 @@ export function collectCreateExportBindings(
 ): CreateExportBinding[] {
   if (!program) {
     try {
-      program = parseAst(code, { jsx: true });
+      program = parseAst(code, { lang: "tsx" });
     } catch {
       return collectCreateExportBindingsFallback(code, fnNames);
     }
@@ -212,10 +234,13 @@ export function collectCreateExportBindings(
     }
 
     for (const decl of varDecl.declarations ?? []) {
-      const calledIdentifier = getCalledIdentifierFromCall(decl?.init);
+      // Unwrap a Fast Refresh signature wrapper (`_s(createLoader(...), ...)`)
+      // so injection targets the inner create* call. Falls back to decl.init.
+      const callExpr = unwrapSignatureWrappedCall(decl?.init, fnNameSet);
+      const calledIdentifier = getCalledIdentifierFromCall(callExpr);
       if (
         decl?.id?.type !== "Identifier" ||
-        decl?.init?.type !== "CallExpression" ||
+        callExpr?.type !== "CallExpression" ||
         !calledIdentifier ||
         !fnNameSet.has(calledIdentifier)
       ) {
@@ -226,9 +251,8 @@ export function collectCreateExportBindings(
       const exportNames = exportMap.get(localName) ?? [];
       if (exportNames.length === 0) continue;
 
-      const callStart = decl.init.start as number;
-      const callEnd = decl.init.end as number;
-      const calleeEnd = decl.init.callee.end as number;
+      const callEnd = callExpr.end as number;
+      const calleeEnd = callExpr.callee.end as number;
 
       let openParenPos = -1;
       for (let i = calleeEnd; i < callEnd; i++) {
@@ -245,10 +269,10 @@ export function collectCreateExportBindings(
       bindings.push({
         localName,
         exportNames,
-        callExprStart: decl.init.start as number,
+        callExprStart: callExpr.start as number,
         callOpenParenPos: openParenPos,
         callCloseParenPos: closeParenPos,
-        argCount: decl.init.arguments?.length ?? 0,
+        argCount: callExpr.arguments?.length ?? 0,
         statementEnd,
       });
     }

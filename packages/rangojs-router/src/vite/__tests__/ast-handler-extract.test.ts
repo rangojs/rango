@@ -595,31 +595,37 @@ layout(Static(() => <a />), Static(() => <b />));
 
 describe("hashInlineId", () => {
   it("generates consistent hashes", () => {
-    const a = hashInlineId("src/urls.tsx", 42);
-    const b = hashInlineId("src/urls.tsx", 42);
+    const a = hashInlineId("src/urls.tsx", "Static", 0);
+    const b = hashInlineId("src/urls.tsx", "Static", 0);
     expect(a).toBe(b);
   });
 
   it("produces 8-char hex string", () => {
-    const hash = hashInlineId("src/urls.tsx", 10);
+    const hash = hashInlineId("src/urls.tsx", "Static", 0);
     expect(hash).toMatch(/^[0-9a-f]{8}$/);
   });
 
-  it("produces different hashes for different lines", () => {
-    const a = hashInlineId("src/urls.tsx", 10);
-    const b = hashInlineId("src/urls.tsx", 20);
+  it("produces different hashes for different source-order indices", () => {
+    const a = hashInlineId("src/urls.tsx", "Static", 0);
+    const b = hashInlineId("src/urls.tsx", "Static", 1);
     expect(a).not.toBe(b);
   });
 
-  it("produces different hashes with index tiebreaker", () => {
-    const a = hashInlineId("src/urls.tsx", 10, 0);
-    const b = hashInlineId("src/urls.tsx", 10, 1);
+  it("produces different hashes for Static vs Prerender at the same index", () => {
+    const a = hashInlineId("src/urls.tsx", "Static", 0);
+    const b = hashInlineId("src/urls.tsx", "Prerender", 0);
     expect(a).not.toBe(b);
   });
 
-  it("index=0 produces same hash as no index", () => {
-    const a = hashInlineId("src/urls.tsx", 10);
-    const b = hashInlineId("src/urls.tsx", 10, 0);
-    expect(a).toBe(b);
+  it("is index-based (stable across line shifts) and file-scoped", () => {
+    // Same source-order index -> same id regardless of where it lands in the
+    // file; this keeps the prerender manifest key in sync with the runtime
+    // handler id when build contexts shift line numbers. Distinct files differ.
+    expect(hashInlineId("src/urls.tsx", "Static", 0)).toBe(
+      hashInlineId("src/urls.tsx", "Static", 0),
+    );
+    expect(hashInlineId("a.tsx", "Static", 0)).not.toBe(
+      hashInlineId("b.tsx", "Static", 0),
+    );
   });
 });

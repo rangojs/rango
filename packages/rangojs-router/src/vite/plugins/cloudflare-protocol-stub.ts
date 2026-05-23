@@ -139,7 +139,7 @@ export function createCloudflareProtocolStubPlugin(): Plugin {
 
       let ast: AstNode;
       try {
-        ast = this.parse(code) as unknown as AstNode;
+        ast = this.parse(code, { lang: "tsx" }) as unknown as AstNode;
       } catch {
         // Malformed source — let a downstream plugin surface the parse error.
         return null;

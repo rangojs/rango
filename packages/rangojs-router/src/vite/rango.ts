@@ -18,7 +18,7 @@ import {
 import { findRouterFiles } from "../build/generate-route-types.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
 import {
-  sharedEsbuildOptions,
+  sharedRolldownOptions,
   createVirtualEntriesPlugin,
   onwarn,
   getManualChunks,
@@ -127,7 +127,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
           // This ensures the same Context instance is used by both browser entry and RSC proxy modules
           optimizeDeps: {
             exclude: excludeDeps,
-            esbuildOptions: sharedEsbuildOptions,
+            rolldownOptions: sharedRolldownOptions,
           },
           resolve: {
             alias: rangoAliases,
@@ -157,7 +157,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
               optimizeDeps: {
                 include: [nested("rsc-html-stream/client")],
                 exclude: excludeDeps,
-                esbuildOptions: sharedEsbuildOptions,
+                rolldownOptions: sharedRolldownOptions,
               },
             },
             ssr: {
@@ -182,7 +182,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   ),
                 ],
                 exclude: excludeDeps,
-                esbuildOptions: sharedEsbuildOptions,
+                rolldownOptions: sharedRolldownOptions,
               },
             },
             rsc: {
@@ -199,7 +199,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   ),
                 ],
                 exclude: excludeDeps,
-                esbuildOptions: sharedEsbuildOptions,
+                rolldownOptions: sharedRolldownOptions,
               },
             },
           },
@@ -286,7 +286,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
         return {
           optimizeDeps: {
             exclude: excludeDeps,
-            esbuildOptions: sharedEsbuildOptions,
+            rolldownOptions: sharedRolldownOptions,
           },
           build: {
             rollupOptions: { onwarn },
@@ -320,7 +320,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   nested("rsc-html-stream/client"),
                 ],
                 exclude: excludeDeps,
-                esbuildOptions: sharedEsbuildOptions,
+                rolldownOptions: sharedRolldownOptions,
                 entries: [VIRTUAL_IDS.browser],
               },
             },
@@ -339,7 +339,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   ),
                 ],
                 exclude: excludeDeps,
-                esbuildOptions: sharedEsbuildOptions,
+                rolldownOptions: sharedRolldownOptions,
               },
             },
             rsc: {
@@ -353,7 +353,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                     "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
                   ),
                 ],
-                esbuildOptions: sharedEsbuildOptions,
+                rolldownOptions: sharedRolldownOptions,
               },
             },
           },

@@ -335,7 +335,7 @@ ${lazyImports.join(",\n")}
           }
           if (_cachedAst !== undefined || _astParseFailed) return _cachedAst;
           try {
-            _cachedAst = parseAst(code, { jsx: true });
+            _cachedAst = parseAst(code, { lang: "tsx" });
           } catch {
             _astParseFailed = true;
           }

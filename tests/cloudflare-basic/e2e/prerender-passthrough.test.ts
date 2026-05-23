@@ -264,12 +264,19 @@ test.describe("prerender passthrough bundle output (production)", () => {
   test.beforeAll(() => {
     // After manualChunks removal (#436), prerender handler stubs are inlined
     // into the RSC entry/worker-entry chunk instead of a separate
-    // __prerender-handlers file. Concat code chunks (excluding __pr-*/__st-*
-    // prerender asset files which contain rendered output, not handler code).
-    prerenderHandlersBundle = readAllFiles(path.join(DIST, "rsc/assets"))
-      .filter((f) => !f.startsWith("__pr-") && !f.startsWith("__st-"))
-      .map((f) => fs.readFileSync(path.join(DIST, "rsc/assets", f), "utf-8"))
-      .join("\n");
+    // __prerender-handlers file. Under Rolldown (Vite 8) that entry is
+    // dist/rsc/index.js (Rollup placed it in an assets/ chunk), so include the
+    // entry too. Exclude __pr-*/__st-* prerender asset files (rendered output,
+    // not handler code).
+    const rscEntry = path.join(DIST, "rsc/index.js");
+    prerenderHandlersBundle =
+      (fs.existsSync(rscEntry)
+        ? fs.readFileSync(rscEntry, "utf-8") + "\n"
+        : "") +
+      readAllFiles(path.join(DIST, "rsc/assets"))
+        .filter((f) => !f.startsWith("__pr-") && !f.startsWith("__st-"))
+        .map((f) => fs.readFileSync(path.join(DIST, "rsc/assets", f), "utf-8"))
+        .join("\n");
     clientBundle = concatBundleContents(path.join(DIST, "client/assets"));
     ssrBundle = concatBundleContents(path.join(DIST, "rsc/ssr/assets"));
   });

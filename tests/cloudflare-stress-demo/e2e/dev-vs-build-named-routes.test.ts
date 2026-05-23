@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 
 const genFilePath = path.resolve("./src/router.named-routes.gen.ts");
 
@@ -869,16 +870,23 @@ test.describe("dev vs build named-routes parity", () => {
     }
   });
 
-  test("single source edit produces exactly one `[vite] program reload`", async ({}, testInfo) => {
-    // Regression: prior to handleHotUpdate suppression, every HMR cycle
-    // emitted TWO program reloads — one from the user's source edit, and a
-    // second from vite's chokidar detecting our subsequent gen-file write
-    // (writeRouteTypesFiles after refreshTempRscEnv). The duplicate cycle
-    // was harmless but visible to users as a duplicate "HMR: version
-    // changed" event on the client.
+  test("single source edit produces exactly one HMR rediscovery cycle", async ({}, testInfo) => {
+    // Regression: prior to the hotUpdate suppression, every HMR cycle ran TWICE
+    // — once from the user's source edit, and again from vite's chokidar
+    // detecting our subsequent gen-file write (writeRouteTypesFiles after
+    // refreshTempRscEnv). The duplicate cycle was harmless but visible to users
+    // as a duplicate "HMR: version changed" event on the client.
     //
-    // Our handleHotUpdate hook returns [] for paths in selfWrittenGenFiles,
-    // dropping the cascade. This test asserts ONE program reload per edit.
+    // Our hotUpdate hook returns [] for paths in selfWrittenGenFiles, dropping
+    // the cascade. This test asserts ONE HMR cycle per edit.
+    //
+    // We count the router's own per-cycle marker (`hmr re-discovery done`)
+    // rather than a vite-native reload log. Vite 7 emitted `[vite] program
+    // reload`; Vite 8 (Rolldown) instead does a granular `[vite] (rsc) hmr
+    // update`, which is colorized AND is not reliably captured in the CI dev
+    // buffer (and the server-side "version updated" bump count differs between
+    // local and CI). `hmr re-discovery done` fires exactly once per HMR cycle in
+    // both environments, so a duplicate cascade would still surface as count 2.
     testInfo.setTimeout(120_000);
     const buildGen = await fs.readFile(genFilePath, "utf-8");
 
@@ -906,13 +914,15 @@ test.describe("dev vs build named-routes parity", () => {
         // generous even on slow CI inotify.
         await new Promise((resolve) => setTimeout(resolve, 1500));
 
-        const postEditSlice = dev.buffer.slice(preEditIdx);
-        const reloadCount = (
-          postEditSlice.match(/\[vite\] program reload/g) ?? []
-        ).length;
+        // Strip ANSI so the matcher and the failure dump are color-agnostic.
+        const postEditSlice = stripVTControlCharacters(
+          dev.buffer.slice(preEditIdx),
+        );
+        const cycleCount = (postEditSlice.match(/hmr re-discovery done/g) ?? [])
+          .length;
         expect(
-          reloadCount,
-          `single source edit should produce exactly one [vite] program reload, got ${reloadCount}.\n--- buffer slice ---\n${postEditSlice}\n--- end slice ---`,
+          cycleCount,
+          `single source edit should produce exactly one HMR rediscovery cycle, got ${cycleCount}.\n--- buffer slice ---\n${postEditSlice}\n--- end slice ---`,
         ).toBe(1);
         expect(dev.unexpectedExit).toBeNull();
       } finally {

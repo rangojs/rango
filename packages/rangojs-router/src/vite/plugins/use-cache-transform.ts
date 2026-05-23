@@ -84,7 +84,7 @@ export function useCacheTransform(): Plugin {
         let ast: any;
         try {
           const { parseAst } = await import("vite");
-          ast = parseAst(code);
+          ast = parseAst(code, { lang: "tsx" });
         } catch {
           return;
         }

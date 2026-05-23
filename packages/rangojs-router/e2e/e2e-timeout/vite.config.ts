@@ -7,7 +7,7 @@ export default defineConfig(({ command }) => ({
     process.env.RANGO_E2E_VITE_CACHE_DIR ?? "node_modules/.vite-e2e-timeout",
   plugins: [rango()],
   define: productionDefines(command),
-  esbuild: {
+  oxc: {
     target: "es2022",
   },
   build: {
