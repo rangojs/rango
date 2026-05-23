@@ -28,6 +28,72 @@ update, and `revalidate()` never reads, writes, or expires a cached value. If yo
 know React Router, `revalidate()` is `shouldRevalidate`, not `Cache-Control`. See
 `/rango` → "Coming from another framework" for the cross-framework mapping.
 
+## Correctness & invalidation
+
+rango's caches are built so a hit can't serve wrong or stale-shaped data. These
+guarantees are mostly automatic — worth knowing so you don't reimplement
+protection the framework already gives you (or assume one it deliberately
+doesn't).
+
+### Cross-deploy safety: version-segmented store keys
+
+`CFCacheStore` prefixes every **physical** store key (the CF Cache API URL and
+the KV key) with the build version — auto-generated from the
+`@rangojs/router:version` virtual module, overridable via the store's `version`
+option. A new deploy reads under a new prefix, so it can **never** read a
+previous build's entries: no cross-deploy shape drift, and no dead client-chunk
+references baked into cached RSC.
+
+The tradeoff to know: **loader/data caches use the same store**, so they're
+version-segmented too. Every deploy is therefore a _cold data cache_ — SWR can't
+soften it, because no stale entry exists under the new key. For high-traffic,
+frequently-deploying, data-bound apps that's a deploy-time origin warm-up. Decide
+deliberately: accept it (correctness over hit-rate), or split the policy — let
+the render/edge cache auto-version while a separate data store gets a stable
+`version` so its entries survive deploys. (Per-process stores like
+`MemorySegmentCacheStore` are cold on every restart anyway; this matters for
+persistent stores.) See `/caching` for store setup.
+
+### Client cache: forward/back is mutation-aware
+
+The browser keeps a history (forward/back) cache of rendered segments. Any
+client-side mutation (a server action) marks those entries **stale** and
+broadcasts it to other tabs. On back/forward (popstate) the router looks up the
+entry, sees it's stale, and revalidates — so your `revalidate()` predicates re-run
+and the segment refreshes (SWR: the stale view paints instantly, fresh data
+streams in). It's the client-side analog of the server-cache correctness problem,
+solved on the partial-render axis.
+
+### Request-scoped data: the `cache: false` taint
+
+`createVar({ cache: false })` (or a `ctx.set(var, v, { cache: false })` write)
+taints a value as request-scoped; reading it **directly** inside a cacheable
+scope throws — the guard against the catastrophic "serve user A's data to user B"
+bug. The guarantee is precise and intentionally narrow — see "Context Variable
+Cache Safety" below for exactly what it does and does not catch.
+
+## Stale-while-revalidate (built in)
+
+SWR is a first-class cache behavior, not something you bolt on: while an entry is
+within its SWR window the cache serves the **stale value instantly** and
+refreshes it in the **background** (`waitUntil`), so users never wait on a
+recompute for a merely-aging entry.
+
+- **`"use cache"`** resolves to the `default` profile `{ ttl: 900, swr: 1800 }`,
+  so function/component caching gets a 30-minute SWR window **out of the box**.
+  Tune or add profiles via `createRouter({ cacheProfiles: { … } })`
+  (`"use cache: short"` → the `short` profile).
+- **`cache()` DSL and loader caches** take an explicit `swr` in seconds (or
+  inherit `store.defaults.swr`): `cache({ ttl: 60, swr: 300 })` → fresh ≤60s,
+  stale-served 60–360s, miss after 360s.
+- **Client forward/back** is SWR after a mutation — see "Correctness &
+  invalidation" → Client cache.
+- **Edge / document layer** uses the HTTP `stale-while-revalidate` directive; see
+  `/document-cache`.
+
+SWR softens normal TTL expiry, **not** a cross-deploy cold cache — a new build
+has no stale entry to serve (see version-segmented store keys above).
+
 ## Key Differences
 
 |                      | `cache()` DSL                                         | `"use cache"` directive                            |
@@ -212,6 +278,36 @@ specifies `cache: false`, the value is non-cacheable.
 Write is dumb — `ctx.set()` stores the cache metadata but does not enforce.
 Enforcement happens at read time (`ctx.get()`), where ALS detects the cache
 scope and rejects non-cacheable reads.
+
+### The guarantee is precise — a direct read, not propagating
+
+The taint lives on the variable, and the guard fires only on `ctx.get(taintedVar)`
+**inside** a cache scope. A value **derived** from it and read **outside** the
+scope is not tracked:
+
+```typescript
+// CAUGHT — direct read of a tainted var inside a cache scope
+async function Widget(ctx) {
+  "use cache";
+  const user = ctx.get(User); // throws: non-cacheable read inside cache scope
+}
+
+// NOT CAUGHT — derived outside, then cached
+function Page(ctx) {
+  // route handler, not a cache scope:
+  const name = ctx.get(User).name; // allowed here (outside any cache scope)
+  return <CachedGreeting name={name} />; // CachedGreeting ("use cache") now caches user data
+}
+```
+
+So do **not** read this as "you can't cache user data" — that overstates it and
+breeds the false confidence that makes the derived leak _more_ likely. The guard
+is deliberately non-propagating (propagation would cost a wrapper per derivation
+on the hot path). The pattern that stays safe is also the natural one: **read
+tainted context at the point of use, in the path that needs it (a loader or live
+segment) — never extract user data into a plain value and cache that.** Loaders
+are exempt because they run outside the cache scope and resolve fresh every
+request.
 
 ## Loaders Are Always Fresh
 

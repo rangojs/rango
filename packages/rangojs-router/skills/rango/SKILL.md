@@ -19,6 +19,8 @@ with the shape, then pick a primitive.
   route, layout, loader, and cache lives. No file-system convention, no hunting.
 - **Two freshness axes, orthogonal:**
   - _stored-value freshness_ — `"use cache"`, `cache()`, loader `cache()`
+    (stale-while-revalidate is built in — `"use cache"` ships a default SWR
+    window; see `/cache-guide`)
   - _client-update selection_ — `revalidate()`
 - **Loaders are the live data layer** — fresh every request by default, even
   inside a cached render. They run **in parallel** right after middleware and
@@ -80,6 +82,11 @@ To decide where something can live: **does it define a URL? structure, stays in
 - One identity `path#export` (`functionId`/`$$id`/`actionId`); one store;
   `revalidateTag` cuts across all cache mechanisms.
 - `useLoader` / `useHandle` / `useFetchLoader` are client-only.
+- Caches are correctness-first: persistent store keys are version-segmented (no
+  cross-deploy drift), the forward/back cache is mutation-aware, and
+  `createVar({ cache: false })` throws on a **direct** read inside a cache scope
+  (a deliberately non-propagating guard). See `/cache-guide` → "Correctness &
+  invalidation".
 
 ## Don't confuse
 
