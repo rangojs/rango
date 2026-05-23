@@ -16,6 +16,8 @@ function createMinimalState(
     projectRoot,
     isBuildMode: true,
     userResolveAlias: undefined,
+    userRunnerConfig: undefined,
+    userResolvePlugins: [],
     scanFilter: undefined,
     cachedRouterFiles: undefined,
     opts: { enableBuildPrerender: true },

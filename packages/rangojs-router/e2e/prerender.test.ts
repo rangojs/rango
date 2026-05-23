@@ -681,3 +681,75 @@ test.describe("reverse() in Prerender/Static handlers (production build)", () =>
     ).toHaveText("/href");
   });
 });
+
+// Issue #500: the discovery runner must honor the user's third-party resolveId
+// plugins (e.g. vite-tsconfig-paths). StaticPage/DocsPage import "@parity/marker"
+// which is resolved ONLY by the `test-parity-alias` resolveId plugin in
+// vite.config.ts (no resolve.alias mirror). In dev the main RSC env resolves it
+// natively; in production the build-time static/prerender rendering goes through
+// the temp discovery runner, which only resolves it if user plugins are forwarded.
+test.describe("resolveId-plugin parity (dev mode)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test("alias-only resolveId plugin resolves in Static handler", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-page"));
+    await waitForHydration(page);
+
+    await expect(page.locator('[data-testid="static-page-parity"]')).toHaveText(
+      "resolveid-plugin-parity-ok",
+    );
+  });
+
+  test("alias-only resolveId plugin resolves in Prerender handler", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/docs"));
+    await waitForHydration(page);
+
+    await expect(page.locator('[data-testid="docs-parity"]')).toHaveText(
+      "resolveid-plugin-parity-ok",
+    );
+  });
+});
+
+test.describe("resolveId-plugin parity (production build)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("alias-only resolveId plugin resolves in build-time Static handler", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-page"));
+    await waitForHydration(page);
+
+    await expect(page.locator('[data-testid="static-page-parity"]')).toHaveText(
+      "resolveid-plugin-parity-ok",
+    );
+  });
+
+  test("alias-only resolveId plugin resolves in build-time Prerender handler", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/docs"));
+    await waitForHydration(page);
+
+    await expect(page.locator('[data-testid="docs-parity"]')).toHaveText(
+      "resolveid-plugin-parity-ok",
+    );
+  });
+});
