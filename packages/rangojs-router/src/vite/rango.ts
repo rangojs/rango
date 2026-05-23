@@ -131,6 +131,14 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
           },
           resolve: {
             alias: rangoAliases,
+            // Force a single React/React-DOM copy across all three RSC
+            // environments. RSC requires exactly one react/react-dom instance
+            // per environment runtime; consumer install topologies (pnpm
+            // strict layout, experimental React pins, third-party "use client"
+            // packages) can otherwise resolve duplicate copies, causing
+            // "Invalid hook call" / lost context. Child environments inherit
+            // this root dedupe, and Vite merges it with any consumer dedupe.
+            dedupe: ["react", "react-dom"],
           },
           build: {
             rollupOptions: { onwarn },
@@ -156,10 +164,6 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
               // Build SSR inside RSC directory so wrangler can deploy self-contained dist/rsc
               build: {
                 outDir: "./dist/rsc/ssr",
-              },
-              resolve: {
-                // Ensure single React instance in SSR child environment
-                dedupe: ["react", "react-dom"],
               },
               // Pre-bundle SSR entry and React for proper module linking with childEnvironments
               // All deps must be listed to avoid late discovery triggering ERR_OUTDATED_OPTIMIZED_DEP
@@ -289,6 +293,14 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
           },
           resolve: {
             alias: rangoAliases,
+            // Force a single React/React-DOM copy across all three RSC
+            // environments. RSC requires exactly one react/react-dom instance
+            // per environment runtime; consumer install topologies (pnpm
+            // strict layout, experimental React pins, third-party "use client"
+            // packages) can otherwise resolve duplicate copies, causing
+            // "Invalid hook call" / lost context. Child environments inherit
+            // this root dedupe, and Vite merges it with any consumer dedupe.
+            dedupe: ["react", "react-dom"],
           },
           environments: {
             client: {

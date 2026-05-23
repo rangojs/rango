@@ -13,7 +13,4 @@ export default defineConfig(({ command }) => ({
   build: {
     sourcemap: true,
   },
-  resolve: {
-    dedupe: ["react", "react-dom"],
-  },
 }));
