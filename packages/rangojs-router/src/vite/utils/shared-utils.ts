@@ -108,7 +108,9 @@ export function createVirtualEntriesPlugin(
  * - "use client" directives: handled by the RSC plugin, not relevant to Rollup
  * - sourcemap errors: caused by "use client" directive at line 1:0 confusing sourcemap resolution
  * - sourcemap incomplete: plugins that transform without generating sourcemaps (router + RSC plugin)
- * - dynamic/static mixed imports: expected for router internals (e.g. request-context, cache-scope)
+ * - dynamic/static mixed imports: expected for router internals (e.g. request-context, cache-scope).
+ *   Under Rolldown (Vite 8) this surfaces as the INEFFECTIVE_DYNAMIC_IMPORT code emitted directly
+ *   by the bundler, rather than the vite:reporter message handled below (Rollup/Vite 7 shape).
  * - empty bundle: @vitejs/plugin-rsc scan build (step 1/5) produces an empty "index" chunk
  *   because the RSC entry is fully externalized during client-reference analysis
  */
@@ -119,7 +121,8 @@ export function onwarn(
   if (
     warning.code === "MODULE_LEVEL_DIRECTIVE" ||
     warning.code === "SOURCEMAP_ERROR" ||
-    warning.code === "EMPTY_BUNDLE"
+    warning.code === "EMPTY_BUNDLE" ||
+    warning.code === "INEFFECTIVE_DYNAMIC_IMPORT"
   ) {
     return;
   }

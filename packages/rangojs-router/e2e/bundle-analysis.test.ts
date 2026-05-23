@@ -252,9 +252,9 @@ test.describe("bundle-analysis", () => {
       const rscBundle = getRscBundleContent();
 
       // Collect all $$id = "..." assignments (actions, loaders, handles)
-      const allIds = [...rscBundle.matchAll(/\$\$id\s*=\s*"([^"]+)"/g)].map(
-        (m) => m[1],
-      );
+      const allIds = [
+        ...rscBundle.matchAll(/\$\$id\s*=\s*["'`]([^"'`]+)["'`]/g),
+      ].map((m) => m[1]);
 
       expect(allIds.length).toBeGreaterThan(0);
 
@@ -318,7 +318,7 @@ test.describe("bundle-analysis", () => {
 
       // Collect all $$id="..." assignments in the client bundle
       const allClientIds = [
-        ...clientBundle.matchAll(/\$\$id\s*=\s*"([^"]+)"/g),
+        ...clientBundle.matchAll(/\$\$id\s*=\s*["'`]([^"'`]+)["'`]/g),
       ].map((m) => m[1]);
 
       expect(allClientIds.length).toBeGreaterThan(0);
@@ -340,7 +340,9 @@ test.describe("bundle-analysis", () => {
       const rscBundle = getRscBundleContent();
 
       // VERSION should be defined as const VERSION = "hexstring"
-      expect(rscBundle).toMatch(/const VERSION\s*=\s*["'][0-9a-f]+["']/i);
+      expect(rscBundle).toMatch(
+        /(?:const|let|var) VERSION\s*=\s*["'][0-9a-f]+["']/i,
+      );
     });
 
     test("VERSION should be a valid hex timestamp", async () => {
@@ -348,7 +350,7 @@ test.describe("bundle-analysis", () => {
 
       // Extract VERSION value from const declaration
       const versionMatch = rscBundle.match(
-        /const VERSION\s*=\s*["']([0-9a-f]+)["']/i,
+        /(?:const|let|var) VERSION\s*=\s*["']([0-9a-f]+)["']/i,
       );
       expect(versionMatch).toBeTruthy();
 
@@ -375,7 +377,7 @@ test.describe("bundle-analysis", () => {
 
       // Extract the actual VERSION from RSC bundle
       const versionMatch = rscBundle.match(
-        /const VERSION\s*=\s*["']([0-9a-f]+)["']/i,
+        /(?:const|let|var) VERSION\s*=\s*["']([0-9a-f]+)["']/i,
       );
       expect(versionMatch).toBeTruthy();
 

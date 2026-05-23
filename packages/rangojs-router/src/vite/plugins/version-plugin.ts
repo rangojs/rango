@@ -18,7 +18,7 @@ function getClientModuleSignature(
 ): ClientModuleSignature | undefined {
   let program: any;
   try {
-    program = parseAst(source, { jsx: true });
+    program = parseAst(source, { lang: "tsx" });
   } catch {
     return undefined;
   }

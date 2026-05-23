@@ -143,7 +143,7 @@
   },
   "dependencies": {
     "@types/debug": "^4.1.12",
-    "@vitejs/plugin-rsc": "^0.5.23",
+    "@vitejs/plugin-rsc": "^0.5.26",
     "debug": "^4.4.1",
     "magic-string": "^0.30.17",
     "picomatch": "^4.0.3",
@@ -163,11 +163,11 @@
     "vitest": "^4.0.0"
   },
   "peerDependencies": {
-    "@cloudflare/vite-plugin": "^1.25.0",
-    "@vitejs/plugin-rsc": "^0.5.23",
+    "@cloudflare/vite-plugin": "^1.38.0",
+    "@vitejs/plugin-rsc": "^0.5.26",
     "react": ">=19.2.6 <20",
     "react-dom": ">=19.2.6 <20",
-    "vite": "^7.3.0"
+    "vite": "^8.0.0"
   },
   "peerDependenciesMeta": {
     "@cloudflare/vite-plugin": {

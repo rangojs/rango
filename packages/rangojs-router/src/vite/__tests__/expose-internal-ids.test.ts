@@ -581,6 +581,28 @@ export const MyLoader = createLoader(async () => ({ ok: true }));
     expect(ctx.warn).not.toHaveBeenCalled();
   });
 
+  it("handles plugin-react Fast Refresh signature wrapper around createLoader", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    // Mirrors @vitejs/plugin-react v6 (oxc) dev output: a loader whose body
+    // calls a hook-like API (ctx.use) trips Fast Refresh's heuristic and gets
+    // wrapped in an _s(...) signature-registration call. The createLoader call
+    // is the first argument of that wrapper. ID injection must still target the
+    // inner create* call (and not emit an "unsupported shape" warning).
+    const code = `import { createLoader } from "@rangojs/router";
+export const ComposingLoader = _s(createLoader(_c = _s(async (ctx) => {
+  const base = await ctx.use(BaseLoader);
+  return { value: base.value };
+}, "sig123", true), true), "sig123", true);
+`;
+    const ctx = rscCtx();
+    const result = plugin.transform.call(ctx, code, FILE_ID);
+
+    expect(ctx.warn).not.toHaveBeenCalled();
+    expect(result?.code).toContain('ComposingLoader.$$id = "');
+  });
+
   it("warns at most once per file/function shape", () => {
     const plugin = createPlugin();
     initDev(plugin);

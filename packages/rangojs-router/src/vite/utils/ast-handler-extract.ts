@@ -48,7 +48,7 @@ function findImportInsertionPos(
 ): number {
   let program: ProgramNode;
   try {
-    program = parseAst(code, { jsx: true });
+    program = parseAst(code, { lang: "tsx" });
   } catch {
     return 0;
   }
@@ -127,7 +127,7 @@ export function findHandlerCalls(
 ): HandlerCallSite[] {
   let program: ProgramNode;
   try {
-    program = parseAst(code, { jsx: true });
+    program = parseAst(code, { lang: "tsx" });
   } catch {
     return [];
   }
@@ -239,7 +239,7 @@ export function getImportedLocalNames(
   parseAst: (code: string, options?: any) => ProgramNode,
 ): Set<string> {
   try {
-    const program = parseAst(code, { jsx: true });
+    const program = parseAst(code, { lang: "tsx" });
     return getImportedLocalNamesFromProgram(program, importedName);
   } catch {
     return new Set<string>();
@@ -256,7 +256,7 @@ export function extractImportDeclarations(
 ): string[] {
   let program: ProgramNode;
   try {
-    program = parseAst(code, { jsx: true });
+    program = parseAst(code, { lang: "tsx" });
   } catch {
     return [];
   }
@@ -380,7 +380,7 @@ export function extractModuleLevelDeclarations(
 ): string[] {
   let program: ProgramNode;
   try {
-    program = parseAst(code, { jsx: true });
+    program = parseAst(code, { lang: "tsx" });
   } catch {
     return [];
   }
