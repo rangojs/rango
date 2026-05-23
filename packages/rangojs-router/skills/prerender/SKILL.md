@@ -11,9 +11,6 @@ deserialization path, same segment system. The worker handles every request --
 there are NO static .html or .rsc files served from assets. The worker reads
 pre-computed Flight payloads instead of executing handler code.
 
-Canonical semantics reference:
-[docs/execution-model.md](../../docs/internal/execution-model.md)
-
 ## API: Prerender
 
 ### Static Route (no params)
@@ -640,16 +637,7 @@ At runtime, the cache-lookup middleware uses these flags:
 
 ## Contributor Checklist
 
-Before changing prerender behavior, read these docs and run these tests.
-
-### Docs to re-read
-
-- [Prerender API design](../../docs/prerender-api-design.md) -- canonical
-  architecture: build-time flow, runtime flow, storage, Passthrough, intercept
-- [Execution model](../../docs/internal/execution-model.md) -- handler-first
-  ordering, middleware scope, context visibility rules
-- [Semantic change checklist](../../docs/internal/semantic-change-checklist.md)
-  -- gate for any change to execution semantics
+Before changing prerender behavior, run these tests.
 
 ### Tests to run
 
@@ -676,10 +664,3 @@ pnpm --filter @rangojs/router exec playwright test handler-first
   dev/build-only and do not need a production counterpart.
 - Behavioral assertions (rendered content, loader freshness, Passthrough
   fallback, intercept variant selection) must work in the production build.
-
-## Maintenance References
-
-- [Stability next steps plan](../../docs/internal/stability-next-steps-plan.md)
-  -- completed parity and cleanup pass (reference for decisions made)
-- [Test quality baseline](../../docs/internal/test-quality-baseline.md) --
-  measured test inventory, sleep debt, production coverage gaps

@@ -10,9 +10,6 @@ Middleware runs before/after route handlers using the onion model.
 
 ## Execution Model
 
-Canonical semantics reference:
-[docs/execution-model.md](../../docs/internal/execution-model.md)
-
 There are two levels of middleware with different execution scopes:
 
 ### Global middleware (`router.use()`)
@@ -64,7 +61,7 @@ and consumer segments, even when middleware is present in the chain.
 
 ```typescript
 export const revalidateCartData = ({ actionId }) =>
-  actionId?.includes("src/actions/cart.ts#") ?? false;
+  actionId?.includes("src/actions/cart.ts#") || undefined;
 
 layout(CartLayout, () => [
   middleware(cartRenderMiddleware),

@@ -9,6 +9,25 @@ argument-hint:
 Both mechanisms share the same backing store, cache profiles, and tag-based
 invalidation. They differ in scope, cache key, execution model, and runtime control.
 
+## Two axes — do not conflate
+
+Everything on this page is **axis 1: stored-value freshness** — _is a cached
+value still good?_ There is a second, orthogonal axis it is easy to mistake for
+caching:
+
+1. **Stored-value freshness** — _is a cached value still good?_
+   → `"use cache"` (fn/component), `cache()` (segment), loader `cache()` (loader data).
+   Entries are coupled across the one store by **tags** (`revalidateTag`).
+2. **Client-update selection** — _should this segment re-run and stream to the
+   client on this navigation/action?_
+   → `revalidate()`. Covered in `/loader` and `/route`, **not here**.
+
+They are orthogonal and compose: a segment selected by `revalidate()` still
+consults its cache (hit → no recompute); a cache bust does **not** force a client
+update, and `revalidate()` never reads, writes, or expires a cached value. If you
+know React Router, `revalidate()` is `shouldRevalidate`, not `Cache-Control`. See
+`/rango` → "Glossary: two freshness axes" for the cross-framework mapping.
+
 ## Key Differences
 
 |                      | `cache()` DSL                                         | `"use cache"` directive                            |

@@ -250,8 +250,10 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * )
    *
    * // Revalidate after specific actions (actionId format: "path/to/file.ts#exportName")
+   * // Use `|| undefined` (defer), not `?? false` (hard short-circuit), so the
+   * // chain and the segment default still apply when there is no match.
    * revalidate(({ actionId }) =>
-   *   actionId?.includes("Cart") ?? false
+   *   actionId?.includes("Cart") || undefined
    * )
    *
    * // Soft decision (suggest but allow override)
@@ -274,7 +276,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *
    * // With loader-specific revalidation (match by file or export name)
    * loader(CartLoader, () => [
-   *   revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
+   *   revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
    * ])
    *
    * // Consume in client components with useLoader()

@@ -244,14 +244,22 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
     revalidate(() => false), // Never revalidate
   ]),
 
-  // Loader that revalidates after cart actions
+  // Loader that revalidates after cart actions (defer otherwise — keeps the
+  // permissive loader defaults for navigation and other actions intact)
   loader(CartLoader, () => [
-    revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
+    revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
   ]),
 ]);
 ```
 
 ### `revalidate()` return shapes
+
+> **Scope: `revalidate()` is a partial-render concern, not a cache concern.**
+> It decides whether a segment (here, a loader) re-runs and streams to the
+> client on a navigation or action — never whether a cached value is stale. The
+> cache decides hit/miss/ttl/swr independently and never reads `revalidate()`.
+> Caching a loader is a separate, opt-in step (`loader(Fn, () => [cache({...})])`).
+> See `/cache-guide` → "Two axes" and `/rango` → "Glossary".
 
 A `revalidate(fn)` callback can return one of four shapes. The chain
 processes revalidators in order; each call's return controls how the
@@ -282,6 +290,32 @@ revalidate(() => null); // explicit defer
 If every revalidator on a segment defers, the segment-type default
 (e.g. params-changed for routes, `false` for parallels) is used.
 
+#### `|| undefined` (defer) vs `?? false` (hard) — pick deliberately
+
+A boolean return — including `false` — is a **hard** decision: it short-circuits
+the chain and overrides the segment default. `undefined` **defers** to the
+running suggestion / segment default. They are not interchangeable:
+
+```typescript
+// Defer: "revalidate on match, otherwise let the default/downstream decide."
+revalidate(({ actionId }) => actionId?.includes("Cart") || undefined);
+
+// Hard: "revalidate ONLY on match, suppress everything else."
+revalidate(({ actionId }) => actionId?.includes("Cart") ?? false);
+```
+
+This matters most for loaders, whose defaults are permissive: a loader defaults
+to revalidating on **any** action (`POST`) and on **param/search changes**
+during navigation. So `?? false` on a loader silently suppresses both — the
+loader will not refetch when you navigate to a different `:id`. Use
+`|| undefined` when you want to _add_ a revalidation signal on top of the
+sensible defaults, and reserve `?? false` for the rare case where you genuinely
+want the loader to refetch on nothing but your matched action.
+
+When **composing multiple revalidators** on one segment (see below), defer is
+mandatory: the first hard `?? false` ends the chain and the later contracts
+never run.
+
 ### Revalidation Contracts for Loader Dependencies
 
 If a loader reads `ctx.get()` data produced by an outer handler/layout, share
@@ -289,8 +323,10 @@ the same named revalidation contract across producer and consumer segments.
 
 ```typescript
 // revalidation-contracts.ts
+// Defer (|| undefined), not ?? false: these contracts are meant to compose, and
+// a hard `false` from the first one would short-circuit the rest.
 export const revalidateAccountScope = ({ actionId }) =>
-  actionId?.includes("src/actions/account.ts#") ?? false;
+  actionId?.includes("src/actions/account.ts#") || undefined;
 
 layout(AccountLayout, () => [
   revalidate(revalidateAccountScope), // producer reruns
@@ -648,7 +684,7 @@ export const CartLoader = createLoader(async (ctx) => {
 export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalidate }) => [
   layout(<ShopLayout />, () => [
     loader(CartLoader, () => [
-      revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
+      revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
     ]),
 
     path("/shop/product/:slug", ProductPage, { name: "product" }, () => [

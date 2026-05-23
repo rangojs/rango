@@ -55,7 +55,9 @@ import { cache, revalidate, loading, errorBoundary, middleware } from "@rangojs/
 // Shared caching configuration
 const withCaching = () => [
   cache({ ttl: 600_000 }),
-  revalidate(({ actionId }) => !!actionId),
+  // Defer on navigation (|| undefined) so each route keeps its own param/search
+  // revalidation default; only force a re-run when an action ran.
+  revalidate(({ actionId }) => (actionId ? true : undefined)),
 ];
 
 // Shared loading and error handling
@@ -70,6 +72,24 @@ const withAuth = () => [
   middleware(loggingMiddleware),
 ];
 ```
+
+> **Factories compose logic, not just values.** A `revalidate()` predicate in a
+> shared factory applies its logic to _every_ route that composes it, so a
+> footgun here is amplified across the app. Two rules:
+>
+> 1. Use `|| undefined` (defer), not `?? false` (hard short-circuit), in shared
+>    predicates — a hard `false` ends the chain and overrides each consuming
+>    route's own default, and a downstream revalidator never runs. See `/loader`
+>    → "`|| undefined` (defer) vs `?? false` (hard)".
+> 2. Match actions through a named contract, not an inline
+>    `actionId.includes("…")` buried in a factory, so a renamed action surfaces
+>    in one place instead of drifting silently across every consumer. A typed
+>    `ctx.isAction(Action)` helper that turns this into a compile error is
+>    **planned**; until it lands, the named-contract pattern is the safe form.
+>
+> Remember the axis: a factory's `revalidate()` controls client-update
+> selection, while its `cache()` controls stored-value freshness. They are
+> independent even when bundled in the same factory (`/cache-guide` → "Two axes").
 
 ## Using Factories in Routes
 
@@ -107,7 +127,7 @@ import { authMiddleware } from "./middleware/auth";
 
 export const withPublicDefaults = () => [
   cache({ ttl: 300 }),
-  revalidate(({ actionId }) => !!actionId),
+  revalidate(({ actionId }) => (actionId ? true : undefined)),
 ];
 
 export const withProtectedDefaults = () => [

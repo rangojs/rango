@@ -524,9 +524,10 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
  *
  * @example
  * ```ts
- * // Re-render only when a cart action happened or browser signals staleness
+ * // Re-render when a cart action happened or the browser signals staleness;
+ * // defer otherwise (|| undefined) so the segment default still applies
  * revalidate(({ actionId, stale }) =>
- *   actionId?.includes("cart") || stale || false
+ *   actionId?.includes("cart") || stale || undefined
  * )
  *
  * // Always re-render when params change (default behavior made explicit)
@@ -570,18 +571,20 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
    * relative to the project root, followed by `#` and the exported function name.
    *
    * This is stable and can be used for path-based matching to revalidate
-   * when any action in a module or directory fires:
+   * when any action in a module or directory fires. Prefer `|| undefined`
+   * (defer to the segment default / downstream revalidators) over `?? false`
+   * (hard short-circuit that suppresses the default and ends the chain):
    *
    * @example
    * ```ts
    * // Match a specific action
-   * revalidate(({ actionId }) => actionId === "src/actions/cart.ts#addToCart")
+   * revalidate(({ actionId }) => actionId === "src/actions/cart.ts#addToCart" || undefined)
    *
    * // Match any action in the cart module
-   * revalidate(({ actionId }) => actionId?.includes("cart") ?? false)
+   * revalidate(({ actionId }) => actionId?.includes("cart") || undefined)
    *
    * // Match any action under src/apps/store/actions/
-   * revalidate(({ actionId }) => actionId?.startsWith("src/apps/store/actions/") ?? false)
+   * revalidate(({ actionId }) => actionId?.startsWith("src/apps/store/actions/") || undefined)
    * ```
    */
   actionId?: string;

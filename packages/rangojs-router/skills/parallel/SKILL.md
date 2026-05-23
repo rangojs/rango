@@ -8,9 +8,6 @@ argument-hint: [@slot-name]
 
 Parallel routes render multiple components simultaneously in named slots.
 
-Canonical semantics reference:
-[docs/execution-model.md](../../docs/internal/execution-model.md)
-
 ## Basic Parallel Routes
 
 ```typescript
@@ -340,7 +337,7 @@ parallel(
   () => [
     loader(CartLoader),
     // Revalidate when cart actions occur
-    revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
+    revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
   ]
 )
 ```
@@ -364,7 +361,7 @@ the parallel consumer:
 ```typescript
 // revalidation-contracts.ts
 export const revalidateCartData = ({ actionId }) =>
-  actionId?.includes("src/actions/cart.ts#") ?? false;
+  actionId?.includes("src/actions/cart.ts#") || undefined;
 
 layout(CartLayout, () => [
   revalidate(revalidateCartData), // producer reruns
@@ -482,7 +479,7 @@ export const shopPatterns = urls(({
       () => [
         loader(CartLoader),
         loading(<CartSkeleton />),
-        revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
+        revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
       ]
     ),
 

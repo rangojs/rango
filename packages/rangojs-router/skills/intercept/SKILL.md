@@ -8,9 +8,6 @@ argument-hint: [@slot-name] [route-to-intercept]
 
 Intercept routes render a different component during soft navigation (client-side) while preserving the background route. Hard navigation (direct URL) shows the full page.
 
-Canonical semantics reference:
-[docs/execution-model.md](../../docs/internal/execution-model.md)
-
 ## Basic Intercept
 
 ```typescript
@@ -111,7 +108,7 @@ consumer when they share `ctx.set()` data:
 
 ```typescript
 export const revalidateProductShell = ({ actionId }) =>
-  actionId?.includes("src/actions/product.ts#") ?? false;
+  actionId?.includes("src/actions/product.ts#") || undefined;
 
 layout(ProductLayout, () => [
   revalidate(revalidateProductShell), // producer reruns

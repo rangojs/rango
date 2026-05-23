@@ -302,7 +302,7 @@ re-rendering. This is about the segment tree, not cache invalidation:
 ```typescript
 // Re-run this layout when a blog action fires
 layout(BlogLayout, () => [
-  revalidate(({ actionId }) => actionId?.includes("updateBlog") ?? false),
+  revalidate(({ actionId }) => actionId?.includes("updateBlog") || undefined),
   path("/blog/:slug", BlogPost, { name: "blogPost" }),
 ]);
 

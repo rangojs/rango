@@ -245,7 +245,7 @@ export const urlpatterns = urls(({ path, layout, cache, loader, revalidate }) =>
     path("/shop/product/:slug", ProductPage, { name: "product" }, () => [
       loader(ProductLoader, () => [cache({ ttl: 120 })]),
       loader(CartLoader, () => [
-        revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
+        revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
       ]),
     ]),
   ]),

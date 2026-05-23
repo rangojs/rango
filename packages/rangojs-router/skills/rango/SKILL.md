@@ -8,35 +8,166 @@ argument-hint:
 
 Django-inspired RSC router with composable URL patterns, type-safe href, and server components.
 
+This page is the mental model to read **before** the catalog. A flat list of
+skills gives nothing to slot details into, so a reader free-associates from local
+vocabulary — which is exactly how `revalidate()` gets misread as caching. Start
+with the shape, then pick a primitive.
+
+## The shape of rango (read first)
+
+- **Routes are expressed, not configured.** The `urls()` tree shows where every
+  route, layout, loader, and cache lives. No file-system convention, no hunting.
+- **Two freshness axes, orthogonal:**
+  - _stored-value freshness_ — `"use cache"`, `cache()`, loader `cache()`
+  - _client-update selection_ — `revalidate()`
+- **Loaders are the live data layer** — fresh every request by default, even
+  inside a cached render. Opt into caching explicitly.
+- **One identity, one store** — loaders, handles, cached fns, and actions are all
+  `path#export`; all caches share one store; `revalidateTag` cuts across them.
+- **Type-safe end to end** — route names, params, search schemas, loader return
+  types, context vars, and `href` / `reverse` are checked at compile time
+  (`/typesafety`).
+
+Most features are **just-in-time**: the core is `urls()`, `path()`, `layout()`,
+`include()`, and `reverse()`. Caching, parallel routes, intercepts, prerender,
+i18n, themes, and the rest are opt-in — reach for them when a requirement
+appears, not up front.
+
+## Composability: structure vs config
+
+- `path()` / `include()` are **structure** — they define URLs and must stay
+  visible in `urls()`. They cannot be hidden in a factory. `include()` composes
+  whole modules (separation of real concerns); `path()` places a leaf.
+- Everything else — `cache`, `loader`, `loading`, `middleware`, `revalidate`,
+  `parallel`, `intercept`, `errorBoundary`, … — is **config**. It attaches to a
+  node via its `use` callback, is importable, and extracts into factories that
+  return arrays (`withAuth()`, `withCaching()`), flattened automatically.
+
+To decide where something can live: **does it define a URL? structure, stays in
+`urls()`. Does it modify a node? config, compose freely.**
+
+## Pick a primitive
+
+| I need to…                            | Use                              | Skill             |
+| ------------------------------------- | -------------------------------- | ----------------- |
+| render data fresh every request       | `loader()` + `useLoader()`       | /loader           |
+| cache a rendered subtree              | `cache()` on a segment           | /caching          |
+| cache one function/component's result | `"use cache"`                    | /use-cache        |
+| cache a loader's data                 | `loader(L, () => [cache()])`     | /loader, /caching |
+| re-render a segment after an action   | `revalidate()`                   | /loader           |
+| mutate                                | `"use server"` action            | /server-actions   |
+| share config across routes            | factory returning a helper array | /composability    |
+| compose a sub-app / module            | `include()`                      | /route            |
+| modal / soft navigation               | `intercept()`                    | /intercept        |
+
+## Invariants
+
+- `path()`/`include()` are always visible in `urls()`; config helpers are extractable.
+- **Cache decides freshness; `revalidate()` decides client-update.** Orthogonal; compose.
+- Loaders resolve fresh every request (even inside `cache()`) and never run twice/request.
+- Inside `"use cache"`: `cookies()`/`headers()` and response side-effects
+  (`ctx.header`/`setTheme`/`onResponse`/`setLocationState`) throw, and reading a
+  non-cacheable `createVar({ cache: false })` throws; `ctx.use(Handle)` is
+  captured on miss and replayed on hit (`ctx.set` of a cacheable var is allowed —
+  enforcement is at read time).
+- One identity `path#export` (`functionId`/`$$id`/`actionId`); one store;
+  `revalidateTag` cuts across all cache mechanisms.
+- `useLoader` / `useHandle` / `useFetchLoader` are client-only.
+
+## Don't confuse
+
+- `revalidate()` ≠ cache invalidation — partial-render selection vs value freshness.
+- host router `.lazy()` (lazy import of a handler/sub-app) vs `.map()` (inline Response).
+- `cache()` (segment, in the DSL) vs `"use cache"` (function/component directive).
+- `loader()` registration (server) vs `useLoader()` consumption (client).
+
+### Coming from another framework (false friends)
+
+Same words, different jobs — this is the most common source of the
+`revalidate()`-is-caching misread.
+
+| You may know                               | Maps to Rango axis | Watch out                                                                                                                                                      |
+| ------------------------------------------ | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Next.js `export const revalidate = N`      | **Axis 1** (cache) | Same word, opposite meaning. Next's `revalidate` is time-based cache expiry; Rango's `revalidate()` is **axis 2**. Use `cache({ ttl })` for the Next behavior. |
+| Next.js `revalidatePath` / `revalidateTag` | **Axis 1** (cache) | Cache busting. Rango's tag bust is `revalidateTag`; there is no `revalidatePath`.                                                                              |
+| React Router / Remix `shouldRevalidate`    | **Axis 2**         | This is the correct mental model for Rango's `revalidate()`.                                                                                                   |
+| HTTP `Cache-Control` / ISR                 | **Axis 1**         | Edge/document layer — see `/document-cache`. Separate from both `cache()` and `revalidate()`.                                                                  |
+| Remix/RR `loader`                          | live data          | Like Rango loaders, fresh per request. Rango additionally lets you cache a loader on demand.                                                                   |
+
+See `/cache-guide` for the axis-1 decision guide, `/loader` and `/route` for
+`revalidate()` (axis 2), and `/document-cache` for the edge layer.
+
+## Canonical shape
+
+```ts
+export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalidate }) => [
+  layout(<ShopLayout />, () => [                 // structure: wraps children
+    loader(CartLoader, () => [                   // config: live data
+      // partial-render axis: re-run on cart actions, defer otherwise
+      revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
+    ]),
+    path("/shop/:slug", ProductPage, { name: "product" }, () => [  // structure: leaf
+      loader(ProductLoader, () => [cache({ ttl: 60 })]),  // config: cache loader DATA
+      loading(<ProductSkeleton />),              // config
+      withRecs(),                                // composed factory (config array)
+    ]),
+  ]),
+]);
+```
+
+One tree, both axes visible: structure (`layout`/`path`) vs config (everything
+else), freshness (`cache`) vs client-update (`revalidate`). A typed
+`ctx.isAction(Action)` to replace the substring match — making a renamed action a
+compile error — is planned; see `/typesafety` → "Stable identity".
+
 ## Skills
 
-| Skill                   | Description                                                                |
-| ----------------------- | -------------------------------------------------------------------------- |
-| `/router-setup`         | Create and configure the RSC router                                        |
-| `/route`                | Define routes with `urls()` and `path()`                                   |
-| `/layout`               | Layouts that wrap child routes                                             |
-| `/loader`               | Data loaders with `createLoader()`                                         |
-| `/server-actions`       | Mutations with `"use server"`, useActionState, validation, revalidation    |
-| `/i18n`                 | Locale routing with `:locale?`, resolution chains, react-intl integration  |
-| `/middleware`           | Request processing and authentication                                      |
-| `/intercept`            | Modal/slide-over patterns for soft navigation                              |
-| `/parallel`             | Multi-column layouts and sidebars                                          |
-| `/caching`              | Segment caching with memory or KV stores                                   |
-| `/use-cache`            | Function-level caching with `"use cache"` directive                        |
-| `/cache-guide`          | When to use `cache()` vs `"use cache"` — differences and decision guide    |
-| `/document-cache`       | Edge caching with Cache-Control headers                                    |
-| `/theme`                | Light/dark mode with FOUC prevention                                       |
-| `/links`                | URL generation: ctx.reverse, href, useHref, useMount, scopedReverse        |
-| `/hooks`                | Client-side React hooks                                                    |
-| `/typesafety`           | Type-safe routes, params, href, and environment                            |
-| `/host-router`          | Multi-app host routing with domain/subdomain patterns                      |
-| `/tailwind`             | Set up Tailwind CSS v4 with `?url` imports                                 |
-| `/response-routes`      | JSON/text/HTML/XML/stream endpoints with `path.json()`, `path.text()`      |
-| `/mime-routes`          | Content negotiation — same URL, different response types via Accept header |
-| `/fonts`                | Load web fonts with preload hints                                          |
-| `/bundle-analysis`      | Audit your app's production bundle for server leaks and oversized chunks   |
-| `/migrate-nextjs`       | Migrate a Next.js App Router project to Rango                              |
-| `/migrate-react-router` | Migrate a React Router / Remix project to Rango                            |
+Grouped by concern — read when you need to…
+
+**Structure & routing** — shape URLs, layouts, navigation, and request processing:
+
+| Skill              | Description                                                                |
+| ------------------ | -------------------------------------------------------------------------- |
+| `/router-setup`    | Create and configure the RSC router                                        |
+| `/route`           | Define routes with `urls()`, `path()`, and `include()`                     |
+| `/layout`          | Layouts that wrap child routes                                             |
+| `/parallel`        | Multi-column layouts and sidebars                                          |
+| `/intercept`       | Modal/slide-over patterns for soft navigation                              |
+| `/middleware`      | Request processing and authentication                                      |
+| `/host-router`     | Multi-app host routing with domain/subdomain patterns                      |
+| `/links`           | URL generation: ctx.reverse, href, useHref, useMount, scopedReverse        |
+| `/response-routes` | JSON/text/HTML/XML/stream endpoints with `path.json()`, `path.text()`      |
+| `/mime-routes`     | Content negotiation — same URL, different response types via Accept header |
+
+**Data & caching** — fetch, mutate, and cache:
+
+| Skill             | Description                                                             |
+| ----------------- | ----------------------------------------------------------------------- |
+| `/loader`         | Data loaders with `createLoader()` and `revalidate()`                   |
+| `/server-actions` | Mutations with `"use server"`, useActionState, validation, revalidation |
+| `/caching`        | Segment caching with memory or KV stores                                |
+| `/use-cache`      | Function-level caching with `"use cache"` directive                     |
+| `/cache-guide`    | When to use `cache()` vs `"use cache"` — differences and decision guide |
+| `/document-cache` | Edge caching with Cache-Control headers                                 |
+
+**Client & presentation** — build the client-side UX:
+
+| Skill       | Description                                                               |
+| ----------- | ------------------------------------------------------------------------- |
+| `/hooks`    | Client-side React hooks                                                   |
+| `/theme`    | Light/dark mode with FOUC prevention                                      |
+| `/i18n`     | Locale routing with `:locale?`, resolution chains, react-intl integration |
+| `/fonts`    | Load web fonts with preload hints                                         |
+| `/tailwind` | Set up Tailwind CSS v4 with `?url` imports                                |
+
+**Setup, types & migration**:
+
+| Skill                   | Description                                                              |
+| ----------------------- | ------------------------------------------------------------------------ |
+| `/typesafety`           | Type-safe routes, params, href, and environment                          |
+| `/bundle-analysis`      | Audit your app's production bundle for server leaks and oversized chunks |
+| `/migrate-nextjs`       | Migrate a Next.js App Router project to Rango                            |
+| `/migrate-react-router` | Migrate a React Router / Remix project to Rango                          |
 
 ## Quick Start
 

@@ -45,11 +45,13 @@ export const urlpatterns = urls(({ path, loader, revalidate }) => [
   // the owning path() so the segment owns its data dependency.
   path("/cart", CartPage, { name: "cart" }, () => [
     revalidate(
-      ({ actionId }) => actionId?.startsWith("src/actions/cart.ts#") ?? false,
+      ({ actionId }) =>
+        actionId?.startsWith("src/actions/cart.ts#") || undefined,
     ),
     loader(CartLoader, () => [
       revalidate(
-        ({ actionId }) => actionId?.startsWith("src/actions/cart.ts#") ?? false,
+        ({ actionId }) =>
+          actionId?.startsWith("src/actions/cart.ts#") || undefined,
       ),
     ]),
   ]),
@@ -396,11 +398,13 @@ urls(({ path, loader, revalidate }) => [
   // Re-render the cart page handler AND re-resolve its loader after cart actions
   path("/cart", CartPage, { name: "cart" }, () => [
     revalidate(
-      ({ actionId }) => actionId?.startsWith("src/actions/cart.ts#") ?? false,
+      ({ actionId }) =>
+        actionId?.startsWith("src/actions/cart.ts#") || undefined,
     ),
     loader(CartLoader, () => [
       revalidate(
-        ({ actionId }) => actionId?.startsWith("src/actions/cart.ts#") ?? false,
+        ({ actionId }) =>
+          actionId?.startsWith("src/actions/cart.ts#") || undefined,
       ),
     ]),
   ]),
@@ -409,7 +413,8 @@ urls(({ path, loader, revalidate }) => [
   path("/account", AccountPage, { name: "account" }, () => [
     loader(AccountLoader, () => [
       revalidate(
-        ({ actionId }) => actionId?.startsWith("src/actions/account/") ?? false,
+        ({ actionId }) =>
+          actionId?.startsWith("src/actions/account/") || undefined,
       ),
     ]),
   ]),
@@ -435,7 +440,7 @@ consumer:
 
 ```typescript
 const revalidateCart = ({ actionId }) =>
-  actionId?.startsWith("src/actions/cart.ts#") ?? false;
+  actionId?.startsWith("src/actions/cart.ts#") || undefined;
 
 urls(({ path, layout, loader, revalidate }) => [
   layout(CartLayout, () => [

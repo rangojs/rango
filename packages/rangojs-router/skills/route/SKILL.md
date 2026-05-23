@@ -234,14 +234,22 @@ Cacheable vars (the default) can be read freely inside cache scopes.
 
 ### Revalidation Contracts for Handler Data
 
+> **Scope: `revalidate()` is a partial-render concern, not a cache concern.**
+> It decides whether this segment re-runs and streams to the client on a
+> navigation or action — never whether a cached value is stale. The cache
+> decides hit/miss/ttl/swr independently and never reads `revalidate()`. See
+> `/cache-guide` → "Two axes" and `/rango` → "Glossary".
+
 Handler-first guarantees apply within a single full render pass. For partial
 action revalidation, define named revalidation contracts and reuse them on both
 the producer route and the consumer child segments.
 
 ```typescript
 // revalidation-contracts.ts
+// Defer (|| undefined), not ?? false: a hard `false` short-circuits the chain,
+// so when the same segment composes multiple contracts the later ones never run.
 export const revalidateCheckoutData = ({ actionId }) =>
-  actionId?.includes("src/actions/checkout.ts#") ?? false;
+  actionId?.includes("src/actions/checkout.ts#") || undefined;
 
 path("/checkout", CheckoutPage, { name: "checkout" }, () => [
   revalidate(revalidateCheckoutData), // producer (route handler) reruns
@@ -269,9 +277,6 @@ path("/checkout", CheckoutPage, { name: "checkout" }, () => [
   layout(CheckoutLayout, () => [revalidateCheckout()]),
 ]);
 ```
-
-For scope/revalidation guarantees and non-guarantees, see:
-[docs/execution-model.md](../../docs/internal/execution-model.md)
 
 ## Redirects
 

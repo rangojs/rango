@@ -493,6 +493,29 @@ RSC Flight serialization calls `toJSON()` on both loaders and handles,
 sending only `{ __brand, $$id }` to the client. The hooks recover the
 full functionality from module-level registries.
 
+## Stable identity: `path#export`
+
+Loaders, handles, cached functions (`functionId`), and server actions
+(`actionId`) all share one identity scheme: `{modulePath}#{exportName}`,
+injected at build by the `exposeInternalIds` and `exposeActionId` Vite plugins.
+This is also the identity React server actions carry across the Flight boundary,
+which is why a `revalidate()` predicate sees an action as a `path#export` string:
+
+```typescript
+revalidate(
+  ({ actionId }) => actionId === "src/actions/cart.ts#addToCart" || undefined,
+);
+```
+
+`actionId` is the only stable reference React exposes across the Flight boundary,
+so it stays as the floor and escape hatch. The hand-written-string surface
+(`actionId?.includes("cart.ts#")`) is brittle: a renamed action or moved file
+silently stops matching with no compile error. A typed helper that resolves this
+id from an imported action reference — making a rename a type error in one place
+— is **planned**, not yet shipped. Until it lands, keep the substring match in a
+single named revalidation contract (`/composability`) so a rename only has to be
+fixed in one place.
+
 ## Location State Type Safety
 
 ```typescript
