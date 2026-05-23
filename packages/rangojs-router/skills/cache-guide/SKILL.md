@@ -229,6 +229,28 @@ On cache hit for the route, the handler doesn't run and `getProductData` is neve
 called. On cache miss, the handler runs and `getProductData` may itself return a
 cached value from a previous call with the same slug.
 
+### Nesting rule: the outer window bounds the inner
+
+A cache's window bounds everything rendered inside it (loaders excepted). An
+inner shorter TTL only takes effect when the **enclosing** cache recomputes — it
+does **not** keep a value fresher than its parent:
+
+- Outer `cache()` **fresh hit** → the subtree is served from stored RSC, so inner
+  `"use cache"` functions are **not consulted** (frozen at the outer's age — no
+  code inside the boundary runs on a hit).
+- Outer **miss / SWR revalidation** → inner caches are consulted, each per its own
+  ttl/swr. With SWR on the outer, a stale subtree serves instantly and refreshes
+  in the background, so under traffic it keeps refreshing rather than rotting to
+  the worst case.
+- **Loaders are the exception** — excluded from the segment cache, re-resolved
+  live even on an outer hit.
+
+So `"use cache: short"` (60s) inside `cache({ ttl: 600 })` yields ~600s freshness
+on hits, **not** 60s. This is not a bug: setting `cache({ ttl: 600 })` declares
+"this subtree may be ~600s stale." **If a value must be fresher than its
+enclosing segment, put it in a loader** (always live). `debugPerformance` prints
+cache hits per layer, so the actual per-request behavior is observable.
+
 ## Headers and Cookies
 
 Neither mechanism caches response headers or cookies.
