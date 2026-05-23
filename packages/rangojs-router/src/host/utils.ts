@@ -15,7 +15,7 @@
  *   app: ['*', 'www.*']
  * });
  *
- * router.host(hosts.admin).map(...); // Type-safe!
+ * router.host(hosts.admin).lazy(() => import("./apps/admin")); // Type-safe!
  * ```
  */
 export function defineHosts<T extends Record<string, string | string[]>>(

@@ -943,9 +943,9 @@ import { createHostRouter } from "@rangojs/router/host";
 
 const hostRouter = createHostRouter();
 
-hostRouter.host(["*.localhost"]).map(() => import("./apps/admin/handler.js"));
-hostRouter.host(["localhost"]).map(() => import("./apps/site/handler.js"));
-hostRouter.fallback().map(() => import("./apps/site/handler.js"));
+hostRouter.host(["*.localhost"]).lazy(() => import("./apps/admin/handler.js"));
+hostRouter.host(["localhost"]).lazy(() => import("./apps/site/handler.js"));
+hostRouter.fallback().lazy(() => import("./apps/site/handler.js"));
 
 export default {
   async fetch(request, env, ctx) {
@@ -954,7 +954,7 @@ export default {
 };
 ```
 
-Each sub-app has its own `createRouter()` and `urls()`. The host router lazily imports the matched app's handler. Patterns are matched in registration order — register more specific patterns (subdomains) before catch-alls.
+Use `.lazy(() => import("./sub-app"))` to mount a lazily-imported sub-app (a module whose `default` export is a handler or nested host router), and `.map((request) => Response)` for an inline request handler. Only `.lazy()` mounts are imported during build-time discovery; `.map(() => import(...))` is a type error. Each sub-app has its own `createRouter()` and `urls()`. Patterns are matched in registration order — register more specific patterns (subdomains) before catch-alls.
 
 ## Meta Tags
 

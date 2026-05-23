@@ -11,8 +11,8 @@
  *
  * const router = createHostRouter();
  *
- * router.host(['.']).map(() => import('./apps/main'));
- * router.host(['admin.*']).map(() => import('./apps/admin'));
+ * router.host(['.']).lazy(() => import('./apps/main'));
+ * router.host(['admin.*']).lazy(() => import('./apps/admin'));
  *
  * export default {
  *   fetch(request) {

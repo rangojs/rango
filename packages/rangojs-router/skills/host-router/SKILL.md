@@ -22,9 +22,9 @@ import { createHostRouter } from "@rangojs/router/host";
 
 const router = createHostRouter();
 
-router.host(["."]).map(() => import("./apps/main"));
-router.host(["admin.*"]).map(() => import("./apps/admin"));
-router.host(["api.*"]).map(() => import("./apps/api"));
+router.host(["."]).lazy(() => import("./apps/main"));
+router.host(["admin.*"]).lazy(() => import("./apps/admin"));
+router.host(["api.*"]).lazy(() => import("./apps/api"));
 
 export default {
   fetch(request: Request, env: Env, ctx: ExecutionContext) {
@@ -33,7 +33,31 @@ export default {
 };
 ```
 
-Each `.map()` receives either a direct handler `(request, input) => Response` or a lazy import `() => import(...)`. Lazy imports resolve a module with a `default` export that is either a handler function or another `HostRouter` (for nesting).
+## Inline handlers (`.map`) vs lazy mounts (`.lazy`)
+
+A host pattern maps to one of two things, and you pick the method by intent:
+
+| Method  | Argument                       | Use for                                                      |
+| ------- | ------------------------------ | ------------------------------------------------------------ |
+| `.map`  | `(request, input) => Response` | An inline request handler that produces a response directly. |
+| `.lazy` | `() => import("./sub-app")`    | A lazily-imported handler or nested host router (a sub-app). |
+
+```typescript
+// Lazy mount: the module's default export is a handler or a HostRouter.
+router.host(["admin.*"]).lazy(() => import("./apps/admin"));
+
+// Inline handler: returns a Response itself (sync or async).
+router.host(["health.*"]).map(() => new Response("ok"));
+router
+  .host(["echo.*"])
+  .map((request) => new Response(new URL(request.url).pathname));
+```
+
+Why two methods instead of one overloaded `.map()`:
+
+- **Build-time discovery** invokes only `.lazy()` mounts (to trigger each sub-app's `createRouter()` registration). Inline `.map()` handlers are never invoked during discovery, so they can't crash it or pollute its errors.
+- `.map(() => import("./sub-app"))` is a **type error** — a lazy import resolves to a module, not a `Response`. Use `.lazy()` for imports. (If the types are bypassed, e.g. from JS, a `.map()` handler that resolves to a module throws a clear `HostRouterError` at request time instead of returning the module.)
+- A lazy loader may declare an ignored parameter (`.lazy((_request?) => import("./x"))`); `.lazy()` accepts it because intent is explicit, not inferred from the signature.
 
 ## Pattern Syntax
 
@@ -65,8 +89,8 @@ const hosts = defineHosts({
   app: [".", "www.*"],
 });
 
-router.host(hosts.admin).map(() => import("./apps/admin"));
-router.host(hosts.app).map(() => import("./apps/main"));
+router.host(hosts.admin).lazy(() => import("./apps/admin"));
+router.host(hosts.app).lazy(() => import("./apps/main"));
 ```
 
 Returns a frozen object — keys are autocompleted by TypeScript.
@@ -88,7 +112,7 @@ router.use(async (request, input, next) => {
 router
   .host(["admin.*"])
   .use(requireAuth)
-  .map(() => import("./apps/admin"));
+  .lazy(() => import("./apps/admin"));
 ```
 
 Middleware signature: `(request: Request, input: RouterRequestInput, next: () => Promise<Response>) => Promise<Response>`
@@ -179,40 +203,41 @@ const request = createTestRequest({
 });
 
 // Test which route would match (without executing)
-router.test("admin.example.com"); // { pattern, handler } | null
+router.test("admin.example.com"); // { pattern, handler, kind } | null
 ```
 
 ## Error Types
 
 All errors extend `HostRouterError`:
 
-| Error                         | When                                        |
-| ----------------------------- | ------------------------------------------- |
-| `InvalidPatternError`         | Pattern is empty, non-string, or has spaces |
-| `HostOverrideNotAllowedError` | Cookie override from disallowed host        |
-| `InvalidHostnameError`        | Cookie value isn't a valid hostname         |
-| `HostValidationError`         | Custom `validate` function threw            |
-| `NoRouteMatchError`           | No host pattern matched the request         |
-| `InvalidHandlerError`         | Handler is not a function                   |
+| Error                         | When                                                                                              |
+| ----------------------------- | ------------------------------------------------------------------------------------------------- |
+| `InvalidPatternError`         | Pattern is empty, non-string, or has spaces                                                       |
+| `HostOverrideNotAllowedError` | Cookie override from disallowed host                                                              |
+| `InvalidHostnameError`        | Cookie value isn't a valid hostname                                                               |
+| `HostValidationError`         | Custom `validate` function threw                                                                  |
+| `NoRouteMatchError`           | No host pattern matched the request                                                               |
+| `InvalidHandlerError`         | Handler is not a function, or a lazy mount resolved to a module without a usable `default` export |
+| `HostRouterError`             | A `.map()` inline handler resolved to a module namespace (a misused lazy import — use `.lazy()`)  |
 
 See the fallback section above for a `NoRouteMatchError` catch example.
 
 ## Nesting Host Routers
 
-A lazy handler can resolve to another `HostRouter`:
+A lazy mount can resolve to another `HostRouter`:
 
 ```typescript
 // apps/regional.ts
 import { createHostRouter } from "@rangojs/router/host";
 
 const regional = createHostRouter();
-regional.host(["us.*"]).map(() => import("./regions/us"));
-regional.host(["eu.*"]).map(() => import("./regions/eu"));
+regional.host(["us.*"]).lazy(() => import("./regions/us"));
+regional.host(["eu.*"]).lazy(() => import("./regions/eu"));
 
 export default regional;
 ```
 
 ```typescript
 // host-router.ts
-router.host(["**.regional.example.com"]).map(() => import("./apps/regional"));
+router.host(["**.regional.example.com"]).lazy(() => import("./apps/regional"));
 ```

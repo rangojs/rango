@@ -106,23 +106,27 @@ guarantees above.
 ## What to use instead for code-splitting
 
 The only public API that accepts a dynamic-import factory is the host
-router's `.map()`:
+router's `.lazy()`:
 
 ```ts
 import { createHostRouter } from "@rangojs/router/host";
 
 const router = createHostRouter();
-router.host(["admin.*"]).map(() => import("./apps/admin/handler.js"));
-router.host(["."]).map(() => import("./apps/main/handler.js"));
+router.host(["admin.*"]).lazy(() => import("./apps/admin/handler.js"));
+router.host(["."]).lazy(() => import("./apps/main/handler.js"));
 ```
 
-`.map()` takes a `Handler | LazyHandler` (see
-`src/host/types.ts:58`) — i.e. a full request `Handler` function or a
-lazy import that resolves to one. Each mapped app is its own
-self-contained router with its own trie, reverse map, and generated
-type file, so deferring its module load does not leave shared metadata
-incomplete. A whole handler/app is a natural splitting unit; a single
-`include()` prefix inside a shared router is not.
+The host route builder splits intent across two methods (see
+`src/host/types.ts`): `.map(handler)` takes a full request `Handler`
+(`(request, input) => Response`), and `.lazy(loader)` takes a
+`LazyHandler` (`() => import(...)`) that resolves to a module whose
+`default` export is a handler or nested host router. Only `.lazy()`
+entries are invoked during build-time discovery; `.map(() => import(...))`
+is rejected (its return type is not a `Response`). Each mounted app is
+its own self-contained router with its own trie, reverse map, and
+generated type file, so deferring its module load does not leave shared
+metadata incomplete. A whole handler/app is a natural splitting unit; a
+single `include()` prefix inside a shared router is not.
 
 `RSCRouter.routes()` itself only accepts `UrlPatterns | UrlBuilder` (see
 `src/router.ts:682`) — it does **not** take a factory. Code-splitting

@@ -6,43 +6,62 @@ import {
   type CaughtDiscoveryError,
 } from "../discovery-errors";
 
-function hostEntry(
-  routeHandlers: Array<() => unknown | Promise<unknown>>,
-  fallbackHandler?: () => unknown | Promise<unknown>,
-) {
-  return {
-    routes: routeHandlers.map((handler) => ({ handler })),
-    fallback: fallbackHandler ? { handler: fallbackHandler } : null,
-  };
+type Kind = "handler" | "lazy";
+type TestRoute = { handler: unknown; kind: Kind };
+
+function lazy(handler: (...args: any[]) => unknown): TestRoute {
+  return { handler, kind: "lazy" };
+}
+function inline(handler: (...args: any[]) => unknown): TestRoute {
+  return { handler, kind: "handler" };
+}
+function hostEntry(routes: TestRoute[], fallback?: TestRoute) {
+  return { routes, fallback: fallback ?? null };
 }
 
 describe("resolveHostRouterHandlers", () => {
-  it("invokes every route and fallback handler", async () => {
+  it("invokes lazy mounts and never invokes inline (.map) handlers", async () => {
     const calls: string[] = [];
     const registry = new Map([
       [
         "app",
         hostEntry(
-          [() => calls.push("route-1"), () => calls.push("route-2")],
-          () => calls.push("fallback"),
+          [
+            lazy(() => {
+              calls.push("lazy-1");
+              return Promise.resolve({ default: () => {} });
+            }),
+            // Inline handler: declares request, registers no routers. Must not
+            // be invoked during discovery (it would crash on the missing
+            // Request, and it is not a module mount).
+            inline((request: Request) => {
+              calls.push("inline");
+              return new URL(request.url);
+            }),
+          ],
+          lazy(() => {
+            calls.push("fallback-lazy");
+            return Promise.resolve({ default: () => {} });
+          }),
         ),
       ],
     ]);
 
     const errors = await resolveHostRouterHandlers(registry);
 
-    expect(calls).toEqual(["route-1", "route-2", "fallback"]);
+    expect(calls).toEqual(["lazy-1", "fallback-lazy"]);
     expect(errors).toEqual([]);
   });
 
-  it("collects handler failures instead of throwing, tagged by host id", async () => {
+  it("collects a lazy mount rejection, tagged by host id", async () => {
+    // A failed import surfaces as a rejected promise.
     const registry = new Map([
       [
         "broken-app",
         hostEntry([
-          () => {
-            throw new Error("Cannot find module './broken'");
-          },
+          lazy(() =>
+            Promise.reject(new Error("Cannot find module './broken'")),
+          ),
         ]),
       ],
     ]);
@@ -56,13 +75,36 @@ describe("resolveHostRouterHandlers", () => {
     );
   });
 
-  it("captures fallback handler failures", async () => {
+  it("collects a lazy mount synchronous throw (e.g. a guard before import)", async () => {
+    // Because the entry is tagged lazy, ANY failure is real - a synchronous
+    // throw (a guard that runs before `import()`) is collected just like a
+    // rejection. No arity heuristic is involved.
     const registry = new Map([
       [
         "app",
-        hostEntry([() => undefined], () => {
-          throw new Error("fallback boom");
-        }),
+        hostEntry([
+          lazy(() => {
+            throw new Error("SUB_APP is required");
+          }),
+        ]),
+      ],
+    ]);
+
+    const errors = await resolveHostRouterHandlers(registry);
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0].context).toBe('host "app" route handler');
+    expect((errors[0].error as Error).message).toBe("SUB_APP is required");
+  });
+
+  it("captures lazy fallback failures", async () => {
+    const registry = new Map([
+      [
+        "app",
+        hostEntry(
+          [lazy(() => Promise.resolve({ default: () => {} }))],
+          lazy(() => Promise.reject(new Error("fallback boom"))),
+        ),
       ],
     ]);
 
@@ -73,16 +115,17 @@ describe("resolveHostRouterHandlers", () => {
     expect((errors[0].error as Error).message).toBe("fallback boom");
   });
 
-  it("continues resolving after a failure (one bad handler does not stop the rest)", async () => {
+  it("continues resolving after a failure (one bad mount does not stop the rest)", async () => {
     const calls: string[] = [];
     const registry = new Map([
       [
         "app",
         hostEntry([
-          () => {
-            throw new Error("first failed");
-          },
-          () => calls.push("second-ran"),
+          lazy(() => Promise.reject(new Error("first failed"))),
+          lazy(() => {
+            calls.push("second-ran");
+            return Promise.resolve({ default: () => {} });
+          }),
         ]),
       ],
     ]);
@@ -93,9 +136,53 @@ describe("resolveHostRouterHandlers", () => {
     expect(errors).toHaveLength(1);
   });
 
+  it("does not invoke a param-declaring inline handler even if it would throw", async () => {
+    let invoked = false;
+    // The reported `*.*/admin` shape: an inline `(request) => ...` handler.
+    // Tagged `.map()`, so discovery never invokes it - no false positive, no
+    // crash on the missing Request.
+    const registry = new Map([
+      [
+        "app",
+        hostEntry([
+          inline((request: Request) => {
+            invoked = true;
+            return new URL(request.url);
+          }),
+        ]),
+      ],
+    ]);
+
+    const errors = await resolveHostRouterHandlers(registry);
+
+    expect(invoked).toBe(false);
+    expect(errors).toEqual([]);
+  });
+
+  it("invokes a param-declaring lazy mount (arity is irrelevant once tagged)", async () => {
+    let imported = false;
+    // A lazy loader may declare an ignored optional param,
+    // `.lazy((_request?: Request) => import("./app"))`. The tag - not arity -
+    // decides invocation, so it is still imported.
+    const lazyWithParam = (_request?: Request) => {
+      imported = true;
+      return Promise.resolve({ default: () => {} });
+    };
+    expect(lazyWithParam.length).toBe(1);
+    const registry = new Map([["app", hostEntry([lazy(lazyWithParam)])]]);
+
+    const errors = await resolveHostRouterHandlers(registry);
+
+    expect(imported).toBe(true);
+    expect(errors).toEqual([]);
+  });
+
   it("skips entries whose handler is not a function", async () => {
     const registry = new Map([
-      ["app", { routes: [{ handler: undefined }], fallback: null }],
+      [
+        "app",
+        { routes: [{ handler: undefined, kind: "lazy" }], fallback: null },
+      ],
     ]);
 
     const errors = await resolveHostRouterHandlers(registry);

@@ -1,17 +1,26 @@
 /**
  * Router discovery error aggregation.
  *
- * During host-router discovery the lazy route handlers registered by a host
- * router are invoked to trigger each sub-app's createRouter() registration.
- * Some handler failures are expected in the temporary discovery server context
- * (a sub-app may reference runtime-only bindings), so each handler is invoked
- * defensively and its error is collected rather than thrown.
+ * During host-router discovery the lazy mounts registered by a host router are
+ * invoked to trigger each sub-app's createRouter() registration. Some mount
+ * failures are expected in the temporary discovery server context (a sub-app may
+ * reference runtime-only bindings), so each is invoked defensively and its error
+ * is collected rather than thrown.
  *
  * Previously these errors were discarded with an empty `catch {}`. When a real
  * failure - typically a sub-app whose router module fails to import - left the
  * registry empty, discovery reported the misleading "No routers found" message
  * with no trace of the underlying cause. The collected errors are now surfaced
  * via the `DiscoveryError` thrown at the end of discovery (issue #499).
+ *
+ * Which entries to invoke is taken from the consumer's declared intent, not
+ * inferred from the function's shape. A host route is registered either with
+ * `.map((request) => Response)` (an inline request handler, `kind: "handler"`)
+ * or `.lazy(() => import("./sub-app"))` (a lazy mount, `kind: "lazy"`). Only
+ * `kind === "lazy"` entries are invoked here; inline handlers are never invoked
+ * during discovery (they need a Request and register no routers). Because a lazy
+ * entry is known to be a module loader, ANY failure it produces - a synchronous
+ * throw or a rejected promise - is a genuine discovery failure and is collected.
  */
 
 /** An error caught (and previously swallowed) while resolving host routers. */
@@ -23,12 +32,16 @@ export interface CaughtDiscoveryError {
 }
 
 /**
- * Minimal shape of a host registry entry needed for handler resolution.
+ * Minimal shape of a host registry entry needed for mount resolution.
  * Mirrors the runtime HostRouterRegistry value without coupling to its type.
  */
+interface HostRegistryRoute {
+  handler?: unknown;
+  kind?: string;
+}
 interface HostRegistryEntry {
-  routes: Array<{ handler?: unknown }>;
-  fallback?: { handler?: unknown } | null;
+  routes: HostRegistryRoute[];
+  fallback?: HostRegistryRoute | null;
 }
 
 /** Indent every non-empty line of `text` by `pad`. */
@@ -40,12 +53,41 @@ function indent(text: string, pad: string): string {
 }
 
 /**
- * Invoke every lazy handler in the host registry to trigger sub-app
+ * Invoke a single lazy mount to trigger its sub-app import (and createRouter()
+ * registration), collecting any failure under `context`. The entry is known to
+ * be a loader (`kind === "lazy"`), so both a synchronous throw and a rejected
+ * promise are genuine failures - no shape heuristics are needed.
+ */
+async function invokeLazyMount(
+  loader: () => unknown,
+  context: string,
+  errors: CaughtDiscoveryError[],
+): Promise<void> {
+  try {
+    await loader();
+  } catch (error) {
+    errors.push({ context, error });
+  }
+}
+
+/** Whether a registry route is a `.lazy()` mount with an invokable loader. */
+function isLazyMount(
+  route: HostRegistryRoute | null | undefined,
+): route is { handler: () => unknown; kind: "lazy" } {
+  return (
+    !!route && route.kind === "lazy" && typeof route.handler === "function"
+  );
+}
+
+/**
+ * Invoke every lazy mount in the host registry to trigger sub-app
  * createRouter() registration, collecting (not throwing) any failures.
  *
- * Failures are returned rather than thrown because some handlers legitimately
- * fail in the temporary discovery server context; the caller decides whether
- * the failures matter, which is only when discovery finds no routers at all.
+ * Only `.lazy()` entries are invoked; `.map()` inline request handlers are
+ * skipped (they need a Request and register no routers). Failures are returned
+ * rather than thrown because some mounts legitimately fail in the temporary
+ * discovery server context; the caller decides whether the failures matter,
+ * which is only when discovery finds no routers at all.
  */
 export async function resolveHostRouterHandlers(
   hostRegistry: Map<string, HostRegistryEntry>,
@@ -54,20 +96,20 @@ export async function resolveHostRouterHandlers(
 
   for (const [hostId, entry] of hostRegistry) {
     for (const route of entry.routes) {
-      if (typeof route.handler === "function") {
-        try {
-          await route.handler();
-        } catch (error) {
-          errors.push({ context: `host "${hostId}" route handler`, error });
-        }
+      if (isLazyMount(route)) {
+        await invokeLazyMount(
+          route.handler,
+          `host "${hostId}" route handler`,
+          errors,
+        );
       }
     }
-    if (entry.fallback && typeof entry.fallback.handler === "function") {
-      try {
-        await entry.fallback.handler();
-      } catch (error) {
-        errors.push({ context: `host "${hostId}" fallback handler`, error });
-      }
+    if (isLazyMount(entry.fallback)) {
+      await invokeLazyMount(
+        entry.fallback.handler,
+        `host "${hostId}" fallback handler`,
+        errors,
+      );
     }
   }
 
