@@ -26,7 +26,7 @@ They are orthogonal and compose: a segment selected by `revalidate()` still
 consults its cache (hit → no recompute); a cache bust does **not** force a client
 update, and `revalidate()` never reads, writes, or expires a cached value. If you
 know React Router, `revalidate()` is `shouldRevalidate`, not `Cache-Control`. See
-`/rango` → "Glossary: two freshness axes" for the cross-framework mapping.
+`/rango` → "Coming from another framework" for the cross-framework mapping.
 
 ## Key Differences
 

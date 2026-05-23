@@ -721,6 +721,15 @@ export const ParallelRevalLoader = createLoader(async () => {
   return { count: Date.now() };
 });
 
+// isAction() e2e probe: a module-level run counter so the test can tell whether
+// the loader re-ran. Gated by revalidate(({ isAction }) => isAction(target)).
+let isActionProbeRuns = 0;
+export const IsActionProbeLoader = createLoader(async () => {
+  "use server";
+  isActionProbeRuns += 1;
+  return { runs: isActionProbeRuns };
+});
+
 // ============================================================================
 // Action ctx.set → loader ctx.get test
 // Reads context variables set by an action to verify loaders see them

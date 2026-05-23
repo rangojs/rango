@@ -41,8 +41,8 @@ that route tree.
 - [SSR streaming policy](./design/ssr-streaming-policy.md) - controlling
   stream vs allReady mode per request
 - [Consolidate generated route type files](./design/consolidate-gen-files.md)
-- [`ctx.isAction()` API design](./design/is-action-api-design.md) - proposed
-  typed, rename-safe action matching for `revalidate()` (not yet implemented)
+- [`ctx.isAction()` API design](./design/is-action-api-design.md) - typed,
+  rename-safe action matching for `revalidate()` (implemented)
 
 ## Internal Reference
 

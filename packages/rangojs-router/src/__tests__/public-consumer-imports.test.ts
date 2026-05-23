@@ -86,11 +86,13 @@ describe("public consumer imports", () => {
     const result = runConsumerTypecheck({
       "root-consumer.ts": `
 import { createLoader, createRouter, redirect, urls } from "@rangojs/router";
+import type { ActionRef } from "@rangojs/router";
 
 void createLoader;
 void createRouter;
 void redirect;
 void urls;
+type _ActionRef = ActionRef;
 `,
       "client-consumer.tsx": `
 import { Link, Outlet, href, useLoader, useRouter } from "@rangojs/router/client";

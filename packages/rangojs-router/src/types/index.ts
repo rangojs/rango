@@ -42,6 +42,7 @@ export type {
   GenericParams,
   RevalidateParams,
   ShouldRevalidateFn,
+  ActionRef,
   RouteKeys,
   ExtractRouteParams,
   HandlersForRouteMap,

@@ -188,6 +188,10 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
 - `revalidate()` DSL primitive
 - Segment-level revalidation defaults, request-method aware behavior
 - Custom revalidate callback composition, SWR background revalidation
+- `ctx.isAction(...refs)` on the revalidate predicate context — typed,
+  rename-safe action matching by reference (single, variadic, or `import * as`
+  namespace); resolves the same id (`$id ?? $$id`) as the action boundary, so it
+  matches in dev and production. Public type: `ActionRef` (exported from root).
 
 ### Progressive Enhancement
 

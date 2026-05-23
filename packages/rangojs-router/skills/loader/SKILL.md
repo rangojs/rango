@@ -259,7 +259,7 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 > client on a navigation or action — never whether a cached value is stale. The
 > cache decides hit/miss/ttl/swr independently and never reads `revalidate()`.
 > Caching a loader is a separate, opt-in step (`loader(Fn, () => [cache({...})])`).
-> See `/cache-guide` → "Two axes" and `/rango` → "Glossary".
+> See `/cache-guide` → "Two axes" and `/rango` → "The shape of rango".
 
 A `revalidate(fn)` callback can return one of four shapes. The chain
 processes revalidators in order; each call's return controls how the
@@ -316,6 +316,29 @@ When **composing multiple revalidators** on one segment (see below), defer is
 mandatory: the first hard `?? false` ends the chain and the later contracts
 never run.
 
+#### Matching actions: `ctx.isAction()`
+
+To revalidate after specific server actions, match them by **reference** with
+`ctx.isAction()` rather than hand-written `actionId` substrings. A rename or
+moved file then becomes a type error instead of silently failing to match:
+
+```typescript
+import { addToCart, removeFromCart } from "../actions/cart";
+import * as CartActions from "../actions/cart";
+
+loader(CartLoader, () => [
+  revalidate((ctx) => ctx.isAction(addToCart) || undefined), // one action
+]);
+revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // several
+revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any action in the module
+```
+
+`isAction()` returns a raw boolean, so pair it with `|| undefined` for the usual
+"revalidate on match, else defer" intent. It returns `false` on plain navigation
+and on non-matches, and resolves the reference the same way the router derives
+`actionId` (`$id` in production, `$$id` in dev), so it matches in both modes. The
+raw `actionId` string stays available as an escape hatch.
+
 ### Revalidation Contracts for Loader Dependencies
 
 If a loader reads `ctx.get()` data produced by an outer handler/layout, share
@@ -323,10 +346,12 @@ the same named revalidation contract across producer and consumer segments.
 
 ```typescript
 // revalidation-contracts.ts
-// Defer (|| undefined), not ?? false: these contracts are meant to compose, and
-// a hard `false` from the first one would short-circuit the rest.
-export const revalidateAccountScope = ({ actionId }) =>
-  actionId?.includes("src/actions/account.ts#") || undefined;
+import * as AccountActions from "./actions/account";
+
+// Match by reference with ctx.isAction() (rename-safe), and defer (|| undefined)
+// so these contracts compose — a hard `false` would short-circuit the rest.
+export const revalidateAccountScope = (ctx) =>
+  ctx.isAction(AccountActions) || undefined;
 
 layout(AccountLayout, () => [
   revalidate(revalidateAccountScope), // producer reruns

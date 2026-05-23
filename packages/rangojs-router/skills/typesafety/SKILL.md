@@ -510,11 +510,23 @@ revalidate(
 `actionId` is the only stable reference React exposes across the Flight boundary,
 so it stays as the floor and escape hatch. The hand-written-string surface
 (`actionId?.includes("cart.ts#")`) is brittle: a renamed action or moved file
-silently stops matching with no compile error. A typed helper that resolves this
-id from an imported action reference — making a rename a type error in one place
-— is **planned**, not yet shipped. Until it lands, keep the substring match in a
-single named revalidation contract (`/composability`) so a rename only has to be
-fixed in one place.
+silently stops matching with no compile error. Prefer **`ctx.isAction()`** in a
+revalidate predicate — it resolves the action's id from an imported reference, so
+a rename is a type error in one place instead of silent drift:
+
+```ts
+import { addToCart, removeFromCart } from "./actions/cart";
+import * as CartActions from "./actions/cart";
+
+revalidate((ctx) => ctx.isAction(addToCart) || undefined); // one action
+revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // several
+revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any action in the module
+```
+
+`isAction()` returns a raw boolean — combine with `|| undefined` for the
+"revalidate on match, else defer" intent. It resolves the reference the same way
+the router derives `actionId` (`$id` in production, `$$id` in dev), so matching
+works in both modes. `actionId` stays available for advanced cases.
 
 ## Location State Type Safety
 

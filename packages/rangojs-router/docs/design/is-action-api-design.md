@@ -1,7 +1,8 @@
 # `ctx.isAction()` — typed, rename-safe action matching for `revalidate()`
 
-**Status:** Proposed. Not implemented. This doc captures the design so the
-skills can reference it as planned without documenting a non-existent API.
+**Status:** Implemented. This doc records the design and rationale. The API is
+shipped on the revalidate predicate context; see `/loader` → "Matching actions:
+`ctx.isAction()`" and `/typesafety` → "Stable identity" for usage.
 
 ## Problem
 
@@ -53,7 +54,7 @@ reference" is an established pattern; this proposal extends it to the
 
 ```ts
 interface RevalidateContext {
-  actionId: string | null; // keep — React-forced floor / escape hatch
+  actionId?: string; // keep — React-forced floor / escape hatch (undefined on navigation)
   defaultShouldRevalidate: boolean;
   isAction(...actions: ActionRef[]): boolean; // typed sugar over actionId
 }
@@ -111,47 +112,50 @@ revalidate(onAction(CartAction)); // hard-true on match, defer otherwise
 
 Primitive (`ctx.isAction`) for control; combinator (`onAction`) for the 90% path.
 
-## Implementation sketch
+## Implementation
 
-1. **Type:** add `isAction(...actions: ActionRef[]): boolean` to the revalidate
-   predicate argument type (`src/types/handler-context.ts`, alongside the
-   existing `actionId`) and to `ShouldRevalidateFn` in
-   `src/route-definition/helpers-types.ts`.
-2. **Resolution:** when constructing the predicate argument object
-   (`src/router/revalidation.ts`, the `fn({ ... })` call inside
-   `evaluateRevalidation`), add an `isAction` closure that maps each `ActionRef`
-   to its id and compares to `actionContext?.actionId`.
-3. **Id resolution helper:** read `ref.$id ?? ref.$$id` for a single reference;
-   for a `import * as Mod` namespace, test whether `actionId` equals any
-   member's id. Centralize so the `$id`/`$$id` split (server vs client form)
-   lives in one place.
-4. **`ActionRef` type:** the public type for an imported server action; ensure
-   `typeof someAction` is assignable.
+1. **Type:** `isAction(...actions: ActionRef[]): boolean` is on the revalidate
+   predicate argument type — the single `ShouldRevalidateFn` arg in
+   `src/types/handler-context.ts`, alongside `actionId`. `helpers-types.ts`
+   consumes that type via import, so no change was needed there.
+2. **`ActionRef` type:** the public type for an imported server action (or a
+   `import * as Mod` namespace); exported from the package root. `typeof someAction`
+   is assignable.
+3. **Resolution:** the predicate argument object built in `evaluateRevalidation`
+   (`src/router/revalidation.ts`) gets `isAction: makeIsAction(actionContext?.actionId)`.
+4. **Helpers (`src/router/revalidation.ts`):** `resolveActionRefId(ref)` reads
+   `ref.$id ?? ref.$$id`; `makeIsAction(currentId)` returns the variadic closure,
+   matching a single reference or any export of a namespace import, and `false`
+   when there is no action.
 
-## Open questions / risks
+## Resolved questions
 
-- **Server vs client id form.** The predicate runs in RSC, where references and
-  `actionId` are both the file-path form, so resolution should compare cleanly.
-  Confirm there is no path where a client-hash reference reaches the predicate.
-- **Namespace resolution.** `import * as Mod` must expose every action's id at
-  the point the predicate runs. Verify the RSC transform keeps namespace members
-  resolvable (not tree-shaken) when only used inside a predicate.
-- **Inline actions** keep hashed ids and are not file-path matchable; document
-  that `isAction` targets module-level `"use server"` exports.
+- **Dev vs production id form.** The decisive insight: the action boundary
+  derives `actionContext.actionId` as `loadedAction.$id ?? loadedAction.$$id`
+  (`src/rsc/server-action.ts`). `isAction` resolves the imported reference with
+  the **same** precedence, and the imported reference and the loaded action are
+  the same registered server reference — so matching holds regardless of whether
+  the id is file-path (`$id`, production RSC) or hash (`$$id`, dev), with no need
+  to reconcile the two forms.
+- **Namespace resolution.** `import * as Mod` is passed as an argument, so its
+  members stay live; `Object.values` over the namespace resolves each export's id
+  and skips non-action members.
+- **Inline actions** keep hashed ids; `isAction` still matches them by reference
+  (it compares the same resolved id on both sides), though substring matching by
+  file path does not apply to them.
 - **API hygiene (pre-release rule):** `actionId` stays as the floor/escape
   hatch; `isAction` is additive. No deprecation needed.
 
-## Test plan (when implemented)
+## Tests
 
-Per repo policy, e2e must cover **both dev and production**:
+Per repo policy, e2e covers **both dev and production**:
 
-- Unit: `isAction(single)`, variadic, namespace form, no-action (navigation)
-  returns `false`, no-match returns `false`, and `$id`/`$$id` resolution.
-- e2e (dev + prod): an action triggers revalidation of a segment guarded by
-  `ctx.isAction(...) || undefined`; a different action does not; a rename of the
-  action surfaces as a type error (type-level test).
-- Keep the semantic matrix green; if action→revalidate matching semantics
-  change, update `docs/internal/execution-model.md` and the matrix rows.
+- Unit (`src/router/__tests__/revalidation-isaction.test.ts`): single match,
+  variadic, namespace form, `$$id` fallback, `$id`-over-`$$id` precedence,
+  plain-navigation `false`, no-match `false`, and an unresolvable reference.
+- e2e (`e2e/is-action.test.ts`, dev + production): the target action re-runs a
+  loader gated by `revalidate(({ isAction }) => isAction(target))`; the decoy
+  action does not.
 
 ## Net
 

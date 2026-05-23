@@ -457,3 +457,12 @@ export async function authBoundaryFormAction(
 ): Promise<void> {
   cookies().set("auth-boundary-action-ran", "true", { path: "/", maxAge: 60 });
 }
+
+/**
+ * isAction() e2e: two distinct module-level "use server" actions. The probe
+ * loader's revalidate predicate matches the target by reference via
+ * ctx.isAction(), so the target re-runs the loader and the decoy does not —
+ * proving rename-safe action matching end to end in dev and production.
+ */
+export async function isActionTargetAction(): Promise<void> {}
+export async function isActionDecoyAction(): Promise<void> {}

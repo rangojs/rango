@@ -514,6 +514,19 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
  * ```
  */
 /**
+ * A reference to a server action, used by `isAction()` in a revalidate predicate.
+ *
+ * Either a directly imported action (`import { addToCart }`) or a namespace
+ * import of an action module (`import * as CartActions`). Matching resolves the
+ * action's build-injected id (`path#export`) — the same identity the router uses
+ * for `actionId` — so a renamed or moved action breaks at compile time instead
+ * of silently failing to match.
+ */
+export type ActionRef =
+  | ((...args: never[]) => unknown)
+  | Record<string, unknown>;
+
+/**
  * Revalidation function called during client-side navigation to decide whether
  * a segment (layout, route, parallel slot, or loader) should be re-rendered.
  *
@@ -588,6 +601,32 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
    * ```
    */
   actionId?: string;
+  /**
+   * Typed, rename-safe action matching. Returns `true` when the action that
+   * triggered this revalidation is one of the given references — or, for a
+   * namespace import (`import * as CartActions`), any export of that module —
+   * and `false` otherwise (including plain navigation with no action).
+   *
+   * Prefer this over hand-written `actionId` substring matches: it resolves the
+   * action's stable `path#export` id from the imported reference, so a rename is
+   * a type error in one place instead of silent drift across consumers. It
+   * resolves the reference the same way the action boundary derives `actionId`
+   * (`$id ?? $$id`), so it matches in both dev and production.
+   *
+   * Returns a raw boolean, so for the common "revalidate on match, else defer"
+   * intent combine with `|| undefined`:
+   *
+   * @example
+   * ```ts
+   * import { addToCart, removeFromCart } from "./actions/cart";
+   * import * as CartActions from "./actions/cart";
+   *
+   * revalidate((ctx) => ctx.isAction(addToCart) || undefined); // one action
+   * revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // several
+   * revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any in the module
+   * ```
+   */
+  isAction: (...actions: ActionRef[]) => boolean;
   /** URL where the action was executed (the page the user was on when they triggered the action). */
   actionUrl?: URL;
   /** Return value from the action execution. Can be used to conditionally revalidate based on the action's outcome. */

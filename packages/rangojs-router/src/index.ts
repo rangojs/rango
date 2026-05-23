@@ -43,6 +43,7 @@ export type {
   // Revalidation types
   RevalidateParams,
   Revalidate,
+  ActionRef,
   RouteKeys,
   // Loader types
   LoaderDefinition,

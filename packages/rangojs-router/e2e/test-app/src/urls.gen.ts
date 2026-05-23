@@ -120,6 +120,7 @@ export const routes = {
   "includeMw.index": "/include-mw-test",
   index: "/",
   inlineAction: "/inline-action",
+  "isAction.index": "/is-action",
   "linkBehavior.index": "/link-behavior",
   loaderComposition: "/loader-composition",
   "loaderCookie.actionSetsCookie": "/loader-cookie/action-sets-cookie",

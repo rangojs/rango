@@ -103,8 +103,9 @@ See `/cache-guide` for the axis-1 decision guide, `/loader` and `/route` for
 export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalidate }) => [
   layout(<ShopLayout />, () => [                 // structure: wraps children
     loader(CartLoader, () => [                   // config: live data
-      // partial-render axis: re-run on cart actions, defer otherwise
-      revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
+      // partial-render axis: re-run on cart actions, defer otherwise.
+      // ctx.isAction() matches by reference (rename-safe), not by string.
+      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
     ]),
     path("/shop/:slug", ProductPage, { name: "product" }, () => [  // structure: leaf
       loader(ProductLoader, () => [cache({ ttl: 60 })]),  // config: cache loader DATA
@@ -116,9 +117,10 @@ export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalid
 ```
 
 One tree, both axes visible: structure (`layout`/`path`) vs config (everything
-else), freshness (`cache`) vs client-update (`revalidate`). A typed
-`ctx.isAction(Action)` to replace the substring match — making a renamed action a
-compile error — is planned; see `/typesafety` → "Stable identity".
+else), freshness (`cache`) vs client-update (`revalidate`). Actions are matched
+by reference with `ctx.isAction(Action)` (rename-safe, where `CartActions` is an
+`import * as CartActions from "./actions/cart"`); see `/typesafety` → "Stable
+identity".
 
 ## Skills
 

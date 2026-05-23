@@ -238,7 +238,7 @@ Cacheable vars (the default) can be read freely inside cache scopes.
 > It decides whether this segment re-runs and streams to the client on a
 > navigation or action — never whether a cached value is stale. The cache
 > decides hit/miss/ttl/swr independently and never reads `revalidate()`. See
-> `/cache-guide` → "Two axes" and `/rango` → "Glossary".
+> `/cache-guide` → "Two axes" and `/rango` → "The shape of rango".
 
 Handler-first guarantees apply within a single full render pass. For partial
 action revalidation, define named revalidation contracts and reuse them on both

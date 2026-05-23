@@ -81,11 +81,10 @@ const withAuth = () => [
 >    predicates — a hard `false` ends the chain and overrides each consuming
 >    route's own default, and a downstream revalidator never runs. See `/loader`
 >    → "`|| undefined` (defer) vs `?? false` (hard)".
-> 2. Match actions through a named contract, not an inline
->    `actionId.includes("…")` buried in a factory, so a renamed action surfaces
->    in one place instead of drifting silently across every consumer. A typed
->    `ctx.isAction(Action)` helper that turns this into a compile error is
->    **planned**; until it lands, the named-contract pattern is the safe form.
+> 2. Match actions with `ctx.isAction(Action)`, not an inline
+>    `actionId.includes("…")` buried in a factory: it resolves the action from an
+>    imported reference, so a rename is a compile error in one place instead of
+>    silent drift across every consumer.
 >
 > Remember the axis: a factory's `revalidate()` controls client-update
 > selection, while its `cache()` controls stored-value freshness. They are
