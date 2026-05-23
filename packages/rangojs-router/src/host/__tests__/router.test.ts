@@ -354,11 +354,11 @@ describe("parseCookies", () => {
   });
 });
 
-describe("Lazy Imports", () => {
+describe("Lazy mounts (.lazy)", () => {
   it("should handle lazy imports", async () => {
     const router = createHostRouter();
 
-    router.host(["."]).map(() =>
+    router.host(["."]).lazy(() =>
       Promise.resolve({
         default: () => new Response("lazy loaded"),
       }),
@@ -376,7 +376,7 @@ describe("Lazy Imports", () => {
 
     nestedRouter.host(["**"]).map(() => new Response("nested"));
 
-    router.host(["."]).map(() =>
+    router.host(["."]).lazy(() =>
       Promise.resolve({
         default: nestedRouter,
       }),
@@ -386,5 +386,51 @@ describe("Lazy Imports", () => {
     const response = await router.match(request);
 
     expect(await response.text()).toBe("nested");
+  });
+
+  it("supports a lazy mount on the fallback route", async () => {
+    const router = createHostRouter({
+      hostOverride: {
+        cookieName: "x-requested-host",
+        allowedHosts: ["localhost"],
+        validate: (_req, cookieValue) => {
+          if (cookieValue === "invalid") throw new Error("Invalid host");
+          return cookieValue;
+        },
+      },
+    });
+
+    router.fallback().lazy(() =>
+      Promise.resolve({
+        default: () => new Response("fallback lazy"),
+      }),
+    );
+
+    const request = new Request("http://localhost:3000/", {
+      headers: { cookie: "x-requested-host=invalid" },
+    });
+    const response = await router.match(request);
+
+    expect(await response.text()).toBe("fallback lazy");
+  });
+
+  it("rejects a .map() handler that resolves to a module (misused lazy import)", async () => {
+    const { HostRouterError } = await import("../errors");
+    const router = createHostRouter();
+
+    // Misuse: a dynamic import passed to .map() instead of .lazy(). At runtime
+    // the inline handler resolves to a module namespace, which the guard
+    // rejects with an actionable message instead of returning the module.
+    router.host(["."]).map((() =>
+      Promise.resolve({
+        default: () => new Response("should not run"),
+      })) as any);
+
+    const request = new Request("http://example.com/");
+
+    await expect(router.match(request)).rejects.toThrow(HostRouterError);
+    await expect(router.match(request)).rejects.toThrow(
+      /use \.lazy\(\(\) => import/,
+    );
   });
 });

@@ -1,11 +1,11 @@
 /**
  * Router discovery error aggregation.
  *
- * During host-router discovery the lazy route handlers registered by a host
- * router are invoked to trigger each sub-app's createRouter() registration.
- * Some handler failures are expected in the temporary discovery server context
- * (a sub-app may reference runtime-only bindings), so each handler is invoked
- * defensively and its error is collected rather than thrown.
+ * During host-router discovery the lazy mounts registered by a host router are
+ * invoked to trigger each sub-app's createRouter() registration. Some mount
+ * failures are expected in the temporary discovery server context (a sub-app may
+ * reference runtime-only bindings), so each is invoked defensively and its error
+ * is collected rather than thrown.
  *
  * Previously these errors were discarded with an empty `catch {}`. When a real
  * failure - typically a sub-app whose router module fails to import - left the
@@ -13,23 +13,14 @@
  * with no trace of the underlying cause. The collected errors are now surfaced
  * via the `DiscoveryError` thrown at the end of discovery (issue #499).
  *
- * A host pattern can be mapped to a lazy module loader (`() => import(...)`) or
- * to an inline request handler (`(request, input) => Response`). Only the lazy
- * loaders should be invoked during discovery; an inline handler invoked without
- * a Request dereferences `undefined` (e.g. `request.url`) and throws, which is
- * unrelated to module resolution and must not be collected as an import failure.
- *
- * The two shapes are not distinguishable before invocation - both are plain
- * functions on the registry entry with no tag, and arity alone is not a gate
- * because a lazy loader may legally declare an (ignored) optional parameter,
- * e.g. `(_request?: Request) => import("./app")` compiles to an arity-1
- * function. They are therefore separated by what an argument-less invocation
- * produces (see `triggerLazyImport`): a thenable result is a real import
- * (awaited, its rejection collected); a non-thenable result is an inline
- * handler that returned a value (ignored); a synchronous throw is split by
- * arity - a declared-param handler is an inline handler crashing on the missing
- * Request (ignored), while a zero-arity handler has no Request to dereference,
- * so its throw is a genuine loader failure and is collected.
+ * Which entries to invoke is taken from the consumer's declared intent, not
+ * inferred from the function's shape. A host route is registered either with
+ * `.map((request) => Response)` (an inline request handler, `kind: "handler"`)
+ * or `.lazy(() => import("./sub-app"))` (a lazy mount, `kind: "lazy"`). Only
+ * `kind === "lazy"` entries are invoked here; inline handlers are never invoked
+ * during discovery (they need a Request and register no routers). Because a lazy
+ * entry is known to be a module loader, ANY failure it produces - a synchronous
+ * throw or a rejected promise - is a genuine discovery failure and is collected.
  */
 
 /** An error caught (and previously swallowed) while resolving host routers. */
@@ -41,12 +32,16 @@ export interface CaughtDiscoveryError {
 }
 
 /**
- * Minimal shape of a host registry entry needed for handler resolution.
+ * Minimal shape of a host registry entry needed for mount resolution.
  * Mirrors the runtime HostRouterRegistry value without coupling to its type.
  */
+interface HostRegistryRoute {
+  handler?: unknown;
+  kind?: string;
+}
 interface HostRegistryEntry {
-  routes: Array<{ handler?: unknown }>;
-  fallback?: { handler?: unknown } | null;
+  routes: HostRegistryRoute[];
+  fallback?: HostRegistryRoute | null;
 }
 
 /** Indent every non-empty line of `text` by `pad`. */
@@ -57,92 +52,42 @@ function indent(text: string, pad: string): string {
     .join("\n");
 }
 
-/** Whether a value is thenable (a Promise or Promise-like). */
-function isThenable(value: unknown): value is PromiseLike<unknown> {
-  return (
-    value !== null &&
-    (typeof value === "object" || typeof value === "function") &&
-    typeof (value as { then?: unknown }).then === "function"
-  );
-}
-
 /**
- * Invoke one host route handler argument-less to trigger a lazy
- * `() => import(...)` loader, collecting only genuine module-import failures.
- *
- * A handler is classified by what the argument-less invocation produces, since
- * lazy loaders and inline request handlers are otherwise indistinguishable
- * (arity is unreliable - a lazy loader may declare `(_request?) => import(...)`):
- *
- *   - Thenable result -> a real lazy import. Awaited; a rejection is a genuine
- *     discovery failure (e.g. the sub-app module cannot be resolved) and is
- *     collected under `context`. This covers both `() => import(...)` and a
- *     param-declaring `(_request?) => import(...)`.
- *   - Non-thenable result (a Response, URL, etc.) -> an inline handler that ran
- *     to completion without a Request. Ignored; not a module load.
- *   - Synchronous throw -> split by arity:
- *       - declared params (arity >= 1): an inline request handler dereferencing
- *         the missing Request (e.g. `request.url` on `undefined`). Ignored, so
- *         it does not pollute the aggregated DiscoveryError.
- *       - zero arity: no Request to dereference, so the throw is a genuine lazy
- *         loader failure that happened before `import()` returned (e.g. a guard
- *         `() => { assertEnv(); return import(...) }`). Collected, preserving
- *         the cause for the "no routers found" error (issue #501).
- *
- * Residuals (both narrow, and at worst only mildly pollute an already-failing
- * "no routers found" discovery): an async inline handler
- * (`async (request) => { ...request... }`) returns a rejected promise
- * indistinguishable from a failed import, so its error is collected; and a
- * param-declaring lazy loader that throws *synchronously* before its import is
- * treated as an inline crash and ignored. Eliminating either would require
- * tagging lazy loaders at the public `map()` API, churning the documented
- * `.map(() => import(...))` pattern.
+ * Invoke a single lazy mount to trigger its sub-app import (and createRouter()
+ * registration), collecting any failure under `context`. The entry is known to
+ * be a loader (`kind === "lazy"`), so both a synchronous throw and a rejected
+ * promise are genuine failures - no shape heuristics are needed.
  */
-async function triggerLazyImport(
-  handler: () => unknown,
+async function invokeLazyMount(
+  loader: () => unknown,
   context: string,
   errors: CaughtDiscoveryError[],
 ): Promise<void> {
-  let result: unknown;
   try {
-    result = handler();
-  } catch (error) {
-    // Synchronous throw. A declared-param handler is an inline request handler
-    // crashing on the missing Request (not a module-import failure) - ignore.
-    // A zero-arity handler has no Request to dereference, so the throw is a
-    // genuine lazy-loader failure that occurred before `import()` returned -
-    // collect it so the "no routers found" error keeps the real cause.
-    if (handler.length === 0) {
-      errors.push({ context, error });
-    }
-    return;
-  }
-  // A non-thenable return is an inline handler that produced a value (e.g. a
-  // Response) rather than a module import. Only thenables are awaited and their
-  // rejection collected as a real failure.
-  if (!isThenable(result)) {
-    return;
-  }
-  try {
-    await result;
+    await loader();
   } catch (error) {
     errors.push({ context, error });
   }
 }
 
+/** Whether a registry route is a `.lazy()` mount with an invokable loader. */
+function isLazyMount(
+  route: HostRegistryRoute | null | undefined,
+): route is { handler: () => unknown; kind: "lazy" } {
+  return (
+    !!route && route.kind === "lazy" && typeof route.handler === "function"
+  );
+}
+
 /**
- * Invoke every lazy module loader in the host registry to trigger sub-app
+ * Invoke every lazy mount in the host registry to trigger sub-app
  * createRouter() registration, collecting (not throwing) any failures.
  *
- * Every function handler is invoked; lazy loaders vs inline request handlers
- * are separated by `triggerLazyImport` based on the invocation result (a thenable
- * is a real import, regardless of arity), with arity used only to classify a
- * synchronous throw (a zero-arity throw is a real loader failure; a declared-param
- * throw is an inline handler crashing on the missing Request).
- *
- * Failures are returned rather than thrown because some loaders legitimately
- * fail in the temporary discovery server context; the caller decides whether
- * the failures matter, which is only when discovery finds no routers at all.
+ * Only `.lazy()` entries are invoked; `.map()` inline request handlers are
+ * skipped (they need a Request and register no routers). Failures are returned
+ * rather than thrown because some mounts legitimately fail in the temporary
+ * discovery server context; the caller decides whether the failures matter,
+ * which is only when discovery finds no routers at all.
  */
 export async function resolveHostRouterHandlers(
   hostRegistry: Map<string, HostRegistryEntry>,
@@ -151,17 +96,17 @@ export async function resolveHostRouterHandlers(
 
   for (const [hostId, entry] of hostRegistry) {
     for (const route of entry.routes) {
-      if (typeof route.handler === "function") {
-        await triggerLazyImport(
-          route.handler as () => unknown,
+      if (isLazyMount(route)) {
+        await invokeLazyMount(
+          route.handler,
           `host "${hostId}" route handler`,
           errors,
         );
       }
     }
-    if (entry.fallback && typeof entry.fallback.handler === "function") {
-      await triggerLazyImport(
-        entry.fallback.handler as () => unknown,
+    if (isLazyMount(entry.fallback)) {
+      await invokeLazyMount(
+        entry.fallback.handler,
         `host "${hostId}" fallback handler`,
         errors,
       );
