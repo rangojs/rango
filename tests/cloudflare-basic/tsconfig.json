@@ -11,6 +11,9 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    "paths": {
+      "@parity/*": ["./src/parity/*"]
+    },
     "types": [
       "@cloudflare/workers-types",
       "vite/client",

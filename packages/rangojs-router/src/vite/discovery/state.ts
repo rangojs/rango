@@ -45,6 +45,21 @@ export interface DiscoveryState {
   projectRoot: string;
   isBuildMode: boolean;
   userResolveAlias: any;
+  /**
+   * Data-only slice of the user's resolved config (resolve.*, define, esbuild)
+   * mirrored into the discovery temp server so it resolves and transforms
+   * modules the same way the real environment does. See
+   * `utils/forward-user-plugins.ts`.
+   */
+  userRunnerConfig:
+    | import("../utils/forward-user-plugins.js").ForwardedRunnerConfig
+    | undefined;
+  /**
+   * User resolution plugins (resolveId/load), stripped to their resolution
+   * surface, forwarded into the discovery temp server. Lets third-party
+   * resolvers such as vite-tsconfig-paths participate in discovery.
+   */
+  userResolvePlugins: import("vite").Plugin[];
   scanFilter: ScanFilter | undefined;
   cachedRouterFiles: string[] | undefined;
   opts: PluginOptions | undefined;
@@ -95,6 +110,8 @@ export function createDiscoveryState(
     projectRoot: "",
     isBuildMode: false,
     userResolveAlias: undefined,
+    userRunnerConfig: undefined,
+    userResolvePlugins: [],
     scanFilter: undefined,
     cachedRouterFiles: undefined,
     opts,

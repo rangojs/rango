@@ -52,6 +52,10 @@ import {
 import { postprocessBundle } from "./discovery/bundle-postprocess.js";
 import { createDiscoveryGate } from "./discovery/gate-state.js";
 import { resetStagedBuildAssets } from "./utils/prerender-utils.js";
+import {
+  pickForwardedRunnerConfig,
+  selectForwardableResolvePlugins,
+} from "./utils/forward-user-plugins.js";
 import { createRangoDebugger, timed, timedSync, NS } from "./debug.js";
 
 const debugDiscovery = createRangoDebugger(NS.discovery);
@@ -129,14 +133,27 @@ async function createTempRscServer(
   // instead of crashing Node's native loader.
   ensureCloudflareProtocolLoaderRegistered();
   const { default: rsc } = await import("@vitejs/plugin-rsc");
+  // Mirror the user's resolution config + plugins so discovery (and the
+  // prerender/static rendering that shares this runner) resolves modules the
+  // same way the real environment does. Falls back to the legacy alias-only
+  // behavior if configResolved hasn't populated the parity slice yet.
+  const runnerConfig = state.userRunnerConfig;
+  const resolveConfig = runnerConfig?.resolve ?? {
+    alias: state.userResolveAlias,
+  };
+  const esbuildConfig = runnerConfig?.esbuild ?? {
+    jsx: "automatic",
+    jsxImportSource: "react",
+  };
   return createViteServer({
     root: state.projectRoot,
     configFile: false,
     server: { middlewareMode: true },
     appType: "custom",
     logLevel: "silent",
-    resolve: { alias: state.userResolveAlias },
-    esbuild: { jsx: "automatic", jsxImportSource: "react" },
+    resolve: resolveConfig,
+    ...(runnerConfig?.define ? { define: runnerConfig.define } : {}),
+    esbuild: esbuildConfig as any,
     ...(options.cacheDir && { cacheDir: options.cacheDir }),
     plugins: [
       rsc({
@@ -155,6 +172,10 @@ async function createTempRscServer(
       // runtime. forceBuild produces hashed IDs for production bundle consistency.
       exposeInternalIds(options.forceBuild ? { forceBuild: true } : undefined),
       exposeRouterId(),
+      // Forwarded user resolution plugins (e.g. vite-tsconfig-paths). Stripped
+      // to resolveId/load and placed last so framework resolution runs first;
+      // Vite re-sorts by `enforce`, so `enforce: "pre"` resolvers still lead.
+      ...state.userResolvePlugins,
     ],
   });
 }
@@ -309,6 +330,16 @@ export function createRouterDiscoveryPlugin(
       viteMode = config.mode;
       // Capture user's resolve aliases for the temp server
       s.userResolveAlias = config.resolve.alias;
+      // Capture the data-only resolution config (resolve.*, define, esbuild)
+      // and the user's resolution plugins (resolveId/load) so the discovery
+      // temp server resolves modules the same way the real environment does.
+      // Without this, third-party resolvers (e.g. vite-tsconfig-paths) are
+      // absent during discovery/prerender/static rendering even though they
+      // apply at request time. See utils/forward-user-plugins.ts.
+      s.userRunnerConfig = pickForwardedRunnerConfig(config);
+      s.userResolvePlugins = selectForwardableResolvePlugins(
+        config.plugins as any,
+      );
       // Node preset: pick up auto-discovered router path from the config() hook.
       // The auto-discover plugin runs in config() using Vite's resolved root,
       // populating the mutable ref before configResolved fires.

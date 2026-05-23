@@ -17,6 +17,7 @@
     "noUncheckedSideEffectImports": true,
     "paths": {
       "@/*": ["./src/*"],
+      "@parity/*": ["./src/parity/*"],
       "fake-context-lib": ["./__test_packages__/fake-context-lib/index.d.ts"]
     }
   },
