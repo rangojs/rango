@@ -7,8 +7,8 @@ import { waitForHydration, expectNoPageError } from "./helper";
  *
  * Validates full cycle:
  * - ctx.set(cacheableVar) inside cache() — allowed
- * - ctx.set(nonCacheableVar) inside cache() — throws (var-level policy)
- * - ctx.set(var, val, { cache: false }) inside cache() — throws (write-level)
+ * - ctx.set(nonCacheableVar) inside cache() — allowed; ctx.get() throws
+ * - ctx.set(var, val, { cache: false }) inside cache() — allowed; ctx.get() throws
  * - ctx.get(nonCacheableVar) inside cache() — throws (read guard)
  * - ctx.headers.set() inside cache() — throws (response-level)
  */
@@ -47,7 +47,7 @@ test.describe("cache-scope-guard", () => {
     );
   });
 
-  test("ctx.set(nonCacheable var) inside cache() should throw", async ({
+  test("ctx.get(nonCacheable var) inside cache() should throw after set", async ({
     page,
   }) => {
     await page.goto(f.url("/cache-scope-guard/var-blocked"));
@@ -59,7 +59,7 @@ test.describe("cache-scope-guard", () => {
     );
   });
 
-  test("ctx.set(var, val, { cache: false }) inside cache() should throw", async ({
+  test("ctx.get(var set with cache:false) inside cache() should throw", async ({
     page,
   }) => {
     await page.goto(f.url("/cache-scope-guard/write-blocked"));
@@ -205,7 +205,7 @@ test.describe("cache-scope-guard (production)", () => {
     await expect(page.getByTestId("csg-error-page")).toBeVisible();
   });
 
-  test("ctx.set(nonCacheable var) inside cache() should render error boundary", async ({
+  test("ctx.get(nonCacheable var) inside cache() should render error boundary after set", async ({
     page,
   }) => {
     await page.goto(f.url("/cache-scope-guard/var-blocked"));
@@ -213,7 +213,7 @@ test.describe("cache-scope-guard (production)", () => {
     await expect(page.getByTestId("csg-error-page")).toBeVisible();
   });
 
-  test("ctx.set(var, val, { cache: false }) inside cache() should render error boundary", async ({
+  test("ctx.get(var set with cache:false) inside cache() should render error boundary", async ({
     page,
   }) => {
     await page.goto(f.url("/cache-scope-guard/write-blocked"));

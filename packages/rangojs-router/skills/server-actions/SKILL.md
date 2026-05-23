@@ -32,37 +32,37 @@ Actions mutate state; route handlers and loaders read the latest state. After
 an action finishes, Rango performs a server-side revalidation render for the
 matched route so the UI receives fresh segment output and loader data.
 
-The main control point is `revalidate(({ actionId }) => ...)` on the segment
-that owns the data. This applies to `path()` handlers, `layout()` handlers,
-`parallel()` slots, `intercept()` routes, and loader registrations:
+The main control point is `revalidate((ctx) => ...)` on the segment that owns
+the data. Match specific actions by imported reference with `ctx.isAction()`;
+use raw `actionId` only when you intentionally need path or directory matching.
+This applies to `path()` handlers, `layout()` handlers, `parallel()` slots,
+`intercept()` routes, and loader registrations:
 
 ```typescript
 // urls.tsx — path/layout/parallel/intercept/loader/revalidate are passed in by urls()
 import { urls } from "@rangojs/router";
+import * as CartActions from "./actions/cart";
 
 export const urlpatterns = urls(({ path, loader, revalidate }) => [
   // The loader belongs to the route that consumes its data — nest it inside
   // the owning path() so the segment owns its data dependency.
   path("/cart", CartPage, { name: "cart" }, () => [
-    revalidate(
-      ({ actionId }) =>
-        actionId?.startsWith("src/actions/cart.ts#") || undefined,
-    ),
+    revalidate((ctx) => ctx.isAction(CartActions) || undefined),
     loader(CartLoader, () => [
-      revalidate(
-        ({ actionId }) =>
-          actionId?.startsWith("src/actions/cart.ts#") || undefined,
-      ),
+      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
     ]),
   ]),
 ]);
 ```
 
-For module-level `"use server"` files, the `actionId` passed to every
+`ctx.isAction()` resolves the imported action reference the same way the router
+derives `actionId`, so it matches in both dev and production and survives action
+renames/moves as type errors instead of silent substring drift.
+
+For module-level `"use server"` files, the raw `actionId` passed to every
 server-side `revalidate()` predicate is path-bearing in the server/RSC
-environment in both dev and production: `src/actions/cart.ts#addToCart`. This
-is intentional so path, layout, parallel, intercept, and loader revalidation
-predicates can filter by action file, directory, or export name.
+environment in both dev and production: `src/actions/cart.ts#addToCart`. This is
+the escape hatch for broad filters by action file, directory, or export name.
 
 Actions and the follow-up revalidation render share one request context.
 Values written in the action with `ctx.set(MyVar, value)` or `ctx.set("key",
@@ -93,15 +93,18 @@ export async function switchTenant(tenantId: string) {
 ```typescript
 // urls.tsx
 import { urls } from "@rangojs/router";
+import * as TenantActions from "./actions/tenant";
 import { ChangedTenant } from "./context";
 
 export const urlpatterns = urls(({ path, revalidate }) => [
   path("/dashboard/:tenantId", DashboardPage, { name: "dashboard" }, () => [
-    revalidate(
-      ({ actionId, context }) =>
-        actionId?.startsWith("src/actions/tenant.ts#") &&
-        context.get(ChangedTenant) === context.params.tenantId,
-    ),
+    revalidate((ctx) => {
+      if (!ctx.isAction(TenantActions)) return undefined;
+      return (
+        ctx.context.get(ChangedTenant) === ctx.context.params.tenantId ||
+        undefined
+      );
+    }),
   ]),
 ]);
 ```
@@ -382,13 +385,18 @@ re-render so the UI updates. Rango runs the action, then evaluates
 `revalidate()` on matched segments and loaders. Each path, layout, parallel,
 intercept, or loader rule decides whether that piece re-renders/re-resolves.
 
-The `actionId` arrives as part of the revalidation context — match it to
-scope re-runs to specific actions.
+Use `ctx.isAction()` for specific actions or modules. It accepts one action,
+several actions, or a namespace import (`import * as CartActions`). Pair it with
+`|| undefined` for "revalidate on match, otherwise defer to defaults/downstream
+rules."
 
 ```typescript
 // urls.tsx — inside the urls() callback. Nest each loader inside the path(),
 // layout(), or parallel() that owns its data so the route tree mirrors the
 // data dependencies.
+import * as AccountActions from "./actions/account";
+import * as CartActions from "./actions/cart";
+
 urls(({ path, loader, revalidate }) => [
   path("/", HomePage, { name: "home" }, () => [
     // Loader data re-runs by default after any action. Opt out with revalidate(() => false).
@@ -397,39 +405,37 @@ urls(({ path, loader, revalidate }) => [
 
   // Re-render the cart page handler AND re-resolve its loader after cart actions
   path("/cart", CartPage, { name: "cart" }, () => [
-    revalidate(
-      ({ actionId }) =>
-        actionId?.startsWith("src/actions/cart.ts#") || undefined,
-    ),
+    revalidate((ctx) => ctx.isAction(CartActions) || undefined),
     loader(CartLoader, () => [
-      revalidate(
-        ({ actionId }) =>
-          actionId?.startsWith("src/actions/cart.ts#") || undefined,
-      ),
+      revalidate((ctx) => ctx.isAction(CartActions) || undefined),
     ]),
   ]),
 
-  // Re-run after any action under src/actions/account/
+  // Re-run after any action exported by the account actions module
   path("/account", AccountPage, { name: "account" }, () => [
     loader(AccountLoader, () => [
-      revalidate(
-        ({ actionId }) =>
-          actionId?.startsWith("src/actions/account/") || undefined,
-      ),
+      revalidate((ctx) => ctx.isAction(AccountActions) || undefined),
     ]),
   ]),
 ]);
 ```
 
-`actionId` is stable per action. For actions exported from a module-level
-`"use server"` file, the ID is prefixed with the source file path
-(`src/actions/cart.ts#addToCart`), so substring matching by file path is the
-recommended scope. **Inline `"use server"` actions** (declared inside an RSC
-component) intentionally keep their hashed IDs — file paths are withheld
-from the client for security. If you need file-path-based revalidation
-predicates, define the action in a module-level `"use server"` file rather
-than inline. See `/loader` for the full revalidation contract (deferred
-returns, soft suggestions).
+The raw `actionId` string stays available for broad path filters:
+
+```typescript
+// Match any action under src/actions/account/, including modules not imported here.
+revalidate(
+  ({ actionId }) => actionId?.startsWith("src/actions/account/") || undefined,
+);
+```
+
+For actions exported from a module-level `"use server"` file, the ID is prefixed
+with the source file path (`src/actions/cart.ts#addToCart`). **Inline `"use
+server"` actions** (declared inside an RSC component) intentionally keep their
+hashed IDs — file paths are withheld from the client for security. If you need
+file-path-based revalidation predicates, define the action in a module-level
+`"use server"` file rather than inline. See `/loader` for the full revalidation
+contract (deferred returns, soft suggestions).
 
 ### Cross-segment dependencies
 
@@ -439,8 +445,9 @@ stale context. Share the same `revalidate` predicate on both producer and
 consumer:
 
 ```typescript
-const revalidateCart = ({ actionId }) =>
-  actionId?.startsWith("src/actions/cart.ts#") || undefined;
+import * as CartActions from "./actions/cart";
+
+const revalidateCart = (ctx) => ctx.isAction(CartActions) || undefined;
 
 urls(({ path, layout, loader, revalidate }) => [
   layout(CartLayout, () => [

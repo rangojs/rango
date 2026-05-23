@@ -72,10 +72,10 @@ a `cache()` boundary throws — the guard against the catastrophic "serve user A
 data to user B" bug. The guarantee is precise and intentionally narrow — see
 "Context Variable Cache Safety" below for exactly what it does and does not catch.
 
-## Stale-while-revalidate (built in)
+## Stale-while-revalidate
 
-SWR is a first-class cache behavior, not something you bolt on: while an entry is
-within its SWR window the cache serves the **stale value instantly** and
+SWR is a first-class cache behavior when the backing store supports it: while an
+entry is within its SWR window the cache serves the **stale value instantly** and
 refreshes it in the **background** (`waitUntil`), so users never wait on a
 recompute for a merely-aging entry.
 
@@ -85,7 +85,8 @@ recompute for a merely-aging entry.
   (`"use cache: short"` → the `short` profile).
 - **`cache()` DSL and loader caches** take an explicit `swr` in seconds (or
   inherit `store.defaults.swr`): `cache({ ttl: 60, swr: 300 })` → fresh ≤60s,
-  stale-served 60–360s, miss after 360s.
+  stale-served 60–360s, miss after 360s in stores that implement SWR for that
+  layer.
 - **Client forward/back** is SWR after a mutation — see "Correctness &
   invalidation" → Client cache.
 - **Edge / document layer** uses the HTTP `stale-while-revalidate` directive; see
@@ -93,6 +94,12 @@ recompute for a merely-aging entry.
 
 SWR softens normal TTL expiry, **not** a cross-deploy cold cache — a new build
 has no stale entry to serve (see version-segmented store keys above).
+
+Store support is layer-specific. `CFCacheStore` supports SWR for segment,
+document/response, and `"use cache"` item entries. `MemorySegmentCacheStore`
+supports SWR for response and `"use cache"` item entries, but its route-segment
+entries expire at TTL and never background-revalidate. Use the memory store for
+local/dev behavior, not as proof that segment SWR is active.
 
 ## Key Differences
 
@@ -103,7 +110,7 @@ has no stale entry to serve (see version-segmented store keys above).
 | **Cache key**        | Request type + pathname + params (+ optional custom)  | Function identity + serialized non-tainted args    |
 | **Execution on hit** | All-or-nothing: entire handler skipped                | Partial: function body skipped, calling code runs  |
 | **Runtime control**  | `condition` to disable, custom `key` function         | None — if the directive is present, it caches      |
-| **Side effects**     | No guards needed — handler doesn't run on hit         | `ctx.header()`, `ctx.set()`, etc. throw at runtime |
+| **Side effects**     | Response side effects throw inside the boundary       | `ctx.header()`, `ctx.set()`, etc. throw at runtime |
 | **Handle data**      | Captured and replayed                                 | Captured and replayed                              |
 | **Loaders**          | Always fresh — excluded from cache, opt-in per loader | Can be used inside loaders                         |
 | **Nesting**          | Nest `cache()` boundaries with different TTLs         | Compose by calling cached functions from uncached  |
@@ -255,9 +262,12 @@ cache hits per layer, so the actual per-request behavior is observable.
 
 Neither mechanism caches response headers or cookies.
 
-- **cache()**: Headers set by handlers are naturally absent on hit because no
-  handler runs. If you need headers on every response, set them in middleware
-  (which runs before cache lookup).
+- **cache()**: Response-level side effects throw inside the cache boundary even
+  on a miss: `ctx.header()`, `ctx.setCookie()`, `ctx.deleteCookie()`,
+  `ctx.setStatus()`, `ctx.onResponse()`, and direct `ctx.headers` mutation. On a
+  hit the handler would be skipped, so allowing the write on a miss would produce
+  inconsistent responses. If you need headers or cookies on every response, set
+  them in middleware or a live segment outside the cache boundary.
 - **"use cache"**: cookies() and headers() throw inside the cached function
   (both reads and writes). ctx.header() also throws. Move them outside.
 
@@ -291,15 +301,16 @@ specifies `cache: false`, the value is non-cacheable.
 
 **Behavior inside a `cache()` boundary:**
 
-| Operation                           | Inside a `cache()` boundary                                  |
-| ----------------------------------- | ------------------------------------------------------------ |
-| `ctx.get(cacheableVar)`             | Allowed                                                      |
-| `ctx.get(nonCacheableVar)`          | Throws (would be baked in)                                   |
-| `ctx.set(var, value)` (cacheable)   | Allowed                                                      |
-| `ctx.header()` / `cookies()` writes | Run on miss, not replayed on hit (set in middleware instead) |
+| Operation                         | Inside a `cache()` boundary                        |
+| --------------------------------- | -------------------------------------------------- |
+| `ctx.get(cacheableVar)`           | Allowed                                            |
+| `ctx.get(nonCacheableVar)`        | Throws (would be baked in)                         |
+| `ctx.set(var, value)` (cacheable) | Allowed                                            |
+| `ctx.header()` / cookie writes    | Throws (response side effect would be lost on hit) |
 
 (Inside a `"use cache"` function the scoping differs: `ctx.set`, `ctx.header()`,
-`cookies()`, and `headers()` **throw** via the cache-exec guard, while the
+`cookies()`, and `headers()` **throw** via the cache-exec guard. Inside
+`cache()`, response side effects throw via the cache-boundary guard, while the
 `ctx.get(nonCacheableVar)` taint check above is tied to the `cache()` boundary —
 see "Headers and Cookies" and the precise guarantee below.)
 

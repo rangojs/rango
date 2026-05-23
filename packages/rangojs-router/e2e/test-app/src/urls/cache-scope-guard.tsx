@@ -12,8 +12,8 @@ const CacheableData = createVar<string>();
 /**
  * Test routes for cache() scope guards.
  * - ctx.set() with cacheable var inside cache() — allowed
- * - ctx.set() with non-cacheable var (createVar({ cache: false })) — throws
- * - ctx.set() with write-level { cache: false } — throws
+ * - ctx.set() with non-cacheable var (createVar({ cache: false })) — set OK; ctx.get() throws
+ * - ctx.set() with write-level { cache: false } — set OK; ctx.get() throws
  * - ctx.get() of non-cacheable var inside cache() — throws
  * - ctx.headers.set() inside cache() — throws
  */

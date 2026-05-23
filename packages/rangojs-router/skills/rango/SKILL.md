@@ -19,8 +19,8 @@ with the shape, then pick a primitive.
   route, layout, loader, and cache lives. No file-system convention, no hunting.
 - **Two freshness axes, orthogonal:**
   - _stored-value freshness_ — `"use cache"`, `cache()`, loader `cache()`
-    (stale-while-revalidate is built in — `"use cache"` ships a default SWR
-    window; see `/cache-guide`)
+    (SWR is first-class where the store supports it; `"use cache"` ships a
+    default SWR window; see `/cache-guide`)
   - _client-update selection_ — `revalidate()`
 - **Loaders are the live data layer** — fresh every request by default, even
   inside a cached render. They run **in parallel** right after middleware and
@@ -35,7 +35,8 @@ with the shape, then pick a primitive.
 - **See where time goes** — turn on `debugPerformance` early (router option, or
   `ctx.debugPerformance()` in middleware for per-request opt-in). It prints a
   per-request waterfall + `Server-Timing` header; loaders should overlap the
-  render bar, not serialize after it. See `/loader` → "See it: debugPerformance".
+  render bar, not serialize after it. For production, wire `telemetry` to a
+  console, OpenTelemetry, or custom sink. See `/observability`.
 
 Most features are **just-in-time**: the core is `urls()`, `path()`, `layout()`,
 `include()`, and `reverse()`. Caching, parallel routes, intercepts, prerender,
@@ -65,6 +66,7 @@ To decide where something can live: **does it define a URL? structure, stays in
 | cache a loader's data                 | `loader(L, () => [cache()])`     | /loader, /caching       |
 | re-render a segment after an action   | `revalidate()`                   | /loader                 |
 | mutate                                | `"use server"` action            | /server-actions         |
+| debug a slow request                  | `debugPerformance` / telemetry   | /observability          |
 | share config across routes            | factory returning a helper array | /composability          |
 | compose a sub-app / module            | `include()`                      | /route                  |
 | modal / soft navigation               | `intercept()`                    | /intercept              |
@@ -194,15 +196,21 @@ Grouped by concern — read when you need to…
 | `/view-transitions` | React View Transitions on layouts, routes, and parallel slots             |
 | `/breadcrumbs`      | Built-in Breadcrumbs handle for breadcrumb navigation                     |
 
+**Observability & production health**:
+
+| Skill              | Description                                                              |
+| ------------------ | ------------------------------------------------------------------------ |
+| `/observability`   | `debugPerformance`, `Server-Timing`, structured telemetry, tracing       |
+| `/bundle-analysis` | Audit your app's production bundle for server leaks and oversized chunks |
+| `/debug-manifest`  | Inspect route manifest structure                                         |
+
 **Setup, types & migration**:
 
-| Skill                   | Description                                                              |
-| ----------------------- | ------------------------------------------------------------------------ |
-| `/typesafety`           | Type-safe routes, params, href, and environment                          |
-| `/bundle-analysis`      | Audit your app's production bundle for server leaks and oversized chunks |
-| `/migrate-nextjs`       | Migrate a Next.js App Router project to Rango                            |
-| `/migrate-react-router` | Migrate a React Router / Remix project to Rango                          |
-| `/debug-manifest`       | Inspect route manifest structure                                         |
+| Skill                   | Description                                     |
+| ----------------------- | ----------------------------------------------- |
+| `/typesafety`           | Type-safe routes, params, href, and environment |
+| `/migrate-nextjs`       | Migrate a Next.js App Router project to Rango   |
+| `/migrate-react-router` | Migrate a React Router / Remix project to Rango |
 
 ## Quick Start
 
