@@ -2,6 +2,8 @@
 export const NamedRoutes = {
   about: "/about",
   "api.status": "/api/status",
+  "group.index": "/g/:id",
+  "group.section.item.leaf": "/g/:id/sub/leaf",
   home: "/",
 } as const;
 

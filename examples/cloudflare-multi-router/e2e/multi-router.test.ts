@@ -487,6 +487,29 @@ test.describe("multi-router (dev)", () => {
       }
     });
   });
+
+  // Regression for #506: a nested lazy-include chain under a dynamic-param
+  // prefix (site -> include("/g", group) -> include("/:id/sub", section) ->
+  // section's own top-level include -> leaf). The dynamic ":id" collapses every
+  // nested staticPrefix to "/g"; the deeply-nested route must still resolve and
+  // must not be over-claimed by the "group" parent entry.
+  test.describe("nested lazy-include under dynamic param (#506)", () => {
+    test("deeply-nested dynamic include route resolves", async ({ page }) => {
+      using _ = expectNoPageError(page);
+      const res = await page.goto(f.url("/g/x/sub/leaf"));
+      expect(res!.status()).toBe(200);
+      await expect(testId(page, "ni-leaf-title")).toHaveText("Nested Leaf");
+    });
+
+    test("sibling dynamic route still resolves via the parent", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const res = await page.goto(f.url("/g/x"));
+      expect(res!.status()).toBe(200);
+      await expect(testId(page, "ni-index")).toBeVisible();
+    });
+  });
 });
 
 // ----- PRODUCTION MODE -----
@@ -874,6 +897,28 @@ test.describe("multi-router (production)", () => {
         await tab1.close();
         await tab2.close();
       }
+    });
+  });
+
+  // Regression for #506 (production build path — where the precompute shortcut
+  // runs). The deeply-nested dynamic include route 404'd before the fix because
+  // its leaf was precomputed under the collapsed "/g" staticPrefix and claimed
+  // by the "group" parent entry, which cannot register it.
+  test.describe("nested lazy-include under dynamic param (#506)", () => {
+    test("deeply-nested dynamic include route resolves", async ({ page }) => {
+      using _ = expectNoPageError(page);
+      const res = await page.goto(f.url("/g/x/sub/leaf"));
+      expect(res!.status()).toBe(200);
+      await expect(testId(page, "ni-leaf-title")).toHaveText("Nested Leaf");
+    });
+
+    test("sibling dynamic route still resolves via the parent", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const res = await page.goto(f.url("/g/x"));
+      expect(res!.status()).toBe(200);
+      await expect(testId(page, "ni-index")).toBeVisible();
     });
   });
 });
