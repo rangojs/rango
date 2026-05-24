@@ -45,12 +45,15 @@ export function RefreshDemoPage() {
       <section style={section}>
         <h2>Shared key</h2>
         <p style={{ color: "#57606a", maxWidth: 760 }}>
-          Both cards read the same loader with <code>key="revenue"</code>.
-          Refreshing one refreshes the whole key — both values move together.
+          Three cards read the same loader with <code>key="revenue"</code>. A{" "}
+          <code>load()</code> from any one is a <b>single</b> server fetch whose
+          result fans out to all three — watch <b>server calls</b> jump by
+          exactly 1 across every card, with identical values.
         </p>
         <div style={grid}>
           <SharedKeyCard id="rev-a" withButton />
           <SharedKeyCard id="rev-b" />
+          <SharedKeyCard id="rev-c" withButton />
         </div>
       </section>
 

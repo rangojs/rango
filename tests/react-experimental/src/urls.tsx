@@ -96,6 +96,11 @@ function RefreshDemoPage(ctx: HandlerContext) {
       </p>
 
       <h2 style={{ fontSize: "1.1rem", color: "#6b7280" }}>Shared key</h2>
+      <p style={{ color: "#6b7280", margin: "0.25rem 0 0", maxWidth: 640 }}>
+        Three cards read one loader with <code>key="revenue"</code>. A{" "}
+        <code>load()</code> from any one is a single server fetch that fans out
+        to all three — server calls jump by exactly 1, every value cross-fades.
+      </p>
       <div
         style={{
           display: "flex",
@@ -106,6 +111,7 @@ function RefreshDemoPage(ctx: HandlerContext) {
       >
         <VtSharedKeyCard id="rev-a" withButton />
         <VtSharedKeyCard id="rev-b" />
+        <VtSharedKeyCard id="rev-c" withButton />
       </div>
 
       <h2 style={{ fontSize: "1.1rem", color: "#6b7280" }}>

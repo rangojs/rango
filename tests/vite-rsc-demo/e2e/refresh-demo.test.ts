@@ -18,25 +18,51 @@ const calls = (page: Page, id: string) =>
   page.locator(`[data-testid="rl-card-${id}-calls"]`).textContent();
 
 async function runScenario(page: Page) {
-  // --- Shared key: both Revenue cards seed from one bucket, equal. ---
-  const aValue = page.locator('[data-testid="rl-card-rev-a-value"]');
-  const bValue = page.locator('[data-testid="rl-card-rev-b-value"]');
-  await expect(aValue).toBeVisible();
-  await expect(bValue).toBeVisible();
-  const aCalls0 = await calls(page, "rev-a");
+  // Wait for every card to have a value first — the group cards auto-load on
+  // mount, so we let those requests settle before counting per-action ones.
+  for (const id of ["rev-a", "rev-b", "rev-c", "users", "orders", "latency"]) {
+    await expect(
+      page.locator(`[data-testid="rl-card-${id}-value"]`),
+    ).toBeVisible();
+  }
 
-  // Capture the live value node so we can prove it survives the refresh.
+  // Count requests to the loader fetch endpoint, so we can prove how many
+  // server round-trips each action makes.
+  let loaderRequests = 0;
+  page.on("request", (req) => {
+    if (req.url().includes("_rsc_loader")) loaderRequests++;
+  });
+
+  // --- Shared key: a single load() is ONE server call that fans out to all
+  // three keyed readers with identical data. ---
+  const aValue = page.locator('[data-testid="rl-card-rev-a-value"]');
+  const before = Number(await calls(page, "rev-a"));
+  expect(Number.isFinite(before)).toBe(true);
   const node = await aValue.elementHandle();
 
+  loaderRequests = 0;
   await page.locator('[data-testid="rl-card-rev-a-refresh"]').click();
+  await expect
+    .poll(async () => Number(await calls(page, "rev-a")))
+    .toBe(before + 1);
 
-  // The refresh ran (loader calls advanced)...
-  await expect.poll(() => calls(page, "rev-a")).not.toBe(aCalls0);
-  const aCalls1 = (await calls(page, "rev-a"))!;
-  // ...and the keyless sibling moved with it (same shared bucket).
-  await expect(bValue).toHaveText(await aValue.textContent());
+  // Exactly ONE network round-trip to the loader endpoint, despite three
+  // keyed readers — the shared bucket fans the single result out.
+  expect(loaderRequests).toBe(1);
+
+  // All three keyed readers converge on the SAME value + the same call count.
+  const v = (await aValue.textContent())!;
+  await expect(page.locator('[data-testid="rl-card-rev-b-value"]')).toHaveText(
+    v,
+  );
+  await expect(page.locator('[data-testid="rl-card-rev-c-value"]')).toHaveText(
+    v,
+  );
   await expect(page.locator('[data-testid="rl-card-rev-b-calls"]')).toHaveText(
-    aCalls1,
+    String(before + 1),
+  );
+  await expect(page.locator('[data-testid="rl-card-rev-c-calls"]')).toHaveText(
+    String(before + 1),
   );
 
   // No fallback flash: the original value node is still connected (text updated
@@ -47,26 +73,20 @@ async function runScenario(page: Page) {
     page.locator('[data-testid="rl-card-rev-a-skeleton"]'),
   ).toHaveCount(0);
 
-  // --- Group: one useRefreshLoaders("metrics")() call refreshes all three. ---
-  await expect(
-    page.locator('[data-testid="rl-card-users-value"]'),
-  ).toBeVisible();
-  await expect(
-    page.locator('[data-testid="rl-card-orders-value"]'),
-  ).toBeVisible();
-  await expect(
-    page.locator('[data-testid="rl-card-latency-value"]'),
-  ).toBeVisible();
-
+  // --- Group: one useRefreshLoaders("metrics")() call = one server fetch PER
+  // member (three different loaders), each advancing. ---
   const u0 = await calls(page, "users");
   const o0 = await calls(page, "orders");
   const l0 = await calls(page, "latency");
 
+  loaderRequests = 0;
   await page.locator('[data-testid="rl-group-refresh"]').click();
-
   await expect.poll(() => calls(page, "users")).not.toBe(u0);
   await expect.poll(() => calls(page, "orders")).not.toBe(o0);
   await expect.poll(() => calls(page, "latency")).not.toBe(l0);
+
+  // Three distinct loaders → three round-trips (no false dedup across loaders).
+  expect(loaderRequests).toBe(3);
 }
 
 devTest.describe("refresh-demo", () => {

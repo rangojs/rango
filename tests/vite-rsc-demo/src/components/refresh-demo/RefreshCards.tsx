@@ -131,7 +131,7 @@ function CardShell({
         </Suspense>
       </div>
       <div style={metaStyle}>
-        loader calls:{" "}
+        server calls:{" "}
         <span data-testid={`rl-card-${id}-calls`}>{calls ?? "—"}</span> ·
         updated {at ?? "—"}
       </div>
@@ -170,7 +170,7 @@ export function SharedKeyCard({
             style={buttonStyle}
             onClick={() => load().catch(() => {})}
           >
-            Refresh (key: revenue)
+            load() · key: revenue
           </button>
         ) : null
       }

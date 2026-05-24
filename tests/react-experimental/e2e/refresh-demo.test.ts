@@ -13,33 +13,54 @@ const calls = (page: Page, id: string) =>
   testId(page, `vt-card-${id}-calls`).textContent();
 
 async function runScenario(page: Page) {
-  // Shared key: both Revenue cards seed from one bucket.
-  await expect(testId(page, "vt-card-rev-a-value")).toBeVisible();
-  await expect(testId(page, "vt-card-rev-b-value")).toBeVisible();
-  const a0 = await calls(page, "rev-a");
+  // Wait for every card to have a value (group cards auto-load on mount) before
+  // counting per-action requests.
+  for (const id of ["rev-a", "rev-b", "rev-c", "users", "orders", "latency"]) {
+    await expect(testId(page, `vt-card-${id}-value`)).toBeVisible();
+  }
 
+  let loaderRequests = 0;
+  page.on("request", (req) => {
+    if (req.url().includes("_rsc_loader")) loaderRequests++;
+  });
+
+  // Shared key: three cards read one bucket. A single load() is ONE server call
+  // whose result fans out to all three with identical data.
+  const before = Number(await calls(page, "rev-a"));
+  expect(Number.isFinite(before)).toBe(true);
+
+  loaderRequests = 0;
   await testId(page, "vt-card-rev-a-refresh").click();
-  await expect.poll(() => calls(page, "rev-a")).not.toBe(a0);
-  const a1 = (await calls(page, "rev-a"))!;
-  // The keyless sibling moved with it (same shared bucket).
-  await expect(testId(page, "vt-card-rev-b-calls")).toHaveText(a1);
-  await expect(testId(page, "vt-card-rev-b-value")).toHaveText(
-    (await testId(page, "vt-card-rev-a-value").textContent())!,
+  await expect
+    .poll(async () => Number(await calls(page, "rev-a")))
+    .toBe(before + 1);
+
+  // Exactly ONE network round-trip despite three keyed readers.
+  expect(loaderRequests).toBe(1);
+
+  // All three keyed readers converge on the same value + call count.
+  const v = (await testId(page, "vt-card-rev-a-value").textContent())!;
+  await expect(testId(page, "vt-card-rev-b-value")).toHaveText(v);
+  await expect(testId(page, "vt-card-rev-c-value")).toHaveText(v);
+  await expect(testId(page, "vt-card-rev-b-calls")).toHaveText(
+    String(before + 1),
+  );
+  await expect(testId(page, "vt-card-rev-c-calls")).toHaveText(
+    String(before + 1),
   );
 
-  // Group: one useRefreshLoaders("metrics")() call moves all three.
-  await expect(testId(page, "vt-card-users-value")).toBeVisible();
-  await expect(testId(page, "vt-card-orders-value")).toBeVisible();
-  await expect(testId(page, "vt-card-latency-value")).toBeVisible();
+  // Group: one useRefreshLoaders("metrics")() call = one server fetch per
+  // member (three distinct loaders).
   const u0 = await calls(page, "users");
   const o0 = await calls(page, "orders");
   const l0 = await calls(page, "latency");
 
+  loaderRequests = 0;
   await testId(page, "vt-group-refresh").click();
-
   await expect.poll(() => calls(page, "users")).not.toBe(u0);
   await expect.poll(() => calls(page, "orders")).not.toBe(o0);
   await expect.poll(() => calls(page, "latency")).not.toBe(l0);
+  expect(loaderRequests).toBe(3);
 }
 
 test.describe("refresh demo — keys & groups (dev)", () => {

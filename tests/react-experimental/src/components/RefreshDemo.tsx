@@ -90,7 +90,7 @@ function CardShell({
         </div>
       </ViewTransition>
       <div style={meta}>
-        loader calls:{" "}
+        server calls:{" "}
         <span data-testid={`vt-card-${id}-calls`}>{calls ?? "—"}</span>
       </div>
       {btn}
@@ -124,7 +124,7 @@ export function VtSharedKeyCard({
             style={button}
             onClick={() => load().catch(() => {})}
           >
-            Refresh (key: revenue)
+            load() · key: revenue
           </button>
         ) : null
       }
