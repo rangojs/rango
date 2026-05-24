@@ -51,5 +51,10 @@ export default defineConfig(({ command }) => ({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+    // Vite 8 native tsconfig paths resolution. The "@native/*" mapping in
+    // tsconfig.json is resolved by this flag alone (no resolve.alias, no
+    // resolveId plugin), exercising that the discovery runner forwards the
+    // native tsconfigPaths flag into its temp server.
+    tsconfigPaths: true,
   },
 }));

@@ -136,7 +136,7 @@ describe("pickForwardedRunnerConfig", () => {
     ({
       resolve: {},
       define: undefined,
-      esbuild: undefined,
+      oxc: undefined,
       ...over,
     }) as ResolvedConfig;
 
@@ -157,27 +157,64 @@ describe("pickForwardedRunnerConfig", () => {
     expect("mainFields" in out.resolve!).toBe(false);
   });
 
+  it("forwards native resolve.tsconfigPaths so it reaches the temp server", () => {
+    // Vite 8's native tsconfig paths resolution is a top-level resolve flag
+    // (off by default). The discovery temp server is configFile:false, so the
+    // flag is only present during discovery/prerender if it's copied here --
+    // otherwise path-aliased imports fail at build time (issue #500 class).
+    const cfg = base({ resolve: { tsconfigPaths: true } as any });
+    expect(pickForwardedRunnerConfig(cfg).resolve).toEqual({
+      tsconfigPaths: true,
+    });
+  });
+
+  it("omits tsconfigPaths when the user has not set it", () => {
+    const out = pickForwardedRunnerConfig(base({ resolve: {} as any }));
+    expect("tsconfigPaths" in out.resolve!).toBe(false);
+  });
+
   it("forwards user define", () => {
     const cfg = base({ define: { __FOO__: "1" } as any });
     expect(pickForwardedRunnerConfig(cfg).define).toEqual({ __FOO__: "1" });
   });
 
-  it("pins the RSC JSX runtime over user esbuild options", () => {
+  it("pins the RSC JSX runtime over user oxc options", () => {
     const cfg = base({
-      esbuild: { jsx: "preserve", target: "es2020" } as any,
+      oxc: { jsx: "preserve", jsxInject: `import React from "react"` } as any,
     });
-    expect(pickForwardedRunnerConfig(cfg).esbuild).toEqual({
-      target: "es2020",
-      jsx: "automatic",
-      jsxImportSource: "react",
+    expect(pickForwardedRunnerConfig(cfg).oxc).toEqual({
+      jsxInject: `import React from "react"`,
+      jsx: { runtime: "automatic", importSource: "react" },
     });
   });
 
-  it("supplies the RSC JSX runtime when user disables esbuild", () => {
-    const cfg = base({ esbuild: false as any });
-    expect(pickForwardedRunnerConfig(cfg).esbuild).toEqual({
-      jsx: "automatic",
-      jsxImportSource: "react",
+  it("preserves user jsx sub-options while pinning runtime + importSource", () => {
+    const cfg = base({
+      oxc: {
+        jsx: { development: true, runtime: "classic", importSource: "preact" },
+      } as any,
+    });
+    expect(pickForwardedRunnerConfig(cfg).oxc).toEqual({
+      jsx: { development: true, runtime: "automatic", importSource: "react" },
+    });
+  });
+
+  it("supplies the RSC JSX runtime when user disables oxc", () => {
+    const cfg = base({ oxc: false as any });
+    expect(pickForwardedRunnerConfig(cfg).oxc).toEqual({
+      jsx: { runtime: "automatic", importSource: "react" },
+    });
+  });
+
+  it("does not read or forward the deprecated esbuild option", () => {
+    const cfg = base({
+      esbuild: { jsx: "preserve", jsxImportSource: "vue" } as any,
+    });
+    const out = pickForwardedRunnerConfig(cfg);
+    expect("esbuild" in out).toBe(false);
+    // JSX still pinned via the oxc default path, ignoring esbuild entirely.
+    expect(out.oxc).toEqual({
+      jsx: { runtime: "automatic", importSource: "react" },
     });
   });
 });

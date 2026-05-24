@@ -3,6 +3,10 @@ import { Prerender } from "@rangojs/router";
 // resolve.alias. Reaching it through a build-time Prerender handler asserts the
 // cloudflare discovery runner honors third-party resolvers (issue #500).
 import { PARITY_MARKER } from "@parity/marker.js";
+// Resolved ONLY by Vite 8's native resolve.tsconfigPaths (tsconfig "@native/*"),
+// with no resolve.alias and no resolveId plugin. Reaching it through the same
+// Prerender handler asserts the discovery runner forwards the native flag too.
+import { NATIVE_PATHS_MARKER } from "@native/marker.js";
 
 interface Release {
   version: string;
@@ -31,6 +35,7 @@ export const ReleasesPage = Prerender(async (ctx) => {
       <h1>Releases</h1>
       <p>Pre-rendered from content/releases.json at build time.</p>
       <p data-testid="releases-parity">{PARITY_MARKER}</p>
+      <p data-testid="releases-native">{NATIVE_PATHS_MARKER}</p>
       {entries.map((r) => (
         <div key={r.version} data-testid={`release-${r.version}`}>
           <h2>{r.version}</h2>

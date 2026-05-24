@@ -4,14 +4,20 @@
  * The discovery temp server (createTempRscServer) runs the user's handler
  * graph through a throwaway Node Vite server built with `configFile: false`.
  * Without help, that server only sees a fixed Rango-owned plugin set, so any
- * user resolution provided by third-party plugins (e.g. vite-tsconfig-paths)
- * is absent during discovery, prerender, and static handler rendering — even
- * though it applies at request time.
+ * user resolution is absent during discovery, prerender, and static handler
+ * rendering — even though it applies at request time. Two flavors of user
+ * resolution must be carried across:
+ *
+ * - Third-party resolveId plugins (e.g. vite-tsconfig-paths) — forwarded as
+ *   plugin instances, see selectForwardableResolvePlugins.
+ * - Native config-driven resolution, including Vite 8's built-in
+ *   `resolve.tsconfigPaths` (which supersedes vite-tsconfig-paths) — forwarded
+ *   as the data slice, see pickForwardedRunnerConfig.
  *
  * These helpers extract the resolution-relevant slice of the user's resolved
- * config (resolve.*, define, esbuild) and forward the user's resolution
- * plugins into the temp server so discovery resolves modules the same way the
- * real environment does.
+ * config (resolve.*, define, oxc) and forward the user's resolution plugins
+ * into the temp server so discovery resolves modules the same way the real
+ * environment does.
  */
 
 import type { Plugin, ResolvedConfig, UserConfig } from "vite";
@@ -120,22 +126,31 @@ export function selectForwardableResolvePlugins(
 /**
  * The resolution-relevant slice of the user's resolved config that is plain
  * data (no plugin re-execution): everything under `resolve` that influences
- * how specifiers map to files, plus `define` and `esbuild` so transforms and
+ * how specifiers map to files, plus `define` and `oxc` so transforms and
  * compile-time constants match request time.
  */
 export interface ForwardedRunnerConfig {
   resolve: UserConfig["resolve"];
   define: UserConfig["define"];
-  esbuild: UserConfig["esbuild"];
+  oxc: UserConfig["oxc"];
 }
 
 /**
  * Extract the data-only config slice to mirror into the discovery temp server.
  * `alias` is included here so callers no longer need to thread it separately.
  *
- * `esbuild` keeps the user's options but always pins the RSC-required JSX
- * runtime, since the temp server compiles the handler graph as React server
- * components regardless of the user's app-level JSX config.
+ * `tsconfigPaths` is forwarded so Vite 8's native tsconfig `paths` resolution
+ * (a top-level `resolve` flag, off by default) reaches the temp server. The
+ * server is created with `configFile: false` and an explicit, allowlisted
+ * resolve slice, so a flag that is not copied here is simply absent during
+ * discovery — which would make path-aliased imports fail at prerender/static
+ * time the same way unforwarded resolveId plugins did (issue #500).
+ *
+ * `oxc` keeps the user's options but always pins the RSC-required JSX runtime
+ * (automatic, react), since the temp server compiles the handler graph as
+ * React server components regardless of the user's app-level JSX config. Vite 8
+ * replaced the deprecated `esbuild` transform option with `oxc`, so we read and
+ * forward `oxc` exclusively — no `esbuild` field is touched.
  */
 export function pickForwardedRunnerConfig(
   config: ResolvedConfig,
@@ -149,16 +164,30 @@ export function pickForwardedRunnerConfig(
   if (r.extensions !== undefined) resolve.extensions = r.extensions;
   if (r.preserveSymlinks !== undefined)
     resolve.preserveSymlinks = r.preserveSymlinks;
+  if (r.tsconfigPaths !== undefined) resolve.tsconfigPaths = r.tsconfigPaths;
 
-  const userEsbuild = config.esbuild;
-  const esbuild: UserConfig["esbuild"] =
-    userEsbuild && typeof userEsbuild === "object"
-      ? { ...userEsbuild, jsx: "automatic", jsxImportSource: "react" }
-      : { jsx: "automatic", jsxImportSource: "react" };
+  // Pin the RSC JSX runtime on top of the user's oxc options. The user's
+  // jsx sub-options (e.g. `development`) are preserved when present; only
+  // `runtime`/`importSource` are forced to the values the RSC compile needs.
+  const userOxc = config.oxc;
+  const userJsx =
+    userOxc &&
+    typeof userOxc === "object" &&
+    typeof userOxc.jsx === "object" &&
+    userOxc.jsx !== null
+      ? userOxc.jsx
+      : {};
+  const oxc: UserConfig["oxc"] =
+    userOxc && typeof userOxc === "object"
+      ? {
+          ...userOxc,
+          jsx: { ...userJsx, runtime: "automatic", importSource: "react" },
+        }
+      : { jsx: { runtime: "automatic", importSource: "react" } };
 
   return {
     resolve,
     define: config.define,
-    esbuild,
+    oxc,
   };
 }
