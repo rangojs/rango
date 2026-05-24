@@ -798,3 +798,61 @@ export const SharedRefetchErrorMixedLoader = createLoader(async () => {
   }
   throw new Error("shared-refetch-error-mixed: refetch failed by design");
 }, true);
+
+// ============================================================================
+// Client refresh key (useLoader/useFetchLoader { key }) fixtures.
+// ============================================================================
+
+// Unregistered fetchable counter. Not attached to any route via loader(), so
+// reads via useFetchLoader have no route context — they share only when given
+// an explicit client refresh key. Counter is module-global; tests assert
+// relative behavior (group converges, distinct keys stay apart) rather than
+// exact counts, so a shared production preview server can't cause flakes.
+let keyRefreshCount = 0;
+
+export const KeyRefreshLoader = createLoader(async () => {
+  keyRefreshCount++;
+  return { count: keyRefreshCount };
+}, true);
+
+// Unregistered fetchable that always fails on load — for the keyed
+// throwOnError originator-scoping test. No SSR seed (unregistered), so the
+// first client load() is the failing call.
+export const KeyRefreshErrorLoader = createLoader(async () => {
+  throw new Error("key-refresh-error: load failed by design");
+}, true);
+
+// Registered fetchable counter for the registered-loader + key test. Seeded
+// into route context on SSR; keyed readers share a refetch while a no-key
+// reader stays on the seeded value.
+let keyRefreshRegisteredCount = 0;
+
+export const KeyRefreshRegisteredLoader = createLoader(async () => {
+  keyRefreshRegisteredCount++;
+  return { count: keyRefreshRegisteredCount };
+}, true);
+
+// Two distinct unregistered fetchable counters for the cross-loader refresh
+// group test (useRefreshLoaders). Both are tagged with the same refreshGroup so
+// one refreshAccount() call re-runs both. Separate counters prove both members
+// actually refetched (each value advances independently).
+let keyRefreshGroupACount = 0;
+let keyRefreshGroupBCount = 0;
+
+export const KeyRefreshGroupLoaderA = createLoader(async () => {
+  keyRefreshGroupACount++;
+  return { count: keyRefreshGroupACount };
+}, true);
+
+export const KeyRefreshGroupLoaderB = createLoader(async () => {
+  keyRefreshGroupBCount++;
+  return { count: keyRefreshGroupBCount };
+}, true);
+
+// Param/body echo for the widened-key semantics tests: a keyed parameterized
+// GET shares within the key, while a keyed mutation (POST/body) stays local.
+// Reads the tag from the JSON body (mutations) or from params (GET).
+export const KeyRefreshParamLoader = createLoader(async (ctx) => {
+  const bodyTag = (ctx.body as { tag?: string } | undefined)?.tag;
+  return { tag: bodyTag ?? ctx.params.tag ?? "—" };
+}, true);
