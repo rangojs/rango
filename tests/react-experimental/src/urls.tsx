@@ -8,6 +8,17 @@ import { getCounter } from "./actions/counter.js";
 import { CommentsLoader } from "./loaders/comments.js";
 import { ViewTransition } from "react";
 import { ARTICLES } from "./data/articles.js";
+import {
+  RevenueLoader,
+  ActiveUsersLoader,
+  OpenOrdersLoader,
+  LatencyLoader,
+} from "./loaders/metrics.js";
+import {
+  VtSharedKeyCard,
+  VtGroupCard,
+  VtGroupRefreshButton,
+} from "./components/RefreshDemo.js";
 
 function HomePage(ctx: HandlerContext) {
   const meta = ctx.use(Meta);
@@ -61,6 +72,61 @@ async function CounterPage(ctx: HandlerContext) {
     <main data-testid="counter-page">
       <h1 data-testid="counter-title">Counter Demo</h1>
       <Counter initialCount={initialCount} />
+    </main>
+  );
+}
+
+// Client refresh + view-transition demo. A keyed refresh and a refreshGroup
+// refresh both commit inside startTransition, so each card's value cross-fades
+// via <ViewTransition> — in place, with no navigation.
+function RefreshDemoPage(ctx: HandlerContext) {
+  const meta = ctx.use(Meta);
+  meta({ title: "Refresh - View Transitions" });
+
+  return (
+    <main data-testid="refresh-demo-page">
+      <h1 style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>
+        Client Refresh + View Transitions
+      </h1>
+      <p style={{ color: "#6b7280", marginBottom: "1.5rem", maxWidth: 640 }}>
+        A keyed refresh and a <code>refreshGroup</code> refresh both commit
+        inside <code>startTransition</code>, so each card&apos;s value
+        cross-fades through a <code>&lt;ViewTransition&gt;</code> — no
+        navigation.
+      </p>
+
+      <h2 style={{ fontSize: "1.1rem", color: "#6b7280" }}>Shared key</h2>
+      <div
+        style={{
+          display: "flex",
+          gap: "1rem",
+          flexWrap: "wrap",
+          margin: "0.75rem 0 2rem",
+        }}
+      >
+        <VtSharedKeyCard id="rev-a" withButton />
+        <VtSharedKeyCard id="rev-b" />
+      </div>
+
+      <h2 style={{ fontSize: "1.1rem", color: "#6b7280" }}>
+        Refresh group &quot;metrics&quot;
+      </h2>
+      <div style={{ margin: "0.75rem 0" }}>
+        <VtGroupRefreshButton />
+      </div>
+      <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+        <VtGroupCard
+          id="users"
+          label="Active users"
+          loader={ActiveUsersLoader}
+        />
+        <VtGroupCard
+          id="orders"
+          label="Open orders"
+          loader={OpenOrdersLoader}
+        />
+        <VtGroupCard id="latency" label="p95 latency" loader={LatencyLoader} />
+      </div>
     </main>
   );
 }
@@ -1235,6 +1301,9 @@ export const urlpatterns = urls(({ path, layout, transition, loader }) => [
   path("/", HomePage, { name: "home" }),
   path("/about", AboutPage, { name: "about" }),
   path("/counter", CounterPage, { name: "counter" }),
+  path("/refresh", RefreshDemoPage, { name: "refresh" }, () => [
+    loader(RevenueLoader),
+  ]),
 
   // Layout-level transition (no-children form, sibling of path()).
   // Pins that back-nav fires the navigation-back transition type when the

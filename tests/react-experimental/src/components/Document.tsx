@@ -86,6 +86,9 @@ export function Document({ children }: { children: ReactNode }) {
           <Link to={href("/counter")} data-testid="nav-counter">
             Counter
           </Link>
+          <Link to={href("/refresh")} data-testid="nav-refresh">
+            Refresh
+          </Link>
           <Link to={href("/static")} data-testid="nav-static">
             Static
           </Link>
