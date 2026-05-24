@@ -107,6 +107,19 @@ export const keyRefreshPatterns = urls(({ path, layout }) => [
   path("/key-refresh-group", () => <KeyRefreshGroupPage />, {
     name: "keyRefreshGroup",
   }),
+  // Regression: a grouped no-key reader that loaded itself must still update on
+  // a group refresh (load() and the group refresh must share the same bucket).
+  path(
+    "/key-refresh-group-load",
+    () => (
+      <div data-testid="key-refresh-group-load-page">
+        <h1>Key Refresh — Group + own load()</h1>
+        <KeyRefreshWidget id="GL" refreshGroup="g2" withButton />
+        <KeyRefreshGroupButton id="g2" group="g2" />
+      </div>
+    ),
+    { name: "keyRefreshGroupLoad" },
+  ),
   // Widened key semantics: a keyed parameterized GET shares within the key.
   path(
     "/key-refresh-params",

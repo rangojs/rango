@@ -413,8 +413,6 @@ function useLoaderInternal<T>(
   loaderIdRef.current = loaderId;
   const bucketKeyRef = useRef(bucketKey);
   bucketKeyRef.current = bucketKey;
-  const keyRef = useRef(key);
-  keyRef.current = key;
   const dataRef = useRef(data);
   dataRef.current = data;
   const hasContextDataRef = useRef(hasContextData);
@@ -432,18 +430,21 @@ function useLoaderInternal<T>(
       }
 
       const bucket = bucketKeyRef.current;
-      const hasKey = keyRef.current !== undefined;
+      // A dedicated bucket means this read owns a bucket distinct from the bare
+      // loader id — either an explicit `key` (`$$id::key`) or a refreshGroup's
+      // private bucket (`$$id::<private>`).
+      const hasDedicatedBucket = bucket !== id;
 
       // Deciding shared vs local:
-      //   - With an explicit key, every shareable GET (params allowed) writes
-      //     to the keyed bucket, with or without route context — the key is an
-      //     explicit opt-in to sharing.
-      //   - Without a key, sharing is only correct when the loader is actually
-      //     registered on the route and the call is a plain refetch — otherwise
-      //     two unrelated components calling load() on the same fetchable loader
-      //     would start overwriting each other's local view through the store.
+      //   - With a dedicated bucket, every shareable GET (params allowed) writes
+      //     to that bucket — the key/group is an explicit opt-in to sharing, and
+      //     a direct load() must land in the same bucket a group refresh uses.
+      //   - On the bare loader-id bucket, sharing is only correct when the
+      //     loader is registered on the route and the call is a plain refetch —
+      //     otherwise two unrelated components calling load() on the same
+      //     fetchable loader would overwrite each other's local view.
       // Mutations (non-GET / body) stay local in both cases.
-      const shared = hasKey
+      const shared = hasDedicatedBucket
         ? isShareableGet(loadOptions)
         : isPlainRefetch(loadOptions) && hasContextDataRef.current;
       let sharedRequestId = -1;

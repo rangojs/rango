@@ -234,6 +234,28 @@ function describeKeyRefresh(label: string, mode: "dev" | "build") {
       );
     });
 
+    test("grouped no-key reader: a group refresh updates a value it loaded itself", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/key-refresh-group-load"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "key-refresh-GL-value")).toHaveText("—");
+
+      // A direct load() on a grouped no-key reader must land in its (private)
+      // bucket, not local state...
+      await testId(page, "key-refresh-GL-load-btn").click();
+      await expect(testId(page, "key-refresh-GL-value")).not.toHaveText("—");
+      const v1 = (await testId(page, "key-refresh-GL-value").textContent())!;
+
+      // ...so a subsequent group refresh moves it. (Regression: local state
+      // used to shadow the bucket, making the group refresh invisible.)
+      await testId(page, "key-refresh-group-btn-g2").click();
+      await expect(testId(page, "key-refresh-GL-value")).not.toHaveText(v1);
+    });
+
     test("keyed parameterized GET shares within the key", async ({ page }) => {
       using _ = expectNoPageError(page);
 
