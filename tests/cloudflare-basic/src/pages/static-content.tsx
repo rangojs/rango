@@ -5,6 +5,10 @@ import { Breadcrumbs } from "../handles/breadcrumbs.js";
 // resolve.alias. Reaching it through a build-time Static handler asserts the
 // cloudflare discovery runner honors third-party resolvers (issue #500).
 import { PARITY_MARKER } from "@parity/marker.js";
+// Resolved ONLY by Vite 8's native resolve.tsconfigPaths (tsconfig "@native/*"),
+// with no resolve.alias and no resolveId plugin. Reaching it through the same
+// Static handler asserts the discovery runner forwards the native flag too.
+import { NATIVE_PATHS_MARKER } from "@native/marker.js";
 
 interface NavItem {
   label: string;
@@ -100,6 +104,7 @@ export const DocsIndexPage = Static(async (ctx) => {
         time.
       </p>
       <p data-testid="static-index-parity">{PARITY_MARKER}</p>
+      <p data-testid="static-index-native">{NATIVE_PATHS_MARKER}</p>
       <p
         data-testid="static-index-build-time"
         style={{ fontSize: "0.75rem", color: "#999" }}

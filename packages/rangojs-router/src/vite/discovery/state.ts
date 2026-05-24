@@ -46,10 +46,10 @@ export interface DiscoveryState {
   isBuildMode: boolean;
   userResolveAlias: any;
   /**
-   * Data-only slice of the user's resolved config (resolve.*, define, esbuild)
-   * mirrored into the discovery temp server so it resolves and transforms
-   * modules the same way the real environment does. See
-   * `utils/forward-user-plugins.ts`.
+   * Data-only slice of the user's resolved config (resolve.* incl. native
+   * tsconfigPaths, define, oxc) mirrored into the discovery temp server so it
+   * resolves and transforms modules the same way the real environment does.
+   * See `utils/forward-user-plugins.ts`.
    */
   userRunnerConfig:
     | import("../utils/forward-user-plugins.js").ForwardedRunnerConfig

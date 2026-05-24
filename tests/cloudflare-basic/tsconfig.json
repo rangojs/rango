@@ -12,7 +12,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "paths": {
-      "@parity/*": ["./src/parity/*"]
+      "@native/*": ["./src/native-paths/*"]
     },
     "types": [
       "@cloudflare/workers-types",

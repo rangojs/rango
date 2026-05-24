@@ -37,6 +37,13 @@ export default defineConfig({
     // Bind to all interfaces for CI compatibility (fixes IPv6/IPv4 issues in Docker/Linux)
     host: process.env.CI ? "0.0.0.0" : undefined,
   },
+  resolve: {
+    // Vite 8 native tsconfig paths resolution. The "@native/*" mapping in
+    // tsconfig.json is resolved by this flag alone (no resolve.alias, no
+    // resolveId plugin), exercising that the cloudflare discovery runner
+    // forwards the native tsconfigPaths flag into its temp server.
+    tsconfigPaths: true,
+  },
   plugins: [
     parityAliasPlugin(),
     react(),

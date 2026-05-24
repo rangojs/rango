@@ -141,9 +141,8 @@ async function createTempRscServer(
   const resolveConfig = runnerConfig?.resolve ?? {
     alias: state.userResolveAlias,
   };
-  const esbuildConfig = runnerConfig?.esbuild ?? {
-    jsx: "automatic",
-    jsxImportSource: "react",
+  const oxcConfig = runnerConfig?.oxc ?? {
+    jsx: { runtime: "automatic", importSource: "react" },
   };
   return createViteServer({
     root: state.projectRoot,
@@ -153,7 +152,7 @@ async function createTempRscServer(
     logLevel: "silent",
     resolve: resolveConfig,
     ...(runnerConfig?.define ? { define: runnerConfig.define } : {}),
-    esbuild: esbuildConfig as any,
+    oxc: oxcConfig as any,
     ...(options.cacheDir && { cacheDir: options.cacheDir }),
     plugins: [
       rsc({
@@ -330,12 +329,14 @@ export function createRouterDiscoveryPlugin(
       viteMode = config.mode;
       // Capture user's resolve aliases for the temp server
       s.userResolveAlias = config.resolve.alias;
-      // Capture the data-only resolution config (resolve.*, define, esbuild)
-      // and the user's resolution plugins (resolveId/load) so the discovery
-      // temp server resolves modules the same way the real environment does.
-      // Without this, third-party resolvers (e.g. vite-tsconfig-paths) are
-      // absent during discovery/prerender/static rendering even though they
-      // apply at request time. See utils/forward-user-plugins.ts.
+      // Capture the data-only resolution config (resolve.*, define, oxc) and
+      // the user's resolution plugins (resolveId/load) so the discovery temp
+      // server resolves modules the same way the real environment does.
+      // Without this, both flavors of user resolution are absent during
+      // discovery/prerender/static rendering even though they apply at request
+      // time: third-party resolvers (e.g. vite-tsconfig-paths, forwarded as
+      // plugins) and Vite 8's native resolve.tsconfigPaths (forwarded in the
+      // data slice). See utils/forward-user-plugins.ts.
       s.userRunnerConfig = pickForwardedRunnerConfig(config);
       s.userResolvePlugins = selectForwardableResolvePlugins(
         config.plugins as any,
