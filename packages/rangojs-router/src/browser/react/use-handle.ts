@@ -32,27 +32,35 @@ import { shallowEqual } from "./shallow-equal.js";
  * const lastCrumb = useHandle(Breadcrumbs, (data) => data.at(-1));
  * ```
  */
-export function useHandle<T, A>(handle: Handle<T, A>): A;
+export function useHandle<T, A>(handle: Handle<T, A>): Rango.FlightSerialize<A>;
 export function useHandle<T, A, S>(
   handle: Handle<T, A>,
-  selector: (data: A) => S,
+  selector: (data: Rango.FlightSerialize<A>) => S,
 ): S;
 export function useHandle<T, A, S>(
   handle: Handle<T, A>,
-  selector?: (data: A) => S,
-): A | S {
+  selector?: (data: Rango.FlightSerialize<A>) => S,
+): Rango.FlightSerialize<A> | S {
   const ctx = useContext(NavigationStoreContext);
 
   // Initial state from context event controller, or empty fallback without provider.
-  const [value, setValue] = useState<A | S>(() => {
+  const [value, setValue] = useState<Rango.FlightSerialize<A> | S>(() => {
     if (!ctx) {
-      const collected = collectHandleData(handle, {}, []);
+      const collected = collectHandleData(
+        handle,
+        {},
+        [],
+      ) as Rango.FlightSerialize<A>;
       return selector ? selector(collected) : collected;
     }
 
     // On client, use event controller state
     const state = ctx.eventController.getHandleState();
-    const collected = collectHandleData(handle, state.data, state.segmentOrder);
+    const collected = collectHandleData(
+      handle,
+      state.data,
+      state.segmentOrder,
+    ) as Rango.FlightSerialize<A>;
     return selector ? selector(collected) : collected;
   });
   const [optimisticValue, setOptimisticValue] = useOptimistic(value);
@@ -76,7 +84,7 @@ export function useHandle<T, A, S>(
       handle,
       currentHandleState.data,
       currentHandleState.segmentOrder,
-    );
+    ) as Rango.FlightSerialize<A>;
     const currentValue = selectorRef.current
       ? selectorRef.current(currentCollected)
       : currentCollected;
@@ -93,7 +101,7 @@ export function useHandle<T, A, S>(
         handle,
         state.data,
         state.segmentOrder,
-      );
+      ) as Rango.FlightSerialize<A>;
       const nextValue = selectorRef.current
         ? selectorRef.current(collected)
         : collected;

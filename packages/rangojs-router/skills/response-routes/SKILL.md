@@ -236,13 +236,14 @@ type ProductsData = RouteResponse<typeof apiPatterns, "products">;
 // = ResponseEnvelope<{ id: string; name: string; price: number }[]>
 ```
 
-### PathResponse (global lookup by URL pattern)
+### Rango.PathResponse (global lookup by URL pattern or concrete path)
 
-`PathResponse` reads from `RegisteredRoutes`, which carries response payload
-metadata. That surface is **not** auto-wired — without the augmentation below,
-`PathResponse` falls back to the generated path/search map, or to a permissive
-map when nothing is generated. Either way, it has no response payload metadata,
-so response routes resolve to `ResponseEnvelope<never>`:
+`Rango.PathResponse` is ambient (no import) and reads from `RegisteredRoutes`,
+which carries response payload metadata. That surface is **not** auto-wired —
+without the augmentation below, `Rango.PathResponse` falls back to the generated
+path/search map, or to a permissive map when nothing is generated. Either way, it
+has no response payload metadata, so response routes resolve to
+`ResponseEnvelope<never>`:
 
 ```typescript
 // router.tsx
@@ -255,19 +256,43 @@ declare global {
 }
 ```
 
-With that in place, look up the response type by URL pattern:
+With that in place, look up the response type by URL pattern (ambient, no import):
 
 ```typescript
-import type { PathResponse } from "@rangojs/router/client";
-
 // After include("/api", apiPatterns) in main urls
-type Health = PathResponse<"/api/health">;
+type Health = Rango.PathResponse<"/api/health">;
 // = ResponseEnvelope<{ status: string; timestamp: number }>
 
 // RSC routes return ResponseEnvelope<never>
-type Home = PathResponse<"/">;
+type Home = Rango.PathResponse<"/">;
 // = ResponseEnvelope<never>
 ```
+
+`Rango.PathResponse` also accepts a **concrete path**, so it types a `fetch`
+wrapper whose response is inferred from the path you pass:
+
+```typescript
+import { href } from "@rangojs/router/client";
+
+async function get<T extends Rango.Path>(
+  path: T,
+): Promise<Rango.PathResponse<T>> {
+  return fetch(href(path)).then((r) => r.json());
+}
+
+const product = await get("/api/products/42"); // ResponseEnvelope<Product>
+```
+
+Pattern keys (`/:id`) match exactly; a concrete path under a _nested_ dynamic
+route can match several patterns and union their responses.
+
+`Rango.PathResponse` reports the JSON **wire** shape, not the handler's raw
+return: `path.json()` serializes with `JSON.stringify`, so a handler returning
+`{ createdAt: Date }` resolves to `ResponseEnvelope<{ createdAt: string }>`. This
+runs through the ambient `Rango.JsonSerialize<T>` transform (`Date -> string`,
+honors `toJSON()`, drops functions/`undefined`, `bigint -> never`). The
+`RouteResponse` surface below applies the same `Rango.JsonSerialize` transform, so
+both response lookups report the identical wire shape.
 
 For local/scoped response typing without global augmentation, prefer
 `RouteResponse<typeof patterns, "routeName">` (see the section above) — it reads
@@ -383,16 +408,16 @@ export const urlpatterns = urls(({ path, include }) => [
 
 ```typescript
 import type { RouteResponse } from "@rangojs/router";
-import type { PathResponse, ParamsFor } from "@rangojs/router/client";
+import type { ParamsFor } from "@rangojs/router/client";
 
 // Scoped (before mount) -- use the module directly, no global wiring needed
 type Stats = RouteResponse<typeof blogApiPatterns, "stats">;
 // = ResponseEnvelope<{ views: number; visitors: number }>
 
 // After mounting -- names get prefixed.
-// PathResponse needs `RegisteredRoutes extends typeof router.routeMap` (see above),
+// Rango.PathResponse needs `RegisteredRoutes extends typeof router.routeMap` (see above),
 // otherwise it resolves to ResponseEnvelope<never>.
-type BlogStats = PathResponse<"/blog/api/stats">;
+type BlogStats = Rango.PathResponse<"/blog/api/stats">;
 // = ResponseEnvelope<{ views: number; visitors: number }>
 
 // Params work through nested includes

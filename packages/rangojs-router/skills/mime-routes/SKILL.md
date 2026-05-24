@@ -111,13 +111,13 @@ picks among the response-type candidates directly.
 ## Type Safety For Negotiated Paths
 
 `router.named-routes.gen.ts` validates route names, params, search, `href()`, and
-`ValidPaths`, but it does not carry response payload metadata. For MIME or
+the `Rango.Path` type, but it does not carry response payload metadata. For MIME or
 response payload types, use one of these surfaces:
 
 - `RouteResponse<typeof patterns, "routeName">` for a specific response variant
   by route name. This is the clearest option when several MIME variants share
   one URL pattern.
-- `PathResponse<"/products/:id">` for global URL-pattern lookup after the app
+- `Rango.PathResponse<"/products/:id">` (ambient, no import) for global lookup by URL pattern or concrete path after the app
   registers `typeof router.routeMap`:
 
 ```typescript

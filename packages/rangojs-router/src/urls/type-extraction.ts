@@ -1,4 +1,5 @@
 import type { ExtractParams } from "../types.js";
+import type { JsonSerialize } from "../serialize.js";
 import type {
   TypedRouteItem,
   TypedIncludeItem,
@@ -362,11 +363,15 @@ export type ResponseEnvelope<T> =
  * type HealthData = RouteResponse<typeof apiPatterns, "health">;
  * // ResponseEnvelope<{ status: string; timestamp: number }>
  * ```
+ *
+ * The payload is the JSON wire shape (via `Rango.JsonSerialize`), matching
+ * `Rango.PathResponse` and what `fetch().then(r => r.json())` actually yields —
+ * e.g. a `Date` field resolves as `string`.
  */
 export type RouteResponse<TPatterns, TName extends string> = TPatterns extends {
   readonly _responses?: infer R;
 }
   ? TName extends keyof R
-    ? ResponseEnvelope<Exclude<R[TName], Response>>
+    ? ResponseEnvelope<JsonSerialize<Exclude<R[TName], Response>>>
     : never
   : never;

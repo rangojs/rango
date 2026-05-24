@@ -221,8 +221,8 @@ export {
   type LocationStateOptions,
 } from "./browser/react/location-state-shared.js";
 
-// Path-based response type lookup from RegisteredRoutes
-export type { PathResponse } from "./href-client.js";
+// Path and response types are ambient on the `Rango` namespace (`Rango.Path`,
+// `Rango.PathResponse`, declared in href-client.ts) — no import needed.
 
 // Telemetry sink
 export { createConsoleSink } from "./router/telemetry.js";

@@ -1014,7 +1014,7 @@ Quick rule of thumb:
 
 - `GeneratedRouteMap` (auto-generated) — use for server-side named-route typing: `Handler<"name">`, `ctx.reverse()`, `Prerender<"name">`
 - `typeof router.routeMap` — use when you need route entries with response metadata
-- `RegisteredRoutes` (manual augmentation) — use to expose `typeof router.routeMap` globally for `href()`, `PathResponse`, `ValidPaths`, and other path/response-aware utilities
+- `RegisteredRoutes` (manual augmentation) — use to expose `typeof router.routeMap` globally for `href()`, `Rango.Path`, `Rango.PathResponse`, and other path/response-aware utilities
 
 For extracted reusable loaders or middleware, prefer global dotted names on
 `ctx.reverse()` by default. If you want type-safe local names for a specific

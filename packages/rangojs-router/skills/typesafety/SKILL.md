@@ -38,7 +38,7 @@ available globally.
   instance, including response-route metadata such as `{ path, response }`.
 - `RegisteredRoutes` — manual global hook for exposing `typeof router.routeMap`
   to global utilities that need the exact router-builder map, especially
-  `PathResponse`.
+  `Rango.PathResponse`.
 
 ### Generated Route Type Surfaces
 
@@ -51,13 +51,13 @@ pick the one that matches what you need to type:
 | `routes`            | per-module `*.gen.ts` (`rango generate`) | local  | local names, params, search              | the global app map                                                                               |
 | `RegisteredRoutes`  | manual `extends typeof router.routeMap`  | global | paths, params, **response payloads**     | the `Handler`/`Prerender` default (those read `GeneratedRouteMap` to avoid a `router.tsx` cycle) |
 
-Key consequence: `href()` and `ValidPaths` are typed from whichever map is
-present — they prefer `RegisteredRoutes` when you wire it, otherwise fall back to
+Key consequence: `href()` and the ambient `Rango.Path` type are typed from
+whichever map is present — they prefer `RegisteredRoutes` when you wire it, otherwise fall back to
 the auto-generated `GeneratedRouteMap`, so **`rango generate` alone gives you
 path-checked `href()`** with no manual augmentation. Response and MIME payload
 inference is the exception: it comes only from `typeof router.routeMap` (via
 `RegisteredRoutes`), because `GeneratedRouteMap` carries paths + search but no
-payloads — so `PathResponse` resolves to `ResponseEnvelope<never>` until you wire
+payloads — so `Rango.PathResponse` resolves to `ResponseEnvelope<never>` until you wire
 `RegisteredRoutes`.
 
 Recommended setup:
@@ -121,7 +121,7 @@ There are two runtime/type surfaces with similar names:
   App code should not pass or import `$$routeNames` directly.
 - `router.routeMap` is the public router instance property for type extraction.
   Use `typeof router.routeMap` when augmenting `Rango.RegisteredRoutes` for
-  global response payload helpers such as `PathResponse`.
+  global response payload helpers such as `Rango.PathResponse`.
 
 Do not document or use a public `router.routeNames` API unless one is
 intentionally added. Today, the public extraction surface is `router.routeMap`;
@@ -196,10 +196,10 @@ function ShopNav() {
 }
 ```
 
-`href()` and `ValidPaths` read from `RegisteredRoutes` when you augment it,
-otherwise from the auto-generated `GeneratedRouteMap` — so `rango generate` alone
-type-checks `href()` paths with no manual augmentation. The augmentation below is
-only needed for **`PathResponse`** (response-payload inference), which
+`href()` and the `Rango.Path` type read from `RegisteredRoutes` when you augment
+it, otherwise from the auto-generated `GeneratedRouteMap` — so `rango generate`
+alone type-checks `href()` paths with no manual augmentation. The augmentation
+below is only needed for **`Rango.PathResponse`** (response-payload inference), which
 `GeneratedRouteMap` cannot provide:
 
 ```typescript
@@ -209,6 +209,93 @@ declare global {
   }
 }
 ```
+
+For wrapper helpers, type the path parameter as `Rango.Path`. It is ambient (no
+import) and shares `href()`'s compile-time path checking, so a wrapper stays in
+sync with your routes automatically:
+
+```typescript
+import { href } from "@rangojs/router/client";
+
+export const appHref = (path: Rango.Path): string => href(path);
+```
+
+For response-route payloads, `Rango.PathResponse<T>` is the ambient lookup. It
+accepts a route _pattern_ **or** a concrete path, so it also serves as the return
+type of a typed `fetch` wrapper. It only resolves once `RegisteredRoutes` carries
+response metadata:
+
+```typescript
+import { href } from "@rangojs/router/client";
+
+type Product = Rango.PathResponse<"/api/products/:id">; // by pattern
+type Same = Rango.PathResponse<"/api/products/42">; // by concrete path
+
+// Response inferred from the concrete path passed in:
+async function get<T extends Rango.Path>(
+  path: T,
+): Promise<Rango.PathResponse<T>> {
+  return fetch(href(path)).then((r) => r.json());
+}
+const product = await get("/api/products/42"); // ResponseEnvelope<Product>
+```
+
+Pattern keys (`/:id`) match exactly; a concrete path under a _nested_ dynamic
+route can match several patterns and union their responses.
+
+`Rango.PathResponse` describes the JSON **wire** shape, not the handler's raw
+return. A `path.json()` handler returning `{ createdAt: Date }` resolves here to
+`ResponseEnvelope<{ createdAt: string }>`, matching what `r.json()` yields. This
+is applied via the ambient `Rango.JsonSerialize<T>` transform (`Date -> string`,
+honors `toJSON()`, drops functions/`undefined`, `bigint -> never`). A separate
+`Rango.FlightSerialize<T>` models the higher-fidelity RSC Flight boundary
+(loaders / RSC props, where `Date` is preserved) — do **not** use it for
+`path.json()`.
+
+### Overriding serialization globally
+
+For your own types, the zero-config way to control the JSON wire shape is a
+`toJSON()` method — `Rango.JsonSerialize` honors it, and it matches the runtime
+exactly (`JSON.stringify` calls `toJSON()`):
+
+```typescript
+class Money {
+  constructor(private cents: number) {}
+  toJSON(): number {
+    return this.cents;
+  }
+}
+// Rango.JsonSerialize<Money> is number; Rango.PathResponse reflects it.
+```
+
+To override a transform for types you **don't** own (or for the Flight boundary,
+which has no `toJSON()`), augment its override slot. Because `Rango.JsonSerialize`
+/ `Rango.FlightSerialize` are type _aliases_ (TS can't merge those), you provide a
+single member that is your **complete** transform, delegating to the built-in for
+the cases you don't change:
+
+```typescript
+declare global {
+  namespace Rango {
+    interface JsonSerializeOverride<T> {
+      app: T extends Decimal ? string : Rango.JsonSerializeBuiltin<T>;
+    }
+    interface FlightSerializeOverride<T> {
+      app: T extends Money ? number : Rango.FlightSerializeBuiltin<T>;
+    }
+  }
+}
+// Rango.JsonSerialize<Decimal> -> string; Rango.FlightSerialize<Money> -> number;
+// everything else stays on the built-in, recursively (nested fields too).
+```
+
+Rules: provide **exactly one** member (the slot is read as
+`Override<T>[keyof Override<T>]`, so multiple members union and conflict).
+Overrides win over `toJSON()` and apply at every nesting level. Caveat for JSON:
+the `path.json()` runtime is plain `JSON.stringify`, which only honors `toJSON()`,
+so a `JsonSerializeOverride` that disagrees with what the runtime emits will lie —
+prefer `toJSON()` for your own types and use the slot only for types you can't
+modify.
 
 See `/links` for full URL generation guide.
 
@@ -814,9 +901,9 @@ export default router;
 // 4. Run `npx rango generate src/router.tsx` to generate
 //    router.named-routes.gen.ts (auto-registers GeneratedRouteMap globally).
 //    No manual RegisteredRoutes declaration is needed for named-route handlers,
-//    ctx.reverse, prerender, href(), or ValidPaths. Add `RegisteredRoutes
+//    ctx.reverse, prerender, href(), or Rango.Path. Add `RegisteredRoutes
 //    extends typeof router.routeMap` when global response payload helpers such
-//    as PathResponse need the richer router.routeMap metadata.
+//    as Rango.PathResponse need the richer router.routeMap metadata.
 
 // 5. loaders/*.ts - Type-safe loaders
 export const ProductLoader = createLoader(async (ctx) => {

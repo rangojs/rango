@@ -69,12 +69,12 @@ declare global {
 export const reverse = router.reverse;
 
 // ---------- Type-level verification ----------
-// These assertions verify PathResponse resolves correctly from the single RegisteredRoutes registry.
+// These assertions verify Rango.PathResponse resolves correctly from the single RegisteredRoutes registry.
 // They produce compile errors if the types regress — do not remove.
-import type { PathResponse, ValidPaths } from "@rangojs/router/client";
+// Rango.PathResponse is ambient (no import).
 
-// PathResponse wraps in ResponseEnvelope<T> = { data: T } | { error: ... }
-type _HealthResponse = PathResponse<"/api/health">;
+// Rango.PathResponse wraps in ResponseEnvelope<T> = { data: T } | { error: ... }
+type _HealthResponse = Rango.PathResponse<"/api/health">;
 type _AssertHealthData = _HealthResponse extends
   | { data: { status: string; timestamp: number } }
   | { error: unknown }
@@ -82,7 +82,7 @@ type _AssertHealthData = _HealthResponse extends
   : never;
 const _checkHealth: _AssertHealthData = true;
 
-type _ProductsResponse = PathResponse<"/api/products">;
+type _ProductsResponse = Rango.PathResponse<"/api/products">;
 type _AssertProductsData = _ProductsResponse extends
   | { data: Array<{ id: string; name: string; price: number }> }
   | { error: unknown }
@@ -90,7 +90,7 @@ type _AssertProductsData = _ProductsResponse extends
   : never;
 const _checkProducts: _AssertProductsData = true;
 
-type _ProductDetailResponse = PathResponse<"/api/products/:id">;
+type _ProductDetailResponse = Rango.PathResponse<"/api/products/:id">;
 type _AssertProductDetailData = _ProductDetailResponse extends
   | { data: { id: string; name: string; price: number; description: string } }
   | { error: unknown }
@@ -98,6 +98,15 @@ type _AssertProductDetailData = _ProductDetailResponse extends
   : never;
 const _checkProductDetail: _AssertProductDetailData = true;
 
+// Unified lookup: a concrete path resolves the same payload as its pattern.
+type _ProductByConcretePath = Rango.PathResponse<"/api/products/42">;
+type _AssertProductByPath = _ProductByConcretePath extends
+  | { data: { id: string; name: string; price: number; description: string } }
+  | { error: unknown }
+  ? true
+  : never;
+const _checkProductByPath: _AssertProductByPath = true;
+
 // Response routes are also valid paths for href()
-type _AssertApiHealthIsValid = "/api/health" extends ValidPaths ? true : never;
+type _AssertApiHealthIsValid = "/api/health" extends Rango.Path ? true : never;
 const _checkValidPath: _AssertApiHealthIsValid = true;

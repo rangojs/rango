@@ -501,7 +501,7 @@ function useLoaderInternal<T>(
 export function useLoader<T>(
   loader: LoaderDefinition<T>,
   options?: UseLoaderOptions,
-): UseLoaderResult<T> {
+): UseLoaderResult<Rango.FlightSerialize<T>> {
   const result = useLoaderInternal(loader, options);
 
   // Strict mode: throw if data is not in context
@@ -513,7 +513,7 @@ export function useLoader<T>(
     );
   }
 
-  return result as UseLoaderResult<T>;
+  return result as UseLoaderResult<Rango.FlightSerialize<T>>;
 }
 
 /**
@@ -565,6 +565,8 @@ export function useLoader<T>(
 export function useFetchLoader<T>(
   loader: LoaderDefinition<T>,
   options?: UseLoaderOptions,
-): UseFetchLoaderResult<T> {
-  return useLoaderInternal(loader, options);
+): UseFetchLoaderResult<Rango.FlightSerialize<T>> {
+  return useLoaderInternal(loader, options) as UseFetchLoaderResult<
+    Rango.FlightSerialize<T>
+  >;
 }

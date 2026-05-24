@@ -1,32 +1,30 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { href, type PathResponse } from "@rangojs/router/client";
+import { href } from "@rangojs/router/client";
 
 export function ApiDataDemo() {
-  const [health, setHealth] = useState<PathResponse<"/api/health"> | null>(
-    null,
-  );
+  const [health, setHealth] =
+    useState<Rango.PathResponse<"/api/health"> | null>(null);
   const [products, setProducts] =
-    useState<PathResponse<"/api/products"> | null>(null);
+    useState<Rango.PathResponse<"/api/products"> | null>(null);
   const [product, setProduct] =
-    useState<PathResponse<"/api/products/:id"> | null>(null);
+    useState<Rango.PathResponse<"/api/products/:id"> | null>(null);
 
   useEffect(() => {
     async function load() {
-      const healthResult: PathResponse<"/api/health"> = await fetch(
+      const healthResult: Rango.PathResponse<"/api/health"> = await fetch(
         href("/api/health"),
       ).then((r) => r.json());
       setHealth(healthResult);
 
-      const productsResult: PathResponse<"/api/products"> = await fetch(
+      const productsResult: Rango.PathResponse<"/api/products"> = await fetch(
         href("/api/products"),
       ).then((r) => r.json());
       setProducts(productsResult);
 
-      const productResult: PathResponse<"/api/products/:id"> = await fetch(
-        href("/api/products/1"),
-      ).then((r) => r.json());
+      const productResult: Rango.PathResponse<"/api/products/:id"> =
+        await fetch(href("/api/products/1")).then((r) => r.json());
       setProduct(productResult);
     }
     load();

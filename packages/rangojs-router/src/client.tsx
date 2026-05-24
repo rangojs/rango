@@ -409,13 +409,10 @@ export {
   type LocationStateOptions,
 } from "./browser/react/location-state.js";
 
-// Type-safe href for client-side path validation
-export {
-  href,
-  type ValidPaths,
-  type PatternToPath,
-  type PathResponse,
-} from "./href-client.js";
+// Type-safe href for client-side path validation. The path and response types
+// are ambient as `Rango.Path` / `Rango.PathResponse` (declared in
+// href-client.ts) — no import needed.
+export { href, type PatternToPath } from "./href-client.js";
 
 // Response envelope types for consuming JSON response routes
 export type { ResponseEnvelope, ResponseError } from "./urls.js";

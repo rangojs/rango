@@ -98,13 +98,24 @@ describe("href()", () => {
     });
   });
 
-  describe("ValidPaths fallback", () => {
-    // When no routes are registered, ValidPaths falls back to `/${string}`
-    // This is tested implicitly by the fact that href() accepts any path starting with /
+  describe("path-type fallback", () => {
+    // When no routes are registered, the path union falls back to `/${string}`.
+    // Tested implicitly: href() accepts any path starting with /.
     it("accepts any path when no routes registered", () => {
       // href() is callable with any /-prefixed string
       const result: string = href("/anything/at/all");
       expect(result).toBe("/anything/at/all");
+    });
+  });
+
+  describe("Rango.Path wrapper type", () => {
+    it("lets wrapper functions share href's input type ambiently", () => {
+      // Rango.Path is available with no import — it is the public alias of the
+      // internal ValidPaths union and shares href()'s validation.
+      const wrappedHref = (path: Rango.Path) => href(path);
+
+      expect(wrappedHref("/wrapped")).toBe("/wrapped");
+      expectTypeOf<Rango.Path>().toEqualTypeOf<ValidPaths>();
     });
   });
 });

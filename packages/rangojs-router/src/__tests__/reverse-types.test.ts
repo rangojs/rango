@@ -482,6 +482,19 @@ describe("RouteResponse (scoped, from UrlPatterns)", () => {
       ResponseEnvelope<{ id: string; name: string; price: number }>
     >();
   });
+
+  it("should serialize the payload to the JSON wire shape (parity with PathResponse)", () => {
+    // RouteResponse applies Rango.JsonSerialize too, so Date -> string and a
+    // bigint payload collapses to never — the two response surfaces agree.
+    type Patterns = { _responses?: { event: { at: Date; title: string } } };
+    expectTypeOf<RouteResponse<Patterns, "event">>().toEqualTypeOf<
+      ResponseEnvelope<{ at: string; title: string }>
+    >();
+    type BigPatterns = { _responses?: { acct: { id: bigint } } };
+    expectTypeOf<RouteResponse<BigPatterns, "acct">>().toEqualTypeOf<
+      ResponseEnvelope<never>
+    >();
+  });
 });
 
 // --- Full chain: path.json() → MergeRoutesWithResponses → routeMap → PathResponse ---
@@ -545,6 +558,68 @@ describe("PathResponse (full chain through routeMap)", () => {
     type Item = PathResponse<"/items/:id", FullRoutes>;
     expectTypeOf<Item>().toEqualTypeOf<
       ResponseEnvelope<{ id: string; name: string; price: number }>
+    >();
+  });
+
+  it("should resolve a concrete dynamic path the same as its pattern", () => {
+    // Unified lookup: a filled-in URL resolves identically to its pattern.
+    type ByPattern = PathResponse<"/items/:id", FullRoutes>;
+    type ByPath = PathResponse<"/items/123", FullRoutes>;
+    expectTypeOf<ByPath>().toEqualTypeOf<ByPattern>();
+    expectTypeOf<ByPath>().toEqualTypeOf<
+      ResponseEnvelope<{ id: string; name: string; price: number }>
+    >();
+  });
+
+  it("should strip query/hash suffixes when matching a concrete path", () => {
+    type WithQuery = PathResponse<"/health?ts=1", FullRoutes>;
+    expectTypeOf<WithQuery>().toEqualTypeOf<
+      ResponseEnvelope<{ status: "ok"; timestamp: number }>
+    >();
+    type WithHash = PathResponse<"/health#top", FullRoutes>;
+    expectTypeOf<WithHash>().toEqualTypeOf<
+      ResponseEnvelope<{ status: "ok"; timestamp: number }>
+    >();
+    // The suffix is stripped BEFORE the pattern discriminator, so a `/:` that
+    // appears only inside the query must not be treated as a pattern.
+    type ColonInQuery = PathResponse<"/health?next=/:id", FullRoutes>;
+    expectTypeOf<ColonInQuery>().toEqualTypeOf<
+      ResponseEnvelope<{ status: "ok"; timestamp: number }>
+    >();
+    // `#` before the first `?` (query is part of the fragment) strips fully.
+    type HashThenQuery = PathResponse<"/health#top?x=1", FullRoutes>;
+    expectTypeOf<HashThenQuery>().toEqualTypeOf<
+      ResponseEnvelope<{ status: "ok"; timestamp: number }>
+    >();
+  });
+
+  it("should collapse a bigint response payload to never (JSON throws)", () => {
+    type BigRoutes = {
+      acct: { path: "/accounts/:id"; response: { id: bigint } };
+    };
+    expectTypeOf<PathResponse<"/accounts/:id", BigRoutes>>().toEqualTypeOf<
+      ResponseEnvelope<never>
+    >();
+    expectTypeOf<PathResponse<"/accounts/7", BigRoutes>>().toEqualTypeOf<
+      ResponseEnvelope<never>
+    >();
+  });
+
+  it("should serialize payload fields to the JSON wire shape (Date -> string)", () => {
+    // The handler returns a Date; the wire value (JSON.stringify) is a string.
+    type WireRoutes = {
+      event: {
+        path: "/events/:id";
+        response: { at: Date; title: string; tags: string[] };
+      };
+    };
+    // Pattern key
+    expectTypeOf<PathResponse<"/events/:id", WireRoutes>>().toEqualTypeOf<
+      ResponseEnvelope<{ at: string; title: string; tags: string[] }>
+    >();
+    // Concrete-path key resolves the same serialized shape
+    expectTypeOf<PathResponse<"/events/2026", WireRoutes>>().toEqualTypeOf<
+      ResponseEnvelope<{ at: string; title: string; tags: string[] }>
     >();
   });
 
