@@ -1,13 +1,24 @@
 "use client";
 
-import { ViewTransition, useEffect, useState, type ReactNode } from "react";
+import {
+  ViewTransition,
+  Suspense,
+  use,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   useLoader,
   useFetchLoader,
   useRefreshLoaders,
   type LoaderDefinition,
 } from "@rangojs/router/client";
-import { RevenueLoader, type Metric } from "../loaders/metrics.js";
+import {
+  RevenueLoader,
+  ProductLoader,
+  type Metric,
+} from "../loaders/metrics.js";
 
 const card: React.CSSProperties = {
   border: "1px solid #e5e7eb",
@@ -158,6 +169,88 @@ export function VtGroupCard({
       calls={data?.calls}
       isLoading={isLoading}
     />
+  );
+}
+
+/** Reads the streamed `details` promise inside a nested Suspense. This region
+ * resolves asynchronously, so it is NOT wrapped in its own ViewTransition — an
+ * async commit landing inside the keyed transition would skip/abort the
+ * transition. It reconciles in place; the keyed cross-fade is shown on the
+ * synchronous rev/group cards instead. On refresh it re-streams without flashing
+ * the nested skeleton (the hook commits in startTransition). */
+function VtProductDetails({
+  id,
+  details,
+}: {
+  id: string;
+  details: Promise<{ rating: string; stock: string }>;
+}) {
+  const d = use(details);
+  return (
+    <div
+      data-testid={`vt-product-${id}-details`}
+      style={{ fontSize: 15, color: "#1f883d", fontWeight: 600, height: 24 }}
+    >
+      {d.rating} · {d.stock}
+    </div>
+  );
+}
+
+/** Streaming product card — keyed loader whose header renders immediately and
+ * whose nested `details` promise streams into a nested Suspense. Two cards share
+ * key="product"; a load() from one re-streams both from a single fetch. */
+export function VtProductCard({
+  id,
+  withButton = false,
+}: {
+  id: string;
+  withButton?: boolean;
+}) {
+  const { data, isLoading, load } = useLoader(ProductLoader, {
+    key: "product",
+  });
+  return (
+    <div data-testid={`vt-product-${id}`} style={card} aria-busy={isLoading}>
+      <div style={head}>
+        <span data-testid={`vt-product-${id}-name`}>{data.name}</span>
+        {isLoading && (
+          <span data-testid={`vt-product-${id}-busy`} style={badge}>
+            refreshing…
+          </span>
+        )}
+      </div>
+      <div data-testid={`vt-product-${id}-price`} style={valueStyle}>
+        {data.price}
+      </div>
+      <Suspense
+        fallback={
+          <div
+            data-testid={`vt-product-${id}-details-skeleton`}
+            style={{
+              height: 24,
+              width: 150,
+              borderRadius: 6,
+              background: "#eaeef2",
+            }}
+          />
+        }
+      >
+        <VtProductDetails id={id} details={data.details} />
+      </Suspense>
+      <div style={meta}>
+        server calls:{" "}
+        <span data-testid={`vt-product-${id}-calls`}>{data.calls}</span>
+      </div>
+      {withButton ? (
+        <button
+          data-testid={`vt-product-${id}-refresh`}
+          style={button}
+          onClick={() => load().catch(() => {})}
+        >
+          load() · key: product
+        </button>
+      ) : null}
+    </div>
   );
 }
 

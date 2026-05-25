@@ -67,3 +67,34 @@ export const LatencyLoader = createLoader(async () => {
     at: now(),
   };
 }, true);
+
+// --- Streaming section: a keyed loader whose payload arrives in two parts. The
+// header (name/price) resolves with the outer object; a nested `details` promise
+// is returned un-awaited, so React Flight streams it as a later chunk. The card
+// reads it with use() inside a NESTED <Suspense>, so the detail row fills in a
+// beat after the header. Two cards share key="product", so a load() from one is
+// a single fetch whose streamed result fans out to (and re-streams) both. ---
+export interface ProductData {
+  name: string;
+  price: string;
+  calls: number;
+  at: string;
+  // Resolved a beat after the header; streamed as its own Flight chunk.
+  details: Promise<{ rating: string; stock: string }>;
+}
+
+let productCalls = 0;
+export const ProductLoader = createLoader(async (): Promise<ProductData> => {
+  await delay(250);
+  productCalls++;
+  return {
+    name: "Acme Widget",
+    price: `$${jitter(100, 80)}.00`,
+    calls: productCalls,
+    at: now(),
+    details: delay(700).then(() => ({
+      rating: `${(4 + Math.random()).toFixed(1)}★`,
+      stock: `${jitter(120, 240)} in stock`,
+    })),
+  };
+}, true);

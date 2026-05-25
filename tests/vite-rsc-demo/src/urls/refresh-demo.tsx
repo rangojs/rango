@@ -1,13 +1,16 @@
 import { urls, Meta } from "@rangojs/router";
 import { RefreshDemoPage } from "../pages/refresh-demo.js";
-import { RevenueLoader } from "../handlers/refresh-demo/loaders.js";
+import {
+  RevenueLoader,
+  ProductLoader,
+} from "../handlers/refresh-demo/loaders.js";
 
 /**
  * Client refresh-key / refresh-group showcase.
  *
- * RevenueLoader is registered here so the shared-key cards read it via
- * useLoader() (SSR-seeded). The group loaders are unregistered fetch loaders
- * used via useFetchLoader() in the cards themselves.
+ * RevenueLoader and ProductLoader are registered here so the shared-key cards
+ * read them via useLoader() (SSR-seeded). The group loaders are unregistered
+ * fetch loaders used via useFetchLoader() in the cards themselves.
  */
 export const refreshDemoPatterns = urls(({ path, loader }) => [
   path(
@@ -17,6 +20,6 @@ export const refreshDemoPatterns = urls(({ path, loader }) => [
       return <RefreshDemoPage />;
     },
     { name: "index" },
-    () => [loader(RevenueLoader)],
+    () => [loader(RevenueLoader), loader(ProductLoader)],
   ),
 ]);

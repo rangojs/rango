@@ -7,7 +7,10 @@ import {
   useRefreshLoaders,
   type LoaderDefinition,
 } from "@rangojs/router/client";
-import { RevenueLoader } from "../../handlers/refresh-demo/loaders.js";
+import {
+  RevenueLoader,
+  ProductLoader,
+} from "../../handlers/refresh-demo/loaders.js";
 
 interface MetricData {
   label: string;
@@ -66,6 +69,15 @@ const valueStyle: React.CSSProperties = {
   fontVariantNumeric: "tabular-nums",
 };
 const metaStyle: React.CSSProperties = { fontSize: 12, color: "#8b949e" };
+const detailRowStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  fontSize: 14,
+  color: "#1f883d",
+  fontWeight: 600,
+  height: 28,
+  alignItems: "center",
+};
 const badgeStyle: React.CSSProperties = {
   fontSize: 11,
   color: "#9a6700",
@@ -233,5 +245,87 @@ export function GroupRefreshButton() {
     >
       {pending ? "Refreshing group…" : 'Refresh group "metrics"'}
     </button>
+  );
+}
+
+/** Reads the streamed `details` promise inside a nested Suspense. This is the
+ * region that fills in a beat after the header on first load, and re-streams on
+ * refresh — held in place (not flashed back to the skeleton) because the hook
+ * commits the new data inside startTransition. */
+function ProductDetails({
+  id,
+  details,
+}: {
+  id: string;
+  details: Promise<{ rating: string; stock: string }>;
+}) {
+  const d = use(details);
+  return (
+    <div data-testid={`rl-product-${id}-details`} style={detailRowStyle}>
+      <span>{d.rating}</span>
+      <span>·</span>
+      <span>{d.stock}</span>
+    </div>
+  );
+}
+
+/**
+ * Streaming product card — a registered loader read with a shared key. The
+ * header (name/price) is SSR-seeded and updates in place; the loader returns a
+ * nested `details` promise that React Flight streams as a later chunk, so the
+ * detail row fills into a nested <Suspense>. Two cards share key="product", so a
+ * load() from either is one fetch whose streamed result re-streams both.
+ */
+export function ProductCard({
+  id,
+  withButton = false,
+}: {
+  id: string;
+  withButton?: boolean;
+}) {
+  const { data, isLoading, load } = useLoader(ProductLoader, {
+    key: "product",
+  });
+  return (
+    <div
+      style={cardStyle}
+      data-testid={`rl-product-${id}`}
+      aria-busy={isLoading}
+    >
+      <div style={headStyle}>
+        <span data-testid={`rl-product-${id}-name`}>{data.name}</span>
+        {isLoading && (
+          <span data-testid={`rl-product-${id}-refreshing`} style={badgeStyle}>
+            refreshing…
+          </span>
+        )}
+      </div>
+      <div style={{ opacity: isLoading ? 0.45 : 1, transition: "opacity .2s" }}>
+        <div data-testid={`rl-product-${id}-price`} style={valueStyle}>
+          {data.price}
+        </div>
+        <Suspense
+          fallback={
+            <SkeletonBar testid={`rl-product-${id}-details-skeleton`} />
+          }
+        >
+          <ProductDetails id={id} details={data.details} />
+        </Suspense>
+      </div>
+      <div style={metaStyle}>
+        server calls:{" "}
+        <span data-testid={`rl-product-${id}-calls`}>{data.calls}</span> ·
+        updated {data.at}
+      </div>
+      {withButton ? (
+        <button
+          data-testid={`rl-product-${id}-refresh`}
+          style={buttonStyle}
+          onClick={() => load().catch(() => {})}
+        >
+          load() · key: product
+        </button>
+      ) : null}
+    </div>
   );
 }

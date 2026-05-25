@@ -6,7 +6,9 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
  * Functional coverage for the /refresh view-transition demo. The cross-fade
  * itself is visual (driven by <ViewTransition> + the hook's startTransition);
  * here we pin the underlying behavior: a keyed refresh moves every card sharing
- * the key, and one useRefreshLoaders() call moves every group member.
+ * the key (from one fetch), a keyed streaming loader re-streams both its readers
+ * from one fetch without flashing the nested skeleton, and one
+ * useRefreshLoaders() call moves every group member.
  */
 
 const calls = (page: Page, id: string) =>
@@ -17,6 +19,12 @@ async function runScenario(page: Page) {
   // counting per-action requests.
   for (const id of ["rev-a", "rev-b", "rev-c", "users", "orders", "latency"]) {
     await expect(testId(page, `vt-card-${id}-value`)).toBeVisible();
+  }
+  // Product cards: header is SSR-seeded; the nested `details` promise streams in
+  // a beat later. Wait for both to resolve before counting per-action requests.
+  for (const id of ["prod-a", "prod-b"]) {
+    await expect(testId(page, `vt-product-${id}-price`)).toBeVisible();
+    await expect(testId(page, `vt-product-${id}-details`)).toBeVisible();
   }
 
   let loaderRequests = 0;
@@ -47,6 +55,46 @@ async function runScenario(page: Page) {
   );
   await expect(testId(page, "vt-card-rev-c-calls")).toHaveText(
     String(before + 1),
+  );
+
+  // Streaming product: a keyed loader whose nested `details` promise streams
+  // into a nested Suspense. A load() re-streams BOTH keyed cards from ONE fetch;
+  // the detail row cross-fades in place rather than flashing the nested skeleton.
+  await expect(testId(page, "vt-product-prod-a-details")).toContainText(
+    "in stock",
+  );
+  const pBefore = Number(
+    await testId(page, "vt-product-prod-a-calls").textContent(),
+  );
+  expect(Number.isFinite(pBefore)).toBe(true);
+
+  loaderRequests = 0;
+  await testId(page, "vt-product-prod-a-refresh").click();
+  await expect
+    .poll(async () =>
+      Number(await testId(page, "vt-product-prod-a-calls").textContent()),
+    )
+    .toBe(pBefore + 1);
+
+  // One fetch streamed the whole payload (header + nested details) for both
+  // keyed readers.
+  expect(loaderRequests).toBe(1);
+
+  // Both product cards converge on call count, price, and re-streamed details.
+  await expect(testId(page, "vt-product-prod-b-calls")).toHaveText(
+    String(pBefore + 1),
+  );
+  const pPrice = (await testId(page, "vt-product-prod-a-price").textContent())!;
+  await expect(testId(page, "vt-product-prod-b-price")).toHaveText(pPrice);
+  const pDetail = (await testId(
+    page,
+    "vt-product-prod-a-details",
+  ).textContent())!;
+  await expect(testId(page, "vt-product-prod-b-details")).toHaveText(pDetail);
+
+  // The nested detail skeleton never reappears during the keyed re-stream.
+  await expect(testId(page, "vt-product-prod-a-details-skeleton")).toHaveCount(
+    0,
   );
 
   // Group: one useRefreshLoaders("metrics")() call = one server fetch per

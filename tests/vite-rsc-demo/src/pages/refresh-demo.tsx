@@ -2,6 +2,7 @@ import {
   SharedKeyCard,
   GroupCard,
   GroupRefreshButton,
+  ProductCard,
 } from "../components/refresh-demo/RefreshCards.js";
 import {
   ActiveUsersLoader,
@@ -54,6 +55,24 @@ export function RefreshDemoPage() {
           <SharedKeyCard id="rev-a" withButton />
           <SharedKeyCard id="rev-b" />
           <SharedKeyCard id="rev-c" withButton />
+        </div>
+      </section>
+
+      <section style={section}>
+        <h2>Streaming loader</h2>
+        <p style={{ color: "#57606a", maxWidth: 760 }}>
+          A keyed loader (<code>key="product"</code>) whose payload arrives in
+          two parts: the header (name/price) renders immediately, while a nested{" "}
+          <code>details</code> promise <b>streams</b> into a nested{" "}
+          <code>&lt;Suspense&gt;</code> a beat later. A <code>load()</code> from
+          one card is a <b>single</b> fetch that re-streams <b>both</b>. On
+          refresh the already-streamed details are held (the hook commits in{" "}
+          <code>startTransition</code>) — they swap in place rather than
+          flashing back to the skeleton.
+        </p>
+        <div style={grid}>
+          <ProductCard id="prod-a" withButton />
+          <ProductCard id="prod-b" />
         </div>
       </section>
 

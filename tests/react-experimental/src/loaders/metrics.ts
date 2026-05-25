@@ -63,3 +63,29 @@ export const LatencyLoader = createLoader(async () => {
     calls: latencyCalls,
   } satisfies Metric;
 }, true);
+
+// Streaming loader: the header (name/price) resolves with the outer object, but
+// `details` is returned un-awaited so React Flight streams it as a later chunk.
+// Two cards read it with key="product"; a load() from one re-streams both.
+export interface Product {
+  name: string;
+  price: string;
+  calls: number;
+  details: Promise<{ rating: string; stock: string }>;
+}
+
+let productCalls = 0;
+export const ProductLoader = createLoader(async (): Promise<Product> => {
+  "use server";
+  await delay(250);
+  productCalls++;
+  return {
+    name: "Acme Widget",
+    price: `$${jitter(100, 80)}.00`,
+    calls: productCalls,
+    details: delay(700).then(() => ({
+      rating: `${(4 + Math.random()).toFixed(1)}★`,
+      stock: `${jitter(120, 240)} in stock`,
+    })),
+  };
+}, true);

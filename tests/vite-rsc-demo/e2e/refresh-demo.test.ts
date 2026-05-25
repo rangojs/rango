@@ -6,8 +6,11 @@ import { expectNoPageError, waitForHydration } from "./helper";
 /**
  * Demo coverage for the client refresh-key / refresh-group page (/refresh).
  *
- * Verifies the three things the demo is meant to show:
- *  - a keyed refresh moves every card sharing that key, together;
+ * Verifies the things the demo is meant to show:
+ *  - a keyed refresh moves every card sharing that key, together, from ONE fetch;
+ *  - a keyed loader whose payload streams in two parts (header + a nested
+ *    `details` promise) re-streams BOTH keyed readers from one fetch, holding the
+ *    already-revealed detail row in place (no nested-skeleton flash);
  *  - one useRefreshLoaders() call refreshes every member of the group;
  *  - a refresh does NOT flash the Suspense fallback — the rendered value node is
  *    kept (the hook commits new data in startTransition), so it is reconciled in
@@ -23,6 +26,17 @@ async function runScenario(page: Page) {
   for (const id of ["rev-a", "rev-b", "rev-c", "users", "orders", "latency"]) {
     await expect(
       page.locator(`[data-testid="rl-card-${id}-value"]`),
+    ).toBeVisible();
+  }
+  // Product cards: header is SSR-seeded; the nested `details` promise streams in
+  // a beat later. Wait for both to fully resolve before counting per-action
+  // requests.
+  for (const id of ["prod-a", "prod-b"]) {
+    await expect(
+      page.locator(`[data-testid="rl-product-${id}-price"]`),
+    ).toBeVisible();
+    await expect(
+      page.locator(`[data-testid="rl-product-${id}-details"]`),
     ).toBeVisible();
   }
 
@@ -71,6 +85,59 @@ async function runScenario(page: Page) {
   expect(kept).toBe(true);
   await expect(
     page.locator('[data-testid="rl-card-rev-a-skeleton"]'),
+  ).toHaveCount(0);
+
+  // --- Streaming product: a keyed loader whose nested `details` promise
+  // streams into a nested Suspense. The detail row resolved on first load; a
+  // load() re-streams BOTH keyed cards from ONE fetch, and the already-revealed
+  // detail row is held in place (no nested-skeleton flash). ---
+  const pDetailA = page.locator('[data-testid="rl-product-prod-a-details"]');
+  await expect(pDetailA).toContainText("in stock");
+  const pBefore = Number(
+    await page.locator('[data-testid="rl-product-prod-a-calls"]').textContent(),
+  );
+  expect(Number.isFinite(pBefore)).toBe(true);
+  const pNode = await pDetailA.elementHandle();
+
+  loaderRequests = 0;
+  await page.locator('[data-testid="rl-product-prod-a-refresh"]').click();
+  await expect
+    .poll(async () =>
+      Number(
+        await page
+          .locator('[data-testid="rl-product-prod-a-calls"]')
+          .textContent(),
+      ),
+    )
+    .toBe(pBefore + 1);
+
+  // One fetch streamed the whole payload (header + nested details) for BOTH
+  // keyed readers.
+  expect(loaderRequests).toBe(1);
+
+  // Both product cards converge on the same call count, price, and re-streamed
+  // detail row.
+  await expect(
+    page.locator('[data-testid="rl-product-prod-b-calls"]'),
+  ).toHaveText(String(pBefore + 1));
+  const pPrice = (await page
+    .locator('[data-testid="rl-product-prod-a-price"]')
+    .textContent())!;
+  await expect(
+    page.locator('[data-testid="rl-product-prod-b-price"]'),
+  ).toHaveText(pPrice);
+  const pDetailText = (await pDetailA.textContent())!;
+  await expect(
+    page.locator('[data-testid="rl-product-prod-b-details"]'),
+  ).toHaveText(pDetailText);
+
+  // The detail row re-streamed without flashing its nested skeleton: the
+  // already-revealed node is kept (swapped in place via startTransition), and
+  // the nested skeleton never reappears.
+  const pKept = pNode ? await pNode.evaluate((el) => el.isConnected) : false;
+  expect(pKept).toBe(true);
+  await expect(
+    page.locator('[data-testid="rl-product-prod-a-details-skeleton"]'),
   ).toHaveCount(0);
 
   // --- Group: one useRefreshLoaders("metrics")() call = one server fetch PER

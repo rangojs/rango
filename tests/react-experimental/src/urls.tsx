@@ -10,12 +10,14 @@ import { ViewTransition } from "react";
 import { ARTICLES } from "./data/articles.js";
 import {
   RevenueLoader,
+  ProductLoader,
   ActiveUsersLoader,
   OpenOrdersLoader,
   LatencyLoader,
 } from "./loaders/metrics.js";
 import {
   VtSharedKeyCard,
+  VtProductCard,
   VtGroupCard,
   VtGroupRefreshButton,
 } from "./components/RefreshDemo.js";
@@ -112,6 +114,26 @@ function RefreshDemoPage(ctx: HandlerContext) {
         <VtSharedKeyCard id="rev-a" withButton />
         <VtSharedKeyCard id="rev-b" />
         <VtSharedKeyCard id="rev-c" withButton />
+      </div>
+
+      <h2 style={{ fontSize: "1.1rem", color: "#6b7280" }}>Streaming loader</h2>
+      <p style={{ color: "#6b7280", margin: "0.25rem 0 0", maxWidth: 640 }}>
+        A keyed loader (<code>key="product"</code>) whose header renders
+        immediately while a nested <code>details</code> promise streams into a
+        nested <code>&lt;Suspense&gt;</code> a beat later. A <code>load()</code>{" "}
+        from one card re-streams both from a single fetch, holding the
+        already-streamed detail row in place (no nested-skeleton flash).
+      </p>
+      <div
+        style={{
+          display: "flex",
+          gap: "1rem",
+          flexWrap: "wrap",
+          margin: "0.75rem 0 2rem",
+        }}
+      >
+        <VtProductCard id="prod-a" withButton />
+        <VtProductCard id="prod-b" />
       </div>
 
       <h2 style={{ fontSize: "1.1rem", color: "#6b7280" }}>
@@ -1309,6 +1331,7 @@ export const urlpatterns = urls(({ path, layout, transition, loader }) => [
   path("/counter", CounterPage, { name: "counter" }),
   path("/refresh", RefreshDemoPage, { name: "refresh" }, () => [
     loader(RevenueLoader),
+    loader(ProductLoader),
   ]),
 
   // Layout-level transition (no-children form, sibling of path()).
