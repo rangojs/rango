@@ -156,6 +156,61 @@ async function runScenario(page: Page) {
   expect(loaderRequests).toBe(3);
 }
 
+/**
+ * Products table (paginated load-more) + cart (server-action write, refresh-
+ * primitive re-render). Proves:
+ *  - the first page is SSR-seeded and each "Load more" appends one page from ONE
+ *    fetch, accumulating rows;
+ *  - "Add to cart" is a server action, and the cart count re-renders via a
+ *    single keyed refresh that fans out to BOTH cart badges (one fetch), not via
+ *    the action's return value.
+ */
+async function runProductsCartScenario(page: Page) {
+  const rows = page.locator('[data-testid^="pc-row-"]');
+  const headerCount = page.locator('[data-testid="pc-badge-header-count"]');
+  const sidebarCount = page.locator('[data-testid="pc-badge-sidebar-count"]');
+
+  // SSR-seeded first page: exactly PAGE_SIZE (3) rows; both badges start at 0.
+  await expect(rows).toHaveCount(3);
+  await expect(headerCount).toHaveText("0");
+  await expect(sidebarCount).toHaveText("0");
+
+  let loaderRequests = 0;
+  page.on("request", (req) => {
+    if (req.url().includes("_rsc_loader")) loaderRequests++;
+  });
+
+  // Load more: ONE fetch appends the next page.
+  loaderRequests = 0;
+  await page.locator('[data-testid="pc-load-more"]').click();
+  await expect(rows).toHaveCount(6);
+  expect(loaderRequests).toBe(1);
+
+  // Load more again: the final page; the button is replaced by the done note.
+  loaderRequests = 0;
+  await page.locator('[data-testid="pc-load-more"]').click();
+  await expect(rows).toHaveCount(9);
+  expect(loaderRequests).toBe(1);
+  await expect(page.locator('[data-testid="pc-load-more"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="pc-load-more-done"]')).toBeVisible();
+
+  // Add to cart: the action mutates server state, then ONE keyed cart refresh
+  // re-reads CartLoader and fans the new count out to BOTH badges. The action
+  // POST is not a _rsc_loader request, so exactly one loader round-trip lands.
+  loaderRequests = 0;
+  await page.locator('[data-testid="pc-add-widget"]').click();
+  await expect(headerCount).toHaveText("1");
+  await expect(sidebarCount).toHaveText("1");
+  expect(loaderRequests).toBe(1);
+
+  // A second add advances both badges together again, still one fetch.
+  loaderRequests = 0;
+  await page.locator('[data-testid="pc-add-gizmo"]').click();
+  await expect(headerCount).toHaveText("2");
+  await expect(sidebarCount).toHaveText("2");
+  expect(loaderRequests).toBe(1);
+}
+
 devTest.describe("refresh-demo", () => {
   devTest(
     "keys and groups refresh without flashing the fallback",
@@ -164,6 +219,16 @@ devTest.describe("refresh-demo", () => {
       await page.goto(devURL(devServerURL, "/refresh"));
       await waitForHydration(page);
       await runScenario(page);
+    },
+  );
+
+  devTest(
+    "products table load-more and cart re-render via refresh primitive",
+    async ({ page, devServerURL }) => {
+      using _ = expectNoPageError(page);
+      await page.goto(devURL(devServerURL, "/refresh"));
+      await waitForHydration(page);
+      await runProductsCartScenario(page);
     },
   );
 });
@@ -180,5 +245,14 @@ test.describe("refresh-demo (production)", () => {
     await page.goto(f.url("/refresh"));
     await waitForHydration(page);
     await runScenario(page);
+  });
+
+  test("products table load-more and cart re-render via refresh primitive", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/refresh"));
+    await waitForHydration(page);
+    await runProductsCartScenario(page);
   });
 });

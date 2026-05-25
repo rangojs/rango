@@ -5,6 +5,10 @@ import {
   ProductCard,
 } from "../components/refresh-demo/RefreshCards.js";
 import {
+  CartBadge,
+  ProductsTable,
+} from "../components/refresh-demo/ProductsCart.js";
+import {
   ActiveUsersLoader,
   OpenOrdersLoader,
   LatencyLoader,
@@ -98,6 +102,44 @@ export function RefreshDemoPage() {
             loader={OpenOrdersLoader}
           />
           <GroupCard id="latency" label="p95 latency" loader={LatencyLoader} />
+        </div>
+      </section>
+
+      <section style={section}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          <h2 style={{ margin: 0 }}>Products &amp; cart</h2>
+          <CartBadge id="header" label="Cart" />
+        </div>
+        <p style={{ color: "#57606a", maxWidth: 760 }}>
+          A paginated table — <b>Load more</b> calls{" "}
+          <code>load(&#123; params: &#123; cursor &#125; &#125;)</code> and
+          appends the next page. <b>Add to cart</b> is a server action; the cart
+          count re-renders via the refresh primitive (
+          <code>useRefreshLoaders("cart")</code>), not from the action's return
+          value. Both cart badges read <code>CartLoader</code> with{" "}
+          <code>key="cart"</code>, so one refresh fans the new count out to both
+          at once.
+        </p>
+        <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 520px", minWidth: 360 }}>
+            <ProductsTable />
+          </div>
+          <aside
+            style={{
+              flex: "0 0 auto",
+              alignSelf: "flex-start",
+              marginTop: 12,
+            }}
+          >
+            <CartBadge id="sidebar" label="Items in cart" />
+          </aside>
         </div>
       </section>
 

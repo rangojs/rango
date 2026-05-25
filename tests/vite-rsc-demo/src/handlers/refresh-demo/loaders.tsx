@@ -1,4 +1,6 @@
 import { createLoader } from "@rangojs/router";
+import { CATALOG, PAGE_SIZE } from "./shop-data.js";
+import { getCartEntries } from "./cart.actions.js";
 
 // Demo loaders for the client refresh-key / refresh-group showcase.
 // All are fetchable so client components can refresh them via load() /
@@ -97,4 +99,55 @@ export const ProductLoader = createLoader(async (): Promise<ProductData> => {
       stock: `${jitter(120, 240)} in stock`,
     })),
   };
+}, true);
+
+// --- Products table: a paginated loader. The first page is SSR-seeded (no
+// params); "Load more" calls load({ params: { cursor } }) to fetch the next
+// page, which the client appends to the growing table. ---
+export interface ProductRow {
+  id: string;
+  name: string;
+  price: string;
+  rating: string;
+  stock: string;
+}
+export interface ProductsPage {
+  items: ProductRow[];
+  nextCursor: number | null;
+}
+
+export const ProductsPageLoader = createLoader(
+  async (ctx): Promise<ProductsPage> => {
+    const cursor = Number(ctx.params?.cursor ?? "0");
+    await delay(450);
+    const items = CATALOG.slice(cursor, cursor + PAGE_SIZE).map((p) => ({
+      id: p.id,
+      name: p.name,
+      price: `$${p.price}.00`,
+      rating: `${p.rating}★`,
+      stock: `${p.stock} in stock`,
+    }));
+    const next = cursor + PAGE_SIZE;
+    return { items, nextCursor: next < CATALOG.length ? next : null };
+  },
+  true,
+);
+
+// --- Cart: a keyed loader read by every cart badge. The "Add to cart" action
+// mutates server state; a refresh of this loader fans the new count out to all
+// badges at once (one fetch). ---
+export interface CartData {
+  count: number;
+  lines: { id: string; name: string; qty: number }[];
+}
+
+export const CartLoader = createLoader(async (): Promise<CartData> => {
+  await delay(150);
+  const entries = await getCartEntries();
+  let count = 0;
+  const lines = entries.map(([id, qty]) => {
+    count += qty;
+    return { id, name: CATALOG.find((p) => p.id === id)?.name ?? id, qty };
+  });
+  return { count, lines };
 }, true);
