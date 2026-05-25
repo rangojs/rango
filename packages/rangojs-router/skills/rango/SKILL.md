@@ -142,6 +142,18 @@ by reference with `ctx.isAction(Action)` (rename-safe, where `CartActions` is an
 `import * as CartActions from "./actions/cart"`); see `/typesafety` → "Stable
 identity".
 
+The predicate arg carries the action's full context, not just its identity. Match
+*which* action with `ctx.isAction(addToCart)` (rename-safe); branch on *what it
+returned* with `ctx.actionResult` — the value your `"use server"` function
+returned, for outcome-conditional revalidation. The arg also exposes `actionId`
+(raw `path#export`), `actionUrl`, `formData`, `method`, and `stale` (cross-tab
+`_rsc_stale` signal). All are `undefined` on plain navigation (no action).
+
+```ts
+// re-render only when checkout actually succeeded; defer otherwise
+revalidate((ctx) => (ctx.isAction(checkout) && ctx.actionResult?.ok) || undefined),
+```
+
 **The source is the source of truth.** Structure, types, and update policy are
 visible and local in the tree — read top-down, no hidden global model to hold in
 your head. A snippet earns its place only if, from the code alone, you can answer:
@@ -149,6 +161,14 @@ _what URLs exist and who owns them?_ (composition), _can I trust this reference
 without leaving the call site?_ (type-safety), _what re-renders after this
 action?_ (partial rendering). If any answer needs another file, it isn't legible
 yet.
+
+**Reading Rango's own source.** Rango is consumed as raw TypeScript — the
+`exports` map resolves `@rangojs/router` and its subpaths to `./src/*.ts` for
+both types and runtime, so a consuming app bundles Rango straight from source.
+Only the `./vite` plugin entry and the CLI `bin` load from `dist/`. To confirm
+any runtime or type detail against an installed copy, read the resolved source
+under `node_modules/@rangojs/router/src/`, not `dist/` — the runtime does not
+resolve `dist/` outside `./vite`, and it may lag `src/`.
 
 ## Skills
 
