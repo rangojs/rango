@@ -39,6 +39,7 @@ export const NamedRoutes = {
   "protected.dashboard": "/protected/dashboard",
   "protected.index": "/protected",
   "protected.profile": "/protected/profile/:username",
+  "refresh.index": "/refresh",
   "shop.account.index": "/shop/account",
   "shop.account.orderDetail": "/shop/account/orders/:id",
   "shop.account.orders": "/shop/account/orders",

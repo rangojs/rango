@@ -71,3 +71,6 @@ details, but they are not the first stop for learning the public API.
   **completed audit** (findings applied to the skills/docs); retained as the
   record of the three generated type surfaces — `GeneratedRouteMap`, per-module
   `.gen.ts`, and `RegisteredRoutes` — and response/MIME payload inference
+- [Loader client refresh key handoff](./internal/loader-client-refresh-key-handoff.md) -
+  proposal handoff for adding a hook-level client refresh key to partition
+  `useLoader()` / `useFetchLoader()` `load()` fan-out

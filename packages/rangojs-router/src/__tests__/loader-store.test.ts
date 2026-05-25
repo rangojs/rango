@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { LoaderStore, EMPTY_LOADER_SNAPSHOT } from "../loader-store.js";
 
 describe("LoaderStore", () => {
@@ -261,6 +261,298 @@ describe("LoaderStore", () => {
       store.setLoading(id, r, true);
       store.finishError(id, r, new Error("boom"));
       expect(store.getSnapshot(id).isLoading).toBe(false);
+    });
+  });
+
+  // Microtasks flush before a setTimeout(0) callback, so awaiting one
+  // guarantees any queued deferred-clear microtask has run.
+  const flushMicrotasks = () =>
+    new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  describe("composite buckets (client refresh key)", () => {
+    it("notifies only the matching bucket's listeners", () => {
+      let xCount = 0;
+      let yCount = 0;
+      store.subscribe("L::x", () => xCount++, { loaderId: "L" });
+      store.subscribe("L::y", () => yCount++, { loaderId: "L" });
+      const r = store.reserveRequestId("L::x");
+      store.finishData("L::x", r, 1);
+      expect(xCount).toBe(1);
+      expect(yCount).toBe(0);
+    });
+
+    it("keeps each bucket's value independent", () => {
+      store.subscribe("L::x", () => {}, { loaderId: "L" });
+      store.subscribe("L::y", () => {}, { loaderId: "L" });
+      const rx = store.reserveRequestId("L::x");
+      store.finishData("L::x", rx, "x-val");
+      const ry = store.reserveRequestId("L::y");
+      store.finishData("L::y", ry, "y-val");
+      expect(store.getSnapshot("L::x").value).toBe("x-val");
+      expect(store.getSnapshot("L::y").value).toBe("y-val");
+    });
+  });
+
+  describe("clearFamily", () => {
+    it("resets every sticky bucket belonging to the loader id", () => {
+      store.subscribe("L", () => {}, { loaderId: "L" });
+      store.subscribe("L::x", () => {}, { loaderId: "L" });
+      const r1 = store.reserveRequestId("L");
+      store.finishData("L", r1, "a");
+      const r2 = store.reserveRequestId("L::x");
+      store.finishData("L::x", r2, "b");
+      store.clearFamily("L");
+      expect(store.getSnapshot("L")).toBe(EMPTY_LOADER_SNAPSHOT);
+      expect(store.getSnapshot("L::x")).toBe(EMPTY_LOADER_SNAPSHOT);
+    });
+
+    it("invalidates in-flight requests for every bucket", () => {
+      store.subscribe("L::x", () => {}, { loaderId: "L" });
+      const inFlight = store.reserveRequestId("L::x");
+      store.clearFamily("L");
+      // Late response tries to commit after the family was cleared.
+      store.finishData("L::x", inFlight, "late");
+      expect(store.getSnapshot("L::x")).toBe(EMPTY_LOADER_SNAPSHOT);
+    });
+
+    it("does not touch buckets of another loader id", () => {
+      store.subscribe("L", () => {}, { loaderId: "L" });
+      store.subscribe("M", () => {}, { loaderId: "M" });
+      const rL = store.reserveRequestId("L");
+      store.finishData("L", rL, "l");
+      const rM = store.reserveRequestId("M");
+      store.finishData("M", rM, "m");
+      store.clearFamily("L");
+      expect(store.getSnapshot("L")).toBe(EMPTY_LOADER_SNAPSHOT);
+      expect(store.getSnapshot("M").value).toBe("m");
+    });
+
+    it("leaves ephemeral buckets untouched (they are refcount-governed)", () => {
+      // An ephemeral subscriber stays mounted, so the bucket survives.
+      store.subscribe("L::cart", () => {}, { loaderId: "L", ephemeral: true });
+      const r = store.reserveRequestId("L::cart");
+      store.finishData("L::cart", r, "kept");
+      store.clearFamily("L");
+      expect(store.getSnapshot("L::cart").value).toBe("kept");
+    });
+  });
+
+  describe("ephemeral refcount lifecycle", () => {
+    it("drops the bucket after the last subscriber unsubscribes", async () => {
+      const unsub = store.subscribe("L::cart", () => {}, {
+        loaderId: "L",
+        ephemeral: true,
+      });
+      const r = store.reserveRequestId("L::cart");
+      store.finishData("L::cart", r, "v");
+      expect(store.getSnapshot("L::cart").value).toBe("v");
+      unsub();
+      await flushMicrotasks();
+      expect(store.getSnapshot("L::cart")).toBe(EMPTY_LOADER_SNAPSHOT);
+    });
+
+    it("a resubscribe before the microtask cancels the drop", async () => {
+      const unsub = store.subscribe("L::cart", () => {}, {
+        loaderId: "L",
+        ephemeral: true,
+      });
+      const r = store.reserveRequestId("L::cart");
+      store.finishData("L::cart", r, "v");
+      unsub();
+      // StrictMode / transition remount resubscribes synchronously.
+      store.subscribe("L::cart", () => {}, { loaderId: "L", ephemeral: true });
+      await flushMicrotasks();
+      expect(store.getSnapshot("L::cart").value).toBe("v");
+    });
+
+    it("defers the drop until an in-flight load settles", async () => {
+      const unsub = store.subscribe("L::cart", () => {}, {
+        loaderId: "L",
+        ephemeral: true,
+      });
+      const r = store.reserveRequestId("L::cart");
+      store.beginRequest("L::cart", r);
+      unsub();
+      await flushMicrotasks();
+      // Mid-flight: the drop is deferred, the entry is still present.
+      expect(store.getSnapshot("L::cart").isLoading).toBe(true);
+      // Once the request settles with no subscribers, the bucket is dropped.
+      store.finishData("L::cart", r, "late");
+      expect(store.getSnapshot("L::cart")).toBe(EMPTY_LOADER_SNAPSHOT);
+    });
+
+    it("keeps a sticky (registered) bucket after the last subscriber leaves", async () => {
+      const unsub = store.subscribe("L", () => {}, { loaderId: "L" });
+      const r = store.reserveRequestId("L");
+      store.finishData("L", r, "v");
+      unsub();
+      await flushMicrotasks();
+      // Sticky buckets persist for remount; they reset via clearFamily.
+      expect(store.getSnapshot("L").value).toBe("v");
+    });
+
+    it("a non-ephemeral subscriber makes a shared bucket sticky", async () => {
+      const unsubEph = store.subscribe("L::g", () => {}, {
+        loaderId: "L",
+        ephemeral: true,
+      });
+      const unsubReg = store.subscribe("L::g", () => {}, {
+        loaderId: "L",
+        ephemeral: false,
+      });
+      const r = store.reserveRequestId("L::g");
+      store.finishData("L::g", r, "v");
+      // Ephemeral subscriber leaves but a registered one remains: kept.
+      unsubEph();
+      await flushMicrotasks();
+      expect(store.getSnapshot("L::g").value).toBe("v");
+      // Registered subscriber leaves too: still kept (sticky for life).
+      unsubReg();
+      await flushMicrotasks();
+      expect(store.getSnapshot("L::g").value).toBe("v");
+      // clearFamily resets sticky buckets.
+      store.clearFamily("L");
+      expect(store.getSnapshot("L::g")).toBe(EMPTY_LOADER_SNAPSHOT);
+    });
+  });
+
+  describe("refreshGroup (cross-loader)", () => {
+    it("calls the refetch thunk for each bucket in the group", async () => {
+      const a = vi.fn().mockResolvedValue(undefined);
+      const b = vi.fn().mockResolvedValue(undefined);
+      store.subscribe("La::u", () => {}, {
+        loaderId: "La",
+        group: "account",
+        refetch: a,
+      });
+      store.subscribe("Lb::u", () => {}, {
+        loaderId: "Lb",
+        group: "account",
+        refetch: b,
+      });
+      await store.refreshGroup("account");
+      expect(a).toHaveBeenCalledTimes(1);
+      expect(b).toHaveBeenCalledTimes(1);
+    });
+
+    it("dedups multiple readers of one bucket to a single refetch", async () => {
+      const fn = vi.fn().mockResolvedValue(undefined);
+      store.subscribe("La::u", () => {}, {
+        loaderId: "La",
+        group: "account",
+        refetch: fn,
+      });
+      store.subscribe("La::u", () => {}, {
+        loaderId: "La",
+        group: "account",
+        refetch: fn,
+      });
+      await store.refreshGroup("account");
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+
+    it("skips buckets whose last subscriber has left", async () => {
+      const a = vi.fn().mockResolvedValue(undefined);
+      const b = vi.fn().mockResolvedValue(undefined);
+      store.subscribe("La::u", () => {}, {
+        loaderId: "La",
+        group: "account",
+        refetch: a,
+      });
+      const unsubB = store.subscribe("Lb::u", () => {}, {
+        loaderId: "Lb",
+        group: "account",
+        refetch: b,
+      });
+      unsubB();
+      await store.refreshGroup("account");
+      expect(a).toHaveBeenCalledTimes(1);
+      expect(b).not.toHaveBeenCalled();
+    });
+
+    it("rejects with an AggregateError when a member fails, running the rest", async () => {
+      const ok = vi.fn().mockResolvedValue(undefined);
+      const bad = vi.fn().mockRejectedValue(new Error("boom"));
+      store.subscribe("La::u", () => {}, {
+        loaderId: "La",
+        group: "account",
+        refetch: ok,
+      });
+      store.subscribe("Lb::u", () => {}, {
+        loaderId: "Lb",
+        group: "account",
+        refetch: bad,
+      });
+      await expect(store.refreshGroup("account")).rejects.toBeInstanceOf(
+        AggregateError,
+      );
+      // The healthy member still ran despite the sibling's failure.
+      expect(ok).toHaveBeenCalledTimes(1);
+    });
+
+    it("is a no-op for an unknown group", async () => {
+      await expect(store.refreshGroup("nope")).resolves.toBeUndefined();
+    });
+
+    it("lets one bucket belong to multiple groups (different subscribers)", async () => {
+      const fn = vi.fn().mockResolvedValue(undefined);
+      // Same bucket (same loader + key), two subscribers, different groups.
+      store.subscribe("L::k", () => {}, {
+        loaderId: "L",
+        group: "g1",
+        refetch: fn,
+      });
+      store.subscribe("L::k", () => {}, {
+        loaderId: "L",
+        group: "g2",
+        refetch: fn,
+      });
+      await store.refreshGroup("g1");
+      expect(fn).toHaveBeenCalledTimes(1);
+      await store.refreshGroup("g2");
+      expect(fn).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps a bucket in its other groups when one group's subscriber leaves", async () => {
+      const fn = vi.fn().mockResolvedValue(undefined);
+      store.subscribe("L::k", () => {}, {
+        loaderId: "L",
+        group: "g1",
+        refetch: fn,
+      });
+      const unsub2 = store.subscribe("L::k", () => {}, {
+        loaderId: "L",
+        group: "g2",
+        refetch: fn,
+      });
+      unsub2();
+      // g2 lost its only subscriber, so the bucket left g2 — but stays in g1.
+      await store.refreshGroup("g2");
+      expect(fn).not.toHaveBeenCalled();
+      await store.refreshGroup("g1");
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+
+    it("refcounts membership per group, independent of unsubscribe order", async () => {
+      const fn = vi.fn().mockResolvedValue(undefined);
+      const u1 = store.subscribe("L::k", () => {}, {
+        loaderId: "L",
+        group: "g",
+        refetch: fn,
+      });
+      const u2 = store.subscribe("L::k", () => {}, {
+        loaderId: "L",
+        group: "g",
+        refetch: fn,
+      });
+      u1();
+      // One subscriber still wants group "g", so the bucket remains in it.
+      await store.refreshGroup("g");
+      expect(fn).toHaveBeenCalledTimes(1);
+      u2();
+      // Now the last "g" subscriber is gone — the bucket leaves the group.
+      await store.refreshGroup("g");
+      expect(fn).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -11,6 +11,7 @@ export const NamedRoutes = {
   "layoutTx.b": "/layout-tx-b",
   prerender: "/prerender",
   "prerender.article": "/prerender/:slug",
+  refresh: "/refresh",
   static: "/static",
   "transition.a": "/transition-a",
   "transition.b": "/transition-b",

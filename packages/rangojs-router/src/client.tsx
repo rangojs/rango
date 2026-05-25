@@ -214,6 +214,7 @@ export function useOutlet(): ReactNode {
 export {
   useLoader,
   useFetchLoader,
+  useRefreshLoaders,
   type LoadFunction,
   type UseLoaderResult,
   type UseFetchLoaderResult,

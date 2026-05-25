@@ -91,6 +91,20 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ]);
 ```
 
+> **Client refresh `key` vs. server `cache({ key })` vs. `revalidate()`.** Three
+> different "what refreshes" knobs that are easy to confuse:
+>
+> - `useLoader(Loader, { key })` / `useFetchLoader(Loader, { key })` — a
+>   **client** refresh identity. It groups which mounted reads of one loader
+>   refresh together when one calls `load()`. It never touches the server
+>   request. For refreshing **different** loaders together, tag them with
+>   `{ refreshGroup }` and call `useRefreshLoaders(name)()` (plain GET only).
+>   See the hooks skill ("Scoping refetch with a `key`" and "Refreshing multiple
+>   loaders together").
+> - `cache({ key })` — a **server** cache identity (storage hit/miss/ttl/swr).
+> - `revalidate()` — which **server** segments/loaders recompute during
+>   navigation and action refreshes.
+
 DSL loaders are the **live data layer** — they resolve fresh on every
 request, even when the route is inside a `cache()` boundary. The router
 excludes them from the segment cache at storage time and re-resolves them

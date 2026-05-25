@@ -231,6 +231,82 @@ So the search/list pattern still works — two components calling
 own result; they do not collapse to last-write-wins through a shared
 store.
 
+**Scoping refetch with a `key`**:
+
+Pass a `key` to partition the shared refresh store. Only hooks using the
+**same** `key` refresh together when one of them calls `load()`. This is a
+client-side refresh identity only — it never changes the request sent to the
+server, and is unrelated to the server `cache({ key })` option and to
+`revalidate()`.
+
+```tsx
+// Two independent dashboards using the same loader. Without a key, one
+// dashboard's load() would flip the other's spinner and value. With a key,
+// they refresh independently.
+function Dashboard({ id }: { id: string }) {
+  const { data, load } = useLoader(StatsLoader, { key: `dashboard:${id}` });
+  return <button onClick={() => load()}>Refresh {data.total}</button>;
+}
+```
+
+The `key` widens sharing in two ways the default cannot:
+
+- **Parameterized GETs share.** `useFetchLoader(SearchLoader, { key: q })`
+  with the same `q` in two components share one result and refresh together —
+  a keyed `load({ params: { q } })` broadcasts to the group instead of staying
+  local. (Mutations — non-GET or `body` — stay local even with a key.)
+- **Unregistered loaders share.** A `key` makes `useFetchLoader` of a loader
+  that is **not** registered on the route share too, letting unrelated
+  components opt into a common refresh group.
+
+Lifecycle: a keyed read of an unregistered loader is reference-counted — its
+shared value lives as long as at least one component using that key is mounted.
+A persistent component (e.g. a header) keeps the value across navigations; a
+route-scoped component's value is reclaimed when it unmounts. Registered-loader
+reads (keyed or not) reset on navigation from fresh route data, as before.
+
+**Refreshing multiple loaders together (`refreshGroup` + `useRefreshLoaders`)**:
+
+`key` groups readers of one loader. To refresh **different** loaders together,
+tag them with the same `refreshGroup` and trigger them with `useRefreshLoaders`:
+
+```tsx
+function Profile() {
+  const { data } = useLoader(ProfileLoader, {
+    key: userId,
+    refreshGroup: "account",
+  });
+  return <span>{data.name}</span>;
+}
+function Orders() {
+  const { data } = useLoader(OrdersLoader, {
+    key: userId,
+    refreshGroup: "account",
+  });
+  return <span>{data.count} orders</span>;
+}
+function RefreshButton() {
+  const refreshAccount = useRefreshLoaders("account");
+  return <button onClick={() => refreshAccount()}>Refresh</button>;
+}
+```
+
+`refreshAccount()` re-runs every currently-mounted member with a **plain GET**
+against the current route URL — no params, no body, no mutation methods, because
+a group spans loaders with different shapes. It returns a promise that resolves
+when all members settle and **rejects with an `AggregateError`** if any fail;
+group refresh never render-throws, so handle failures at the await site
+(`await refreshAccount().catch(...)`). Each failing member also exposes its error
+via its own read's `error`.
+
+Sharing within a group is opt-in via `key`: members that share a `key` share one
+value (and one fetch); a grouped reader **without** a `key` gets its own private
+bucket, so a group refresh updates only that read and never leaks into unrelated
+unkeyed reads of the same loader. A bucket may belong to several groups at once
+(different reads can tag the same keyed bucket with different group names).
+Keep parameterized loaders on the single-loader `key` — a plain-GET group refresh
+sends no params.
+
 **Load options**:
 
 ```tsx
@@ -798,21 +874,22 @@ See `/links` for the full URL generation guide. `ctx.reverse()` is server-only; 
 
 ## Hook Summary
 
-| Hook                 | Purpose                           | Returns                                                            |
-| -------------------- | --------------------------------- | ------------------------------------------------------------------ |
-| `useParams()`        | Route params                      | `Readonly<T>` (default `Record<string, string>`) or selected value |
-| `usePathname()`      | Current pathname                  | `string`                                                           |
-| `useSearchParams()`  | URL search params                 | `ReadonlyURLSearchParams`                                          |
-| `useHref()`          | Mount-aware href                  | `(path) => string`                                                 |
-| `useMount()`         | Current include() mount path      | `string`                                                           |
-| `useReverse()`       | Local reverse for imported routes | `(name, params?, search?) => string`                               |
-| `useNavigation()`    | Reactive navigation state         | state, location, isStreaming                                       |
-| `useRouter()`        | Stable router actions             | push, replace, refresh, prefetch, back, forward                    |
-| `useSegments()`      | URL path & segment IDs            | path, segmentIds, location                                         |
-| `useLinkStatus()`    | Link pending state                | { pending }                                                        |
-| `useLoader()`        | Loader data (strict)              | data, isLoading, error                                             |
-| `useFetchLoader()`   | Loader with on-demand fetch       | data, load, isLoading                                              |
-| `useHandle()`        | Accumulated handle data           | T (handle type)                                                    |
-| `useAction()`        | Server action state               | state, error, result                                               |
-| `useLocationState()` | History state (persists or flash) | T \| undefined                                                     |
-| `useClientCache()`   | Cache control                     | { clear }                                                          |
+| Hook                  | Purpose                           | Returns                                                            |
+| --------------------- | --------------------------------- | ------------------------------------------------------------------ |
+| `useParams()`         | Route params                      | `Readonly<T>` (default `Record<string, string>`) or selected value |
+| `usePathname()`       | Current pathname                  | `string`                                                           |
+| `useSearchParams()`   | URL search params                 | `ReadonlyURLSearchParams`                                          |
+| `useHref()`           | Mount-aware href                  | `(path) => string`                                                 |
+| `useMount()`          | Current include() mount path      | `string`                                                           |
+| `useReverse()`        | Local reverse for imported routes | `(name, params?, search?) => string`                               |
+| `useNavigation()`     | Reactive navigation state         | state, location, isStreaming                                       |
+| `useRouter()`         | Stable router actions             | push, replace, refresh, prefetch, back, forward                    |
+| `useSegments()`       | URL path & segment IDs            | path, segmentIds, location                                         |
+| `useLinkStatus()`     | Link pending state                | { pending }                                                        |
+| `useLoader()`         | Loader data (strict)              | data, isLoading, error                                             |
+| `useFetchLoader()`    | Loader with on-demand fetch       | data, load, isLoading                                              |
+| `useRefreshLoaders()` | Refresh a cross-loader group      | `(group) => () => Promise<void>`                                   |
+| `useHandle()`         | Accumulated handle data           | T (handle type)                                                    |
+| `useAction()`         | Server action state               | state, error, result                                               |
+| `useLocationState()`  | History state (persists or flash) | T \| undefined                                                     |
+| `useClientCache()`    | Cache control                     | { clear }                                                          |
