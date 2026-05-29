@@ -297,7 +297,7 @@ QuickViewModal.use = () => [
 
 ## `loading()` is a single-assignment item — scope it correctly
 
-Most `use` items accumulate when merged: `handler.use` `middleware()` runs _and_ explicit `middleware()` runs; both `loader()` registrations apply. `loading()` is different — it mutates `entry.loading` directly, last call wins ([dsl-helpers.ts `loadingFn`](../../src/route-definition/dsl-helpers.ts)).
+Most `use` items accumulate when merged: `handler.use` `middleware()` runs _and_ explicit `middleware()` runs; both `loader()` registrations apply. `loading()` is different — it mutates `entry.loading` directly, last call wins ([dsl-helpers.ts `loading`](../../src/route-definition/dsl-helpers.ts)).
 
 For pages, layouts, and intercepts that's straightforward: explicit `loading()` at the mount site replaces any `loading()` from `handler.use`. The merge order is `handler.use → explicit`, so the explicit one is the last writer and wins.
 
