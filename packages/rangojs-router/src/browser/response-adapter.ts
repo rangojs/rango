@@ -25,6 +25,31 @@ export function emptyResponse(): Response {
 }
 
 /**
+ * Handle the X-RSC-Reload control header (server requests a full page reload on
+ * a version mismatch). Returns a short-circuit response when the header is
+ * present -- emptyResponse() if the URL was blocked by origin validation, or a
+ * never-resolving promise while the page reloads -- and null when absent, so
+ * the caller continues processing (e.g. the X-RSC-Redirect check). Scoped to
+ * X-RSC-Reload only; redirect handling differs between callers.
+ */
+export function handleReloadHeader(
+  response: Response,
+  opts: { onBlocked: () => void; onReload: (url: string) => void },
+): Response | Promise<Response> | null {
+  const reload = extractRscHeaderUrl(response, "X-RSC-Reload");
+  if (reload === "blocked") {
+    opts.onBlocked();
+    return emptyResponse();
+  }
+  if (reload) {
+    opts.onReload(reload.url);
+    window.location.href = reload.url;
+    return new Promise<Response>(() => {});
+  }
+  return null;
+}
+
+/**
  * Tee a response body for RSC parsing and stream completion tracking.
  * Returns a new Response with one branch; the other is consumed to detect
  * end-of-stream, calling onComplete when done.

@@ -423,17 +423,6 @@ ${lazyImports.join(",\n")}
           if (wholeFile) return wholeFile;
         }
 
-        // --- PrerenderHandler: RSC build module tracking ---
-        if (hasPrerenderHandlerCode && isRscEnv && isBuild) {
-          const fnNames = getFnNames(PRERENDER_CONFIG.fnName);
-          const exportNames = getBindings(code, fnNames).map(
-            (b) => b.exportNames[0],
-          );
-          if (exportNames.length > 0) {
-            prerenderHandlerModules.set(id, exportNames);
-          }
-        }
-
         // --- Inline handler extraction to virtual modules ---
         // Runs before stubs/tracking so inline calls become imports, then
         // the existing regex fast path handles both the original file's
@@ -709,14 +698,27 @@ ${lazyImports.join(",\n")}
           }
         }
 
-        // --- StaticHandler: RSC build module tracking ---
-        if (hasStaticHandlerCode && isRscEnv && isBuild) {
-          const fnNames = getFnNames(STATIC_CONFIG.fnName);
-          const exportNames = getBindings(code, fnNames).map(
-            (b) => b.exportNames[0],
-          );
-          if (exportNames.length > 0) {
-            staticHandlerModules.set(id, exportNames);
+        // RSC build module tracking (prerender + static), consumed via the
+        // plugin API for prerender freezing. Export-binding sets are invariant
+        // across the inline-extraction loop, so tracking both here is equivalent
+        // to the pre-extraction prerender tracking this replaces.
+        if (isRscEnv && isBuild) {
+          const trackTypes: Array<
+            [boolean, HandlerTransformConfig, Map<string, string[]>]
+          > = [
+            [
+              hasPrerenderHandlerCode,
+              PRERENDER_CONFIG,
+              prerenderHandlerModules,
+            ],
+            [hasStaticHandlerCode, STATIC_CONFIG, staticHandlerModules],
+          ];
+          for (const [has, cfg, trackMap] of trackTypes) {
+            if (!has) continue;
+            const exportNames = getBindings(code, getFnNames(cfg.fnName)).map(
+              (b) => b.exportNames[0],
+            );
+            if (exportNames.length > 0) trackMap.set(id, exportNames);
           }
         }
 

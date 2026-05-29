@@ -558,7 +558,10 @@ export function findRouterFiles(root: string, filter?: ScanFilter): string[] {
 export function writeCombinedRouteTypes(
   root: string,
   knownRouterFiles?: string[],
-  opts?: { preserveIfLarger?: boolean },
+  opts?: {
+    preserveIfLarger?: boolean;
+    onWrite?: (outPath: string, content: string) => void;
+  },
 ): void {
   // Delete old combined named-routes.gen.ts if it exists (stale from older versions)
   try {
@@ -607,6 +610,7 @@ export function writeCombinedRouteTypes(
     if (Object.keys(result.routes).length === 0) {
       if (!existing) {
         const emptySource = generateRouteTypesSource({});
+        opts?.onWrite?.(outPath, emptySource);
         writeFileSync(outPath, emptySource);
       }
       continue;
@@ -632,6 +636,7 @@ export function writeCombinedRouteTypes(
           continue;
         }
       }
+      opts?.onWrite?.(outPath, source);
       writeFileSync(outPath, source);
       console.log(
         `[rango] Generated route types (${Object.keys(result.routes).length} routes) -> ${outPath}`,

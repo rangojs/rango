@@ -707,6 +707,10 @@ export function createNavigationBridge(
       };
     },
 
+    getVersion(): string | undefined {
+      return version;
+    },
+
     updateVersion(newVersion: string): void {
       version = newVersion;
       setAppVersion(newVersion);

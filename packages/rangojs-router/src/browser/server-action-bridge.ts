@@ -25,6 +25,7 @@ import { validateRedirectOrigin } from "./validate-redirect-origin.js";
 import {
   extractRscHeaderUrl,
   emptyResponse,
+  handleReloadHeader,
   teeWithCompletion,
 } from "./response-adapter.js";
 import { mergeLocationState } from "./history-state.js";
@@ -236,18 +237,12 @@ export function createServerActionBridge(
         handle.signal.removeEventListener("abort", onHandleAbort);
 
         // Check for version mismatch - server wants us to reload
-        const reload = extractRscHeaderUrl(response, "X-RSC-Reload");
-        if (reload === "blocked") {
-          resolveStreamComplete();
-          return emptyResponse();
-        }
-        if (reload) {
-          log("version mismatch on action, reloading", {
-            reloadUrl: reload.url,
-          });
-          window.location.href = reload.url;
-          return new Promise<Response>(() => {});
-        }
+        const reloadResult = handleReloadHeader(response, {
+          onBlocked: resolveStreamComplete,
+          onReload: (url) =>
+            log("version mismatch on action, reloading", { reloadUrl: url }),
+        });
+        if (reloadResult) return reloadResult;
 
         // Simple redirect from action (no state, no RSC payload).
         // Short-circuits before createFromFetch — no Flight deserialization needed.

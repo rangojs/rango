@@ -66,35 +66,16 @@ export function writeCombinedRouteTypesWithTracking(
     findRouterFiles(state.projectRoot, state.scanFilter);
   state.cachedRouterFiles = routerFiles;
 
-  // Snapshot pre-write content to detect which files actually change.
-  const preContent = new Map<string, string>();
-  for (const routerFilePath of routerFiles) {
-    const outPath = genFileTsPath(routerFilePath);
-    try {
-      preContent.set(outPath, readFileSync(outPath, "utf-8"));
-    } catch {
-      // File doesn't exist yet — any write is a real change.
-    }
-  }
-
-  writeCombinedRouteTypes(state.projectRoot, routerFiles, opts);
-
-  // Mark only files that were actually written so the watcher can
-  // distinguish self-triggered change events from manual edits.
-  // Marking unchanged files creates stale entries that interfere with
-  // multi-server setups (e.g. shared webServer + isolated HMR server).
-  for (const routerFilePath of routerFiles) {
-    const outPath = genFileTsPath(routerFilePath);
-    if (!existsSync(outPath)) continue;
-    try {
-      const content = readFileSync(outPath, "utf-8");
-      if (content !== preContent.get(outPath)) {
-        markSelfGenWrite(state, outPath, content);
-      }
-    } catch {
-      // Ignore transient fs errors while files are being rewritten.
-    }
-  }
+  // Mark each gen file as self-generated BEFORE it is written, via the onWrite
+  // callback fired at every writeFileSync site, so the watcher distinguishes
+  // self-triggered change events from manual edits. The callback fires only
+  // for files actually written, so unchanged files are never marked (stale
+  // entries interfere with multi-server setups such as a shared webServer plus
+  // an isolated HMR server).
+  writeCombinedRouteTypes(state.projectRoot, routerFiles, {
+    ...opts,
+    onWrite: (outPath, content) => markSelfGenWrite(state, outPath, content),
+  });
 }
 
 /**
