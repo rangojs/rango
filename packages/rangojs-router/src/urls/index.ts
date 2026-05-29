@@ -13,7 +13,6 @@ export type {
   UnnamedRoute,
   LocalOnlyInclude,
   PathOptions,
-  PathDefinition,
   UrlPatterns,
   IncludeOptions,
 } from "./pattern-types.js";
@@ -22,8 +21,6 @@ export type {
 export type {
   ExtractRoutes,
   ExtractResponses,
-  ExtractRouteNames,
-  ExtractPathParams,
   ResponseError,
   ResponseEnvelope,
   RouteResponse,

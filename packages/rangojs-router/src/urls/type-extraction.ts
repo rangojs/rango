@@ -1,4 +1,3 @@
-import type { ExtractParams } from "../types.js";
 import type { JsonSerialize } from "../serialize.js";
 import type {
   TypedRouteItem,
@@ -7,11 +6,7 @@ import type {
   TypedCacheItem,
   TypedTransitionItem,
 } from "../route-types.js";
-import type {
-  LocalOnlyInclude,
-  UnnamedRoute,
-  UrlPatterns,
-} from "./pattern-types.js";
+import type { LocalOnlyInclude, UnnamedRoute } from "./pattern-types.js";
 
 // ============================================================================
 // Route Type Extraction Utilities
@@ -69,62 +64,6 @@ type PrefixPatterns<
 };
 
 /**
- * Depth counter for limiting recursion (max 40 levels)
- * Supports up to 40 sibling items at any level of a urls() call
- * Note: Higher values hit TypeScript's internal recursion limits
- */
-type Depth = [
-  never,
-  0,
-  1,
-  2,
-  3,
-  4,
-  5,
-  6,
-  7,
-  8,
-  9,
-  10,
-  11,
-  12,
-  13,
-  14,
-  15,
-  16,
-  17,
-  18,
-  19,
-  20,
-  21,
-  22,
-  23,
-  24,
-  25,
-  26,
-  27,
-  28,
-  29,
-  30,
-  31,
-  32,
-  33,
-  34,
-  35,
-  36,
-  37,
-  38,
-  39,
-];
-
-/**
- * Force TypeScript to eagerly evaluate a type.
- * This helps with interface extension by creating a "concrete" object type.
- */
-type Simplify<T> =
-  T extends Record<string, string> ? { [K in keyof T]: T[K] } : T;
-
-/**
  * Convert a union type to an intersection type.
  * Used to combine route maps from multiple siblings without recursive tuple processing.
  */
@@ -136,13 +75,11 @@ type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends (
 
 /**
  * Extract routes from a single item (path, include, layout, cache with children)
- * D is the current depth level for nested layouts/caches
  */
-type ExtractRoutesFromItem<T, D extends number = 40> = [D] extends [never]
-  ? {} // Max depth reached, stop recursion
-  : // TypedRouteItem: extract name -> pattern (exclude unnamed routes)
-    // When search schema is non-empty, value becomes { path, search } object
-    T extends TypedRouteItem<infer TName, infer TPattern, any, infer TSearch>
+type ExtractRoutesFromItem<T> =
+  // TypedRouteItem: extract name -> pattern (exclude unnamed routes)
+  // When search schema is non-empty, value becomes { path, search } object
+  T extends TypedRouteItem<infer TName, infer TPattern, any, infer TSearch>
     ? TName extends string
       ? TName extends UnnamedRoute
         ? {} // Exclude unnamed routes from type map
@@ -186,14 +123,10 @@ type ExtractRoutesFromItem<T, D extends number = 40> = [D] extends [never]
  * Extract routes from an array of items using mapped types.
  * Uses UnionToIntersection to combine routes without recursive tuple processing,
  * removing the sibling limit that was caused by TypeScript recursion limits.
- * D is passed to ExtractRoutesFromItem for nested depth tracking.
  */
-type ExtractRoutesFromItems<
-  T extends readonly any[],
-  D extends number = 40,
-> = T extends readonly any[]
+type ExtractRoutesFromItems<T extends readonly any[]> = T extends readonly any[]
   ? UnionToIntersection<
-      { [K in keyof T]: ExtractRoutesFromItem<T[K], D> }[number]
+      { [K in keyof T]: ExtractRoutesFromItem<T[K]> }[number]
     > extends infer R
     ? R extends Record<string, any>
       ? R
@@ -204,12 +137,8 @@ type ExtractRoutesFromItems<
 /**
  * Main utility: extract route map from urls() callback return type
  * Uses mapped types for sibling processing (no sibling limit).
- * Uses Simplify to force eager evaluation for interface extension compatibility.
  */
-export type ExtractRoutes<T extends readonly any[]> = ExtractRoutesFromItems<
-  T,
-  40
->;
+export type ExtractRoutes<T extends readonly any[]> = ExtractRoutesFromItems<T>;
 
 // ============================================================================
 // Response Type Extraction Utilities
@@ -237,9 +166,8 @@ type PrefixKeys<
  * Extract response data types from a single item.
  * Parallel to ExtractRoutesFromItem but extracts name -> TData mapping.
  */
-type ExtractResponsesFromItem<T, D extends number = 40> = [D] extends [never]
-  ? {}
-  : T extends TypedRouteItem<infer TName, any, infer TData>
+type ExtractResponsesFromItem<T> =
+  T extends TypedRouteItem<infer TName, any, infer TData>
     ? TName extends string
       ? TName extends UnnamedRoute
         ? {}
@@ -273,46 +201,23 @@ type ExtractResponsesFromItem<T, D extends number = 40> = [D] extends [never]
  * Extract responses from an array of items using mapped types.
  * Parallel to ExtractRoutesFromItems.
  */
-type ExtractResponsesFromItems<
-  T extends readonly any[],
-  D extends number = 40,
-> = T extends readonly any[]
-  ? UnionToIntersection<
-      { [K in keyof T]: ExtractResponsesFromItem<T[K], D> }[number]
-    > extends infer R
-    ? R extends Record<string, unknown>
-      ? R
+type ExtractResponsesFromItems<T extends readonly any[]> =
+  T extends readonly any[]
+    ? UnionToIntersection<
+        { [K in keyof T]: ExtractResponsesFromItem<T[K]> }[number]
+      > extends infer R
+      ? R extends Record<string, unknown>
+        ? R
+        : {}
       : {}
-    : {}
-  : {};
+    : {};
 
 /**
  * Main utility: extract response data type map from urls() callback return type.
  * Parallel to ExtractRoutes.
  */
 export type ExtractResponses<T extends readonly any[]> =
-  ExtractResponsesFromItems<T, 40>;
-
-// ============================================================================
-// Type Utilities for path()
-// ============================================================================
-
-/**
- * Extract route names from a UrlPatterns result
- * Used for type-safe href() generation
- */
-export type ExtractRouteNames<T extends UrlPatterns<any>> =
-  T extends UrlPatterns<infer _TEnv>
-    ? string // For now, will be refined with full implementation
-    : never;
-
-/**
- * Extract params for a specific route name
- */
-export type ExtractPathParams<
-  T extends UrlPatterns<any>,
-  K extends string,
-> = ExtractParams<string>; // Will be refined with pattern tracking
+  ExtractResponsesFromItems<T>;
 
 // ============================================================================
 // Response Envelope Types

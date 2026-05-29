@@ -1,10 +1,5 @@
 import type { AllUseItems, IncludeItem } from "../route-types.js";
-import {
-  getContext,
-  runWithPrefixes,
-  getUrlPrefix,
-  getNamePrefix,
-} from "../server/context";
+import { getContext, getUrlPrefix, getNamePrefix } from "../server/context";
 import {
   INTERNAL_INCLUDE_SCOPE_PREFIX,
   validateUserRouteName,
@@ -26,28 +21,10 @@ function allocateInternalIncludeScopeId(
 }
 
 /**
- * Process an IncludeItem by executing its nested patterns with prefixes
- * This expands the include into actual route registrations
- */
-function processIncludeItem(item: IncludeItem): AllUseItems[] {
-  const { prefix, patterns } = item;
-  const namePrefix =
-    (item as IncludeItem & { _lazyContext?: { namePrefix?: string } })
-      ._lazyContext?.namePrefix ?? item.options?.name;
-
-  // Execute the nested patterns' handler with URL and name prefixes
-  // The urlPrefix being set tells nested urls() to skip RootLayout wrapping
-  return runWithPrefixes(prefix, namePrefix, () => {
-    // Call the nested patterns' handler - this registers routes with prefixed patterns/names
-    return (patterns as UrlPatterns).handler();
-  });
-}
-
-/**
- * Recursively process items, expanding any IncludeItems
- * Returns items with IncludeItems expanded into actual route items
+ * Recursively walk items, recursing into layout children.
  *
- * Lazy includes are kept as-is (not expanded) for the router to handle later.
+ * All includes are lazy and kept as-is; the router expands them on the first
+ * matching request.
  */
 export function processItems(items: readonly AllUseItems[]): AllUseItems[] {
   const result: AllUseItems[] = [];
@@ -56,26 +33,8 @@ export function processItems(items: readonly AllUseItems[]): AllUseItems[] {
     if (!item) continue;
 
     if (item.type === "include") {
-      const includeItem = item as IncludeItem & {
-        _expanded?: AllUseItems[];
-        lazy?: boolean;
-      };
-
-      // Lazy includes are NOT expanded here - kept for router to handle
-      if (includeItem.lazy) {
-        result.push(item);
-        continue;
-      }
-
-      // Eager includes are already expanded during include() call
-      if (includeItem._expanded) {
-        // Items were expanded immediately - just process them recursively
-        result.push(...processItems(includeItem._expanded));
-      } else {
-        // Fallback for legacy include items without _expanded
-        const expanded = processIncludeItem(item as IncludeItem);
-        result.push(...processItems(expanded));
-      }
+      // All includes are lazy; the router expands them on first matching request.
+      result.push(item);
     } else if (item.type === "layout" && (item as any).uses) {
       // Process nested items in layout
       const layoutItem = item as any;
@@ -92,13 +51,9 @@ export function processItems(items: readonly AllUseItems[]): AllUseItems[] {
 /**
  * Create include() helper for composing URL patterns
  *
- * By default, include() IMMEDIATELY expands the nested patterns. This ensures
- * that routes from included patterns inherit the correct parent context
- * (the layout they're included in).
- *
- * With `lazy: true`, patterns are NOT expanded at definition time. Instead,
- * they're evaluated on first request that matches the prefix. This improves
- * cold start time for apps with many routes.
+ * All includes are lazy: the nested patterns are NOT expanded at definition
+ * time. Instead they are evaluated on the first request that matches the
+ * prefix, which improves cold start time for apps with many routes.
  */
 export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
   return (
