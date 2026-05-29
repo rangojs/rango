@@ -9,11 +9,10 @@ export default defineConfig({
     // Bind to all interfaces for CI compatibility (fixes IPv6/IPv4 issues in Docker/Linux)
     host: process.env.CI ? "0.0.0.0" : undefined,
   },
-  resolve: {
-    // Ensure all environments resolve to the same experimental React instance,
-    // preventing duplicate React copies when @rangojs/router depends on stable React.
-    dedupe: ["react", "react-dom"],
-  },
+  // react/react-dom dedupe is injected automatically by rango() across all
+  // three RSC environments (see resolve.dedupe in the plugin's config hook),
+  // so this app no longer needs to declare it manually even though it pins an
+  // experimental React that differs from the router's peer range.
   plugins: [
     react(),
     rango({ preset: "cloudflare" }),

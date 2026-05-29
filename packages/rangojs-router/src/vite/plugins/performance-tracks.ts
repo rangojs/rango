@@ -14,6 +14,9 @@
 
 import type { Plugin } from "vite";
 import { readFile } from "node:fs/promises";
+import { createRangoDebugger, createCounter, NS } from "../debug.js";
+
+const debug = createRangoDebugger(NS.transform);
 
 const RSDW_PATCH_RE =
   /((?:var|let|const)\s+\w+\s*=\s*root\._children\s*,\s*(\w+)\s*=\s*root\._debugInfo\s*[;,])/;
@@ -45,44 +48,45 @@ export function patchRsdwClientDebugInfoRecovery(code: string): {
 
 export function performanceTracksOptimizeDepsPlugin(): {
   name: string;
-  setup(build: any): void;
+  load(id: string): Promise<{ code: string } | null>;
 } {
+  const RSDW_CLIENT_RE =
+    /react-server-dom-webpack-client\.browser\.(development|production)\.js$/;
   return {
     name: "@rangojs/router:performance-tracks-optimize-deps",
-    setup(build: any): void {
-      build.onLoad(
-        {
-          filter:
-            /react-server-dom-webpack-client\.browser\.(development|production)\.js$/,
-        },
-        async (args: { path: string }) => {
-          const code = await readFile(args.path, "utf8");
-          const patched = patchRsdwClientDebugInfoRecovery(code);
-          return {
-            contents: patched.code,
-            loader: "js",
-          };
-        },
-      );
+    // Vite 8 optimizes deps with Rolldown (Rollup-style plugin pipeline), so the
+    // pre-bundled RSDW client is patched via load() rather than esbuild's onLoad.
+    // Returning code overrides Rolldown's default filesystem read for the module.
+    async load(id: string): Promise<{ code: string } | null> {
+      const cleanId = id.split("?")[0] ?? id;
+      if (!RSDW_CLIENT_RE.test(cleanId)) return null;
+      const code = await readFile(cleanId, "utf8");
+      const patched = patchRsdwClientDebugInfoRecovery(code);
+      return { code: patched.code };
     },
   };
 }
 
 export function performanceTracksPlugin(): Plugin {
+  const counter = createCounter(debug, "performance-tracks");
   return {
     name: "@rangojs/router:performance-tracks",
 
+    buildEnd() {
+      counter?.flush();
+    },
+
     transform(code, id) {
       if (!id.includes("react-server-dom") || !id.includes("client")) return;
-      const patched = patchRsdwClientDebugInfoRecovery(code);
-      if (!patched.debugInfoVar) return;
-      if (process.env.INTERNAL_RANGO_DEBUG)
-        console.log(
-          "[perf-tracks] patched RSDW client (var:",
-          patched.debugInfoVar,
-          ")",
-        );
-      return patched.code;
+      const start = counter ? performance.now() : 0;
+      try {
+        const patched = patchRsdwClientDebugInfoRecovery(code);
+        if (!patched.debugInfoVar) return;
+        debug?.("patched RSDW client (var: %s)", patched.debugInfoVar);
+        return patched.code;
+      } finally {
+        counter?.record(id, performance.now() - start);
+      }
     },
   };
 }

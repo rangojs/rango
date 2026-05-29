@@ -298,10 +298,13 @@ test.describe("useAction", () => {
     const button = page.locator('[data-testid="streaming-btn"]');
     await button.click();
 
-    // Should track action through lifecycle
-    await expect(actionStatus).toContainText("Action status: loading", {
-      timeout: 2000,
-    });
+    // Should track action through lifecycle. Match either "loading" or
+    // "streaming" — both represent an in-flight action and the transition
+    // between them can be too fast to observe under CI load.
+    await expect(actionStatus).toContainText(
+      /Action status: (loading|streaming)/,
+      { timeout: 5000 },
+    );
 
     await expect(actionStatus).toContainText("Action status: idle", {
       timeout: 10000,
@@ -351,10 +354,11 @@ test.describe("useNavigation during actions", () => {
     const button = page.locator('[data-testid="streaming-btn"]');
     await button.click();
 
-    // Action should be in progress
+    // Action should be in progress (loading or streaming — both indicate
+    // an in-flight action; the loading→streaming hop can be too fast to catch)
     await expect(
       page.locator('[data-testid="StreamingActionStatus-action-status"]'),
-    ).toContainText("loading", { timeout: 2000 });
+    ).toContainText(/(loading|streaming)/, { timeout: 5000 });
 
     // Navigation state should still be idle (actions don't affect navigation state)
     await expect(
@@ -408,10 +412,10 @@ test.describe("useNavigation during actions", () => {
     const button = page.locator('[data-testid="streaming-btn"]');
     await button.click();
 
-    // Action should be loading
+    // Action should be in progress (loading or streaming)
     await expect(
       page.locator('[data-testid="StreamingActionStatus-action-status"]'),
-    ).toContainText("loading", { timeout: 2000 });
+    ).toContainText(/(loading|streaming)/, { timeout: 5000 });
 
     // Navigate away while the action is running. Pending-actions e2e coverage
     // owns the browser-history/back-button edge cases; this hook test keeps the

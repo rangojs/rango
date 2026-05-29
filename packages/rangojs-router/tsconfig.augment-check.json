@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "isolatedDeclarations": false
+  },
+  "include": ["src/__augment-tests__/**/*", "src/**/*.d.ts"],
+  "exclude": ["node_modules", "dist", "src/server"],
+  "references": []
+}

@@ -218,6 +218,53 @@ test.describe("handler.use (dev)", () => {
       "three-layer-slot-local",
     );
   });
+
+  test("loader handler.use revalidate rule is invoked during action-triggered revalidation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/handler-use/loader-use"));
+    await waitForHydration(page);
+
+    // Initial render: cookie unset, revalidate rule hasn't been invoked
+    // (the router only consults the rule after the first navigation that
+    // already has this segment on the client, i.e., the action round-trip).
+    await expect(page.getByTestId("loader-use-action-cookie")).toHaveText(
+      "none",
+    );
+    const initialCount = Number(
+      await page.getByTestId("loader-use-reval-count").textContent(),
+    );
+
+    await page.getByTestId("loader-use-action-btn").click();
+    // Wait on the action round-trip completing: the cookie flips none→fired.
+    await expect(page.getByTestId("loader-use-action-cookie")).toHaveText(
+      "fired",
+    );
+
+    // If handler.use flowed through, the router evaluated our revalidate
+    // rule at least once during the action-triggered revalidation.
+    const afterCount = Number(
+      await page.getByTestId("loader-use-reval-count").textContent(),
+    );
+    expect(afterCount).toBeGreaterThan(initialCount);
+  });
+
+  test("intercept handler.use middleware fires when intercept matches", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/handler-use/intercept-source"));
+    await waitForHydration(page);
+
+    await page.getByTestId("link-intercept-target").click();
+
+    await expect(page.getByTestId("intercepted-modal-value")).toHaveText(
+      "intercept-mw-ran",
+    );
+  });
 });
 
 // -- Production build --------------------------------------------------------
@@ -422,6 +469,53 @@ test.describe("handler.use (production)", () => {
     );
     await expect(page.getByTestId("three-layer-slot-local-mark")).toHaveText(
       "three-layer-slot-local",
+    );
+  });
+
+  test("loader handler.use revalidate rule is invoked during action-triggered revalidation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/handler-use/loader-use"));
+    await waitForHydration(page);
+
+    // Initial render: cookie unset, revalidate rule hasn't been invoked
+    // (the router only consults the rule after the first navigation that
+    // already has this segment on the client, i.e., the action round-trip).
+    await expect(page.getByTestId("loader-use-action-cookie")).toHaveText(
+      "none",
+    );
+    const initialCount = Number(
+      await page.getByTestId("loader-use-reval-count").textContent(),
+    );
+
+    await page.getByTestId("loader-use-action-btn").click();
+    // Wait on the action round-trip completing: the cookie flips none→fired.
+    await expect(page.getByTestId("loader-use-action-cookie")).toHaveText(
+      "fired",
+    );
+
+    // If handler.use flowed through, the router evaluated our revalidate
+    // rule at least once during the action-triggered revalidation.
+    const afterCount = Number(
+      await page.getByTestId("loader-use-reval-count").textContent(),
+    );
+    expect(afterCount).toBeGreaterThan(initialCount);
+  });
+
+  test("intercept handler.use middleware fires when intercept matches", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/handler-use/intercept-source"));
+    await waitForHydration(page);
+
+    await page.getByTestId("link-intercept-target").click();
+
+    await expect(page.getByTestId("intercepted-modal-value")).toHaveText(
+      "intercept-mw-ran",
     );
   });
 });

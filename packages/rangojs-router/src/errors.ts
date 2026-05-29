@@ -1,5 +1,5 @@
 /**
- * Custom error classes for RSC Router
+ * Custom error classes for Rango
  *
  * All errors include:
  * - Descriptive names for easy identification
@@ -25,6 +25,17 @@ export class RouteNotFoundError extends Error {
     Object.setPrototypeOf(this, RouteNotFoundError.prototype);
     this.cause = options?.cause;
   }
+}
+
+// name fallback covers cross-realm errors (Vite dev dupes, RSC serialization)
+// where instanceof fails.
+export function isRouteNotFoundError(
+  error: unknown,
+): error is RouteNotFoundError {
+  return (
+    error instanceof RouteNotFoundError ||
+    (error instanceof Error && error.name === "RouteNotFoundError")
+  );
 }
 
 /**
@@ -105,6 +116,24 @@ export class BuildError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message);
     Object.setPrototypeOf(this, BuildError.prototype);
+    this.cause = options?.cause;
+  }
+}
+
+/**
+ * Thrown when a route-definition DSL helper (route/layout/loader/cache/…) is
+ * called outside an active urls()/map() builder, so there is no
+ * AsyncLocalStorage build context to attach to. The message names the specific
+ * helper and how to fix it; the `cause` records the mechanical reason so the
+ * failure mode is identifiable (not conflated with an unrelated throw).
+ */
+export class DslContextError extends Error {
+  name = "DslContextError" as const;
+  cause?: unknown;
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message);
+    Object.setPrototypeOf(this, DslContextError.prototype);
     this.cause = options?.cause;
   }
 }

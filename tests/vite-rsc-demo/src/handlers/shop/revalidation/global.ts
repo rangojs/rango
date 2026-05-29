@@ -1,6 +1,6 @@
 import type { Revalidate, GenericParams } from "@rangojs/router";
 
-export const globalRevalidation: Revalidate<GenericParams, RSCRouter.Env> = ({
+export const globalRevalidation: Revalidate<GenericParams, Rango.Env> = ({
   defaultShouldRevalidate,
 }) => {
   console.log(

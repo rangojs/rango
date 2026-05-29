@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createElement } from "react";
-import { getContext, RSCRouterContext } from "../../server/context.js";
+import { getContext, RangoContext } from "../../server/context.js";
 import { loadManifest, clearManifestCache } from "../manifest.js";
 import type { RouteEntry } from "../../types.js";
 import { urls } from "../../urls.js";
@@ -83,7 +83,7 @@ describe("manifest module-level cache", () => {
     const entry = createTestEntry(routeKey, handlerSpy);
 
     // Must run inside the ALS context since loadManifest uses getContext()
-    await RSCRouterContext.run(
+    await RangoContext.run(
       {
         manifest: new Map(),
         namespace: "",
@@ -127,7 +127,7 @@ describe("manifest module-level cache", () => {
     const routeKey = "ssrTest";
     const entry = createTestEntry(routeKey, handlerSpy);
 
-    await RSCRouterContext.run(
+    await RangoContext.run(
       {
         manifest: new Map(),
         namespace: "",
@@ -163,7 +163,7 @@ describe("manifest module-level cache", () => {
     const routeKey = "restoreTest";
     const entry = createTestEntry(routeKey, handlerSpy);
 
-    await RSCRouterContext.run(
+    await RangoContext.run(
       {
         manifest: new Map(),
         namespace: "",
@@ -196,7 +196,7 @@ describe("manifest module-level cache", () => {
     const routeKey = "clearTest";
     const entry = createTestEntry(routeKey, handlerSpy);
 
-    await RSCRouterContext.run(
+    await RangoContext.run(
       {
         manifest: new Map(),
         namespace: "",
@@ -253,7 +253,7 @@ describe("loadManifest rootScoped propagation for lazy entries", () => {
       lazyEvaluated: false,
     } as unknown as RouteEntry;
 
-    await RSCRouterContext.run(
+    await RangoContext.run(
       {
         manifest: new Map(),
         namespace: "",
@@ -298,7 +298,7 @@ describe("loadManifest rootScoped propagation for lazy entries", () => {
       lazyEvaluated: false,
     } as unknown as RouteEntry;
 
-    await RSCRouterContext.run(
+    await RangoContext.run(
       {
         manifest: new Map(),
         namespace: "",

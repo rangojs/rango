@@ -7,7 +7,7 @@
 
 import type { ResolvedSegment, SlotState } from "../types.js";
 import type { HandleData } from "../server/handle-store.js";
-import type { RSCRouterInternal } from "../router/router-interfaces.js";
+import type { RangoInternal } from "../router/router-interfaces.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 
 /**
@@ -26,6 +26,12 @@ export interface RscPayload {
     isError?: boolean;
     matched?: string[];
     diff?: string[];
+    /**
+     * All segment ids re-resolved on the server, including null-component
+     * ones excluded from `segments`/`diff`. Drives client-side handle-bucket
+     * cleanup. Superset of `diff`. See MatchResult.resolvedIds.
+     */
+    resolvedIds?: string[];
     /** Merged route params from the matched route */
     params?: Record<string, string>;
     slots?: Record<string, SlotState>;
@@ -179,7 +185,7 @@ export interface CreateRSCHandlerOptions<
   /**
    * The RSC router instance
    */
-  router: RSCRouterInternal<TEnv, TRoutes>;
+  router: RangoInternal<TEnv, TRoutes>;
 
   /**
    * RSC dependencies from @vitejs/plugin-rsc/rsc.

@@ -16,6 +16,7 @@ import { middlewarePatterns } from "./middleware.js";
 import { shopPatterns } from "./shop.js";
 import { magazinePatterns } from "./magazine.js";
 import { compositionPatterns } from "./composition-test.js";
+import { refreshDemoPatterns } from "./refresh-demo.js";
 
 /**
  * URL patterns - Django-style routing API
@@ -53,6 +54,7 @@ export const urlpatterns = urls(({ path, include }) => [
   include("/errors", errorsPatterns, { name: "errors" }),
   include("/kanban", kanbanPatterns, { name: "kanban" }),
   include("/loaders", loadersPatterns, { name: "loaders" }),
+  include("/refresh", refreshDemoPatterns, { name: "refresh" }),
   include("/middleware", middlewarePatterns, { name: "middleware" }),
   include("/shop", shopPatterns, { name: "shop" }),
   include("/magazine", magazinePatterns, { name: "magazine" }),

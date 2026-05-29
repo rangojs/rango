@@ -106,6 +106,22 @@ describe("middleware", () => {
       const params = extractParams("/posts/123", regex, paramNames);
       expect(params).toEqual({});
     });
+
+    it("should URL-decode param values", () => {
+      const { regex, paramNames } = parsePattern("/mailbox/:id");
+      const params = extractParams(
+        "/mailbox/ivo%40example.com",
+        regex,
+        paramNames,
+      );
+      expect(params).toEqual({ id: "ivo@example.com" });
+    });
+
+    it("should preserve malformed percent-encoding as raw", () => {
+      const { regex, paramNames } = parsePattern("/users/:id");
+      const params = extractParams("/users/broken%ZZ", regex, paramNames);
+      expect(params).toEqual({ id: "broken%ZZ" });
+    });
   });
 
   describe("parseCookies", () => {
@@ -809,7 +825,7 @@ describe("middleware", () => {
     });
 
     it("should pass params to middleware context", async () => {
-      let receivedParams: Record<string, string> = {};
+      let receivedParams: Record<string, string | undefined> = {};
 
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         receivedParams = ctx.params;
@@ -964,6 +980,176 @@ describe("middleware", () => {
       );
 
       expect(result.headers.get("Content-Type")).toBe("text/plain");
+    });
+
+    // Regression: WebSocket upgrade responses (status 101, and/or Cloudflare-style
+    // responses carrying a `webSocket` property) must flow back through the
+    // middleware chain unchanged. The previous implementation unconditionally
+    // rewrapped the handler Response with `new Response(body, { status, ... })`
+    // to merge stub headers — which throws RangeError for status 101 on
+    // standards-compliant runtimes and drops the non-standard `webSocket`
+    // property on workerd. See: @rangojs/router upstream bug around .82–.83.
+    describe("WebSocket upgrade passthrough (status 101 / webSocket)", () => {
+      // Node's Response constructor rejects status outside 200–599 (RangeError),
+      // so we fabricate an upgrade-style Response by overriding `.status` on a
+      // real Response instance. This mirrors what workerd yields for a real WS
+      // upgrade while keeping the test runnable in Node/vitest.
+      const fabricateUpgradeResponse = (opts?: {
+        status101?: boolean;
+        webSocket?: boolean;
+      }): Response => {
+        const response = new Response(null, { status: 200 });
+        if (opts?.status101 ?? true) {
+          Object.defineProperty(response, "status", {
+            value: 101,
+            configurable: true,
+          });
+        }
+        if (opts?.webSocket) {
+          Object.defineProperty(response, "webSocket", {
+            value: { stub: "websocket" },
+            configurable: true,
+            enumerable: true,
+            writable: true,
+          });
+        }
+        return response;
+      };
+
+      it("passes through status-101 handler response unchanged when middleware awaits next()", async () => {
+        const upgrade = fabricateUpgradeResponse();
+        const mw: MiddlewareFn<unknown> = async (_ctx, next) => {
+          await next();
+        };
+
+        const result = await executeMiddleware(
+          [createMockEntry(mw)],
+          new Request("http://localhost/ws", {
+            headers: { upgrade: "websocket", connection: "Upgrade" },
+          }),
+          {},
+          {},
+          async () => upgrade,
+        );
+
+        expect(result).toBe(upgrade);
+        expect(result.status).toBe(101);
+      });
+
+      it("preserves webSocket property on handler response when middleware awaits next()", async () => {
+        const upgrade = fabricateUpgradeResponse({
+          status101: false,
+          webSocket: true,
+        });
+        const mw: MiddlewareFn<unknown> = async (_ctx, next) => {
+          await next();
+        };
+
+        const result = await executeMiddleware(
+          [createMockEntry(mw)],
+          new Request("http://localhost/ws"),
+          {},
+          {},
+          async () => upgrade,
+        );
+
+        expect(result).toBe(upgrade);
+        expect((result as unknown as { webSocket?: unknown }).webSocket).toBe(
+          (upgrade as unknown as { webSocket?: unknown }).webSocket,
+        );
+      });
+
+      it("passes through status-101 response returned directly by middleware (short-circuit)", async () => {
+        const upgrade = fabricateUpgradeResponse();
+        const mw: MiddlewareFn<unknown> = async () => upgrade;
+        const finalHandler = vi.fn(async () => new Response("should not run"));
+
+        const result = await executeMiddleware(
+          [createMockEntry(mw)],
+          new Request("http://localhost/ws"),
+          {},
+          {},
+          finalHandler,
+        );
+
+        expect(result).toBe(upgrade);
+        expect(result.status).toBe(101);
+        expect(finalHandler).not.toHaveBeenCalled();
+      });
+
+      it("preserves webSocket property on middleware short-circuit Response", async () => {
+        const upgrade = fabricateUpgradeResponse({
+          status101: false,
+          webSocket: true,
+        });
+        const mw: MiddlewareFn<unknown> = async () => upgrade;
+
+        const result = await executeMiddleware(
+          [createMockEntry(mw)],
+          new Request("http://localhost/ws"),
+          {},
+          {},
+          async () => new Response("not reached"),
+        );
+
+        expect(result).toBe(upgrade);
+        expect((result as unknown as { webSocket?: unknown }).webSocket).toBe(
+          (upgrade as unknown as { webSocket?: unknown }).webSocket,
+        );
+      });
+
+      it("does not attempt header merge on final re-merge when handler returns 101 and middleware set stub cookies", async () => {
+        const upgrade = fabricateUpgradeResponse();
+        const request = new Request("http://localhost/ws");
+        const reqCtx = createRequestContext({
+          env: {},
+          request,
+          url: new URL(request.url),
+          variables: {},
+        });
+
+        const mw: MiddlewareFn<unknown> = async (_ctx, next) => {
+          // Write to the stub via cookies().set — the final re-merge would
+          // otherwise try to mutate the upgrade response's headers, which is
+          // meaningless (and can throw on runtimes where upgrade headers are
+          // immutable).
+          cookies().set("session", "abc123");
+          return next();
+        };
+
+        const result = await runWithRequestContext(reqCtx, () =>
+          executeMiddleware(
+            [createMockEntry(mw)],
+            request,
+            {},
+            {},
+            async () => upgrade,
+          ),
+        );
+
+        expect(result).toBe(upgrade);
+        expect(result.status).toBe(101);
+        // Set-Cookie must NOT have been appended to the upgrade response.
+        expect(result.headers.getSetCookie()).toEqual([]);
+      });
+
+      it("does not throw RangeError when terminal-next rewrap would reject status 101", async () => {
+        // Explicit regression for the original symptom:
+        //   RangeError: Responses may only be constructed with status codes
+        //   in the range 200 to 599, inclusive.
+        const upgrade = fabricateUpgradeResponse();
+        const mw: MiddlewareFn<unknown> = async (_ctx, next) => next();
+
+        await expect(
+          executeMiddleware(
+            [createMockEntry(mw)],
+            new Request("http://localhost/ws"),
+            {},
+            {},
+            async () => upgrade,
+          ),
+        ).resolves.toBe(upgrade);
+      });
     });
   });
 
@@ -1255,7 +1441,7 @@ describe("middleware", () => {
 
     it("should provide params to middleware context", async () => {
       const stubResponse = new Response(null, { status: 200 });
-      let capturedParams: Record<string, string> = {};
+      let capturedParams: Record<string, string | undefined> = {};
 
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         capturedParams = ctx.params;
@@ -1515,7 +1701,7 @@ describe("middleware", () => {
     });
 
     it("should provide params to middleware context", async () => {
-      let capturedParams: Record<string, string> = {};
+      let capturedParams: Record<string, string | undefined> = {};
 
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         capturedParams = ctx.params;

@@ -17,6 +17,12 @@
     "isolatedDeclarations": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/server", "src/**/__fixtures__"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/server",
+    "src/**/__fixtures__",
+    "src/__augment-tests__"
+  ],
   "references": [{ "path": "./src/server/tsconfig.json" }]
 }

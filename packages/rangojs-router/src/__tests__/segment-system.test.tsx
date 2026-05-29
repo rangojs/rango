@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, vi } from "vitest";
 import { createElement, type ReactNode, type ReactElement } from "react";
 import type { ResolvedSegment } from "../types";
@@ -584,6 +585,262 @@ describe("segment-system", () => {
           "modal-loader": { modal: true },
         });
       });
+
+      it("wraps a layout's outlet content with ViewTransition, not the layout component itself", async () => {
+        // The VT wrap must sit between the layout and the inner route segment,
+        // not above the layout component. Otherwise sibling parallel slots
+        // (e.g. <ParallelOutlet name="@modal" />) count as subtree updates of
+        // the layout VT and React's commit walker fires startViewTransition on
+        // intercept commits, hoisting view-transition-named elements above the
+        // modal overlay.
+        //
+        // segment-system captures React.ViewTransition eagerly at module load,
+        // so mock the react module and re-import the module fresh so the
+        // top-level const is re-evaluated.
+        function MockViewTransition(props: any) {
+          return props.children;
+        }
+        const actualReact = await vi.importActual<any>("react");
+        vi.doMock("react", () => ({
+          ...actualReact,
+          ViewTransition: MockViewTransition,
+          default: { ...actualReact, ViewTransition: MockViewTransition },
+        }));
+        vi.resetModules();
+        try {
+          const { renderSegments: renderSegmentsFresh } =
+            await import("../segment-system");
+
+          const layout = seg({
+            id: "L0",
+            type: "layout",
+            transition: { default: "fade" } as any,
+          });
+          const route = seg({ id: "L0R0", type: "route" });
+
+          const result = await renderSegmentsFresh([layout, route]);
+          const tree = toTreeNode(result);
+          const layoutOutlet = collectByType(tree, MockOutletProvider).find(
+            (o) => o.props.segment.id === "L0",
+          )!;
+
+          const findVTIn = (n: ReactNode) =>
+            findFirst(toTreeNode(n), MockViewTransition);
+
+          // VT lives in the layout's `content` channel (what <Outlet /> renders),
+          // not its `children` channel (the layout component itself).
+          expect(findVTIn(layoutOutlet.props.content)).not.toBeNull();
+          expect(findVTIn(layoutOutlet.props.content)?.props.default).toBe(
+            "fade",
+          );
+          expect(findVTIn(layoutOutlet.props.children)).toBeNull();
+        } finally {
+          vi.doUnmock("react");
+          vi.resetModules();
+        }
+      });
+
+      it("pushes ancestor layout ViewTransition into descendant default outlet content", async () => {
+        function MockViewTransition(props: any) {
+          return props.children;
+        }
+        const actualReact = await vi.importActual<any>("react");
+        vi.doMock("react", () => ({
+          ...actualReact,
+          ViewTransition: MockViewTransition,
+          default: { ...actualReact, ViewTransition: MockViewTransition },
+        }));
+        vi.resetModules();
+        try {
+          const { renderSegments: renderSegmentsFresh } =
+            await import("../segment-system");
+
+          const outer = seg({
+            id: "L0",
+            type: "layout",
+            transition: { default: "outer-fade" } as any,
+          });
+          const inner = seg({ id: "L0L0", type: "layout" });
+          const route = seg({ id: "L0L0R0", type: "route" });
+          const interceptSegments: ResolvedSegment[] = [
+            seg({
+              id: "L0L0.@modal",
+              type: "parallel",
+              slot: "@modal",
+            }),
+          ];
+
+          const normalResult = await renderSegmentsFresh([outer, inner, route]);
+          const normalOuterOutlet = collectByType(
+            toTreeNode(normalResult),
+            MockOutletProvider,
+          ).find((o) => o.props.segment.id === "L0")!;
+          const normalInnerOutlet = collectByType(
+            toTreeNode(normalResult),
+            MockOutletProvider,
+          ).find((o) => o.props.segment.id === "L0L0")!;
+          const findVTIn = (n: ReactNode) =>
+            findFirst(toTreeNode(n), MockViewTransition);
+
+          expect(toTreeNode(normalOuterOutlet.props.content)?.type).toBe(
+            MockOutletProvider,
+          );
+          expect(findVTIn(normalInnerOutlet.props.content)?.props.default).toBe(
+            "outer-fade",
+          );
+
+          const interceptResult = await renderSegmentsFresh(
+            [outer, inner, route],
+            { interceptSegments },
+          );
+          const interceptOuterOutlet = collectByType(
+            toTreeNode(interceptResult),
+            MockOutletProvider,
+          ).find((o) => o.props.segment.id === "L0")!;
+          const interceptInnerOutlet = collectByType(
+            toTreeNode(interceptResult),
+            MockOutletProvider,
+          ).find((o) => o.props.segment.id === "L0L0")!;
+
+          expect(toTreeNode(interceptOuterOutlet.props.content)?.type).toBe(
+            MockOutletProvider,
+          );
+          expect(
+            findVTIn(interceptInnerOutlet.props.content)?.props.default,
+          ).toBe("outer-fade");
+        } finally {
+          vi.doUnmock("react");
+          vi.resetModules();
+        }
+      });
+
+      it("retains the same default outlet and intercept slot shape during modal actions", async () => {
+        function MockViewTransition(props: any) {
+          return props.children;
+        }
+        const actualReact = await vi.importActual<any>("react");
+        vi.doMock("react", () => ({
+          ...actualReact,
+          ViewTransition: MockViewTransition,
+          default: { ...actualReact, ViewTransition: MockViewTransition },
+        }));
+        vi.resetModules();
+        try {
+          const { renderSegments: renderSegmentsFresh } =
+            await import("../segment-system");
+
+          const outer = seg({
+            id: "L0",
+            type: "layout",
+            transition: { default: "outer-fade" } as any,
+          });
+          const inner = seg({ id: "L0L0", type: "layout" });
+          const route = seg({ id: "L0L0R0", type: "route" });
+          const interceptSegments: ResolvedSegment[] = [
+            seg({
+              id: "L0L0.@modal",
+              namespace: "intercept:modal",
+              type: "parallel",
+              slot: "@modal",
+              layout: createElement("div", null, "modal-layout"),
+              component: createElement("form", null, "modal-action"),
+            }),
+          ];
+
+          const render = async (isAction: boolean) => {
+            const result = await renderSegmentsFresh([outer, inner, route], {
+              isAction,
+              interceptSegments,
+            });
+            const outlets = collectByType(
+              toTreeNode(result),
+              MockOutletProvider,
+            );
+            return {
+              outer: outlets.find((o) => o.props.segment.id === "L0")!,
+              inner: outlets.find((o) => o.props.segment.id === "L0L0")!,
+            };
+          };
+
+          const beforeAction = await render(false);
+          const afterAction = await render(true);
+          const findVTIn = (n: ReactNode) =>
+            findFirst(toTreeNode(n), MockViewTransition);
+
+          expect(toTreeNode(beforeAction.outer.props.content)?.type).toBe(
+            MockOutletProvider,
+          );
+          expect(toTreeNode(afterAction.outer.props.content)?.type).toBe(
+            MockOutletProvider,
+          );
+
+          expect(
+            findVTIn(beforeAction.inner.props.content)?.props.default,
+          ).toBe("outer-fade");
+          expect(findVTIn(afterAction.inner.props.content)?.props.default).toBe(
+            "outer-fade",
+          );
+
+          expect(beforeAction.inner.props.parallel).toHaveLength(1);
+          expect(afterAction.inner.props.parallel).toHaveLength(1);
+          expect(beforeAction.inner.props.parallel[0].slot).toBe("@modal");
+          expect(afterAction.inner.props.parallel[0].slot).toBe("@modal");
+          expect(beforeAction.inner.props.parallel[0].layout).toBeDefined();
+          expect(afterAction.inner.props.parallel[0].layout).toBeDefined();
+          expect(findVTIn(beforeAction.inner.props.parallel[0].component)).toBe(
+            null,
+          );
+          expect(findVTIn(afterAction.inner.props.parallel[0].component)).toBe(
+            null,
+          );
+        } finally {
+          vi.doUnmock("react");
+          vi.resetModules();
+        }
+      });
+
+      it("wraps a leaf route's component itself when the route has a transition", async () => {
+        // Routes have no <Outlet /> or parallel slots, so the wrap stays
+        // around the route's own component.
+        function MockViewTransition(props: any) {
+          return props.children;
+        }
+        const actualReact = await vi.importActual<any>("react");
+        vi.doMock("react", () => ({
+          ...actualReact,
+          ViewTransition: MockViewTransition,
+          default: { ...actualReact, ViewTransition: MockViewTransition },
+        }));
+        vi.resetModules();
+        try {
+          const { renderSegments: renderSegmentsFresh } =
+            await import("../segment-system");
+
+          const route = seg({
+            id: "R0",
+            type: "route",
+            transition: { default: "fade" } as any,
+          });
+
+          const result = await renderSegmentsFresh([route]);
+          const tree = toTreeNode(result);
+          const routeOutlet = collectByType(tree, MockOutletProvider).find(
+            (o) => o.props.segment.id === "R0",
+          )!;
+
+          const findVTIn = (n: ReactNode) =>
+            findFirst(toTreeNode(n), MockViewTransition);
+
+          // Route has no outlet content; the VT wraps nodeContent (children).
+          expect(findVTIn(routeOutlet.props.children)).not.toBeNull();
+          expect(findVTIn(routeOutlet.props.children)?.props.default).toBe(
+            "fade",
+          );
+        } finally {
+          vi.doUnmock("react");
+          vi.resetModules();
+        }
+      });
     });
 
     describe("rootLayout wrapping", () => {
@@ -953,11 +1210,19 @@ describe("segment-system", () => {
           }),
         ];
 
-        await renderSegments(segments);
-        const firstPromise = segments[1].loaderDataPromise;
+        const firstResult = await renderSegments(segments);
+        const firstBoundary = collectByType(
+          toTreeNode(firstResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        const firstPromise = firstBoundary.props.loaderDataPromise;
 
-        await renderSegments(segments);
-        const secondPromise = segments[1].loaderDataPromise;
+        const secondResult = await renderSegments(segments);
+        const secondBoundary = collectByType(
+          toTreeNode(secondResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        const secondPromise = secondBoundary.props.loaderDataPromise;
 
         expect(firstPromise).toBeInstanceOf(Promise);
         expect(secondPromise).toBe(firstPromise);
@@ -980,27 +1245,35 @@ describe("segment-system", () => {
           }),
         ];
 
-        await renderSegments(segments);
-        const firstPromise = segments[1].loaderDataPromise;
+        const firstResult = await renderSegments(segments);
+        const firstBoundary = collectByType(
+          toTreeNode(firstResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        const firstPromise = firstBoundary.props.loaderDataPromise;
 
         segments[2] = {
           ...segments[2],
           loaderData: Promise.resolve({ foo: 2 }),
         };
 
-        await renderSegments(segments);
-        const secondPromise = segments[1].loaderDataPromise;
+        const secondResult = await renderSegments(segments);
+        const secondBoundary = collectByType(
+          toTreeNode(secondResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        const secondPromise = secondBoundary.props.loaderDataPromise;
 
         expect(firstPromise).toBeInstanceOf(Promise);
         expect(secondPromise).not.toBe(firstPromise);
       });
 
       // Regression guard: reconcileSegments produces fresh segment refs on
-      // many paths (in-diff spread, loading-strip, mergeSegmentLoaders). If
-      // memoization is tied to the exact segment ref, the realistic flow —
-      // reconcile then render — recreates Promise wrappers every navigation
-      // and the intercept flicker returns. These tests run segments through
-      // reconcile between renders to simulate the real browser path.
+      // many paths (in-diff spread, mergeSegmentLoaders). Memoization now
+      // lives in a module-level WeakMap keyed on loaderData/component refs
+      // (not on the segment), so it survives reconcile inherently — this
+      // integration test proves the render → reconcile → render path keeps
+      // the aggregate Promise stable end to end.
       it("preserves the memoized loader promise across a reconcile that spreads the segment", async () => {
         const { reconcileSegments } =
           await import("../browser/segment-reconciler");
@@ -1021,8 +1294,12 @@ describe("segment-system", () => {
           }),
         ];
 
-        await renderSegments(initial);
-        const firstPromise = initial[1].loaderDataPromise;
+        const firstResult = await renderSegments(initial);
+        const firstBoundary = collectByType(
+          toTreeNode(firstResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        const firstPromise = firstBoundary.props.loaderDataPromise;
         expect(firstPromise).toBeInstanceOf(Promise);
 
         // Simulate navigation where the server returns a fresh copy of L0R0
@@ -1045,13 +1322,13 @@ describe("segment-system", () => {
           (s) => s.id === "L0R0",
         )!;
         expect(mergedRoute).not.toBe(initial[1]);
-        expect(mergedRoute.loaderDataPromise).toBe(firstPromise);
-        expect(mergedRoute.layoutLoaderSources).toBe(
-          initial[1].layoutLoaderSources,
-        );
 
-        await renderSegments(reconciled.mainSegments);
-        expect(mergedRoute.loaderDataPromise).toBe(firstPromise);
+        const secondResult = await renderSegments(reconciled.mainSegments);
+        const secondBoundary = collectByType(
+          toTreeNode(secondResult),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0R0")!;
+        expect(secondBoundary.props.loaderDataPromise).toBe(firstPromise);
       });
 
       it("keeps the cached segment ref when reconciling cached-only entries with truthy loading", async () => {
@@ -1068,8 +1345,12 @@ describe("segment-system", () => {
           }),
         ];
 
-        await renderSegments(initial);
-        const firstContent = initial[0].contentPromise;
+        const firstResult = await renderSegments(initial);
+        const firstWrapper = collectByType(
+          toTreeNode(firstResult),
+          MockRouteContentWrapper,
+        )[0];
+        const firstContent = firstWrapper.props.content;
         expect(firstContent).toBeInstanceOf(Promise);
 
         // Cached-only entries stay as-is: renderSegments must stay in the
@@ -1086,7 +1367,13 @@ describe("segment-system", () => {
         const mergedRoute = reconciled.mainSegments[0];
         expect(mergedRoute).toBe(initial[0]);
         expect(mergedRoute.loading).toBe(loadingSkeleton);
-        expect(mergedRoute.contentPromise).toBe(firstContent);
+
+        const secondResult = await renderSegments(reconciled.mainSegments);
+        const secondWrapper = collectByType(
+          toTreeNode(secondResult),
+          MockRouteContentWrapper,
+        )[0];
+        expect(secondWrapper.props.content).toBe(firstContent);
       });
     });
   });

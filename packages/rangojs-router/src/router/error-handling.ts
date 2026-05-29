@@ -1,7 +1,7 @@
 /**
  * Router Error Handling Utilities
  *
- * Error boundary and not-found boundary handling for RSC Router.
+ * Error boundary and not-found boundary handling for Rango.
  * Also includes the shared invokeOnError utility for error callback invocation.
  */
 

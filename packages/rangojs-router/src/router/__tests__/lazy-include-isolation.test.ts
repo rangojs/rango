@@ -4,10 +4,11 @@ import { urls } from "../../urls.js";
 import { createLoader } from "../../loader.js";
 import type { RouteEntry } from "../../types.js";
 import type { EntryData } from "../../server/context.js";
-import { getContext, RSCRouterContext } from "../../server/context.js";
+import { getContext, RangoContext } from "../../server/context.js";
 import { evaluateLazyEntry } from "../lazy-includes.js";
 import { loadManifest, clearManifestCache } from "../manifest.js";
 import type { MiddlewareFn } from "../middleware.js";
+import { isRouteRootScoped } from "../../route-map-builder.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -254,8 +255,8 @@ describe("lazy include parent isolation", () => {
         },
       } as unknown as RouteEntry;
 
-      // loadManifest requires being inside RSCRouterContext
-      await RSCRouterContext.run(
+      // loadManifest requires being inside RangoContext
+      await RangoContext.run(
         {
           manifest: new Map(),
           patterns: new Map(),
@@ -355,7 +356,7 @@ describe("lazy include parent isolation", () => {
         },
       } as unknown as RouteEntry;
 
-      await RSCRouterContext.run(
+      await RangoContext.run(
         {
           manifest: new Map(),
           patterns: new Map(),
@@ -395,6 +396,228 @@ describe("lazy include parent isolation", () => {
           expect(sharedParent.intercept).toHaveLength(0);
           expect(sharedParent.revalidate).toHaveLength(0);
           expect(sharedParent.layout).toHaveLength(0);
+        },
+      );
+    });
+
+    // Regression: loadManifest() calls within a single RangoContext.run
+    // share the same ALS-backed Store (via getOrCreateStore). A lazy
+    // manifest build sets Store.includeScope; a subsequent non-lazy build
+    // on the same store must see includeScope cleared, otherwise its
+    // top-level routes get a stale "I..." scope baked into their shortCode.
+    it("does not leak includeScope from a lazy build into a later non-lazy build", async () => {
+      const sharedParent = makeSyntheticRoot();
+
+      const scopedPatterns = urls<any>(({ path }) => [
+        path("/", ProductList, { name: "index" }),
+      ]);
+
+      const plainPatterns = urls<any>(({ path }) => [
+        path("/", DashboardPage, { name: "plain" }),
+      ]);
+
+      const scopedRouteEntry: RouteEntry = {
+        prefix: "/scoped",
+        staticPrefix: "/scoped",
+        routes: { "scoped.index": "/scoped/" } as any,
+        handler: scopedPatterns.handler,
+        mountIndex: 10,
+        lazy: true,
+        lazyEvaluated: false,
+        lazyPatterns: scopedPatterns,
+        lazyContext: {
+          urlPrefix: "",
+          namePrefix: "scoped",
+          parent: sharedParent,
+          counters: {},
+          includeScope: "I0",
+        },
+      } as unknown as RouteEntry;
+
+      // Non-lazy entry (plain route under the same shared parent). Its
+      // lazyContext is absent, so Store.includeScope must be cleared
+      // before the manifest handler runs.
+      const plainRouteEntry: RouteEntry = {
+        prefix: "/plain",
+        staticPrefix: "/plain",
+        routes: { plain: "/plain/" } as any,
+        handler: plainPatterns.handler,
+        mountIndex: 11,
+        lazy: false,
+      } as unknown as RouteEntry;
+
+      await RangoContext.run(
+        {
+          manifest: new Map(),
+          patterns: new Map(),
+          patternsByPrefix: new Map(),
+          trailingSlash: new Map(),
+          namespace: "root",
+          parent: sharedParent,
+          counters: {},
+          mountIndex: 0,
+        },
+        async () => {
+          const scopedManifest = await loadManifest(
+            scopedRouteEntry,
+            "scoped.index",
+            "/scoped/",
+          );
+          // Scoped build: route shortCode must carry the I0 scope.
+          expect(scopedManifest.shortCode).toMatch(/I0/);
+
+          const plainManifest = await loadManifest(
+            plainRouteEntry,
+            "plain",
+            "/plain/",
+          );
+          // Non-lazy build immediately after: route shortCode must NOT
+          // carry any stale I-scope token from the previous build.
+          expect(plainManifest.shortCode).not.toMatch(/I\d/);
+        },
+      );
+    });
+
+    // Regression: Store.rootScoped had the same leak shape as
+    // Store.includeScope — a lazy build of a named-include entry leaves
+    // rootScoped=false behind, and the next non-lazy build on the same
+    // ALS-backed Store reads that stale value through getRootScoped(),
+    // mis-registering its plain routes as non-root-scoped and breaking
+    // dot-local reverse resolution.
+    it("does not leak rootScoped from a lazy named-include build into a later non-lazy build", async () => {
+      const sharedParent = makeSyntheticRoot();
+
+      // A lazy entry whose captured context declares rootScoped=false,
+      // mirroring what include("/account", accountUrls, { name: "account" })
+      // produces at DSL time.
+      const namedIncludePatterns = urls<any>(({ path }) => [
+        path("/", ProductList, { name: "dashboard" }),
+      ]);
+
+      // A non-lazy plain entry that should end up root-scoped.
+      const plainPatterns = urls<any>(({ path }) => [
+        path("/ping", DashboardPage, { name: "rootScopeLeakPing" }),
+      ]);
+
+      const namedLazyEntry: RouteEntry = {
+        prefix: "/account",
+        staticPrefix: "/account",
+        routes: { "account.dashboard": "/account/" } as any,
+        handler: namedIncludePatterns.handler,
+        mountIndex: 20,
+        lazy: true,
+        lazyEvaluated: false,
+        lazyPatterns: namedIncludePatterns,
+        lazyContext: {
+          urlPrefix: "",
+          namePrefix: "account",
+          parent: sharedParent,
+          counters: {},
+          rootScoped: false,
+        },
+      } as unknown as RouteEntry;
+
+      const plainEntry: RouteEntry = {
+        prefix: "/ping",
+        staticPrefix: "/ping",
+        routes: { rootScopeLeakPing: "/ping" } as any,
+        handler: plainPatterns.handler,
+        mountIndex: 21,
+        lazy: false,
+      } as unknown as RouteEntry;
+
+      await RangoContext.run(
+        {
+          manifest: new Map(),
+          patterns: new Map(),
+          patternsByPrefix: new Map(),
+          trailingSlash: new Map(),
+          namespace: "root",
+          parent: sharedParent,
+          counters: {},
+          mountIndex: 0,
+        },
+        async () => {
+          await loadManifest(namedLazyEntry, "account.dashboard", "/account/");
+          await loadManifest(plainEntry, "rootScopeLeakPing", "/ping");
+
+          // Plain route at root level must register as root-scoped (true),
+          // not inherit the prior lazy build's rootScoped=false.
+          expect(isRouteRootScoped("rootScopeLeakPing")).toBe(true);
+        },
+      );
+    });
+
+    // Regression: Store.cacheProfiles has the same cross-build leak shape
+    // as includeScope/rootScoped. A lazy manifest build whose captured
+    // lazyContext carries a profile map would write it into the shared
+    // ALS-backed Store; a later non-lazy build on the same Store must
+    // clear the map, otherwise a cache("name") call in its urls would
+    // silently resolve against an unrelated entry's profile.
+    it("does not leak cacheProfiles from a lazy build into a later non-lazy build", async () => {
+      const sharedParent = makeSyntheticRoot();
+
+      const lazyProfilePatterns = urls<any>(({ path }) => [
+        path("/", ProductList, { name: "index" }),
+      ]);
+      const plainPatterns = urls<any>(({ path }) => [
+        path("/", DashboardPage, { name: "plain" }),
+      ]);
+
+      const lazyProfileEntry: RouteEntry = {
+        prefix: "/cached",
+        staticPrefix: "/cached",
+        routes: { "cached.index": "/cached/" } as any,
+        handler: lazyProfilePatterns.handler,
+        mountIndex: 30,
+        lazy: true,
+        lazyEvaluated: false,
+        lazyPatterns: lazyProfilePatterns,
+        lazyContext: {
+          urlPrefix: "",
+          namePrefix: "cached",
+          parent: sharedParent,
+          counters: {},
+          cacheProfiles: { shortCache: { ttl: 30 } },
+        },
+      } as unknown as RouteEntry;
+
+      // Non-lazy entry with no cacheProfiles. After its loadManifest(),
+      // the shared Store must no longer expose the lazy entry's profiles.
+      const plainEntry: RouteEntry = {
+        prefix: "/plain",
+        staticPrefix: "/plain",
+        routes: { plain: "/plain/" } as any,
+        handler: plainPatterns.handler,
+        mountIndex: 31,
+        lazy: false,
+      } as unknown as RouteEntry;
+
+      await RangoContext.run(
+        {
+          manifest: new Map(),
+          patterns: new Map(),
+          patternsByPrefix: new Map(),
+          trailingSlash: new Map(),
+          namespace: "root",
+          parent: sharedParent,
+          counters: {},
+          mountIndex: 0,
+        },
+        async () => {
+          await loadManifest(lazyProfileEntry, "cached.index", "/cached/");
+
+          // Sanity check: during/after the lazy build, the Store carried
+          // the profile map. (If this fails, the test premise is broken.)
+          const storeAfterLazy = getContext().getOrCreateStore();
+          expect(storeAfterLazy.cacheProfiles?.shortCache).toBeDefined();
+
+          await loadManifest(plainEntry, "plain", "/plain/");
+
+          // After the plain build the ALS-backed Store must not carry
+          // the prior lazy build's profile map.
+          const storeAfterPlain = getContext().getOrCreateStore();
+          expect(storeAfterPlain.cacheProfiles).toBeUndefined();
         },
       );
     });

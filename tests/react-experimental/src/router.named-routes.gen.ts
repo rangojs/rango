@@ -7,15 +7,18 @@ export const NamedRoutes = {
   "cards.detail": "/cards/:slug",
   counter: "/counter",
   home: "/",
+  "layoutTx.a": "/layout-tx-a",
+  "layoutTx.b": "/layout-tx-b",
   prerender: "/prerender",
   "prerender.article": "/prerender/:slug",
+  refresh: "/refresh",
   static: "/static",
   "transition.a": "/transition-a",
   "transition.b": "/transition-b",
 } as const;
 
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface GeneratedRouteMap extends Readonly<typeof NamedRoutes> {}
   }
 }

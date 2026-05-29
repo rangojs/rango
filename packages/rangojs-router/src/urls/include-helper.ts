@@ -1,10 +1,8 @@
 import type { AllUseItems, IncludeItem } from "../route-types.js";
 import {
-  getContext,
-  runWithPrefixes,
   getUrlPrefix,
   getNamePrefix,
-  getRootScoped,
+  requireDslContext,
 } from "../server/context";
 import {
   INTERNAL_INCLUDE_SCOPE_PREFIX,
@@ -27,28 +25,10 @@ function allocateInternalIncludeScopeId(
 }
 
 /**
- * Process an IncludeItem by executing its nested patterns with prefixes
- * This expands the include into actual route registrations
- */
-function processIncludeItem(item: IncludeItem): AllUseItems[] {
-  const { prefix, patterns } = item;
-  const namePrefix =
-    (item as IncludeItem & { _lazyContext?: { namePrefix?: string } })
-      ._lazyContext?.namePrefix ?? item.options?.name;
-
-  // Execute the nested patterns' handler with URL and name prefixes
-  // The urlPrefix being set tells nested urls() to skip RootLayout wrapping
-  return runWithPrefixes(prefix, namePrefix, () => {
-    // Call the nested patterns' handler - this registers routes with prefixed patterns/names
-    return (patterns as UrlPatterns).handler();
-  });
-}
-
-/**
- * Recursively process items, expanding any IncludeItems
- * Returns items with IncludeItems expanded into actual route items
+ * Recursively walk items, recursing into layout children.
  *
- * Lazy includes are kept as-is (not expanded) for the router to handle later.
+ * All includes are lazy and kept as-is; the router expands them on the first
+ * matching request.
  */
 export function processItems(items: readonly AllUseItems[]): AllUseItems[] {
   const result: AllUseItems[] = [];
@@ -57,26 +37,8 @@ export function processItems(items: readonly AllUseItems[]): AllUseItems[] {
     if (!item) continue;
 
     if (item.type === "include") {
-      const includeItem = item as IncludeItem & {
-        _expanded?: AllUseItems[];
-        lazy?: boolean;
-      };
-
-      // Lazy includes are NOT expanded here - kept for router to handle
-      if (includeItem.lazy) {
-        result.push(item);
-        continue;
-      }
-
-      // Eager includes are already expanded during include() call
-      if (includeItem._expanded) {
-        // Items were expanded immediately - just process them recursively
-        result.push(...processItems(includeItem._expanded));
-      } else {
-        // Fallback for legacy include items without _expanded
-        const expanded = processIncludeItem(item as IncludeItem);
-        result.push(...processItems(expanded));
-      }
+      // All includes are lazy; the router expands them on first matching request.
+      result.push(item);
     } else if (item.type === "layout" && (item as any).uses) {
       // Process nested items in layout
       const layoutItem = item as any;
@@ -93,13 +55,9 @@ export function processItems(items: readonly AllUseItems[]): AllUseItems[] {
 /**
  * Create include() helper for composing URL patterns
  *
- * By default, include() IMMEDIATELY expands the nested patterns. This ensures
- * that routes from included patterns inherit the correct parent context
- * (the layout they're included in).
- *
- * With `lazy: true`, patterns are NOT expanded at definition time. Instead,
- * they're evaluated on first request that matches the prefix. This improves
- * cold start time for apps with many routes.
+ * All includes are lazy: the nested patterns are NOT expanded at definition
+ * time. Instead they are evaluated on the first request that matches the
+ * prefix, which improves cold start time for apps with many routes.
  */
 export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
   return (
@@ -107,9 +65,7 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
     patterns: UrlPatterns<TEnv>,
     options?: IncludeOptions,
   ): IncludeItem => {
-    const store = getContext();
-    const ctx = store.getStore();
-    if (!ctx) throw new Error("include() must be called inside urls()");
+    const { ctx } = requireDslContext("include() must be called inside urls()");
 
     const explicitName = options?.name;
     const hasExplicitName = hasExplicitNameOption(options);
@@ -149,21 +105,31 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
       });
     }
 
-    // Snapshot parent's counters so lazy manifest generation starts
-    // at the correct index, preventing shortCode collisions with
-    // sibling entries (e.g., BlogLayout and ArticlesLayout under NavLayout).
-    const capturedCounters = { ...ctx.counters };
-
-    // Reserve a layout slot in the parent's counter so sibling lazy includes
-    // produce different shortCode indices for their root layout.
-    // Without this, consecutive include() calls capture identical counters
-    // and their first child layouts get the same shortCode (e.g., both M0L0L0),
-    // causing the client partial-update diff to see no changes on navigation.
+    // Allocate an include-scope token for this include() call. The token is
+    // appended to the parent's shortCode prefix whenever the include's
+    // direct-descendant shortCodes are generated (see getShortCode in
+    // context.ts), partitioning the parent's counter namespace so routes
+    // inside an include cannot collide with siblings declared outside it.
+    //
+    // Scopes compose: a nested include inside an outer include with scope
+    // "I0" allocates against the `${parent.shortCode}I0_include` counter
+    // and produces scope "I0I0", "I0I1", etc.
+    const parentScope = ctx.includeScope ?? "";
+    let includeScope = parentScope;
     if (capturedParent?.shortCode) {
-      const layoutCounterKey = `${capturedParent.shortCode}_layout`;
-      ctx.counters[layoutCounterKey] ??= 0;
-      ctx.counters[layoutCounterKey]++;
+      const includeCounterKey = `${capturedParent.shortCode}${parentScope}_include`;
+      ctx.counters[includeCounterKey] ??= 0;
+      const includeIdx = ctx.counters[includeCounterKey];
+      ctx.counters[includeCounterKey] = includeIdx + 1;
+      includeScope = `${parentScope}I${includeIdx}`;
     }
+
+    // Snapshot parent's counters AFTER allocating the include scope so lazy
+    // manifest generation starts with the same counter state this include
+    // observed — its descendants still get fresh per-scope counters because
+    // they key off `${parent.shortCode}${includeScope}_*` (not shared with
+    // siblings outside the include).
+    const capturedCounters = { ...ctx.counters };
 
     // Compute rootScoped at capture time, mirroring the logic in runWithPrefixes.
     // This ensures lazy evaluation restores the correct scope state.
@@ -191,6 +157,7 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
         counters: capturedCounters,
         cacheProfiles: ctx.cacheProfiles,
         rootScoped: capturedRootScoped,
+        includeScope,
       },
     } as IncludeItem;
   };

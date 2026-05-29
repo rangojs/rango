@@ -143,6 +143,23 @@ authorization or resource scoping (e.g., verifying the user owns the resource
 at the matched URL). Use `ctx.params` for general data fetching where
 client-provided params are acceptable.
 
+### URL params: absent optionals are `undefined`
+
+Absent optional segments (`:locale?`) are **omitted from the params record**
+at runtime — `ctx.params.locale` reads as `undefined`, not `""`. This
+matches the `RouteParams<"name">` type (`{ locale?: string }`) and the
+public `useParams()` default (`Record<string, string | undefined>`).
+
+| Pattern             | URL    | `ctx.params`         |
+| ------------------- | ------ | -------------------- |
+| `/:locale?`         | `/`    | `{}` (locale absent) |
+| `/:locale?`         | `/en`  | `{ locale: "en" }`   |
+| `/:locale?/c/:slug` | `/c/x` | `{ slug: "x" }`      |
+
+Internal consumers tolerate both forms — `satisfiesConstraints` and
+`reverse()` treat missing/undefined and `""` identically — so caller code
+or `getParams()` shapes that pass `""` explicitly continue to work.
+
 ## Async Context Propagation
 
 The router uses `AsyncLocalStorage` to maintain request context across all
@@ -233,6 +250,61 @@ This is intentional: during SSR, the loader runs inside the route middleware
 scope and inherits its protections. The per-loader middleware exists to guard
 the standalone fetch endpoint, which bypasses route middleware entirely.
 
+## Client Refresh Fan-out
+
+This is a **client-only** contract: which mounted `useLoader` / `useFetchLoader`
+reads observe the result of a `load()`. It is independent of the server
+execution model above and of `cache()` / `revalidate()`; it never changes the
+request sent to the server. Owned by `src/use-loader.tsx` + `src/loader-store.ts`
+(the per-tab module-level `loaderStore`). The store is partitioned into buckets;
+each bucket key is `loader.$$id`, or `loader.$$id + key` when the hook is given
+an explicit client refresh `key`. Buckets of one loader form a family (indexed
+by `$$id`) so a route-context reset can clear them together.
+
+| `load(...)` call                     | No `key`                                        | With `key`                         |
+| ------------------------------------ | ----------------------------------------------- | ---------------------------------- |
+| `load()` (or GET, no params/body)    | shared by `$$id` iff loader is in route context | shared by `$$id + key`             |
+| `load({ params })`                   | local to the calling hook                       | shared by `$$id + key`             |
+| `load({ method: non-GET })` / `body` | local to the calling hook                       | local to the calling hook          |
+| loader not in route context          | local to the calling hook                       | shared by `$$id + key` (ephemeral) |
+
+`isLoading` and `error` follow the bucket. `throwOnError: true` render-throws are
+scoped to the **originating** hook: a shared error is thrown only by the hook
+whose `load()` produced it (matched on the bucket's `requestId`); co-bucket
+siblings expose it via `error` without throwing. A successful follow-up `load()`
+clears the shared error.
+
+Bucket reset has two boundaries:
+
+- **Sticky buckets** (any route-registered reader subscribed) reset on
+  route-context change via `clearFamily(loaderId)` — navigation / action
+  revalidation re-seeds them from fresh `loaderData`.
+- **Ephemeral buckets** (only ever read by hooks with no route context — keyed
+  `useFetchLoader` of an unregistered loader) have no route-context trigger, so
+  they are reference-counted: dropped once the last subscriber unsubscribes
+  (deferred a microtask, cancelled on resubscribe, held until any in-flight load
+  settles). A persistent reader outside the outlet keeps its value across a
+  navigation; a route-scoped reader's value is reclaimed on unmount.
+
+**Cross-loader refresh groups.** `key` partitions readers of one loader; the
+`refreshGroup` option + `useRefreshLoaders(name)` refresh **different** loaders
+together. The store keeps a `groups: Map<name, Set<bucketKey>>` index, with
+membership refcounted per subscriber on each entry (`entry.groups: Map<name,
+count>`) so a bucket can belong to several groups at once and leaves a group only
+when that group's last subscriber unmounts — independent of subscribe/unsubscribe
+order. `refreshGroup(name)` runs each member's registered plain-GET thunk (deduped
+by bucket, current route URL, no params/body), `Promise.allSettled`s them, and
+rejects with an `AggregateError` on any failure. Group refresh never
+render-throws — failures surface via each member's `error` and the returned
+promise; handle them at the await site. It is GET-only by design: a group spans
+heterogeneous loaders, so there is no coherent params or aggregate return type.
+
+A grouped reader with **no explicit `key`** is given a private per-hook bucket
+(`loader.$$id::<private>`) rather than the bare `loader.$$id` bucket. Otherwise a
+group refresh would write the shared loader-id bucket and leak into unrelated
+unkeyed reads of the same loader, which the fan-out table keeps local. Sharing a
+value within a group is therefore opt-in via a common `key`.
+
 ## Non-Guarantees
 
 - Route middleware is not an action guard.
@@ -304,7 +376,7 @@ DSL loaders (registered with `loader()`) and handler-called loaders
     imported from `@rangojs/router`, which delegate to the request
     context. The cache-scope guard is bypassed via a dedicated
     `loaderScopeALS` that tracks loader execution separately from the
-    `insideCacheScope` flag on `RSCRouterContext`.
+    `insideCacheScope` flag on `RangoContext`.
   - This applies to all DSL loader resolution paths: fresh, revalidation,
     and intercept.
 

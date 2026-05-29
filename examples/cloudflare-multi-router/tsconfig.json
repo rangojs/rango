@@ -1,22 +1,16 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "jsx": "react-jsx",
-    "strict": true,
-    "noEmit": true,
-    "skipLibCheck": true,
-    "esModuleInterop": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "types": [
-      "@cloudflare/workers-types",
-      "vite/client",
-      "@rangojs/router/types"
-    ]
-  },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  // Each sub-app is a SEPARATE TypeScript program (see src/apps/*/tsconfig.json).
+  // Required for the multi-router / host-router pattern: every router's generated
+  // `*.named-routes.gen.ts` augments the single global `Rango.GeneratedRouteMap`,
+  // so two routers with overlapping route names in ONE program collide.
+  //
+  // This root program covers the host entry (worker.rsc.tsx + env.ts). Resolving
+  // the lazy `import()`s here also type-checks the apps' source, but NOT their
+  // generated maps: collision avoidance relies on the invariant that no app
+  // source imports its own `*.named-routes.gen.ts` (those are loaded only by the
+  // Vite virtual module at build time). If an app ever imports its gen file, that
+  // augmentation re-enters this program and the maps collide again. See
+  // /typesafety "Multiple routers in one program".
+  "extends": "./tsconfig.base.json",
+  "include": ["src/env.ts", "src/worker.rsc.tsx"]
 }

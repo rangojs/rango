@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { LocationStateDefinition } from "./location-state-shared.js";
 
 // Re-export shared utilities and types
@@ -12,6 +12,24 @@ export {
   type LocationStateDefinition,
   type LocationStateOptions,
 } from "./location-state-shared.js";
+
+function readLocationStateValue<TState>(
+  key: string | undefined,
+): TState | undefined {
+  if (typeof window === "undefined") return undefined;
+  if (key) {
+    return window.history.state?.[key] as TState | undefined;
+  }
+  // Plain state: stored under history.state.state
+  return window.history.state?.state as TState | undefined;
+}
+
+function hasHydrated(): boolean {
+  return (
+    typeof document !== "undefined" &&
+    document.documentElement.hasAttribute("data-hydrated")
+  );
+}
 
 /**
  * Hook to read location state from history.state
@@ -48,30 +66,33 @@ export function useLocationState<TArgs extends unknown[], TState>(
   const key = definition?.__rsc_ls_key;
   const isFlash = definition?.__rsc_ls_flash ?? false;
 
+  // Track whether the initial render returned undefined because the page
+  // hadn't hydrated yet. If so, the mount effect catches up by reading
+  // history.state once. If not, we already have the right value and must
+  // not re-read on mount — under StrictMode, the flash-cleanup effect runs
+  // before the second setup pass, so a re-read would clobber the captured
+  // value with the now-cleared `undefined`.
+  const initialReadDeferredRef = useRef(false);
+
   const [state, setState] = useState<TState | undefined>(() => {
-    if (typeof window === "undefined") return undefined;
-    if (key) {
-      return window.history.state?.[key] as TState | undefined;
+    if (!hasHydrated()) {
+      initialReadDeferredRef.current = true;
+      return undefined;
     }
-    // Plain state: stored under history.state.state
-    return window.history.state?.state as TState | undefined;
+    return readLocationStateValue<TState>(key);
   });
 
   // Subscribe to popstate and programmatic state changes
   useEffect(() => {
     const handlePopstate = () => {
-      if (key) {
-        setState(window.history.state?.[key] as TState | undefined);
-      } else {
-        setState(window.history.state?.state as TState | undefined);
-      }
+      setState(readLocationStateValue<TState>(key));
     };
 
     // Handle programmatic state changes (same-page navigation with
     // ctx.setLocationState where components don't remount)
     const handleLocationState = () => {
       if (key) {
-        const val = window.history.state?.[key] as TState | undefined;
+        const val = readLocationStateValue<TState>(key);
         if (isFlash) {
           // For flash state, only update if there's a new value
           if (val !== undefined) {
@@ -81,9 +102,14 @@ export function useLocationState<TArgs extends unknown[], TState>(
           setState(val);
         }
       } else {
-        setState(window.history.state?.state as TState | undefined);
+        setState(readLocationStateValue<TState>(key));
       }
     };
+
+    if (initialReadDeferredRef.current) {
+      initialReadDeferredRef.current = false;
+      setState(readLocationStateValue<TState>(key));
+    }
 
     window.addEventListener("popstate", handlePopstate);
     window.addEventListener("__rsc_locationstate", handleLocationState);

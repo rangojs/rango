@@ -12,7 +12,53 @@ import {
   type ReactNode,
 } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
+import { loaderStore, type LoaderEntry } from "./loader-store.js";
 import type { LoaderDefinition, LoadOptions } from "./types.js";
+
+/**
+ * A shareable GET — a `load()` call that reads data (GET or defaulted method)
+ * with no request body. Params are allowed. This is the gate for keyed sharing:
+ * when a hook is given an explicit `key`, every shareable GET writes to the
+ * keyed bucket so co-keyed readers (including parameterized views) refresh
+ * together. Non-GET methods and body-bearing calls are mutations and stay local
+ * to the call site.
+ */
+function isShareableGet(options: LoadOptions | undefined): boolean {
+  if (!options) return true;
+  if (options.method && options.method !== "GET") return false;
+  if ("body" in options && (options as { body?: unknown }).body !== undefined) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Plain route-context refetch — a `load()` call with no options or a
+ * trivially-defaulted GET (no params, no body). Results from these are
+ * broadcast to every component reading the same loader id via the shared
+ * store, so a layout's refetch button updates page + parallel-slot reads
+ * automatically.
+ *
+ * Calls with explicit `params`, an explicit non-GET method, or a `body`
+ * stay local to the call site — that preserves the today-semantics of
+ * `useFetchLoader(SearchLoader).load({ params: { q } })` style code where
+ * each component owns its own fetched view. (An explicit `key` opts a
+ * parameterized GET back into sharing; see `isShareableGet`.)
+ */
+function isPlainRefetch(options: LoadOptions | undefined): boolean {
+  if (!isShareableGet(options)) return false;
+  if (options?.params && Object.keys(options.params).length > 0) return false;
+  return true;
+}
+
+// Per-hook unique suffix for grouped reads that have no explicit `key`. Such a
+// read must NOT share the bare `loader.$$id` bucket, or a cross-loader group
+// refresh would leak into unrelated unkeyed readers of the same loader (which
+// the contract keeps local). Sharing within a group is opt-in via an explicit
+// `key`; without one, each grouped read gets its own private bucket. The value
+// is only ever used as a client-side store bucket key (never rendered), so the
+// counter has no SSR/hydration consistency requirement.
+let privateGroupBucketSeq = 0;
 
 /**
  * Extract a specific loader's data from a content ReactNode.
@@ -121,6 +167,37 @@ export interface UseLoaderOptions {
    * @default true
    */
   throwOnError?: boolean;
+  /**
+   * Client refresh key. Partitions the shared refresh store so that only hooks
+   * using the same `key` refresh together when one of them calls `load()`.
+   *
+   * Without a `key` (default), a plain `load()` on a route-registered loader
+   * broadcasts to every reader of that loader, and any parameterized / unregistered
+   * load stays local to the calling hook. With a `key`:
+   *   - readers of the same loader that share a `key` form one refresh group —
+   *     a `load()` from any of them updates the whole group, including
+   *     parameterized GETs;
+   *   - readers with different keys are independent;
+   *   - it works even when the loader is NOT registered on the route (keyed
+   *     `useFetchLoader`), letting unrelated components opt into sharing.
+   *
+   * This is a client-side refresh identity only. It is unrelated to the server
+   * `cache({ key })` option and to `revalidate()`; it never changes the request
+   * sent to the server.
+   */
+  key?: string;
+  /**
+   * Cross-loader refresh group. Tag reads of DIFFERENT loaders with the same
+   * `refreshGroup` name, then call `useRefreshLoaders(name)()` to refresh the
+   * whole group at once. Each member is refreshed with a plain GET against the
+   * current route URL — no params, no body, no mutation methods — because a
+   * group spans heterogeneous loaders with different param/return shapes.
+   *
+   * For parameterized sharing of a SINGLE loader, use `key` instead; group
+   * members should be registered or non-parameterized-keyed reads (a plain-GET
+   * group refresh would drop any per-call params).
+   */
+  refreshGroup?: string;
 }
 
 /**
@@ -132,12 +209,23 @@ function useLoaderInternal<T>(
 ): UseFetchLoaderResult<T> {
   const context = useContext(OutletContext);
 
-  // Get data from context (SSR/navigation)
-  const contextData = useMemo((): T | undefined => {
+  // Get data from context (SSR/navigation). `hasContextData` distinguishes
+  // "loader registered on the route, value happens to be undefined" from
+  // "loader is not in any parent's context at all". The shared store is
+  // only consulted when the loader really is in route context — that
+  // preserves per-component isolation for ad-hoc useFetchLoader callers
+  // who use the same fetchable loader without registering it.
+  const { contextData, hasContextData } = useMemo((): {
+    contextData: T | undefined;
+    hasContextData: boolean;
+  } => {
     let current: OutletContextValue | null | undefined = context;
     while (current) {
       if (current.loaderData && loader.$$id in current.loaderData) {
-        return current.loaderData[loader.$$id] as T;
+        return {
+          contextData: current.loaderData[loader.$$id] as T,
+          hasContextData: true,
+        };
       }
       // Check content element — the route's OutletProvider is rendered as
       // <Outlet /> content (a child), so its loaderData isn't in the parent
@@ -147,32 +235,173 @@ function useLoaderInternal<T>(
         loader.$$id,
       );
       if (contentData !== NOT_FOUND) {
-        return contentData as T;
+        return { contextData: contentData as T, hasContextData: true };
       }
       current = current.parent;
     }
-    return undefined;
+    return { contextData: undefined, hasContextData: false };
   }, [context, loader.$$id]);
 
-  // Local state for fetched data (from load() calls)
-  const [fetchedData, setFetchedData] = useState<T | undefined>(undefined);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-  const requestIdRef = useRef(0);
+  // Shared subscription: every component reading the same loader id sees
+  // the same snapshot, so a plain refetch from one component propagates to
+  // the others. Mirrors the convention used by useParams / useLinkStatus —
+  // useState seeded from the store, useEffect subscribes for updates and
+  // calls setState inside startTransition so subscriber re-renders don't
+  // trip Suspense fallbacks during a refetch (matches the per-hook
+  // startTransition the old code wrapped setFetchedData in).
+  const loaderId = loader.$$id;
+  // Client refresh key. The shared store is partitioned by bucket key so that
+  // only hooks with the same `key` refresh together. Default (no key) keeps the
+  // historical behavior: one bucket per loader id.
+  const key = options?.key;
+  const refreshGroup = options?.refreshGroup;
+  // A grouped reader with no explicit key gets a private per-hook bucket so a
+  // cross-loader group refresh cannot leak into the bare `loader.$$id` bucket
+  // shared by unrelated unkeyed readers. Sharing within a group is opt-in via
+  // an explicit `key`.
+  const privateBucketIdRef = useRef<string | null>(null);
+  if (
+    refreshGroup !== undefined &&
+    key === undefined &&
+    privateBucketIdRef.current === null
+  ) {
+    privateBucketIdRef.current = `__rg${privateGroupBucketSeq++}`;
+  }
+  const effectiveKey =
+    key ??
+    (refreshGroup !== undefined ? privateBucketIdRef.current! : undefined);
+  const bucketKey =
+    effectiveKey === undefined ? loaderId : `${loaderId}::${effectiveKey}`;
 
-  // Track context data changes to reset fetched data on navigation
+  // Plain-GET refresh thunk registered with the store for cross-loader group
+  // refresh (useRefreshLoaders). Always shares into this hook's bucket, never
+  // touches lastSharedRequestIdRef (so a group refresh never render-throws —
+  // errors surface via `error` and reject the refreshGroup() promise instead),
+  // and sends no params/body. Stable across navigations (depends only on
+  // loaderId + bucketKey), so the store keeps one current thunk per bucket.
+  const groupRefetch = useCallback(async (): Promise<void> => {
+    if (!loaderId) return;
+    const requestId = loaderStore.reserveRequestId(bucketKey);
+    loaderStore.beginRequest(bucketKey, requestId);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("_rsc_loader", loaderId);
+      const response = fetch(url.toString(), {
+        method: "GET",
+        headers: { Accept: "text/x-component" },
+      });
+      const { createFromFetch } = await import("./deps/browser.js");
+      const payload = await createFromFetch<LoaderRscPayload<T>>(response);
+      if (payload.loaderError) {
+        throw new Error(payload.loaderError.message);
+      }
+      loaderStore.finishData(bucketKey, requestId, payload.loaderResult);
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      loaderStore.finishError(bucketKey, requestId, err);
+      throw err;
+    } finally {
+      loaderStore.setLoading(bucketKey, requestId, false);
+    }
+  }, [loaderId, bucketKey]);
+
+  const [sharedState, setSharedState] = useState<{
+    bucketKey: string;
+    snapshot: LoaderEntry;
+  }>(() => ({
+    bucketKey,
+    snapshot: loaderStore.getSnapshot(bucketKey),
+  }));
+  const sharedSnapshot =
+    sharedState.bucketKey === bucketKey
+      ? sharedState.snapshot
+      : loaderStore.getSnapshot(bucketKey);
+  useEffect(() => {
+    // Sync any value the store committed between this hook's lazy
+    // initializer and effect-time (e.g. a sibling that mounted earlier
+    // already triggered a load()).
+    const initial = loaderStore.getSnapshot(bucketKey);
+    if (initial !== sharedSnapshot) {
+      startTransition(() => {
+        setSharedState({ bucketKey, snapshot: initial });
+      });
+    }
+    // ephemeral: a reader with no route context has no route-context reset
+    // trigger, so its keyed bucket is reference-counted by the store. A
+    // route-registered reader makes the bucket sticky (reset via clearFamily).
+    return loaderStore.subscribe(
+      bucketKey,
+      () => {
+        const next = loaderStore.getSnapshot(bucketKey);
+        startTransition(() => {
+          setSharedState({ bucketKey, snapshot: next });
+        });
+      },
+      {
+        loaderId,
+        ephemeral: !hasContextData,
+        group: refreshGroup,
+        refetch: refreshGroup !== undefined ? groupRefetch : undefined,
+      },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional:
+    // sharedSnapshot is captured for the one-shot init sync; we don't want
+    // to re-subscribe on every snapshot change. bucketKey, hasContextData,
+    // refreshGroup, and groupRefetch are the only inputs that require a fresh
+    // subscription (groupRefetch is stable per bucketKey).
+  }, [bucketKey, hasContextData, refreshGroup, groupRefetch]);
+
+  // Local state holds the result of:
+  //   - parameterized / mutation `load()` calls (load({ params }), POST,
+  //     etc.) — stay scoped so concurrent same-loader different-params
+  //     fetches don't clobber each other through the shared store;
+  //   - any `load()` made by hooks that are NOT in route context (i.e.
+  //     useFetchLoader of an unregistered loader) — keeping those local
+  //     prevents two unrelated components from accidentally sharing data
+  //     through the global store just because they reference the same
+  //     loader id.
+  const [localFetchedData, setLocalFetchedData] = useState<T | undefined>(
+    undefined,
+  );
+  const [localIsLoading, setLocalIsLoading] = useState(false);
+  const [localError, setLocalError] = useState<Error | null>(null);
+
+  // Local request id, mirrors the per-hook gating the previous
+  // implementation provided. Two quick parameterized loads from the same
+  // hook (e.g. load({ params: { q: "a" } }) then load({ params: { q: "b" } }))
+  // can resolve out of order — only the latest must commit.
+  const localRequestIdRef = useRef(0);
+
+  // Tracks the request id of the most recent SHARED load() this hook
+  // initiated. The render-throw rule below uses it to scope the throw
+  // to the originating hook only — sibling readers see the error in
+  // `error` but don't blow up their own boundaries.
+  const lastSharedRequestIdRef = useRef<number | null>(null);
+
+  // Reset on navigation. clear() bumps the entry's latest request id so
+  // any pre-navigation load() promise that resolves later fails its gate
+  // and is dropped — fixes the race where a stale fetch overwrites the
+  // new route's context.
   const prevContextDataRef = useRef(contextData);
   useEffect(() => {
     if (prevContextDataRef.current !== contextData) {
-      // Navigation happened, clear fetched data so context takes precedence
-      setFetchedData(undefined);
-      setError(null);
+      setLocalFetchedData(undefined);
+      setLocalIsLoading(false);
+      setLocalError(null);
+      lastSharedRequestIdRef.current = null;
+      // Reset every sticky bucket of this loader (keyed or not). Ephemeral
+      // (unregistered keyed) buckets are left to their refcount lifecycle.
+      loaderStore.clearFamily(loaderId);
       prevContextDataRef.current = contextData;
     }
-  }, [contextData]);
+  }, [contextData, loaderId]);
 
-  // Data priority: fetched data (if any) > context data
-  const data = fetchedData ?? contextData;
+  // Read priority: a parameterized load() result overrides the shared
+  // snapshot; the shared snapshot overrides the server-seeded context.
+  const data =
+    localFetchedData ?? (sharedSnapshot.value as T | undefined) ?? contextData;
+  const isLoading = localIsLoading || sharedSnapshot.isLoading;
+  const error = localError ?? sharedSnapshot.error;
 
   const throwOnError = options?.throwOnError ?? true;
 
@@ -180,30 +409,62 @@ function useLoaderInternal<T>(
   // churn. loader.$$id can change if a reusable component receives a different
   // loader without remounting; data changes on every navigation. Refs keep the
   // callback stable while always reading the latest values.
-  const loaderIdRef = useRef(loader.$$id);
-  loaderIdRef.current = loader.$$id;
+  const loaderIdRef = useRef(loaderId);
+  loaderIdRef.current = loaderId;
+  const bucketKeyRef = useRef(bucketKey);
+  bucketKeyRef.current = bucketKey;
   const dataRef = useRef(data);
   dataRef.current = data;
+  const hasContextDataRef = useRef(hasContextData);
+  hasContextDataRef.current = hasContextData;
 
   // Load function for fetching data via the ?_rsc_loader endpoint.
   // Supports GET (data fetching) and POST/PUT/PATCH/DELETE (mutations).
   const load = useCallback(
     async (loadOptions?: LoadOptions): Promise<T> => {
-      const requestId = ++requestIdRef.current;
-      const loaderId = loaderIdRef.current;
-      // Verify the loader has $$id
-      if (!loaderId) {
+      const id = loaderIdRef.current;
+      if (!id) {
         throw new Error(
           `Loader is missing $$id. Make sure the exposeLoaderId Vite plugin is enabled.`,
         );
       }
 
-      setIsLoading(true);
-      setError(null);
+      const bucket = bucketKeyRef.current;
+      // A dedicated bucket means this read owns a bucket distinct from the bare
+      // loader id — either an explicit `key` (`$$id::key`) or a refreshGroup's
+      // private bucket (`$$id::<private>`).
+      const hasDedicatedBucket = bucket !== id;
+
+      // Deciding shared vs local:
+      //   - With a dedicated bucket, every shareable GET (params allowed) writes
+      //     to that bucket — the key/group is an explicit opt-in to sharing, and
+      //     a direct load() must land in the same bucket a group refresh uses.
+      //   - On the bare loader-id bucket, sharing is only correct when the
+      //     loader is registered on the route and the call is a plain refetch —
+      //     otherwise two unrelated components calling load() on the same
+      //     fetchable loader would overwrite each other's local view.
+      // Mutations (non-GET / body) stay local in both cases.
+      const shared = hasDedicatedBucket
+        ? isShareableGet(loadOptions)
+        : isPlainRefetch(loadOptions) && hasContextDataRef.current;
+      let sharedRequestId = -1;
+      let localRequestId = -1;
+      if (shared) {
+        sharedRequestId = loaderStore.reserveRequestId(bucket);
+        lastSharedRequestIdRef.current = sharedRequestId;
+        // beginRequest flips loading on AND clears any prior error so a
+        // throwOnError: false consumer doesn't keep showing the stale
+        // error during the retry. Gated on requestId === latest.
+        loaderStore.beginRequest(bucket, sharedRequestId);
+      } else {
+        localRequestId = ++localRequestIdRef.current;
+        setLocalIsLoading(true);
+        setLocalError(null);
+      }
 
       try {
         const url = new URL(window.location.href);
-        url.searchParams.set("_rsc_loader", loaderId);
+        url.searchParams.set("_rsc_loader", id);
 
         const method = loadOptions?.method ?? "GET";
         const isBodyMethod = method !== "GET";
@@ -284,16 +545,26 @@ function useLoaderInternal<T>(
         }
 
         const result = payload.loaderResult;
-        if (requestId === requestIdRef.current) {
+        if (shared) {
+          // finishData is gated on requestId; a stale response is dropped.
+          loaderStore.finishData(bucket, sharedRequestId, result);
+        } else if (localRequestId === localRequestIdRef.current) {
+          // Local-branch gate, mirrors the shared-branch requestId check:
+          // if a newer load() was issued from this hook before this one
+          // resolved, drop the stale result.
           startTransition(() => {
-            setFetchedData(result);
+            setLocalFetchedData(result);
+            setLocalIsLoading(false);
           });
         }
         return result;
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
-        if (requestId === requestIdRef.current) {
-          setError(err);
+        if (shared) {
+          loaderStore.finishError(bucket, sharedRequestId, err);
+        } else if (localRequestId === localRequestIdRef.current) {
+          setLocalError(err);
+          setLocalIsLoading(false);
         }
         if (throwOnError) {
           throw err;
@@ -302,18 +573,31 @@ function useLoaderInternal<T>(
         // successful value or undefined). Caller should check error state.
         return dataRef.current as T;
       } finally {
-        if (requestId === requestIdRef.current) {
-          setIsLoading(false);
+        if (shared) {
+          // setLoading is gated; only the latest request flips the flag off.
+          loaderStore.setLoading(bucket, sharedRequestId, false);
         }
       }
     },
     [throwOnError],
   );
 
-  // Throw during render if there's an error and throwOnError is true
-  // This allows ErrorBoundaries to catch async errors from load()
-  if (error && throwOnError) {
-    throw error;
+  // Throw during render if there's an error and throwOnError is true.
+  // - Local errors always belong to this hook, so always throw on opt-in.
+  // - Shared errors throw only when this hook initiated the failing
+  //   request (entry.requestId matches lastSharedRequestIdRef). Sibling
+  //   readers expose the error via `error` but do not throw, so a
+  //   throwOnError: true reader never explodes because of someone else's
+  //   throwOnError: false load() failure.
+  if (throwOnError) {
+    if (localError) throw localError;
+    if (
+      sharedSnapshot.error &&
+      lastSharedRequestIdRef.current !== null &&
+      sharedSnapshot.requestId === lastSharedRequestIdRef.current
+    ) {
+      throw sharedSnapshot.error;
+    }
   }
 
   return {
@@ -357,7 +641,7 @@ function useLoaderInternal<T>(
 export function useLoader<T>(
   loader: LoaderDefinition<T>,
   options?: UseLoaderOptions,
-): UseLoaderResult<T> {
+): UseLoaderResult<Rango.FlightSerialize<T>> {
   const result = useLoaderInternal(loader, options);
 
   // Strict mode: throw if data is not in context
@@ -369,7 +653,7 @@ export function useLoader<T>(
     );
   }
 
-  return result as UseLoaderResult<T>;
+  return result as UseLoaderResult<Rango.FlightSerialize<T>>;
 }
 
 /**
@@ -421,6 +705,46 @@ export function useLoader<T>(
 export function useFetchLoader<T>(
   loader: LoaderDefinition<T>,
   options?: UseLoaderOptions,
-): UseFetchLoaderResult<T> {
-  return useLoaderInternal(loader, options);
+): UseFetchLoaderResult<Rango.FlightSerialize<T>> {
+  return useLoaderInternal(loader, options) as UseFetchLoaderResult<
+    Rango.FlightSerialize<T>
+  >;
+}
+
+/**
+ * Refresh every loader tagged with a shared `refreshGroup` name.
+ *
+ * Returns a stable async function that refreshes all currently-mounted reads
+ * in the group with a plain GET against the current route URL. This is the
+ * cross-loader counterpart to the single-loader `key`: use it to refresh a set
+ * of DIFFERENT loaders together (e.g. profile + orders after an account
+ * switch). Members are tagged via `useLoader(Loader, { refreshGroup })` /
+ * `useFetchLoader(Loader, { refreshGroup })`.
+ *
+ * Group refresh never render-throws: a failing member surfaces its error via
+ * that read's `error` state, and the returned promise rejects with an
+ * `AggregateError` of the failures so the caller can handle them at the await
+ * site. Each loader is refreshed in place — no params, no body, no mutations.
+ *
+ * @example
+ * ```tsx
+ * "use client";
+ * import { useLoader, useRefreshLoaders } from "rsc-router/client";
+ *
+ * function Profile() {
+ *   const { data } = useLoader(ProfileLoader, { key: userId, refreshGroup: "account" });
+ *   return <span>{data.name}</span>;
+ * }
+ * function Orders() {
+ *   const { data } = useLoader(OrdersLoader, { key: userId, refreshGroup: "account" });
+ *   return <span>{data.count} orders</span>;
+ * }
+ * function RefreshButton() {
+ *   const refreshAccount = useRefreshLoaders("account");
+ *   return <button onClick={() => refreshAccount()}>Refresh</button>;
+ * }
+ * ```
+ */
+export function useRefreshLoaders(group: string): () => Promise<void> {
+  return useCallback(() => loaderStore.refreshGroup(group), [group]);
 }

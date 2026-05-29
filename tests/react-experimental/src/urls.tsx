@@ -1,13 +1,26 @@
 import { urls, Static, Prerender } from "@rangojs/router";
 import { Meta } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
-import { Link, href } from "@rangojs/router/client";
+import { Link, href, Outlet } from "@rangojs/router/client";
 import { Counter } from "./components/Counter.js";
 import { Comments } from "./components/Comments.js";
 import { getCounter } from "./actions/counter.js";
 import { CommentsLoader } from "./loaders/comments.js";
 import { ViewTransition } from "react";
 import { ARTICLES } from "./data/articles.js";
+import {
+  RevenueLoader,
+  ProductLoader,
+  ActiveUsersLoader,
+  OpenOrdersLoader,
+  LatencyLoader,
+} from "./loaders/metrics.js";
+import {
+  VtSharedKeyCard,
+  VtProductCard,
+  VtGroupCard,
+  VtGroupRefreshButton,
+} from "./components/RefreshDemo.js";
 
 function HomePage(ctx: HandlerContext) {
   const meta = ctx.use(Meta);
@@ -61,6 +74,87 @@ async function CounterPage(ctx: HandlerContext) {
     <main data-testid="counter-page">
       <h1 data-testid="counter-title">Counter Demo</h1>
       <Counter initialCount={initialCount} />
+    </main>
+  );
+}
+
+// Client refresh + view-transition demo. A keyed refresh and a refreshGroup
+// refresh both commit inside startTransition, so each card's value cross-fades
+// via <ViewTransition> — in place, with no navigation.
+function RefreshDemoPage(ctx: HandlerContext) {
+  const meta = ctx.use(Meta);
+  meta({ title: "Refresh - View Transitions" });
+
+  return (
+    <main data-testid="refresh-demo-page">
+      <h1 style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>
+        Client Refresh + View Transitions
+      </h1>
+      <p style={{ color: "#6b7280", marginBottom: "1.5rem", maxWidth: 640 }}>
+        A keyed refresh and a <code>refreshGroup</code> refresh both commit
+        inside <code>startTransition</code>, so each card&apos;s value
+        cross-fades through a <code>&lt;ViewTransition&gt;</code> — no
+        navigation.
+      </p>
+
+      <h2 style={{ fontSize: "1.1rem", color: "#6b7280" }}>Shared key</h2>
+      <p style={{ color: "#6b7280", margin: "0.25rem 0 0", maxWidth: 640 }}>
+        Three cards read one loader with <code>key="revenue"</code>. A{" "}
+        <code>load()</code> from any one is a single server fetch that fans out
+        to all three — server calls jump by exactly 1, every value cross-fades.
+      </p>
+      <div
+        style={{
+          display: "flex",
+          gap: "1rem",
+          flexWrap: "wrap",
+          margin: "0.75rem 0 2rem",
+        }}
+      >
+        <VtSharedKeyCard id="rev-a" withButton />
+        <VtSharedKeyCard id="rev-b" />
+        <VtSharedKeyCard id="rev-c" withButton />
+      </div>
+
+      <h2 style={{ fontSize: "1.1rem", color: "#6b7280" }}>Streaming loader</h2>
+      <p style={{ color: "#6b7280", margin: "0.25rem 0 0", maxWidth: 640 }}>
+        A keyed loader (<code>key="product"</code>) whose header renders
+        immediately while a nested <code>details</code> promise streams into a
+        nested <code>&lt;Suspense&gt;</code> a beat later. A <code>load()</code>{" "}
+        from one card re-streams both from a single fetch, holding the
+        already-streamed detail row in place (no nested-skeleton flash).
+      </p>
+      <div
+        style={{
+          display: "flex",
+          gap: "1rem",
+          flexWrap: "wrap",
+          margin: "0.75rem 0 2rem",
+        }}
+      >
+        <VtProductCard id="prod-a" withButton />
+        <VtProductCard id="prod-b" />
+      </div>
+
+      <h2 style={{ fontSize: "1.1rem", color: "#6b7280" }}>
+        Refresh group &quot;metrics&quot;
+      </h2>
+      <div style={{ margin: "0.75rem 0" }}>
+        <VtGroupRefreshButton />
+      </div>
+      <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+        <VtGroupCard
+          id="users"
+          label="Active users"
+          loader={ActiveUsersLoader}
+        />
+        <VtGroupCard
+          id="orders"
+          label="Open orders"
+          loader={OpenOrdersLoader}
+        />
+        <VtGroupCard id="latency" label="p95 latency" loader={LatencyLoader} />
+      </div>
     </main>
   );
 }
@@ -565,6 +659,60 @@ function TransitionPageB(ctx: HandlerContext) {
         exit: {"{"} navigation: "slide-to-left", navigation-back:
         "slide-to-right" {"}"}
       </div>
+    </main>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Layout-level transition — pins back-nav firing when transition() is attached
+// at the layout segment.
+// ---------------------------------------------------------------------------
+
+function LayoutTxShell() {
+  return (
+    <div data-testid="layout-tx-shell">
+      <Outlet />
+    </div>
+  );
+}
+
+// Tall filler so scroll-to-top tests can move scrollY > 0 before navigating.
+function ScrollFiller() {
+  return (
+    <div
+      data-testid="scroll-filler"
+      style={{ height: "3000px", background: "linear-gradient(#eee, #ccc)" }}
+    />
+  );
+}
+
+function LayoutTxAPage(ctx: HandlerContext) {
+  const meta = ctx.use(Meta);
+  meta({ title: "Layout TX A" });
+  return (
+    <main data-testid="layout-tx-a-page">
+      <h1 data-testid="layout-tx-a-title">Layout TX Page A</h1>
+      {/* Mid-page link so a scroll-down position keeps the link in view —
+          Playwright's .click() would otherwise scroll it into view, resetting
+          scrollY before the click fires. */}
+      <div style={{ height: "600px" }} />
+      <Link to={href("/layout-tx-b")} data-testid="nav-layout-tx-b">
+        Go to B
+      </Link>
+      <ScrollFiller />
+    </main>
+  );
+}
+
+function LayoutTxBPage(ctx: HandlerContext) {
+  const meta = ctx.use(Meta);
+  meta({ title: "Layout TX B" });
+  return (
+    <main data-testid="layout-tx-b-page">
+      <h1 data-testid="layout-tx-b-title">Layout TX Page B</h1>
+      <Link to={href("/layout-tx-a")} data-testid="nav-layout-tx-a">
+        Go to A
+      </Link>
     </main>
   );
 }
@@ -1177,10 +1325,32 @@ function CardDetail(ctx: HandlerContext<{ slug: string }>) {
   );
 }
 
-export const urlpatterns = urls(({ path, transition, loader }) => [
+export const urlpatterns = urls(({ path, layout, transition, loader }) => [
   path("/", HomePage, { name: "home" }),
   path("/about", AboutPage, { name: "about" }),
   path("/counter", CounterPage, { name: "counter" }),
+  path("/refresh", RefreshDemoPage, { name: "refresh" }, () => [
+    loader(RevenueLoader),
+    loader(ProductLoader),
+  ]),
+
+  // Layout-level transition (no-children form, sibling of path()).
+  // Pins that back-nav fires the navigation-back transition type when the
+  // transition is attached at the LAYOUT segment, not the path segments.
+  layout(LayoutTxShell, () => [
+    transition({
+      enter: {
+        navigation: "slide-from-right",
+        "navigation-back": "slide-from-left",
+      },
+      exit: {
+        navigation: "slide-to-left",
+        "navigation-back": "slide-to-right",
+      },
+    }),
+    path("/layout-tx-a", LayoutTxAPage, { name: "layoutTx.a" }),
+    path("/layout-tx-b", LayoutTxBPage, { name: "layoutTx.b" }),
+  ]),
   transition({ enter: "fade-in", exit: "fade-out" }, () => [
     path("/static", StaticPage, { name: "static" }),
     path("/prerender", PrerenderedPage, { name: "prerender" }),

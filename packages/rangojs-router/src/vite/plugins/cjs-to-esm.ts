@@ -1,4 +1,7 @@
 import type { Plugin } from "vite";
+import { createRangoDebugger, NS } from "../debug.js";
+
+const debug = createRangoDebugger(NS.transform);
 
 /**
  * Transform CJS vendor files from @vitejs/plugin-rsc to ESM for browser compatibility.
@@ -9,18 +12,16 @@ export function createCjsToEsmPlugin(): Plugin {
     name: "@rangojs/router:cjs-to-esm",
     enforce: "pre",
     transform(code, id) {
-      const cleanId = id.split("?")[0];
+      const cleanId = id.split("?")[0].replaceAll("\\", "/");
 
       // Transform the client.browser.js entry point to re-export from CJS
-      if (
-        cleanId.includes("vendor/react-server-dom/client.browser.js") ||
-        cleanId.includes("vendor\\react-server-dom\\client.browser.js")
-      ) {
+      if (cleanId.includes("vendor/react-server-dom/client.browser.js")) {
         const isProd = process.env.NODE_ENV === "production";
         const cjsFile = isProd
           ? "./cjs/react-server-dom-webpack-client.browser.production.js"
           : "./cjs/react-server-dom-webpack-client.browser.development.js";
 
+        debug?.("cjs-to-esm entry redirect %s", id);
         return {
           code: `export * from "${cjsFile}";`,
           map: null,
@@ -29,8 +30,7 @@ export function createCjsToEsmPlugin(): Plugin {
 
       // Transform the actual CJS files to ESM
       if (
-        (cleanId.includes("vendor/react-server-dom/cjs/") ||
-          cleanId.includes("vendor\\react-server-dom\\cjs\\")) &&
+        cleanId.includes("vendor/react-server-dom/cjs/") &&
         cleanId.includes("client.browser")
       ) {
         let transformed = code;
@@ -81,6 +81,7 @@ export function createCjsToEsmPlugin(): Plugin {
         // Reconstruct with license at the top
         transformed = license + "\n" + transformed;
 
+        debug?.("cjs-to-esm body rewrite %s", id);
         return {
           code: transformed,
           map: null,

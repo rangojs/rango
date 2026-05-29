@@ -34,6 +34,7 @@ import {
   InlinePricingPage,
 } from "./pages/inline.js";
 import { articlesPatterns } from "./pages/articles.js";
+import { clientReversePatterns } from "./pages/client-reverse.js";
 import { guidesPatterns } from "./pages/guides.js";
 import { releasesPatterns } from "./pages/releases.js";
 import { staticContentPatterns } from "./pages/static-content-urls.js";
@@ -58,6 +59,7 @@ import {
 } from "./pages/suffix-params-test.js";
 import { CookieOverlayPage } from "./pages/cookie-overlay.js";
 import { buildEnvPatterns } from "./pages/build-env-handler.js";
+import { buildEnvDirectPatterns } from "./pages/build-env-direct-handler.js";
 import { ActionLocationStatePage } from "./pages/action-location-state.js";
 import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
 
@@ -242,6 +244,9 @@ export const urlpatterns = urls(
       name: "productReviews",
     }),
     include("/build-env", buildEnvPatterns, { name: "buildEnv" }),
+    include("/build-env-direct", buildEnvDirectPatterns, {
+      name: "buildEnvDirect",
+    }),
     path("/*", CatchAllPage, { name: "catchAll" }),
 
     layout(<RootLayout />, () => [
@@ -342,6 +347,9 @@ export const urlpatterns = urls(
         path("/inline/pricing", InlinePricingPage, { name: "inlinePricing" }),
         // Pre-rendered articles (static content, build-time rendering)
         include("/articles", articlesPatterns, { name: "articles" }),
+
+        // Client useReverse() coverage on the Cloudflare preset
+        include("/cr/:tenantId", clientReversePatterns, { name: "cr" }),
 
         // Pre-rendered guides with passthrough (known slugs pre-rendered, unknown slugs live)
         include("/guides", guidesPatterns, { name: "guides" }),

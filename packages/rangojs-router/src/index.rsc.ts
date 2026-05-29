@@ -18,6 +18,7 @@ export {
   MiddlewareError,
   HandlerError,
   BuildError,
+  DslContextError,
   InvalidHandlerError,
   RouterError,
   Skip,
@@ -43,6 +44,7 @@ export type {
   // Revalidation types
   RevalidateParams,
   Revalidate,
+  ActionRef,
   RouteKeys,
   // Loader types
   LoaderDefinition,
@@ -67,7 +69,7 @@ export type {
 
 // Router options type (server-only, so import directly)
 export type {
-  RSCRouterOptions,
+  RangoOptions,
   SSRStreamMode,
   SSROptions,
   ResolveStreamingContext,
@@ -151,7 +153,7 @@ export {
 // Core router (server-side)
 export {
   createRouter,
-  type RSCRouter,
+  type Rango,
   type RootLayoutProps,
   type RouterRequestInput,
 } from "./router.js";
@@ -171,6 +173,9 @@ import { getRequestContext as _getRequestContextInternal } from "./server/reques
 export type { PublicRequestContext as RequestContext } from "./server/request-context.js";
 import type { PublicRequestContext } from "./server/request-context.js";
 import type { DefaultEnv } from "./types/global-namespace.js";
+
+// Shared base for every user-facing request context (mirrors index.ts).
+export type { RequestScope, ExecutionContext } from "./types/request-scope.js";
 
 export const getRequestContext: <
   TEnv = DefaultEnv,
@@ -217,8 +222,8 @@ export {
   type LocationStateOptions,
 } from "./browser/react/location-state-shared.js";
 
-// Path-based response type lookup from RegisteredRoutes
-export type { PathResponse } from "./href-client.js";
+// Path and response types are ambient on the `Rango` namespace (`Rango.Path`,
+// `Rango.PathResponse`, declared in href-client.ts) — no import needed.
 
 // Telemetry sink
 export { createConsoleSink } from "./router/telemetry.js";

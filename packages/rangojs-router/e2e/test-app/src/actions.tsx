@@ -3,38 +3,21 @@
 import { ReactNode } from "react";
 import { cookies, getRequestContext, redirect } from "@rangojs/router";
 import { FlashMessage } from "./location-states.js";
+import {
+  getCurrentCart,
+  getCartQuantitySync,
+  resetCurrentCart,
+} from "./cart-store.js";
 
 // Simulated delay helper
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// Cart state keyed by cart ID (cookie-based isolation for parallel tests)
-const carts: Map<string, Map<string, number>> = new Map();
-
-function getCartId(): string {
-  const jar = cookies();
-  let cartId = jar.get("cart-id")?.value;
-  if (!cartId) {
-    cartId = Math.random().toString(36).slice(2);
-    jar.set("cart-id", cartId, { path: "/" });
-  }
-  return cartId;
-}
-
-function getCart(cartId: string): Map<string, number> {
-  let cart = carts.get(cartId);
-  if (!cart) {
-    cart = new Map();
-    carts.set(cartId, cart);
-  }
-  return cart;
-}
 
 /**
  * Add item to cart - fire and forget pattern
  */
 export async function addToCart(productId: string): Promise<void> {
   await delay(100);
-  const cart = getCart(getCartId());
+  const cart = getCurrentCart();
   const current = cart.get(productId) || 0;
   cart.set(productId, current + 1);
 }
@@ -46,7 +29,7 @@ export async function addToCartWithResult(
   productId: string,
 ): Promise<{ success: boolean; quantity: number; message: string }> {
   await delay(100);
-  const cart = getCart(getCartId());
+  const cart = getCurrentCart();
   const current = cart.get(productId) || 0;
   const newQuantity = current + 1;
   cart.set(productId, newQuantity);
@@ -65,7 +48,7 @@ export async function updateQuantity(
   delta: number,
 ): Promise<{ quantity: number }> {
   await delay(50);
-  const cart = getCart(getCartId());
+  const cart = getCurrentCart();
   const current = cart.get(productId) || 0;
   const newQuantity = Math.max(0, current + delta);
   if (newQuantity === 0) {
@@ -80,8 +63,7 @@ export async function updateQuantity(
  * Get cart quantity for a product
  */
 export async function getCartQuantity(productId: string): Promise<number> {
-  const cart = getCart(getCartId());
-  return cart.get(productId) || 0;
+  return getCartQuantitySync(productId);
 }
 
 /**
@@ -101,8 +83,7 @@ export async function streamingAction(
  * Reset cart - for test cleanup
  */
 export async function resetCart(): Promise<void> {
-  const cartId = getCartId();
-  carts.delete(cartId);
+  resetCurrentCart();
 }
 
 // Dummy action for prerender client component tests
@@ -324,6 +305,18 @@ export async function revalidationContractAction(): Promise<void> {
 }
 
 /**
+ * No-op action used by the loader handler.use e2e fixture to trigger the
+ * router's default "revalidate on action" flow. If the loader's
+ * handler.use-attached revalidate rule is honored, the loader must not rerun.
+ */
+export async function handlerUseLoaderAction(): Promise<void> {
+  cookies().set("handler-use-loader-action", "fired", {
+    path: "/",
+    maxAge: 86400,
+  });
+}
+
+/**
  * Middleware chain test action.
  * Sets a cookie, a context variable, and a response header.
  * Exercises action writes across all three channels so the
@@ -414,6 +407,41 @@ export async function actionSetCtxVarForm(_formData: FormData): Promise<void> {
 }
 
 /**
+ * No-op action used to verify useParams survives the action → revalidation
+ * boundary. It intentionally touches no state; the client asserts that the
+ * params store is still populated after the server round-trip.
+ */
+export async function paramsAfterActionNoop(): Promise<void> {
+  await delay(50);
+}
+
+/**
+ * Form-compatible variant for progressive enhancement testing.
+ */
+export async function paramsAfterActionNoopForm(
+  _formData: FormData,
+): Promise<void> {
+  await delay(50);
+}
+
+/**
+ * Action that throws, used to exercise the action → error-boundary render
+ * path. Verifies that useParams remains populated when the server sends
+ * the partial error response (isError: true) for both JS and PE paths.
+ */
+export async function paramsAfterActionThrow(): Promise<void> {
+  await delay(50);
+  throw new Error("params-after-action boom");
+}
+
+export async function paramsAfterActionThrowForm(
+  _formData: FormData,
+): Promise<void> {
+  await delay(50);
+  throw new Error("params-after-action boom");
+}
+
+/**
  * Auth boundary test action. Mutates state (sets a cookie) to prove the action
  * executed. Route middleware does NOT guard this — only global middleware does.
  */
@@ -429,3 +457,12 @@ export async function authBoundaryFormAction(
 ): Promise<void> {
   cookies().set("auth-boundary-action-ran", "true", { path: "/", maxAge: 60 });
 }
+
+/**
+ * isAction() e2e: two distinct module-level "use server" actions. The probe
+ * loader's revalidate predicate matches the target by reference via
+ * ctx.isAction(), so the target re-runs the loader and the decoy does not —
+ * proving rename-safe action matching end to end in dev and production.
+ */
+export async function isActionTargetAction(): Promise<void> {}
+export async function isActionDecoyAction(): Promise<void> {}

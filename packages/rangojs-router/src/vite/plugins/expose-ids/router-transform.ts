@@ -4,6 +4,9 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { normalizePath, findMatchingParen } from "../expose-id-utils.js";
 import { getImportedFnNames } from "./export-analysis.js";
+import { createRangoDebugger, createCounter, NS } from "../../debug.js";
+
+const debug = createRangoDebugger(NS.transform);
 
 export function transformRouter(
   code: string,
@@ -82,10 +85,14 @@ export function transformRouter(
  */
 export function exposeRouterId(): Plugin {
   let projectRoot = "";
+  const counter = createCounter(debug, "expose-router-id");
   return {
     name: "@rangojs/router:expose-router-id",
     configResolved(config) {
       projectRoot = config.root;
+    },
+    buildEnd() {
+      counter?.flush();
     },
     transform(code, id) {
       if (!code.includes("createRouter")) return null;
@@ -102,9 +109,19 @@ export function exposeRouterId(): Plugin {
       }
       if (id.includes("node_modules")) return null;
 
-      const filePath = normalizePath(path.relative(projectRoot, id));
-      const routerFnNames = getImportedFnNames(code, "createRouter");
-      return transformRouter(code, filePath, routerFnNames, normalizePath(id));
+      const start = counter ? performance.now() : 0;
+      try {
+        const filePath = normalizePath(path.relative(projectRoot, id));
+        const routerFnNames = getImportedFnNames(code, "createRouter");
+        return transformRouter(
+          code,
+          filePath,
+          routerFnNames,
+          normalizePath(id),
+        );
+      } finally {
+        counter?.record(id, performance.now() - start);
+      }
     },
   };
 }

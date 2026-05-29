@@ -18,6 +18,7 @@ export {
   MiddlewareError,
   HandlerError,
   BuildError,
+  DslContextError,
   InvalidHandlerError,
   RouterError,
   Skip,
@@ -43,6 +44,7 @@ export type {
   // Revalidation types
   RevalidateParams,
   Revalidate,
+  ActionRef,
   RouteKeys,
   // Loader types
   LoaderDefinition,
@@ -264,6 +266,9 @@ export function transition(): never {
 // Request context type (safe for client)
 export type { PublicRequestContext as RequestContext } from "./server/request-context.js";
 
+// Shared base for every user-facing request context.
+export type { RequestScope, ExecutionContext } from "./types/request-scope.js";
+
 // Cookie store types (safe for client)
 export type {
   CookieStore,
@@ -299,12 +304,17 @@ export {
   type LocationStateOptions,
 } from "./browser/react/location-state-shared.js";
 
-// Path-based response type lookup from RegisteredRoutes
-export type { PathResponse } from "./href-client.js";
+// Path and response types are ambient on the `Rango` namespace (`Rango.Path`,
+// `Rango.PathResponse`, declared in href-client.ts) — no import needed.
 
-// Telemetry sink
-export { createConsoleSink } from "./router/telemetry.js";
-export { createOTelSink } from "./router/telemetry-otel.js";
+// Telemetry types only — the createConsoleSink/createOTelSink values are
+// server-only and live in index.rsc.ts (the `react-server` condition of the
+// bare `@rangojs/router` import). Re-exporting them as values from this
+// (default/client) entry would pull telemetry.ts and telemetry-otel.ts into
+// the client module graph; both tree-shake to zero bytes but still appear in
+// bundle analysis output and slow build-time module resolution. Consumers
+// who need the values in non-RSC contexts can import from
+// `@rangojs/router/server`.
 export type { OTelTracer, OTelSpan } from "./router/telemetry-otel.js";
 export type { TelemetrySink, TelemetryEvent } from "./router/telemetry.js";
 

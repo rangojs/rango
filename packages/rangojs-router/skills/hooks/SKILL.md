@@ -190,6 +190,123 @@ function SearchResults() {
 }
 ```
 
+**Shared refetch behavior**:
+
+When the loader is registered on the route via `loader()`, a plain
+`load()` call (no options, or a trivially-defaulted GET with no
+`params` and no `body`) broadcasts its result to every component
+reading the same loader id. Layout, page, and parallel-slot reads
+all converge on the new value:
+
+```tsx
+// Layout button calls load() — the page read below sees the update too.
+function Layout() {
+  const { data, load } = useLoader(CartLoader);
+  return <button onClick={() => load()}>Refresh ({data.count})</button>;
+}
+function Page() {
+  const { data } = useLoader(CartLoader); // updates with the layout's load()
+  return <span>{data.count} items</span>;
+}
+```
+
+`isLoading` and `error` follow the same scope. `throwOnError: true`
+render-throws are scoped to the **originating** hook — sibling readers
+see the error in their `error` state but their boundaries are not
+triggered by someone else's failure. A successful follow-up `load()`
+clears the shared error.
+
+**`load()` calls that stay local** (no broadcast, per-hook state, same
+semantics as the old per-component `useState`):
+
+- `load({ params: { ... } })` — explicit params.
+- `load({ method: "POST", body })` — mutations.
+- Any `load()` on a `useFetchLoader(loader)` whose loader is **not**
+  registered on the current route. Two unrelated components calling
+  `load()` on the same fetchable-but-unregistered loader keep
+  independent results.
+
+So the search/list pattern still works — two components calling
+`load({ params: { q } })` with different `q` values each keep their
+own result; they do not collapse to last-write-wins through a shared
+store.
+
+**Scoping refetch with a `key`**:
+
+Pass a `key` to partition the shared refresh store. Only hooks using the
+**same** `key` refresh together when one of them calls `load()`. This is a
+client-side refresh identity only — it never changes the request sent to the
+server, and is unrelated to the server `cache({ key })` option and to
+`revalidate()`.
+
+```tsx
+// Two independent dashboards using the same loader. Without a key, one
+// dashboard's load() would flip the other's spinner and value. With a key,
+// they refresh independently.
+function Dashboard({ id }: { id: string }) {
+  const { data, load } = useLoader(StatsLoader, { key: `dashboard:${id}` });
+  return <button onClick={() => load()}>Refresh {data.total}</button>;
+}
+```
+
+The `key` widens sharing in two ways the default cannot:
+
+- **Parameterized GETs share.** `useFetchLoader(SearchLoader, { key: q })`
+  with the same `q` in two components share one result and refresh together —
+  a keyed `load({ params: { q } })` broadcasts to the group instead of staying
+  local. (Mutations — non-GET or `body` — stay local even with a key.)
+- **Unregistered loaders share.** A `key` makes `useFetchLoader` of a loader
+  that is **not** registered on the route share too, letting unrelated
+  components opt into a common refresh group.
+
+Lifecycle: a keyed read of an unregistered loader is reference-counted — its
+shared value lives as long as at least one component using that key is mounted.
+A persistent component (e.g. a header) keeps the value across navigations; a
+route-scoped component's value is reclaimed when it unmounts. Registered-loader
+reads (keyed or not) reset on navigation from fresh route data, as before.
+
+**Refreshing multiple loaders together (`refreshGroup` + `useRefreshLoaders`)**:
+
+`key` groups readers of one loader. To refresh **different** loaders together,
+tag them with the same `refreshGroup` and trigger them with `useRefreshLoaders`:
+
+```tsx
+function Profile() {
+  const { data } = useLoader(ProfileLoader, {
+    key: userId,
+    refreshGroup: "account",
+  });
+  return <span>{data.name}</span>;
+}
+function Orders() {
+  const { data } = useLoader(OrdersLoader, {
+    key: userId,
+    refreshGroup: "account",
+  });
+  return <span>{data.count} orders</span>;
+}
+function RefreshButton() {
+  const refreshAccount = useRefreshLoaders("account");
+  return <button onClick={() => refreshAccount()}>Refresh</button>;
+}
+```
+
+`refreshAccount()` re-runs every currently-mounted member with a **plain GET**
+against the current route URL — no params, no body, no mutation methods, because
+a group spans loaders with different shapes. It returns a promise that resolves
+when all members settle and **rejects with an `AggregateError`** if any fail;
+group refresh never render-throws, so handle failures at the await site
+(`await refreshAccount().catch(...)`). Each failing member also exposes its error
+via its own read's `error`.
+
+Sharing within a group is opt-in via `key`: members that share a `key` share one
+value (and one fetch); a grouped reader **without** a `key` gets its own private
+bucket, so a group refresh updates only that read and never leaks into unrelated
+unkeyed reads of the same loader. A bucket may belong to several groups at once
+(different reads can tag the same keyed bucket with different group names).
+Keep parameterized loaders on the single-loader `key` — a plain-GET group refresh
+sends no params.
+
 **Load options**:
 
 ```tsx
@@ -298,9 +415,11 @@ path("/dashboard", (ctx) => {
   push({ label: "Dashboard", href: "/dashboard" });
   return <DashboardNav handle={Breadcrumbs} />;
 });
+```
 
+```tsx
 // Client component — typeof infers the full Handle<T> type
-("use client");
+"use client";
 import { useHandle, type Breadcrumbs } from "@rangojs/router/client";
 
 function DashboardNav({ handle }: { handle: typeof Breadcrumbs }) {
@@ -320,6 +439,11 @@ RSC serialization strips the `collect` function via `toJSON()`. On the client,
 `createHandle()` runs during module initialization).
 
 ## Action Hooks
+
+For the full server-action guide (defining actions, `useActionState`,
+`useOptimistic`, validation, revalidation, error handling, file uploads),
+see `/server-actions`. `useAction()` below is a Rango-specific hook for
+tracking actions called outside a `<form action={...}>` flow.
 
 ### useAction()
 
@@ -504,6 +628,43 @@ const flash = FlashMessage.read();
 const product = ProductState.read();
 ```
 
+> **Hydration:** `.read()` returns `undefined` on the server but may return
+> a real value on the first client render (history state survives reload).
+> Do not call `.read()` directly during the initial render of a component;
+> call it from an event handler or inside a `useEffect` post-mount. For
+> reactive hydration-safe access, use `useLocationState()` instead.
+
+### .write() / .delete() (static, non-reactive)
+
+Static counterparts to `.read()`. Both mutate the current history entry's
+`history.state` via `replaceState`, preserving any other keys (router
+bookkeeping, other location state slots). Both are client-only; they throw
+when called on the server.
+
+Neither dispatches an event, so components reading via `useLocationState`
+will NOT re-render until the next navigation/popstate. Pair with `.read()`
+(or a fresh mount via back/forward/reload) instead.
+
+```tsx
+"use client";
+import { ProductState } from "./state";
+
+// Persisted across hard refresh and back/forward of this entry.
+ProductState.write({ name: "Widget", price: 9.99 });
+
+// Read later (or on next mount).
+const current = ProductState.read();
+
+// Manually clear the slot. Idempotent if it isn't set.
+ProductState.delete();
+```
+
+| Method      | Updates `history.state` | Fires `useLocationState` rerender | SSR behavior        |
+| ----------- | ----------------------- | --------------------------------- | ------------------- |
+| `.read()`   | no                      | n/a (returns snapshot)            | returns `undefined` |
+| `.write()`  | yes (replace this slot) | no                                | throws              |
+| `.delete()` | yes (remove this slot)  | no                                | throws              |
+
 ## Cache Hooks
 
 ### useClientCache()
@@ -593,6 +754,12 @@ function ProductPage() {
   return <h1>Product {params.productId}</h1>;
 }
 
+// Annotate the expected shape via a generic
+function ProductPageTyped() {
+  const { productId } = useParams<{ productId: string }>();
+  return <h1>Product {productId}</h1>;
+}
+
 // With selector for performance (re-renders only when selected value changes)
 function ProductId() {
   const productId = useParams((p) => p.productId);
@@ -600,7 +767,7 @@ function ProductId() {
 }
 ```
 
-Returns merged params from all matched route segments. Updates on navigation commit (not during pending navigation).
+Returns merged params from all matched route segments as a `Readonly<T>` map. Updates on navigation commit (not during pending navigation).
 
 ### usePathname()
 
@@ -681,24 +848,48 @@ function MountInfo() {
 }
 ```
 
-See `/links` for full URL generation guide including server-side `ctx.reverse`.
+### useReverse(routes)
+
+Mount-aware local reverse for client components. Import the generated `routes` map from a `urls()` module's `.gen.ts` and call `reverse(".name", params?)`. Auto-fills params from `useParams()`; explicit params override.
+
+> Per-module `*.gen.ts` files are **CLI opt-in and not Vite-watched** — run `rango generate <urls-file>` (or wire it into `predev`) and re-run it whenever the module's routes change. See `/links` for the full generated-file setup and exposure-boundary rules.
+
+```tsx
+"use client";
+import { Link, useReverse } from "@rangojs/router/client";
+import { routes as blogRoutes } from "../urls/blog.gen.js";
+
+function BlogNav() {
+  const reverse = useReverse(blogRoutes);
+  return (
+    <nav>
+      <Link to={reverse(".index")}>Blog</Link>
+      <Link to={reverse(".post", { postId: "hello" })}>Post</Link>
+    </nav>
+  );
+}
+```
+
+See `/links` for the full URL generation guide. `ctx.reverse()` is server-only; on the client, prefer `useReverse(routes)` for in-module names and pass URLs as props for cross-module ones.
 
 ## Hook Summary
 
-| Hook                 | Purpose                           | Returns                                         |
-| -------------------- | --------------------------------- | ----------------------------------------------- |
-| `useParams()`        | Route params                      | `Record<string, string>` or selected value      |
-| `usePathname()`      | Current pathname                  | `string`                                        |
-| `useSearchParams()`  | URL search params                 | `ReadonlyURLSearchParams`                       |
-| `useHref()`          | Mount-aware href                  | `(path) => string`                              |
-| `useMount()`         | Current include() mount path      | `string`                                        |
-| `useNavigation()`    | Reactive navigation state         | state, location, isStreaming                    |
-| `useRouter()`        | Stable router actions             | push, replace, refresh, prefetch, back, forward |
-| `useSegments()`      | URL path & segment IDs            | path, segmentIds, location                      |
-| `useLinkStatus()`    | Link pending state                | { pending }                                     |
-| `useLoader()`        | Loader data (strict)              | data, isLoading, error                          |
-| `useFetchLoader()`   | Loader with on-demand fetch       | data, load, isLoading                           |
-| `useHandle()`        | Accumulated handle data           | T (handle type)                                 |
-| `useAction()`        | Server action state               | state, error, result                            |
-| `useLocationState()` | History state (persists or flash) | T \| undefined                                  |
-| `useClientCache()`   | Cache control                     | { clear }                                       |
+| Hook                  | Purpose                           | Returns                                                            |
+| --------------------- | --------------------------------- | ------------------------------------------------------------------ |
+| `useParams()`         | Route params                      | `Readonly<T>` (default `Record<string, string>`) or selected value |
+| `usePathname()`       | Current pathname                  | `string`                                                           |
+| `useSearchParams()`   | URL search params                 | `ReadonlyURLSearchParams`                                          |
+| `useHref()`           | Mount-aware href                  | `(path) => string`                                                 |
+| `useMount()`          | Current include() mount path      | `string`                                                           |
+| `useReverse()`        | Local reverse for imported routes | `(name, params?, search?) => string`                               |
+| `useNavigation()`     | Reactive navigation state         | state, location, isStreaming                                       |
+| `useRouter()`         | Stable router actions             | push, replace, refresh, prefetch, back, forward                    |
+| `useSegments()`       | URL path & segment IDs            | path, segmentIds, location                                         |
+| `useLinkStatus()`     | Link pending state                | { pending }                                                        |
+| `useLoader()`         | Loader data (strict)              | data, isLoading, error                                             |
+| `useFetchLoader()`    | Loader with on-demand fetch       | data, load, isLoading                                              |
+| `useRefreshLoaders()` | Refresh a cross-loader group      | `(group) => () => Promise<void>`                                   |
+| `useHandle()`         | Accumulated handle data           | T (handle type)                                                    |
+| `useAction()`         | Server action state               | state, error, result                                               |
+| `useLocationState()`  | History state (persists or flash) | T \| undefined                                                     |
+| `useClientCache()`    | Cache control                     | { clear }                                                          |

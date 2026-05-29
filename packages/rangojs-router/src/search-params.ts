@@ -81,11 +81,11 @@ export type ResolveSearchSchema<T extends SearchSchema> = Simplify<
 // ============================================================================
 
 /** Resolve the global route map from RegisteredRoutes or GeneratedRouteMap. */
-type GlobalRouteMap = keyof RSCRouter.RegisteredRoutes extends never
-  ? keyof RSCRouter.GeneratedRouteMap extends never
+type GlobalRouteMap = keyof Rango.RegisteredRoutes extends never
+  ? keyof Rango.GeneratedRouteMap extends never
     ? Record<string, string>
-    : RSCRouter.GeneratedRouteMap
-  : RSCRouter.RegisteredRoutes;
+    : Rango.GeneratedRouteMap
+  : Rango.RegisteredRoutes;
 
 /**
  * Extract the resolved search params type for a named route.

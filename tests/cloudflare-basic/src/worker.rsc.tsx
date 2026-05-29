@@ -2,6 +2,12 @@
 import { router } from "./router.js";
 import type { AppBindings } from "./env.js";
 
+// Regression fixture for the `cloudflare:workers` discovery failure.
+// The DO class lives in a subdirectory (mirroring real CF projects'
+// shape) so the `cloudflare:workers` import is transitive through the
+// module graph, not at the worker entry's top level.
+export { Counter } from "./workers/durableObject/index.js";
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);

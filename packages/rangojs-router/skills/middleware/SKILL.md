@@ -10,9 +10,6 @@ Middleware runs before/after route handlers using the onion model.
 
 ## Execution Model
 
-Canonical semantics reference:
-[docs/execution-model.md](../../docs/internal/execution-model.md)
-
 There are two levels of middleware with different execution scopes:
 
 ### Global middleware (`router.use()`)
@@ -32,16 +29,25 @@ When the router has a `basename`, pattern-scoped `.use()` patterns are automatic
 
 Registered inside `urls()` callback. Wraps **rendering only** -- it does NOT wrap server action execution. Actions run before route middleware, so when route middleware executes during post-action revalidation, it can observe state that the action set (cookies, context variables, headers).
 
+> **Implication for auth:** route middleware cannot guard server actions. Use `router.use("/admin/*", requireAuth)` (global, scoped) for action protection, or check inside the action body. See `/server-actions` for action-side auth patterns.
+
 ```
 Request flow (with action):
-  global mw -> action executes -> route mw -> layout -> handler -> loaders
+  global mw -> action executes -> route mw -> render pass
 
 Request flow (no action):
-  global mw -> route mw -> layout -> handler -> loaders
+  global mw -> route mw -> render pass
 
 Progressive enhancement (no-JS form POST):
   global mw -> action executes -> route mw -> full page re-render
 ```
+
+The **render pass** resolves handler, layouts, parallels, and loaders together —
+it is not a handler-then-loaders sequence. Handler-first ordering is guaranteed
+only between a route handler and its child/orphan layouts and parallels (so
+`ctx.set` is visible); loaders run **concurrently** and stream their results, so
+their latency overlaps rendering rather than blocking it. See `/loader` →
+"Parallel and streaming".
 
 The contract is: **route middleware wraps rendering regardless of transport** (JS-enabled RSC stream or no-JS HTML). During PE re-render, route middleware observes action-set state (cookies, context variables) the same way it does during JS-enabled post-action revalidation.
 
@@ -62,7 +68,7 @@ and consumer segments, even when middleware is present in the chain.
 
 ```typescript
 export const revalidateCartData = ({ actionId }) =>
-  actionId?.includes("src/actions/cart.ts#") ?? false;
+  actionId?.includes("src/actions/cart.ts#") || undefined;
 
 layout(CartLayout, () => [
   middleware(cartRenderMiddleware),
@@ -190,7 +196,7 @@ export const myMiddleware: Middleware = async (ctx, next) => {
   ctx.env.DB; // D1Database
   ctx.env.KV; // KVNamespace
 
-  // Set variables for downstream handlers (typed via RSCRouter.Vars)
+  // Set variables for downstream handlers (typed via Rango.Vars)
   ctx.set("user", { id: "123", name: "John" });
 
   // Continue to next middleware/handler
@@ -231,8 +237,8 @@ const Dashboard: Handler<"dashboard"> = (ctx) => {
 ```
 
 This works alongside `ctx.get("key")` / `ctx.set("key", value)` (global typing
-via RSCRouter.Vars augmentation). Use `createVar` for route-local or feature-scoped
-data; use RSCRouter.Vars for app-wide middleware state.
+via Rango.Vars augmentation). Use `createVar` for route-local or feature-scoped
+data; use Rango.Vars for app-wide middleware state.
 
 ## Redirect with State in Middleware
 

@@ -12,7 +12,10 @@ import type {
   ActionStateListener,
   HandleData,
 } from "./types.js";
-import { clearPrefetchCache } from "./prefetch/cache.js";
+import {
+  clearPrefetchCache,
+  clearPrefetchCacheLocal,
+} from "./prefetch/cache.js";
 
 /**
  * Default action state (idle with no payload)
@@ -280,18 +283,17 @@ export function createNavigationStore(
   /**
    * Create a debounced function that batches rapid calls
    */
+  // A non-keyed notifier is the keyed one restricted to a single constant key;
+  // its own keyed instance means the "" key never collides with action keys.
   function createDebouncedNotifier<T extends (...args: any[]) => void>(
     fn: T,
     ms: number = 20,
   ): T {
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    return ((...args: Parameters<T>) => {
-      if (timeout !== null) clearTimeout(timeout);
-      timeout = setTimeout(() => {
-        timeout = null;
-        fn(...args);
-      }, ms);
-    }) as T;
+    const keyed = createKeyedDebouncedNotifier(
+      (_key: string, ...args: any[]) => fn(...args),
+      ms,
+    );
+    return ((...args: Parameters<T>) => keyed("", ...args)) as T;
   }
 
   /**
@@ -333,6 +335,18 @@ export function createNavigationStore(
   function clearCacheInternal(): void {
     historyCache.length = 0;
     clearPrefetchCache();
+  }
+
+  /**
+   * Drop this tab's navigation + prefetch caches without broadcasting or
+   * rotating shared state. Used when the local session changes in a way that
+   * doesn't affect other tabs — e.g. this tab crosses into a different app
+   * via a cross-router navigation. Other tabs in the old app keep their
+   * caches and their X-Rango-State token.
+   */
+  function clearCacheInternalLocal(): void {
+    historyCache.length = 0;
+    clearPrefetchCacheLocal();
   }
 
   /**
@@ -666,6 +680,15 @@ export function createNavigationStore(
      */
     clearHistoryCache(): void {
       clearCacheAndBroadcast();
+    },
+
+    /**
+     * Drop this tab's navigation + prefetch caches locally without
+     * broadcasting or rotating shared state. Intended for cross-app
+     * transitions where the session state diverges for this tab only.
+     */
+    clearHistoryCacheLocal(): void {
+      clearCacheInternalLocal();
     },
 
     /**

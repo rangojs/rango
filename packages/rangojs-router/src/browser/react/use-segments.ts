@@ -25,15 +25,18 @@ function parsePathname(pathname: string): string[] {
 }
 
 /**
- * Build segments state from event controller
+ * Build segments state from event controller. `segmentIds` is the
+ * route-only list (parallels and loaders stripped) — distinct from the
+ * controller's `segmentOrder` which drives handle collection and includes
+ * parallel slot ids.
  */
 function buildSegmentsState(
   location: URL,
-  segmentOrder: string[],
+  routeSegmentIds: string[],
 ): SegmentsState {
   return {
     path: parsePathname(location.pathname),
-    segmentIds: segmentOrder,
+    segmentIds: routeSegmentIds,
     location,
   };
 }
@@ -74,7 +77,7 @@ export function useSegments<T>(
     const handleState = ctx.eventController.getHandleState();
     const segmentsState = buildSegmentsState(
       location as URL,
-      handleState.segmentOrder,
+      handleState.routeSegmentIds,
     );
     return selector ? selector(segmentsState) : segmentsState;
   });
@@ -94,7 +97,7 @@ export function useSegments<T>(
   // render-time setState calls.
   const segmentsCache = useRef<{
     location: URL;
-    segmentOrder: string[];
+    routeSegmentIds: string[];
     state: SegmentsState;
   } | null>(null);
 
@@ -113,17 +116,17 @@ export function useSegments<T>(
     if (
       cache &&
       cache.location === location &&
-      cache.segmentOrder === handleState.segmentOrder
+      cache.routeSegmentIds === handleState.routeSegmentIds
     ) {
       segmentsState = cache.state;
     } else {
       segmentsState = buildSegmentsState(
         location as URL,
-        handleState.segmentOrder,
+        handleState.routeSegmentIds,
       );
       segmentsCache.current = {
         location: location as URL,
-        segmentOrder: handleState.segmentOrder,
+        routeSegmentIds: handleState.routeSegmentIds,
         state: segmentsState,
       };
     }

@@ -14,6 +14,8 @@ import {
   trailingSlashPatterns,
 } from "./urls/meta.js";
 import { hooksPatterns } from "./urls/hooks.js";
+import { sharedRefetchPatterns } from "./urls/shared-refetch.js";
+import { keyRefreshPatterns } from "./urls/key-refresh.js";
 import { middlewarePatterns } from "./urls/middleware.js";
 import { cachePatterns } from "./urls/cache.js";
 import { themePatterns } from "./urls/theme.js";
@@ -33,12 +35,17 @@ import { apiShopPatterns } from "./urls/api-shop.js";
 import { locationStatePatterns } from "./urls/location-state.js";
 import { responseCachePatterns } from "./urls/response-cache.js";
 import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
+import {
+  optionalIncludePatterns,
+  constrainedOptionalIncludePatterns,
+} from "./urls/optional-include.js";
 import { handlerFirstPatterns } from "./urls/handler-first.js";
 import { handlerUsePatterns } from "./urls/handler-use.js";
 import { parallelLoaderInheritPatterns } from "./urls/parallel-loader-inherit.js";
 import { buildSkipPatterns } from "./urls/prerender-build-skip.js";
 import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
+import { clientReversePatterns } from "./urls/client-reverse.js";
 import { useCachePatterns } from "./urls/use-cache.js";
 import { prerenderLocalePatterns } from "./urls/prerender-locale.js";
 import { loaderReversePatterns } from "./urls/loader-reverse.js";
@@ -56,16 +63,20 @@ import { authBoundaryPatterns } from "./urls/auth-boundary.js";
 import { contentOwnershipPatterns } from "./urls/content-ownership.js";
 import { cacheIsolationPatterns } from "./urls/cache-isolation.js";
 import { actionCtxSetPatterns } from "./urls/action-ctx-set.js";
+import { isActionPatterns } from "./urls/is-action.js";
+import { paramsAfterActionPatterns } from "./urls/params-after-action.js";
 import { middlewareWrappingPatterns } from "./urls/middleware-wrapping.js";
 import { alsScopePatterns } from "./urls/als-scope.js";
 import { streamModePatterns } from "./urls/stream-mode.js";
 import { devDebugPatterns, devInfoHandler } from "./urls/dev-routes.js";
 import { contextDedupPatterns } from "./urls/context-dedup.js";
 import { parallelMetaPatterns } from "./urls/parallel-meta.js";
+import { parallelMetaStalePatterns } from "./urls/parallel-meta-stale.js";
 import { renderedBarrierPatterns } from "./urls/rendered-barrier.js";
 import { cacheScopeGuardPatterns } from "./urls/cache-scope-guard.js";
 import { colocatedLoaderPrerenderPatterns } from "./urls/colocated-loader-prerender.js";
 import { parallelLoaderRevalPatterns } from "./urls/parallel-loader-reval.js";
+import { parallelRevalAfterActionPatterns } from "./urls/parallel-reval-after-action.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -75,6 +86,7 @@ import {
   SlowProductDetailLoader,
 } from "./loaders.js";
 import { SlowProductLocationState } from "./location-states.js";
+import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import { Modal } from "./components/Modal.js";
 import { QuantityControl } from "./components/QuantityControl.js";
 import { SlowModalSkeleton } from "./components/SlowModalSkeleton.js";
@@ -499,6 +511,12 @@ export const urlpatterns = urls(
       // Hook test patterns - already have their prefixes in paths
       include("/", hooksPatterns, { name: "" }),
 
+      // Shared-refetch regression scenario
+      include("/", sharedRefetchPatterns, { name: "" }),
+
+      // Client refresh key (useLoader/useFetchLoader { key }) scenarios
+      include("/", keyRefreshPatterns, { name: "" }),
+
       // Middleware test patterns
       include("/middleware-test", middlewarePatterns, {
         name: "middlewareTest",
@@ -517,6 +535,11 @@ export const urlpatterns = urls(
       include("/unnamed-reverse", unnamedIncludeReversePatterns),
       include("/flat-reverse", flattenedIncludePatterns, { name: "" }),
       include("/ns-reverse", namedIncludePatterns, { name: "ns" }),
+
+      // Same patterns mounted twice under different prefixes — the
+      // useReverse(routes) e2e spec exercises the hook from these.
+      include("/cr/a/:tenantId", clientReversePatterns, { name: "crA" }),
+      include("/cr/b/:tenantId", clientReversePatterns, { name: "crB" }),
 
       // Search params test patterns
       include("/search", searchPatterns, { name: "search" }),
@@ -608,6 +631,13 @@ export const urlpatterns = urls(
       // parallel loader revalidation on orphan layout regression test
       include("/", parallelLoaderRevalPatterns),
 
+      // PR #482 regression: parallel slot revalidate() fns survive sibling
+      // action + nav (action pruned slot from client matched set, next nav
+      // skipped revalidate fns)
+      include("/", parallelRevalAfterActionPatterns, {
+        name: "parallelRevalAfterAction",
+      }),
+
       // Skip test patterns (prerender + static skip/error handling)
       include("/build-skip", buildSkipPatterns, { name: "buildSkip" }),
 
@@ -638,6 +668,16 @@ export const urlpatterns = urls(
       // Action ctx.set → handler ctx.get test
       include("/action-ctx-set", actionCtxSetPatterns, {
         name: "actionCtxSet",
+      }),
+
+      // ctx.isAction() typed action matching in a revalidate predicate
+      include("/is-action", isActionPatterns, {
+        name: "isAction",
+      }),
+
+      // useParams survival across action → revalidation boundary
+      include("/params-after-action", paramsAfterActionPatterns, {
+        name: "paramsAfterAction",
       }),
 
       // Middleware wrapping test (middleware(fn, () => [...]) scoping)
@@ -708,6 +748,17 @@ export const urlpatterns = urls(
         }),
       ]),
 
+      // Optional include prefix regression coverage. The outer "/oi" static
+      // segment is needed to avoid colliding with HomePage at "/"; the
+      // optional locale lives at the include boundary so the joined patterns
+      // exercise the include + optional path-helper join logic end-to-end.
+      include("/oi/:locale?", optionalIncludePatterns, {
+        name: "optionalInclude",
+      }),
+      include("/coi/:locale(en|gb)?", constrainedOptionalIncludePatterns, {
+        name: "constrainedOptionalInclude",
+      }),
+
       // Shop playground page
       path(
         "/shop-playground",
@@ -751,20 +802,19 @@ export const urlpatterns = urls(
         },
       ),
 
-      // Test utils: read onError log (non-destructive)
+      // Test utils: read onError log (non-destructive).
+      // Imports from error-log.js (not router.js) so we can use a static
+      // import and avoid the dynamic-import / module-graph race that
+      // occasionally returned an empty log under concurrent SSR load.
       path.json(
         "/__test/last-error",
-        async () => {
-          const { onErrorLog } = await import("./router.js");
-          return onErrorLog.length > 0 ? [...onErrorLog] : null;
-        },
+        () => (onErrorLog.length > 0 ? [...onErrorLog] : null),
         { name: "testLastError" },
       ),
       // Test utils: clear onError log
       path.json(
         "/__test/clear-error-log",
-        async () => {
-          const { clearOnErrorLog } = await import("./router.js");
+        () => {
           clearOnErrorLog();
           return { cleared: true };
         },
@@ -1027,6 +1077,13 @@ export const urlpatterns = urls(
       // @meta parallel slot pattern (handles from parallel slots)
       include("/parallel-meta", parallelMetaPatterns, {
         name: "parallelMeta",
+      }),
+
+      // Layout-mounted parallel slot that conditionally pushes Meta —
+      // exercises the stale-handle-bucket cleanup on slot revalidation
+      // when the slot returns null without pushing.
+      include("/parallel-meta-stale", parallelMetaStalePatterns, {
+        name: "parallelMetaStale",
       }),
 
       // notFound() without a notFoundBoundary — should render 404, not error

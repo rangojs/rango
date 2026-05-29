@@ -20,6 +20,7 @@ import type {
 } from "./route-config.js";
 import type { LoaderDefinition } from "./loader-types.js";
 import type { UseItems, HandlerUseItem } from "../route-types.js";
+import type { RequestScope } from "./request-scope.js";
 
 // Re-export MiddlewareFn for internal/advanced use
 export type { MiddlewareFn } from "../router/middleware.js";
@@ -42,7 +43,7 @@ export type { MiddlewareFn } from "../router/middleware.js";
  */
 export type ScopedRouteMap<
   TPrefix extends string,
-  TMap = RSCRouter.GeneratedRouteMap,
+  TMap = Rango.GeneratedRouteMap,
 > = {
   [K in keyof TMap as K extends `${TPrefix}.${infer Rest}`
     ? Rest
@@ -195,7 +196,7 @@ export type HandlerContext<
   TEnv = DefaultEnv,
   TSearch extends SearchSchema = {},
   TRouteMap = never,
-> = {
+> = RequestScope<TEnv> & {
   /**
    * Route parameters extracted from the URL pattern.
    * Type-safe when using Handler<"/path/:param"> or Handler<{ param: string }>.
@@ -216,43 +217,10 @@ export type HandlerContext<
    */
   dev: boolean;
   /**
-   * The original incoming Request object (transport URL intact).
-   * Use `ctx.url` / `ctx.searchParams` for application logic — those have
-   * internal `_rsc*` params stripped. `ctx.request` preserves the raw URL
-   * for cases where you need original headers, method, or body.
-   */
-  request: Request;
-  /**
-   * Query parameters from the URL (system params like `_rsc*` are filtered).
-   * Always a standard URLSearchParams instance.
-   */
-  searchParams: URLSearchParams;
-  /**
    * Typed search parameters parsed from URL query string via the route's
    * search schema. Empty object when no schema is defined.
    */
   search: {} extends TSearch ? {} : ResolveSearchSchema<TSearch>;
-  /**
-   * The pathname portion of the request URL.
-   */
-  pathname: string;
-  /**
-   * The full URL object (with internal `_rsc*` params stripped).
-   * Use this for application logic — routing, link generation, display.
-   */
-  url: URL;
-  /**
-   * The original request URL with all parameters intact, including
-   * internal `_rsc*` transport params. Use `ctx.url` for application
-   * logic — this is only needed for advanced cases like debugging
-   * or custom cache keying.
-   */
-  originalUrl: URL;
-  /**
-   * Platform bindings (DB, KV, secrets, etc.).
-   * Access resources like `ctx.env.DB`, `ctx.env.KV`.
-   */
-  env: TEnv;
   /**
    * Type-safe getter for middleware variables.
    * Preferred way to read middleware-injected variables.
@@ -503,13 +471,16 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
  * **Return Types:**
  * - `boolean` - Hard decision: immediately returns this value (short-circuits)
  * - `{ defaultShouldRevalidate: boolean }` - Soft decision: updates suggestion for next revalidator
+ * - `void` / `null` / `undefined` - Defer to the current suggestion (no opinion); the
+ *   loop continues to the next revalidator without changing the running default
  *
  * **Execution Flow:**
  * 1. Start with built-in `defaultShouldRevalidate` (true if params changed)
  * 2. Execute global revalidators first, then route-specific
  * 3. Hard decision (boolean): stop immediately and use that value
  * 4. Soft decision (object): update suggestion and continue to next revalidator
- * 5. If all return soft decisions: use the final suggestion
+ * 5. Defer (`void` / `null` / `undefined`): leave suggestion unchanged and continue
+ * 6. If no hard decision was returned: use the final running suggestion
  *
  * @param args.currentParams - Previous route params (generic by default, can be narrowed)
  * @param args.currentUrl - Previous URL
@@ -521,7 +492,8 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
  * @param args.formData - Form data from action (future support)
  * @param args.formMethod - HTTP method from action (future support)
  *
- * @returns Hard decision (boolean) or soft suggestion (object)
+ * @returns Hard decision (boolean), soft suggestion (object), or defer
+ *   (`void` / `null` / `undefined`) to keep the running suggestion as-is.
  *
  * @example
  * ```typescript
@@ -542,18 +514,33 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
  * ```
  */
 /**
+ * A reference to a server action, used by `isAction()` in a revalidate predicate.
+ *
+ * Either a directly imported action (`import { addToCart }`) or a namespace
+ * import of an action module (`import * as CartActions`). Matching resolves the
+ * action's build-injected id (`path#export`) — the same identity the router uses
+ * for `actionId` — so a renamed or moved action breaks at compile time instead
+ * of silently failing to match.
+ */
+export type ActionRef =
+  | ((...args: never[]) => unknown)
+  | Record<string, unknown>;
+
+/**
  * Revalidation function called during client-side navigation to decide whether
  * a segment (layout, route, parallel slot, or loader) should be re-rendered.
  *
  * Return `true` to re-render, `false` to skip (keep client's current version),
- * or `{ defaultShouldRevalidate: boolean }` to override the default for
- * downstream segments.
+ * `{ defaultShouldRevalidate: boolean }` to update the running suggestion for
+ * downstream revalidators, or nothing (`void` / `null` / `undefined`) to defer
+ * to the current suggestion without changing it.
  *
  * @example
  * ```ts
- * // Re-render only when a cart action happened or browser signals staleness
+ * // Re-render when a cart action happened or the browser signals staleness;
+ * // defer otherwise (|| undefined) so the segment default still applies
  * revalidate(({ actionId, stale }) =>
- *   actionId?.includes("cart") || stale || false
+ *   actionId?.includes("cart") || stale || undefined
  * )
  *
  * // Always re-render when params change (default behavior made explicit)
@@ -597,21 +584,49 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
    * relative to the project root, followed by `#` and the exported function name.
    *
    * This is stable and can be used for path-based matching to revalidate
-   * when any action in a module or directory fires:
+   * when any action in a module or directory fires. Prefer `|| undefined`
+   * (defer to the segment default / downstream revalidators) over `?? false`
+   * (hard short-circuit that suppresses the default and ends the chain):
    *
    * @example
    * ```ts
    * // Match a specific action
-   * revalidate(({ actionId }) => actionId === "src/actions/cart.ts#addToCart")
+   * revalidate(({ actionId }) => actionId === "src/actions/cart.ts#addToCart" || undefined)
    *
    * // Match any action in the cart module
-   * revalidate(({ actionId }) => actionId?.includes("cart") ?? false)
+   * revalidate(({ actionId }) => actionId?.includes("cart") || undefined)
    *
    * // Match any action under src/apps/store/actions/
-   * revalidate(({ actionId }) => actionId?.startsWith("src/apps/store/actions/") ?? false)
+   * revalidate(({ actionId }) => actionId?.startsWith("src/apps/store/actions/") || undefined)
    * ```
    */
   actionId?: string;
+  /**
+   * Typed, rename-safe action matching. Returns `true` when the action that
+   * triggered this revalidation is one of the given references — or, for a
+   * namespace import (`import * as CartActions`), any export of that module —
+   * and `false` otherwise (including plain navigation with no action).
+   *
+   * Prefer this over hand-written `actionId` substring matches: it resolves the
+   * action's stable `path#export` id from the imported reference, so a rename is
+   * a type error in one place instead of silent drift across consumers. It
+   * resolves the reference the same way the action boundary derives `actionId`
+   * (`$id ?? $$id`), so it matches in both dev and production.
+   *
+   * Returns a raw boolean, so for the common "revalidate on match, else defer"
+   * intent combine with `|| undefined`:
+   *
+   * @example
+   * ```ts
+   * import { addToCart, removeFromCart } from "./actions/cart";
+   * import * as CartActions from "./actions/cart";
+   *
+   * revalidate((ctx) => ctx.isAction(addToCart) || undefined); // one action
+   * revalidate((ctx) => ctx.isAction(addToCart, removeFromCart) || undefined); // several
+   * revalidate((ctx) => ctx.isAction(CartActions) || undefined); // any in the module
+   * ```
+   */
+  isAction: (...actions: ActionRef[]) => boolean;
   /** URL where the action was executed (the page the user was on when they triggered the action). */
   actionUrl?: URL;
   /** Return value from the action execution. Can be used to conditionally revalidate based on the action's outcome. */
@@ -647,7 +662,7 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
    * action that may have mutated backend state.
    */
   stale?: boolean;
-}) => boolean | { defaultShouldRevalidate: boolean };
+}) => boolean | { defaultShouldRevalidate: boolean } | null | void;
 
 // MiddlewareFn is imported from "../router/middleware.js" and re-exported
 
@@ -752,7 +767,7 @@ export type Revalidate<
  * Middleware function with typed params and environment
  *
  * @template TParams - Params object (defaults to generic)
- * @template TEnv - Environment type (defaults to global RSCRouter.Env)
+ * @template TEnv - Environment type (defaults to global Rango.Env)
  *
  * Note: Middleware cannot directly use route names for params typing because
  * middleware is defined during router setup, before RegisteredRoutes is populated.
@@ -760,7 +775,7 @@ export type Revalidate<
  *
  * @example
  * ```typescript
- * // Basic middleware (uses global RSCRouter.Env via module augmentation)
+ * // Basic middleware (uses global Rango.Env via module augmentation)
  * const middleware: Middleware = async (ctx, next) => {
  *   ctx.set("user", { id: "123" }); // Type-safe!
  *   await next();

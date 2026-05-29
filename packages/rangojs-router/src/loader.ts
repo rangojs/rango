@@ -51,7 +51,7 @@ export function createLoader<T>(
 
   if (!loaderId && process.env.NODE_ENV === "development") {
     throw new Error(
-      "[rsc-router] Loader is missing $$id. " +
+      "[rango] Loader is missing $$id. " +
         "Make sure the exposeInternalIds Vite plugin is enabled and " +
         "the loader is exported with: export const MyLoader = createLoader(...)",
     );

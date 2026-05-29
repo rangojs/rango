@@ -22,10 +22,10 @@ import { collectRouteMiddleware } from "./middleware.js";
 import { traverseBack } from "./pattern-matching.js";
 import { DefaultErrorFallback } from "../default-error-boundary.js";
 import {
-  EntryData,
-  LoaderEntry,
+  type EntryData,
+  type LoaderEntry,
   getContext,
-  InterceptSelectorContext,
+  type InterceptSelectorContext,
 } from "../server/context";
 import type { ErrorBoundaryHandler, ErrorInfo, MatchResult } from "../types";
 import type { ReactNode } from "react";
@@ -550,6 +550,7 @@ export async function matchError<TEnv>(
     segments: [errorSegment],
     matched: matchedIds,
     diff: [errorSegment.id],
+    resolvedIds: [errorSegment.id],
     params: matched.params,
   };
 }

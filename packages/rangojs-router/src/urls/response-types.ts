@@ -5,6 +5,7 @@ import type {
   DefaultVars,
 } from "../types/global-namespace.js";
 import type { UseItems, ResponseRouteUseItem } from "../route-types.js";
+import type { RequestScope } from "../types/request-scope.js";
 
 /**
  * Reverse function for response handler contexts.
@@ -31,20 +32,31 @@ type ResponseReverseFunction = [DefaultReverseRouteMap] extends [
  * Symbol marking a route as a response route (non-RSC).
  * Stored on PathOptions and UrlPatterns to signal the trie to short-circuit.
  */
-export const RESPONSE_TYPE: unique symbol = Symbol.for(
-  "rangojs.responseType",
-) as any;
+export const RESPONSE_TYPE: unique symbol = Symbol.for("rangojs.responseType");
+
+/**
+ * Shared shape of a response-route handler: a function returning TReturn (or a
+ * promise of it), plus an optional composable `use` thunk merged at mount time.
+ */
+type ResponseHandlerOf<
+  TReturn,
+  TParams = Record<string, string>,
+  TEnv = any,
+> = ((
+  ctx: ResponseHandlerContext<TParams, TEnv>,
+) => TReturn | Promise<TReturn>) & {
+  /** Composable default DSL items merged when the handler is mounted. */
+  use?: () => UseItems<ResponseRouteUseItem>;
+};
 
 /**
  * Handler that must return Response (not ReactNode).
  * Used by path.image(), path.stream(), path.any() (binary/streaming data).
  */
-export type ResponseHandler<TParams = Record<string, string>, TEnv = any> = ((
-  ctx: ResponseHandlerContext<TParams, TEnv>,
-) => Response | Promise<Response>) & {
-  /** Composable default DSL items merged when the handler is mounted. */
-  use?: () => UseItems<ResponseRouteUseItem>;
-};
+export type ResponseHandler<
+  TParams = Record<string, string>,
+  TEnv = any,
+> = ResponseHandlerOf<Response, TParams, TEnv>;
 
 /**
  * JSON-serializable value type for auto-wrap support.
@@ -64,12 +76,7 @@ export type JsonValue =
 export type JsonResponseHandler<
   TParams = Record<string, string>,
   TEnv = any,
-> = ((
-  ctx: ResponseHandlerContext<TParams, TEnv>,
-) => JsonValue | Response | Promise<JsonValue | Response>) & {
-  /** Composable default DSL items merged when the handler is mounted. */
-  use?: () => UseItems<ResponseRouteUseItem>;
-};
+> = ResponseHandlerOf<JsonValue | Response, TParams, TEnv>;
 
 /**
  * Handler for text-based response routes (text, html, xml).
@@ -78,12 +85,7 @@ export type JsonResponseHandler<
 export type TextResponseHandler<
   TParams = Record<string, string>,
   TEnv = any,
-> = ((
-  ctx: ResponseHandlerContext<TParams, TEnv>,
-) => string | Response | Promise<string | Response>) & {
-  /** Composable default DSL items merged when the handler is mounted. */
-  use?: () => UseItems<ResponseRouteUseItem>;
-};
+> = ResponseHandlerOf<string | Response, TParams, TEnv>;
 
 /**
  * Lighter handler context for response routes.
@@ -93,19 +95,10 @@ export type TextResponseHandler<
 export interface ResponseHandlerContext<
   TParams = Record<string, string>,
   TEnv = any,
-> {
-  request: Request;
+> extends RequestScope<TEnv> {
   params: TParams;
   /** @internal Phantom property for params type invariance. Prevents mounting handlers on wrong routes. */
   readonly _paramCheck?: (params: TParams) => TParams;
-  /** Platform bindings (DB, KV, secrets, etc.). */
-  env: TEnv;
-  /** Query parameters from the URL (system params like `_rsc*` are filtered). */
-  searchParams: URLSearchParams;
-  /** The full URL object (with system params filtered). */
-  url: URL;
-  /** The pathname portion of the request URL. */
-  pathname: string;
   reverse: ResponseReverseFunction;
   /** Read a variable set by middleware via ctx.set(key, value) or ctx.set(ContextVar, value). */
   get: {

@@ -8,7 +8,16 @@ export function Document({ children }: { children: React.ReactNode }) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>App B</title>
       </head>
-      <body>{children}</body>
+      <body>
+        <div
+          data-testid="app-shell-marker"
+          data-app-shell="b"
+          style={{ display: "none" }}
+        >
+          app-b-shell
+        </div>
+        {children}
+      </body>
     </html>
   );
 }

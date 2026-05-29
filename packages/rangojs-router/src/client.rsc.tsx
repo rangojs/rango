@@ -78,6 +78,9 @@ export {
 // Re-export useHref - it's a "use client" hook
 export { useHref } from "./browser/react/use-href.js";
 
+// Re-export useReverse - it's a "use client" hook
+export { useReverse } from "./browser/react/use-reverse.js";
+
 // Re-export useHandle - it's a "use client" hook
 export { useHandle } from "./browser/react/use-handle.js";
 

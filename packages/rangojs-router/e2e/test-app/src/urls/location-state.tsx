@@ -22,6 +22,7 @@ import {
   PlainJitLink,
   TypedJitTimingLink,
 } from "../components/LinkStateDisplay.js";
+import { StaticWriteWidget } from "../components/StaticWriteWidget.js";
 
 /**
  * Location state test routes - tests for redirect() with state,
@@ -247,5 +248,24 @@ export const locationStatePatterns = urls(({ path, middleware }) => [
       </div>
     ),
     { name: "linkStatePlainTarget" },
+  ),
+
+  // Static write/delete demo: drives LocationState.write() and .delete()
+  // from the client and exposes both .read() and useLocationState() readers.
+  path(
+    "/static-write",
+    () => (
+      <div data-testid="ls-static-write">
+        <h1>Static Write</h1>
+        <StaticWriteWidget />
+        <Link to="/location-state" data-testid="sw-index-link">
+          Back to index
+        </Link>
+        <Link to="/location-state/other" data-testid="sw-other-link">
+          Go to other page
+        </Link>
+      </div>
+    ),
+    { name: "staticWrite" },
   ),
 ]);

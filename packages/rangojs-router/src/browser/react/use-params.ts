@@ -4,6 +4,8 @@ import { useContext, useState, useEffect, useRef } from "react";
 import { NavigationStoreContext } from "./context.js";
 import { shallowEqual } from "./shallow-equal.js";
 
+const EMPTY_PARAMS: Record<string, string> = Object.freeze({});
+
 /**
  * Hook to access the current route params.
  *
@@ -16,24 +18,34 @@ import { shallowEqual } from "./shallow-equal.js";
  * const params = useParams();
  * // { productId: "123" }
  *
+ * // Annotate the expected shape via a generic
+ * const { productId } = useParams<{ productId: string }>();
+ *
  * // With selector
  * const productId = useParams(p => p.productId);
  * ```
  */
-export function useParams(): Record<string, string>;
+// `T extends object` (not `Record<string, string | undefined>`) so that
+// interface shapes pass the constraint — interfaces lack an implicit
+// index signature and would otherwise be rejected. The generic is a
+// shape annotation, not a runtime check; the body always returns the
+// underlying params map unchanged. The default and selector input use
+// `string | undefined` because absent optional params are omitted from
+// the params record at runtime — the type must reflect that so callers
+// don't write `p.locale.length` and crash when the segment is absent.
+export function useParams<
+  T extends object = Record<string, string | undefined>,
+>(): Readonly<T>;
 export function useParams<T>(
-  selector: (params: Record<string, string>) => T,
+  selector: (params: Record<string, string | undefined>) => T,
 ): T;
 export function useParams<T>(
-  selector?: (params: Record<string, string>) => T,
-): T | Record<string, string> {
+  selector?: (params: Record<string, string | undefined>) => T,
+): T | Record<string, string | undefined> {
   const ctx = useContext(NavigationStoreContext);
 
   const [value, setValue] = useState<T | Record<string, string>>(() => {
-    if (!ctx) {
-      return selector ? selector({}) : {};
-    }
-    const params = ctx.eventController.getParams();
+    const params = ctx ? ctx.eventController.getParams() : EMPTY_PARAMS;
     return selector ? selector(params) : params;
   });
 

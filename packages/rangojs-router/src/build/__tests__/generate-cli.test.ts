@@ -237,7 +237,7 @@ describe("generate-cli e2e fixtures", () => {
 
       // Global augmentation
       expect(content).toContain("declare global");
-      expect(content).toContain("namespace RSCRouter");
+      expect(content).toContain("namespace Rango");
       expect(content).toContain("GeneratedRouteMap");
       expect(content).toContain("NamedRoutes");
 

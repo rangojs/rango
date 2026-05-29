@@ -1,9 +1,9 @@
 /**
- * JSON API response routes for PathResponse type testing.
+ * JSON API response routes for Rango.PathResponse type testing.
  *
  * Uses urls.json() so handlers return plain objects auto-wrapped as JSON.
  * The response types are carried through to RegisteredRoutes via
- * MergeRoutesWithResponses, enabling PathResponse<"/json-api/health">
+ * MergeRoutesWithResponses, enabling Rango.PathResponse<"/json-api/health">
  * to resolve the correct data type.
  */
 import { urls } from "@rangojs/router";

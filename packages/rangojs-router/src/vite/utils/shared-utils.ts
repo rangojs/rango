@@ -1,4 +1,4 @@
-import type { Plugin } from "vite";
+import type { Plugin, ResolvedConfig } from "vite";
 import * as Vite from "vite";
 import { getPublishedPackageName } from "./package-resolution.js";
 import { performanceTracksOptimizeDepsPlugin } from "../plugins/performance-tracks.js";
@@ -6,39 +6,52 @@ import {
   VIRTUAL_ENTRY_BROWSER,
   VIRTUAL_ENTRY_SSR,
   getVirtualEntryRSC,
+  getVirtualVersionContent,
   VIRTUAL_IDS,
 } from "../plugins/virtual-entries.js";
 
+// Cloudflare preset: @cloudflare/vite-plugin sets optimizeDeps.entries (string
+// or array) on the rsc environment. Single source for both the discovery plugin
+// and the version injector so they target the same entry.
+export function resolveRscEntryFromConfig(
+  config: ResolvedConfig,
+): string | undefined {
+  const entries = (config.environments as any)?.["rsc"]?.optimizeDeps?.entries;
+  if (typeof entries === "string") return entries;
+  if (Array.isArray(entries) && entries.length > 0) return entries[0];
+  return undefined;
+}
+
 /**
- * esbuild plugin to provide rsc-router:version virtual module during optimization.
- * This is needed because esbuild runs during Vite's dependency optimization phase,
- * before Vite's plugin system can handle virtual modules.
+ * Rolldown plugin to provide the version virtual module during dependency
+ * optimization. Vite 8 optimizes deps with Rolldown (a Rollup-style plugin
+ * pipeline that is separate from the main plugin set), so this is a
+ * resolveId/load plugin under optimizeDeps.rolldownOptions. Any dep pulled into
+ * optimization that imports the version virtual module gets a "dev" stub here;
+ * the real VERSION is injected into runtime modules by the version plugin.
  */
-const versionEsbuildPlugin = {
+const versionRolldownPlugin = {
   name: "@rangojs/router-version",
-  setup(build: any): void {
-    build.onResolve({ filter: /^rsc-router:version$/ }, (args: any) => ({
-      path: args.path,
-      namespace: "@rangojs/router-virtual",
-    }));
-    build.onLoad(
-      { filter: /.*/, namespace: "@rangojs/router-virtual" },
-      () => ({
-        contents: `export const VERSION = "dev";`,
-        loader: "js",
-      }),
-    );
+  resolveId(id: string): string | undefined {
+    if (id === VIRTUAL_IDS.version) return "\0" + VIRTUAL_IDS.version;
+    return undefined;
+  },
+  load(id: string): string | undefined {
+    if (id === "\0" + VIRTUAL_IDS.version) {
+      return getVirtualVersionContent("dev");
+    }
+    return undefined;
   },
 };
 
 /**
- * Shared esbuild options for dependency optimization.
- * Includes the version stub plugin for all environments.
+ * Shared Rolldown options for dependency optimization (Vite 8).
+ * Includes the version stub plugin and the performance-tracks RSDW patch.
  */
-export const sharedEsbuildOptions: {
+export const sharedRolldownOptions: {
   plugins: any[];
 } = {
-  plugins: [versionEsbuildPlugin, performanceTracksOptimizeDepsPlugin()],
+  plugins: [versionRolldownPlugin, performanceTracksOptimizeDepsPlugin()],
 };
 
 /**
@@ -108,7 +121,9 @@ export function createVirtualEntriesPlugin(
  * - "use client" directives: handled by the RSC plugin, not relevant to Rollup
  * - sourcemap errors: caused by "use client" directive at line 1:0 confusing sourcemap resolution
  * - sourcemap incomplete: plugins that transform without generating sourcemaps (router + RSC plugin)
- * - dynamic/static mixed imports: expected for router internals (e.g. request-context, cache-scope)
+ * - dynamic/static mixed imports: expected for router internals (e.g. request-context, cache-scope).
+ *   Under Rolldown (Vite 8) this surfaces as the INEFFECTIVE_DYNAMIC_IMPORT code emitted directly
+ *   by the bundler, rather than the vite:reporter message handled below (Rollup/Vite 7 shape).
  * - empty bundle: @vitejs/plugin-rsc scan build (step 1/5) produces an empty "index" chunk
  *   because the RSC entry is fully externalized during client-reference analysis
  */
@@ -119,7 +134,8 @@ export function onwarn(
   if (
     warning.code === "MODULE_LEVEL_DIRECTIVE" ||
     warning.code === "SOURCEMAP_ERROR" ||
-    warning.code === "EMPTY_BUNDLE"
+    warning.code === "EMPTY_BUNDLE" ||
+    warning.code === "INEFFECTIVE_DYNAMIC_IMPORT"
   ) {
     return;
   }

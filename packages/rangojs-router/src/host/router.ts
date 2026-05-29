@@ -52,6 +52,34 @@ export const HostRouterRegistry: Map<string, HostRouterRegistryEntry> =
 
 let hostRouterAutoId = 0;
 
+/** Whether a value is thenable (a Promise or Promise-like). */
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
+
+/**
+ * Whether a resolved value looks like a module namespace from a lazy import -
+ * an object with a `default` export that is a function (a Handler) or a host
+ * router (an object with `match`). Used to detect a `.map(() => import(...))`
+ * misuse: an inline handler should return a Response, not a module.
+ */
+function looksLikeLazyModule(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || !("default" in value)) {
+    return false;
+  }
+  const defaultExport = (value as { default: unknown }).default;
+  return (
+    typeof defaultExport === "function" ||
+    (typeof defaultExport === "object" &&
+      defaultExport !== null &&
+      "match" in defaultExport)
+  );
+}
+
 /**
  * Create a host router
  */
@@ -77,32 +105,44 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
   ): HostRouteBuilder {
     const middleware: Middleware[] = [];
 
+    function register(
+      handler: Handler | LazyHandler,
+      kind: RouteEntry["kind"],
+    ): HostRouter {
+      const entry: RouteEntry = {
+        patterns,
+        middleware,
+        handler,
+        kind,
+        isFallback,
+      };
+
+      if (isFallback) {
+        fallbackRoute = entry;
+      } else {
+        routes.push(entry);
+      }
+
+      log(
+        `Registered ${isFallback ? "fallback" : "route"} (${kind}):`,
+        patterns.join(", "),
+      );
+
+      return router;
+    }
+
     return {
       use(...mw: Middleware[]): HostRouteBuilder {
         middleware.push(...mw);
         return this;
       },
 
-      map(handler: Handler | LazyHandler): HostRouter {
-        const entry: RouteEntry = {
-          patterns,
-          middleware,
-          handler,
-          isFallback,
-        };
+      map(handler: Handler): HostRouter {
+        return register(handler, "handler");
+      },
 
-        if (isFallback) {
-          fallbackRoute = entry;
-        } else {
-          routes.push(entry);
-        }
-
-        log(
-          `Registered ${isFallback ? "fallback" : "route"}:`,
-          patterns.join(", "),
-        );
-
-        return router;
+      lazy(handler: LazyHandler): HostRouter {
+        return register(handler, "lazy");
       },
     };
   }
@@ -169,50 +209,82 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
   }
 
   /**
-   * Execute handler (lazy or direct)
+   * Execute a route entry, branching on its declared kind:
+   *   - "lazy": await the loader, then delegate to the default export
+   *     (a nested HostRouter via `.match`, or a request Handler directly).
+   *   - "handler": call the inline handler with the request. A `.map()` handler
+   *     that resolves to a module namespace (`{ default }`) is almost certainly
+   *     a misused lazy import, so it is rejected with a clear message rather
+   *     than silently returning a module object as the response.
    */
   async function executeHandler(
-    handler: Handler | LazyHandler,
+    entry: RouteEntry,
     request: Request,
     input: RouterRequestInput<any>,
   ): Promise<Response> {
-    // Check if it's a lazy handler (function that returns promise)
-    if (typeof handler === "function") {
-      const result = handler(request, input);
+    const { handler, kind } = entry;
 
-      // If it returns a promise with default export
-      if (result && typeof result === "object" && "then" in result) {
-        const module = await result;
-        if (
-          typeof module === "object" &&
-          module !== null &&
-          "default" in module
-        ) {
-          const defaultExport = (module as { default: Handler | HostRouter })
-            .default;
-
-          // If default export is a router with match method
-          if (
-            typeof defaultExport === "object" &&
-            defaultExport !== null &&
-            "match" in defaultExport
-          ) {
-            return (defaultExport as HostRouter).match(request, input);
-          }
-
-          // Otherwise treat as handler
-          return (defaultExport as Handler)(request, input);
-        }
-        // If promise resolves to Response
-        return result as Promise<Response>;
-      }
-
-      // Direct handler
-      return result as Response | Promise<Response>;
+    if (typeof handler !== "function") {
+      throw new InvalidHandlerError(handler, {
+        cause: { handlerType: typeof handler },
+      });
     }
 
-    throw new InvalidHandlerError(handler, {
-      cause: { handlerType: typeof handler },
+    if (kind === "lazy") {
+      return executeLazyMount(handler as LazyHandler, request, input);
+    }
+
+    const result = (handler as Handler)(request, input);
+
+    // Inline handlers may be async; await to obtain the Response and to run the
+    // misuse guard below.
+    if (isThenable(result)) {
+      const awaited = await result;
+      if (looksLikeLazyModule(awaited)) {
+        throw new HostRouterError(
+          ".map() is for inline request handlers; use .lazy(() => import(...)) for lazy host mounts.",
+        );
+      }
+      return awaited as Response;
+    }
+
+    return result;
+  }
+
+  /**
+   * Resolve a `.lazy()` mount: invoke the zero-arg loader, then dispatch to the
+   * module's default export.
+   */
+  async function executeLazyMount(
+    loader: LazyHandler,
+    request: Request,
+    input: RouterRequestInput<any>,
+  ): Promise<Response> {
+    const module = await loader();
+
+    if (typeof module === "object" && module !== null && "default" in module) {
+      const defaultExport = (module as { default: Handler | HostRouter })
+        .default;
+
+      // Default export is a nested host router
+      if (
+        typeof defaultExport === "object" &&
+        defaultExport !== null &&
+        "match" in defaultExport
+      ) {
+        return (defaultExport as HostRouter).match(request, input);
+      }
+
+      // Otherwise treat the default export as a request handler
+      return (defaultExport as Handler)(request, input);
+    }
+
+    throw new InvalidHandlerError(loader, {
+      cause: {
+        reason:
+          "lazy mount did not resolve to a module with a default export; " +
+          "use .lazy(() => import('./sub-app')) where the module default-exports a handler or host router",
+      },
     });
   }
 
@@ -252,6 +324,7 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
             return {
               pattern,
               handler: route.handler,
+              kind: route.kind,
             };
           }
         }
@@ -288,8 +361,7 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
               allMiddleware,
               request,
               fallbackInput,
-              () =>
-                executeHandler(fallbackRoute!.handler, request, fallbackInput),
+              () => executeHandler(fallbackRoute!, request, fallbackInput),
             );
           }
 
@@ -330,14 +402,14 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
 
       // Execute middleware chain and handler
       return executeMiddleware(allMiddleware, request, input, () =>
-        executeHandler(matchedRoute.handler, request, input),
+        executeHandler(matchedRoute, request, input),
       );
     },
   };
 
   // Register in the global HostRouterRegistry for build-time discovery.
   // The routes array and fallbackRoute ref are live - they reflect routes
-  // added via .host().map() after this point.
+  // added via .host().map()/.lazy() after this point.
   const registryId = `host-router-${hostRouterAutoId++}`;
   HostRouterRegistry.set(registryId, {
     get routes() {

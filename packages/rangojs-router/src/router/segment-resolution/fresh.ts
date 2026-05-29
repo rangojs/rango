@@ -32,7 +32,7 @@ import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
 import {
   track,
-  RSCRouterContext,
+  RangoContext,
   runInsideLoaderScope,
 } from "../../server/context.js";
 
@@ -515,6 +515,14 @@ export async function resolveParallelEntry<TEnv>(
       if (handler === undefined) {
         continue;
       }
+      // Pin `_currentSegmentId` to the slot's own id so handle pushes from
+      // inside the slot handler get their own bucket in the HandleStore.
+      // Parent-keying would collapse them into the parent layout's bucket;
+      // the partial-update merge then replaces the parent's bucket on a
+      // slot-only revalidation and drops layout-pushed Meta/Breadcrumbs.
+      // filterSegmentOrder() retains slot ids so the client preserves them.
+      (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+        `${parentShortCode}.${slot}`;
       const doneParallelHandler = track(
         `handler:${parallelEntry.id}.${slot}`,
         2,
@@ -624,7 +632,7 @@ export async function resolveAllSegments<TEnv>(
     // can guard non-cacheable variable reads. Also guards response-level
     // side effects (headers.set). Persists for all descendant entries.
     if (entry.type === "cache") {
-      const store = RSCRouterContext.getStore();
+      const store = RangoContext.getStore();
       if (store) store.insideCacheScope = true;
     }
     const doneEntry = track(`segment:${entry.id}`, 1);

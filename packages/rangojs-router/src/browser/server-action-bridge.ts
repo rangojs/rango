@@ -25,6 +25,7 @@ import { validateRedirectOrigin } from "./validate-redirect-origin.js";
 import {
   extractRscHeaderUrl,
   emptyResponse,
+  handleReloadHeader,
   teeWithCompletion,
 } from "./response-adapter.js";
 import { mergeLocationState } from "./history-state.js";
@@ -76,6 +77,20 @@ export function createServerActionBridge(
     renderSegments,
     onNavigate,
   } = config;
+
+  // SPA-navigate when onNavigate is set, else hard-reload. state is omitted (not
+  // passed as undefined) to match the header path's prior call shape.
+  async function dispatchRedirect(url: string, state?: unknown): Promise<void> {
+    if (onNavigate) {
+      await onNavigate(url, {
+        ...(state !== undefined ? { state } : {}),
+        replace: true,
+        _skipCache: true,
+      });
+    } else {
+      window.location.href = url;
+    }
+  }
 
   let isRegistered = false;
 
@@ -222,18 +237,12 @@ export function createServerActionBridge(
         handle.signal.removeEventListener("abort", onHandleAbort);
 
         // Check for version mismatch - server wants us to reload
-        const reload = extractRscHeaderUrl(response, "X-RSC-Reload");
-        if (reload === "blocked") {
-          resolveStreamComplete();
-          return emptyResponse();
-        }
-        if (reload) {
-          log("version mismatch on action, reloading", {
-            reloadUrl: reload.url,
-          });
-          window.location.href = reload.url;
-          return new Promise<Response>(() => {});
-        }
+        const reloadResult = handleReloadHeader(response, {
+          onBlocked: resolveStreamComplete,
+          onReload: (url) =>
+            log("version mismatch on action, reloading", { reloadUrl: url }),
+        });
+        if (reloadResult) return reloadResult;
 
         // Simple redirect from action (no state, no RSC payload).
         // Short-circuits before createFromFetch — no Flight deserialization needed.
@@ -243,14 +252,7 @@ export function createServerActionBridge(
         if (redirect && redirect !== "blocked" && !handle.signal.aborted) {
           log("action simple redirect", { url: redirect.url });
           handle.complete(undefined);
-          if (onNavigate) {
-            await onNavigate(redirect.url, {
-              replace: true,
-              _skipCache: true,
-            });
-          } else {
-            window.location.href = redirect.url;
-          }
+          await dispatchRedirect(redirect.url);
           return new Promise<Response>(() => {});
         }
         if (redirect === "blocked") {
@@ -339,18 +341,9 @@ export function createServerActionBridge(
           handle.complete(returnValue?.data);
           return returnValue?.data;
         }
-        const redirectState = metadata.locationState;
         log("action redirect", { url: redirectUrl });
         handle.complete(returnValue?.data);
-        if (onNavigate) {
-          await onNavigate(redirectUrl, {
-            state: redirectState,
-            replace: true,
-            _skipCache: true,
-          });
-        } else {
-          window.location.href = redirectUrl;
-        }
+        await dispatchRedirect(redirectUrl, metadata.locationState);
         return returnValue?.data;
       }
 

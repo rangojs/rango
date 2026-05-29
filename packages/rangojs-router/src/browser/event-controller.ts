@@ -113,11 +113,24 @@ export type ActionStateListener = (state: TrackedActionState) => void;
 export type HandleListener = () => void;
 
 /**
- * Internal handle state stored in controller
+ * Internal handle state stored in controller.
+ *
+ * Two segment lists are exposed because they serve different consumers:
+ *
+ * - `segmentOrder` drives handle collection (collectHandleData). Includes
+ *   parallel slot ids and reorders them after their parent so later-wins
+ *   collect functions (e.g. Meta) get the right precedence.
+ * - `routeSegmentIds` is the layouts-and-routes-only list documented by
+ *   `useSegments().segmentIds`. Parallels and loader sub-ids are stripped;
+ *   raw matched order is preserved.
+ *
+ * Both are derived from the same `matched` input on each setHandleData call
+ * so they stay in sync.
  */
 export interface HandleState {
   data: HandleData;
   segmentOrder: string[];
+  routeSegmentIds: string[];
 }
 
 /**
@@ -202,6 +215,14 @@ export interface EventController {
     data: HandleData,
     matched?: string[],
     isPartial?: boolean,
+    /**
+     * Segment ids that were re-resolved on the server this request (the
+     * partial response's `diff`). On a partial update, any existing bucket
+     * keyed under one of these ids that has no incoming entry is treated as
+     * stale and cleared. Without this, a parallel slot that revalidates but
+     * pushes nothing leaves its previous bucket in place forever.
+     */
+    resolvedIds?: string[],
   ): void;
   getHandleState(): HandleState;
 
@@ -245,6 +266,20 @@ function matchesActionId(
   }
   // Action name only: suffix match (matches "anything#actionName")
   return entryActionId.endsWith(`#${subscriptionId}`);
+}
+
+// Coalesce rapid notifications into one microtask-deferred fan-out; the
+// setTimeout(0) batching prevents render storms. Each notifier owns its timer
+// so listener kinds coalesce independently.
+function makeDebouncedNotifier(listeners: Set<() => void>): () => void {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  return () => {
+    if (timeout !== null) clearTimeout(timeout);
+    timeout = setTimeout(() => {
+      timeout = null;
+      listeners.forEach((listener) => listener());
+    }, 0);
+  };
 }
 
 // ============================================================================
@@ -300,6 +335,7 @@ export function createEventController(
   // Handle data from RSC payload
   let handleData: HandleData = {};
   let handleSegmentOrder: string[] = [];
+  let routeSegmentIds: string[] = [];
 
   // Merged route params from current match
   let routeParams: Record<string, string> = {};
@@ -312,18 +348,7 @@ export function createEventController(
   const actionListeners = new Map<string, Set<ActionStateListener>>();
   const handleListeners = new Set<HandleListener>();
 
-  // Debounce state notifications to batch rapid updates
-  let notifyTimeout: ReturnType<typeof setTimeout> | null = null;
-
-  function notify() {
-    if (notifyTimeout !== null) {
-      clearTimeout(notifyTimeout);
-    }
-    notifyTimeout = setTimeout(() => {
-      notifyTimeout = null;
-      stateListeners.forEach((listener) => listener());
-    }, 0);
-  }
+  const notify = makeDebouncedNotifier(stateListeners);
 
   // Debounce per-action notifications
   const actionNotifyTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
@@ -349,18 +374,7 @@ export function createEventController(
     );
   }
 
-  // Debounce handle notifications
-  let handleNotifyTimeout: ReturnType<typeof setTimeout> | null = null;
-
-  function notifyHandles() {
-    if (handleNotifyTimeout !== null) {
-      clearTimeout(handleNotifyTimeout);
-    }
-    handleNotifyTimeout = setTimeout(() => {
-      handleNotifyTimeout = null;
-      handleListeners.forEach((listener) => listener());
-    }, 0);
-  }
+  const notifyHandles = makeDebouncedNotifier(handleListeners);
 
   // ========================================================================
   // Derived State
@@ -407,22 +421,17 @@ export function createEventController(
   }
 
   function getActionState(actionId: string): TrackedActionState {
-    // Find the most recent action with this ID that's not settling
-    // Uses suffix matching when actionId is just a name (no #)
-    const activeEntry = [...inflightActions.values()]
-      .filter(
-        (a) => matchesActionId(actionId, a.actionId) && a.phase !== "settling",
-      )
-      .sort((a, b) => b.startedAt - a.startedAt)[0];
-
-    // Also check for settling entries to get result/error
-    const settlingEntry = [...inflightActions.values()]
-      .filter(
-        (a) => matchesActionId(actionId, a.actionId) && a.phase === "settling",
-      )
-      .sort((a, b) => b.startedAt - a.startedAt)[0];
-
-    const entry = activeEntry || settlingEntry;
+    // Prefer the most-recent non-settling entry; fall back to most-recent
+    // settling so a just-settled action's result/error stays readable.
+    const entry = [...inflightActions.values()]
+      .filter((a) => matchesActionId(actionId, a.actionId))
+      .reduce<ActionEntry | undefined>((best, a) => {
+        if (!best) return a;
+        const aActive = a.phase !== "settling";
+        const bActive = best.phase !== "settling";
+        if (aActive !== bActive) return aActive ? a : best;
+        return a.startedAt > best.startedAt ? a : best;
+      }, undefined);
 
     if (!entry) {
       return { ...DEFAULT_ACTION_STATE };
@@ -610,6 +619,19 @@ export function createEventController(
       doSettle();
     }
 
+    // streamingEnded is forced here for the "streaming never started" case so
+    // tryFinalize can run; otherwise the streaming token's end() finalizes.
+    function settleWith(result: NonNullable<typeof pendingResult>) {
+      if (!inflightActions.has(id) || settled) return;
+      actionCompleted = true;
+      entry.completed = true;
+      pendingResult = result;
+      if (entry.phase === "fetching" || streamingEnded) {
+        streamingEnded = true;
+        tryFinalize();
+      }
+    }
+
     return {
       id,
       abort,
@@ -646,35 +668,11 @@ export function createEventController(
       },
 
       complete(result?: unknown) {
-        if (!inflightActions.has(id) || settled) return;
-
-        actionCompleted = true;
-        entry.completed = true;
-        pendingResult = { type: "success", value: result };
-
-        // If streaming never started or already ended, finalize immediately
-        // Otherwise wait for streaming to end
-        if (entry.phase === "fetching" || streamingEnded) {
-          streamingEnded = true; // Mark as ended if never started
-          tryFinalize();
-        }
-        // If streaming is in progress, tryFinalize() will be called when streaming ends
+        settleWith({ type: "success", value: result });
       },
 
       fail(error: unknown) {
-        if (!inflightActions.has(id) || settled) return;
-
-        actionCompleted = true;
-        entry.completed = true;
-        pendingResult = { type: "error", value: error };
-
-        // If streaming never started or already ended, finalize immediately
-        // Otherwise wait for streaming to end
-        if (entry.phase === "fetching" || streamingEnded) {
-          streamingEnded = true; // Mark as ended if never started
-          tryFinalize();
-        }
-        // If streaming is in progress, tryFinalize() will be called when streaming ends
+        settleWith({ type: "error", value: error });
       },
 
       getRevalidatedSegments(): Set<string> {
@@ -744,8 +742,15 @@ export function createEventController(
     data: HandleData,
     matched?: string[],
     isPartial?: boolean,
+    resolvedIds?: string[],
   ): void {
-    const newSegmentOrder = filterSegmentOrder(matched ?? []);
+    const rawMatched = matched ?? [];
+    const newSegmentOrder = filterSegmentOrder(rawMatched);
+    // Separate list for useSegments(): "layouts and routes only" — strip
+    // parallels (".@") and loader sub-ids (D digit) without reordering.
+    const newRouteSegmentIds = rawMatched.filter(
+      (id) => !id.includes(".@") && !/D\d+\./.test(id),
+    );
 
     if (isPartial && newSegmentOrder.length > 0) {
       // Partial update: merge new data with existing
@@ -757,10 +762,19 @@ export function createEventController(
           handleData[handleName][segmentId] = data[handleName][segmentId];
         }
       }
-      // Clean up data from segments no longer in the matched list
+      const resolvedIdSet =
+        resolvedIds && resolvedIds.length > 0 ? new Set(resolvedIds) : null;
+      // Cleanup pass:
+      //   a) segment dropped from the match list — delete its bucket.
+      //   b) segment was re-resolved this request but pushed nothing for
+      //      this handle — its previous bucket is stale.
+      // (a) is the existing behavior; (b) requires resolvedIds.
       for (const handleName of Object.keys(handleData)) {
         for (const segmentId of Object.keys(handleData[handleName])) {
-          if (!newSegmentOrder.includes(segmentId)) {
+          const droppedFromMatch = !newSegmentOrder.includes(segmentId);
+          const reresolvedWithoutPush =
+            resolvedIdSet?.has(segmentId) && !data[handleName]?.[segmentId];
+          if (droppedFromMatch || reresolvedWithoutPush) {
             delete handleData[handleName][segmentId];
           }
         }
@@ -770,6 +784,7 @@ export function createEventController(
       handleData = data;
     }
     handleSegmentOrder = newSegmentOrder;
+    routeSegmentIds = newRouteSegmentIds;
 
     notifyHandles();
   }
@@ -778,6 +793,7 @@ export function createEventController(
     return {
       data: handleData,
       segmentOrder: handleSegmentOrder,
+      routeSegmentIds,
     };
   }
 

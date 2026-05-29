@@ -33,6 +33,26 @@ urls(({ path }) => [
 ]);
 ```
 
+### Optional URL params at runtime
+
+Absent optional params are **omitted from `ctx.params`** — `ctx.params.<name>`
+reads as `undefined`, matching the `RouteParams<"name">` type
+(`{ query?: string }`). Use `??` to default and `=== undefined` to check
+absence:
+
+```typescript
+path("/search/:query?", (ctx) => {
+  const query = ctx.params.query ?? ""; // works — undefined coalesces
+  if (ctx.params.query === undefined) return <EmptySearch />;
+  return <Results query={ctx.params.query} />;
+}, { name: "search" });
+```
+
+For the common pattern of an optional locale prefix
+(`include("/:locale?", routes)`) and the wider react-intl integration —
+locale detection, fallback chains, URL generation with absent locale —
+see `/i18n`.
+
 ## Route Handler Patterns
 
 ### Component Function
@@ -214,14 +234,22 @@ Cacheable vars (the default) can be read freely inside cache scopes.
 
 ### Revalidation Contracts for Handler Data
 
+> **Scope: `revalidate()` is a partial-render concern, not a cache concern.**
+> It decides whether this segment re-runs and streams to the client on a
+> navigation or action — never whether a cached value is stale. The cache
+> decides hit/miss/ttl/swr independently and never reads `revalidate()`. See
+> `/cache-guide` → "Two axes" and `/rango` → "The shape of rango".
+
 Handler-first guarantees apply within a single full render pass. For partial
 action revalidation, define named revalidation contracts and reuse them on both
 the producer route and the consumer child segments.
 
 ```typescript
 // revalidation-contracts.ts
+// Defer (|| undefined), not ?? false: a hard `false` short-circuits the chain,
+// so when the same segment composes multiple contracts the later ones never run.
 export const revalidateCheckoutData = ({ actionId }) =>
-  actionId?.includes("src/actions/checkout.ts#") ?? false;
+  actionId?.includes("src/actions/checkout.ts#") || undefined;
 
 path("/checkout", CheckoutPage, { name: "checkout" }, () => [
   revalidate(revalidateCheckoutData), // producer (route handler) reruns
@@ -249,9 +277,6 @@ path("/checkout", CheckoutPage, { name: "checkout" }, () => [
   layout(CheckoutLayout, () => [revalidateCheckout()]),
 ]);
 ```
-
-For scope/revalidation guarantees and non-guarantees, see:
-[docs/execution-model.md](../../docs/internal/execution-model.md)
 
 ## Redirects
 
@@ -382,6 +407,10 @@ urls(({ path, layout }) => [
   ]),
 ])
 ```
+
+## View Transitions
+
+A route can configure its own `transition()` — the wrap goes around the route's component itself (routes are leaves; they have no separate default outlet channel). If the route component renders a `<ParallelOutlet />` directly, that slot remains inside the route's VT subtree, so prefer mounting parallel slots in a layout when combining intercept modals with route-level transitions. See [skills/view-transitions](../view-transitions/SKILL.md) for examples and the wrap-location rules across layouts, routes, and slots.
 
 ## Handler-attached `.use`
 

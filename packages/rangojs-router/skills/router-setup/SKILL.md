@@ -71,7 +71,7 @@ urls(
 ## Router Options
 
 ```typescript
-interface RSCRouterOptions<TEnv> {
+interface RangoOptions<TEnv> {
   // URL patterns from urls() function
   urls: UrlPatterns;
 
@@ -405,7 +405,7 @@ interface AppBindings {
   KV: KVNamespace;
 }
 
-// Variables declared via module augmentation
+// Variables declared via global namespace augmentation
 interface AppVariables {
   user?: { id: string; name: string };
 }
@@ -417,7 +417,7 @@ const router = createRouter<AppBindings>({
 
 // Register types globally for implicit typing
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface Env extends AppBindings {}
     interface Vars extends AppVariables {}
   }

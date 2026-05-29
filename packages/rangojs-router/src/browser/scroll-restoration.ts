@@ -332,6 +332,8 @@ export function scrollToHash(): boolean {
  * Scroll to top of page
  */
 export function scrollToTop(): void {
+  if (typeof window === "undefined") return;
+  if (typeof window.scrollTo !== "function") return;
   window.scrollTo(0, 0);
 }
 
@@ -374,20 +376,26 @@ export function handleNavigationEnd(options: {
     // Fall through to hash or top if no saved position
   }
 
-  // Defer hash and scroll-to-top to after React paints the new content,
-  // so the user doesn't see the current page jump before the new route appears.
-  deferToNextPaint(() => {
-    // Re-check: the deferred callback may fire after environment teardown
-    if (typeof window === "undefined") return;
-
-    // Try hash scrolling first
-    if (scrollToHash()) {
-      return;
-    }
-
-    // Default: scroll to top
-    scrollToTop();
-  });
+  // scrollToHash / scrollToTop run synchronously here.
+  // handleNavigationEnd is invoked from NavigationProvider's
+  // useLayoutEffect (post-commit, pre-paint), so a sync scrollTo is
+  // captured by the upcoming paint AND by startViewTransition's snapshot.
+  // Deferring via rAF here pushed the call past the snapshot capture,
+  // making forward navigations wrapped in a layout/route view transition
+  // skip scroll-to-top — the live DOM scrolled but the captured snapshot
+  // was at the previous scroll position, so the user-facing page stayed
+  // visually clamped at the source page's scrollY (often the new tree's
+  // max scroll for tall→short navs). Y=0 / a hash element are robust
+  // against unmeasured layout, so sync scroll is correct here even
+  // before the new tree's scrollHeight settles.
+  //
+  // (The restore branch above keeps deferToNextPaint because savedY
+  // depends on the new tree's max scroll; sync scrollTo against an
+  // unmeasured DOM would clamp savedY to whatever the old/zero max was.)
+  if (scrollToHash()) {
+    return;
+  }
+  scrollToTop();
 }
 
 /**

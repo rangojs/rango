@@ -11,6 +11,9 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    "paths": {
+      "@native/*": ["./src/native-paths/*"]
+    },
     "types": [
       "@cloudflare/workers-types",
       "vite/client",

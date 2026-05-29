@@ -3,6 +3,9 @@ import MagicString from "magic-string";
 import path from "node:path";
 import fs from "node:fs";
 import { normalizePath } from "./expose-id-utils.js";
+import { createRangoDebugger, createCounter, NS } from "../debug.js";
+
+const debug = createRangoDebugger(NS.transform);
 
 /**
  * Type for the RSC plugin's manager API
@@ -39,7 +42,7 @@ function getRscPluginApi(config: ResolvedConfig): RscPluginApi | undefined {
     );
     if (plugin) {
       console.warn(
-        `[rsc-router:expose-action-id] RSC plugin found by API structure (name: "${plugin.name}"). ` +
+        `[rango:expose-action-id] RSC plugin found by API structure (name: "${plugin.name}"). ` +
           `Consider updating the name lookup if the plugin was renamed.`,
       );
     }
@@ -254,6 +257,8 @@ export function exposeActionId(): Plugin {
   let isBuild = false;
   let hashToFileMap: Map<string, string> | undefined;
   let rscPluginApi: RscPluginApi | undefined;
+  const counterTransform = createCounter(debug, "expose-action-id transform");
+  const counterRender = createCounter(debug, "expose-action-id renderChunk");
 
   return {
     name: "@rangojs/router:expose-action-id",
@@ -268,6 +273,11 @@ export function exposeActionId(): Plugin {
       rscPluginApi = getRscPluginApi(config);
     },
 
+    buildEnd() {
+      counterTransform?.flush();
+      counterRender?.flush();
+    },
+
     buildStart() {
       // Verify RSC plugin is present at build start (after all config hooks have run)
       // This allows rsc-router:rsc-integration to dynamically add the RSC plugin
@@ -277,7 +287,7 @@ export function exposeActionId(): Plugin {
 
       if (!rscPluginApi) {
         throw new Error(
-          "[rsc-router] Could not find @vitejs/plugin-rsc. " +
+          "[rango] Could not find @vitejs/plugin-rsc. " +
             "@rangojs/router requires the Vite RSC plugin, which is included automatically by rango().",
         );
       }
@@ -324,40 +334,54 @@ export function exposeActionId(): Plugin {
         return;
       }
 
-      // Dev mode: no hash-to-file mapping needed (IDs are already file paths)
-      return transformServerReferences(code, id);
+      const start = counterTransform ? performance.now() : 0;
+      try {
+        // Dev mode: no hash-to-file mapping needed (IDs are already file paths)
+        return transformServerReferences(code, id);
+      } finally {
+        counterTransform?.record(id, performance.now() - start);
+      }
     },
 
     // Build mode: renderChunk runs after all transforms and bundling complete
     renderChunk(code, chunk) {
-      // Only RSC bundle should get file paths for revalidation matching
-      // SSR bundle must NOT use file paths because client components run there
-      // and need to match the client bundle during hydration (otherwise: error #418)
-      const isRscEnv = this.environment?.name === "rsc";
+      const start = counterRender ? performance.now() : 0;
+      try {
+        // Only RSC bundle should get file paths for revalidation matching
+        // SSR bundle must NOT use file paths because client components run there
+        // and need to match the client bundle during hydration (otherwise: error #418)
+        const isRscEnv = this.environment?.name === "rsc";
 
-      // Only use file path mapping for RSC environment
-      const effectiveMap = isRscEnv ? hashToFileMap : undefined;
+        // Only use file path mapping for RSC environment
+        const effectiveMap = isRscEnv ? hashToFileMap : undefined;
 
-      // For RSC bundles, both createServerReference and registerServerReference
-      // may need transforming. Use a single MagicString for correct sourcemaps.
-      if (isRscEnv && hashToFileMap) {
-        const s = new MagicString(code);
-        const changed1 = applyServerReferenceWrapping(code, s, effectiveMap);
-        const changed2 = applyRegisterReferenceWrapping(code, s, hashToFileMap);
-        if (changed1 || changed2) {
-          return {
-            code: s.toString(),
-            map: s.generateMap({
-              source: chunk.fileName,
-              includeContent: true,
-            }),
-          };
+        // For RSC bundles, both createServerReference and registerServerReference
+        // may need transforming. Use a single MagicString for correct sourcemaps.
+        if (isRscEnv && hashToFileMap) {
+          const s = new MagicString(code);
+          const changed1 = applyServerReferenceWrapping(code, s, effectiveMap);
+          const changed2 = applyRegisterReferenceWrapping(
+            code,
+            s,
+            hashToFileMap,
+          );
+          if (changed1 || changed2) {
+            return {
+              code: s.toString(),
+              map: s.generateMap({
+                source: chunk.fileName,
+                includeContent: true,
+              }),
+            };
+          }
+          return null;
         }
-        return null;
-      }
 
-      // Non-RSC environments: only transform createServerReference calls
-      return transformServerReferences(code, chunk.fileName, effectiveMap);
+        // Non-RSC environments: only transform createServerReference calls
+        return transformServerReferences(code, chunk.fileName, effectiveMap);
+      } finally {
+        counterRender?.record(chunk.fileName, performance.now() - start);
+      }
     },
   };
 }

@@ -376,7 +376,7 @@ export function buildCombinedRouteMapWithSearch(
   const realPath = resolve(filePath);
   const key = variableName ? `${realPath}:${variableName}` : realPath;
   if (visited.has(key)) {
-    console.warn(`[rsc-router] Circular include detected, skipping: ${key}`);
+    console.warn(`[rango] Circular include detected, skipping: ${key}`);
     return { routes: {}, searchSchemas: {} };
   }
   visited.add(key);

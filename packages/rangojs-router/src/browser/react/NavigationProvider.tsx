@@ -28,6 +28,7 @@ import { NonceContext } from "./nonce-context.js";
 import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
 import { cancelAllPrefetches } from "../prefetch/queue.js";
 import { handleNavigationEnd } from "../scroll-restoration.js";
+import { createAppShellRef, type AppShellRef } from "../app-shell.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -46,10 +47,22 @@ async function processHandles(
     store: NavigationStore;
     matched?: string[];
     isPartial?: boolean;
+    /** Server's `resolvedIds`: every segment re-resolved this request,
+     *  including null-component ones excluded from `diff`/`segments`.
+     *  Drives cleanup of stale handle buckets when a re-resolved segment
+     *  pushed nothing. */
+    resolvedIds?: string[];
     historyKey: string;
   },
 ): Promise<void> {
-  const { eventController, store, matched, isPartial, historyKey } = opts;
+  const {
+    eventController,
+    store,
+    matched,
+    isPartial,
+    resolvedIds,
+    historyKey,
+  } = opts;
 
   let yieldCount = 0;
   for await (const handleData of handlesGenerator) {
@@ -64,7 +77,7 @@ async function processHandles(
     }
 
     yieldCount++;
-    eventController.setHandleData(handleData, matched, isPartial);
+    eventController.setHandleData(handleData, matched, isPartial, resolvedIds);
   }
 
   // Check again before final updates
@@ -72,12 +85,11 @@ async function processHandles(
     return;
   }
 
-  // For partial updates where the generator yielded nothing (cached handlers),
-  // we still need to update the segment order to clean up stale handle data.
-  // This happens when navigating away from a route - the handlers for the new
-  // route might not push any breadcrumbs, but we still need to remove the old ones.
+  // For partial updates where the generator yielded nothing (every
+  // re-resolved handler pushed nothing), still call setHandleData so the
+  // cleanup pass can clear out stale buckets for those segments.
   if (yieldCount === 0 && matched) {
-    eventController.setHandleData({}, matched, true);
+    eventController.setHandleData({}, matched, true, resolvedIds);
   }
 
   // After handles processing completes, update the cache's handleData.
@@ -133,15 +145,23 @@ export interface NavigationProviderProps {
   warmupEnabled?: boolean;
 
   /**
-   * App version from server payload (stable, immutable).
-   * Forwarded to context for cache key building.
+   * App version from server payload.
+   * Used only as a fallback when `appShellRef` is not supplied.
    */
   version?: string;
 
   /**
    * URL prefix for all routes (from createRouter({ basename })).
+   * Used only as a fallback when `appShellRef` is not supplied.
    */
   basename?: string;
+
+  /**
+   * Live app-shell ref. When provided, the context's `basename` and `version`
+   * properties become live getters that track app-switch updates without
+   * invalidating the memoized context value.
+   */
+  appShellRef?: AppShellRef;
 }
 
 /**
@@ -175,6 +195,7 @@ export function NavigationProvider({
   warmupEnabled,
   version,
   basename,
+  appShellRef,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
   const [payload, setPayload] = useState(initialPayload);
@@ -196,18 +217,34 @@ export function NavigationProvider({
     await bridge.refresh();
   }, []);
 
-  // Context value is stable (store, eventController, navigate, refresh never change)
-  const contextValue = useMemo<NavigationStoreContextValue>(
-    () => ({
+  // basename/version are always read through a shell ref so the context value
+  // has a single shape: a supplied appShellRef stays live (app-switch updates
+  // it), the standalone fallback is a frozen ref over the mount-time props.
+  const fallbackShellRef = useRef<AppShellRef | null>(null);
+  if (!fallbackShellRef.current) {
+    fallbackShellRef.current = createAppShellRef({ basename, version });
+  }
+  const shellRef = appShellRef ?? fallbackShellRef.current;
+
+  const contextValue = useMemo<NavigationStoreContextValue>(() => {
+    const value = {
       store,
       eventController,
       navigate,
       refresh,
-      version,
-      basename,
-    }),
-    [],
-  );
+    } as NavigationStoreContextValue;
+    Object.defineProperty(value, "basename", {
+      configurable: true,
+      enumerable: true,
+      get: () => shellRef.get().basename,
+    });
+    Object.defineProperty(value, "version", {
+      configurable: true,
+      enumerable: true,
+      get: () => shellRef.get().version,
+    });
+    return value;
+  }, []);
 
   // Connection warmup: keep TLS alive after idle periods.
   // After 60s of no user interaction, marks connection as "cold".
@@ -345,8 +382,12 @@ export function NavigationProvider({
         metadata: update.metadata,
       });
 
-      // Update route params
-      eventController.setParams(update.metadata.params ?? {});
+      // Update route params. Only reset when the server actually sends a params
+      // map — an absent `params` field means "no change" (e.g., legacy action
+      // responses that omitted params). Explicit `{}` still clears correctly.
+      if (update.metadata.params !== undefined) {
+        eventController.setParams(update.metadata.params);
+      }
 
       // Update handle data progressively as it streams in
       if (update.metadata.handles) {
@@ -359,24 +400,20 @@ export function NavigationProvider({
           store,
           matched: update.metadata.matched,
           isPartial: update.metadata.isPartial,
+          resolvedIds: update.metadata.resolvedIds,
           historyKey,
         }).catch((err) =>
           console.error("[NavigationProvider] Error consuming handles:", err),
         );
-      } else if (update.metadata.cachedHandleData) {
-        // For back/forward navigation from cache, restore the cached handleData
-        // This restores breadcrumbs to the exact state they were when the page was cached
-        eventController.setHandleData(
-          update.metadata.cachedHandleData,
-          update.metadata.matched,
-          false, // full replace - restore entire cached state
-        );
       } else if (update.metadata.matched) {
-        // For cached navigations without handleData, update segmentOrder to clean up stale data
+        // cachedHandleData present -> full restore (back/forward); absent ->
+        // partial cleanup of segments no longer matched.
+        const cached = update.metadata.cachedHandleData;
         eventController.setHandleData(
-          {}, // Empty data - all existing data not in matched will be cleaned up
+          cached ?? {},
           update.metadata.matched,
-          true, // partial update - will clean up segments not in matched
+          cached === undefined,
+          cached === undefined ? update.metadata.resolvedIds : undefined,
         );
       }
     });
@@ -398,7 +435,11 @@ export function NavigationProvider({
   // Build the content tree
   let content = <RootErrorBoundary>{root}</RootErrorBoundary>;
 
-  // Wrap with ThemeProvider when theme is enabled
+  // Wrap with ThemeProvider when theme is enabled. The ThemeProvider is
+  // document-lifetime: its config comes from the initial load and does NOT
+  // swap on cross-app transitions, because the ThemeProvider sits above the
+  // segment tree and a smooth (no-reload) app switch cannot safely remount
+  // it. A new theme config only takes effect on a full document load.
   if (themeConfig) {
     content = (
       <ThemeProvider config={themeConfig} initialTheme={initialTheme}>

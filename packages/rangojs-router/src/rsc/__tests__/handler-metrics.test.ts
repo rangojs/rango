@@ -78,15 +78,15 @@ vi.mock("../../router/router-context.js", () => ({
 }));
 
 import { createRSCHandler } from "../handler.js";
-import type { RSCRouterInternal } from "../../router/router-interfaces.js";
+import type { RangoInternal } from "../../router/router-interfaces.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 function createMockRouter(
-  overrides: Partial<RSCRouterInternal<unknown, any>> = {},
-): RSCRouterInternal<unknown, any> {
+  overrides: Partial<RangoInternal<unknown, any>> = {},
+): RangoInternal<unknown, any> {
   return {
     id: "test-router",
     middleware: [],

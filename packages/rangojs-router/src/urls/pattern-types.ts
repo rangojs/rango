@@ -1,10 +1,5 @@
-import type { ReactNode } from "react";
-import type { Handler, TrailingSlashMode } from "../types.js";
-import type {
-  AllUseItems,
-  RouteUseItem,
-  UrlPatternsBrand,
-} from "../route-types.js";
+import type { TrailingSlashMode } from "../types.js";
+import type { AllUseItems, UrlPatternsBrand } from "../route-types.js";
 import type { SearchSchema } from "../search-params.js";
 import { RESPONSE_TYPE } from "./response-types.js";
 import type { DefaultEnv } from "../types.js";
@@ -55,16 +50,6 @@ export interface PathOptions<
 }
 
 /**
- * Internal representation of a URL pattern definition
- */
-export interface PathDefinition {
-  pattern: string;
-  name?: string;
-  handler: ReactNode | Handler<any, any, any>;
-  use?: RouteUseItem[];
-}
-
-/**
  * Result of urls() - contains the route definitions
  */
 export interface UrlPatterns<
@@ -72,8 +57,6 @@ export interface UrlPatterns<
   TRoutes extends Record<string, any> = Record<string, string>,
   TResponses extends Record<string, unknown> = Record<string, unknown>,
 > {
-  /** Internal: route definitions */
-  readonly definitions: PathDefinition[];
   /** Internal: compiled handler function */
   readonly handler: () => AllUseItems[];
   /** Internal: trailing slash config per route name */
@@ -87,6 +70,40 @@ export interface UrlPatterns<
   /** Responses type brand (phantom) - carries route name -> response data type mapping */
   readonly _responses?: TResponses;
 }
+
+/**
+ * Extract the phantom env type carried by a UrlPatterns value.
+ */
+export type UrlPatternsEnv<T> =
+  T extends UrlPatterns<infer TEnv, any, any> ? TEnv : never;
+
+/**
+ * Guards `routes()` env compatibility without over-constraining.
+ *
+ * - An env-agnostic block (its env is `unknown` — e.g. a shared urls() module,
+ *   or an app that does not augment `Rango.Env`) attaches to any router.
+ * - A block carrying a concrete env is accepted only when the router env
+ *   (`TRouterEnv`) satisfies it; resolves to `never` otherwise, so a
+ *   `urls<{ DB: D1Database }>()` cannot be mounted on a `createRouter<{}>()`.
+ *
+ * Use as `patterns: T & EnvCompatible<T, TEnv>` so `T` still infers from the
+ * argument — a bare `EnvCompatible<T, TEnv>` parameter sits in a non-inferrable
+ * conditional position and would collapse `T` to its constraint.
+ *
+ * Known limitation: `TRouterEnv extends ...` distributes over a union router env,
+ * so a `urls<A>()` block is accepted on `createRouter<A | B>()` even though the
+ * `B` arm cannot supply `A`'s env. Suppressing distribution with
+ * `[TRouterEnv] extends [...]` would close that edge but breaks the common
+ * generic-`TEnv` call sites (a deferred type parameter can't resolve the tuple
+ * conditional, so the intersection stops reducing to `T`). A router has one env,
+ * so a union env is not a supported pattern; the distributive form is kept.
+ */
+export type EnvCompatible<TPatterns, TRouterEnv> =
+  unknown extends UrlPatternsEnv<TPatterns>
+    ? TPatterns
+    : TRouterEnv extends UrlPatternsEnv<TPatterns>
+      ? TPatterns
+      : never;
 
 /**
  * Options for include()

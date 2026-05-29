@@ -24,6 +24,7 @@ export const NamedRoutes = {
   "kanban.card": "/kanban/card/:cardId",
   "kanban.index": "/kanban",
   "loaders.index": "/loaders",
+  "loaders.reverse": "/loaders/reverse",
   "loaders.stats": "/loaders/stats",
   "magazine.article": "/magazine/:slug",
   "magazine.author": "/magazine/author/:authorSlug",
@@ -38,6 +39,7 @@ export const NamedRoutes = {
   "protected.dashboard": "/protected/dashboard",
   "protected.index": "/protected",
   "protected.profile": "/protected/profile/:username",
+  "refresh.index": "/refresh",
   "shop.account.index": "/shop/account",
   "shop.account.orderDetail": "/shop/account/orders/:id",
   "shop.account.orders": "/shop/account/orders",
@@ -56,7 +58,7 @@ export const NamedRoutes = {
 } as const;
 
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface GeneratedRouteMap extends Readonly<typeof NamedRoutes> {}
   }
 }

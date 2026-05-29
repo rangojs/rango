@@ -48,7 +48,7 @@ export function assertSegmentStructure(
 
   if (cachedCategory !== incomingCategory) {
     console.warn(
-      `[RSC Router] Tree structure mismatch detected in ${context} ` +
+      `[Rango] Tree structure mismatch detected in ${context} ` +
         `for segment "${cached.id}": loading category changed from ` +
         `"${cachedCategory}" (${describeLoading(cached.loading)}) to ` +
         `"${incomingCategory}" (${describeLoading(incoming.loading)}). ` +
@@ -64,7 +64,7 @@ export function assertSegmentStructure(
   const incomingHasMount = !!incoming.mountPath;
   if (cachedHasMount !== incomingHasMount) {
     console.warn(
-      `[RSC Router] MountContextProvider mismatch detected in ${context} ` +
+      `[Rango] MountContextProvider mismatch detected in ${context} ` +
         `for segment "${cached.id}": mountPath changed from ` +
         `${cachedHasMount ? `"${cached.mountPath}"` : "undefined"} to ` +
         `${incomingHasMount ? `"${incoming.mountPath}"` : "undefined"}. ` +

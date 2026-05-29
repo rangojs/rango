@@ -5,13 +5,15 @@
  * from discovered router manifests and static source parsing.
  */
 
-import { dirname, basename, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
 import {
   generateRouteTypesSource,
   writeCombinedRouteTypes,
   findRouterFiles,
   buildCombinedRouteMapForRouterFile,
+  genFileTsPath,
+  resolveSearchSchemas,
 } from "../../build/generate-route-types.js";
 import type { DiscoveryState } from "./state.js";
 import { markSelfGenWrite } from "./self-gen-tracking.js";
@@ -35,6 +37,22 @@ function filterUserNamedRoutes(
   return filtered;
 }
 
+// Write a gen file only when content changed, marking the write as
+// self-generated BEFORE writeFileSync so the watcher distinguishes it from a
+// manual edit (the HMR self-gen-loop guard).
+function writeGenFileIfChanged(
+  state: DiscoveryState,
+  outPath: string,
+  source: string,
+  opts?: { log?: boolean },
+): void {
+  const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
+  if (existing === source) return;
+  markSelfGenWrite(state, outPath, source);
+  writeFileSync(outPath, source);
+  if (opts?.log) console.log(`[rango] Generated route types -> ${outPath}`);
+}
+
 /**
  * Write combined route types for all router files.
  * Only writes when content has changed to avoid triggering HMR loops.
@@ -48,45 +66,16 @@ export function writeCombinedRouteTypesWithTracking(
     findRouterFiles(state.projectRoot, state.scanFilter);
   state.cachedRouterFiles = routerFiles;
 
-  // Snapshot pre-write content to detect which files actually change.
-  const preContent = new Map<string, string>();
-  for (const routerFilePath of routerFiles) {
-    const routerDir = dirname(routerFilePath);
-    const routerBasename = basename(routerFilePath).replace(
-      /\.(tsx?|jsx?)$/,
-      "",
-    );
-    const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
-    try {
-      preContent.set(outPath, readFileSync(outPath, "utf-8"));
-    } catch {
-      // File doesn't exist yet — any write is a real change.
-    }
-  }
-
-  writeCombinedRouteTypes(state.projectRoot, routerFiles, opts);
-
-  // Mark only files that were actually written so the watcher can
-  // distinguish self-triggered change events from manual edits.
-  // Marking unchanged files creates stale entries that interfere with
-  // multi-server setups (e.g. shared webServer + isolated HMR server).
-  for (const routerFilePath of routerFiles) {
-    const routerDir = dirname(routerFilePath);
-    const routerBasename = basename(routerFilePath).replace(
-      /\.(tsx?|jsx?)$/,
-      "",
-    );
-    const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
-    if (!existsSync(outPath)) continue;
-    try {
-      const content = readFileSync(outPath, "utf-8");
-      if (content !== preContent.get(outPath)) {
-        markSelfGenWrite(state, outPath, content);
-      }
-    } catch {
-      // Ignore transient fs errors while files are being rewritten.
-    }
-  }
+  // Mark each gen file as self-generated BEFORE it is written, via the onWrite
+  // callback fired at every writeFileSync site, so the watcher distinguishes
+  // self-triggered change events from manual edits. The callback fires only
+  // for files actually written, so unchanged files are never marked (stale
+  // entries interfere with multi-server setups such as a shared webServer plus
+  // an isolated HMR server).
+  writeCombinedRouteTypes(state.projectRoot, routerFiles, {
+    ...opts,
+    onWrite: (outPath, content) => markSelfGenWrite(state, outPath, content),
+  });
 }
 
 /**
@@ -104,7 +93,7 @@ export function writeRouteTypesFiles(state: DiscoveryState): void {
     if (existsSync(oldCombinedPath)) {
       unlinkSync(oldCombinedPath);
       console.log(
-        `[rsc-router] Removed stale combined route types: ${oldCombinedPath}`,
+        `[rango] Removed stale combined route types: ${oldCombinedPath}`,
       );
     }
   } catch {}
@@ -122,40 +111,22 @@ export function writeRouteTypesFiles(state: DiscoveryState): void {
     // the wrong location, causing non-deterministic type resolution.
     if (sourceFile.includes("node_modules")) {
       throw new Error(
-        `[rsc-router] Router "${id}" has sourceFile inside node_modules: ${sourceFile}\n` +
+        `[rango] Router "${id}" has sourceFile inside node_modules: ${sourceFile}\n` +
           `This means createRouter() stack trace parsing matched a Vite internal frame.\n` +
           `Set an explicit \`id\` on createRouter() or check the call site.`,
       );
     }
 
-    const routerDir = dirname(sourceFile);
-    const routerBasename = basename(sourceFile).replace(/\.(tsx?|jsx?)$/, "");
-    const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
+    const outPath = genFileTsPath(sourceFile);
 
     // Filter out auto-generated route names (e.g. "$path____debug_reverse-test")
     // to match the static parser's output and prevent HMR oscillation.
     const userRoutes = filterUserNamedRoutes(routeManifest);
-    let effectiveSearchSchemas = routeSearchSchemas;
-
-    // Runtime manifest may omit search schema metadata in some module-runner
-    // flows. Fall back to static source parsing from the router file.
-    if (
-      (!effectiveSearchSchemas ||
-        Object.keys(effectiveSearchSchemas).length === 0) &&
-      sourceFile
-    ) {
-      const staticParsed = buildCombinedRouteMapForRouterFile(sourceFile);
-      if (Object.keys(staticParsed.searchSchemas).length > 0) {
-        const filtered: Record<string, Record<string, string>> = {};
-        for (const name of Object.keys(userRoutes)) {
-          const schema = staticParsed.searchSchemas[name];
-          if (schema) filtered[name] = schema;
-        }
-        if (Object.keys(filtered).length > 0) {
-          effectiveSearchSchemas = filtered;
-        }
-      }
-    }
+    const effectiveSearchSchemas = resolveSearchSchemas(
+      Object.keys(userRoutes),
+      routeSearchSchemas,
+      sourceFile,
+    );
 
     const source = generateRouteTypesSource(
       userRoutes,
@@ -163,14 +134,7 @@ export function writeRouteTypesFiles(state: DiscoveryState): void {
         ? effectiveSearchSchemas
         : undefined,
     );
-    const existing = existsSync(outPath)
-      ? readFileSync(outPath, "utf-8")
-      : null;
-    if (existing !== source) {
-      markSelfGenWrite(state, outPath, source);
-      writeFileSync(outPath, source);
-      console.log(`[rsc-router] Generated route types -> ${outPath}`);
-    }
+    writeGenFileIfChanged(state, outPath, source, { log: true });
   }
 }
 
@@ -236,22 +200,14 @@ export function supplementGenFilesWithRuntimeRoutes(
       }
     }
 
-    const routerDir = dirname(sourceFile);
-    const routerBasename = basename(sourceFile).replace(/\.(tsx?|jsx?)$/, "");
-    const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
+    const outPath = genFileTsPath(sourceFile);
     const source = generateRouteTypesSource(
       mergedRoutes,
       Object.keys(mergedSearchSchemas).length > 0
         ? mergedSearchSchemas
         : undefined,
     );
-    const existing = existsSync(outPath)
-      ? readFileSync(outPath, "utf-8")
-      : null;
-    if (existing !== source) {
-      markSelfGenWrite(state, outPath, source);
-      writeFileSync(outPath, source);
-    }
+    writeGenFileIfChanged(state, outPath, source);
   }
   // No manual manifest update needed: the virtual module imports the gen
   // file, so Vite's HMR automatically re-evaluates it with fresh data.

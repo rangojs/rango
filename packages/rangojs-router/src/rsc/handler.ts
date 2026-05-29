@@ -8,7 +8,7 @@
  */
 
 import { createElement } from "react";
-import { RouteNotFoundError } from "../errors.js";
+import { isRouteNotFoundError } from "../errors.js";
 import { matchMiddleware, executeMiddleware } from "../router/middleware.js";
 import {
   runWithRequestContext,
@@ -31,6 +31,7 @@ import {
   interceptRedirectForPartial,
   buildRouteMiddlewareEntries,
 } from "./helpers.js";
+import { isWebSocketUpgradeResponse } from "../response-utils.js";
 import {
   handleResponseRoute,
   type ResponseRouteMatch,
@@ -56,6 +57,7 @@ import {
   getRouterTrie,
 } from "../route-map-builder.js";
 import type { HandlerContext } from "./handler-context.js";
+import type { SegmentCacheStore } from "../cache/types.js";
 import { buildRouterTrieFromUrlpatterns } from "./manifest-init.js";
 import { handleProgressiveEnhancement } from "./progressive-enhancement.js";
 import {
@@ -64,7 +66,10 @@ import {
   type ActionContinuation,
 } from "./server-action.js";
 import { handleLoaderFetch } from "./loader-fetch.js";
-import { checkRequestOrigin, type OriginCheckPhase } from "./origin-guard.js";
+import {
+  checkRequestOrigin,
+  ORIGIN_CHECK_PHASE_BY_MODE,
+} from "./origin-guard.js";
 import { handleRscRendering } from "./rsc-rendering.js";
 import {
   withTimeout,
@@ -81,6 +86,7 @@ import {
   startSSRSetup,
   getSSRSetup,
   mayNeedSSR,
+  isRscRequest,
   SSR_SETUP_VAR,
 } from "./ssr-setup.js";
 import {
@@ -352,7 +358,7 @@ export function createRSCHandler<
     // Resolve cache store configuration
     // Priority: options.cache (handler override) > router.cache (router default)
     // Store is enabled only if: config provided, enabled, and no ?__no_cache query param
-    let cacheStore = undefined;
+    let cacheStore: SegmentCacheStore | undefined;
     const cacheOption = options.cache ?? router.cache;
     if (cacheOption && !url.searchParams.has("__no_cache")) {
       const cacheConfig =
@@ -533,7 +539,9 @@ export function createRSCHandler<
       }
 
       const fullTiming = timingParts.join(", ");
-      if (fullTiming) response.headers.set("Server-Timing", fullTiming);
+      if (fullTiming && !isWebSocketUpgradeResponse(response)) {
+        response.headers.set("Server-Timing", fullTiming);
+      }
 
       return response;
     });
@@ -593,10 +601,7 @@ export function createRSCHandler<
         routerId: router.id,
       });
     } catch (error) {
-      if (
-        error instanceof RouteNotFoundError ||
-        (error instanceof Error && error.name === "RouteNotFoundError")
-      ) {
+      if (isRouteNotFoundError(error)) {
         // Let the render path handle 404 — match()/matchPartial() will
         // re-throw RouteNotFoundError and the catch block in
         // executeRenderWithMiddleware renders the not-found page.
@@ -647,14 +652,7 @@ export function createRSCHandler<
     }
 
     // ---- 3. Origin guard (gate for action/loader/PE modes) ----
-    const originPhase: OriginCheckPhase | null =
-      plan.mode === "action"
-        ? "action"
-        : plan.mode === "loader"
-          ? "loader"
-          : plan.mode === "pe-render"
-            ? "pe-form"
-            : null;
+    const originPhase = ORIGIN_CHECK_PHASE_BY_MODE[plan.mode];
     if (originPhase) {
       const originResult = await checkRequestOrigin(
         request,
@@ -804,7 +802,7 @@ export function createRSCHandler<
         );
       }
       const response = responseOutcome.result;
-      if (plan.negotiated) {
+      if (plan.negotiated && !isWebSocketUpgradeResponse(response)) {
         response.headers.append("Vary", "Accept");
       }
       return response;
@@ -921,47 +919,17 @@ export function createRSCHandler<
       );
     }
 
-    // ---- Full render / Partial render (or PE that fell through) ----
-    if (plan.mode === "full-render" || plan.mode === "partial-render") {
-      const isPartial = plan.mode === "partial-render";
-      return executeRenderWithMiddleware(
-        plan.route.routeMiddleware,
-        plan.negotiated,
-        plan.route.routeKey,
-        routeReverse,
-        request,
-        env,
-        url,
-        variables,
-        nonce,
-        handleStore,
-        isPartial,
-      );
-    }
-
-    // PE that fell through (handleProgressiveEnhancement returned null)
-    // falls back to full render
-    if (plan.mode === "pe-render") {
-      return executeRenderWithMiddleware(
-        plan.route.routeMiddleware,
-        false,
-        plan.route.routeKey,
-        routeReverse,
-        request,
-        env,
-        url,
-        variables,
-        nonce,
-        handleStore,
-        false,
-      );
-    }
-
-    // Redirect plan that wasn't handled above (full-page redirect — let
-    // the pipeline handle it via match() which returns { redirect: url })
+    // Full render, partial render, fallen-through PE, and full-page redirect all
+    // render through the same middleware-wrapped path. Only full/partial-render
+    // carry negotiation + the partial flag; pe/redirect render plainly.
+    const isPartial = plan.mode === "partial-render";
+    const negotiated =
+      plan.mode === "full-render" || plan.mode === "partial-render"
+        ? plan.negotiated
+        : false;
     return executeRenderWithMiddleware(
       plan.route.routeMiddleware,
-      false,
+      negotiated,
       plan.route.routeKey,
       routeReverse,
       request,
@@ -970,7 +938,7 @@ export function createRSCHandler<
       variables,
       nonce,
       handleStore,
-      false,
+      isPartial,
     );
   }
 
@@ -1014,7 +982,7 @@ export function createRSCHandler<
             nonce,
           );
         }
-        if (negotiated) {
+        if (negotiated && !isWebSocketUpgradeResponse(response)) {
           response.headers.append("Vary", "Accept");
         }
         return response;
@@ -1050,10 +1018,7 @@ export function createRSCHandler<
         }
 
         // Render 404 page for unmatched routes
-        const isRouteNotFound =
-          error instanceof RouteNotFoundError ||
-          (error instanceof Error && error.name === "RouteNotFoundError");
-        if (isRouteNotFound) {
+        if (isRouteNotFoundError(error)) {
           callOnError(error, "routing", {
             request,
             url,
@@ -1100,13 +1065,7 @@ export function createRSCHandler<
             },
           });
 
-          const isRscRequest =
-            isPartial ||
-            (!request.headers.get("accept")?.includes("text/html") &&
-              !url.searchParams.has("__html")) ||
-            url.searchParams.has("__rsc");
-
-          if (isRscRequest) {
+          if (isRscRequest(request, url, isPartial)) {
             return createResponseWithMergedHeaders(rscStream, {
               status: 404,
               headers: { "content-type": "text/x-component;charset=utf-8" },

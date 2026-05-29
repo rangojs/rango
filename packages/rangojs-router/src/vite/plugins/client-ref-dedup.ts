@@ -1,4 +1,7 @@
 import type { Plugin, ResolvedConfig } from "vite";
+import { createRangoDebugger, NS } from "../debug.js";
+
+const debug = createRangoDebugger(NS.transform);
 
 const CLIENT_IN_SERVER_PROXY_PREFIX =
   "virtual:vite-rsc/client-in-server-package-proxy/";
@@ -62,6 +65,7 @@ export function extractPackageName(absolutePath: string): string | null {
  */
 export function clientRefDedup(): Plugin {
   let clientExclude: string[] = [];
+  const dedupedPackages = new Set<string>();
 
   return {
     name: "@rangojs/router:client-ref-dedup",
@@ -74,6 +78,16 @@ export function clientRefDedup(): Plugin {
       const clientEnv = config.environments?.["client"];
       clientExclude =
         clientEnv?.optimizeDeps?.exclude ?? config.optimizeDeps?.exclude ?? [];
+    },
+
+    buildEnd() {
+      if (debug && dedupedPackages.size > 0) {
+        debug(
+          "client-ref-dedup: redirected %d package(s) (%s)",
+          dedupedPackages.size,
+          [...dedupedPackages].join(","),
+        );
+      }
     },
 
     resolveId(source, importer, options) {
@@ -94,6 +108,8 @@ export function clientRefDedup(): Plugin {
 
       // Don't redirect packages that are excluded from optimization
       if (clientExclude.includes(packageName)) return;
+
+      if (debug) dedupedPackages.add(packageName);
 
       // Return a virtual module that re-exports via bare specifier
       return `\0rango:dedup/${packageName}`;

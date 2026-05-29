@@ -21,6 +21,10 @@ export function resolveHandlerUse(handler: unknown): (() => any[]) | undefined {
   if (isStaticHandler(handler)) {
     return (handler as any).use;
   }
+  // Loader definitions from createLoader() — branded objects with optional .use
+  if (typeof handler === "object" && (handler as any).__brand === "loader") {
+    return (handler as any).use;
+  }
   // Plain handler function
   if (typeof handler === "function") {
     return (handler as any).use;
@@ -99,6 +103,8 @@ const MOUNT_SITE_ALLOWED_TYPES: Record<string, Set<string>> = {
     "when",
     "transition",
   ]),
+  // LoaderUseItem — only revalidate + cache can attach to a loader entry
+  loader: new Set(["revalidate", "cache"]),
 };
 
 /**

@@ -403,11 +403,12 @@ describe("optional parameters", () => {
       expect(result!.optionalParams.has("locale")).toBe(true);
     });
 
-    it("should return empty string for optional param when absent", () => {
+    it("omits absent optional params from `params` (key not present)", () => {
       const entries = [createRouteEntry("", { blog: "/:locale?/blog" })];
       const result = findMatch("/blog", entries);
       expect(result).not.toBeNull();
-      expect(result!.params).toEqual({ locale: "" });
+      expect(result!.params).toEqual({});
+      expect(result!.params.locale).toBeUndefined();
       expect(result!.optionalParams.has("locale")).toBe(true);
     });
 
@@ -416,74 +417,212 @@ describe("optional parameters", () => {
         createRouteEntry("", { shop: "/:locale?/:region?/shop" }),
       ];
 
-      expect(findMatch("/shop", entries)!.params).toEqual({
-        locale: "",
-        region: "",
-      });
-      expect(findMatch("/en/shop", entries)!.params).toEqual({
-        locale: "en",
-        region: "",
-      });
+      expect(findMatch("/shop", entries)!.params).toEqual({});
+      expect(findMatch("/en/shop", entries)!.params).toEqual({ locale: "en" });
       expect(findMatch("/en/us/shop", entries)!.params).toEqual({
         locale: "en",
         region: "us",
       });
+    });
+
+    it("trailing-slash fallback also omits absent optional params (regression)", () => {
+      // `/blog/` doesn't exact-match the no-trailing-slash pattern, so the
+      // matcher tries the alternate pathname (`/blog`). The alternate-match
+      // branch must apply the same skip-undefined contract — historically it
+      // coalesced absent groups to `""` while the exact-match branch did not.
+      const entries = [createRouteEntry("", { blog: "/:locale?/blog" })];
+      const result = findMatch("/blog/", entries);
+      expect(result).not.toBeNull();
+      expect(result!.params).toEqual({});
+      expect(result!.params.locale).toBeUndefined();
+      expect(result!.redirectTo).toBe("/blog");
+    });
+  });
+
+  // Patterns made entirely of optional segments (no static suffix) must accept
+  // a bare `/` as the "absent" form. This shape arises naturally when
+  // `include("/:locale?", routes)` is composed with an inner `path("/")`:
+  // the joined pattern collapses to `/:locale?`, and without this guarantee
+  // the index route 404s for non-localized requests.
+  describe("all-optional patterns (no static tail)", () => {
+    it("/:locale? matches `/` and `/en`, but not `/en/`", () => {
+      const { regex, paramNames, optionalParams } = compilePattern("/:locale?");
+      expect(paramNames).toEqual(["locale"]);
+      expect(optionalParams.has("locale")).toBe(true);
+      expect(regex.test("/")).toBe(true);
+      expect(regex.test("/en")).toBe(true);
+      expect(regex.test("/en/")).toBe(false);
+      expect(regex.test("/en/extra")).toBe(false);
+    });
+
+    it("/:locale(en|gb)? matches `/`, `/en`, `/gb`", () => {
+      const { regex, constraints } = compilePattern("/:locale(en|gb)?");
+      expect(constraints).toEqual({ locale: ["en", "gb"] });
+      expect(regex.test("/")).toBe(true);
+      expect(regex.test("/en")).toBe(true);
+      expect(regex.test("/gb")).toBe(true);
+      // Constraint validation lives in findMatch, not the regex — `/fr` still
+      // matches the regex but is rejected post-decode (covered below).
+    });
+
+    it("/:a?/:b? matches `/`, `/a`, `/a/b`", () => {
+      const { regex } = compilePattern("/:a?/:b?");
+      expect(regex.test("/")).toBe(true);
+      expect(regex.test("/a")).toBe(true);
+      expect(regex.test("/a/b")).toBe(true);
+      expect(regex.test("/a/b/c")).toBe(false);
+    });
+
+    it("findMatch on bare `/` through an optional include prefix", () => {
+      // Mirrors the include('/:locale?', routes) + path('/', Home) shape.
+      // Fixture: include's `prefix` becomes the entry prefix; the inner '/'
+      // pattern collapses via the joiner so the effective pattern is
+      // entry.prefix itself. Absent optional params are omitted from
+      // `params` so `ctx.params.locale` reads as `undefined`.
+      const entries = [createRouteEntry("/:locale?", { home: "/" })];
+
+      const root = findMatch("/", entries);
+      expect(root).not.toBeNull();
+      expect(root!.params).toEqual({});
+      expect(root!.params.locale).toBeUndefined();
+      expect(root!.optionalParams.has("locale")).toBe(true);
+
+      const localized = findMatch("/en", entries);
+      expect(localized).not.toBeNull();
+      expect(localized!.params).toEqual({ locale: "en" });
+    });
+
+    it("findMatch on a child route through an optional include prefix", () => {
+      // Pin the case the bug report flagged as also-broken so we lock in
+      // the diagnosis: child routes under an optional include prefix must
+      // match both with and without the leading optional segment.
+      const entries = [createRouteEntry("/:locale?", { category: "/c/:slug" })];
+
+      expect(findMatch("/c/breads", entries)!.params).toEqual({
+        slug: "breads",
+      });
+      expect(findMatch("/en/c/breads", entries)!.params).toEqual({
+        locale: "en",
+        slug: "breads",
+      });
+    });
+
+    it("findMatch on a constrained optional include prefix rejects unknown locales", () => {
+      const entries = [createRouteEntry("/:locale(en|gb)?", { home: "/" })];
+
+      expect(findMatch("/", entries)!.params).toEqual({});
+      expect(findMatch("/en", entries)!.params).toEqual({ locale: "en" });
+      expect(findMatch("/gb", entries)!.params).toEqual({ locale: "gb" });
+      expect(findMatch("/fr", entries)).toBeNull(); // constraint rejection
+    });
+  });
+
+  // Trailing-slash interactions for the all-optional shape. The compiler-level
+  // fix above guards `!hasTrailingSlash` so a pattern with an explicit
+  // trailing slash compiles to the same regex it always did. These tests
+  // pin that contract and the findMatch redirect/accept behavior across the
+  // three trailing-slash modes when the optional segment is the entire join.
+  describe("all-optional patterns + trailing slash", () => {
+    it("compilePattern('/:locale?/') matches `/` and `/en/`, NOT `/en`", () => {
+      const { regex, hasTrailingSlash } = compilePattern("/:locale?/");
+      expect(hasTrailingSlash).toBe(true);
+      expect(regex.test("/")).toBe(true);
+      expect(regex.test("/en/")).toBe(true);
+      expect(regex.test("/en")).toBe(false);
+    });
+
+    it("compilePattern('/:locale(en|gb)?/') matches `/`, `/en/`, `/gb/`", () => {
+      const { regex } = compilePattern("/:locale(en|gb)?/");
+      expect(regex.test("/")).toBe(true);
+      expect(regex.test("/en/")).toBe(true);
+      expect(regex.test("/gb/")).toBe(true);
+      expect(regex.test("/en")).toBe(false);
+    });
+
+    it("trailingSlash 'ignore' on root-via-include accepts `/` and `/en/` without redirect", () => {
+      const entries = [
+        createRouteEntry("/:locale?", { home: "/" }, { home: "ignore" }),
+      ];
+
+      const root = findMatch("/", entries);
+      expect(root).not.toBeNull();
+      expect(root!.params).toEqual({});
+      expect(root!.params.locale).toBeUndefined();
+      expect(root!.redirectTo).toBeUndefined();
+
+      const localizedSlash = findMatch("/en/", entries);
+      expect(localizedSlash).not.toBeNull();
+      expect(localizedSlash!.params).toEqual({ locale: "en" });
+      expect(localizedSlash!.redirectTo).toBeUndefined();
+
+      const localizedNoSlash = findMatch("/en", entries);
+      expect(localizedNoSlash).not.toBeNull();
+      expect(localizedNoSlash!.params).toEqual({ locale: "en" });
+      expect(localizedNoSlash!.redirectTo).toBeUndefined();
+    });
+
+    it("trailingSlash 'never' on root-via-include redirects `/en/` → `/en`, leaves `/` alone", () => {
+      const entries = [
+        createRouteEntry("/:locale?", { home: "/" }, { home: "never" }),
+      ];
+
+      const root = findMatch("/", entries);
+      expect(root).not.toBeNull();
+      expect(root!.params).toEqual({});
+      expect(root!.redirectTo).toBeUndefined(); // `/` is already canonical
+
+      const localizedSlash = findMatch("/en/", entries);
+      expect(localizedSlash).not.toBeNull();
+      expect(localizedSlash!.params).toEqual({ locale: "en" });
+      expect(localizedSlash!.redirectTo).toBe("/en");
+    });
+
+    it("trailingSlash 'always' on root-via-include redirects `/en` → `/en/`, leaves `/` alone", () => {
+      const entries = [
+        createRouteEntry("/:locale?", { home: "/" }, { home: "always" }),
+      ];
+
+      const root = findMatch("/", entries);
+      expect(root).not.toBeNull();
+      expect(root!.params).toEqual({});
+      expect(root!.redirectTo).toBeUndefined(); // `/` is its own canonical form
+
+      const localizedNoSlash = findMatch("/en", entries);
+      expect(localizedNoSlash).not.toBeNull();
+      expect(localizedNoSlash!.params).toEqual({ locale: "en" });
+      expect(localizedNoSlash!.redirectTo).toBe("/en/");
     });
   });
 });
 
 describe("constrained parameters", () => {
   describe("compilePattern", () => {
-    it("should match constrained param with valid value", () => {
-      const { regex, paramNames } = compilePattern("/:locale(en|gb)/blog");
-      expect(regex.test("/en/blog")).toBe(true);
-      expect(regex.test("/gb/blog")).toBe(true);
+    // Constraint values are captured by compilePattern and surfaced on the
+    // `constraints` field; findMatch validates them post-decode so that a
+    // constraint like `:lang(en GB)` still matches a URL-encoded value like
+    // `/en%20GB`. (Matching behavior is covered in "findMatch param
+    // extraction" below; these tests just pin the compile-step contract.)
+    it("should capture constraint list and param name", () => {
+      const { paramNames, constraints } = compilePattern(
+        "/:locale(en|gb)/blog",
+      );
       expect(paramNames).toEqual(["locale"]);
+      expect(constraints).toEqual({ locale: ["en", "gb"] });
     });
 
-    it("should not match constrained param with invalid value", () => {
-      const { regex } = compilePattern("/:locale(en|gb)/blog");
-      expect(regex.test("/de/blog")).toBe(false);
-      expect(regex.test("/us/blog")).toBe(false);
-    });
-
-    it("should handle optional + constrained params", () => {
-      const { regex, optionalParams } = compilePattern("/:locale(en|gb)?/blog");
-      expect(regex.test("/blog")).toBe(true);
-      expect(regex.test("/en/blog")).toBe(true);
-      expect(regex.test("/gb/blog")).toBe(true);
-      expect(regex.test("/de/blog")).toBe(false);
+    it("should capture constraint for optional + constrained params", () => {
+      const { paramNames, optionalParams, constraints } = compilePattern(
+        "/:locale(en|gb)?/blog",
+      );
+      expect(paramNames).toEqual(["locale"]);
       expect(optionalParams.has("locale")).toBe(true);
+      expect(constraints).toEqual({ locale: ["en", "gb"] });
     });
 
-    it("should handle multiple constrained values", () => {
-      const { regex } = compilePattern("/:type(post|page|comment)/edit");
-      expect(regex.test("/post/edit")).toBe(true);
-      expect(regex.test("/page/edit")).toBe(true);
-      expect(regex.test("/comment/edit")).toBe(true);
-      expect(regex.test("/user/edit")).toBe(false);
-    });
-
-    it("should escape regex metacharacters in constraint values", () => {
-      const { regex } = compilePattern("/:version(v1.0|v2.0)");
-      expect(regex.test("/v1.0")).toBe(true);
-      expect(regex.test("/v2.0")).toBe(true);
-      expect(regex.test("/v1x0")).toBe(false);
-      expect(regex.test("/v2X0")).toBe(false);
-    });
-
-    it("should escape plus and hash in constraint values", () => {
-      const { regex } = compilePattern("/:lang(c++|c#)");
-      expect(regex.test("/c++")).toBe(true);
-      expect(regex.test("/c#")).toBe(true);
-      expect(regex.test("/cxx")).toBe(false);
-    });
-
-    it("should escape metacharacters in optional constrained params", () => {
-      const { regex } = compilePattern("/:version(v1.0|v2.0)?/docs");
-      expect(regex.test("/v1.0/docs")).toBe(true);
-      expect(regex.test("/docs")).toBe(true);
-      expect(regex.test("/v1x0/docs")).toBe(false);
+    it("should preserve regex metacharacters verbatim in constraint list", () => {
+      const { constraints } = compilePattern("/:version(v1.0|v2.0)");
+      // Values stored as-is; no regex-escaping leaks into the stored list.
+      expect(constraints).toEqual({ version: ["v1.0", "v2.0"] });
     });
   });
 
@@ -505,11 +644,12 @@ describe("constrained parameters", () => {
       expect(result!.optionalParams.has("locale")).toBe(true);
     });
 
-    it("should return empty string for optional + constrained param when absent", () => {
+    it("omits absent optional + constrained param from params", () => {
       const entries = [createRouteEntry("", { blog: "/:locale(en|gb)?/blog" })];
       const result = findMatch("/blog", entries);
       expect(result).not.toBeNull();
-      expect(result!.params).toEqual({ locale: "" });
+      expect(result!.params).toEqual({});
+      expect(result!.params.locale).toBeUndefined();
       expect(result!.optionalParams.has("locale")).toBe(true);
     });
 
@@ -530,6 +670,50 @@ describe("constrained parameters", () => {
       ];
       expect(findMatch("/v1x0/docs", entries)).toBeNull();
       expect(findMatch("/v2X0/docs", entries)).toBeNull();
+    });
+
+    it("should reject invalid constraint value even when captured by regex", () => {
+      const entries = [
+        createRouteEntry("", { localized: "/:locale(en|gb)/blog" }),
+      ];
+      // Regression: now that constrained params capture [^/]+ (and are
+      // validated post-decode), make sure the post-decode check still
+      // rejects values outside the allowed list.
+      expect(findMatch("/de/blog", entries)).toBeNull();
+      expect(findMatch("/us/blog", entries)).toBeNull();
+    });
+
+    it("should match constraint value that was URL-encoded in the pathname", () => {
+      // Parity with the trie path: `:lang(en US)` must match `/en%20US/foo`
+      // because the constraint list contains the decoded value.
+      const entries = [
+        createRouteEntry("", { localized: "/:lang(en US|en GB)/foo" }),
+      ];
+      const encoded = findMatch("/en%20US/foo", entries);
+      expect(encoded).not.toBeNull();
+      expect(encoded!.params).toEqual({ lang: "en US" });
+
+      const decoded = findMatch("/en US/foo", entries);
+      expect(decoded).not.toBeNull();
+      expect(decoded!.params).toEqual({ lang: "en US" });
+
+      // Value outside the constraint list still rejected.
+      expect(findMatch("/en%20CA/foo", entries)).toBeNull();
+    });
+
+    it("should fall through to a later route when an earlier constraint rejects", () => {
+      // Fall-through is the same whether rejection comes from regex miss
+      // or from post-decode constraint failure.
+      const entries = [
+        createRouteEntry("", {
+          localized: "/:locale(en|gb)/blog",
+          catchAll: "/:any/blog",
+        }),
+      ];
+      const result = findMatch("/de/blog", entries);
+      expect(result).not.toBeNull();
+      expect(result!.routeKey).toBe("catchAll");
+      expect(result!.params).toEqual({ any: "de" });
     });
   });
 });

@@ -45,6 +45,21 @@ export interface DiscoveryState {
   projectRoot: string;
   isBuildMode: boolean;
   userResolveAlias: any;
+  /**
+   * Data-only slice of the user's resolved config (resolve.* incl. native
+   * tsconfigPaths, define, oxc) mirrored into the discovery temp server so it
+   * resolves and transforms modules the same way the real environment does.
+   * See `utils/forward-user-plugins.ts`.
+   */
+  userRunnerConfig:
+    | import("../utils/forward-user-plugins.js").ForwardedRunnerConfig
+    | undefined;
+  /**
+   * User resolution plugins (resolveId/load), stripped to their resolution
+   * surface, forwarded into the discovery temp server. Lets third-party
+   * resolvers such as vite-tsconfig-paths participate in discovery.
+   */
+  userResolvePlugins: import("vite").Plugin[];
   scanFilter: ScanFilter | undefined;
   cachedRouterFiles: string[] | undefined;
   opts: PluginOptions | undefined;
@@ -76,6 +91,14 @@ export interface DiscoveryState {
   resolvedBuildEnv?: Record<string, unknown>;
   /** Cleanup function for build-time env resources (e.g., miniflare). */
   buildEnvDispose?: (() => Promise<void> | void) | null;
+
+  /**
+   * Set when the most recent HMR re-discovery threw. Cleared on the next
+   * successful discovery. Surfaced via debug logs so we can detect "manifest
+   * frozen at last-good after error → user fix in non-route file → no
+   * rediscovery trigger" scenarios.
+   */
+  lastDiscoveryError?: { message: string; at: number } | null;
 }
 
 export function createDiscoveryState(
@@ -87,6 +110,8 @@ export function createDiscoveryState(
     projectRoot: "",
     isBuildMode: false,
     userResolveAlias: undefined,
+    userRunnerConfig: undefined,
+    userResolvePlugins: [],
     scanFilter: undefined,
     cachedRouterFiles: undefined,
     opts,
@@ -113,5 +138,6 @@ export function createDiscoveryState(
     devServer: null,
     selfWrittenGenFiles: new Map(),
     SELF_WRITE_WINDOW_MS: 5_000,
+    lastDiscoveryError: null,
   };
 }

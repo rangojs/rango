@@ -22,10 +22,9 @@ import type { UrlPatterns } from "./urls.js";
 import type { UrlBuilder } from "./urls/pattern-types.js";
 import { urls } from "./urls.js";
 import {
-  EntryData,
-  InterceptSelectorContext,
+  type EntryData,
   getContext,
-  RSCRouterContext,
+  RangoContext,
   type MetricsStore,
 } from "./server/context";
 import { createHandleStore, type HandleStore } from "./server/handle-store.js";
@@ -91,13 +90,10 @@ import {
   RouterRegistry,
   nextRouterAutoId,
 } from "./router/router-registry.js";
+import type { RangoOptions, RootLayoutProps } from "./router/router-options.js";
 import type {
-  RSCRouterOptions,
-  RootLayoutProps,
-} from "./router/router-options.js";
-import type {
-  RSCRouter,
-  RSCRouterInternal,
+  Rango,
+  RangoInternal,
   RouterRequestInput,
 } from "./router/router-interfaces.js";
 
@@ -116,22 +112,22 @@ import {
 // Re-export public types and values from extracted modules
 export { RSC_ROUTER_BRAND, RouterRegistry } from "./router/router-registry.js";
 export type {
-  RSCRouterOptions,
+  RangoOptions,
   RootLayoutProps,
   SSRStreamMode,
   SSROptions,
   ResolveStreamingContext,
 } from "./router/router-options.js";
 export type {
-  RSCRouter,
-  RSCRouterInternal,
+  Rango,
+  RangoInternal,
   RouterRequestInput,
 } from "./router/router-interfaces.js";
 export { toInternal } from "./router/router-interfaces.js";
 
 export function createRouter<TEnv = any>(
-  options: RSCRouterOptions<TEnv> = {},
-): RSCRouter<TEnv, {}> {
+  options: RangoOptions<TEnv> = {},
+): Rango<TEnv, {}> {
   const {
     id: userProvidedId,
     $$id: injectedId,
@@ -674,7 +670,7 @@ export function createRouter<TEnv = any>(
    * The type system tracks accumulated routes through the builder chain
    * Initial TRoutes is {} (empty) to avoid poisoning accumulated types with Record<string, string>
    */
-  const router: RSCRouterInternal<TEnv, {}> = {
+  const router: RangoInternal<TEnv, {}> = {
     __brand: RSC_ROUTER_BRAND,
     id: routerId,
     basename,
@@ -722,7 +718,7 @@ export function createRouter<TEnv = any>(
       };
 
       let handlerResult: AllUseItems[] = [];
-      RSCRouterContext.run(
+      RangoContext.run(
         {
           manifest,
           patterns: routePatterns,
@@ -1046,9 +1042,9 @@ export function createRouter<TEnv = any>(
 
   // If urls option was provided, auto-register them
   if (typeof urlsOption === "function") {
-    return router.routes(urlsOption) as RSCRouter<TEnv, {}>;
+    return router.routes(urlsOption) as Rango<TEnv, {}>;
   } else if (urlsOption) {
-    return router.routes(urlsOption) as RSCRouter<TEnv, {}>;
+    return router.routes(urlsOption) as Rango<TEnv, {}>;
   }
 
   return router;

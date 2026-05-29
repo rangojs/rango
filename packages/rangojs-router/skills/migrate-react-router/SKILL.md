@@ -483,6 +483,10 @@ Since Rango uses RSC server actions, all React action patterns work:
 `useActionState`, `useOptimistic`, `useTransition`, `startTransition`,
 and plain `<form action={serverAction}>`. No framework-specific hook needed.
 
+For the full guide — defining actions, validation with Zod, error handling,
+revalidation rules, file uploads, and progressive enhancement — see
+`/server-actions`.
+
 ### clientLoader / clientAction (framework mode)
 
 RR7 framework mode's `clientLoader` and `clientAction` run in the browser.
@@ -635,6 +639,7 @@ layout(<ShopLayout />, () => [
 | `useLocation().pathname`                  | `usePathname()` from `@rangojs/router/client`                                    |
 | `useSearchParams()`                       | `useSearchParams()` from `@rangojs/router/client`                                |
 | `useParams()`                             | `useParams()` from `@rangojs/router/client` (or `ctx.params` in server handlers) |
+| `useParams<T>()`                          | `useParams<T>()` — same generic annotation pattern                               |
 | `<NavLink>`                               | `<Link>` with `usePathname()` for active state                                   |
 
 ### useNavigate → useRouter

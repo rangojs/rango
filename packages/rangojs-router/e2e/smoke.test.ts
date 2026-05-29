@@ -161,12 +161,12 @@ test.describe("smoke", () => {
     await page.goto(f.url("/app"));
     await waitForHydration(page);
 
-    await expect(page.getByTestId("href-path-result")).toHaveText("/about");
+    await expect(page.getByTestId("href-path-result")).toHaveText("/app/about");
     await expect(page.getByTestId("href-absolute-result")).toHaveText(
-      "/shop/cart",
+      "/app/shop/cart",
     );
     await expect(page.getByTestId("href-params-result")).toHaveText(
-      "/blog/test",
+      "/app/blog/test",
     );
   });
 });
@@ -289,12 +289,12 @@ test.describe("smoke (production)", () => {
     await page.goto(f.url("/app"));
     await waitForHydration(page);
 
-    await expect(page.getByTestId("href-path-result")).toHaveText("/about");
+    await expect(page.getByTestId("href-path-result")).toHaveText("/app/about");
     await expect(page.getByTestId("href-absolute-result")).toHaveText(
-      "/shop/cart",
+      "/app/shop/cart",
     );
     await expect(page.getByTestId("href-params-result")).toHaveText(
-      "/blog/test",
+      "/app/blog/test",
     );
   });
 });

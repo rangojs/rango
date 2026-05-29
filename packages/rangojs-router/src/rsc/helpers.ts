@@ -8,8 +8,49 @@ import {
   _getRequestContext,
   getLocationState,
 } from "../server/request-context.js";
+import type { RequestContext } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
+import { isRedirectResponse } from "../response-utils.js";
 import type { MiddlewareEntry, MiddlewareFn } from "../router/middleware.js";
+
+/**
+ * Copy stub headers from the request context onto a target Headers instance:
+ * append Set-Cookie entries, set everything else only if absent. Header
+ * mutation failures are swallowed so the same logic works against Response
+ * headers that may be immutable (e.g. Cloudflare protocol-switch responses).
+ */
+function applyStubHeaders(target: Headers, stub: Headers): void {
+  stub.forEach((value, name) => {
+    try {
+      if (name.toLowerCase() === "set-cookie") {
+        target.append(name, value);
+      } else if (!target.has(name)) {
+        target.set(name, value);
+      }
+    } catch {
+      // Headers immutable — skip.
+    }
+  });
+}
+
+/**
+ * Drain ctx._onResponseCallbacks onto a response. Swapping the array before
+ * iteration prevents re-entrant registrations from double-firing and matches
+ * the contract that each callback runs at most once per request.
+ */
+function drainOnResponseCallbacks(
+  ctx: RequestContext,
+  response: Response,
+): Response {
+  const callbacks = ctx._onResponseCallbacks;
+  if (callbacks.length === 0) return response;
+  ctx._onResponseCallbacks = [];
+  let result = response;
+  for (const callback of callbacks) {
+    result = callback(result) ?? result;
+  }
+  return result;
+}
 
 /**
  * Check if a request body has content to decode
@@ -39,40 +80,23 @@ export function createResponseWithMergedHeaders(
     return new Response(body, init);
   }
 
-  // Merge headers from stub response into the new response.
-  // Delete Set-Cookie from the stub after consuming so that downstream
-  // merge points (e.g. executeMiddleware) do not duplicate them.
+  // Delete Set-Cookie from the stub after consuming so downstream merge
+  // points (e.g. executeMiddleware) don't duplicate them.
   const mergedHeaders = new Headers(init.headers);
-  ctx.res.headers.forEach((value, name) => {
-    if (name.toLowerCase() === "set-cookie") {
-      mergedHeaders.append(name, value);
-    } else if (!mergedHeaders.has(name)) {
-      // Only set if not already present in init.headers
-      mergedHeaders.set(name, value);
-    }
-  });
+  applyStubHeaders(mergedHeaders, ctx.res.headers);
   ctx.res.headers.delete("set-cookie");
 
-  // Use ctx.res.status if it was set (e.g., 404 for notFound, 500 for error)
-  // Otherwise use the status from init
+  // ctx.res.status overrides init.status when explicitly set (e.g. 404 for
+  // notFound, 500 for error). Default ctx.res.status is 200.
   const status = ctx.res.status !== 200 ? ctx.res.status : init.status;
 
-  let response = new Response(body, {
+  const response = new Response(body, {
     ...init,
     status,
     headers: mergedHeaders,
   });
 
-  // Run onResponse callbacks - each can inspect/modify the response.
-  // Drain the array so that downstream callers (e.g. finalizeResponse)
-  // do not re-execute the same callbacks on this response.
-  const callbacks = ctx._onResponseCallbacks;
-  ctx._onResponseCallbacks = [];
-  for (const callback of callbacks) {
-    response = callback(response) ?? response;
-  }
-
-  return response;
+  return drainOnResponseCallbacks(ctx, response);
 }
 
 /**
@@ -122,10 +146,10 @@ export function interceptRedirectForPartial(
     locationState?: Record<string, unknown>,
   ) => Response,
 ): Response | null {
-  const redirectUrl = response.headers.get("Location");
-  if (!(response.status >= 300 && response.status < 400 && redirectUrl)) {
+  if (!isRedirectResponse(response)) {
     return null;
   }
+  const redirectUrl = response.headers.get("Location")!;
   const locationState = getLocationState();
   let intercepted: Response;
   if (locationState) {
@@ -175,24 +199,29 @@ export function buildRouteMiddlewareEntries<TEnv>(
 }
 
 /**
- * Run onResponse callbacks on an existing Response.
- *
- * Used for code paths that bypass createResponseWithMergedHeaders(), such as
- * middleware short-circuits where the Response is already constructed but
- * ctx.onResponse() callbacks still need to fire.
+ * Merge stub headers from the request context onto an existing Response in
+ * place, then drain onResponse callbacks. Used when a Response cannot flow
+ * through `new Response()` — status 101 is outside the constructor's
+ * 200-599 range, and the Cloudflare-specific `webSocket` property would be
+ * lost on reconstruction.
+ */
+export function mergeStubHeadersAndFinalize(response: Response): Response {
+  const ctx = _getRequestContext();
+  if (!ctx) return response;
+
+  applyStubHeaders(response.headers, ctx.res.headers);
+  ctx.res.headers.delete("set-cookie");
+
+  return drainOnResponseCallbacks(ctx, response);
+}
+
+/**
+ * Run onResponse callbacks on an existing Response. Used by code paths that
+ * bypass createResponseWithMergedHeaders (e.g. middleware short-circuits)
+ * but still need ctx.onResponse() callbacks to fire.
  */
 export function finalizeResponse(response: Response): Response {
   const ctx = _getRequestContext();
-  if (!ctx || ctx._onResponseCallbacks.length === 0) {
-    return response;
-  }
-
-  // Drain the array so callbacks run at most once per request.
-  const callbacks = ctx._onResponseCallbacks;
-  ctx._onResponseCallbacks = [];
-  let result = response;
-  for (const callback of callbacks) {
-    result = callback(result) ?? result;
-  }
-  return result;
+  if (!ctx) return response;
+  return drainOnResponseCallbacks(ctx, response);
 }

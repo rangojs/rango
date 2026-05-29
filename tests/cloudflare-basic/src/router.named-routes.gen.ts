@@ -12,6 +12,7 @@ export const NamedRoutes = {
   blog: "/blog",
   blogPost: "/blog/:slug",
   "buildEnv.index": "/build-env",
+  "buildEnvDirect.index": "/build-env-direct",
   "buildSkip.article": "/build-skip/:slug",
   "buildSkip.staticSkip": "/build-skip/static-skip",
   "buildSkip.workingStatic": "/build-skip/working-static",
@@ -20,6 +21,8 @@ export const NamedRoutes = {
   "composition.index": "/composition",
   cookieOverlay: "/cookie-overlay",
   counter: "/counter",
+  "cr.index": "/cr/:tenantId",
+  "cr.post": "/cr/:tenantId/posts/:postId",
   "docs.detail": "/docs/:slug",
   "docs.index": "/docs",
   "docs.raw": "/docs/:slug/raw",
@@ -87,7 +90,7 @@ export const NamedRoutes = {
 } as const;
 
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface GeneratedRouteMap extends Readonly<typeof NamedRoutes> {}
   }
 }

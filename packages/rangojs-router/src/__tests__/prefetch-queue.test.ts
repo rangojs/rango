@@ -188,12 +188,12 @@ describe("prefetch queue", () => {
     const a = deferred();
     const b = deferred();
 
-    // Keys use format "source\0target" — simulate real cache keys
-    enqueuePrefetch("http://localhost/\0/product/a", (signal) => {
+    // Wildcard key: "rangoState\0/target"
+    enqueuePrefetch("v1:abc\0/product/a", (signal) => {
       signals.set("/product/a", signal);
       return a.promise;
     });
-    enqueuePrefetch("http://localhost/\0/product/b", (signal) => {
+    enqueuePrefetch("v1:abc\0/product/b", (signal) => {
       signals.set("/product/b", signal);
       return b.promise;
     });
@@ -206,6 +206,118 @@ describe("prefetch queue", () => {
 
     expect(signals.get("/product/a")!.aborted).toBe(true);
     expect(signals.get("/product/b")!.aborted).toBe(false);
+
+    a.resolve();
+    b.resolve();
+    await flush();
+  });
+
+  it("cancelAllPrefetches keeps matching source-scoped prefetch (3-segment key)", async () => {
+    const { enqueuePrefetch, cancelAllPrefetches } =
+      await import("../browser/prefetch/queue");
+
+    const signals = new Map<string, AbortSignal>();
+    const a = deferred();
+    const b = deferred();
+
+    // Source-scoped key shape: "rangoState\0sourceHref\0/target".
+    // The middle segment is the source URL — extracting it as the target
+    // (old [1] indexing) would mismatch keepUrl and wrongly abort.
+    enqueuePrefetch("v1:abc\0http://localhost/home\0/product/a", (signal) => {
+      signals.set("/product/a", signal);
+      return a.promise;
+    });
+    enqueuePrefetch("v1:abc\0http://localhost/home\0/product/b", (signal) => {
+      signals.set("/product/b", signal);
+      return b.promise;
+    });
+
+    await flush();
+    expect(signals.size).toBe(2);
+
+    cancelAllPrefetches("/product/b");
+
+    expect(signals.get("/product/a")!.aborted).toBe(true);
+    expect(signals.get("/product/b")!.aborted).toBe(false);
+
+    a.resolve();
+    b.resolve();
+    await flush();
+  });
+
+  it("cancelAllPrefetches matches real keys with _rsc_* params (source-scoped)", async () => {
+    const { enqueuePrefetch, cancelAllPrefetches } =
+      await import("../browser/prefetch/queue");
+
+    const signals = new Map<string, AbortSignal>();
+    const a = deferred();
+    const b = deferred();
+
+    // Real-world shape: target segment includes the internal _rsc_* params
+    // that prefetch/fetch.ts buildPrefetchUrl appends. keepUrl comes from
+    // NavigationProvider's pendingUrl as a bare navigation URL — the match
+    // must strip internal params on both sides before comparing.
+    enqueuePrefetch(
+      "v1:abc\0http://localhost/home\0/product/a?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1",
+      (signal) => {
+        signals.set("/product/a", signal);
+        return a.promise;
+      },
+    );
+    enqueuePrefetch(
+      "v1:abc\0http://localhost/home\0/product/b?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1",
+      (signal) => {
+        signals.set("/product/b", signal);
+        return b.promise;
+      },
+    );
+
+    await flush();
+    expect(signals.size).toBe(2);
+
+    cancelAllPrefetches("/product/b");
+
+    expect(signals.get("/product/a")!.aborted).toBe(true);
+    expect(signals.get("/product/b")!.aborted).toBe(false);
+
+    a.resolve();
+    b.resolve();
+    await flush();
+  });
+
+  it("cancelAllPrefetches preserves user-facing query params when matching", async () => {
+    const { enqueuePrefetch, cancelAllPrefetches } =
+      await import("../browser/prefetch/queue");
+
+    const signals = new Map<string, AbortSignal>();
+    const a = deferred();
+    const b = deferred();
+
+    // Two prefetches for the same pathname, different user search params.
+    // keepUrl has user params but no internal params. Only the prefetch
+    // whose non-internal search params match should be kept.
+    enqueuePrefetch(
+      "v1:abc\0/search?q=apples&_rsc_partial=true&_rsc_segments=A0",
+      (signal) => {
+        signals.set("apples", signal);
+        return a.promise;
+      },
+    );
+    enqueuePrefetch(
+      "v1:abc\0/search?q=oranges&_rsc_partial=true&_rsc_segments=A0",
+      (signal) => {
+        signals.set("oranges", signal);
+        return b.promise;
+      },
+    );
+
+    await flush();
+    expect(signals.size).toBe(2);
+
+    cancelAllPrefetches("/search?q=oranges");
+
+    expect(signals.get("apples")!.aborted).toBe(true);
+    expect(signals.get("oranges")!.aborted).toBe(false);
 
     a.resolve();
     b.resolve();

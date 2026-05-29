@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { urls } from "../urls.js";
-import { RSCRouterContext, type EntryData } from "../server/context.js";
+import { map } from "../route-definition.js";
+import { RangoContext, type EntryData } from "../server/context.js";
 import {
   layout,
   middleware,
@@ -11,6 +12,7 @@ import {
   when,
   revalidate,
   errorBoundary,
+  cache,
 } from "../route-definition.js";
 import { createLoader } from "../loader.rsc.js";
 import type { Handler } from "../types.js";
@@ -27,7 +29,7 @@ function createContext() {
 
 function runInContext(ctx: ReturnType<typeof createContext>, fn: () => any) {
   let result: any;
-  RSCRouterContext.run(
+  RangoContext.run(
     {
       manifest: ctx.manifest,
       patterns: ctx.patterns,
@@ -623,6 +625,44 @@ describe("handler.use integration", () => {
       expect(interceptEntry!.middleware).toContain(testMw);
     });
 
+    it("handler.use items reach the intercept entry via runtime merging", () => {
+      // A redundant but explicit assertion that intercept() walks the full
+      // resolveHandlerUse → mergeHandlerUse path for loaders/revalidate too,
+      // not just middleware.
+      const revalidateFn = () => true;
+      const loaderDef = {
+        __brand: "loader" as const,
+        $$id: "int-loader",
+        fn: async () => ({}),
+      };
+      const InterceptHandler: Handler = Object.assign(
+        () => <div>Intercept</div>,
+        {
+          use: () => [loader(loaderDef as any), revalidate(revalidateFn)],
+        },
+      );
+
+      const urlPatterns = urls(({ path }) => [
+        layout(
+          () => <div>Layout</div>,
+          () => [
+            path("/", () => <div>Home</div>, { name: "home" }),
+            intercept("@modal", "home", InterceptHandler),
+          ],
+        ),
+      ]);
+
+      runInContext(ctx, () => urlPatterns.handler());
+      const entry = ctx.manifest.get("home");
+      let layoutEntry = entry!.parent;
+      while (layoutEntry && layoutEntry.type !== "layout") {
+        layoutEntry = layoutEntry.parent;
+      }
+      const interceptEntry = layoutEntry?.intercept?.[0];
+      expect(interceptEntry!.revalidate).toContain(revalidateFn);
+      expect(interceptEntry!.loader.map((l) => l.loader)).toContain(loaderDef);
+    });
+
     it("merges handler.use before explicit use in intercept", () => {
       const mwA = async (_ctx: any, next: any) => next();
       const mwB = async (_ctx: any, next: any) => next();
@@ -654,6 +694,142 @@ describe("handler.use integration", () => {
       }
       const interceptEntry = layoutEntry?.intercept?.[0];
       expect(interceptEntry!.middleware).toEqual([mwA, mwB]);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // loader() with handler.use (LoaderDefinition.use)
+  // -----------------------------------------------------------------------
+
+  describe("loader()", () => {
+    const makeLoaderDef = (use?: () => any[]) =>
+      ({
+        __brand: "loader" as const,
+        $$id: "test-loader",
+        fn: async () => ({ ok: true }),
+        ...(use ? { use } : {}),
+      }) as any;
+
+    const mountLoader = (loaderDef: any, explicitUse?: () => any[]) =>
+      urls(({ path }) => [
+        path(
+          "/",
+          () => <div>Home</div>,
+          { name: "home" },
+          () => [loader(loaderDef, explicitUse)],
+        ),
+      ]);
+
+    it("applies handler.use revalidate to the loader entry", () => {
+      const revalidateFn = () => true;
+      const loaderDef = makeLoaderDef(() => [revalidate(revalidateFn)]);
+
+      runInContext(ctx, () => mountLoader(loaderDef).handler());
+      const entry = ctx.manifest.get("home");
+      const loaderEntry = entry!.loader.find(
+        (le: any) => le.loader === loaderDef,
+      );
+      expect(loaderEntry).toBeDefined();
+      expect(loaderEntry!.revalidate).toContain(revalidateFn);
+    });
+
+    it("applies handler.use cache to the loader entry", () => {
+      const loaderDef = makeLoaderDef(() => [cache({ ttl: 1000 })]);
+
+      runInContext(ctx, () => mountLoader(loaderDef).handler());
+      const entry = ctx.manifest.get("home");
+      const loaderEntry = entry!.loader.find(
+        (le: any) => le.loader === loaderDef,
+      );
+      expect(loaderEntry).toBeDefined();
+      expect((loaderEntry as any).cache).toBeDefined();
+    });
+
+    it("merges handler.use before explicit use on a loader", () => {
+      const revA = () => true;
+      const revB = () => false;
+      const loaderDef = makeLoaderDef(() => [revalidate(revA)]);
+
+      runInContext(ctx, () =>
+        mountLoader(loaderDef, () => [revalidate(revB)]).handler(),
+      );
+      const entry = ctx.manifest.get("home");
+      const loaderEntry = entry!.loader.find(
+        (le: any) => le.loader === loaderDef,
+      );
+      expect(loaderEntry!.revalidate).toEqual([revA, revB]);
+    });
+
+    it("rejects invalid items (middleware) in loader mount", () => {
+      const testMw = async (_ctx: any, next: any) => next();
+      const loaderDef = makeLoaderDef(() => [middleware(testMw)]);
+
+      expect(() =>
+        runInContext(ctx, () => mountLoader(loaderDef).handler()),
+      ).toThrow(/handler\.use\(\) returned middleware\(\).*loader\(\)/);
+    });
+
+    it("works without handler.use on loader (no regression)", () => {
+      const loaderDef = makeLoaderDef();
+
+      runInContext(ctx, () => mountLoader(loaderDef).handler());
+      const entry = ctx.manifest.get("home");
+      expect(entry!.loader.length).toBe(1);
+      expect(entry!.loader[0].revalidate).toEqual([]);
+    });
+
+    it("rejects cache wrapper form in loader mount (via handler.use)", () => {
+      // cache(() => [...]) passes item-type validation, but wrapper form has
+      // no effect on the loader entry — it would silently no-op. Reject it.
+      const loaderDef = makeLoaderDef(() => [cache(() => [])]);
+
+      expect(() =>
+        runInContext(ctx, () => mountLoader(loaderDef).handler()),
+      ).toThrow(/cache\(\) wrapper form is not valid inside loader\(\)/);
+    });
+
+    it("rejects cache wrapper form in loader mount (via explicit use)", () => {
+      const loaderDef = makeLoaderDef();
+
+      expect(() =>
+        runInContext(ctx, () =>
+          mountLoader(loaderDef, () => [cache(() => [])]).handler(),
+        ),
+      ).toThrow(/cache\(\) wrapper form is not valid inside loader\(\)/);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // route() with handler.use
+  // -----------------------------------------------------------------------
+
+  describe("route()", () => {
+    it("applies handler.use items to the route entry", () => {
+      const testMw = async (_ctx: any, next: any) => next();
+      const Page: Handler = Object.assign(() => <div>Page</div>, {
+        use: () => [middleware(testMw)],
+      });
+
+      const handlers = map(({ route }) => [(route as any)("home", Page)]);
+      runInContext(ctx, () => handlers());
+      const entry = ctx.manifest.get("home");
+      expect(entry).toBeDefined();
+      expect(entry!.middleware).toContain(testMw);
+    });
+
+    it("merges handler.use before explicit use on route()", () => {
+      const mwA = async (_ctx: any, next: any) => next();
+      const mwB = async (_ctx: any, next: any) => next();
+      const Page: Handler = Object.assign(() => <div>Page</div>, {
+        use: () => [middleware(mwA)],
+      });
+
+      const handlers = map(({ route }) => [
+        (route as any)("home", Page, () => [middleware(mwB)]),
+      ]);
+      runInContext(ctx, () => handlers());
+      const entry = ctx.manifest.get("home");
+      expect(entry!.middleware).toEqual([mwA, mwB]);
     });
   });
 

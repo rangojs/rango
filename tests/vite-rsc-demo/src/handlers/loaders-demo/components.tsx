@@ -10,11 +10,13 @@ import {
   NotesLoader,
   FileUploadLoader,
   ChatStreamLoader,
+  ReverseUrlsLoader,
   type UsersLoaderData,
   type RSCContentLoaderData,
   type NotesLoaderData,
   type FileUploadLoaderData,
   type ChatStreamLoaderData,
+  type ReverseUrlsLoaderData,
 } from "./loaders.js";
 import {
   incrementPageViewsAction,
@@ -1318,3 +1320,37 @@ const statCardStyle: React.CSSProperties = {
   borderRadius: "6px",
   textAlign: "center",
 };
+
+export function ReverseUrlsDisplay() {
+  const { data } = useLoader<ReverseUrlsLoaderData>(ReverseUrlsLoader);
+
+  return (
+    <div style={cardStyle}>
+      <h3 style={headingStyle}>ReverseUrlsLoader - ctx.reverse in a loader</h3>
+      <ul style={{ margin: 0, paddingLeft: "1.5rem" }}>
+        <li>
+          local <code>.index</code>:{" "}
+          <code data-testid="reverse-local-index">{data.localIndex}</code>
+        </li>
+        <li>
+          local <code>.stats</code>:{" "}
+          <code data-testid="reverse-local-stats">{data.localStats}</code>
+        </li>
+        <li>
+          global <code>home.index</code>:{" "}
+          <code data-testid="reverse-global-home">{data.globalHome}</code>
+        </li>
+        <li>
+          global <code>blog.index</code>:{" "}
+          <code data-testid="reverse-global-blog">{data.globalBlogIndex}</code>
+        </li>
+        <li>
+          global <code>blog.post</code> + params:{" "}
+          <code data-testid="reverse-blog-post">
+            {data.parameterizedBlogPost}
+          </code>
+        </li>
+      </ul>
+    </div>
+  );
+}

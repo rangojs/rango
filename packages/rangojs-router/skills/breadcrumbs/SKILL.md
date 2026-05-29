@@ -141,9 +141,11 @@ path("/dashboard", (ctx) => {
   breadcrumb({ label: "Dashboard", href: "/dashboard" });
   return <DashboardNav handle={Breadcrumbs} />;
 });
+```
 
+```tsx
 // Client component
-("use client");
+"use client";
 import { useHandle, type Breadcrumbs } from "@rangojs/router/client";
 
 function DashboardNav({ handle }: { handle: typeof Breadcrumbs }) {

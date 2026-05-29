@@ -121,14 +121,17 @@ test.describe("action-id-resolution (production)", () => {
         // Client bundle should NOT have file paths like "src/..."
         // It should only have hashed IDs
 
-        // Check for suspicious patterns that would expose server file structure
+        // Check for suspicious patterns that would expose server file structure.
+        // Quote class covers " ' ` since Rolldown's oxc minifier emits backticks.
         const hasServerFilePath =
           // Direct file path patterns in server reference calls
-          /createServerReference\([^)]*"src\/[^"]+\.tsx?/.test(content) ||
+          /createServerReference\([^)]*["'`]src\/[^"'`]+\.tsx?/.test(content) ||
           // File paths in action registrations
-          /registerServerReference\([^)]*"src\/[^"]+\.tsx?/.test(content) ||
+          /registerServerReference\([^)]*["'`]src\/[^"'`]+\.tsx?/.test(
+            content,
+          ) ||
           // Exposed handler paths in string literals
-          /"src\/[^"]+\.tsx?"/.test(content);
+          /["'`]src\/[^"'`]+\.tsx?["'`]/.test(content);
 
         expect(
           hasServerFilePath,
@@ -160,8 +163,10 @@ test.describe("action-id-resolution (production)", () => {
         // In minified bundles, createServerReference becomes a single letter,
         // but the $$id="hash#actionName" pattern remains stable
         // Pattern: $$id="hash#actionName" or .$$id="hash#actionName"
+        // Rolldown's oxc minifier (Vite 8) emits string literals with
+        // backticks; match any quote style so the assertion is bundler-agnostic.
         const actionIdMatches = content.match(
-          /\$\$id\s*=\s*"([a-f0-9]+#[^"]+)"/g,
+          /\$\$id\s*=\s*["'`]([a-f0-9]+#[^"'`]+)["'`]/g,
         );
 
         if (actionIdMatches && actionIdMatches.length > 0) {
@@ -169,7 +174,7 @@ test.describe("action-id-resolution (production)", () => {
 
           for (const match of actionIdMatches) {
             // Extract the ID part
-            const idMatch = match.match(/\$\$id\s*=\s*"([^"]+)"/);
+            const idMatch = match.match(/\$\$id\s*=\s*["'`]([^"'`]+)["'`]/);
             if (idMatch) {
               const actionId = idMatch[1];
 

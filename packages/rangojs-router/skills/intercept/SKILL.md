@@ -8,9 +8,6 @@ argument-hint: [@slot-name] [route-to-intercept]
 
 Intercept routes render a different component during soft navigation (client-side) while preserving the background route. Hard navigation (direct URL) shows the full page.
 
-Canonical semantics reference:
-[docs/execution-model.md](../../docs/internal/execution-model.md)
-
 ## Basic Intercept
 
 ```typescript
@@ -111,7 +108,7 @@ consumer when they share `ctx.set()` data:
 
 ```typescript
 export const revalidateProductShell = ({ actionId }) =>
-  actionId?.includes("src/actions/product.ts#") ?? false;
+  actionId?.includes("src/actions/product.ts#") || undefined;
 
 layout(ProductLayout, () => [
   revalidate(revalidateProductShell), // producer reruns
@@ -196,6 +193,31 @@ function ModalWrapper({ children }) {
   );
 }
 ```
+
+## Interaction with View Transitions
+
+A layout that owns the `@modal` slot can also configure `transition()` for page
+fades — opening a modal does **not** fire the layout's view transition. Rango
+narrows the layout's `<ViewTransition>` wrap to the layout's default outlet
+content, so `<ParallelOutlet />` (the slot where the modal mounts) is a sibling
+of the wrap, not inside its subtree. Form actions submitted from inside an open
+modal also commit without firing the underlying layout's transition, and the
+modal subtree identity is preserved across revalidation (no remount,
+`useActionState` survives). Closing the modal restores the page without a
+stray transition.
+
+For a modal-only morph (e.g. when intercepted URLs change while the modal
+stays open), use an element-level React `<ViewTransition>` inside the modal
+component — `transition()` accepted on `intercept()` via the DSL is not
+applied to slot rendering today.
+
+Caveat: route-level `transition()` wraps the route component itself, so a
+`<ParallelOutlet />` rendered directly inside that route component would still
+be inside the route's VT subtree. Mount the slot in a layout instead when you
+combine intercept modals with route-level transitions.
+
+See [skills/view-transitions](../view-transitions/SKILL.md) for the full
+contract and direction-aware examples.
 
 ## Interaction with Prerender
 

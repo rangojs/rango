@@ -71,12 +71,12 @@ export function postprocessBundle(state: DiscoveryState): void {
           writeFileSync(chunkPath, result.code);
           const savedKB = (result.savedBytes / 1024).toFixed(1);
           console.log(
-            `[rsc-router] Evicted ${target.label} (${savedKB} KB saved): ${info.fileName}`,
+            `[rango] Evicted ${target.label} (${savedKB} KB saved): ${info.fileName}`,
           );
         }
       } catch (replaceErr: any) {
         console.warn(
-          `[rsc-router] Failed to evict ${target.label}: ${replaceErr.message}`,
+          `[rango] Failed to evict ${target.label}: ${replaceErr.message}`,
         );
       }
     }
@@ -121,11 +121,11 @@ export function postprocessBundle(state: DiscoveryState): void {
 
         const totalKB = (totalBytes / 1024).toFixed(1);
         console.log(
-          `[rsc-router] Wrote prerender assets (${totalKB} KB total, ${Object.keys(state.prerenderManifestEntries!).length} entries)`,
+          `[rango] Wrote prerender assets (${totalKB} KB total, ${Object.keys(state.prerenderManifestEntries!).length} entries)`,
         );
       } catch (err: any) {
         throw new Error(
-          `[rsc-router] Failed to write prerender assets: ${err.message}`,
+          `[rango] Failed to write prerender assets: ${err.message}`,
         );
       }
     }
@@ -169,11 +169,11 @@ export function postprocessBundle(state: DiscoveryState): void {
 
         const totalKB = (totalBytes / 1024).toFixed(1);
         console.log(
-          `[rsc-router] Wrote static assets (${totalKB} KB total, ${Object.keys(state.staticManifestEntries!).length} entries)`,
+          `[rango] Wrote static assets (${totalKB} KB total, ${Object.keys(state.staticManifestEntries!).length} entries)`,
         );
       } catch (err: any) {
         throw new Error(
-          `[rsc-router] Failed to write static assets: ${err.message}`,
+          `[rango] Failed to write static assets: ${err.message}`,
         );
       }
     }

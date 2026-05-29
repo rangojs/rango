@@ -53,6 +53,12 @@ export function useNavigation<T>(
   });
   const prevState = useRef(baseValue);
 
+  // Tracks whether the most recent setOptimisticValue call pinned the value
+  // to a non-idle state. Used to decide whether to emit a release update when
+  // returning to idle, so the optimistic store doesn't stay pinned if a
+  // parent transition (e.g. <Link> click) is still pending.
+  const optimisticPinnedRef = useRef(false);
+
   // useOptimistic allows immediate updates during transitions/actions
   const [value, setOptimisticValue] = useOptimistic(baseValue);
 
@@ -82,11 +88,25 @@ export function useNavigation<T>(
         const hasInflightActions =
           ctx.eventController.getInflightActions().size > 0;
 
-        if (hasInflightActions || publicState.state !== "idle") {
-          // Use optimistic update for immediate feedback during transitions
+        const shouldPin = hasInflightActions || publicState.state !== "idle";
+
+        if (shouldPin) {
+          // Pin the optimistic store so the loading value shows immediately
+          // even if a parent transition (e.g. <Link> click) defers the
+          // urgent setBaseValue commit.
           startTransition(() => {
             setOptimisticValue(nextSelected);
           });
+          optimisticPinnedRef.current = true;
+        } else if (optimisticPinnedRef.current) {
+          // Release a previously-pinned optimistic value. Without this,
+          // useOptimistic keeps returning the stale loading value while
+          // any parent transition is still pending, even after baseValue
+          // flipped to idle.
+          startTransition(() => {
+            setOptimisticValue(nextSelected);
+          });
+          optimisticPinnedRef.current = false;
         }
 
         // Always update base state so UI reflects current state

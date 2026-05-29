@@ -10,7 +10,7 @@ import type {
   ShouldRevalidateFn,
   TransitionConfig,
 } from "../types";
-import { invariant } from "../errors";
+import { invariant, DslContextError } from "../errors";
 import type { DefaultRouteName } from "../types/global-namespace.js";
 
 // ============================================================================
@@ -40,7 +40,7 @@ export interface MetricsStore {
   metrics: PerformanceMetric[];
 }
 // ============================================================================
-//  RSC Router Context
+//  Rango Context
 // ============================================================================
 
 /**
@@ -71,6 +71,10 @@ export type EntryPropCommon = {
 };
 
 /**
+ * Attachments resolved by walking the parent chain, not owned by the entry:
+ * middleware composes downward; revalidate and the error/notFound boundaries are
+ * resolved by nearest-ancestor lookup. Inherited, not a single execution chain.
+ *
  * @internal This type is an implementation detail and may change without notice.
  */
 export type EntryPropDatas = {
@@ -78,6 +82,16 @@ export type EntryPropDatas = {
   revalidate: ShouldRevalidateFn<any, any>[];
   errorBoundary: (ReactNode | ErrorBoundaryHandler)[];
   notFoundBoundary: (ReactNode | NotFoundBoundaryHandler)[];
+};
+
+/**
+ * Render-time presentation fields shared by every entry variant.
+ *
+ * @internal This type is an implementation detail and may change without notice.
+ */
+export type EntryPropRender = {
+  loading?: ReactNode | false;
+  transition?: TransitionConfig;
 };
 
 /**
@@ -158,11 +172,9 @@ export type InterceptEntry = {
 };
 
 export interface ParallelEntryData
-  extends EntryPropCommon, EntryPropDatas, EntryPropSegments {
+  extends EntryPropCommon, EntryPropDatas, EntryPropSegments, EntryPropRender {
   type: "parallel";
   handler: Record<`@${string}`, Handler<any, any, any> | ReactNode>;
-  loading?: ReactNode | false;
-  transition?: TransitionConfig;
   /** Set when any parallel slot is a Static definition */
   isStaticPrerender?: true;
   /** Per-slot static handler $$ids for build-time store lookup */
@@ -171,6 +183,13 @@ export interface ParallelEntryData
 
 export type ParallelEntries = Partial<Record<`@${string}`, ParallelEntryData>>;
 
+/**
+ * This entry's own structural children plus its owned loaders. `loader` lives
+ * here (not in EntryPropDatas) because loaders are owned by the entry, not
+ * inherited from ancestors.
+ *
+ * @internal This type is an implementation detail and may change without notice.
+ */
 export type EntryPropSegments = {
   loader: LoaderEntry[];
   layout: EntryData[];
@@ -182,8 +201,6 @@ export type EntryData =
   | ({
       type: "route";
       handler: Handler<any, any, any>;
-      loading?: ReactNode | false;
-      transition?: TransitionConfig;
       /** URL pattern for this route (used by path() in urls()) */
       pattern?: string;
       /** Set when handler is a Prerender definition */
@@ -205,29 +222,28 @@ export type EntryData =
       responseType?: string;
     } & EntryPropCommon &
       EntryPropDatas &
-      EntryPropSegments)
+      EntryPropSegments &
+      EntryPropRender)
   | ({
       type: "layout";
       handler: ReactNode | Handler<any, any, any>;
-      loading?: ReactNode | false;
-      transition?: TransitionConfig;
       /** Set when handler is a Static definition (build-time only) */
       isStaticPrerender?: true;
       /** Static handler $$id for build-time store lookup */
       staticHandlerId?: string;
     } & EntryPropCommon &
       EntryPropDatas &
-      EntryPropSegments)
+      EntryPropSegments &
+      EntryPropRender)
   | ParallelEntryData
   | ({
       type: "cache";
       /** Cache entries create cache boundaries and render like layouts (with Outlet) */
       handler: ReactNode | Handler<any, any, any>;
-      loading?: ReactNode | false;
-      transition?: TransitionConfig;
     } & EntryPropCommon &
       EntryPropDatas &
-      EntryPropSegments);
+      EntryPropSegments &
+      EntryPropRender);
 
 /**
  * Tracked include info for build-time manifest generation
@@ -280,6 +296,22 @@ interface HelperContext {
   /** True when resolving handlers inside a cache() DSL boundary.
    *  Read by ctx.get() to guard non-cacheable variable reads. */
   insideCacheScope?: boolean;
+  /**
+   * Include scope string applied to direct-descendant shortCodes.
+   *
+   * Each `include(...)` call allocates a sibling-positional token like `I0`,
+   * `I1` from its parent's include counter and stores the composed scope
+   * (`${parentScope}I${idx}`) in its lazyContext. When the include's handler
+   * evaluates lazily, the store's `includeScope` is set from that context so
+   * every direct-descendant shortCode is generated as
+   * `${parent.shortCode}${includeScope}${prefix}${index}` — preventing
+   * collisions with siblings declared outside the include.
+   *
+   * The scope is NOT propagated through `store.run(...)`, so layouts /
+   * parallels / caches inside the include absorb the scope into their own
+   * shortCodes and their children start fresh.
+   */
+  includeScope?: string;
 }
 // Use a global symbol key so the AsyncLocalStorage instance survives HMR
 // module re-evaluation. Without this, Vite's RSC module runner may create
@@ -287,9 +319,27 @@ interface HelperContext {
 // hold references to the old instance — causing getStore() to return
 // undefined even inside a run() callback.
 const RSC_CONTEXT_KEY = Symbol.for("rangojs-router:rsc-context");
-export const RSCRouterContext: AsyncLocalStorage<HelperContext> = ((
+export const RangoContext: AsyncLocalStorage<HelperContext> = ((
   globalThis as any
 )[RSC_CONTEXT_KEY] ??= new AsyncLocalStorage<HelperContext>());
+
+/** shortCode prefix letter per entry type (e.g. "L0", "R2", "M1C0"). */
+const SHORT_CODE_PREFIX: Record<
+  "layout" | "parallel" | "route" | "loader" | "cache",
+  string
+> = {
+  layout: "L",
+  parallel: "P",
+  route: "R",
+  loader: "D",
+  cache: "C",
+};
+
+/** Post-increment a named per-store counter, returning the prior value. */
+function bumpCounter(store: HelperContext, key: string): number {
+  store.counters[key] ??= 0;
+  return store.counters[key]++;
+}
 
 export const getContext = (): {
   context: AsyncLocalStorage<HelperContext>;
@@ -314,12 +364,12 @@ export const getContext = (): {
     callback: (...args: any[]) => T,
   ) => T;
 } => {
-  const context = RSCRouterContext;
+  const context = RangoContext;
 
   return {
     context,
     getOrCreateStore: (forRoute?: string): HelperContext => {
-      let store = RSCRouterContext.getStore();
+      let store = RangoContext.getStore();
       if (!store) {
         store = {
           manifest: new Map<string, EntryData>(),
@@ -339,7 +389,7 @@ export const getContext = (): {
       const store = context.getStore();
       if (!store) {
         throw new Error(
-          "RSC Router context store is not available. Make sure to run within RSC Router context.",
+          "Rango context store is not available. Make sure to run within Rango context.",
         );
       }
       return store;
@@ -356,48 +406,36 @@ export const getContext = (): {
       type: (string & {}) | "layout" | "parallel" | "middleware" | "revalidate",
     ) => {
       const store = context.getStore();
-      invariant(store, "No context RSCRouterContext available");
-      store.counters[type] ??= 0;
-      const index = store.counters[type];
-      store.counters[type] = index + 1;
-      return `$${type}.${index}`;
+      invariant(store, "No context RangoContext available");
+      return `$${type}.${bumpCounter(store, type)}`;
     },
     getShortCode: (
       type: "layout" | "parallel" | "route" | "loader" | "cache",
     ) => {
       const store = context.getStore();
-      invariant(store, "No context RSCRouterContext available");
+      invariant(store, "No context RangoContext available");
 
       const parent = store.parent;
-      const prefix =
-        type === "layout"
-          ? "L"
-          : type === "parallel"
-            ? "P"
-            : type === "loader"
-              ? "D"
-              : type === "cache"
-                ? "C"
-                : "R";
+      const prefix = SHORT_CODE_PREFIX[type];
       const mountPrefix =
         store.mountIndex !== undefined ? `M${store.mountIndex}` : "";
+
+      const includeScope = store.includeScope ?? "";
 
       if (!parent) {
         // Root entry: prefix with mount index and use mount-scoped counter
         const counterKey = mountPrefix
           ? `${mountPrefix}_root_${type}`
           : `root_${type}`;
-        store.counters[counterKey] ??= 0;
-        const index = store.counters[counterKey];
-        store.counters[counterKey] = index + 1;
-        return `${mountPrefix}${prefix}${index}`;
+        return `${mountPrefix}${prefix}${bumpCounter(store, counterKey)}`;
       } else {
-        // Child entry: use parent-scoped counter (parent already has M prefix)
-        const counterKey = `${parent.shortCode}_${type}`;
-        store.counters[counterKey] ??= 0;
-        const index = store.counters[counterKey];
-        store.counters[counterKey] = index + 1;
-        return `${parent.shortCode}${prefix}${index}`;
+        // Child entry: use parent-scoped counter with includeScope appended.
+        // When we're evaluating a lazy include's direct children, includeScope
+        // is a per-include token like "I0" / "I1I0" that partitions the
+        // parent's counter namespace so routes inside one include cannot
+        // collide with siblings declared outside it.
+        const counterKey = `${parent.shortCode}${includeScope}_${type}`;
+        return `${parent.shortCode}${includeScope}${prefix}${bumpCounter(store, counterKey)}`;
       }
     },
     runWithStore: <T>(
@@ -424,6 +462,7 @@ export const getContext = (): {
           rootScoped: store.rootScoped,
           trackedIncludes: store.trackedIncludes,
           cacheProfiles: store.cacheProfiles,
+          includeScope: store.includeScope,
         },
         callback,
       );
@@ -471,6 +510,31 @@ export const getContext = (): {
 };
 
 /**
+ * Acquire the active DSL build context, throwing `message` if a helper was
+ * called outside a urls()/map() builder. Returns the store API and the live
+ * HelperContext so callers avoid a second getContext() lookup.
+ */
+export function requireDslContext(message: string): {
+  store: ReturnType<typeof getContext>;
+  ctx: HelperContext;
+} {
+  const store = getContext();
+  const ctx = store.context.getStore();
+  if (!ctx) {
+    // The only reason the store is absent here is that a route-definition helper
+    // ran with no active RangoContext — i.e. outside a urls()/map() builder.
+    // Record that as the cause so the throw is self-explanatory, not a bare
+    // "must be called inside urls()" with no indication of the mechanism.
+    throw new DslContextError(message, {
+      cause:
+        "RangoContext store is undefined: a route-definition helper was called " +
+        "outside an active urls()/map() builder.",
+    });
+  }
+  return { store, ctx };
+}
+
+/**
  * Run a callback with specific URL and name prefixes
  * Used by include() to apply prefixes to nested patterns
  */
@@ -479,7 +543,7 @@ export function runWithPrefixes<T>(
   namePrefix: string | undefined,
   callback: () => T,
 ): T {
-  const store = RSCRouterContext.getStore();
+  const store = RangoContext.getStore();
   if (!store) {
     throw new Error("runWithPrefixes must be called within router context");
   }
@@ -524,7 +588,7 @@ export function runWithPrefixes<T>(
         ? (store.rootScoped ?? false)
         : store.rootScoped;
 
-  return RSCRouterContext.run(
+  return RangoContext.run(
     {
       ...store,
       urlPrefix: combinedUrlPrefix,
@@ -539,7 +603,7 @@ export function runWithPrefixes<T>(
  * Get current URL prefix from context
  */
 export function getUrlPrefix(): string {
-  const store = RSCRouterContext.getStore();
+  const store = RangoContext.getStore();
   return store?.urlPrefix || "";
 }
 
@@ -547,7 +611,7 @@ export function getUrlPrefix(): string {
  * Get current name prefix from context
  */
 export function getNamePrefix(): string | undefined {
-  const store = RSCRouterContext.getStore();
+  const store = RangoContext.getStore();
   return store?.namePrefix;
 }
 
@@ -556,7 +620,7 @@ export function getNamePrefix(): string | undefined {
  * Returns true at root or inside { name: "" } includes, false inside named includes.
  */
 export function getRootScoped(): boolean {
-  const store = RSCRouterContext.getStore();
+  const store = RangoContext.getStore();
   return store?.rootScoped ?? true;
 }
 
@@ -653,7 +717,7 @@ export function getParallelSlotCount(
  * ```
  */
 export function track(label: string, depth?: number): () => void {
-  const store = RSCRouterContext.getStore();
+  const store = RangoContext.getStore();
 
   // No-op if context unavailable or metrics not enabled
   if (!store?.metrics?.enabled) {
@@ -676,8 +740,8 @@ export function track(label: string, depth?: number): () => void {
 
 /**
  * Separate ALS for tracking loader execution scope.
- * Uses a dedicated ALS (not RSCRouterContext) to avoid issues with
- * nested RSCRouterContext.run() calls in Vite's module runner.
+ * Uses a dedicated ALS (not RangoContext) to avoid issues with
+ * nested RangoContext.run() calls in Vite's module runner.
  */
 const LOADER_SCOPE_KEY = Symbol.for("rangojs-router:loader-scope");
 const loaderScopeALS: AsyncLocalStorage<{ active: true }> = ((
@@ -690,7 +754,7 @@ const loaderScopeALS: AsyncLocalStorage<{ active: true }> = ((
  * (never cached), so non-cacheable reads are safe.
  */
 export function isInsideCacheScope(): boolean {
-  if (RSCRouterContext.getStore()?.insideCacheScope !== true) return false;
+  if (RangoContext.getStore()?.insideCacheScope !== true) return false;
   // Loaders are always fresh — even inside a cache() boundary, the loader
   // function re-executes on every request. Skip the guard when running
   // inside a loader.

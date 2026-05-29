@@ -23,13 +23,13 @@ Related docs:
 | `.`              | Root entrypoint with shared types/utilities plus server/RSC APIs selected via the `react-server` export condition: `createRouter`, `createLoader`, `redirect`, `cookies()`, `headers()`, route DSL, errors, helpers, URL/route utilities, reverse lookup. Default (non-RSC) entry also exports universal handles `Meta` and `Breadcrumbs` alongside `createHandle`. |
 | `./client`       | Client-side components and hooks (see [Client API](#client-api) below)                                                                                                                                                                                                                                                                                              |
 | `./vite`         | Public Vite plugin surface: `rango()`, `poke()`, and plugin option types                                                                                                                                                                                                                                                                                            |
-| `./browser`      | Browser bootstrap: `initBrowserApp`, `RSCRouter`, `InitBrowserAppOptions`                                                                                                                                                                                                                                                                                           |
+| `./browser`      | Browser bootstrap: `initBrowserApp`, `Rango`, `InitBrowserAppOptions`                                                                                                                                                                                                                                                                                               |
 | `./rsc`          | Advanced server request-pipeline APIs: `createRSCHandler`, request-context access, RSC handler types                                                                                                                                                                                                                                                                |
 | `./ssr`          | Advanced HTML rendering bridge: `createSSRHandler`, nonce/form-state/streamMode support                                                                                                                                                                                                                                                                             |
 | `./build`        | Manifest and route-type generators: `generateManifest`, `generateManifestFull`, `generateManifestCode`, `writePerModuleRouteTypes`, `generatePerModuleTypesSource`, `extractRoutesFromSource`, `buildRouteTrie`, `createScanFilter`, `hashParams`                                                                                                                   |
 | `./cache`        | Segment and response cache APIs: `SegmentCacheStore`, `MemorySegmentCacheStore`, `CFCacheStore` (L1 + optional KV L2), `KVNamespace`, document cache middleware, cache scope utilities                                                                                                                                                                              |
 | `./theme`        | Theming public API: `useTheme`, `ThemeProvider`, `ThemeScript`, theme constants                                                                                                                                                                                                                                                                                     |
-| `./host`         | Host-based multi-app routing: `createHostRouter`, `defineHosts`, host matching types                                                                                                                                                                                                                                                                                |
+| `./host`         | Host-based multi-app routing: `createHostRouter`, `defineHosts`, host matching types. Route builder splits intent: `.map((request) => Response)` (inline handler) vs `.lazy(() => import("./sub-app"))` (lazy mount)                                                                                                                                                |
 | `./host/testing` | Host router test helpers                                                                                                                                                                                                                                                                                                                                            |
 
 ### Internal (not user-facing)
@@ -69,25 +69,27 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 
 ### Hooks
 
-| Hook                   | Purpose                          |
-| ---------------------- | -------------------------------- |
-| `useLoader`            | Access loader data               |
-| `useFetchLoader`       | Client-side fetch loader         |
-| `useNavigation`        | Navigation state                 |
-| `useRouter`            | Imperative navigation            |
-| `usePathname`          | Current pathname                 |
-| `useSearchParams`      | Search parameters                |
-| `useParams`            | Route params                     |
-| `useSegments`          | Segments state                   |
-| `useAction`            | Server action state tracking     |
-| `useHandle`            | Access handle data               |
-| `useLocationState`     | Navigation state persistence     |
-| `useClientCache`       | Client cache controls            |
-| `useLinkStatus`        | Link navigation status           |
-| `useMount`             | `include()` mount context        |
-| `useHref`              | Mount-aware href generation      |
-| `useScrollRestoration` | Scroll restoration control       |
-| `useTheme`             | Theme management (via `./theme`) |
+| Hook                   | Purpose                                 |
+| ---------------------- | --------------------------------------- |
+| `useLoader`            | Access loader data                      |
+| `useFetchLoader`       | Client-side fetch loader                |
+| `useRefreshLoaders`    | Refresh a cross-loader refresh group    |
+| `useNavigation`        | Navigation state                        |
+| `useRouter`            | Imperative navigation                   |
+| `usePathname`          | Current pathname                        |
+| `useSearchParams`      | Search parameters                       |
+| `useParams`            | Route params                            |
+| `useSegments`          | Segments state                          |
+| `useAction`            | Server action state tracking            |
+| `useHandle`            | Access handle data                      |
+| `useLocationState`     | Navigation state persistence            |
+| `useClientCache`       | Client cache controls                   |
+| `useLinkStatus`        | Link navigation status                  |
+| `useMount`             | `include()` mount context               |
+| `useHref`              | Mount-aware href generation             |
+| `useReverse`           | Local reverse for imported `routes` map |
+| `useScrollRestoration` | Scroll restoration control              |
+| `useTheme`             | Theme management (via `./theme`)        |
 
 ### Factories
 
@@ -103,7 +105,7 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 
 ### Router Lifecycle
 
-Public API (`RSCRouter` interface):
+Public API (`Rango` interface):
 
 - `createRouter()` with `.routes()`, `.use()`, `.reverse()`, `.fetch()`
 - `routeMap`, warmup handling, document wrapper, global not-found/error defaults
@@ -111,7 +113,7 @@ Public API (`RSCRouter` interface):
 - Request timeouts via `timeout`/`timeouts`/`onTimeout` options
 - `basename` for sub-path deployments — auto-prefixes all routes, `reverse()`, `Link`, `redirect()`, `router.use()` patterns, and `useRouter()` navigation. `href()` is intentionally not basename-aware (raw path helper).
 
-Internal API (`RSCRouterInternal`, not exported):
+Internal API (`RangoInternal`, not exported):
 
 - `.match()`, `.matchPartial()`, `.matchError()`, `.previewMatch()`, `.matchForPrerender()`, `.renderStaticSegment()`
 - `allowDebugManifest`, `debugManifest()`
@@ -135,6 +137,8 @@ URL pattern matching, middleware execution, segment resolution, error matching, 
 
 - `loader()` declarations, `createLoader()`, `useLoader()`, `useFetchLoader()`
 - `fetchable` loader mode for cacheable JSON/resource paths
+- Client refresh `key` (per-loader refresh groups) and `useRefreshLoaders()`
+  (cross-loader refresh groups via `refreshGroup`)
 
 ### Request Context and Server Helpers
 
@@ -167,15 +171,15 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
 
 - Route-level loading boundaries via `loading()`
 - Error/not-found boundary composition
-- View Transition config via `transition()`
+- View Transition config via `transition()` — wrap location depends on segment type (layout: default outlet content; route: route component; parallel/intercept slot: slot content). See [skills/view-transitions](../../skills/view-transitions/SKILL.md).
 - Parallel slot streaming: `loading()` + `loader()` on a parallel makes it an independent streaming unit (own `LoaderBoundary`, non-blocking across SSR, SPA navigation, and cache-hit paths). Without `loading()`, parallel loaders block the parent layout.
 - Slot override dedup: last `parallel()` definition wins per `@slot` name, enabling composition overrides
 - Modal/intercept rendering via `intercept()` with `when()` conditions
 
 ### Location State
 
-- `createLocationState()` -- typed state definitions
-- `useLocationState()` -- read/write navigation state
+- `createLocationState()` -- typed state definitions; each definition exposes `.read()`, `.write()`, and `.delete()` for static (non-reactive) access to its slot in `history.state`
+- `useLocationState()` -- reactive hook; updates on popstate / `__rsc_locationstate` (does NOT update on static `.write()` / `.delete()`)
 - `redirect()` integration with location state
 
 ### Handle Data
@@ -187,6 +191,10 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
 - `revalidate()` DSL primitive
 - Segment-level revalidation defaults, request-method aware behavior
 - Custom revalidate callback composition, SWR background revalidation
+- `ctx.isAction(...refs)` on the revalidate predicate context — typed,
+  rename-safe action matching by reference (single, variadic, or `import * as`
+  namespace); resolves the same id (`$id ?? $$id`) as the action boundary, so it
+  matches in dev and production. Public type: `ActionRef` (exported from root).
 
 ### Progressive Enhancement
 

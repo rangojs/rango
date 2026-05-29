@@ -20,6 +20,14 @@ import {
   expandPrerenderRoutes,
   renderStaticHandlers,
 } from "./prerender-collection.js";
+import {
+  resolveHostRouterHandlers,
+  DiscoveryError,
+  type CaughtDiscoveryError,
+} from "./discovery-errors.js";
+import { createRangoDebugger, timed, NS } from "../debug.js";
+
+const debug = createRangoDebugger(NS.discovery);
 
 /**
  * Import the user's entry via RSC runner, generate manifests for each
@@ -38,41 +46,40 @@ export async function discoverRouters(
   // Import the entry file via RSC environment.
   // For node preset: this is the router file (createRouter() registers in RouterRegistry).
   // For cloudflare preset: this is the worker entry (which imports the router).
-  await rscEnv.runner.import(state.resolvedEntryPath);
+  await timed(debug, "inner: import entry", () =>
+    rscEnv.runner.import(state.resolvedEntryPath),
+  );
 
   // Import the router package to access the registry
-  const serverMod = await rscEnv.runner.import("@rangojs/router/server");
+  const serverMod = await timed(
+    debug,
+    "inner: import @rangojs/router/server",
+    () => rscEnv.runner.import("@rangojs/router/server"),
+  );
   let registry: Map<string, any> = serverMod.RouterRegistry;
 
   if (!registry || registry.size === 0) {
     // No RSC routers found directly. Check for host routers with lazy handlers
     // that need to be resolved to trigger sub-app createRouter() calls.
+    //
+    // Handler failures are collected rather than swallowed: when the registry
+    // is still empty afterwards, these errors (typically a sub-app whose router
+    // module failed to import) are the most likely cause and are surfaced in
+    // the terminal "No routers found" error below.
+    const discoveryErrors: CaughtDiscoveryError[] = [];
     try {
       const hostRegistry: Map<string, any> | undefined =
         serverMod.HostRouterRegistry;
 
       if (hostRegistry && hostRegistry.size > 0) {
         console.log(
-          `[rsc-router] Found ${hostRegistry.size} host router(s), resolving lazy handlers...`,
+          `[rango] Found ${hostRegistry.size} host router(s), resolving lazy handlers...`,
         );
 
-        for (const [, entry] of hostRegistry) {
-          for (const route of entry.routes) {
-            if (typeof route.handler === "function") {
-              try {
-                await route.handler();
-              } catch {
-                // Lazy handler may fail in temp server context, that's OK
-              }
-            }
-          }
-          if (entry.fallback && typeof entry.fallback.handler === "function") {
-            try {
-              await entry.fallback.handler();
-            } catch {
-              // Fallback handler may fail in temp server context
-            }
-          }
+        const handlerErrors = await resolveHostRouterHandlers(hostRegistry);
+        discoveryErrors.push(...handlerErrors);
+        for (const { context, error } of handlerErrors) {
+          debug?.("caught error while resolving %s: %O", context, error);
         }
 
         // Re-read RouterRegistry - sub-app createRouter() calls should have populated it
@@ -87,21 +94,27 @@ export async function discoverRouters(
           registry = freshRegistry;
         }
       }
-    } catch {
-      // Host-router discovery is best-effort; skip if unavailable
+    } catch (error) {
+      // Host-router discovery is best-effort; record the failure so it can be
+      // surfaced if no routers are found.
+      discoveryErrors.push({ context: "host-router discovery", error });
     }
 
     // If still no routers after host router resolution, fail
     if (!registry || registry.size === 0) {
-      throw new Error(
-        `[rsc-router] No routers found in registry after importing ${state.resolvedEntryPath}`,
-      );
+      throw new DiscoveryError(state.resolvedEntryPath, discoveryErrors);
     }
   }
 
   // Import build utilities for manifest generation
-  const buildMod = await rscEnv.runner.import("@rangojs/router/build");
+  const buildMod = await timed(
+    debug,
+    "inner: import @rangojs/router/build",
+    () => rscEnv.runner.import("@rangojs/router/build"),
+  );
   const generateManifestFull = buildMod.generateManifestFull;
+
+  debug?.("inner: found %d router(s) in registry", registry.size);
 
   const nestedRouterConflict = findNestedRouterConflict(
     [...registry.values()]
@@ -130,6 +143,7 @@ export async function discoverRouters(
   // Collect all manifests for trie building (avoid re-running generateManifest)
   const allManifests: Array<{ id: string; manifest: any }> = [];
 
+  const manifestGenStart = debug ? performance.now() : 0;
   for (const [id, router] of registry) {
     if (!router.urlpatterns || !generateManifestFull) {
       continue;
@@ -210,7 +224,7 @@ export async function discoverRouters(
     newPerRouterPrecomputedMap.set(id, routerPrecomputed);
 
     console.log(
-      `[rsc-router] Router "${id}" -> ${routeCount} routes ` +
+      `[rango] Router "${id}" -> ${routeCount} routes ` +
         `(${staticRoutes} static, ${dynamicRoutes} dynamic)`,
     );
   }
@@ -226,7 +240,7 @@ export async function discoverRouters(
     );
     if (autoIds.length > 1) {
       console.warn(
-        `[rsc-router] WARNING: ${autoIds.length} routers use auto-generated IDs (${autoIds.join(", ")}). ` +
+        `[rango] WARNING: ${autoIds.length} routers use auto-generated IDs (${autoIds.join(", ")}). ` +
           `In multi-router setups, each createRouter() must have an explicit \`id\` option ` +
           `to ensure per-router manifest data is matched correctly at runtime. ` +
           `Example: createRouter({ id: "site", ... })`,
@@ -234,8 +248,15 @@ export async function discoverRouters(
     }
   }
 
+  debug?.(
+    "inner: generated manifests for %d router(s) (%sms)",
+    allManifests.length,
+    (performance.now() - manifestGenStart).toFixed(1),
+  );
+
   // Build route trie from merged manifest + ancestry
   let newMergedRouteTrie: any = null;
+  const trieStart = debug ? performance.now() : 0;
   if (Object.keys(newMergedRouteManifest).length > 0) {
     const buildRouteTrie = buildMod.buildRouteTrie;
     if (buildRouteTrie && mergedRouteAncestry) {
@@ -271,18 +292,16 @@ export async function discoverRouters(
         }
       }
 
+      // buildRouteTrie reads these via ?.has / ?.[] — empty is observationally
+      // identical to undefined, so no empty->undefined coercion is needed.
       newMergedRouteTrie = buildRouteTrie(
         newMergedRouteManifest,
         mergedRouteAncestry,
         routeToStaticPrefix,
-        Object.keys(mergedRouteTrailingSlash).length > 0
-          ? mergedRouteTrailingSlash
-          : undefined,
-        prerenderRouteNames.size > 0 ? prerenderRouteNames : undefined,
-        passthroughRouteNames.size > 0 ? passthroughRouteNames : undefined,
-        Object.keys(mergedResponseTypeRoutes).length > 0
-          ? mergedResponseTypeRoutes
-          : undefined,
+        mergedRouteTrailingSlash,
+        prerenderRouteNames,
+        passthroughRouteNames,
+        mergedResponseTypeRoutes,
       );
 
       // Build per-router tries for multi-router isolation.
@@ -309,25 +328,20 @@ export async function discoverRouters(
           manifest.routeManifest,
           manifest._routeAncestry,
           perRouterStaticPrefix,
-          manifest.routeTrailingSlash &&
-            Object.keys(manifest.routeTrailingSlash).length > 0
-            ? manifest.routeTrailingSlash
-            : undefined,
-          perRouterPrerenderNames && perRouterPrerenderNames.size > 0
-            ? perRouterPrerenderNames
-            : undefined,
-          perRouterPassthroughNames && perRouterPassthroughNames.size > 0
-            ? perRouterPassthroughNames
-            : undefined,
-          manifest.responseTypeRoutes &&
-            Object.keys(manifest.responseTypeRoutes).length > 0
-            ? manifest.responseTypeRoutes
-            : undefined,
+          manifest.routeTrailingSlash,
+          perRouterPrerenderNames,
+          perRouterPassthroughNames,
+          manifest.responseTypeRoutes,
         );
         newPerRouterTrieMap.set(id, perRouterTrie);
       }
     }
   }
+
+  debug?.(
+    "inner: trie build done (%sms)",
+    (performance.now() - trieStart).toFixed(1),
+  );
 
   // Commit all local state to the shared discovery state atomically.
   // This ensures a failed re-discovery (e.g. from a transient module

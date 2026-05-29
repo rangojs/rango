@@ -11,9 +11,6 @@ deserialization path, same segment system. The worker handles every request --
 there are NO static .html or .rsc files served from assets. The worker reads
 pre-computed Flight payloads instead of executing handler code.
 
-Canonical semantics reference:
-[docs/execution-model.md](../../docs/internal/execution-model.md)
-
 ## API: Prerender
 
 ### Static Route (no params)
@@ -361,16 +358,16 @@ Both error types propagate to the router's `onError` callback with phase
 The build produces per-URL timing logs:
 
 ```
-[rsc-router] Pre-rendering 12 URL(s) (concurrency: 4)...
-[rsc-router]   OK   /articles/hello            (42ms)
-[rsc-router]   PASS /articles/remote-only      (5ms) - live fallback
-[rsc-router]   SKIP /articles/draft-post       (3ms) - Article is a draft
-[rsc-router] Pre-render complete: 11 done, 1 skipped (1204ms total)
+[rango] Pre-rendering 12 URL(s) (concurrency: 4)...
+[rango]   OK   /articles/hello            (42ms)
+[rango]   PASS /articles/remote-only      (5ms) - live fallback
+[rango]   SKIP /articles/draft-post       (3ms) - Article is a draft
+[rango] Pre-render complete: 11 done, 1 skipped (1204ms total)
 
-[rsc-router] Rendering 3 static handler(s)...
-[rsc-router]   OK   DocsLayout                 (28ms)
-[rsc-router]   SKIP TocSidebar                 (1ms) - Not ready
-[rsc-router] Static render complete: 2 done, 1 skipped (120ms total)
+[rango] Rendering 3 static handler(s)...
+[rango]   OK   DocsLayout                 (28ms)
+[rango]   SKIP TocSidebar                 (1ms) - Not ready
+[rango] Static render complete: 2 done, 1 skipped (120ms total)
 ```
 
 A `FAIL` line is logged per-URL when a handler throws a non-Skip error. The
@@ -466,9 +463,9 @@ export const Product = Passthrough(ProductDef, async (ctx) => {
 Passthrough entries are logged distinctly:
 
 ```
-[rsc-router]   OK   /blog/a                          (42ms)
-[rsc-router]   PASS /blog/b                          (3ms) - live fallback
-[rsc-router]   OK   /blog/c                          (38ms)
+[rango]   OK   /blog/a                          (42ms)
+[rango]   PASS /blog/b                          (3ms) - live fallback
+[rango]   OK   /blog/c                          (38ms)
 ```
 
 ## Edge Cases and Constraints
@@ -640,16 +637,7 @@ At runtime, the cache-lookup middleware uses these flags:
 
 ## Contributor Checklist
 
-Before changing prerender behavior, read these docs and run these tests.
-
-### Docs to re-read
-
-- [Prerender API design](../../docs/prerender-api-design.md) -- canonical
-  architecture: build-time flow, runtime flow, storage, Passthrough, intercept
-- [Execution model](../../docs/internal/execution-model.md) -- handler-first
-  ordering, middleware scope, context visibility rules
-- [Semantic change checklist](../../docs/internal/semantic-change-checklist.md)
-  -- gate for any change to execution semantics
+Before changing prerender behavior, run these tests.
 
 ### Tests to run
 
@@ -676,10 +664,3 @@ pnpm --filter @rangojs/router exec playwright test handler-first
   dev/build-only and do not need a production counterpart.
 - Behavioral assertions (rendered content, loader freshness, Passthrough
   fallback, intercept variant selection) must work in the production build.
-
-## Maintenance References
-
-- [Stability next steps plan](../../docs/internal/stability-next-steps-plan.md)
-  -- completed parity and cleanup pass (reference for decisions made)
-- [Test quality baseline](../../docs/internal/test-quality-baseline.md) --
-  measured test inventory, sleep debt, production coverage gaps

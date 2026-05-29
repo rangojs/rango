@@ -8,9 +8,6 @@ argument-hint: [@slot-name]
 
 Parallel routes render multiple components simultaneously in named slots.
 
-Canonical semantics reference:
-[docs/execution-model.md](../../docs/internal/execution-model.md)
-
 ## Basic Parallel Routes
 
 ```typescript
@@ -237,6 +234,8 @@ A slot's `loading()` (whether from `handler.use` or explicit) makes that slot an
 
 The `parallel` mount site has the narrowest allow-list for `handler.use` items — slots cannot bring their own middleware or layout, only `revalidate`, `loader`, `loading`, `errorBoundary`, `notFoundBoundary`, and `transition`. See [skills/handler-use](../handler-use/SKILL.md) for the full table and merge rules.
 
+`transition` is allowed in the slot allow-list, but slot-level rendering does **not** currently apply a `<ViewTransition>` wrapper — only the layout/route wraps take effect at render time. For a modal-only morph today, use an element-level React `<ViewTransition>` inside the slot's component. The reverse direction is the useful guarantee: a layout-level `transition()` fires when the layout's default outlet content changes but **not** when a `<ParallelOutlet />` mounts new content (modal opens are not subtree updates of the layout VT). See [skills/view-transitions](../view-transitions/SKILL.md) for the wrap rules and the intercept caveat.
+
 ### Two scopes for explicit `use`: shared (broadcast) and slot-local
 
 `parallel({...slots}, () => [...use])` runs the shared `use()` callback **once per slot** ([dsl-helpers.ts](../../src/route-definition/dsl-helpers.ts)) — items in that callback land on every slot's entry. That's the right behavior for the items the parallel allow-list permits and that accumulate (`loader`, `revalidate`, `errorBoundary`, `notFoundBoundary`, `transition`). (Slots cannot bring `middleware` or `layout` — see the allowed-types note above.)
@@ -338,7 +337,7 @@ parallel(
   () => [
     loader(CartLoader),
     // Revalidate when cart actions occur
-    revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
+    revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
   ]
 )
 ```
@@ -346,6 +345,13 @@ parallel(
 Revalidating only the parallel does not re-run outer handlers/layouts.
 If the slot reads `ctx.get()` data established above it, opt the outer
 segment into revalidation as well.
+
+A `revalidate()` callback may return a hard `boolean`, a soft
+`{ defaultShouldRevalidate }` object, or nothing (`void` / `null` /
+`undefined`) to defer to the next revalidator. See
+[loader/SKILL.md#revalidate-return-shapes](../loader/SKILL.md#revalidate-return-shapes)
+for the full contract — it's the same across `loader()`, `path()`,
+`layout()`, `parallel()`, and `intercept()`.
 
 ### Revalidation Contracts for Parallel Dependencies
 
@@ -355,7 +361,7 @@ the parallel consumer:
 ```typescript
 // revalidation-contracts.ts
 export const revalidateCartData = ({ actionId }) =>
-  actionId?.includes("src/actions/cart.ts#") ?? false;
+  actionId?.includes("src/actions/cart.ts#") || undefined;
 
 layout(CartLayout, () => [
   revalidate(revalidateCartData), // producer reruns
@@ -473,7 +479,7 @@ export const shopPatterns = urls(({
       () => [
         loader(CartLoader),
         loading(<CartSkeleton />),
-        revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
+        revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
       ]
     ),
 

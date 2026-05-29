@@ -9,10 +9,28 @@
  * navigations, bookmarks, and non-browser clients don't send Origin.
  */
 
+import type { RequestPlan } from "../router/request-classification.js";
+
 /**
  * Request phase that triggered the origin check.
  */
 export type OriginCheckPhase = "action" | "loader" | "pe-form";
+
+// Exhaustive over RequestPlan modes so a new mode must be classified here (the
+// security gate) instead of silently falling through to no origin check.
+export const ORIGIN_CHECK_PHASE_BY_MODE: Record<
+  RequestPlan["mode"],
+  OriginCheckPhase | null
+> = {
+  action: "action",
+  loader: "loader",
+  "pe-render": "pe-form",
+  "full-render": null,
+  "partial-render": null,
+  response: null,
+  redirect: null,
+  "version-mismatch": null,
+};
 
 /**
  * Context passed to the originCheck callback.
@@ -116,14 +134,15 @@ export async function checkRequestOrigin<TEnv = any>(
   // Disabled by explicit opt-out
   if (config === false) return null;
 
-  // Default: built-in validation (config === true or undefined)
-  if (config === true || config === undefined) {
-    const allowed = defaultOriginCheck(request, url);
-    if (allowed) return null;
-    return createForbiddenResponse(request);
-  }
+  // Default (true/undefined) becomes a callback returning boolean, so the
+  // Response|true|reject resolution below is written once.
+  const check: (
+    ctx: OriginCheckContext<TEnv>,
+  ) => boolean | Response | Promise<boolean | Response> =
+    config === true || config === undefined
+      ? () => defaultOriginCheck(request, url)
+      : config;
 
-  // Custom function — build context and call
   const ctx: OriginCheckContext<TEnv> = {
     request,
     url,
@@ -133,9 +152,8 @@ export async function checkRequestOrigin<TEnv = any>(
     defaultCheck: () => defaultOriginCheck(request, url),
   };
 
-  const result = await config(ctx);
+  const result = await check(ctx);
 
   if (result instanceof Response) return result;
-  if (result === true) return null;
-  return createForbiddenResponse(request);
+  return result === true ? null : createForbiddenResponse(request);
 }

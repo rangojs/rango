@@ -35,5 +35,7 @@ export {
   formatNestedRouterConflictError,
   findRouterFiles,
   writeCombinedRouteTypes,
+  genFileTsPath,
+  resolveSearchSchemas,
 } from "./route-types/router-processing.js";
 export { findUrlsVariableNames } from "./route-types/per-module-writer.js";

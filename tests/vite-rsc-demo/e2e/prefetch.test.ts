@@ -1,9 +1,29 @@
 import { test, expect, devURL } from "./dev-fixture";
-import { test as base, expect as baseExpect } from "@playwright/test";
+import {
+  test as base,
+  expect as baseExpect,
+  type Page,
+} from "@playwright/test";
 import { waitForHydration, expectNoPageError } from "./helper";
 import { useFixture } from "./fixture";
 
 type ExpectLike = typeof expect;
+
+// rango-state is stored under `rango-state:{routerId}` so sibling apps on
+// the same origin don't collide. Single-app setups may still use the
+// legacy unnamespaced `rango-state` key. Locate whichever key the app
+// wrote without hard-coding the router id.
+async function readRangoState(page: Page): Promise<string | null> {
+  return await page.evaluate(() => {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key === "rango-state" || key?.startsWith("rango-state:")) {
+        return localStorage.getItem(key);
+      }
+    }
+    return null;
+  });
+}
 
 async function expectCountToRemain(
   expectFn: ExpectLike,
@@ -326,7 +346,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     });
 
     await expect
-      .poll(() => page.evaluate(() => localStorage.getItem("rango-state")), {
+      .poll(() => readRangoState(page), {
         timeout: 5000,
       })
       .not.toBe(prefetchStates[0]);
@@ -351,9 +371,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     await waitForHydration(page);
 
     // Read the initial state key from localStorage
-    const initialState = await page.evaluate(() =>
-      localStorage.getItem("rango-state"),
-    );
+    const initialState = await readRangoState(page);
     expect(initialState).toBeDefined();
     expect(initialState).toContain(":");
 
@@ -377,9 +395,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     await waitForHydration(page);
 
     // State key should persist across refresh
-    const stateAfterReload = await page.evaluate(() =>
-      localStorage.getItem("rango-state"),
-    );
+    const stateAfterReload = await readRangoState(page);
     expect(stateAfterReload).toBe(initialState);
   });
 
@@ -393,9 +409,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     await waitForHydration(page);
 
     // Read the state key from localStorage
-    const stateKey = await page.evaluate(() =>
-      localStorage.getItem("rango-state"),
-    );
+    const stateKey = await readRangoState(page);
     expect(stateKey).toBeDefined();
 
     // Format should be "{version}:{timestamp}"
@@ -614,7 +628,7 @@ base.describe("prefetch-on-hover (production)", () => {
       );
 
       await baseExpect
-        .poll(() => page.evaluate(() => localStorage.getItem("rango-state")), {
+        .poll(() => readRangoState(page), {
           timeout: 5000,
         })
         .not.toBe(prefetchStates[0]);
@@ -639,9 +653,7 @@ base.describe("prefetch-on-hover (production)", () => {
       await waitForHydration(page);
 
       // Read initial state key
-      const initialState = await page.evaluate(() =>
-        localStorage.getItem("rango-state"),
-      );
+      const initialState = await readRangoState(page);
       baseExpect(initialState).toBeDefined();
       baseExpect(initialState).toContain(":");
 
@@ -669,9 +681,7 @@ base.describe("prefetch-on-hover (production)", () => {
       await waitForHydration(page);
 
       // State key should persist
-      const stateAfterReload = await page.evaluate(() =>
-        localStorage.getItem("rango-state"),
-      );
+      const stateAfterReload = await readRangoState(page);
       baseExpect(stateAfterReload).toBe(initialState);
     },
   );
@@ -680,9 +690,7 @@ base.describe("prefetch-on-hover (production)", () => {
     await page.goto(f.url("/"));
     await waitForHydration(page);
 
-    const stateKey = await page.evaluate(() =>
-      localStorage.getItem("rango-state"),
-    );
+    const stateKey = await readRangoState(page);
     baseExpect(stateKey).toBeDefined();
 
     // Format: "{version}:{timestamp}"

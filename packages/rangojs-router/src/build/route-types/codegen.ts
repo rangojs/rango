@@ -23,7 +23,7 @@ export function generatePerModuleTypesSource(
   const valid = routes.filter(({ name }) => {
     if (!name || /["'\\`\n\r]/.test(name)) {
       console.warn(
-        `[rsc-router] Skipping route with invalid name: ${JSON.stringify(name)}`,
+        `[rango] Skipping route with invalid name: ${JSON.stringify(name)}`,
       );
       return false;
     }
@@ -42,7 +42,7 @@ export function generatePerModuleTypesSource(
   for (const { name, pattern, params, search } of valid) {
     if (deduped.has(name)) {
       console.warn(
-        `[rsc-router] Duplicate route name "${name}" — keeping first definition`,
+        `[rango] Duplicate route name "${name}" — keeping first definition`,
       );
       continue;
     }
@@ -59,7 +59,7 @@ export function generatePerModuleTypesSource(
 }
 
 /**
- * Generates a .ts file that augments RSCRouter.GeneratedRouteMap
+ * Generates a .ts file that augments Rango.GeneratedRouteMap
  * with route name -> pattern mappings. This enables Handler<"routeName">
  * without circular references since the file has no imports from the app.
  */
@@ -94,7 +94,7 @@ ${objectBody}
 } as const;
 
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface GeneratedRouteMap extends Readonly<typeof NamedRoutes> {}
   }
 }

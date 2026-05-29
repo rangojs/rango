@@ -2,7 +2,7 @@ import type { ComponentType, ReactNode } from "react";
 import type { SerializedManifest } from "../debug.js";
 import type { ReverseFunction } from "../reverse.js";
 import type { UrlPatterns } from "../urls.js";
-import type { UrlBuilder } from "../urls/pattern-types.js";
+import type { UrlBuilder, EnvCompatible } from "../urls/pattern-types.js";
 import type { EntryData } from "../server/context";
 import type { ErrorInfo, MatchResult } from "../types";
 import type { NonceProvider } from "../rsc/types.js";
@@ -13,7 +13,7 @@ import type {
 } from "../cache/types.js";
 import type { MiddlewareEntry, MiddlewareFn } from "./middleware.js";
 import { RSC_ROUTER_BRAND } from "./router-registry.js";
-import type { RSCRouterOptions, RootLayoutProps } from "./router-options.js";
+import type { RangoOptions, RootLayoutProps } from "./router-options.js";
 import type { DefaultVars } from "../types/global-namespace.js";
 import type { ResolvedTimeouts, OnTimeoutCallback } from "./timeout.js";
 
@@ -49,16 +49,16 @@ type MergeRoutesWithResponses<
 };
 
 /**
- * Public RSC Router interface — the user-facing API surface.
+ * Public Rango router interface — the user-facing API surface.
  *
  * Users interact with this type when building and using routers.
- * Internal framework code uses RSCRouterInternal (via toInternal()) to access
+ * Internal framework code uses RangoInternal (via toInternal()) to access
  * matching, build-time, and configuration members that are not part of the
  * public contract.
  *
  * TRoutes accumulates all registered route types through the builder chain.
  */
-export interface RSCRouter<
+export interface Rango<
   TEnv = any,
   TRoutes extends Record<string, unknown> = Record<string, string>,
 > {
@@ -89,16 +89,16 @@ export interface RSCRouter<
    * ])
    * ```
    */
-  routes<T extends UrlPatterns<TEnv, any>>(
-    patterns: T,
-  ): RSCRouter<
+  routes<T extends UrlPatterns<any, any, any>>(
+    patterns: T & EnvCompatible<T, TEnv>,
+  ): Rango<
     TEnv,
     TRoutes &
       (NonNullable<T["_routes"]> extends Record<string, unknown>
         ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
         : Record<string, string>)
   >;
-  routes(builder: UrlBuilder<TEnv>): RSCRouter<TEnv, TRoutes>;
+  routes(builder: UrlBuilder<TEnv>): Rango<TEnv, TRoutes>;
 
   /**
    * Add global middleware that runs on all routes
@@ -114,7 +114,7 @@ export interface RSCRouter<
   use(
     patternOrMiddleware: string | MiddlewareFn<TEnv>,
     middleware?: MiddlewareFn<TEnv>,
-  ): RSCRouter<TEnv, TRoutes>;
+  ): Rango<TEnv, TRoutes>;
 
   /**
    * Type-safe URL builder for registered routes
@@ -141,7 +141,7 @@ export interface RSCRouter<
    * type AppRoutes = typeof _router.routeMap;
    *
    * declare global {
-   *   namespace RSCRouter {
+   *   namespace Rango {
    *     interface RegisteredRoutes extends AppRoutes {}
    *   }
    * }
@@ -177,16 +177,16 @@ export interface RSCRouter<
 }
 
 /**
- * Internal RSC Router interface — the full framework-facing API.
+ * Internal Rango router interface — the full framework-facing API.
  *
  * This type includes all members used by the Vite plugin, RSC handler,
  * pre-rendering pipeline, and other framework internals. It is NOT exported
  * from the public package API.
  *
- * Use toInternal(router) to assert a public RSCRouter into this type
+ * Use toInternal(router) to assert a public Rango into this type
  * at the boundary where framework code receives a user-provided router.
  */
-export interface RSCRouterInternal<
+export interface RangoInternal<
   TEnv = any,
   TRoutes extends Record<string, unknown> = Record<string, string>,
 > {
@@ -206,18 +206,24 @@ export interface RSCRouterInternal<
   readonly basename: string | undefined;
 
   /**
-   * Register routes using URL patterns from urls() or a builder function
+   * Register routes using URL patterns from urls() or a builder function.
+   *
+   * Env compatibility is checked by EnvCompatible: an env-agnostic urls() block
+   * (its env is `unknown` — e.g. a shared module, or an app that does not augment
+   * `Rango.Env`) attaches to any router, while a urls<TEnv>() block carrying a
+   * concrete env is accepted only when this router's `TEnv` satisfies it. So a
+   * `urls<{ DB }>()` cannot be mounted on a `createRouter<{}>()`.
    */
-  routes<T extends UrlPatterns<TEnv, any>>(
-    patterns: T,
-  ): RSCRouter<
+  routes<T extends UrlPatterns<any, any, any>>(
+    patterns: T & EnvCompatible<T, TEnv>,
+  ): Rango<
     TEnv,
     TRoutes &
       (NonNullable<T["_routes"]> extends Record<string, unknown>
         ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
         : Record<string, string>)
   >;
-  routes(builder: UrlBuilder<TEnv>): RSCRouter<TEnv, TRoutes>;
+  routes(builder: UrlBuilder<TEnv>): Rango<TEnv, TRoutes>;
 
   /**
    * Add global middleware that runs on all routes
@@ -225,7 +231,7 @@ export interface RSCRouterInternal<
   use(
     patternOrMiddleware: string | MiddlewareFn<TEnv>,
     middleware?: MiddlewareFn<TEnv>,
-  ): RSCRouter<TEnv, TRoutes>;
+  ): Rango<TEnv, TRoutes>;
 
   /**
    * Type-safe URL builder for registered routes
@@ -247,17 +253,17 @@ export interface RSCRouterInternal<
    * Error callback for monitoring/alerting
    * Called when errors occur in loaders, actions, or routes
    */
-  readonly onError?: RSCRouterOptions<TEnv>["onError"];
+  readonly onError?: RangoOptions<TEnv>["onError"];
 
   /**
    * Cache configuration
    */
-  readonly cache?: RSCRouterOptions<TEnv>["cache"];
+  readonly cache?: RangoOptions<TEnv>["cache"];
 
   /**
    * Not found component to render when no route matches
    */
-  readonly notFound?: RSCRouterOptions<TEnv>["notFound"];
+  readonly notFound?: RangoOptions<TEnv>["notFound"];
 
   /**
    * Resolved theme configuration (null if theme not enabled)
@@ -469,16 +475,16 @@ export interface RSCRouterInternal<
 }
 
 /**
- * Assert a public RSCRouter into the internal type.
+ * Assert a public Rango into the internal type.
  *
  * Use this at the boundary where framework code receives a user-provided
  * router and needs access to internal members (match, config, build-time).
  * The cast is safe because createRouter() always produces an object that
- * satisfies RSCRouterInternal; the public type is just a narrower view.
+ * satisfies RangoInternal; the public type is just a narrower view.
  */
 export function toInternal<
   TEnv = any,
   TRoutes extends Record<string, unknown> = Record<string, string>,
->(router: RSCRouter<TEnv, TRoutes>): RSCRouterInternal<TEnv, TRoutes> {
-  return router as RSCRouterInternal<TEnv, TRoutes>;
+>(router: Rango<TEnv, TRoutes>): RangoInternal<TEnv, TRoutes> {
+  return router as RangoInternal<TEnv, TRoutes>;
 }

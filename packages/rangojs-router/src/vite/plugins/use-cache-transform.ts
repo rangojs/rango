@@ -20,6 +20,9 @@ import type { Plugin } from "vite";
 import path from "node:path";
 import MagicString from "magic-string";
 import { normalizePath, hashId } from "./expose-id-utils.js";
+import { createRangoDebugger, createCounter, NS } from "../debug.js";
+
+const debug = createRangoDebugger(NS.transform);
 
 const CACHE_RUNTIME_IMPORT = "@rangojs/router/cache-runtime";
 
@@ -32,6 +35,7 @@ export function useCacheTransform(): Plugin {
   let isBuild = false;
   let rscTransforms: typeof import("@vitejs/plugin-rsc/transforms") | null =
     null;
+  const counter = createCounter(debug, "use-cache");
 
   return {
     name: "@rangojs/router:use-cache",
@@ -40,6 +44,10 @@ export function useCacheTransform(): Plugin {
     configResolved(config) {
       projectRoot = config.root;
       isBuild = config.command === "build";
+    },
+
+    buildEnd() {
+      counter?.flush();
     },
 
     async transform(code, id) {
@@ -55,63 +63,68 @@ export function useCacheTransform(): Plugin {
       // Only JS/TS files
       if (!/\.(tsx?|jsx?|mjs)$/.test(id)) return;
 
-      // Lazy-load transform helpers
-      if (!rscTransforms) {
+      const start = counter ? performance.now() : 0;
+      try {
+        // Lazy-load transform helpers
+        if (!rscTransforms) {
+          try {
+            rscTransforms = await import("@vitejs/plugin-rsc/transforms");
+          } catch {
+            return;
+          }
+        }
+
+        const {
+          hasDirective,
+          transformWrapExport,
+          transformHoistInlineDirective,
+        } = rscTransforms;
+
+        // Parse AST
+        let ast: any;
         try {
-          rscTransforms = await import("@vitejs/plugin-rsc/transforms");
+          const { parseAst } = await import("vite");
+          ast = parseAst(code, { lang: "tsx" });
         } catch {
           return;
         }
-      }
 
-      const {
-        hasDirective,
-        transformWrapExport,
-        transformHoistInlineDirective,
-      } = rscTransforms;
+        const filePath = normalizePath(path.relative(projectRoot, id));
+        const isLayoutOrTemplate = LAYOUT_TEMPLATE_PATTERN.test(id);
 
-      // Parse AST
-      let ast: any;
-      try {
-        const { parseAst } = await import("vite");
-        ast = parseAst(code);
-      } catch {
-        return;
-      }
+        // Check for file-level "use cache"
+        if (hasDirective(ast.body, "use cache")) {
+          return transformFileLevelUseCache(
+            code,
+            ast,
+            filePath,
+            id,
+            isBuild,
+            isLayoutOrTemplate,
+            transformWrapExport,
+          );
+        }
 
-      const filePath = normalizePath(path.relative(projectRoot, id));
-      const isLayoutOrTemplate = LAYOUT_TEMPLATE_PATTERN.test(id);
-
-      // Check for file-level "use cache"
-      if (hasDirective(ast.body, "use cache")) {
-        return transformFileLevelUseCache(
+        // Check for function-level "use cache" / "use cache: profileName"
+        // (only if there's no file-level directive but code still contains the string)
+        const functionResult = transformFunctionLevelUseCache(
           code,
           ast,
           filePath,
           id,
           isBuild,
-          isLayoutOrTemplate,
-          transformWrapExport,
+          transformHoistInlineDirective,
         );
+
+        // Always check for near-miss directives, even when valid directives
+        // exist. A file may contain both valid and invalid "use cache" directives
+        // in different functions — the invalid ones should still warn.
+        warnOnNearMissDirectives(ast, id, this.warn.bind(this));
+
+        if (functionResult) return functionResult;
+      } finally {
+        counter?.record(id, performance.now() - start);
       }
-
-      // Check for function-level "use cache" / "use cache: profileName"
-      // (only if there's no file-level directive but code still contains the string)
-      const functionResult = transformFunctionLevelUseCache(
-        code,
-        ast,
-        filePath,
-        id,
-        isBuild,
-        transformHoistInlineDirective,
-      );
-
-      // Always check for near-miss directives, even when valid directives
-      // exist. A file may contain both valid and invalid "use cache" directives
-      // in different functions — the invalid ones should still warn.
-      warnOnNearMissDirectives(ast, id, this.warn.bind(this));
-
-      if (functionResult) return functionResult;
     },
   };
 }

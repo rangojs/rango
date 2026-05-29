@@ -11,6 +11,7 @@ import { requireRequestContext } from "../server/request-context.js";
 import { contextGet } from "../context-var.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import { traverseBack } from "../router/pattern-matching.js";
+import { RESPONSE_TYPE_MIME } from "../router/content-negotiation.js";
 import { createCacheScope } from "../cache/cache-scope.js";
 import { executeMiddleware } from "../router/middleware.js";
 import {
@@ -26,7 +27,9 @@ import {
   finalizeResponse,
   isCacheableStatus,
   buildRouteMiddlewareEntries,
+  mergeStubHeadersAndFinalize,
 } from "./helpers.js";
+import { isWebSocketUpgradeResponse } from "../response-utils.js";
 
 export interface ResponseRouteMatch {
   responseType: string;
@@ -78,10 +81,13 @@ export async function handleResponseRoute<TEnv>(
     env,
     searchParams: cleanUrl.searchParams,
     url: cleanUrl,
+    originalUrl: reqCtx.originalUrl,
     pathname: url.pathname,
     reverse: createReverseFunction(handlerCtx.getRequiredRouteMap()),
     get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
     header: (name: string, value: string) => reqCtx.header(name, value),
+    waitUntil: reqCtx.waitUntil.bind(reqCtx),
+    executionContext: reqCtx.executionContext,
     _responseType: preview.responseType,
   };
   // Brand with taint symbol so "use cache" detects it as request-scoped
@@ -96,6 +102,12 @@ export async function handleResponseRoute<TEnv>(
     // so that stub headers (cookies, custom headers set via ctx.header()) are included.
     // Use Headers (not Record<string, string>) to preserve duplicate entries like Set-Cookie.
     const rewrapResponse = (result: Response) => {
+      // 204/205/304 are NOT short-circuited — they're valid for the Response
+      // constructor and must honor ctx.setStatus() overrides. Only upgrade
+      // responses (status 101 / `webSocket` property) bypass reconstruction.
+      if (isWebSocketUpgradeResponse(result)) {
+        return mergeStubHeadersAndFinalize(result);
+      }
       const headers = new Headers();
       result.headers.forEach((value, key) => {
         if (key.toLowerCase() === "set-cookie") {
@@ -110,13 +122,15 @@ export async function handleResponseRoute<TEnv>(
       });
     };
 
-    // JSON response routes: wrap in { data } / { error } envelope
-    if (preview.responseType === "json") {
-      try {
-        const result = await (preview.handler as Function)(responseHandlerCtx);
-        if (result instanceof Response) {
-          return rewrapResponse(result);
-        }
+    try {
+      const result = await (preview.handler as Function)(responseHandlerCtx);
+
+      if (result instanceof Response) {
+        return rewrapResponse(result);
+      }
+
+      // Handled before the MIME lookup (json is also a RESPONSE_TYPE_MIME key).
+      if (preview.responseType === "json") {
         return createResponseWithMergedHeaders(
           JSON.stringify({ data: result }),
           {
@@ -124,10 +138,28 @@ export async function handleResponseRoute<TEnv>(
             headers: { "content-type": "application/json;charset=utf-8" },
           },
         );
-      } catch (error) {
-        handlerCtx.callOnError(error, "handler", errorCtx);
-        const isDev = process.env.NODE_ENV !== "production";
-        const status = error instanceof RouterError ? error.status : 500;
+      }
+
+      // Object.hasOwn (not truthiness) so prototype names like "toString" are not
+      // matched; image/stream/any are absent and fall through to the throw.
+      if (Object.hasOwn(RESPONSE_TYPE_MIME, preview.responseType)) {
+        return createResponseWithMergedHeaders(String(result), {
+          status: 200,
+          headers: {
+            "content-type": `${RESPONSE_TYPE_MIME[preview.responseType]};charset=utf-8`,
+          },
+        });
+      }
+
+      throw new Error(
+        `Response route handler for "${preview.responseType}" must return a Response object, got ${typeof result}`,
+      );
+    } catch (error) {
+      handlerCtx.callOnError(error, "handler", errorCtx);
+      const isDev = process.env.NODE_ENV !== "production";
+      const status = error instanceof RouterError ? error.status : 500;
+
+      if (preview.responseType === "json") {
         return createResponseWithMergedHeaders(
           JSON.stringify({
             error: createResponseErrorPayload(error, isDev),
@@ -138,48 +170,7 @@ export async function handleResponseRoute<TEnv>(
           },
         );
       }
-    }
 
-    // Non-JSON response routes: catch errors and return plain Response
-    try {
-      const result = await (preview.handler as Function)(responseHandlerCtx);
-
-      if (result instanceof Response) {
-        return rewrapResponse(result);
-      }
-
-      // Auto-wrap based on response type tag
-      switch (preview.responseType) {
-        case "text":
-          return createResponseWithMergedHeaders(String(result), {
-            status: 200,
-            headers: { "content-type": "text/plain;charset=utf-8" },
-          });
-        case "html":
-          return createResponseWithMergedHeaders(String(result), {
-            status: 200,
-            headers: { "content-type": "text/html;charset=utf-8" },
-          });
-        case "xml":
-          return createResponseWithMergedHeaders(String(result), {
-            status: 200,
-            headers: { "content-type": "application/xml;charset=utf-8" },
-          });
-        case "md":
-          return createResponseWithMergedHeaders(String(result), {
-            status: 200,
-            headers: { "content-type": "text/markdown;charset=utf-8" },
-          });
-        default:
-          // image, stream, any -- must return Response
-          throw new Error(
-            `Response route handler for "${preview.responseType}" must return a Response object, got ${typeof result}`,
-          );
-      }
-    } catch (error) {
-      handlerCtx.callOnError(error, "handler", errorCtx);
-      const isDev = process.env.NODE_ENV !== "production";
-      const status = error instanceof RouterError ? error.status : 500;
       const message =
         error instanceof RouterError
           ? error.message
@@ -196,7 +187,9 @@ export async function handleResponseRoute<TEnv>(
   // Wrap callHandler to append Vary: Accept on content-negotiated responses
   const callHandlerWithVary = async () => {
     const response = await callHandler();
-    if (preview.negotiated) {
+    if (preview.negotiated && !isWebSocketUpgradeResponse(response)) {
+      // Skip Vary on upgrade responses: headers are semantically immutable
+      // on some runtimes, and Vary is meaningless for a 101 response.
       response.headers.append("Vary", "Accept");
     }
     return response;

@@ -1,4 +1,5 @@
 import { createLoader, cookies } from "@rangojs/router";
+import { getCartQuantitySync } from "./cart-store.js";
 
 // Layout-level loader for segment tracking tests
 export const LayoutCountLoader = createLoader(async () => {
@@ -63,9 +64,7 @@ export const ProductDetailLoader = createLoader(async (ctx) => {
  */
 export const CartQuantityLoader = createLoader(async (ctx) => {
   const productId = ctx.params.productId!;
-  // Import dynamically to avoid "use server" directive issues
-  const { getCartQuantity } = await import("./actions.jsx");
-  const quantity = await getCartQuantity(productId);
+  const quantity = getCartQuantitySync(productId);
   return { productId, quantity };
 });
 
@@ -722,6 +721,15 @@ export const ParallelRevalLoader = createLoader(async () => {
   return { count: Date.now() };
 });
 
+// isAction() e2e probe: a module-level run counter so the test can tell whether
+// the loader re-ran. Gated by revalidate(({ isAction }) => isAction(target)).
+let isActionProbeRuns = 0;
+export const IsActionProbeLoader = createLoader(async () => {
+  "use server";
+  isActionProbeRuns += 1;
+  return { runs: isActionProbeRuns };
+});
+
 // ============================================================================
 // Action ctx.set → loader ctx.get test
 // Reads context variables set by an action to verify loaders see them
@@ -734,3 +742,117 @@ export const ActionCtxSetLoader = createLoader(async (ctx) => {
   const typedValue = ctx.get(ActionCtxTypedVar) ?? null;
   return { stringValue, typedValue };
 });
+
+// ============================================================================
+// Shared refetch loader
+// Counter-based loader for the shared-refetch regression test. Multiple
+// components on the same page read this loader; one of them calls load()
+// and the test asserts that ALL reading sites pick up the new count.
+// ============================================================================
+
+let sharedRefetchCount = 0;
+
+export const SharedRefetchLoader = createLoader(
+  async () => {
+    sharedRefetchCount++;
+    return { count: sharedRefetchCount };
+  },
+  true, // fetchable — required so client components can call load()
+);
+
+// Param-aware variant for the params-stay-local regression. Two components
+// call load({ params: { tag } }) with different tags; each component must
+// render its own tag, never overwriting the other through the shared store.
+let sharedRefetchParamCount = 0;
+
+export const SharedRefetchParamLoader = createLoader(async (ctx) => {
+  sharedRefetchParamCount++;
+  const tag = ctx.params.tag ?? "default";
+  return { tag, count: sharedRefetchParamCount };
+}, true);
+
+// Failing loader for the error-throw-scope guard. Registered on the
+// route so contextData is populated (required for the load() refetch
+// to go through the shared store post-fix). The first call (route SSR)
+// succeeds; subsequent calls — i.e. client refetches — throw. A
+// per-loader counter avoids cross-test interference in production
+// where the test-app preview server is shared.
+let sharedRefetchErrorCount = 0;
+
+export const SharedRefetchErrorLoader = createLoader(async () => {
+  sharedRefetchErrorCount++;
+  if (sharedRefetchErrorCount === 1) {
+    return { ok: true } as const;
+  }
+  throw new Error("shared-refetch-error: refetch failed by design");
+}, true);
+
+// Mixed-throwOnError variant: same SSR-success / refetch-fail behavior,
+// own counter so the two error-scenario tests don't share fail-state.
+let sharedRefetchErrorMixedCount = 0;
+
+export const SharedRefetchErrorMixedLoader = createLoader(async () => {
+  sharedRefetchErrorMixedCount++;
+  if (sharedRefetchErrorMixedCount === 1) {
+    return { ok: true } as const;
+  }
+  throw new Error("shared-refetch-error-mixed: refetch failed by design");
+}, true);
+
+// ============================================================================
+// Client refresh key (useLoader/useFetchLoader { key }) fixtures.
+// ============================================================================
+
+// Unregistered fetchable counter. Not attached to any route via loader(), so
+// reads via useFetchLoader have no route context — they share only when given
+// an explicit client refresh key. Counter is module-global; tests assert
+// relative behavior (group converges, distinct keys stay apart) rather than
+// exact counts, so a shared production preview server can't cause flakes.
+let keyRefreshCount = 0;
+
+export const KeyRefreshLoader = createLoader(async () => {
+  keyRefreshCount++;
+  return { count: keyRefreshCount };
+}, true);
+
+// Unregistered fetchable that always fails on load — for the keyed
+// throwOnError originator-scoping test. No SSR seed (unregistered), so the
+// first client load() is the failing call.
+export const KeyRefreshErrorLoader = createLoader(async () => {
+  throw new Error("key-refresh-error: load failed by design");
+}, true);
+
+// Registered fetchable counter for the registered-loader + key test. Seeded
+// into route context on SSR; keyed readers share a refetch while a no-key
+// reader stays on the seeded value.
+let keyRefreshRegisteredCount = 0;
+
+export const KeyRefreshRegisteredLoader = createLoader(async () => {
+  keyRefreshRegisteredCount++;
+  return { count: keyRefreshRegisteredCount };
+}, true);
+
+// Two distinct unregistered fetchable counters for the cross-loader refresh
+// group test (useRefreshLoaders). Both are tagged with the same refreshGroup so
+// one refreshAccount() call re-runs both. Separate counters prove both members
+// actually refetched (each value advances independently).
+let keyRefreshGroupACount = 0;
+let keyRefreshGroupBCount = 0;
+
+export const KeyRefreshGroupLoaderA = createLoader(async () => {
+  keyRefreshGroupACount++;
+  return { count: keyRefreshGroupACount };
+}, true);
+
+export const KeyRefreshGroupLoaderB = createLoader(async () => {
+  keyRefreshGroupBCount++;
+  return { count: keyRefreshGroupBCount };
+}, true);
+
+// Param/body echo for the widened-key semantics tests: a keyed parameterized
+// GET shares within the key, while a keyed mutation (POST/body) stays local.
+// Reads the tag from the JSON body (mutations) or from params (GET).
+export const KeyRefreshParamLoader = createLoader(async (ctx) => {
+  const bodyTag = (ctx.body as { tag?: string } | undefined)?.tag;
+  return { tag: bodyTag ?? ctx.params.tag ?? "—" };
+}, true);

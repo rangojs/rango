@@ -59,7 +59,7 @@ export function extractHandlerExportsFromChunk(
       if (detectPassthrough) {
         const eFnName = escapeRegExp(fnName);
         const callStartRe = new RegExp(
-          `const\\s+${eName}\\s*=\\s*${eFnName}\\s*(?:<[^>]*>)?\\s*\\(`,
+          `(?:const|let|var)\\s+${eName}\\s*=\\s*${eFnName}\\s*(?:<[^>]*>)?\\s*\\(`,
         );
         const callStart = callStartRe.exec(chunkCode);
         if (callStart) {
@@ -98,8 +98,10 @@ export function evictHandlerCode(
     if (passthrough) continue;
 
     const eName = escapeRegExp(name);
+    // Match const/let/var: Rolldown (Vite 8) emits top-level bindings in the
+    // non-minified RSC bundle as `var`, whereas Rollup used `const`.
     const callStartRe = new RegExp(
-      `const\\s+${eName}\\s*=\\s*${eFnName}\\s*(?:<[^>]*>)?\\s*\\(`,
+      `(?:const|let|var)\\s+${eName}\\s*=\\s*${eFnName}\\s*(?:<[^>]*>)?\\s*\\(`,
     );
     const startMatch = callStartRe.exec(modified);
     if (!startMatch) continue;

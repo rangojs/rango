@@ -11,7 +11,7 @@
 import type { UrlPatterns } from "../urls.js";
 import type { AllUseItems } from "../route-types.js";
 import { extractStaticPrefix } from "../router/pattern-matching.js";
-import { RSCRouterContext, runWithPrefixes } from "../server/context.js";
+import { RangoContext, runWithPrefixes } from "../server/context.js";
 import type { EntryData, TrackedInclude } from "../server/context.js";
 import type { TrailingSlashMode } from "../types.js";
 import { createRouteHelpers } from "../route-definition.js";
@@ -57,6 +57,26 @@ export interface GeneratedManifest {
  * Build prefix tree node by running the patterns with proper context.
  * Uses a visited set to detect circular includes and prevent infinite recursion.
  */
+// Merge tracked nested includes into `target`. Multiple includes can share a
+// fullPrefix (e.g. include("/", a), include("/", b)) — concat their routes and
+// Object.assign children rather than overwrite.
+function mergeIncludeNodes(
+  target: Record<string, PrefixTreeNode>,
+  includes: TrackedInclude[],
+  buildChild: (include: TrackedInclude) => PrefixTreeNode,
+): void {
+  for (const include of includes) {
+    const node = buildChild(include);
+    const existing = target[include.fullPrefix];
+    if (existing) {
+      existing.routes.push(...node.routes);
+      Object.assign(existing.children, node.children);
+    } else {
+      target[include.fullPrefix] = node;
+    }
+  }
+}
+
 function buildPrefixTreeNode(
   urlPrefix: string,
   namePrefix: string | undefined,
@@ -93,7 +113,7 @@ function buildPrefixTreeNode(
   const searchSchemasMap = new Map<string, Record<string, string>>();
   const trackedIncludes: TrackedInclude[] = [];
 
-  RSCRouterContext.run(
+  RangoContext.run(
     {
       manifest,
       patterns: patternsMap,
@@ -166,13 +186,9 @@ function buildPrefixTreeNode(
     }
   }
 
-  // Build children from tracked nested includes.
-  // Multiple includes can share the same fullPrefix (e.g., include("/", patternsA),
-  // include("/", patternsB)). Merge their routes instead of overwriting.
   const children: Record<string, PrefixTreeNode> = {};
-
-  for (const include of trackedIncludes) {
-    const childNode = buildPrefixTreeNode(
+  mergeIncludeNodes(children, trackedIncludes, (include) =>
+    buildPrefixTreeNode(
       include.fullPrefix,
       include.namePrefix,
       include.patterns as UrlPatterns<any>,
@@ -186,16 +202,8 @@ function buildPrefixTreeNode(
       passthroughRoutes,
       responseTypeRoutes,
       routeSearchSchemas,
-    );
-
-    const existing = children[include.fullPrefix];
-    if (existing) {
-      existing.routes.push(...childNode.routes);
-      Object.assign(existing.children, childNode.children);
-    } else {
-      children[include.fullPrefix] = childNode;
-    }
-  }
+    ),
+  );
 
   // Remove from visited so sibling branches can reuse the same patterns
   // without false circular-include detection. Only ancestors in the current
@@ -296,7 +304,7 @@ export function generateManifestFull<TEnv>(
   const searchSchemasMap = new Map<string, Record<string, string>>();
   const trackedIncludes: TrackedInclude[] = [];
 
-  RSCRouterContext.run(
+  RangoContext.run(
     {
       manifest,
       patterns: patternsMap,
@@ -356,12 +364,10 @@ export function generateManifestFull<TEnv>(
     }
   }
 
-  // Build prefix tree from tracked includes (shared visited set for cycle detection).
-  // Multiple includes can share the same fullPrefix (e.g., include("/", patternsA),
-  // include("/", patternsB)). Merge their routes instead of overwriting.
+  // Shared visited set for cycle detection across all root-level includes.
   const visited = new Set<unknown>();
-  for (const include of trackedIncludes) {
-    const node = buildPrefixTreeNode(
+  mergeIncludeNodes(prefixTree, trackedIncludes, (include) =>
+    buildPrefixTreeNode(
       include.fullPrefix,
       include.namePrefix,
       include.patterns as UrlPatterns<any>,
@@ -375,16 +381,8 @@ export function generateManifestFull<TEnv>(
       passthroughRoutes,
       responseTypeRoutes,
       routeSearchSchemas,
-    );
-
-    const existing = prefixTree[include.fullPrefix];
-    if (existing) {
-      existing.routes.push(...node.routes);
-      Object.assign(existing.children, node.children);
-    } else {
-      prefixTree[include.fullPrefix] = node;
-    }
-  }
+    ),
+  );
 
   return {
     prefixTree,

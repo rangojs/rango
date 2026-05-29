@@ -232,7 +232,6 @@ describe("segment-resolution parallel loading", () => {
       context.url,
       context.url,
       "/blog",
-      new Map(),
       false,
       { trackHandler: (p: any) => p } as any,
     );
@@ -414,7 +413,6 @@ describe("segment-resolution parallel loading", () => {
       context.url,
       context.url,
       "/shop",
-      new Map(),
       false,
       {
         wrapLoaderPromise: vi.fn((promise: Promise<any>) => promise),

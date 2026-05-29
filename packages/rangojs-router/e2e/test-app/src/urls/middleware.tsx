@@ -99,8 +99,11 @@ export const middlewarePatterns = urls(({ path, middleware }) => [
     () => [
       // Route-level middleware that reads ctx.params
       middleware(async (ctx, next) => {
-        // ctx.params should be typed with routeId from the route definition
-        const routeId = ctx.params.routeId;
+        // The matched route pattern guarantees `:routeId` is present, but the
+        // generic middleware param shape is `Record<string, string | undefined>`
+        // (matching the runtime contract for optional segments). Coalesce so
+        // the downstream API consumers receive a definite string.
+        const routeId = ctx.params.routeId ?? "";
         ctx.set("middlewareRouteId", routeId);
         ctx.set("paramsAvailableInMiddleware", routeId ? "yes" : "no");
         await next();

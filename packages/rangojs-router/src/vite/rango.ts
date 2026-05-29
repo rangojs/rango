@@ -12,11 +12,13 @@ import { VIRTUAL_IDS } from "./plugins/virtual-entries.js";
 import {
   getExcludeDeps,
   getPackageAliases,
+  getPublishedPackageName,
+  getVendorAliases,
 } from "./utils/package-resolution.js";
 import { findRouterFiles } from "../build/generate-route-types.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
 import {
-  sharedEsbuildOptions,
+  sharedRolldownOptions,
   createVirtualEntriesPlugin,
   onwarn,
   getManualChunks,
@@ -27,6 +29,9 @@ import { createVersionInjectorPlugin } from "./plugins/version-injector.js";
 import { createCjsToEsmPlugin } from "./plugins/cjs-to-esm.js";
 import { createRouterDiscoveryPlugin } from "./router-discovery.js";
 import { performanceTracksPlugin } from "./plugins/performance-tracks.js";
+import { createRangoDebugger, NS } from "./debug.js";
+
+const debugConfig = createRangoDebugger(NS.config);
 
 /**
  * Vite plugin for @rangojs/router.
@@ -53,24 +58,40 @@ import { performanceTracksPlugin } from "./plugins/performance-tracks.js";
  * ```
  */
 export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
+  const rangoStart = performance.now();
   const resolvedOptions: RangoOptions = options ?? { preset: "node" };
   const preset = resolvedOptions.preset ?? "node";
   const showBanner = resolvedOptions.banner ?? true;
+  debugConfig?.("rango(%s) setup start", preset);
 
   const plugins: PluginOption[] = [];
 
-  // Get package resolution info (workspace vs npm install)
-  const rangoAliases = getPackageAliases();
+  // Get package resolution info (workspace vs npm install).
+  // Vendor aliases redirect the bare plugin-rsc vendor specs (which plugin-rsc
+  // itself injects into optimizeDeps.include) to absolute paths resolved from
+  // this package — so strict-pnpm consumers don't hit "Failed to resolve
+  // dependency" warnings when those deps aren't hoisted to their app root.
+  const rangoAliases = { ...getPackageAliases(), ...getVendorAliases() };
   const excludeDeps = [
     ...getExcludeDeps(),
-    // The public browser entry re-exports the RSDW browser client.
-    // Excluding both keeps Vite from freezing the unpatched bundle into
-    // .vite/deps before our source transforms run.
+    // plugin-rsc itself injects these into the client env's
+    // optimizeDeps.include, which overrides exclude for the dep's own
+    // pre-bundle entry. What exclude still controls is how *other*
+    // pre-bundled deps treat imports of these specs (external vs inlined)
+    // via esbuildCjsExternalPlugin. The cjs-to-esm transform in
+    // plugins/cjs-to-esm.ts is the fallback for strict-pnpm consumers,
+    // where client.browser's bare include fails to resolve and Vite ends up
+    // serving the raw CJS file at dev-serve time.
     "@vitejs/plugin-rsc/browser",
-    // Keep the browser RSDW client out of Vite's dep optimizer so our
-    // cjs-to-esm transform can patch the real file.
     "@vitejs/plugin-rsc/vendor/react-server-dom/client.browser",
   ];
+
+  // Vite supports a nested `A > B` syntax in optimizeDeps.include that resolves
+  // B from A's location. We anchor transitive deps (rsc-html-stream,
+  // @vitejs/plugin-rsc/vendor/*) to @rangojs/router so pnpm consumers — where
+  // these aren't visible at the app root — can still pre-bundle them.
+  const pkg = getPublishedPackageName();
+  const nested = (spec: string) => `${pkg} > ${spec}`;
 
   // Mutable ref for router path (node preset only).
   // Set immediately when user-specified, or populated by the auto-discover
@@ -106,10 +127,18 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
           // This ensures the same Context instance is used by both browser entry and RSC proxy modules
           optimizeDeps: {
             exclude: excludeDeps,
-            esbuildOptions: sharedEsbuildOptions,
+            rolldownOptions: sharedRolldownOptions,
           },
           resolve: {
             alias: rangoAliases,
+            // Force a single React/React-DOM copy across all three RSC
+            // environments. RSC requires exactly one react/react-dom instance
+            // per environment runtime; consumer install topologies (pnpm
+            // strict layout, experimental React pins, third-party "use client"
+            // packages) can otherwise resolve duplicate copies, causing
+            // "Invalid hook call" / lost context. Child environments inherit
+            // this root dedupe, and Vite merges it with any consumer dedupe.
+            dedupe: ["react", "react-dom"],
           },
           build: {
             rollupOptions: { onwarn },
@@ -126,19 +155,15 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
               // Pre-bundle rsc-html-stream to prevent discovery during first request
               // Exclude rsc-router modules to ensure same Context instance
               optimizeDeps: {
-                include: ["rsc-html-stream/client"],
+                include: [nested("rsc-html-stream/client")],
                 exclude: excludeDeps,
-                esbuildOptions: sharedEsbuildOptions,
+                rolldownOptions: sharedRolldownOptions,
               },
             },
             ssr: {
               // Build SSR inside RSC directory so wrangler can deploy self-contained dist/rsc
               build: {
                 outDir: "./dist/rsc/ssr",
-              },
-              resolve: {
-                // Ensure single React instance in SSR child environment
-                dedupe: ["react", "react-dom"],
               },
               // Pre-bundle SSR entry and React for proper module linking with childEnvironments
               // All deps must be listed to avoid late discovery triggering ERR_OUTDATED_OPTIMIZED_DEP
@@ -151,11 +176,13 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   "react-dom/static.edge",
                   "react/jsx-runtime",
                   "react/jsx-dev-runtime",
-                  "rsc-html-stream/server",
-                  "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
+                  nested("rsc-html-stream/server"),
+                  nested(
+                    "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
+                  ),
                 ],
                 exclude: excludeDeps,
-                esbuildOptions: sharedEsbuildOptions,
+                rolldownOptions: sharedRolldownOptions,
               },
             },
             rsc: {
@@ -167,10 +194,12 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   "react",
                   "react/jsx-runtime",
                   "react/jsx-dev-runtime",
-                  "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
+                  nested(
+                    "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
+                  ),
                 ],
                 exclude: excludeDeps,
-                esbuildOptions: sharedEsbuildOptions,
+                rolldownOptions: sharedRolldownOptions,
               },
             },
           },
@@ -231,7 +260,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                 "  - " + (f.startsWith(root) ? f.slice(root.length + 1) : f),
             )
             .join("\n");
-          throw new Error(`[rsc-router] Multiple routers found:\n${list}`);
+          throw new Error(`[rango] Multiple routers found:\n${list}`);
         }
         // 0 found: routerRef.path stays undefined, warn at startup via discovery plugin
       },
@@ -257,13 +286,21 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
         return {
           optimizeDeps: {
             exclude: excludeDeps,
-            esbuildOptions: sharedEsbuildOptions,
+            rolldownOptions: sharedRolldownOptions,
           },
           build: {
             rollupOptions: { onwarn },
           },
           resolve: {
             alias: rangoAliases,
+            // Force a single React/React-DOM copy across all three RSC
+            // environments. RSC requires exactly one react/react-dom instance
+            // per environment runtime; consumer install topologies (pnpm
+            // strict layout, experimental React pins, third-party "use client"
+            // packages) can otherwise resolve duplicate copies, causing
+            // "Invalid hook call" / lost context. Child environments inherit
+            // this root dedupe, and Vite merges it with any consumer dedupe.
+            dedupe: ["react", "react-dom"],
           },
           environments: {
             client: {
@@ -280,10 +317,10 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   "react-dom",
                   "react/jsx-runtime",
                   "react/jsx-dev-runtime",
-                  "rsc-html-stream/client",
+                  nested("rsc-html-stream/client"),
                 ],
                 exclude: excludeDeps,
-                esbuildOptions: sharedEsbuildOptions,
+                rolldownOptions: sharedRolldownOptions,
                 entries: [VIRTUAL_IDS.browser],
               },
             },
@@ -297,10 +334,12 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   "react-dom/static.edge",
                   "react/jsx-runtime",
                   "react/jsx-dev-runtime",
-                  "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
+                  nested(
+                    "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
+                  ),
                 ],
                 exclude: excludeDeps,
-                esbuildOptions: sharedEsbuildOptions,
+                rolldownOptions: sharedRolldownOptions,
               },
             },
             rsc: {
@@ -310,9 +349,11 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   "react",
                   "react/jsx-runtime",
                   "react/jsx-dev-runtime",
-                  "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
+                  nested(
+                    "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
+                  ),
                 ],
-                esbuildOptions: sharedEsbuildOptions,
+                rolldownOptions: sharedRolldownOptions,
               },
             },
           },
@@ -337,7 +378,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
         if (rscMinimalCount > 1 && !hasWarnedDuplicate) {
           hasWarnedDuplicate = true;
           console.warn(
-            "[rsc-router] Duplicate @vitejs/plugin-rsc detected. " +
+            "[rango] Duplicate @vitejs/plugin-rsc detected. " +
               "Remove rsc() from your vite config — rango() includes it automatically.",
           );
         }
@@ -458,5 +499,11 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
     }),
   );
 
+  debugConfig?.(
+    "rango(%s) setup done: %d plugin(s) (%sms)",
+    preset,
+    plugins.length,
+    (performance.now() - rangoStart).toFixed(1),
+  );
   return plugins;
 }

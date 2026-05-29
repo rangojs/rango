@@ -135,8 +135,8 @@ export interface NegotiationResult {
   manifestEntry: EntryData;
   /** Route middleware for the winning variant */
   routeMiddleware: CollectedMiddleware[];
-  /** Always true — negotiation occurred */
-  negotiated: true;
+  /** True when negotiation selected a variant; false for a plain response route. */
+  negotiated: boolean;
 }
 
 /**
@@ -155,6 +155,19 @@ export async function negotiateRoute(
 ): Promise<NegotiationResult | null> {
   const { matched, manifestEntry, routeMiddleware, responseType } = snapshot;
   if (!matched.negotiateVariants || matched.negotiateVariants.length === 0) {
+    // No variants: a plain response route still yields a result (negotiated:false)
+    // so callers don't re-derive it; RSC routes (no responseType/handler) -> null.
+    const handler =
+      manifestEntry.type === "route" ? manifestEntry.handler : undefined;
+    if (responseType && handler) {
+      return {
+        responseType,
+        handler: handler as Function,
+        manifestEntry,
+        routeMiddleware,
+        negotiated: false,
+      };
+    }
     return null;
   }
 

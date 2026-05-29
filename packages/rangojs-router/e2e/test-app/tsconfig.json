@@ -17,7 +17,7 @@
     "noUncheckedSideEffectImports": true,
     "paths": {
       "@/*": ["./src/*"],
-      "fake-context-lib": ["./__test_packages__/fake-context-lib/index.d.ts"]
+      "@native/*": ["./src/native-paths/*"]
     }
   },
   "include": ["src"]

@@ -10,6 +10,7 @@ Named-route RSC router with structural composability and type-safe partial rende
 - **Structural composability** — Attach routes, loaders, middleware, handles, caching, prerendering, and static generation without hiding the route tree
 - **Composable URL patterns** — Django-style `urls()` DSL with `path`, `layout`, `include`
 - **Data loaders** — `createLoader()` with automatic streaming and Suspense integration
+- **Server actions** — `"use server"` mutations with `useActionState`, `useOptimistic`, and per-segment + per-loader `revalidate()` rules
 - **Live data layer** — Pre-render or cache the UI shell while loaders stay live by default at request time
 - **Layouts & nesting** — Nested layouts with `<Outlet />` and parallel routes
 - **Segment-level caching** — `cache()` DSL with TTL/SWR and pluggable cache stores
@@ -161,12 +162,17 @@ const urlpatterns = urls(({ path }) => [
 ]);
 ```
 
-Use `reverse()` as the default way to link to routes:
+Use `ctx.reverse()` from handler context as the default way to link to routes from server code:
 
 ```tsx
-router.reverse("product", { slug: "widget" }); // "/product/widget"
-router.reverse("search", undefined, { q: "rsc" }); // "/search?q=rsc"
+const ProductPage: Handler<"product"> = (ctx) => {
+  const url = ctx.reverse("product", { slug: "widget" }); // "/product/widget"
+  const searchUrl = ctx.reverse("search", undefined, { q: "rsc" }); // "/search?q=rsc"
+  return <Link to={url}>Widget</Link>;
+};
 ```
+
+`router.reverse()` (exported from the router module) is the same function without a handler context, useful in scripts or tests. In request code, prefer `ctx.reverse()` — it auto-fills mount params from the current match.
 
 ### Composable URL Modules
 
@@ -477,41 +483,130 @@ const urlpatterns = urls(({ path, loader }) => [
 ]);
 ```
 
-## Navigation & Links
+## Server Actions
 
-### Named Routes with `reverse()` (Server Components)
-
-In server components, use `reverse()` to generate URLs by route name:
+Server actions are React's RSC mutation primitive. Define them with the
+`"use server"` directive — Rango uses standard React 19 hooks
+(`useActionState`, `useFormStatus`, `useOptimistic`) with no framework wrapper.
 
 ```tsx
-import { Link } from "@rangojs/router/client";
-import { reverse } from "./router";
+// app/actions/cart.ts
+"use server";
 
-function BlogIndex() {
+import { getRequestContext } from "@rangojs/router";
+
+export async function addToCart(productId: string): Promise<void> {
+  const ctx = getRequestContext();
+  const userId = ctx.get("user").id;
+  await db.cart.insert({ userId, productId });
+}
+```
+
+```tsx
+// Client form with progressive enhancement + pending state
+"use client";
+import { useActionState } from "react";
+import { saveProfile } from "../actions/profile";
+
+export function ProfileForm() {
+  const [state, action, pending] = useActionState(saveProfile, null);
   return (
-    <nav>
-      <Link to={reverse("home")}>Home</Link>
-      <Link to={reverse("blogPost", { slug: "my-post" })}>My Post</Link>
-      <Link to={reverse("about")}>About</Link>
-    </nav>
+    <form action={action}>
+      <input name="name" defaultValue={state?.values?.name} />
+      {state?.errors?.name && <p role="alert">{state.errors.name}</p>}
+      <button disabled={pending}>{pending ? "Saving…" : "Save"}</button>
+    </form>
   );
 }
 ```
 
-`reverse()` is type-safe — route names and required params are checked at compile time. Included routes use dotted names: `reverse("api.health")`.
-
-Handlers also have `ctx.reverse()` directly on the context:
+After an action runs, matched route segments (path/layout/parallel/intercept)
+and loaders can re-render/re-resolve so the UI reflects the new state.
+Attach a `revalidate(({ actionId }) => ...)` rule on any segment or loader
+that owns data the action touched:
 
 ```tsx
+urls(({ path, loader, revalidate }) => [
+  // Segment-level: re-render the cart page handler after cart actions.
+  // Nest loaders that belong to this route inside the same path() so the
+  // segment owns its data dependencies.
+  path("/cart", CartPage, { name: "cart" }, () => [
+    revalidate(
+      ({ actionId }) => actionId?.startsWith("src/actions/cart.ts#") ?? false,
+    ),
+    loader(CartLoader, () => [
+      revalidate(
+        ({ actionId }) => actionId?.startsWith("src/actions/cart.ts#") ?? false,
+      ),
+    ]),
+  ]),
+]);
+```
+
+For the full guide — validation with Zod, error handling, file uploads,
+`useOptimistic`, redirects, and progressive enhancement — see the
+`/server-actions` skill.
+
+## Navigation & Links
+
+### Named Routes with `ctx.reverse()` (Server)
+
+In server components and handlers, use `ctx.reverse()` to generate URLs by route name. This is the default — it is typed, auto-fills mount params from the current match, and resolves both local (`.name`) and absolute (`name.sub`) names:
+
+```tsx
+import { Link } from "@rangojs/router/client";
+import type { Handler } from "@rangojs/router";
+
 const BlogPostPage: Handler<"blogPost"> = (ctx) => {
   const backUrl = ctx.reverse("blog");
   return <Link to={backUrl}>Back to blog</Link>;
 };
 ```
 
+`reverse()` is type-safe — route names and required params are checked at compile time. Included routes use dotted names: `ctx.reverse("api.health")`.
+
+For scripts, tests, or other code without a handler context, import the router-level `reverse`:
+
+```tsx
+import { reverse } from "./router";
+reverse("blogPost", { slug: "my-post" });
+```
+
+### Client Components
+
+**`reverse()` is server-only.** It depends on the route manifest and handler context — neither is available in the browser bundle. Client components receive URLs as props, loader data, or server-action return values:
+
+```tsx
+// server
+function BlogIndex(ctx: HandlerContext) {
+  return (
+    <Nav
+      home={ctx.reverse("home")}
+      post={ctx.reverse("blogPost", { slug: "my-post" })}
+    />
+  );
+}
+```
+
+```tsx
+"use client";
+import { Link } from "@rangojs/router/client";
+
+export function Nav({ home, post }: { home: string; post: string }) {
+  return (
+    <nav>
+      <Link to={home}>Home</Link>
+      <Link to={post}>My Post</Link>
+    </nav>
+  );
+}
+```
+
+For client-side navigation to static paths (no named-route lookup), use `href()` — see below. For URLs tied to named routes, you have two options: import the per-module generated `routes` map and use `useReverse(routes)` for in-module names (see [`/links` skill](./skills/links/SKILL.md)), or generate the URL on the server and pass the string in for cross-module URLs.
+
 ### `href()` for Path Validation (Client Components)
 
-In client components, use `href()` for compile-time path validation:
+In client components, use `href()` for compile-time path validation on static path strings:
 
 ```tsx
 "use client";
@@ -848,9 +943,9 @@ import { createHostRouter } from "@rangojs/router/host";
 
 const hostRouter = createHostRouter();
 
-hostRouter.host(["*.localhost"]).map(() => import("./apps/admin/handler.js"));
-hostRouter.host(["localhost"]).map(() => import("./apps/site/handler.js"));
-hostRouter.fallback().map(() => import("./apps/site/handler.js"));
+hostRouter.host(["*.localhost"]).lazy(() => import("./apps/admin/handler.js"));
+hostRouter.host(["localhost"]).lazy(() => import("./apps/site/handler.js"));
+hostRouter.fallback().lazy(() => import("./apps/site/handler.js"));
 
 export default {
   async fetch(request, env, ctx) {
@@ -859,7 +954,7 @@ export default {
 };
 ```
 
-Each sub-app has its own `createRouter()` and `urls()`. The host router lazily imports the matched app's handler. Patterns are matched in registration order — register more specific patterns (subdomains) before catch-alls.
+Use `.lazy(() => import("./sub-app"))` to mount a lazily-imported sub-app (a module whose `default` export is a handler or nested host router), and `.map((request) => Response)` for an inline request handler. Only `.lazy()` mounts are imported during build-time discovery; `.map(() => import(...))` is a type error. Each sub-app has its own `createRouter()` and `urls()`. Patterns are matched in registration order — register more specific patterns (subdomains) before catch-alls.
 
 ## Meta Tags
 
@@ -898,16 +993,16 @@ Auto-detects file type:
 
 ## Type Safety
 
-The Vite plugin automatically generates a `router.named-routes.gen.ts` file that globally registers route names, patterns, and search schemas via `RSCRouter.GeneratedRouteMap`. This powers server-side named-route typing such as `Handler<"name">`, `ctx.reverse()`, `getRequestContext().reverse()`, and `RouteParams<"name">` without any manual route registration. The gen file is updated on dev server startup, HMR, and production builds.
+The Vite plugin automatically generates a `router.named-routes.gen.ts` file that globally registers route names, patterns, and search schemas via `Rango.GeneratedRouteMap`. This powers server-side named-route typing such as `Handler<"name">`, `ctx.reverse()`, `getRequestContext().reverse()`, and `RouteParams<"name">` without any manual route registration. The gen file is updated on dev server startup, HMR, and production builds.
 
-Use the generated map by default. Augment `RSCRouter.RegisteredRoutes` only when you need the richer `typeof router.routeMap` shape globally, especially for response-aware and path-based utilities.
+Use the generated map by default. Augment `Rango.RegisteredRoutes` only when you need the richer `typeof router.routeMap` shape globally, especially for response-aware and path-based utilities.
 
 ```typescript
 // router.tsx
 const router = createRouter<AppBindings>({}).routes(urlpatterns);
 
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface Env extends AppEnv {}
     interface Vars extends AppVars {}
     interface RegisteredRoutes extends typeof router.routeMap {}
@@ -919,7 +1014,7 @@ Quick rule of thumb:
 
 - `GeneratedRouteMap` (auto-generated) — use for server-side named-route typing: `Handler<"name">`, `ctx.reverse()`, `Prerender<"name">`
 - `typeof router.routeMap` — use when you need route entries with response metadata
-- `RegisteredRoutes` (manual augmentation) — use to expose `typeof router.routeMap` globally for `href()`, `PathResponse`, `ValidPaths`, and other path/response-aware utilities
+- `RegisteredRoutes` (manual augmentation) — use to expose `typeof router.routeMap` globally for `href()`, `Rango.Path`, `Rango.PathResponse`, and other path/response-aware utilities
 
 For extracted reusable loaders or middleware, prefer global dotted names on
 `ctx.reverse()` by default. If you want type-safe local names for a specific

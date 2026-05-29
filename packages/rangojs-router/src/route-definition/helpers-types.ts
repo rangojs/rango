@@ -198,10 +198,10 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
       use?: () => UseItems<InterceptUseItem>,
     ): InterceptItem;
     // Global: unprefixed, params inferred from global route map
-    <K extends keyof RSCRouter.GeneratedRouteMap & string>(
+    <K extends keyof Rango.GeneratedRouteMap & string>(
       slotName: `@${string}`,
       routeName: K,
-      handler: ReactNode | Handler<K, RSCRouter.GeneratedRouteMap, TEnv>,
+      handler: ReactNode | Handler<K, Rango.GeneratedRouteMap, TEnv>,
       use?: () => UseItems<InterceptUseItem>,
     ): InterceptItem;
   };
@@ -250,8 +250,10 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * )
    *
    * // Revalidate after specific actions (actionId format: "path/to/file.ts#exportName")
+   * // Use `|| undefined` (defer), not `?? false` (hard short-circuit), so the
+   * // chain and the segment default still apply when there is no match.
    * revalidate(({ actionId }) =>
-   *   actionId?.includes("Cart") ?? false
+   *   actionId?.includes("Cart") || undefined
    * )
    *
    * // Soft decision (suggest but allow override)
@@ -259,7 +261,12 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   ({ defaultShouldRevalidate: true })
    * )
    * ```
-   * @param fn - Function that returns boolean (hard) or { defaultShouldRevalidate } (soft)
+   * @param fn - Function returning either:
+   *   - `boolean` (hard decision — short-circuits the chain),
+   *   - `{ defaultShouldRevalidate: boolean }` (soft — updates the suggestion
+   *     for downstream revalidators),
+   *   - or nothing / `null` / `undefined` (defer — leaves the suggestion
+   *     unchanged and continues to the next revalidator).
    */
   revalidate: (fn: ShouldRevalidateFn<any, TEnv>) => RevalidateItem;
   /**
@@ -269,7 +276,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *
    * // With loader-specific revalidation (match by file or export name)
    * loader(CartLoader, () => [
-   *   revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
+   *   revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
    * ])
    *
    * // Consume in client components with useLoader()

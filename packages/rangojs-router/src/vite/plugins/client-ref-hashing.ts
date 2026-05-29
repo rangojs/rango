@@ -1,6 +1,9 @@
 import type { Plugin } from "vite";
 import { relative } from "node:path";
 import { createHash } from "node:crypto";
+import { createRangoDebugger, createCounter, NS } from "../debug.js";
+
+const debug = createRangoDebugger(NS.transform);
 
 // Dev-mode client-reference key prefixes emitted by @vitejs/plugin-rsc
 const CLIENT_PKG_PROXY_PREFIX =
@@ -89,6 +92,7 @@ export function transformClientRefs(
  * regex replacement of Flight payloads.
  */
 export function hashClientRefs(projectRoot: string): Plugin {
+  const counter = createCounter(debug, "hash-client-refs");
   return {
     name: "@rangojs/router:hash-client-refs",
     // Run after the RSC plugin's transform (default enforce is normal)
@@ -96,10 +100,18 @@ export function hashClientRefs(projectRoot: string): Plugin {
     applyToEnvironment(env) {
       return env.name === "rsc";
     },
-    transform(code, _id) {
-      const result = transformClientRefs(code, projectRoot);
-      if (result === null) return;
-      return { code: result, map: null };
+    buildEnd() {
+      counter?.flush();
+    },
+    transform(code, id) {
+      const start = counter ? performance.now() : 0;
+      try {
+        const result = transformClientRefs(code, projectRoot);
+        if (result === null) return;
+        return { code: result, map: null };
+      } finally {
+        counter?.record(id, performance.now() - start);
+      }
     },
   };
 }

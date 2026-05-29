@@ -8,6 +8,7 @@ import {
   createResponseWithMergedHeaders,
   carryOverRedirectHeaders,
 } from "./helpers.js";
+import { isRedirectResponse } from "../response-utils.js";
 
 // W3 -----------------------------------------------------------------------
 
@@ -18,16 +19,14 @@ import {
  */
 export function extractRedirectResponse(value: unknown): Response | null {
   if (!(value instanceof Response)) return null;
-  const location = value.headers.get("Location");
-  if (value.status >= 300 && value.status < 400 && location) {
-    const redirect = createResponseWithMergedHeaders(null, {
-      status: value.status,
-      headers: { Location: location },
-    });
-    carryOverRedirectHeaders(value, redirect);
-    return redirect;
-  }
-  return null;
+  if (!isRedirectResponse(value)) return null;
+  const location = value.headers.get("Location")!;
+  const redirect = createResponseWithMergedHeaders(null, {
+    status: value.status,
+    headers: { Location: location },
+  });
+  carryOverRedirectHeaders(value, redirect);
+  return redirect;
 }
 
 /**

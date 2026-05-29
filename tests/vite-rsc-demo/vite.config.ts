@@ -13,7 +13,7 @@ export default defineConfig({
     }),
     devtoolsJson(),
   ],
-  esbuild: {
+  oxc: {
     target: "es2022",
   },
   build: {

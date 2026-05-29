@@ -32,18 +32,22 @@ export function makeStubId(
 }
 
 /**
- * Generate an 8-char hex hash for an inline static handler call site.
- * Uses file path and line number (plus optional index for same-line collisions).
+ * Generate an 8-char hex hash for an inline handler call site.
+ *
+ * Keyed on the source-order INDEX of the call (the Nth inline `fnName(...)` in
+ * the file), NOT its line number. Line numbers shift between the prerender
+ * build context and the production build context (preceding transforms differ,
+ * e.g. plugin-react boilerplate), which would desync the prerender manifest key
+ * from the runtime handler id and break prerender/static freezing. The
+ * source-order index is invariant to line shifts; `fnName` keeps Static and
+ * Prerender inline ids from colliding at the same index.
  */
 export function hashInlineId(
   filePath: string,
-  lineNumber: number,
-  index?: number,
+  fnName: string,
+  index: number,
 ): string {
-  const input =
-    index !== undefined && index > 0
-      ? `${filePath}:${lineNumber}:${index}`
-      : `${filePath}:${lineNumber}`;
+  const input = `${filePath}:${fnName}:${index}`;
   return crypto.createHash("sha256").update(input).digest("hex").slice(0, 8);
 }
 

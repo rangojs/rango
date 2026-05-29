@@ -11,7 +11,7 @@
 import React from "react";
 import type { urls } from "../../urls.js";
 import {
-  RSCRouterContext,
+  RangoContext,
   getParallelEntries,
   getParallelSlotCount,
   runWithPrefixes,
@@ -56,7 +56,7 @@ export interface InterceptInfo {
 /**
  * Build a route tree from url patterns for inspection.
  *
- * Executes the urls() handler inside RSCRouterContext and extracts
+ * Executes the urls() handler inside RangoContext and extracts
  * the manifest, patterns, and route entries. Lazy includes are
  * eagerly evaluated so the full tree is available.
  *
@@ -111,7 +111,7 @@ export function buildRouteTree(
 
   let handlerResult: AllUseItems[] = [];
 
-  RSCRouterContext.run(
+  RangoContext.run(
     {
       manifest,
       patterns,
@@ -127,9 +127,11 @@ export function buildRouteTree(
     },
   );
 
-  // Eagerly evaluate lazy includes
-  const lazyIncludes = findLazyIncludes(handlerResult);
-  for (const lazy of lazyIncludes) {
+  // Eagerly evaluate lazy includes, including any nested lazy includes
+  // discovered while evaluating an outer include's handler.
+  const pending = findLazyIncludes(handlerResult);
+  while (pending.length > 0) {
+    const lazy = pending.shift()!;
     const lazyManifest = new Map<string, EntryData>();
     const lazyPatterns = new Map<string, string>();
     const lazyCounters: Record<string, number> = {};
@@ -139,7 +141,8 @@ export function buildRouteTree(
       }
     }
 
-    RSCRouterContext.run(
+    let lazyResult: AllUseItems[] = [];
+    RangoContext.run(
       {
         manifest: lazyManifest,
         patterns: lazyPatterns,
@@ -150,21 +153,29 @@ export function buildRouteTree(
         counters: lazyCounters,
         mountIndex,
         rootScoped: lazy.context.rootScoped,
+        includeScope: (lazy.context as any).includeScope,
       },
       () => {
         const fullPrefix = (lazy.context.urlPrefix || "") + lazy.prefix;
         if (fullPrefix || lazy.context.namePrefix) {
           runWithPrefixes(fullPrefix, lazy.context.namePrefix, () => {
-            (lazy.patterns as ReturnType<typeof urls>).handler();
+            lazyResult = (
+              lazy.patterns as ReturnType<typeof urls>
+            ).handler() as AllUseItems[];
           });
         } else {
-          (lazy.patterns as ReturnType<typeof urls>).handler();
+          lazyResult = (
+            lazy.patterns as ReturnType<typeof urls>
+          ).handler() as AllUseItems[];
         }
       },
     );
 
     for (const [k, v] of lazyManifest) manifest.set(k, v);
     for (const [k, v] of lazyPatterns) patterns.set(k, v);
+
+    // Discover nested lazy includes produced by this handler and queue them.
+    pending.push(...findLazyIncludes(lazyResult));
   }
 
   // Build route entries for findMatch
@@ -451,6 +462,7 @@ function findLazyIncludes(items: AllUseItems[]): Array<{
     parent: unknown;
     counters?: Record<string, number>;
     rootScoped?: boolean;
+    includeScope?: string;
   };
 }> {
   const result: Array<{
@@ -462,6 +474,7 @@ function findLazyIncludes(items: AllUseItems[]): Array<{
       parent: unknown;
       counters?: Record<string, number>;
       rootScoped?: boolean;
+      includeScope?: string;
     };
   }> = [];
 

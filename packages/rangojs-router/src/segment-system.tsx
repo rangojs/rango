@@ -3,7 +3,7 @@ import { createElement, type ReactNode, type ComponentType } from "react";
 import { OutletProvider } from "./client.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import type { ResolvedSegment, RootLayoutProps } from "./types.js";
-import { isLoaderDataResult } from "./types.js";
+import { decodeLoaderResults } from "./decode-loader-results.js";
 import { invariant } from "./errors.js";
 import {
   RouteContentWrapper,
@@ -11,6 +11,7 @@ import {
 } from "./route-content-wrapper.js";
 import { RootErrorBoundary } from "./root-error-boundary.js";
 import { getMemoizedContentPromise } from "./segment-content-promise.js";
+import { getMemoizedLoaderPromise } from "./segment-loader-promise.js";
 
 // ViewTransition is only available in React experimental.
 // Access via namespace import to avoid compile-time errors on stable React.
@@ -58,91 +59,6 @@ function restoreParallelLoaderMarkers(
   return nextSegments ?? segments;
 }
 
-function hasSameReferences(a: unknown[] | undefined, b: unknown[]): boolean {
-  if (!a || a.length !== b.length) {
-    return false;
-  }
-
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-/**
- * Memoize an aggregate Promise.all for a segment's owned loaders on the
- * segment itself. Reusing the same aggregate across renders — invalidated
- * only when an underlying loader.loaderData ref changes — keeps React's
- * use() in "known fulfilled" state and prevents a fresh Promise.all from
- * suspending (and briefly committing the Suspense fallback) on every
- * partial update that doesn't actually change loader data.
- */
-function memoizeLoaderPromise(
-  target: ResolvedSegment,
-  loaders: ResolvedSegment[],
-  sourcesKey: "layoutLoaderSources" | "parallelLoaderSources",
-): Promise<any[]> | any[] {
-  const sources = loaders.map((loader) => loader.loaderData);
-  if (
-    target.loaderDataPromise !== undefined &&
-    hasSameReferences(target[sourcesKey], sources)
-  ) {
-    return target.loaderDataPromise;
-  }
-  const promise: Promise<any[]> | any[] =
-    loaders.length > 0
-      ? Promise.all(
-          loaders.map((loader) =>
-            loader.loaderData instanceof Promise
-              ? loader.loaderData
-              : Promise.resolve(loader.loaderData),
-          ),
-        )
-      : Promise.resolve([]);
-  target.loaderDataPromise = promise;
-  target[sourcesKey] = sources;
-  return promise;
-}
-
-/**
- * Resolve loader data from raw results, unwrapping LoaderDataResult wrappers
- */
-function resolveLoaderData(
-  resolvedData: any[],
-  loaderIds: string[],
-): { loaderData: Record<string, any>; errorFallback: ReactNode } {
-  const loaderData: Record<string, any> = {};
-  let errorFallback: ReactNode = null;
-
-  for (let i = 0; i < loaderIds.length; i++) {
-    const id = loaderIds[i];
-    const result = resolvedData[i];
-
-    if (!isLoaderDataResult(result)) {
-      // Legacy format - direct data
-      loaderData[id] = result;
-      continue;
-    }
-
-    if (result.ok) {
-      loaderData[id] = result.data;
-      continue;
-    }
-
-    // Error case
-    if (result.fallback) {
-      errorFallback = result.fallback;
-    } else {
-      throw new Error(result.error.message);
-    }
-  }
-
-  return { loaderData, errorFallback };
-}
-
 /**
  * Options for renderSegments
  */
@@ -177,6 +93,47 @@ export interface RenderSegmentsOptions {
    * preventing the app shell from unmounting during errors (avoids FOUC).
    */
   rootLayout?: ComponentType<RootLayoutProps>;
+}
+
+function createViewTransitionBoundary(
+  transition: NonNullable<ResolvedSegment["transition"]>,
+  children: ReactNode,
+): ReactNode {
+  return createElement(ReactViewTransition, {
+    ...transition,
+    children,
+  });
+}
+
+function wrapDefaultOutletContent(
+  content: ReactNode,
+  transition: NonNullable<ResolvedSegment["transition"]>,
+): ReactNode {
+  if (!React.isValidElement(content)) {
+    return createViewTransitionBoundary(transition, content);
+  }
+
+  const props = content.props as any;
+
+  if (content.type === MountContextProvider) {
+    return React.cloneElement(content, {
+      children: wrapDefaultOutletContent(props.children, transition),
+    } as any);
+  }
+
+  if (content.type === OutletProvider && props.segment?.type === "layout") {
+    return React.cloneElement(content, {
+      content: wrapDefaultOutletContent(props.content, transition),
+    } as any);
+  }
+
+  if (content.type === LoaderBoundary && props.segment?.type === "layout") {
+    return React.cloneElement(content, {
+      outletContent: wrapDefaultOutletContent(props.outletContent, transition),
+    } as any);
+  }
+
+  return createViewTransitionBoundary(transition, content);
 }
 
 /**
@@ -310,7 +267,7 @@ export async function renderSegments(
       loading !== null && loading !== undefined && loading !== false
         ? createElement(RouteContentWrapper, {
             key: `suspense-loading-${id}`,
-            content: getMemoizedContentPromise(node.segment, resolvedComponent),
+            content: getMemoizedContentPromise(resolvedComponent),
             fallback: loading,
             segmentId: id,
           })
@@ -321,30 +278,38 @@ export async function renderSegments(
     // in transitions without adding custom animation classes. Named element-level
     // <ViewTransition> components inside (with name/share props) morph independently
     // from the parent's default cross-fade.
-    if (ReactViewTransition && node.segment.transition) {
-      nodeContent = createElement(ReactViewTransition, {
-        ...node.segment.transition,
-        children: nodeContent,
-      });
-    }
-
-    // Common props for OutletProvider
-    const outletContent: ReactNode =
+    //
+    // For layouts, wrap the outlet content (what `<Outlet />` renders) rather
+    // than the layout component itself. Parallel slots like `<ParallelOutlet
+    // name="@modal" />` read from a separate context channel and end up as
+    // siblings of the VT in the rendered tree, so modal mounts don't trigger a
+    // subtree update on the layout-level VT — which would otherwise make
+    // React's commit walker fire `document.startViewTransition` and apply
+    // view-transition-names to the underlying main subtree (cover/title/etc.).
+    let outletContent: ReactNode =
       node.segment.type === "layout" ? content : null;
+
+    const transition = node.segment.transition;
+
+    if (ReactViewTransition && transition) {
+      if (node.segment.type === "layout") {
+        outletContent = wrapDefaultOutletContent(outletContent, transition);
+      } else {
+        nodeContent = createViewTransitionBoundary(transition, nodeContent);
+      }
+    }
 
     // Prepare loader data if there are loaders
     const loaderIds = loaderEntries.map((loader) => loader.loaderId!);
-    const loaderDataPromise = memoizeLoaderPromise(
-      node.segment,
-      loaderEntries,
-      "layoutLoaderSources",
-    );
 
     // Use LoaderBoundary when loading is defined to maintain consistent tree structure
     // This ensures cached segments (which may not have loader segments) have the same
     // tree structure as fresh segments, preventing React remounts
     // If forceAwait or isAction is set, pre-resolve promises so LoaderBoundary won't suspend
     if (loading !== undefined && loading !== null) {
+      // Aggregate built here only — the loaderless and no-loading branches don't
+      // read it (the latter builds its own per-parallel promises).
+      const loaderDataPromise = getMemoizedLoaderPromise(loaderEntries);
       content = createElement(LoaderBoundary, {
         key: `loader-boundary-${key}`,
         loaderDataPromise:
@@ -388,7 +353,7 @@ export async function renderSegments(
             )
           : Promise.resolve([]);
       const resolvedData = await layoutLoaderDataPromise;
-      const { loaderData, errorFallback } = resolveLoaderData(
+      const { loaderData, errorFallback } = decodeLoaderResults(
         resolvedData,
         layoutLoaderIds,
       );
@@ -421,14 +386,11 @@ export async function renderSegments(
           }
 
           p.loaderIds = ownedLoaders.map((l) => l.loaderId!);
-          const aggregated = memoizeLoaderPromise(
-            p,
-            ownedLoaders,
-            "parallelLoaderSources",
-          );
-          if ((forceAwait || isAction) && aggregated instanceof Promise) {
-            p.loaderDataPromise = await aggregated;
-          }
+          const aggregated = getMemoizedLoaderPromise(ownedLoaders);
+          p.loaderDataPromise =
+            (forceAwait || isAction) && aggregated instanceof Promise
+              ? await aggregated
+              : aggregated;
         }
       }
 

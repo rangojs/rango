@@ -16,6 +16,9 @@ import {
   stageBuildAssetModule,
 } from "../utils/prerender-utils.js";
 import type { DiscoveryState } from "./state.js";
+import { createRangoDebugger, NS } from "../debug.js";
+
+const debug = createRangoDebugger(NS.prerender);
 
 /**
  * Expand prerender routes into concrete URLs and render them via the
@@ -29,6 +32,12 @@ export async function expandPrerenderRoutes(
   allManifests: Array<{ id: string; manifest: any }>,
 ): Promise<void> {
   if (!state.opts?.enableBuildPrerender || !state.isBuildMode) return;
+
+  const overallStart = debug ? performance.now() : 0;
+  debug?.(
+    "expandPrerenderRoutes: start (%d router manifest(s))",
+    allManifests.length,
+  );
 
   type PrerenderEntry = {
     urlPath: string;
@@ -72,7 +81,7 @@ export async function expandPrerenderRoutes(
       ? setInterval(() => {
           const elapsed = ((performance.now() - paramsStart) / 1000).toFixed(1);
           console.log(
-            `[rsc-router] Resolving prerender params... ${resolvedRoutes}/${totalDynamic} routes (${elapsed}s)`,
+            `[rango] Resolving prerender params... ${resolvedRoutes}/${totalDynamic} routes (${elapsed}s)`,
           );
         }, 5000)
       : undefined;
@@ -99,6 +108,7 @@ export async function expandPrerenderRoutes(
         } else {
           // Dynamic route: call getParams() to enumerate param combinations
           if (def?.getParams) {
+            const getParamsStart = debug ? performance.now() : 0;
             try {
               const buildVars: Record<string, any> = {};
               const buildEnv = state.resolvedBuildEnv;
@@ -112,12 +122,18 @@ export async function expandPrerenderRoutes(
                 get env() {
                   if (buildEnv !== undefined) return buildEnv;
                   throw new Error(
-                    "[rsc-router] ctx.env is not available during build-time getParams(). " +
+                    "[rango] ctx.env is not available during build-time getParams(). " +
                       "Configure buildEnv in your rango() plugin options to enable build-time env access.",
                   );
                 },
               };
               const paramsList = await def.getParams(getParamsCtx);
+              debug?.(
+                "getParams %s -> %d params (%sms)",
+                routeName,
+                paramsList.length,
+                (performance.now() - getParamsStart).toFixed(1),
+              );
               const concurrency = def.options?.concurrency ?? 1;
               const hasBuildVars =
                 Object.keys(buildVars).length > 0 ||
@@ -154,7 +170,7 @@ export async function expandPrerenderRoutes(
               // Skip in getParams() skips the entire route
               if (err.name === "Skip") {
                 console.log(
-                  `[rsc-router]   SKIP route "${routeName}" - ${err.message}`,
+                  `[rango]   SKIP route "${routeName}" - ${err.message}`,
                 );
                 notifyOnError(
                   registry,
@@ -168,14 +184,14 @@ export async function expandPrerenderRoutes(
               }
               // Regular error: fail the build
               console.error(
-                `[rsc-router] Failed to get params for prerender route "${routeName}": ${err.message}`,
+                `[rango] Failed to get params for prerender route "${routeName}": ${err.message}`,
               );
               notifyOnError(registry, err, "prerender", routeName);
               throw err;
             }
           } else {
             console.warn(
-              `[rsc-router] Dynamic prerender route "${routeName}" has no getParams(), skipping`,
+              `[rango] Dynamic prerender route "${routeName}" has no getParams(), skipping`,
             );
           }
         }
@@ -186,19 +202,30 @@ export async function expandPrerenderRoutes(
       clearInterval(progressInterval);
       const elapsed = ((performance.now() - paramsStart) / 1000).toFixed(1);
       console.log(
-        `[rsc-router] Resolved prerender params: ${resolvedRoutes}/${totalDynamic} routes (${elapsed}s)`,
+        `[rango] Resolved prerender params: ${resolvedRoutes}/${totalDynamic} routes (${elapsed}s)`,
       );
     }
   }
 
-  if (entries.length === 0) return;
+  if (entries.length === 0) {
+    debug?.(
+      "no prerender entries (done in %sms)",
+      (performance.now() - overallStart).toFixed(1),
+    );
+    return;
+  }
 
   // Determine the max concurrency for the log header
   const maxConcurrency = Math.max(...entries.map((e) => e.concurrency));
   const concurrencyNote =
     maxConcurrency > 1 ? ` (concurrency: ${maxConcurrency})` : "";
   console.log(
-    `[rsc-router] Pre-rendering ${entries.length} URL(s)${concurrencyNote}...`,
+    `[rango] Pre-rendering ${entries.length} URL(s)${concurrencyNote}...`,
+  );
+  debug?.(
+    "prerender loop: %d entries, max concurrency %d",
+    entries.length,
+    maxConcurrency,
   );
 
   const { hashParams } = await rscEnv.runner.import("@rangojs/router/build");
@@ -234,7 +261,7 @@ export async function expandPrerenderRoutes(
             if (result.passthrough) {
               const elapsed = (performance.now() - startUrl).toFixed(0);
               console.log(
-                `[rsc-router]   PASS ${entry.urlPath.padEnd(40)} (${elapsed}ms) - live fallback`,
+                `[rango]   PASS ${entry.urlPath.padEnd(40)} (${elapsed}ms) - live fallback`,
               );
               doneCount++;
               break;
@@ -268,7 +295,7 @@ export async function expandPrerenderRoutes(
             }
             const elapsed = (performance.now() - startUrl).toFixed(0);
             console.log(
-              `[rsc-router]   OK   ${entry.urlPath.padEnd(40)} (${elapsed}ms)`,
+              `[rango]   OK   ${entry.urlPath.padEnd(40)} (${elapsed}ms)`,
             );
             doneCount++;
             break;
@@ -276,7 +303,7 @@ export async function expandPrerenderRoutes(
             if (err.name === "Skip") {
               const elapsed = (performance.now() - startUrl).toFixed(0);
               console.log(
-                `[rsc-router]   SKIP ${entry.urlPath.padEnd(40)} (${elapsed}ms) - ${err.message}`,
+                `[rango]   SKIP ${entry.urlPath.padEnd(40)} (${elapsed}ms) - ${err.message}`,
               );
               skipCount++;
               notifyOnError(
@@ -292,7 +319,7 @@ export async function expandPrerenderRoutes(
             // Regular error: log, notify, and fail the build
             const elapsed = (performance.now() - startUrl).toFixed(0);
             console.error(
-              `[rsc-router]   FAIL ${entry.urlPath.padEnd(40)} (${elapsed}ms) - ${err.message}`,
+              `[rango]   FAIL ${entry.urlPath.padEnd(40)} (${elapsed}ms) - ${err.message}`,
             );
             notifyOnError(
               registry,
@@ -315,7 +342,14 @@ export async function expandPrerenderRoutes(
   const parts = [`${doneCount} done`];
   if (skipCount > 0) parts.push(`${skipCount} skipped`);
   console.log(
-    `[rsc-router] Pre-render complete: ${parts.join(", ")} (${totalElapsed}ms total)`,
+    `[rango] Pre-render complete: ${parts.join(", ")} (${totalElapsed}ms total)`,
+  );
+  debug?.(
+    "expandPrerenderRoutes done: %d done, %d skipped, %sms (overall %sms)",
+    doneCount,
+    skipCount,
+    totalElapsed,
+    (performance.now() - overallStart).toFixed(1),
   );
 }
 
@@ -337,6 +371,12 @@ export async function renderStaticHandlers(
   )
     return;
 
+  const overallStart = debug ? performance.now() : 0;
+  debug?.(
+    "renderStaticHandlers: start (%d static module(s))",
+    state.resolvedStaticModules.size,
+  );
+
   const manifestEntries: Record<string, string> = {};
   let staticDone = 0;
   let staticSkip = 0;
@@ -347,9 +387,7 @@ export async function renderStaticHandlers(
     totalStaticCount += exportNames.length;
   }
   const startStatic = performance.now();
-  console.log(
-    `[rsc-router] Rendering ${totalStaticCount} static handler(s)...`,
-  );
+  console.log(`[rango] Rendering ${totalStaticCount} static handler(s)...`);
 
   for (const [moduleId, exportNames] of state.resolvedStaticModules) {
     let mod: any;
@@ -357,7 +395,7 @@ export async function renderStaticHandlers(
       mod = await rscEnv!.runner.import(moduleId);
     } catch (err: any) {
       console.error(
-        `[rsc-router] Failed to import static module ${moduleId}: ${err.message}`,
+        `[rango] Failed to import static module ${moduleId}: ${err.message}`,
       );
       notifyOnError(registry, err, "static");
       throw err;
@@ -392,9 +430,7 @@ export async function renderStaticHandlers(
               exportValue,
             );
             const elapsed = (performance.now() - startHandler).toFixed(0);
-            console.log(
-              `[rsc-router]   OK   ${name.padEnd(40)} (${elapsed}ms)`,
-            );
+            console.log(`[rango]   OK   ${name.padEnd(40)} (${elapsed}ms)`);
             staticDone++;
             handled = true;
             break;
@@ -403,7 +439,7 @@ export async function renderStaticHandlers(
           if (err.name === "Skip") {
             const elapsed = (performance.now() - startHandler).toFixed(0);
             console.log(
-              `[rsc-router]   SKIP ${name.padEnd(40)} (${elapsed}ms) - ${err.message}`,
+              `[rango]   SKIP ${name.padEnd(40)} (${elapsed}ms) - ${err.message}`,
             );
             staticSkip++;
             notifyOnError(registry, err, "static", undefined, undefined, true);
@@ -413,16 +449,14 @@ export async function renderStaticHandlers(
           // Regular error: log, notify, and fail the build
           const elapsed = (performance.now() - startHandler).toFixed(0);
           console.error(
-            `[rsc-router]   FAIL ${name.padEnd(40)} (${elapsed}ms) - ${err.message}`,
+            `[rango]   FAIL ${name.padEnd(40)} (${elapsed}ms) - ${err.message}`,
           );
           notifyOnError(registry, err, "static");
           throw err;
         }
       }
       if (!handled) {
-        console.warn(
-          `[rsc-router] No router could render static handler "${name}"`,
-        );
+        console.warn(`[rango] No router could render static handler "${name}"`);
       }
     }
   }
@@ -434,6 +468,13 @@ export async function renderStaticHandlers(
   const staticParts = [`${staticDone} done`];
   if (staticSkip > 0) staticParts.push(`${staticSkip} skipped`);
   console.log(
-    `[rsc-router] Static render complete: ${staticParts.join(", ")} (${totalStaticElapsed}ms total)`,
+    `[rango] Static render complete: ${staticParts.join(", ")} (${totalStaticElapsed}ms total)`,
+  );
+  debug?.(
+    "renderStaticHandlers done: %d done, %d skipped, %sms (overall %sms)",
+    staticDone,
+    staticSkip,
+    totalStaticElapsed,
+    (performance.now() - overallStart).toFixed(1),
   );
 }

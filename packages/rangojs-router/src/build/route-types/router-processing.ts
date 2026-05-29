@@ -61,7 +61,7 @@ function findRouterFilesRecursive(
     entries = readdirSync(dir, { withFileTypes: true });
   } catch (err) {
     console.warn(
-      `[rsc-router] Failed to scan directory ${dir}: ${(err as Error).message}`,
+      `[rango] Failed to scan directory ${dir}: ${(err as Error).message}`,
     );
     return;
   }
@@ -142,7 +142,7 @@ export function findNestedRouterConflict(
 
 export function formatNestedRouterConflictError(
   conflict: { ancestor: string; nested: string },
-  prefix = "[rsc-router]",
+  prefix = "[rango]",
 ): string {
   return (
     `${prefix} Nested router roots are not supported.\n` +
@@ -339,6 +339,36 @@ function applyBasenameToRoutes(
   return { routes: prefixed, searchSchemas: result.searchSchemas };
 }
 
+// Filesystem path of the generated route-types file for a router source file.
+// Native separators — matches the self-gen-tracking Map key the watcher compares.
+export function genFileTsPath(sourceFile: string): string {
+  const base = pathBasename(sourceFile).replace(/\.(tsx?|jsx?)$/, "");
+  return join(dirname(sourceFile), `${base}.named-routes.gen.ts`);
+}
+
+// Search schemas for the gen file: prefer the runtime manifest's; when it omits
+// them (some module-runner flows) fall back to static parsing filtered to the
+// public route-name set. Returns the runtime value unchanged otherwise.
+export function resolveSearchSchemas(
+  publicRouteNames: string[],
+  runtimeSchemas: Record<string, Record<string, string>> | undefined,
+  sourceFile: string,
+): Record<string, Record<string, string>> | undefined {
+  if (runtimeSchemas && Object.keys(runtimeSchemas).length > 0) {
+    return runtimeSchemas;
+  }
+  const staticParsed = buildCombinedRouteMapForRouterFile(sourceFile);
+  if (Object.keys(staticParsed.searchSchemas).length === 0) {
+    return runtimeSchemas;
+  }
+  const filtered: Record<string, Record<string, string>> = {};
+  for (const name of publicRouteNames) {
+    const schema = staticParsed.searchSchemas[name];
+    if (schema) filtered[name] = schema;
+  }
+  return Object.keys(filtered).length > 0 ? filtered : runtimeSchemas;
+}
+
 /**
  * Resolve routes and search schemas from a router source file by following the
  * variable passed to `.routes(...)` or `urls: ...` in createRouter options,
@@ -528,7 +558,10 @@ export function findRouterFiles(root: string, filter?: ScanFilter): string[] {
 export function writeCombinedRouteTypes(
   root: string,
   knownRouterFiles?: string[],
-  opts?: { preserveIfLarger?: boolean },
+  opts?: {
+    preserveIfLarger?: boolean;
+    onWrite?: (outPath: string, content: string) => void;
+  },
 ): void {
   // Delete old combined named-routes.gen.ts if it exists (stale from older versions)
   try {
@@ -536,7 +569,7 @@ export function writeCombinedRouteTypes(
     if (existsSync(oldCombinedPath)) {
       unlinkSync(oldCombinedPath);
       console.log(
-        `[rsc-router] Removed stale combined route types: ${oldCombinedPath}`,
+        `[rango] Removed stale combined route types: ${oldCombinedPath}`,
       );
     }
   } catch {}
@@ -566,14 +599,7 @@ export function writeCombinedRouteTypes(
       if (!extractUrlsFromRouter(routerSource)) continue;
     }
 
-    const routerBasename = pathBasename(routerFilePath).replace(
-      /\.(tsx?|jsx?)$/,
-      "",
-    );
-    const outPath = join(
-      dirname(routerFilePath),
-      `${routerBasename}.named-routes.gen.ts`,
-    );
+    const outPath = genFileTsPath(routerFilePath);
     const existing = existsSync(outPath)
       ? readFileSync(outPath, "utf-8")
       : null;
@@ -584,6 +610,7 @@ export function writeCombinedRouteTypes(
     if (Object.keys(result.routes).length === 0) {
       if (!existing) {
         const emptySource = generateRouteTypesSource({});
+        opts?.onWrite?.(outPath, emptySource);
         writeFileSync(outPath, emptySource);
       }
       continue;
@@ -609,9 +636,10 @@ export function writeCombinedRouteTypes(
           continue;
         }
       }
+      opts?.onWrite?.(outPath, source);
       writeFileSync(outPath, source);
       console.log(
-        `[rsc-router] Generated route types (${Object.keys(result.routes).length} routes) -> ${outPath}`,
+        `[rango] Generated route types (${Object.keys(result.routes).length} routes) -> ${outPath}`,
       );
     }
   }

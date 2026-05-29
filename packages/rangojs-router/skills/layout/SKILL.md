@@ -8,9 +8,6 @@ argument-hint: [component]
 
 Layouts wrap child routes and persist during navigation within their scope.
 
-Canonical semantics reference:
-[docs/execution-model.md](../../docs/internal/execution-model.md)
-
 ## Basic Layout
 
 ```typescript
@@ -118,6 +115,8 @@ function ShopLayout() {
 }
 ```
 
+A layout's `transition()` config wraps the content that flows through `<Outlet />` — not the layout chrome itself, and not sibling `<ParallelOutlet />` slots. Stacking transitions across nested layouts collapses around the deepest default outlet content. See [skills/view-transitions](../view-transitions/SKILL.md) for the full wrap rules and intercept-modal interaction.
+
 ## Named Outlets
 
 For parallel routes, use named outlets:
@@ -204,7 +203,7 @@ layout(<ShopLayout />, () => [
 
 // Or revalidate based on conditions
 layout(<CartLayout />, () => [
-  revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
+  revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
 
   path("/cart", CartPage, { name: "cart" }),
 ])
@@ -223,7 +222,7 @@ them on both producer and consumer segments:
 ```typescript
 // revalidation-contracts.ts
 export const revalidateCartData = ({ actionId }) =>
-  actionId?.includes("src/actions/cart.ts#addToCart") ?? false;
+  actionId?.includes("src/actions/cart.ts#addToCart") || undefined;
 ```
 
 ```typescript
@@ -245,7 +244,7 @@ You can also package them as importable handoff helpers:
 import { revalidate } from "@rangojs/router";
 
 export const revalidateAuthData = ({ actionId }) =>
-  actionId?.includes("src/actions/auth.ts#") ?? false;
+  actionId?.includes("src/actions/auth.ts#") || undefined;
 export const revalidateAuth = () => [revalidate(revalidateAuthData)];
 ```
 
@@ -292,7 +291,7 @@ export const shopPatterns = urls(({ path, layout, parallel, loader, revalidate }
   }, () => [
     // Layout loaders
     loader(CartLoader, () => [
-      revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
+      revalidate(({ actionId }) => actionId?.includes("Cart") || undefined),
     ]),
 
     // Parallel routes

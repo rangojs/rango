@@ -13,7 +13,7 @@ const cacheStore = new MemorySegmentCacheStore({
 type AppRoutes = typeof router.routeMap;
 
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface RegisteredRoutes extends AppRoutes {}
   }
 }

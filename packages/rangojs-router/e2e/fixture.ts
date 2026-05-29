@@ -7,7 +7,18 @@ import { x } from "tinyexec";
 
 function runCli(options: { command: string; label?: string } & SpawnOptions) {
   const [name, ...args] = options.command.split(" ");
-  const child = x(name!, args, { nodeOptions: options }).process!;
+  // Vite registers `process.stdin.on("end", ...)` as parent-death detection and
+  // calls process.exit() when stdin reaches EOF, unless process.env.CI === "true"
+  // (see vite's setupSIGTERMListener). Servers spawned here receive an stdin that
+  // hits EOF immediately, so without CI=true the dev/preview server shuts itself
+  // down before it finishes starting. Real CI runners set CI=true; mirror that for
+  // locally-spawned servers so they stay alive for the duration of the tests.
+  const child = x(name!, args, {
+    nodeOptions: {
+      ...options,
+      env: { ...process.env, CI: "true", ...options.env },
+    },
+  }).process!;
   const label = `[${options.label ?? "cli"}]`;
   let stdout = "";
   let stderr = "";

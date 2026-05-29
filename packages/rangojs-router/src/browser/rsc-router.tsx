@@ -28,6 +28,7 @@ import {
   isInterceptSegment,
   splitInterceptSegments,
 } from "./intercept-utils.js";
+import { createAppShellRef } from "./app-shell.js";
 
 // Vite HMR types are provided by vite/client
 
@@ -114,13 +115,20 @@ export interface BrowserAppContext {
   warmupEnabled?: boolean;
   /** App version for prefetch version mismatch detection */
   version?: string;
+  /**
+   * Live app-shell ref. Cross-app navigations replace its contents so the
+   * NavigationProvider and renderSegments pick up the target app's
+   * rootLayout, basename, and version without consumer rerenders. Theme,
+   * warmup, and prefetch TTL are document-lifetime (see AppShell).
+   */
+  appShellRef?: import("./app-shell.js").AppShellRef;
 }
 
 // Module-level state for the initialized app
 let browserAppContext: BrowserAppContext | null = null;
 
 /**
- * Initialize the browser app. Must be called before rendering RSCRouter.
+ * Initialize the browser app. Must be called before rendering Rango.
  *
  * This function:
  * - Loads the initial RSC payload from the stream
@@ -204,13 +212,23 @@ export async function initBrowserApp(
   // Create composable utilities
   const client = createNavigationClient(deps);
 
-  // Extract rootLayout and version from metadata for browser-side re-renders
-  const rootLayout = initialPayload.metadata?.rootLayout;
+  // Capture the per-router app-shell so cross-app navigations can replace
+  // it atomically. rootLayout, basename, and version live here and are
+  // read through the ref at call time rather than closed over. Theme,
+  // warmup, and prefetch TTL are deliberately excluded — they are
+  // document-lifetime and stay stable across smooth cross-app transitions.
   const version = initialPayload.metadata?.version;
+  const appShellRef = createAppShellRef({
+    routerId: initialPayload.metadata?.routerId,
+    rootLayout: initialPayload.metadata?.rootLayout,
+    basename: initialPayload.metadata?.basename,
+    version,
+  });
 
   // Initialize the localStorage state key for cache invalidation.
-  // Uses the build version so a new deploy automatically busts all cached prefetches.
-  initRangoState(version ?? "0");
+  // The build version busts cached prefetches on deploy; the routerId
+  // namespaces the key so sibling apps on the same origin don't collide.
+  initRangoState(version ?? "0", initialPayload.metadata?.routerId);
   setAppVersion(version);
 
   // Initialize the in-memory prefetch cache TTL from server config.
@@ -220,11 +238,17 @@ export async function initBrowserApp(
     initPrefetchCache(prefetchCacheTTL);
   }
 
-  // Create a bound renderSegments that includes rootLayout
+  // Create a bound renderSegments that reads rootLayout through the shell
+  // ref. On app switch the ref is updated before the tree re-renders, so
+  // the new app's Document (rootLayout) replaces the previous one.
   const renderSegments = (
     segments: ResolvedSegment[],
     options?: RenderSegmentsOptions,
-  ) => baseRenderSegments(segments, { ...options, rootLayout });
+  ) =>
+    baseRenderSegments(segments, {
+      ...options,
+      rootLayout: appShellRef.get().rootLayout,
+    });
 
   // Lazy reference for navigation bridge — the action bridge is created first
   // but may need to trigger SPA navigation for action redirects.
@@ -256,6 +280,7 @@ export async function initBrowserApp(
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
     version: version,
+    appShellRef,
   });
 
   // Connect action redirect → navigation bridge (now that both are initialized)
@@ -300,11 +325,11 @@ export async function initBrowserApp(
         // full lifecycle (fetching + streaming, before commit) without
         // blocking on server actions.
         if (eventController.getState().isNavigating) {
-          console.log("[RSCRouter] HMR: Skipping — navigation in progress");
+          console.log("[Rango] HMR: Skipping — navigation in progress");
           return;
         }
 
-        console.log("[RSCRouter] HMR: Server update, refetching RSC");
+        console.log("[Rango] HMR: Server update, refetching RSC");
 
         const abort = new AbortController();
         hmrAbort = abort;
@@ -339,11 +364,18 @@ export async function initBrowserApp(
           // Update version BEFORE rebuilding state so that
           // clearHistoryCache() runs first, then the fresh segment
           // cache entry we create below survives.
+          //
+          // Compare against the bridge's live version, not the init-time
+          // `version` const: after the first HMR bump the const is stale, so a
+          // later update with an unchanged version would otherwise re-clear the
+          // cache and re-broadcast across tabs/apps. The live read fires only
+          // on a genuine version change.
           const newVersion = payload.metadata.version;
-          if (newVersion && newVersion !== version) {
+          const currentVersion = navigationBridge.getVersion();
+          if (newVersion && newVersion !== currentVersion) {
             console.log(
-              "[RSCRouter] HMR: version changed",
-              version,
+              "[Rango] HMR: version changed",
+              currentVersion,
               "→",
               newVersion,
               "clearing caches",
@@ -390,10 +422,10 @@ export async function initBrowserApp(
 
           await streamComplete;
           handle.complete(new URL(window.location.href));
-          console.log("[RSCRouter] HMR: RSC stream complete");
+          console.log("[Rango] HMR: RSC stream complete");
         } catch (err) {
           if (abort.signal.aborted) return;
-          console.warn("[RSCRouter] HMR: Refetch failed, reloading page", err);
+          console.warn("[Rango] HMR: Refetch failed, reloading page", err);
           window.location.reload();
           return;
         } finally {
@@ -405,7 +437,7 @@ export async function initBrowserApp(
     });
   }
 
-  // Store context for RSCRouter component
+  // Store context for Rango component
   const context: BrowserAppContext = {
     store,
     eventController,
@@ -416,6 +448,7 @@ export async function initBrowserApp(
     initialTheme: effectiveInitialTheme,
     warmupEnabled: initialPayload.metadata?.warmupEnabled ?? true,
     version,
+    appShellRef,
   };
   browserAppContext = context;
 
@@ -428,7 +461,7 @@ export async function initBrowserApp(
 export function getBrowserAppContext(): BrowserAppContext {
   if (!browserAppContext) {
     throw new Error(
-      "RSCRouter: initBrowserApp() must be called before rendering RSCRouter",
+      "Rango: initBrowserApp() must be called before rendering Rango",
     );
   }
   return browserAppContext;
@@ -442,18 +475,18 @@ export function resetBrowserAppContext(): void {
 }
 
 /**
- * Props for the RSCRouter component
+ * Props for the Rango component
  */
-export interface RSCRouterProps {}
+export interface RangoProps {}
 
 /**
- * RSCRouter component - renders the RSC router with all internal wiring.
+ * Rango component - renders the RSC router with all internal wiring.
  *
  * Must be called after initBrowserApp() has completed.
  *
  * @example
  * ```tsx
- * import { initBrowserApp, RSCRouter } from "rsc-router/browser";
+ * import { initBrowserApp, Rango } from "rsc-router/browser";
  * import { rscStream } from "rsc-html-stream/client";
  * import * as rscBrowser from "@vitejs/plugin-rsc/browser";
  *
@@ -463,14 +496,14 @@ export interface RSCRouterProps {}
  *   hydrateRoot(
  *     document,
  *     <React.StrictMode>
- *       <RSCRouter />
+ *       <Rango />
  *     </React.StrictMode>
  *   );
  * }
  * main();
  * ```
  */
-export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
+export function Rango(_props: RangoProps): React.ReactElement {
   const {
     store,
     eventController,
@@ -481,6 +514,7 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
     initialTheme,
     warmupEnabled,
     version,
+    appShellRef,
   } = getBrowserAppContext();
 
   // Signal that the React tree has hydrated. useEffect only fires after
@@ -501,6 +535,7 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
       warmupEnabled={warmupEnabled}
       version={version}
       basename={initialPayload.metadata?.basename}
+      appShellRef={appShellRef}
     />
   );
 }

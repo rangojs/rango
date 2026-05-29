@@ -11,7 +11,7 @@ A code-first, type-safe React Server Components router for serverless deployment
 - **Partial rendering** - Optimal performance with RSC
 - **Parallel routes** - First-class support for complex layouts
 - **Intercepting routes** - Modal patterns with soft navigation
-- **Server Actions** - Mutations with automatic revalidation
+- **Server Actions** - `"use server"` mutations with `useActionState` / `useOptimistic` and per-segment + per-loader `revalidate()` rules
 - **Middleware** - Auth, logging, rate limiting
 - **Error/NotFound boundaries** - Graceful error handling
 - **Pre-rendering** - Build-time caching for static content

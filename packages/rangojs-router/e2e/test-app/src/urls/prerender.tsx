@@ -8,6 +8,14 @@ import {
 import { ChangelogPage } from "./prerender-fs.js";
 import { PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
+// Resolved by the `test-parity-alias` resolveId plugin (vite.config.ts), not
+// resolve.alias. Reaching this through build-time Static/Prerender handlers
+// asserts discovery's runner honors third-party resolvers (issue #500).
+import { PARITY_MARKER } from "@parity/marker.js";
+// Resolved ONLY by Vite 8's native resolve.tsconfigPaths (tsconfig "@native/*"),
+// with no resolve.alias and no resolveId plugin. Reaching this through the same
+// handlers asserts discovery's runner forwards the native tsconfigPaths flag.
+import { NATIVE_PATHS_MARKER } from "@native/marker.js";
 
 // Static handler on a non-parameterized route -- should be pre-rendered at build time.
 export const StaticPage = Static((ctx) => {
@@ -20,6 +28,8 @@ export const StaticPage = Static((ctx) => {
       <p data-testid="static-page-content">
         This is a statically pre-rendered page.
       </p>
+      <p data-testid="static-page-parity">{PARITY_MARKER}</p>
+      <p data-testid="static-page-native">{NATIVE_PATHS_MARKER}</p>
       <p data-testid="static-page-timestamp">Built at: {Date.now()}</p>
     </div>
   );
@@ -46,6 +56,8 @@ export const DocsPage = Prerender(async (ctx) => {
       <p data-testid="docs-content">
         This is pre-rendered documentation content.
       </p>
+      <p data-testid="docs-parity">{PARITY_MARKER}</p>
+      <p data-testid="docs-native">{NATIVE_PATHS_MARKER}</p>
       <p data-testid="docs-pathname">Pathname: {ctx.pathname}</p>
     </div>
   );

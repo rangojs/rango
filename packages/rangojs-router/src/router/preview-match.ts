@@ -67,9 +67,11 @@ export async function previewMatch<TEnv = any>(
             responseType: negotiation.responseType,
             handler: negotiation.handler,
             params: matched.params,
-            negotiated: true,
             manifestEntry: negotiation.manifestEntry,
             routeKey: matched.routeKey,
+            // omitted unless a variant negotiated, preserving the prior public
+            // shape (absent for plain response routes, not negotiated:false)
+            ...(negotiation.negotiated ? { negotiated: true } : {}),
           };
         }
 

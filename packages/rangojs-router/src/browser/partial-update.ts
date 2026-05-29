@@ -14,7 +14,10 @@ const addTransitionType: ((type: string) => void) | undefined =
 import type { RenderSegmentsOptions } from "../segment-system.js";
 import { reconcileSegments } from "./segment-reconciler.js";
 import type { ReconcileActor } from "./segment-reconciler.js";
-import { hasActiveIntercept as hasActiveInterceptSlots } from "./intercept-utils.js";
+import {
+  hasActiveIntercept as hasActiveInterceptSlots,
+  isInterceptSegment,
+} from "./intercept-utils.js";
 import type { BoundTransaction } from "./navigation-transaction.js";
 import { ServerRedirect } from "../errors.js";
 import { debugLog } from "./logging.js";
@@ -26,6 +29,23 @@ function toScrollPayload(
   scroll: boolean | undefined,
 ): NonNullable<NavigationUpdate["scroll"]> {
   return { enabled: scroll !== false ? scroll : false };
+}
+
+/**
+ * Whether to wrap an update in startViewTransition.
+ *
+ * Intercept-driven updates only mutate the parallel slot — the main outlet
+ * shows the same content — so transitions on the underlying main segments
+ * shouldn't fire (otherwise their elements get hoisted above the modal).
+ */
+function shouldStartViewTransition(segments: ResolvedSegment[]): boolean {
+  let hasIntercept = false;
+  let hasTransition = false;
+  for (const s of segments) {
+    if (isInterceptSegment(s)) hasIntercept = true;
+    else if (s.transition) hasTransition = true;
+  }
+  return !hasIntercept && hasTransition;
 }
 
 /**
@@ -41,6 +61,13 @@ export interface PartialUpdateConfig {
   ) => Promise<ReactNode> | ReactNode;
   /** RSC version getter — returns the current version (may change after HMR) */
   getVersion?: () => string | undefined;
+  /**
+   * Replace the active app-shell when a cross-app navigation is detected.
+   * Called before the full-update tree replacement renders, so the new
+   * payload's rootLayout, basename, and version are picked up. Theme,
+   * warmup, and prefetch TTL are not part of the shell — see AppShell.
+   */
+  applyAppShell?: (next: import("./app-shell.js").AppShell) => void;
 }
 
 /**
@@ -76,7 +103,7 @@ export type UpdateMode =
       /** Source URL for intercept restore (popstate cache miss) */
       interceptSourceUrl?: string;
     }
-  | { type: "leave-intercept" }
+  | { type: "leave-intercept"; interceptSourceUrl?: string }
   | { type: "stale-revalidation"; interceptSourceUrl?: string }
   | { type: "action"; interceptSourceUrl?: string };
 
@@ -110,6 +137,7 @@ export function createPartialUpdater(
     onUpdate,
     renderSegments,
     getVersion = () => undefined,
+    applyAppShell,
   } = config;
 
   /**
@@ -141,13 +169,7 @@ export function createPartialUpdater(
     // Capture history key at start for stale revalidation consistency check
     const historyKeyAtStart = store.getHistoryKey();
 
-    // Derive interceptSourceUrl from modes that carry it
-    const interceptSourceUrl =
-      mode.type === "stale-revalidation" ||
-      mode.type === "action" ||
-      mode.type === "navigate"
-        ? mode.interceptSourceUrl
-        : undefined;
+    const interceptSourceUrl = mode.interceptSourceUrl;
 
     // When leaving intercept, filter out intercept-specific segments
     let segments: string[];
@@ -190,13 +212,11 @@ export function createPartialUpdater(
     // When navigating with targetCacheSegments, use those for consistency.
     // Otherwise fall back to current page's segments (for same-route revalidation).
     const targetCache =
-      mode.type === "navigate" ? mode.targetCacheSegments : undefined;
-    const cachedSegs =
-      targetCache && targetCache.length > 0
-        ? targetCache
-        : getCurrentCachedSegments();
-    const cachedSegsSource =
-      targetCache && targetCache.length > 0 ? "history-cache" : "current-page";
+      mode.type === "navigate" && mode.targetCacheSegments?.length
+        ? mode.targetCacheSegments
+        : undefined;
+    const cachedSegs = targetCache ?? getCurrentCachedSegments();
+    const cachedSegsSource = targetCache ? "history-cache" : "current-page";
     debugLog(
       `[Browser] cachedSegs source: ${cachedSegsSource} (${cachedSegs.length} segments: ${cachedSegs.map((s) => s.id).join(", ")})`,
     );
@@ -228,7 +248,12 @@ export function createPartialUpdater(
     // Detect app switch: if routerId changed, the navigation crossed into
     // a different router (e.g., via host router path mount). Downgrade
     // partial to full so the entire tree is replaced without reconciliation
-    // against stale segments from the previous app.
+    // against stale segments from the previous app, and replace the app
+    // shell (rootLayout, basename, version) so the target app's document
+    // and router config take effect instead of remaining captured from the
+    // initial load. Theme, warmup, and prefetch TTL are intentionally
+    // document-lifetime (see AppShell doc); a new document navigation
+    // applies them.
     if (payload.metadata?.routerId) {
       const prevRouterId = store.getRouterId?.();
       if (prevRouterId && prevRouterId !== payload.metadata.routerId) {
@@ -236,6 +261,12 @@ export function createPartialUpdater(
           `[Browser] App switch detected (${prevRouterId} → ${payload.metadata.routerId}), forcing full update`,
         );
         payload.metadata.isPartial = false;
+        applyAppShell?.({
+          routerId: payload.metadata.routerId,
+          rootLayout: payload.metadata.rootLayout,
+          basename: payload.metadata.basename,
+          version: payload.metadata.version,
+        });
       }
       store.setRouterId?.(payload.metadata.routerId);
     }
@@ -279,7 +310,7 @@ export function createPartialUpdater(
           .filter(Boolean) as ResolvedSegment[];
 
         // When navigating with cached segments to a different route, render them.
-        if (mode.type === "navigate" && targetCache && targetCache.length > 0) {
+        if (mode.type === "navigate" && targetCache) {
           debugLog(
             "[Browser] No diff but navigating with cached segments - rendering target route",
           );
@@ -319,10 +350,7 @@ export function createPartialUpdater(
             scroll: toScrollPayload(commitScroll),
           };
 
-          const cachedHasTransition = existingSegments.some(
-            (s) => s.transition,
-          );
-          if (cachedHasTransition) {
+          if (shouldStartViewTransition(existingSegments)) {
             startTransition(() => {
               if (addTransitionType) {
                 addTransitionType("navigation");
@@ -508,7 +536,7 @@ export function createPartialUpdater(
 
       // Emit update to trigger React render.
       // Scroll info is included so NavigationProvider applies it after React commits.
-      const hasTransition = reconciled.mainSegments.some((s) => s.transition);
+      const hasTransition = shouldStartViewTransition(reconciled.segments);
       const scrollPayload = toScrollPayload(navScroll);
 
       if (mode.type === "action" || mode.type === "stale-revalidation") {
@@ -570,9 +598,7 @@ export function createPartialUpdater(
           })
         : tx.commit(segmentIds, segments);
 
-      const fullHasTransition = segments.some(
-        (s: ResolvedSegment) => s.transition,
-      );
+      const fullHasTransition = shouldStartViewTransition(segments);
       const fullScrollPayload = toScrollPayload(fullScroll);
 
       if (mode.type === "stale-revalidation") {

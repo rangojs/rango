@@ -2,12 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 let historyState: any = null;
 const replaceStateSpy = vi.fn();
+const pushStateSpy = vi.fn();
 const dispatchEventSpy = vi.fn();
 
 beforeEach(() => {
   historyState = { existing: "value" };
 
   replaceStateSpy.mockImplementation((state: any) => {
+    historyState = state;
+  });
+  pushStateSpy.mockImplementation((state: any) => {
     historyState = state;
   });
 
@@ -17,6 +21,7 @@ beforeEach(() => {
         return historyState;
       },
       replaceState: replaceStateSpy,
+      pushState: pushStateSpy,
     },
     location: { href: "http://localhost/page", origin: "http://localhost" },
     dispatchEvent: dispatchEventSpy,
@@ -26,6 +31,7 @@ beforeEach(() => {
 afterEach(() => {
   delete (globalThis as any).window;
   replaceStateSpy.mockReset();
+  pushStateSpy.mockReset();
   dispatchEventSpy.mockReset();
   vi.restoreAllMocks();
 });
@@ -33,12 +39,14 @@ afterEach(() => {
 let buildHistoryState: typeof import("../browser/history-state").buildHistoryState;
 let mergeLocationState: typeof import("../browser/history-state").mergeLocationState;
 let resolveNavigationState: typeof import("../browser/history-state").resolveNavigationState;
+let pushHistoryWithIdx: typeof import("../browser/history-state").pushHistoryWithIdx;
 
 beforeEach(async () => {
   const mod = await import("../browser/history-state");
   buildHistoryState = mod.buildHistoryState;
   mergeLocationState = mod.mergeLocationState;
   resolveNavigationState = mod.resolveNavigationState;
+  pushHistoryWithIdx = mod.pushHistoryWithIdx;
 });
 
 describe("buildHistoryState", () => {
@@ -113,6 +121,34 @@ describe("mergeLocationState", () => {
     mergeLocationState({ plain: "data" });
 
     expect(dispatchEventSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("pushHistoryWithIdx", () => {
+  it("stamps idx=1 on first push from initial entry without idx", () => {
+    historyState = null;
+    pushHistoryWithIdx({ foo: "bar" }, "/next", false);
+    expect(pushStateSpy).toHaveBeenCalledOnce();
+    expect(pushStateSpy.mock.calls[0][0]).toEqual({ foo: "bar", idx: 1 });
+  });
+
+  it("increments idx on subsequent push", () => {
+    historyState = { idx: 3, foo: "x" };
+    pushHistoryWithIdx({ bar: "y" }, "/next", false);
+    expect(pushStateSpy.mock.calls[0][0]).toEqual({ bar: "y", idx: 4 });
+  });
+
+  it("keeps idx unchanged on replace", () => {
+    historyState = { idx: 5 };
+    pushHistoryWithIdx({ a: 1 }, "/same", true);
+    expect(replaceStateSpy).toHaveBeenCalledOnce();
+    expect(replaceStateSpy.mock.calls[0][0]).toEqual({ a: 1, idx: 5 });
+  });
+
+  it("treats null state as empty object", () => {
+    historyState = { idx: 2 };
+    pushHistoryWithIdx(null, "/next", false);
+    expect(pushStateSpy.mock.calls[0][0]).toEqual({ idx: 3 });
   });
 });
 

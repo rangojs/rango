@@ -7,22 +7,12 @@ import {
 } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
+import { onErrorLog } from "./error-log.js";
 
 // App-level cache store with defaults
 export const cacheStore = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 120 },
 });
-
-// Store the last onError call for e2e test verification
-export interface OnErrorRecord {
-  phase: string;
-  message: string;
-  actionId?: string;
-}
-export const onErrorLog: OnErrorRecord[] = [];
-export function clearOnErrorLog() {
-  onErrorLog.length = 0;
-}
 
 /**
  * App-level bindings (platform resources like DB, KV, etc.)
@@ -73,7 +63,7 @@ export interface AppVariables {
 export type AppEnv = AppBindings;
 
 declare global {
-  namespace RSCRouter {
+  namespace Rango {
     interface Env extends AppBindings {}
     interface Vars extends AppVariables {}
   }
@@ -81,7 +71,7 @@ declare global {
 
 /**
  * Global middleware - adds X-Global-Middleware header to all responses
- * Note: Middleware defaults to RSCRouter.Env (via DefaultEnv) so no type parameter needed
+ * Note: Middleware defaults to Rango.Env (via DefaultEnv) so no type parameter needed
  */
 const globalMiddleware: Middleware = async (ctx, next) => {
   const response = await next();
@@ -208,6 +198,26 @@ export const router = createRouter<AppEnv>({
     await next();
     cookies().set("session_id", "abc123", { path: "/", httpOnly: true });
     cookies().set("post-next-marker", "applied", { path: "/" });
+  })
+  // Regression repro: top-level (router.use) middleware that THROWS a Response.
+  // Expected: short-circuit with the Response (status 418, x-throw-response header).
+  // Actual today: escapes past rsc/handler.ts executeMiddleware (no try/catch),
+  // gets stringified by the host (miniflare in CF, Node's fetch adapter) as 500.
+  // onError must NOT be invoked for Response short-circuits.
+  .use("/__test/global-mw-throw-response", async () => {
+    throw new Response("throw-response-body", {
+      status: 418,
+      headers: { "x-throw-response": "applied" },
+    });
+  })
+  // Sanity repro: top-level middleware RETURNS a Response. This path already
+  // works (middleware.ts:474 short-circuits on Response return). Kept adjacent
+  // to the throw case so the contrast is testable in dev + production.
+  .use("/__test/global-mw-return-response", async () => {
+    return new Response("return-response-body", {
+      status: 418,
+      headers: { "x-return-response": "applied" },
+    });
   })
   // Global middleware - applied to ALL routes
   .use(globalMiddleware)
