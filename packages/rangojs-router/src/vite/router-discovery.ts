@@ -52,6 +52,7 @@ import {
 import { postprocessBundle } from "./discovery/bundle-postprocess.js";
 import { createDiscoveryGate } from "./discovery/gate-state.js";
 import { resetStagedBuildAssets } from "./utils/prerender-utils.js";
+import { resolveRscEntryFromConfig } from "./utils/shared-utils.js";
 import {
   pickForwardedRunnerConfig,
   selectForwardableResolvePlugins,
@@ -347,17 +348,10 @@ export function createRouterDiscoveryPlugin(
       if (!s.resolvedEntryPath && opts?.routerPathRef?.path) {
         s.resolvedEntryPath = opts.routerPathRef.path;
       }
-      // Cloudflare preset: read entry from resolved environment config.
-      // The @cloudflare/vite-plugin reads wrangler config (toml/json/jsonc)
-      // and sets optimizeDeps.entries on the RSC environment.
+      // Cloudflare preset: entry comes from the resolved RSC env config.
       if (!s.resolvedEntryPath) {
-        const rscEnvConfig = (config.environments as any)?.["rsc"];
-        const entries = rscEnvConfig?.optimizeDeps?.entries;
-        if (typeof entries === "string") {
-          s.resolvedEntryPath = entries;
-        } else if (Array.isArray(entries) && entries.length > 0) {
-          s.resolvedEntryPath = entries[0];
-        }
+        const entry = resolveRscEntryFromConfig(config);
+        if (entry) s.resolvedEntryPath = entry;
       }
       // Generate combined named-routes.gen.ts from static source parsing.
       // Runs before the dev server starts so the gen file exists immediately for IDE.
@@ -794,20 +788,15 @@ export function createRouterDiscoveryPlugin(
         if (s.mergedRouteTrie && serverMod.setRouteTrie) {
           serverMod.setRouteTrie(s.mergedRouteTrie);
         }
-        if (serverMod.setRouterManifest) {
-          for (const [routerId, manifest] of s.perRouterManifestDataMap) {
-            serverMod.setRouterManifest(routerId, manifest);
-          }
-        }
-        if (serverMod.setRouterTrie) {
-          for (const [routerId, trie] of s.perRouterTrieMap) {
-            serverMod.setRouterTrie(routerId, trie);
-          }
-        }
-        if (serverMod.setRouterPrecomputedEntries) {
-          for (const [routerId, entries] of s.perRouterPrecomputedMap) {
-            serverMod.setRouterPrecomputedEntries(routerId, entries);
-          }
+        const perRouterSetters: Array<[Map<string, any>, string]> = [
+          [s.perRouterManifestDataMap, "setRouterManifest"],
+          [s.perRouterTrieMap, "setRouterTrie"],
+          [s.perRouterPrecomputedMap, "setRouterPrecomputedEntries"],
+        ];
+        for (const [map, fn] of perRouterSetters) {
+          const setter = serverMod[fn];
+          if (typeof setter !== "function") continue;
+          for (const [routerId, value] of map) setter(routerId, value);
         }
       };
 

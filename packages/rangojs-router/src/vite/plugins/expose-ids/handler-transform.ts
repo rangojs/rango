@@ -1,5 +1,5 @@
 import MagicString from "magic-string";
-import { hashId } from "../expose-id-utils.js";
+import { makeStubId } from "../expose-id-utils.js";
 import type { HandlerTransformConfig, CreateExportBinding } from "./types.js";
 import { isExportOnlyFile } from "./export-analysis.js";
 
@@ -28,9 +28,7 @@ export function transformHandles(
       binding.callCloseParenPos,
     );
 
-    const handleId = isBuild
-      ? hashId(filePath, exportName)
-      : `${filePath}#${exportName}`;
+    const handleId = makeStubId(filePath, exportName, isBuild);
 
     let paramInjection: string;
     if (!args.hasArgs) {
@@ -58,9 +56,7 @@ export function transformLocationState(
   for (const binding of bindings) {
     const exportName = binding.exportNames[0];
 
-    const stateKey = isBuild
-      ? hashId(filePath, exportName)
-      : `${filePath}#${exportName}`;
+    const stateKey = makeStubId(filePath, exportName, isBuild);
 
     // Key is injected as a property assignment (not as a function argument).
     // This allows createLocationState to accept options like { flash: true }
@@ -88,7 +84,7 @@ export function generateWholeFileStubs(
 
   const exportNames = bindings.flatMap((b) => b.exportNames);
   const stubs = exportNames.map((name) => {
-    const handlerId = isBuild ? hashId(filePath, name) : `${filePath}#${name}`;
+    const handlerId = makeStubId(filePath, name, isBuild);
     return `export const ${name} = { __brand: "${cfg.brand}", $$id: "${handlerId}" };`;
   });
 
@@ -96,53 +92,8 @@ export function generateWholeFileStubs(
 }
 
 /**
- * Replace handler call expressions with lightweight stub objects in non-RSC
- * environments. Other exports, imports, and module-level code remain untouched.
- */
-export function generateExprStubs(
-  cfg: HandlerTransformConfig,
-  bindings: CreateExportBinding[],
-  code: string,
-  filePath: string,
-  sourceId: string,
-  isBuild: boolean,
-): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
-  if (bindings.length === 0) return null;
-
-  const s = new MagicString(code);
-  let hasChanges = false;
-
-  for (const binding of bindings) {
-    const exportName = binding.exportNames[0];
-    const handlerId = isBuild
-      ? hashId(filePath, exportName)
-      : `${filePath}#${exportName}`;
-
-    s.overwrite(
-      binding.callExprStart,
-      binding.callCloseParenPos + 1,
-      `{ __brand: "${cfg.brand}", $$id: "${handlerId}" }`,
-    );
-    hasChanges = true;
-  }
-
-  if (!hasChanges) return null;
-
-  return {
-    code: s.toString(),
-    map: s.generateMap({
-      source: sourceId,
-      includeContent: true,
-      hires: "boundary",
-    }),
-  };
-}
-
-/**
- * Replace handler call expressions with lightweight stub objects on an
- * existing MagicString. Unlike generateExprStubs (which creates its own
- * MagicString and returns the full result), this integrates into the
- * unified transform pipeline so all transforms share one sourcemap.
+ * Replace handler call expressions with lightweight stub objects on the shared
+ * unified-pipeline MagicString so all transforms share one sourcemap.
  */
 export function stubHandlerExprs(
   cfg: HandlerTransformConfig,
@@ -154,9 +105,7 @@ export function stubHandlerExprs(
   let hasChanges = false;
   for (const binding of bindings) {
     const exportName = binding.exportNames[0];
-    const handlerId = isBuild
-      ? hashId(filePath, exportName)
-      : `${filePath}#${exportName}`;
+    const handlerId = makeStubId(filePath, exportName, isBuild);
 
     s.overwrite(
       binding.callExprStart,
@@ -182,9 +131,7 @@ export function transformHandlerIds(
   for (const binding of bindings) {
     const exportName = binding.exportNames[0];
 
-    const handlerId = isBuild
-      ? hashId(filePath, exportName)
-      : `${filePath}#${exportName}`;
+    const handlerId = makeStubId(filePath, exportName, isBuild);
 
     // Injection strategy matches the runtime overload signatures:
     //   0 args                              -> inject undefined, "id"

@@ -1,4 +1,4 @@
-import type { Plugin } from "vite";
+import type { Plugin, ResolvedConfig } from "vite";
 import * as Vite from "vite";
 import { getPublishedPackageName } from "./package-resolution.js";
 import { performanceTracksOptimizeDepsPlugin } from "../plugins/performance-tracks.js";
@@ -9,6 +9,18 @@ import {
   getVirtualVersionContent,
   VIRTUAL_IDS,
 } from "../plugins/virtual-entries.js";
+
+// Cloudflare preset: @cloudflare/vite-plugin sets optimizeDeps.entries (string
+// or array) on the rsc environment. Single source for both the discovery plugin
+// and the version injector so they target the same entry.
+export function resolveRscEntryFromConfig(
+  config: ResolvedConfig,
+): string | undefined {
+  const entries = (config.environments as any)?.["rsc"]?.optimizeDeps?.entries;
+  if (typeof entries === "string") return entries;
+  if (Array.isArray(entries) && entries.length > 0) return entries[0];
+  return undefined;
+}
 
 /**
  * Rolldown plugin to provide the version virtual module during dependency

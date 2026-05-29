@@ -292,18 +292,16 @@ export async function discoverRouters(
         }
       }
 
+      // buildRouteTrie reads these via ?.has / ?.[] — empty is observationally
+      // identical to undefined, so no empty->undefined coercion is needed.
       newMergedRouteTrie = buildRouteTrie(
         newMergedRouteManifest,
         mergedRouteAncestry,
         routeToStaticPrefix,
-        Object.keys(mergedRouteTrailingSlash).length > 0
-          ? mergedRouteTrailingSlash
-          : undefined,
-        prerenderRouteNames.size > 0 ? prerenderRouteNames : undefined,
-        passthroughRouteNames.size > 0 ? passthroughRouteNames : undefined,
-        Object.keys(mergedResponseTypeRoutes).length > 0
-          ? mergedResponseTypeRoutes
-          : undefined,
+        mergedRouteTrailingSlash,
+        prerenderRouteNames,
+        passthroughRouteNames,
+        mergedResponseTypeRoutes,
       );
 
       // Build per-router tries for multi-router isolation.
@@ -330,20 +328,10 @@ export async function discoverRouters(
           manifest.routeManifest,
           manifest._routeAncestry,
           perRouterStaticPrefix,
-          manifest.routeTrailingSlash &&
-            Object.keys(manifest.routeTrailingSlash).length > 0
-            ? manifest.routeTrailingSlash
-            : undefined,
-          perRouterPrerenderNames && perRouterPrerenderNames.size > 0
-            ? perRouterPrerenderNames
-            : undefined,
-          perRouterPassthroughNames && perRouterPassthroughNames.size > 0
-            ? perRouterPassthroughNames
-            : undefined,
-          manifest.responseTypeRoutes &&
-            Object.keys(manifest.responseTypeRoutes).length > 0
-            ? manifest.responseTypeRoutes
-            : undefined,
+          manifest.routeTrailingSlash,
+          perRouterPrerenderNames,
+          perRouterPassthroughNames,
+          manifest.responseTypeRoutes,
         );
         newPerRouterTrieMap.set(id, perRouterTrie);
       }

@@ -39,7 +39,6 @@ import {
   transformHandles,
   transformLocationState,
   generateWholeFileStubs,
-  generateExprStubs,
   stubHandlerExprs,
   transformHandlerIds,
 } from "./expose-ids/handler-transform.js";
@@ -758,48 +757,19 @@ ${lazyImports.join(",\n")}
               isBuild,
             ) || changed;
         }
-        if (hasPrerenderHandlerCode) {
-          const fnNames = getFnNames(PRERENDER_CONFIG.fnName);
-          const bindings = getBindings(code, fnNames);
-          if (isRscEnv) {
-            changed =
-              transformHandlerIds(
-                PRERENDER_CONFIG,
-                bindings,
-                s,
-                filePath,
-                isBuild,
-              ) || changed;
-          } else {
-            // Non-RSC mixed-export file: replace Prerender() calls with stubs
-            // on the shared MagicString so sourcemaps stay accurate.
-            changed =
-              stubHandlerExprs(
-                PRERENDER_CONFIG,
-                bindings,
-                s,
-                filePath,
-                isBuild,
-              ) || changed;
-          }
-        }
-        if (hasStaticHandlerCode) {
-          const fnNames = getFnNames(STATIC_CONFIG.fnName);
-          const bindings = getBindings(code, fnNames);
-          if (isRscEnv) {
-            changed =
-              transformHandlerIds(
-                STATIC_CONFIG,
-                bindings,
-                s,
-                filePath,
-                isBuild,
-              ) || changed;
-          } else {
-            changed =
-              stubHandlerExprs(STATIC_CONFIG, bindings, s, filePath, isBuild) ||
-              changed;
-          }
+        // Prerender + Static share the RSC inject-id vs non-RSC stub dispatch.
+        // Call sites are disjoint (distinct fnNames), so loop order is irrelevant.
+        const finalHandlerConfigs = [
+          hasPrerenderHandlerCode && PRERENDER_CONFIG,
+          hasStaticHandlerCode && STATIC_CONFIG,
+        ].filter((c): c is HandlerTransformConfig => !!c);
+        for (const cfg of finalHandlerConfigs) {
+          const bindings = getBindings(code, getFnNames(cfg.fnName));
+          changed =
+            (isRscEnv
+              ? transformHandlerIds(cfg, bindings, s, filePath, isBuild)
+              : stubHandlerExprs(cfg, bindings, s, filePath, isBuild)) ||
+            changed;
         }
 
         if (!changed) return;

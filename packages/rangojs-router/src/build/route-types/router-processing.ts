@@ -339,6 +339,36 @@ function applyBasenameToRoutes(
   return { routes: prefixed, searchSchemas: result.searchSchemas };
 }
 
+// Filesystem path of the generated route-types file for a router source file.
+// Native separators — matches the self-gen-tracking Map key the watcher compares.
+export function genFileTsPath(sourceFile: string): string {
+  const base = pathBasename(sourceFile).replace(/\.(tsx?|jsx?)$/, "");
+  return join(dirname(sourceFile), `${base}.named-routes.gen.ts`);
+}
+
+// Search schemas for the gen file: prefer the runtime manifest's; when it omits
+// them (some module-runner flows) fall back to static parsing filtered to the
+// public route-name set. Returns the runtime value unchanged otherwise.
+export function resolveSearchSchemas(
+  publicRouteNames: string[],
+  runtimeSchemas: Record<string, Record<string, string>> | undefined,
+  sourceFile: string,
+): Record<string, Record<string, string>> | undefined {
+  if (runtimeSchemas && Object.keys(runtimeSchemas).length > 0) {
+    return runtimeSchemas;
+  }
+  const staticParsed = buildCombinedRouteMapForRouterFile(sourceFile);
+  if (Object.keys(staticParsed.searchSchemas).length === 0) {
+    return runtimeSchemas;
+  }
+  const filtered: Record<string, Record<string, string>> = {};
+  for (const name of publicRouteNames) {
+    const schema = staticParsed.searchSchemas[name];
+    if (schema) filtered[name] = schema;
+  }
+  return Object.keys(filtered).length > 0 ? filtered : runtimeSchemas;
+}
+
 /**
  * Resolve routes and search schemas from a router source file by following the
  * variable passed to `.routes(...)` or `urls: ...` in createRouter options,
@@ -566,14 +596,7 @@ export function writeCombinedRouteTypes(
       if (!extractUrlsFromRouter(routerSource)) continue;
     }
 
-    const routerBasename = pathBasename(routerFilePath).replace(
-      /\.(tsx?|jsx?)$/,
-      "",
-    );
-    const outPath = join(
-      dirname(routerFilePath),
-      `${routerBasename}.named-routes.gen.ts`,
-    );
+    const outPath = genFileTsPath(routerFilePath);
     const existing = existsSync(outPath)
       ? readFileSync(outPath, "utf-8")
       : null;
