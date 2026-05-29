@@ -12,13 +12,10 @@ export function createCjsToEsmPlugin(): Plugin {
     name: "@rangojs/router:cjs-to-esm",
     enforce: "pre",
     transform(code, id) {
-      const cleanId = id.split("?")[0];
+      const cleanId = id.split("?")[0].replaceAll("\\", "/");
 
       // Transform the client.browser.js entry point to re-export from CJS
-      if (
-        cleanId.includes("vendor/react-server-dom/client.browser.js") ||
-        cleanId.includes("vendor\\react-server-dom\\client.browser.js")
-      ) {
+      if (cleanId.includes("vendor/react-server-dom/client.browser.js")) {
         const isProd = process.env.NODE_ENV === "production";
         const cjsFile = isProd
           ? "./cjs/react-server-dom-webpack-client.browser.production.js"
@@ -33,8 +30,7 @@ export function createCjsToEsmPlugin(): Plugin {
 
       // Transform the actual CJS files to ESM
       if (
-        (cleanId.includes("vendor/react-server-dom/cjs/") ||
-          cleanId.includes("vendor\\react-server-dom\\cjs\\")) &&
+        cleanId.includes("vendor/react-server-dom/cjs/") &&
         cleanId.includes("client.browser")
       ) {
         let transformed = code;
