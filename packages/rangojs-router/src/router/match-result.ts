@@ -138,34 +138,38 @@ export async function collectSegments(
 function deduplicateLoaderSegments(
   segments: ResolvedSegment[],
   logPrefix: string,
-): ResolvedSegment[] {
-  // First pass: collect loaderIds of original (non-inherited) segments
-  // and whether their parent entry uses loading()
+): { segments: ResolvedSegment[]; removedIds: Set<string> } {
+  // Single pass: original (non-inherited) loaderIds, all loaderIds grouped by
+  // namespace, and namespaces of segments that declare loading().
   const originalLoaders = new Set<string>();
-  const loadersWithLoading = new Set<string>();
+  const loaderIdsByNamespace = new Map<string, string[]>();
+  const namespacesWithLoading = new Set<string>();
   for (const s of segments) {
-    if (s.type === "loader" && s.loaderId && !s._inherited) {
-      originalLoaders.add(s.loaderId);
-      // If the segment has a sibling with loading, the parent uses loading()
-      // We detect this by checking if any non-loader segment in the same
-      // namespace has loading defined
+    if (s.type === "loader" && s.loaderId) {
+      if (!s._inherited) originalLoaders.add(s.loaderId);
+      const ids = loaderIdsByNamespace.get(s.namespace);
+      if (ids) ids.push(s.loaderId);
+      else loaderIdsByNamespace.set(s.namespace, [s.loaderId]);
+    } else if (
+      s.type !== "loader" &&
+      s.loading !== undefined &&
+      s.loading !== false
+    ) {
+      namespacesWithLoading.add(s.namespace);
     }
   }
-  // Check if any layout/route segment has loading — if a loader's namespace
-  // matches a segment with loading, the inherited copy is needed
-  for (const s of segments) {
-    if (s.type !== "loader" && s.loading !== undefined && s.loading !== false) {
-      // Find loaders in this namespace
-      for (const l of segments) {
-        if (l.type === "loader" && l.namespace === s.namespace && l.loaderId) {
-          loadersWithLoading.add(l.loaderId);
-        }
-      }
+
+  // An inherited loader is needed when it shares a namespace with a
+  // loading-bearing segment (its data sits behind that LoaderBoundary).
+  const loadersWithLoading = new Set<string>();
+  for (const ns of namespacesWithLoading) {
+    for (const id of loaderIdsByNamespace.get(ns) ?? []) {
+      loadersWithLoading.add(id);
     }
   }
 
   const result: ResolvedSegment[] = [];
-  let dedupCount = 0;
+  const removedIds = new Set<string>();
 
   for (const s of segments) {
     if (
@@ -175,17 +179,20 @@ function deduplicateLoaderSegments(
       originalLoaders.has(s.loaderId) &&
       !loadersWithLoading.has(s.loaderId)
     ) {
-      dedupCount++;
+      removedIds.add(s.id);
       continue;
     }
     result.push(s);
   }
 
-  if (dedupCount > 0) {
-    debugLog(logPrefix, `deduped ${dedupCount} inherited loader segment(s)`);
+  if (removedIds.size > 0) {
+    debugLog(
+      logPrefix,
+      `deduped ${removedIds.size} inherited loader segment(s)`,
+    );
   }
 
-  return result;
+  return { segments: result, removedIds };
 }
 
 /**
@@ -244,7 +251,7 @@ export function buildMatchResult<TEnv>(
     );
   }
 
-  const dedupedSegments = deduplicateLoaderSegments(
+  const { segments: dedupedSegments, removedIds } = deduplicateLoaderSegments(
     segmentsToRender,
     logPrefix,
   );
@@ -262,11 +269,6 @@ export function buildMatchResult<TEnv>(
 
   // Remove deduped loader IDs from matched so the client doesn't treat
   // them as missing segments and trigger a fallback refetch.
-  const removedIds = new Set(
-    segmentsToRender
-      .filter((s) => !dedupedSegments.includes(s))
-      .map((s) => s.id),
-  );
   const matchedIds =
     removedIds.size > 0 ? allIds.filter((id) => !removedIds.has(id)) : allIds;
 

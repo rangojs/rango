@@ -3,7 +3,7 @@ import { createElement, type ReactNode, type ComponentType } from "react";
 import { OutletProvider } from "./client.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import type { ResolvedSegment, RootLayoutProps } from "./types.js";
-import { isLoaderDataResult } from "./types.js";
+import { decodeLoaderResults } from "./decode-loader-results.js";
 import { invariant } from "./errors.js";
 import {
   RouteContentWrapper,
@@ -57,42 +57,6 @@ function restoreParallelLoaderMarkers(
   }
 
   return nextSegments ?? segments;
-}
-
-/**
- * Resolve loader data from raw results, unwrapping LoaderDataResult wrappers
- */
-function resolveLoaderData(
-  resolvedData: any[],
-  loaderIds: string[],
-): { loaderData: Record<string, any>; errorFallback: ReactNode } {
-  const loaderData: Record<string, any> = {};
-  let errorFallback: ReactNode = null;
-
-  for (let i = 0; i < loaderIds.length; i++) {
-    const id = loaderIds[i];
-    const result = resolvedData[i];
-
-    if (!isLoaderDataResult(result)) {
-      // Legacy format - direct data
-      loaderData[id] = result;
-      continue;
-    }
-
-    if (result.ok) {
-      loaderData[id] = result.data;
-      continue;
-    }
-
-    // Error case
-    if (result.fallback) {
-      errorFallback = result.fallback;
-    } else {
-      throw new Error(result.error.message);
-    }
-  }
-
-  return { loaderData, errorFallback };
 }
 
 /**
@@ -337,13 +301,15 @@ export async function renderSegments(
 
     // Prepare loader data if there are loaders
     const loaderIds = loaderEntries.map((loader) => loader.loaderId!);
-    const loaderDataPromise = getMemoizedLoaderPromise(loaderEntries);
 
     // Use LoaderBoundary when loading is defined to maintain consistent tree structure
     // This ensures cached segments (which may not have loader segments) have the same
     // tree structure as fresh segments, preventing React remounts
     // If forceAwait or isAction is set, pre-resolve promises so LoaderBoundary won't suspend
     if (loading !== undefined && loading !== null) {
+      // Aggregate built here only — the loaderless and no-loading branches don't
+      // read it (the latter builds its own per-parallel promises).
+      const loaderDataPromise = getMemoizedLoaderPromise(loaderEntries);
       content = createElement(LoaderBoundary, {
         key: `loader-boundary-${key}`,
         loaderDataPromise:
@@ -387,7 +353,7 @@ export async function renderSegments(
             )
           : Promise.resolve([]);
       const resolvedData = await layoutLoaderDataPromise;
-      const { loaderData, errorFallback } = resolveLoaderData(
+      const { loaderData, errorFallback } = decodeLoaderResults(
         resolvedData,
         layoutLoaderIds,
       );

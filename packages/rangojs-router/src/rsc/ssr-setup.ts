@@ -126,3 +126,19 @@ export function mayNeedSSR(request: Request, url: URL): boolean {
 
   return true;
 }
+
+// Final render-time decision: is the response an RSC stream (vs HTML)? Distinct
+// from mayNeedSSR, which is a conservative pre-classifier (it treats a missing
+// Accept header as needing SSR; this treats it as RSC).
+export function isRscRequest(
+  request: Request,
+  url: URL,
+  isPartial: boolean,
+): boolean {
+  return (
+    isPartial ||
+    (!request.headers.get("accept")?.includes("text/html") &&
+      !url.searchParams.has("__html")) ||
+    url.searchParams.has("__rsc")
+  );
+}

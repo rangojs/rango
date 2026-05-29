@@ -66,28 +66,14 @@ export function findInterceptForRoute(
   let current: EntryData | null = fromEntry;
 
   while (current) {
-    if (current.intercept && current.intercept.length > 0) {
-      for (const intercept of current.intercept) {
+    // current first, then its sibling layouts — same order as before.
+    for (const source of [current, ...current.layout]) {
+      for (const intercept of source.intercept) {
         if (
           intercept.routeName === targetRouteKey &&
           evaluateInterceptWhen(intercept, selectorContext, isAction)
         ) {
-          return { intercept, entry: current };
-        }
-      }
-    }
-
-    if (current.layout && current.layout.length > 0) {
-      for (const siblingLayout of current.layout) {
-        if (siblingLayout.intercept && siblingLayout.intercept.length > 0) {
-          for (const intercept of siblingLayout.intercept) {
-            if (
-              intercept.routeName === targetRouteKey &&
-              evaluateInterceptWhen(intercept, selectorContext, isAction)
-            ) {
-              return { intercept, entry: siblingLayout };
-            }
-          }
+          return { intercept, entry: source };
         }
       }
     }

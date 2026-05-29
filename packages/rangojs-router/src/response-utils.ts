@@ -26,3 +26,12 @@ export function isWebSocketUpgradeResponse(response: Response): boolean {
     (response as unknown as { webSocket?: unknown }).webSocket != null
   );
 }
+
+// Location truthiness (not presence) so an empty `Location: ""` is not a redirect.
+export function isRedirectResponse(response: Response): boolean {
+  return (
+    response.status >= 300 &&
+    response.status < 400 &&
+    Boolean(response.headers.get("Location"))
+  );
+}

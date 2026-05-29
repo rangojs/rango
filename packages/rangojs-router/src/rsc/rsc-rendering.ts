@@ -13,8 +13,9 @@ import {
 } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import { appendMetric } from "../router/metrics.js";
-import { getSSRSetup } from "./ssr-setup.js";
+import { getSSRSetup, isRscRequest } from "./ssr-setup.js";
 import type { RscPayload } from "./types.js";
+import type { MatchResult } from "../types.js";
 import {
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
@@ -35,6 +36,28 @@ export async function handleRscRendering<TEnv>(
   let payload: RscPayload;
   let hasInterceptSlots = false;
 
+  // Shared by the partial-fallback and full-render paths. The partial-success
+  // payload below is intentionally different (omits rootLayout/theme, adds slots).
+  const buildFullPayload = (m: MatchResult): RscPayload => ({
+    metadata: {
+      pathname: url.pathname,
+      routerId: ctx.router.id,
+      basename: ctx.router.basename,
+      segments: m.segments,
+      matched: m.matched,
+      diff: m.diff,
+      resolvedIds: m.resolvedIds,
+      params: m.params,
+      isPartial: false,
+      rootLayout: ctx.router.rootLayout,
+      handles: handleStore.stream(),
+      version: ctx.version,
+      prefetchCacheTTL: ctx.router.prefetchCacheTTL,
+      themeConfig: ctx.router.themeConfig,
+      initialTheme: reqCtx.theme,
+    },
+  });
+
   if (isPartial) {
     // Partial render (navigation)
     const result = await ctx.router.matchPartial(request, { env });
@@ -51,25 +74,7 @@ export async function handleRscRendering<TEnv>(
         return createSimpleRedirectResponse(match.redirect);
       }
 
-      payload = {
-        metadata: {
-          pathname: url.pathname,
-          routerId: ctx.router.id,
-          basename: ctx.router.basename,
-          segments: match.segments,
-          matched: match.matched,
-          diff: match.diff,
-          resolvedIds: match.resolvedIds,
-          params: match.params,
-          isPartial: false,
-          rootLayout: ctx.router.rootLayout,
-          handles: handleStore.stream(),
-          version: ctx.version,
-          prefetchCacheTTL: ctx.router.prefetchCacheTTL,
-          themeConfig: ctx.router.themeConfig,
-          initialTheme: reqCtx.theme,
-        },
-      };
+      payload = buildFullPayload(match);
     } else {
       setRequestContextParams(result.params, result.routeName);
 
@@ -135,28 +140,7 @@ export async function handleRscRendering<TEnv>(
         { headers: { "Content-Type": "application/json" } },
       );
     } else {
-      payload = {
-        // Initial SSR can reconstruct the tree from segments + rootLayout,
-        // so we omit root to avoid sending the same structure twice.
-
-        metadata: {
-          pathname: url.pathname,
-          routerId: ctx.router.id,
-          basename: ctx.router.basename,
-          segments: match.segments,
-          matched: match.matched,
-          diff: match.diff,
-          resolvedIds: match.resolvedIds,
-          params: match.params,
-          isPartial: false,
-          rootLayout: ctx.router.rootLayout,
-          handles: handleStore.stream(),
-          version: ctx.version,
-          prefetchCacheTTL: ctx.router.prefetchCacheTTL,
-          themeConfig: ctx.router.themeConfig,
-          initialTheme: reqCtx.theme,
-        },
-      };
+      payload = buildFullPayload(match);
     }
   }
 
@@ -190,17 +174,7 @@ export async function handleRscRendering<TEnv>(
     rscSerializeDur,
   );
 
-  // Determine if this is an RSC request or HTML request.
-  // Partial requests (_rsc_partial) are always RSC -- they come from client-side
-  // navigation or prefetch fetch(). We cannot rely on Accept alone since some
-  // browsers may send Accept: text/html for non-HTML requests.
-  const isRscRequest =
-    isPartial ||
-    (!request.headers.get("accept")?.includes("text/html") &&
-      !url.searchParams.has("__html")) ||
-    url.searchParams.has("__rsc");
-
-  if (isRscRequest) {
+  if (isRscRequest(request, url, isPartial)) {
     const renderDur = performance.now() - renderStart;
     appendMetric(metricsStore, "render:total", renderStart, renderDur);
     const rscHeaders: Record<string, string> = {

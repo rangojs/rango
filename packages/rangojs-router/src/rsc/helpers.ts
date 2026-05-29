@@ -10,6 +10,7 @@ import {
 } from "../server/request-context.js";
 import type { RequestContext } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
+import { isRedirectResponse } from "../response-utils.js";
 import type { MiddlewareEntry, MiddlewareFn } from "../router/middleware.js";
 
 /**
@@ -145,10 +146,10 @@ export function interceptRedirectForPartial(
     locationState?: Record<string, unknown>,
   ) => Response,
 ): Response | null {
-  const redirectUrl = response.headers.get("Location");
-  if (!(response.status >= 300 && response.status < 400 && redirectUrl)) {
+  if (!isRedirectResponse(response)) {
     return null;
   }
+  const redirectUrl = response.headers.get("Location")!;
   const locationState = getLocationState();
   let intercepted: Response;
   if (locationState) {
