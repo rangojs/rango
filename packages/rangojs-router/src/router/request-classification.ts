@@ -278,33 +278,9 @@ async function classifyResponseRoute<TEnv>(
   pathname: string,
   snapshot: RouteSnapshot<TEnv>,
 ): Promise<ResponseRoutePlan<TEnv> | null> {
-  const { manifestEntry, responseType } = snapshot;
-
+  // negotiateRoute returns the response plan (variant or plain) or null for RSC.
   const negotiation = await negotiateRoute(request, pathname, snapshot);
-  if (negotiation) {
-    return {
-      mode: "response",
-      route: snapshot,
-      ...negotiation,
-    };
-  }
-
-  // Non-negotiated response route (no variants, or RSC won negotiation)
-  if (responseType) {
-    const handler =
-      manifestEntry.type === "route" ? manifestEntry.handler : undefined;
-    if (handler) {
-      return {
-        mode: "response",
-        route: snapshot,
-        handler,
-        responseType,
-        negotiated: false,
-        manifestEntry,
-        routeMiddleware: snapshot.routeMiddleware,
-      };
-    }
-  }
-
-  return null;
+  return negotiation
+    ? { mode: "response", route: snapshot, ...negotiation }
+    : null;
 }

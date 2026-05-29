@@ -15,6 +15,7 @@ import { resolveLocationStateEntries } from "../browser/react/location-state-sha
 import { appendMetric } from "../router/metrics.js";
 import { getSSRSetup } from "./ssr-setup.js";
 import type { RscPayload } from "./types.js";
+import type { MatchResult } from "../types.js";
 import {
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
@@ -35,6 +36,28 @@ export async function handleRscRendering<TEnv>(
   let payload: RscPayload;
   let hasInterceptSlots = false;
 
+  // Shared by the partial-fallback and full-render paths. The partial-success
+  // payload below is intentionally different (omits rootLayout/theme, adds slots).
+  const buildFullPayload = (m: MatchResult): RscPayload => ({
+    metadata: {
+      pathname: url.pathname,
+      routerId: ctx.router.id,
+      basename: ctx.router.basename,
+      segments: m.segments,
+      matched: m.matched,
+      diff: m.diff,
+      resolvedIds: m.resolvedIds,
+      params: m.params,
+      isPartial: false,
+      rootLayout: ctx.router.rootLayout,
+      handles: handleStore.stream(),
+      version: ctx.version,
+      prefetchCacheTTL: ctx.router.prefetchCacheTTL,
+      themeConfig: ctx.router.themeConfig,
+      initialTheme: reqCtx.theme,
+    },
+  });
+
   if (isPartial) {
     // Partial render (navigation)
     const result = await ctx.router.matchPartial(request, { env });
@@ -51,25 +74,7 @@ export async function handleRscRendering<TEnv>(
         return createSimpleRedirectResponse(match.redirect);
       }
 
-      payload = {
-        metadata: {
-          pathname: url.pathname,
-          routerId: ctx.router.id,
-          basename: ctx.router.basename,
-          segments: match.segments,
-          matched: match.matched,
-          diff: match.diff,
-          resolvedIds: match.resolvedIds,
-          params: match.params,
-          isPartial: false,
-          rootLayout: ctx.router.rootLayout,
-          handles: handleStore.stream(),
-          version: ctx.version,
-          prefetchCacheTTL: ctx.router.prefetchCacheTTL,
-          themeConfig: ctx.router.themeConfig,
-          initialTheme: reqCtx.theme,
-        },
-      };
+      payload = buildFullPayload(match);
     } else {
       setRequestContextParams(result.params, result.routeName);
 
@@ -135,28 +140,7 @@ export async function handleRscRendering<TEnv>(
         { headers: { "Content-Type": "application/json" } },
       );
     } else {
-      payload = {
-        // Initial SSR can reconstruct the tree from segments + rootLayout,
-        // so we omit root to avoid sending the same structure twice.
-
-        metadata: {
-          pathname: url.pathname,
-          routerId: ctx.router.id,
-          basename: ctx.router.basename,
-          segments: match.segments,
-          matched: match.matched,
-          diff: match.diff,
-          resolvedIds: match.resolvedIds,
-          params: match.params,
-          isPartial: false,
-          rootLayout: ctx.router.rootLayout,
-          handles: handleStore.stream(),
-          version: ctx.version,
-          prefetchCacheTTL: ctx.router.prefetchCacheTTL,
-          themeConfig: ctx.router.themeConfig,
-          initialTheme: reqCtx.theme,
-        },
-      };
+      payload = buildFullPayload(match);
     }
   }
 

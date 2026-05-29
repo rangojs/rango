@@ -27,7 +27,7 @@ import {
   hasBodyContent,
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
-  carryOverRedirectHeaders,
+  interceptRedirectForPartial,
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 
@@ -111,49 +111,25 @@ export async function executeServerAction<TEnv>(
     loadedAction = await ctx.loadServerAction(actionId);
     const data = await loadedAction!.apply(null, args);
 
-    // Intercept redirect responses from actions. Without this, the redirect
-    // Response would be serialized as the action returnValue (which fails)
-    // and the revalidation step would run unnecessarily.
+    // Intercept redirect Responses: serializing one as the action returnValue
+    // would fail, and revalidation would run needlessly.
     if (data instanceof Response) {
-      const redirectUrl = data.headers.get("Location");
-      const isRedirect = data.status >= 300 && data.status < 400 && redirectUrl;
-      if (isRedirect) {
-        const locationState = getLocationState();
-        let redirect: Response;
-        if (locationState) {
-          redirect = ctx.createRedirectFlightResponse(
-            redirectUrl,
-            resolveLocationStateEntries(locationState),
-          );
-        } else {
-          redirect = createSimpleRedirectResponse(redirectUrl);
-        }
-        carryOverRedirectHeaders(data, redirect);
-        return redirect;
-      }
+      const intercepted = interceptRedirectForPartial(
+        data,
+        ctx.createRedirectFlightResponse,
+      );
+      if (intercepted) return intercepted;
     }
 
     returnValue = { ok: true, data };
   } catch (error) {
     // Handle thrown redirect (e.g., throw redirect('/path'))
     if (error instanceof Response) {
-      const redirectUrl = error.headers.get("Location");
-      const isRedirect =
-        error.status >= 300 && error.status < 400 && redirectUrl;
-      if (isRedirect) {
-        const locationState = getLocationState();
-        let redirect: Response;
-        if (locationState) {
-          redirect = ctx.createRedirectFlightResponse(
-            redirectUrl,
-            resolveLocationStateEntries(locationState),
-          );
-        } else {
-          redirect = createSimpleRedirectResponse(redirectUrl);
-        }
-        carryOverRedirectHeaders(error, redirect);
-        return redirect;
-      }
+      const intercepted = interceptRedirectForPartial(
+        error,
+        ctx.createRedirectFlightResponse,
+      );
+      if (intercepted) return intercepted;
 
       // Non-redirect Response thrown from action — this will be treated
       // as a regular error and routed to the error boundary. Warn in dev
