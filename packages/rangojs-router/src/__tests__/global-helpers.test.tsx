@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { urls } from "../urls.js";
 import { RangoContext, type EntryData } from "../server/context.js";
+import { DslContextError } from "../errors.js";
 
 // These are the helpers we want to export globally from @rangojs/router.
 // Currently they're module-level consts in route-definition.ts.
@@ -428,6 +429,47 @@ describe("global helper imports", () => {
         // withCache is defined but NOT called
         void withCache;
       }).not.toThrow();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 5b. DslContextError contract — the single consumer-observable delta.
+  // Calling a DSL helper outside a urls()/map() builder throws a typed
+  // DslContextError with a helper-specific, actionable message and a cause.
+  // -------------------------------------------------------------------------
+  describe("DslContextError contract", () => {
+    it("a helper called outside a builder throws DslContextError with message + cause", () => {
+      let error: unknown;
+      try {
+        revalidate(() => true);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(DslContextError);
+      expect((error as DslContextError).name).toBe("DslContextError");
+      expect((error as Error).message).toBe(
+        "revalidate() must be called inside urls()",
+      );
+      expect(String((error as DslContextError).cause)).toContain(
+        "outside an active urls()/map() builder",
+      );
+    });
+
+    it("each helper names itself in its guard message", () => {
+      expect(() => cache()).toThrow("cache() must be called inside urls()");
+      expect(() => layout(() => <div>Layout</div>)).toThrow(
+        "layout() must be called inside urls()",
+      );
+      expect(() => parallel({ "@slot": () => <div>Slot</div> })).toThrow(
+        "parallel() must be called inside urls()",
+      );
+    });
+
+    it("when() keeps its intercept-specific guard message", () => {
+      expect(() => when(() => true)).toThrowError(DslContextError);
+      expect(() => when(() => true)).toThrow(
+        "when() must be called inside intercept()",
+      );
     });
   });
 

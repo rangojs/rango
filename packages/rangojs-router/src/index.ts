@@ -18,6 +18,7 @@ export {
   MiddlewareError,
   HandlerError,
   BuildError,
+  DslContextError,
   InvalidHandlerError,
   RouterError,
   Skip,

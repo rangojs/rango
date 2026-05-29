@@ -69,8 +69,10 @@ const hasRoutesInItem = (item: AllUseItems): boolean => {
 /**
  * Fresh empty collections shared by every from-scratch segment entry. Returns
  * new arrays/objects per call so no two entries share mutable references.
- * mountPath is intentionally NOT included — each call site adds it only where
- * the entry can carry a URL prefix (route/transition entries never do).
+ * mountPath is intentionally NOT included here — each call site adds it from
+ * getUrlPrefix() where applicable: the route() and transition() helpers add
+ * none, while path() (which also builds a `type: "route"` entry) and the
+ * structural helpers (layout/cache/middleware/parallel) do.
  */
 const emptySegmentBase = (): EntryPropDatas &
   EntryPropSegments & { loading: undefined } => ({
