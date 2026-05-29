@@ -17,16 +17,27 @@ export type LayoutItem = {
 };
 
 /**
+ * Phantom inference fields attached to wrapper items (layout/cache/transition)
+ * so the urls() type extractor can read their child routes/responses. The fields
+ * never exist at runtime.
+ */
+type WithChildren<
+  TBase,
+  TChildRoutes extends Record<string, any> = Record<string, string>,
+  TChildResponses extends Record<string, unknown> = Record<string, unknown>,
+> = TBase & {
+  readonly __childRoutes?: TChildRoutes;
+  readonly __childResponses?: TChildResponses;
+};
+
+/**
  * Typed layout item that carries child routes as phantom type
  * Used for type inference in urls() API
  */
 export type TypedLayoutItem<
   TChildRoutes extends Record<string, any> = Record<string, string>,
   TChildResponses extends Record<string, unknown> = Record<string, unknown>,
-> = LayoutItem & {
-  readonly __childRoutes?: TChildRoutes;
-  readonly __childResponses?: TChildResponses;
-};
+> = WithChildren<LayoutItem, TChildRoutes, TChildResponses>;
 export type RouteItem = {
   name: string;
   type: "route";
@@ -108,10 +119,7 @@ export type TransitionItem = {
 export type TypedTransitionItem<
   TChildRoutes extends Record<string, any> = Record<string, string>,
   TChildResponses extends Record<string, unknown> = Record<string, unknown>,
-> = TransitionItem & {
-  readonly __childRoutes?: TChildRoutes;
-  readonly __childResponses?: TChildResponses;
-};
+> = WithChildren<TransitionItem, TChildRoutes, TChildResponses>;
 
 /**
  * Typed cache item that carries child routes as phantom type
@@ -120,10 +128,7 @@ export type TypedTransitionItem<
 export type TypedCacheItem<
   TChildRoutes extends Record<string, any> = Record<string, string>,
   TChildResponses extends Record<string, unknown> = Record<string, unknown>,
-> = CacheItem & {
-  readonly __childRoutes?: TChildRoutes;
-  readonly __childResponses?: TChildResponses;
-};
+> = WithChildren<CacheItem, TChildRoutes, TChildResponses>;
 
 /**
  * Include item for URL pattern composition (used by urls() API)

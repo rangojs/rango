@@ -271,7 +271,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
     // Create orphan cache entry (like orphan layout)
     // Subsequent siblings in the same array will attach to this entry
     const namespace = `${ctx.namespace}.${cacheIndex}`;
-    const cacheUrlPrefix = getUrlPrefix();
+    const urlPrefix = getUrlPrefix();
 
     const entry = {
       id: namespace,
@@ -289,8 +289,8 @@ const cache: RouteHelpers<any, any>["cache"] = (
       parallel: {},
       intercept: [],
       loader: [],
-      ...(cacheUrlPrefix ? { mountPath: cacheUrlPrefix } : {}),
-    } as EntryData;
+      ...(urlPrefix ? { mountPath: urlPrefix } : {}),
+    } satisfies EntryData;
 
     // Attach to parent's layout array (cache entries are structural like layouts)
     if (parent && "layout" in parent) {
@@ -317,7 +317,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
   const namespace = `${ctx.namespace}.${cacheIndex}`;
   const cacheShortCode = store.getShortCode("cache");
 
-  const cacheUrlPrefix2 = getUrlPrefix();
+  const urlPrefix = getUrlPrefix();
 
   const entry = {
     id: namespace,
@@ -336,8 +336,8 @@ const cache: RouteHelpers<any, any>["cache"] = (
     parallel: {},
     intercept: [],
     loader: [],
-    ...(cacheUrlPrefix2 ? { mountPath: cacheUrlPrefix2 } : {}),
-  } as EntryData;
+    ...(urlPrefix ? { mountPath: urlPrefix } : {}),
+  } satisfies EntryData;
 
   // Run children with cache entry as parent
   const result = store.run(namespace, entry, children)?.flat(3);
@@ -442,7 +442,7 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
     intercept: [],
     loader: [],
     ...(urlPrefix ? { mountPath: urlPrefix } : {}),
-  } as EntryData;
+  } satisfies EntryData;
 
   // Run children callback. If the second arg was actually a middleware fn
   // (old variadic form: middleware(mw1, mw2)), this will return a non-array
@@ -741,7 +741,7 @@ const intercept = (
 /**
  * Loader helper - attaches a loader to the current entry
  */
-const loaderFn: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
+const loader: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
   const store = getContext();
   const ctx = store.getStore();
   if (!ctx) throw new Error("loader() must be called inside map()");
@@ -806,7 +806,7 @@ const loaderFn: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
  * Loading helper - attaches a loading component to the current entry
  * Loading components are static (no context) and shown during navigation
  */
-const loadingFn: RouteHelpers<any, any>["loading"] = (component, options) => {
+const loading: RouteHelpers<any, any>["loading"] = (component, options) => {
   const store = getContext();
   const ctx = store.getStore();
   if (!ctx) throw new Error("loading() must be called inside map()");
@@ -835,7 +835,7 @@ const loadingFn: RouteHelpers<any, any>["loading"] = (component, options) => {
  * Transition helper - attaches a ViewTransition config to the current entry
  * or wraps a group of routes in a transparent layout with ViewTransition
  */
-const transitionFn = (
+const transition = (
   configOrChildren?: TransitionConfig | (() => UseItems<AllUseItems>),
   maybeChildren?: () => UseItems<AllUseItems>,
 ): TransitionItem => {
@@ -883,7 +883,7 @@ const transitionFn = (
     parallel: {},
     intercept: [],
     loader: [],
-  } as EntryData;
+  } satisfies EntryData;
 
   const result = store.run(namespace, entry, children)?.flat(3);
 
@@ -908,7 +908,7 @@ const transitionFn = (
   return { name: namespace, type: "transition" } as TransitionItem;
 };
 
-const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
+const route: RouteHelpers<any, any>["route"] = (name, handler, use) => {
   const store = getContext();
   const ctx = store.getStore();
   if (!ctx) throw new Error("route() must be called inside map()");
@@ -1099,7 +1099,9 @@ const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
   );
 };
 
-// Global helper exports for direct import from @rangojs/router
+// DSL helpers exported for direct import from @rangojs/router and for
+// assembly into the RouteHelpers object in helper-factories.ts. The route-item
+// types are discriminated by their `type` literal, so the helpers carry no brand.
 export {
   layout,
   cache,
@@ -1110,25 +1112,9 @@ export {
   when,
   errorBoundary,
   notFoundBoundary,
-  loaderFn as loader,
-  loadingFn as loading,
-  transitionFn as transition,
-};
-
-const isOrphanLayout = (item: AllUseItems): boolean => {
-  return (
-    item.type === "layout" &&
-    !item.uses?.some((child) => hasRoutesInItem(child))
-  );
-};
-
-// Internal exports used by helper-factories.ts
-export {
-  routeFn,
-  loaderFn,
-  loadingFn,
-  transitionFn,
-  hasRoutesInItem,
+  route,
+  loader,
+  loading,
+  transition,
   isValidUseItem,
-  isOrphanLayout,
 };

@@ -71,6 +71,10 @@ export type EntryPropCommon = {
 };
 
 /**
+ * Attachments resolved by walking the parent chain, not owned by the entry:
+ * middleware composes downward; revalidate and the error/notFound boundaries are
+ * resolved by nearest-ancestor lookup. Inherited, not a single execution chain.
+ *
  * @internal This type is an implementation detail and may change without notice.
  */
 export type EntryPropDatas = {
@@ -78,6 +82,16 @@ export type EntryPropDatas = {
   revalidate: ShouldRevalidateFn<any, any>[];
   errorBoundary: (ReactNode | ErrorBoundaryHandler)[];
   notFoundBoundary: (ReactNode | NotFoundBoundaryHandler)[];
+};
+
+/**
+ * Render-time presentation fields shared by every entry variant.
+ *
+ * @internal This type is an implementation detail and may change without notice.
+ */
+export type EntryPropRender = {
+  loading?: ReactNode | false;
+  transition?: TransitionConfig;
 };
 
 /**
@@ -158,11 +172,9 @@ export type InterceptEntry = {
 };
 
 export interface ParallelEntryData
-  extends EntryPropCommon, EntryPropDatas, EntryPropSegments {
+  extends EntryPropCommon, EntryPropDatas, EntryPropSegments, EntryPropRender {
   type: "parallel";
   handler: Record<`@${string}`, Handler<any, any, any> | ReactNode>;
-  loading?: ReactNode | false;
-  transition?: TransitionConfig;
   /** Set when any parallel slot is a Static definition */
   isStaticPrerender?: true;
   /** Per-slot static handler $$ids for build-time store lookup */
@@ -171,6 +183,13 @@ export interface ParallelEntryData
 
 export type ParallelEntries = Partial<Record<`@${string}`, ParallelEntryData>>;
 
+/**
+ * This entry's own structural children plus its owned loaders. `loader` lives
+ * here (not in EntryPropDatas) because loaders are owned by the entry, not
+ * inherited from ancestors.
+ *
+ * @internal This type is an implementation detail and may change without notice.
+ */
 export type EntryPropSegments = {
   loader: LoaderEntry[];
   layout: EntryData[];
@@ -182,8 +201,6 @@ export type EntryData =
   | ({
       type: "route";
       handler: Handler<any, any, any>;
-      loading?: ReactNode | false;
-      transition?: TransitionConfig;
       /** URL pattern for this route (used by path() in urls()) */
       pattern?: string;
       /** Set when handler is a Prerender definition */
@@ -205,29 +222,28 @@ export type EntryData =
       responseType?: string;
     } & EntryPropCommon &
       EntryPropDatas &
-      EntryPropSegments)
+      EntryPropSegments &
+      EntryPropRender)
   | ({
       type: "layout";
       handler: ReactNode | Handler<any, any, any>;
-      loading?: ReactNode | false;
-      transition?: TransitionConfig;
       /** Set when handler is a Static definition (build-time only) */
       isStaticPrerender?: true;
       /** Static handler $$id for build-time store lookup */
       staticHandlerId?: string;
     } & EntryPropCommon &
       EntryPropDatas &
-      EntryPropSegments)
+      EntryPropSegments &
+      EntryPropRender)
   | ParallelEntryData
   | ({
       type: "cache";
       /** Cache entries create cache boundaries and render like layouts (with Outlet) */
       handler: ReactNode | Handler<any, any, any>;
-      loading?: ReactNode | false;
-      transition?: TransitionConfig;
     } & EntryPropCommon &
       EntryPropDatas &
-      EntryPropSegments);
+      EntryPropSegments &
+      EntryPropRender);
 
 /**
  * Tracked include info for build-time manifest generation
