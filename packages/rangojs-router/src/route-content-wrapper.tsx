@@ -4,7 +4,7 @@ import { Suspense, use, useId } from "react";
 import { invariant } from "./errors";
 import { OutletProvider } from "./outlet-provider.js";
 import type { ResolvedSegment } from "./types.js";
-import { isLoaderDataResult } from "./types.js";
+import { decodeLoaderResults } from "./decode-loader-results.js";
 
 /**
  * Stable async wrapper component for route content
@@ -26,10 +26,6 @@ export function RouteContentWrapper({
   fallback?: ReactNode;
   segmentId?: string;
 }): ReactNode {
-  if (!content) {
-    // Already resolved
-    return content as ReactNode;
-  }
   return (
     <Suspense
       fallback={fallback ?? null}
@@ -159,28 +155,10 @@ function LoaderResolver({
       ? use(loaderDataPromise)
       : loaderDataPromise;
 
-  // Build loaderData record from resolved values
-  const loaderData: Record<string, any> = {};
-  let loaderErrorFallback: ReactNode = null;
-
-  loaderIds.forEach((id, i) => {
-    const result = resolvedData[i];
-
-    if (isLoaderDataResult(result)) {
-      if (result.ok) {
-        loaderData[id] = result.data;
-      } else {
-        if (result.fallback) {
-          loaderErrorFallback = result.fallback;
-        } else {
-          throw new Error(result.error.message);
-        }
-      }
-    } else {
-      // Legacy format - direct data
-      loaderData[id] = result;
-    }
-  });
+  const { loaderData, errorFallback } = decodeLoaderResults(
+    resolvedData,
+    loaderIds,
+  );
 
   return (
     <OutletProvider
@@ -190,7 +168,7 @@ function LoaderResolver({
       parallel={parallel}
       loaderData={Object.keys(loaderData).length > 0 ? loaderData : undefined}
     >
-      {loaderErrorFallback ?? children}
+      {errorFallback ?? children}
     </OutletProvider>
   );
 }

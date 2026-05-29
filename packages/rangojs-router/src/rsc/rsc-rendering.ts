@@ -13,7 +13,7 @@ import {
 } from "../server/request-context.js";
 import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import { appendMetric } from "../router/metrics.js";
-import { getSSRSetup } from "./ssr-setup.js";
+import { getSSRSetup, isRscRequest } from "./ssr-setup.js";
 import type { RscPayload } from "./types.js";
 import type { MatchResult } from "../types.js";
 import {
@@ -174,17 +174,7 @@ export async function handleRscRendering<TEnv>(
     rscSerializeDur,
   );
 
-  // Determine if this is an RSC request or HTML request.
-  // Partial requests (_rsc_partial) are always RSC -- they come from client-side
-  // navigation or prefetch fetch(). We cannot rely on Accept alone since some
-  // browsers may send Accept: text/html for non-HTML requests.
-  const isRscRequest =
-    isPartial ||
-    (!request.headers.get("accept")?.includes("text/html") &&
-      !url.searchParams.has("__html")) ||
-    url.searchParams.has("__rsc");
-
-  if (isRscRequest) {
+  if (isRscRequest(request, url, isPartial)) {
     const renderDur = performance.now() - renderStart;
     appendMetric(metricsStore, "render:total", renderStart, renderDur);
     const rscHeaders: Record<string, string> = {

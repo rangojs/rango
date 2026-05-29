@@ -27,6 +27,17 @@ export class RouteNotFoundError extends Error {
   }
 }
 
+// name fallback covers cross-realm errors (Vite dev dupes, RSC serialization)
+// where instanceof fails.
+export function isRouteNotFoundError(
+  error: unknown,
+): error is RouteNotFoundError {
+  return (
+    error instanceof RouteNotFoundError ||
+    (error instanceof Error && error.name === "RouteNotFoundError")
+  );
+}
+
 /**
  * Thrown when data is not found (e.g., product with ID doesn't exist)
  * Use this in handlers/loaders to trigger the nearest notFoundBoundary
