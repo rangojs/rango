@@ -103,7 +103,7 @@ export type UpdateMode =
       /** Source URL for intercept restore (popstate cache miss) */
       interceptSourceUrl?: string;
     }
-  | { type: "leave-intercept" }
+  | { type: "leave-intercept"; interceptSourceUrl?: string }
   | { type: "stale-revalidation"; interceptSourceUrl?: string }
   | { type: "action"; interceptSourceUrl?: string };
 
@@ -169,13 +169,7 @@ export function createPartialUpdater(
     // Capture history key at start for stale revalidation consistency check
     const historyKeyAtStart = store.getHistoryKey();
 
-    // Derive interceptSourceUrl from modes that carry it
-    const interceptSourceUrl =
-      mode.type === "stale-revalidation" ||
-      mode.type === "action" ||
-      mode.type === "navigate"
-        ? mode.interceptSourceUrl
-        : undefined;
+    const interceptSourceUrl = mode.interceptSourceUrl;
 
     // When leaving intercept, filter out intercept-specific segments
     let segments: string[];
@@ -218,13 +212,11 @@ export function createPartialUpdater(
     // When navigating with targetCacheSegments, use those for consistency.
     // Otherwise fall back to current page's segments (for same-route revalidation).
     const targetCache =
-      mode.type === "navigate" ? mode.targetCacheSegments : undefined;
-    const cachedSegs =
-      targetCache && targetCache.length > 0
-        ? targetCache
-        : getCurrentCachedSegments();
-    const cachedSegsSource =
-      targetCache && targetCache.length > 0 ? "history-cache" : "current-page";
+      mode.type === "navigate" && mode.targetCacheSegments?.length
+        ? mode.targetCacheSegments
+        : undefined;
+    const cachedSegs = targetCache ?? getCurrentCachedSegments();
+    const cachedSegsSource = targetCache ? "history-cache" : "current-page";
     debugLog(
       `[Browser] cachedSegs source: ${cachedSegsSource} (${cachedSegs.length} segments: ${cachedSegs.map((s) => s.id).join(", ")})`,
     );
@@ -318,7 +310,7 @@ export function createPartialUpdater(
           .filter(Boolean) as ResolvedSegment[];
 
         // When navigating with cached segments to a different route, render them.
-        if (mode.type === "navigate" && targetCache && targetCache.length > 0) {
+        if (mode.type === "navigate" && targetCache) {
           debugLog(
             "[Browser] No diff but navigating with cached segments - rendering target route",
           );

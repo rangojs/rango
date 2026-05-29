@@ -268,6 +268,20 @@ function matchesActionId(
   return entryActionId.endsWith(`#${subscriptionId}`);
 }
 
+// Coalesce rapid notifications into one microtask-deferred fan-out; the
+// setTimeout(0) batching prevents render storms. Each notifier owns its timer
+// so listener kinds coalesce independently.
+function makeDebouncedNotifier(listeners: Set<() => void>): () => void {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  return () => {
+    if (timeout !== null) clearTimeout(timeout);
+    timeout = setTimeout(() => {
+      timeout = null;
+      listeners.forEach((listener) => listener());
+    }, 0);
+  };
+}
+
 // ============================================================================
 // Implementation
 // ============================================================================
@@ -334,18 +348,7 @@ export function createEventController(
   const actionListeners = new Map<string, Set<ActionStateListener>>();
   const handleListeners = new Set<HandleListener>();
 
-  // Debounce state notifications to batch rapid updates
-  let notifyTimeout: ReturnType<typeof setTimeout> | null = null;
-
-  function notify() {
-    if (notifyTimeout !== null) {
-      clearTimeout(notifyTimeout);
-    }
-    notifyTimeout = setTimeout(() => {
-      notifyTimeout = null;
-      stateListeners.forEach((listener) => listener());
-    }, 0);
-  }
+  const notify = makeDebouncedNotifier(stateListeners);
 
   // Debounce per-action notifications
   const actionNotifyTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
@@ -371,18 +374,7 @@ export function createEventController(
     );
   }
 
-  // Debounce handle notifications
-  let handleNotifyTimeout: ReturnType<typeof setTimeout> | null = null;
-
-  function notifyHandles() {
-    if (handleNotifyTimeout !== null) {
-      clearTimeout(handleNotifyTimeout);
-    }
-    handleNotifyTimeout = setTimeout(() => {
-      handleNotifyTimeout = null;
-      handleListeners.forEach((listener) => listener());
-    }, 0);
-  }
+  const notifyHandles = makeDebouncedNotifier(handleListeners);
 
   // ========================================================================
   // Derived State
@@ -429,22 +421,17 @@ export function createEventController(
   }
 
   function getActionState(actionId: string): TrackedActionState {
-    // Find the most recent action with this ID that's not settling
-    // Uses suffix matching when actionId is just a name (no #)
-    const activeEntry = [...inflightActions.values()]
-      .filter(
-        (a) => matchesActionId(actionId, a.actionId) && a.phase !== "settling",
-      )
-      .sort((a, b) => b.startedAt - a.startedAt)[0];
-
-    // Also check for settling entries to get result/error
-    const settlingEntry = [...inflightActions.values()]
-      .filter(
-        (a) => matchesActionId(actionId, a.actionId) && a.phase === "settling",
-      )
-      .sort((a, b) => b.startedAt - a.startedAt)[0];
-
-    const entry = activeEntry || settlingEntry;
+    // Prefer the most-recent non-settling entry; fall back to most-recent
+    // settling so a just-settled action's result/error stays readable.
+    const entry = [...inflightActions.values()]
+      .filter((a) => matchesActionId(actionId, a.actionId))
+      .reduce<ActionEntry | undefined>((best, a) => {
+        if (!best) return a;
+        const aActive = a.phase !== "settling";
+        const bActive = best.phase !== "settling";
+        if (aActive !== bActive) return aActive ? a : best;
+        return a.startedAt > best.startedAt ? a : best;
+      }, undefined);
 
     if (!entry) {
       return { ...DEFAULT_ACTION_STATE };
@@ -632,6 +619,19 @@ export function createEventController(
       doSettle();
     }
 
+    // streamingEnded is forced here for the "streaming never started" case so
+    // tryFinalize can run; otherwise the streaming token's end() finalizes.
+    function settleWith(result: NonNullable<typeof pendingResult>) {
+      if (!inflightActions.has(id) || settled) return;
+      actionCompleted = true;
+      entry.completed = true;
+      pendingResult = result;
+      if (entry.phase === "fetching" || streamingEnded) {
+        streamingEnded = true;
+        tryFinalize();
+      }
+    }
+
     return {
       id,
       abort,
@@ -668,35 +668,11 @@ export function createEventController(
       },
 
       complete(result?: unknown) {
-        if (!inflightActions.has(id) || settled) return;
-
-        actionCompleted = true;
-        entry.completed = true;
-        pendingResult = { type: "success", value: result };
-
-        // If streaming never started or already ended, finalize immediately
-        // Otherwise wait for streaming to end
-        if (entry.phase === "fetching" || streamingEnded) {
-          streamingEnded = true; // Mark as ended if never started
-          tryFinalize();
-        }
-        // If streaming is in progress, tryFinalize() will be called when streaming ends
+        settleWith({ type: "success", value: result });
       },
 
       fail(error: unknown) {
-        if (!inflightActions.has(id) || settled) return;
-
-        actionCompleted = true;
-        entry.completed = true;
-        pendingResult = { type: "error", value: error };
-
-        // If streaming never started or already ended, finalize immediately
-        // Otherwise wait for streaming to end
-        if (entry.phase === "fetching" || streamingEnded) {
-          streamingEnded = true; // Mark as ended if never started
-          tryFinalize();
-        }
-        // If streaming is in progress, tryFinalize() will be called when streaming ends
+        settleWith({ type: "error", value: error });
       },
 
       getRevalidatedSegments(): Set<string> {

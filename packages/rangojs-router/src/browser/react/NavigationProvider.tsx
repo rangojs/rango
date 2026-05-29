@@ -28,7 +28,7 @@ import { NonceContext } from "./nonce-context.js";
 import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
 import { cancelAllPrefetches } from "../prefetch/queue.js";
 import { handleNavigationEnd } from "../scroll-restoration.js";
-import type { AppShellRef } from "../app-shell.js";
+import { createAppShellRef, type AppShellRef } from "../app-shell.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -217,38 +217,33 @@ export function NavigationProvider({
     await bridge.refresh();
   }, []);
 
-  // Context value is stable (store, eventController, navigate, refresh never
-  // change). When an appShellRef is supplied, `basename` and `version` are
-  // installed as live getters so app-switch transitions (which update the ref)
-  // propagate to consumers without forcing a tree-wide rerender.
+  // basename/version are always read through a shell ref so the context value
+  // has a single shape: a supplied appShellRef stays live (app-switch updates
+  // it), the standalone fallback is a frozen ref over the mount-time props.
+  const fallbackShellRef = useRef<AppShellRef | null>(null);
+  if (!fallbackShellRef.current) {
+    fallbackShellRef.current = createAppShellRef({ basename, version });
+  }
+  const shellRef = appShellRef ?? fallbackShellRef.current;
+
   const contextValue = useMemo<NavigationStoreContextValue>(() => {
-    if (appShellRef) {
-      const value = {
-        store,
-        eventController,
-        navigate,
-        refresh,
-      } as NavigationStoreContextValue;
-      Object.defineProperty(value, "basename", {
-        configurable: true,
-        enumerable: true,
-        get: () => appShellRef.get().basename,
-      });
-      Object.defineProperty(value, "version", {
-        configurable: true,
-        enumerable: true,
-        get: () => appShellRef.get().version,
-      });
-      return value;
-    }
-    return {
+    const value = {
       store,
       eventController,
       navigate,
       refresh,
-      version,
-      basename,
-    };
+    } as NavigationStoreContextValue;
+    Object.defineProperty(value, "basename", {
+      configurable: true,
+      enumerable: true,
+      get: () => shellRef.get().basename,
+    });
+    Object.defineProperty(value, "version", {
+      configurable: true,
+      enumerable: true,
+      get: () => shellRef.get().version,
+    });
+    return value;
   }, []);
 
   // Connection warmup: keep TLS alive after idle periods.
@@ -410,21 +405,15 @@ export function NavigationProvider({
         }).catch((err) =>
           console.error("[NavigationProvider] Error consuming handles:", err),
         );
-      } else if (update.metadata.cachedHandleData) {
-        // For back/forward navigation from cache, restore the cached handleData
-        // This restores breadcrumbs to the exact state they were when the page was cached
-        eventController.setHandleData(
-          update.metadata.cachedHandleData,
-          update.metadata.matched,
-          false, // full replace - restore entire cached state
-        );
       } else if (update.metadata.matched) {
-        // For cached navigations without handleData, update segmentOrder to clean up stale data
+        // cachedHandleData present -> full restore (back/forward); absent ->
+        // partial cleanup of segments no longer matched.
+        const cached = update.metadata.cachedHandleData;
         eventController.setHandleData(
-          {}, // Empty data - all existing data not in matched will be cleaned up
+          cached ?? {},
           update.metadata.matched,
-          true, // partial update - will clean up segments not in matched
-          update.metadata.resolvedIds,
+          cached === undefined,
+          cached === undefined ? update.metadata.resolvedIds : undefined,
         );
       }
     });

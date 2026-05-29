@@ -77,6 +77,20 @@ export function createServerActionBridge(
     onNavigate,
   } = config;
 
+  // SPA-navigate when onNavigate is set, else hard-reload. state is omitted (not
+  // passed as undefined) to match the header path's prior call shape.
+  async function dispatchRedirect(url: string, state?: unknown): Promise<void> {
+    if (onNavigate) {
+      await onNavigate(url, {
+        ...(state !== undefined ? { state } : {}),
+        replace: true,
+        _skipCache: true,
+      });
+    } else {
+      window.location.href = url;
+    }
+  }
+
   let isRegistered = false;
 
   const fetchPartialUpdate = createPartialUpdater({
@@ -243,14 +257,7 @@ export function createServerActionBridge(
         if (redirect && redirect !== "blocked" && !handle.signal.aborted) {
           log("action simple redirect", { url: redirect.url });
           handle.complete(undefined);
-          if (onNavigate) {
-            await onNavigate(redirect.url, {
-              replace: true,
-              _skipCache: true,
-            });
-          } else {
-            window.location.href = redirect.url;
-          }
+          await dispatchRedirect(redirect.url);
           return new Promise<Response>(() => {});
         }
         if (redirect === "blocked") {
@@ -339,18 +346,9 @@ export function createServerActionBridge(
           handle.complete(returnValue?.data);
           return returnValue?.data;
         }
-        const redirectState = metadata.locationState;
         log("action redirect", { url: redirectUrl });
         handle.complete(returnValue?.data);
-        if (onNavigate) {
-          await onNavigate(redirectUrl, {
-            state: redirectState,
-            replace: true,
-            _skipCache: true,
-          });
-        } else {
-          window.location.href = redirectUrl;
-        }
+        await dispatchRedirect(redirectUrl, metadata.locationState);
         return returnValue?.data;
       }
 
