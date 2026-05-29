@@ -307,6 +307,46 @@ export function matchMiddleware<TEnv>(
   return matches;
 }
 
+// Set-Cookie is appended; for other headers stubOverridesNonCookie=true
+// overwrites (chain ran to completion), false fills only missing slots (an
+// explicit short-circuit Response's own headers win).
+function mergeStubHeaders(
+  target: Headers,
+  stub: Headers,
+  stubOverridesNonCookie: boolean,
+): void {
+  stub.forEach((value, name) => {
+    if (name.toLowerCase() === "set-cookie") {
+      target.append(name, value);
+    } else if (stubOverridesNonCookie || !target.has(name)) {
+      target.set(name, value);
+    }
+  });
+}
+
+// Set-Cookie is deduped so a nested inner executeMiddleware that already merged
+// the same reqCtx cookies does not duplicate them; other headers fill if missing.
+function mergeReqCtxStub(
+  target: Headers,
+  reqCtx: ReturnType<typeof _getRequestContext>,
+): void {
+  if (!reqCtx) return;
+  const stubCookies = reqCtx.res.headers.getSetCookie();
+  if (stubCookies.length > 0) {
+    const existing = new Set(target.getSetCookie());
+    for (const cookie of stubCookies) {
+      if (!existing.has(cookie)) {
+        target.append("set-cookie", cookie);
+      }
+    }
+  }
+  reqCtx.res.headers.forEach((value, name) => {
+    if (name !== "set-cookie" && !target.has(name)) {
+      target.set(name, value);
+    }
+  });
+}
+
 /**
  * Execute middleware chain
  *
@@ -345,36 +385,9 @@ export async function executeMiddleware<TEnv>(
       // End of chain - call actual RSC handler
       const response = await finalHandler();
 
-      // Merge headers set on stub into the real response.
-      // Use append for Set-Cookie to preserve multiple cookies.
       const mergedHeaders = new Headers(response.headers);
-      stubResponse.headers.forEach((value, name) => {
-        if (name.toLowerCase() === "set-cookie") {
-          mergedHeaders.append(name, value);
-        } else {
-          mergedHeaders.set(name, value);
-        }
-      });
-      // Also merge shared RequestContext stub (cookies written via cookies().set()).
-      // Dedup Set-Cookie: an inner executeMiddleware (route-level middleware)
-      // may have already merged the same reqCtx cookies into the response.
-      const reqCtx = _getRequestContext();
-      if (reqCtx) {
-        const stubCookies = reqCtx.res.headers.getSetCookie();
-        if (stubCookies.length > 0) {
-          const existing = new Set(mergedHeaders.getSetCookie());
-          for (const cookie of stubCookies) {
-            if (!existing.has(cookie)) {
-              mergedHeaders.append("set-cookie", cookie);
-            }
-          }
-        }
-        reqCtx.res.headers.forEach((value, name) => {
-          if (name !== "set-cookie" && !mergedHeaders.has(name)) {
-            mergedHeaders.set(name, value);
-          }
-        });
-      }
+      mergeStubHeaders(mergedHeaders, stubResponse.headers, true);
+      mergeReqCtxStub(mergedHeaders, _getRequestContext());
 
       if (isWebSocketUpgradeResponse(response)) {
         responseHolder.response = response;
@@ -485,33 +498,8 @@ export async function executeMiddleware<TEnv>(
         return result;
       }
       const mergedHeaders = new Headers(result.headers);
-      stubResponse.headers.forEach((value, name) => {
-        if (name.toLowerCase() === "set-cookie") {
-          mergedHeaders.append(name, value);
-        } else if (!mergedHeaders.has(name)) {
-          mergedHeaders.set(name, value);
-        }
-      });
-      // Also merge shared RequestContext stub (cookies written via setCookie).
-      // Dedup Set-Cookie: an inner executeMiddleware (route-level middleware)
-      // may have already merged the same reqCtx cookies into the response.
-      const reqCtx = _getRequestContext();
-      if (reqCtx) {
-        const stubCookies = reqCtx.res.headers.getSetCookie();
-        if (stubCookies.length > 0) {
-          const existing = new Set(mergedHeaders.getSetCookie());
-          for (const cookie of stubCookies) {
-            if (!existing.has(cookie)) {
-              mergedHeaders.append("set-cookie", cookie);
-            }
-          }
-        }
-        reqCtx.res.headers.forEach((value, name) => {
-          if (name !== "set-cookie" && !mergedHeaders.has(name)) {
-            mergedHeaders.set(name, value);
-          }
-        });
-      }
+      mergeStubHeaders(mergedHeaders, stubResponse.headers, false);
+      mergeReqCtxStub(mergedHeaders, _getRequestContext());
       const merged = new Response(result.body, {
         status: result.status,
         statusText: result.statusText,
@@ -565,21 +553,7 @@ export async function executeMiddleware<TEnv>(
   // set-cookie on an upgrade is not meaningful.
   const reqCtx = _getRequestContext();
   if (reqCtx && !isWebSocketUpgradeResponse(finalResponse)) {
-    const stubCookies = reqCtx.res.headers.getSetCookie();
-    if (stubCookies.length > 0) {
-      const existingCookies = new Set(finalResponse.headers.getSetCookie());
-      for (const cookie of stubCookies) {
-        if (!existingCookies.has(cookie)) {
-          finalResponse.headers.append("set-cookie", cookie);
-        }
-      }
-    }
-    // Fill in non-cookie headers that aren't already on the response
-    reqCtx.res.headers.forEach((value, name) => {
-      if (name !== "set-cookie" && !finalResponse.headers.has(name)) {
-        finalResponse.headers.set(name, value);
-      }
-    });
+    mergeReqCtxStub(finalResponse.headers, reqCtx);
   }
 
   return finalResponse;
@@ -688,13 +662,7 @@ export async function executeInterceptMiddleware<TEnv>(
       // Only fill in missing headers — the returned Response's explicit
       // headers take precedence, matching executeMiddleware behavior.
       const mergedHeaders = new Headers(response.headers);
-      stubResponse.headers.forEach((value, name) => {
-        if (name.toLowerCase() === "set-cookie") {
-          mergedHeaders.append(name, value);
-        } else if (!mergedHeaders.has(name)) {
-          mergedHeaders.set(name, value);
-        }
-      });
+      mergeStubHeaders(mergedHeaders, stubResponse.headers, false);
       return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
