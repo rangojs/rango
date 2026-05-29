@@ -788,20 +788,15 @@ export function createRouterDiscoveryPlugin(
         if (s.mergedRouteTrie && serverMod.setRouteTrie) {
           serverMod.setRouteTrie(s.mergedRouteTrie);
         }
-        if (serverMod.setRouterManifest) {
-          for (const [routerId, manifest] of s.perRouterManifestDataMap) {
-            serverMod.setRouterManifest(routerId, manifest);
-          }
-        }
-        if (serverMod.setRouterTrie) {
-          for (const [routerId, trie] of s.perRouterTrieMap) {
-            serverMod.setRouterTrie(routerId, trie);
-          }
-        }
-        if (serverMod.setRouterPrecomputedEntries) {
-          for (const [routerId, entries] of s.perRouterPrecomputedMap) {
-            serverMod.setRouterPrecomputedEntries(routerId, entries);
-          }
+        const perRouterSetters: Array<[Map<string, any>, string]> = [
+          [s.perRouterManifestDataMap, "setRouterManifest"],
+          [s.perRouterTrieMap, "setRouterTrie"],
+          [s.perRouterPrecomputedMap, "setRouterPrecomputedEntries"],
+        ];
+        for (const [map, fn] of perRouterSetters) {
+          const setter = serverMod[fn];
+          if (typeof setter !== "function") continue;
+          for (const [routerId, value] of map) setter(routerId, value);
         }
       };
 
