@@ -1,16 +1,11 @@
 import type { ReactNode } from "react";
 import type { Handler } from "../types.js";
-import type {
-  AllUseItems,
-  RouteItem,
-  RouteUseItem,
-  UseItems,
-} from "../route-types.js";
+import type { RouteItem, RouteUseItem, UseItems } from "../route-types.js";
 import {
-  getContext,
   getUrlPrefix,
   getNamePrefix,
   getRootScoped,
+  requireDslContext,
 } from "../server/context";
 import { invariant, DataNotFoundError } from "../errors";
 import { validateUserRouteName } from "../route-name.js";
@@ -39,35 +34,7 @@ import {
   resolveHandlerUse,
   mergeHandlerUse,
 } from "../route-definition/resolve-handler-use.js";
-
-/**
- * Check if a value is a valid use item
- */
-const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
-  return (
-    typeof item === "undefined" ||
-    item === null ||
-    (item &&
-      typeof item === "object" &&
-      "type" in item &&
-      [
-        "layout",
-        "route",
-        "middleware",
-        "revalidate",
-        "parallel",
-        "intercept",
-        "loader",
-        "loading",
-        "errorBoundary",
-        "notFoundBoundary",
-        "when",
-        "cache",
-        "transition",
-        "include",
-      ].includes(item.type))
-  );
-};
+import { isValidUseItem } from "../route-definition/dsl-helpers.js";
 
 /**
  * Apply URL prefix to a pattern
@@ -112,9 +79,9 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
     optionsOrUse?: PathOptions | (() => UseItems<RouteUseItem>),
     maybeUse?: () => UseItems<RouteUseItem>,
   ): RouteItem => {
-    const store = getContext();
-    const ctx = store.getStore();
-    if (!ctx) throw new Error("path() must be called inside urls()");
+    const { store, ctx } = requireDslContext(
+      "path() must be called inside urls()",
+    );
 
     invariant(
       !ctx.parent || ctx.parent.type !== "parallel",

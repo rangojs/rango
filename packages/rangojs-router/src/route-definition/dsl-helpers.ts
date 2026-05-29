@@ -11,6 +11,7 @@ import {
   getContext,
   getNamePrefix,
   getUrlPrefix,
+  requireDslContext,
   type EntryData,
   type InterceptEntry,
 } from "../server/context";
@@ -38,6 +39,7 @@ import type {
 } from "../route-types.js";
 import type { RouteHelpers } from "./helpers-types.js";
 import { resolveHandlerUse, mergeHandlerUse } from "./resolve-handler-use.js";
+import { ALL_USE_ITEM_TYPES } from "./use-item-types.js";
 
 /**
  * Check if an item contains routes (directly or inside nested structures like cache).
@@ -61,16 +63,85 @@ const hasRoutesInItem = (item: AllUseItems): boolean => {
   return false;
 };
 
+/**
+ * Fresh empty collections shared by every from-scratch segment entry. Returns
+ * new arrays/objects per call so no two entries share mutable references.
+ * mountPath is intentionally NOT included — each call site adds it only where
+ * the entry can carry a URL prefix (route/transition entries never do).
+ */
+const emptySegmentBase = () => ({
+  loading: undefined,
+  middleware: [],
+  revalidate: [],
+  errorBoundary: [],
+  notFoundBoundary: [],
+  layout: [],
+  parallel: {},
+  intercept: [],
+  loader: [],
+});
+
+/**
+ * Run a children/use callback as a nested scope, flatten the result, and assert
+ * every item is a valid use item. `kind` preserves the existing error wording
+ * ("use()" vs "children" callback).
+ */
+function runAndValidateUseItems(
+  store: ReturnType<typeof getContext>,
+  namespace: string,
+  entry: EntryData,
+  cb: () => any,
+  label: string,
+  kind: "use" | "children",
+): AllUseItems[] {
+  const result = store.run(namespace, entry, cb)?.flat(3);
+  return validateUseItems(result, namespace, label, kind);
+}
+
+/** Assert an already-invoked, flattened callback result is a use-item array. */
+function validateUseItems(
+  result: any,
+  namespace: string,
+  label: string,
+  kind: "use" | "children",
+): AllUseItems[] {
+  invariant(
+    Array.isArray(result) && result.every((item) => isValidUseItem(item)),
+    `${label}() ${kind === "use" ? "use()" : "children"} callback must return an array of use items [${namespace}]`,
+  );
+  return result as AllUseItems[];
+}
+
+/** True when a children/use result contains no routes (directly or nested). */
+const isOrphan = (result: AllUseItems[]): boolean =>
+  !result.some((item) => item != null && hasRoutesInItem(item));
+
+/**
+ * Register a routeless structural entry as an orphan sibling: clear its parent
+ * pointer so it leaves the middleware/parent-pointer chain (LOAD-BEARING — see
+ * docs/tree-structure.md) and push it onto the parent's layout[] so it renders
+ * as a wrapper. Used by cache()/middleware()/transition(); layout() runs extra
+ * validation and registers inline.
+ */
+const attachOrphanSibling = (
+  parent: EntryData | null,
+  entry: EntryData,
+): void => {
+  entry.parent = null;
+  if (parent && "layout" in parent) parent.layout.push(entry);
+};
+
 const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
-  const ctx = getContext().getStore();
-  if (!ctx) throw new Error("revalidate() must be called inside map()");
+  const { store, ctx } = requireDslContext(
+    "revalidate() must be called inside urls()",
+  );
 
   // Attach to last entry in stack
   const parent = ctx.parent;
   if (!parent || !("revalidate" in parent)) {
     invariant(false, "No parent entry available for revalidate()");
   }
-  const name = `$${getContext().getNextIndex("revalidate")}`;
+  const name = `$${store.getNextIndex("revalidate")}`;
   parent.revalidate.push(fn);
   return { name, type: "revalidate" } as RevalidateItem;
 };
@@ -108,15 +179,16 @@ const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
  * ```
  */
 const errorBoundary: RouteHelpers<any, any>["errorBoundary"] = (fallback) => {
-  const ctx = getContext().getStore();
-  if (!ctx) throw new Error("errorBoundary() must be called inside map()");
+  const { store, ctx } = requireDslContext(
+    "errorBoundary() must be called inside urls()",
+  );
 
   // Attach to parent entry in stack
   const parent = ctx.parent;
   if (!parent || !("errorBoundary" in parent)) {
     invariant(false, "No parent entry available for errorBoundary()");
   }
-  const name = `$${getContext().getNextIndex("errorBoundary")}`;
+  const name = `$${store.getNextIndex("errorBoundary")}`;
   parent.errorBoundary.push(fallback);
   return { name, type: "errorBoundary" } as ErrorBoundaryItem;
 };
@@ -155,15 +227,16 @@ const errorBoundary: RouteHelpers<any, any>["errorBoundary"] = (fallback) => {
 const notFoundBoundary: RouteHelpers<any, any>["notFoundBoundary"] = (
   fallback,
 ) => {
-  const ctx = getContext().getStore();
-  if (!ctx) throw new Error("notFoundBoundary() must be called inside map()");
+  const { store, ctx } = requireDslContext(
+    "notFoundBoundary() must be called inside urls()",
+  );
 
   // Attach to parent entry in stack
   const parent = ctx.parent;
   if (!parent || !("notFoundBoundary" in parent)) {
     invariant(false, "No parent entry available for notFoundBoundary()");
   }
-  const name = `$${getContext().getNextIndex("notFoundBoundary")}`;
+  const name = `$${store.getNextIndex("notFoundBoundary")}`;
   parent.notFoundBoundary.push(fallback);
   return { name, type: "notFoundBoundary" } as NotFoundBoundaryItem;
 };
@@ -177,8 +250,9 @@ const notFoundBoundary: RouteHelpers<any, any>["notFoundBoundary"] = (
  * for the intercept to activate.
  */
 const when: RouteHelpers<any, any>["when"] = (fn) => {
-  const ctx = getContext().getStore();
-  if (!ctx) throw new Error("when() must be called inside intercept()");
+  const { store, ctx } = requireDslContext(
+    "when() must be called inside intercept()",
+  );
 
   // The when() function needs to be captured by the intercept's tempParent
   // which should have a `when` array. If not present, we're not inside intercept()
@@ -190,7 +264,7 @@ const when: RouteHelpers<any, any>["when"] = (fn) => {
     );
   }
 
-  const name = `$${getContext().getNextIndex("when")}`;
+  const name = `$${store.getNextIndex("when")}`;
   parent.when.push(fn);
   return { name, type: "when" } as WhenItem;
 };
@@ -217,9 +291,9 @@ const cache: RouteHelpers<any, any>["cache"] = (
     | (() => UseItems<AllUseItems>),
   maybeChildren?: () => UseItems<AllUseItems>,
 ) => {
-  const store = getContext();
-  const ctx = store.getStore();
-  if (!ctx) throw new Error("cache() must be called inside map()");
+  const { store, ctx } = requireDslContext(
+    "cache() must be called inside urls()",
+  );
 
   // Handle overloaded signature
   let options: PartialCacheOptions | false;
@@ -274,21 +348,13 @@ const cache: RouteHelpers<any, any>["cache"] = (
     const urlPrefix = getUrlPrefix();
 
     const entry = {
+      ...emptySegmentBase(),
       id: namespace,
       shortCode: store.getShortCode("cache"),
       type: "cache",
       parent: parent, // link to current parent for hierarchy
       cache: cacheConfig,
       handler: RootLayout,
-      loading: undefined, // Allow loading() to attach loading state
-      middleware: [],
-      revalidate: [],
-      errorBoundary: [],
-      notFoundBoundary: [],
-      layout: [],
-      parallel: {},
-      intercept: [],
-      loader: [],
       ...(urlPrefix ? { mountPath: urlPrefix } : {}),
     } satisfies EntryData;
 
@@ -320,6 +386,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
   const urlPrefix = getUrlPrefix();
 
   const entry = {
+    ...emptySegmentBase(),
     id: namespace,
     shortCode: cacheShortCode,
     type: "cache",
@@ -327,40 +394,22 @@ const cache: RouteHelpers<any, any>["cache"] = (
     cache: cacheConfig,
     // Cache entries render like layouts (with Outlet as default handler)
     handler: RootLayout, // RootLayout just renders <Outlet />
-    loading: undefined, // Allow loading() to attach loading state
-    middleware: [],
-    revalidate: [],
-    errorBoundary: [],
-    notFoundBoundary: [],
-    layout: [],
-    parallel: {},
-    intercept: [],
-    loader: [],
     ...(urlPrefix ? { mountPath: urlPrefix } : {}),
   } satisfies EntryData;
 
   // Run children with cache entry as parent
-  const result = store.run(namespace, entry, children)?.flat(3);
-
-  invariant(
-    Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-    `cache() children callback must return an array of use items [${namespace}]`,
+  const result = runAndValidateUseItems(
+    store,
+    namespace,
+    entry,
+    children,
+    "cache",
+    "children",
   );
 
-  // Check if this cache has routes (including nested caches/layouts)
-  const hasRoutes =
-    result &&
-    Array.isArray(result) &&
-    result.some((item) => hasRoutesInItem(item));
-
-  if (!hasRoutes) {
-    const parent = ctx.parent;
-    if (parent && "layout" in parent) {
-      // Attach to parent's layout array (cache entries are structural like layouts)
-      entry.parent = null;
-      parent.layout.push(entry);
-    }
-  }
+  // Cache entries are structural like layouts: with no routes inside, register
+  // as an orphan sibling.
+  if (isOrphan(result)) attachOrphanSibling(ctx.parent, entry);
 
   return { name: namespace, type: "cache", uses: result } as CacheItem;
 };
@@ -406,9 +455,9 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
     }
   }
 
-  const store = getContext();
-  const ctx = store.getStore();
-  if (!ctx) throw new Error("middleware() must be called inside map()");
+  const { store, ctx } = requireDslContext(
+    "middleware() must be called inside urls()",
+  );
 
   if (!children) {
     // Sibling mode: attach to parent entry
@@ -427,20 +476,13 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
 
   const urlPrefix = getUrlPrefix();
   const entry = {
+    ...emptySegmentBase(),
     id: namespace,
     shortCode: store.getShortCode("layout"),
     type: "layout",
     parent: ctx.parent,
     handler: RootLayout,
-    loading: undefined,
     middleware: [...fns],
-    revalidate: [],
-    errorBoundary: [],
-    notFoundBoundary: [],
-    layout: [],
-    parallel: {},
-    intercept: [],
-    loader: [],
     ...(urlPrefix ? { mountPath: urlPrefix } : {}),
   } satisfies EntryData;
 
@@ -455,25 +497,14 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
       "To pass multiple middleware, use middleware([fn1, fn2]).",
   );
 
-  const result = rawResult.flat(3);
-
-  invariant(
-    result.every((item: any) => isValidUseItem(item)),
-    `middleware() children callback must return an array of use items [${namespace}]`,
+  const result = validateUseItems(
+    rawResult.flat(3),
+    namespace,
+    "middleware",
+    "children",
   );
 
-  const hasRoutes =
-    result &&
-    Array.isArray(result) &&
-    result.some((item) => item != null && hasRoutesInItem(item));
-
-  if (!hasRoutes) {
-    const parent = ctx.parent;
-    if (parent && "layout" in parent) {
-      entry.parent = null;
-      parent.layout.push(entry);
-    }
-  }
+  if (isOrphan(result)) attachOrphanSibling(ctx.parent, entry);
 
   return {
     name: namespace,
@@ -483,9 +514,9 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
 };
 
 const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
-  const store = getContext();
-  const ctx = store.getStore();
-  if (!ctx) throw new Error("parallel() must be called inside map()");
+  const { store, ctx } = requireDslContext(
+    "parallel() must be called inside urls()",
+  );
 
   if (!ctx.parent || !ctx.parent?.parallel) {
     invariant(false, "No parent entry available for parallel()");
@@ -537,20 +568,12 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
   // Create full EntryData for parallel with its own loaders/revalidate/loading
   const parallelUrlPrefix = getUrlPrefix();
   const entry = {
+    ...emptySegmentBase(),
     id: namespace,
     shortCode: store.getShortCode("parallel"),
     type: "parallel",
     parent: null, // Parallels don't participate in parent chain traversal
     handler: unwrappedSlots,
-    loading: undefined, // Allow loading() to attach loading state
-    middleware: [],
-    revalidate: [],
-    errorBoundary: [],
-    notFoundBoundary: [],
-    layout: [],
-    parallel: {},
-    intercept: [],
-    loader: [],
     ...(parallelUrlPrefix ? { mountPath: parallelUrlPrefix } : {}),
     ...(hasStaticSlot
       ? {
@@ -605,10 +628,13 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
       "parallel",
     );
     if (slotMergedUse) {
-      const result = store.run(namespace, slotEntry, slotMergedUse)?.flat(3);
-      invariant(
-        Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-        `parallel() use() callback must return an array of use items [${namespace}]`,
+      runAndValidateUseItems(
+        store,
+        namespace,
+        slotEntry,
+        slotMergedUse,
+        "parallel",
+        "use",
       );
     }
 
@@ -648,9 +674,9 @@ const intercept = (
   handler: any,
   use?: () => any[],
 ) => {
-  const store = getContext();
-  const ctx = store.getStore();
-  if (!ctx) throw new Error("intercept() must be called inside map()");
+  const { store, ctx } = requireDslContext(
+    "intercept() must be called inside urls()",
+  );
 
   if (!ctx.parent || !ctx.parent?.intercept) {
     invariant(false, "No parent entry available for intercept()");
@@ -728,10 +754,7 @@ const intercept = (
         | Handler<any, any, any>;
     }
 
-    invariant(
-      Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-      `intercept() use() callback must return an array of use items [${namespace}]`,
-    );
+    validateUseItems(result, namespace, "intercept", "use");
   }
 
   ctx.parent.intercept.push(entry);
@@ -742,9 +765,9 @@ const intercept = (
  * Loader helper - attaches a loader to the current entry
  */
 const loader: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
-  const store = getContext();
-  const ctx = store.getStore();
-  if (!ctx) throw new Error("loader() must be called inside map()");
+  const { store, ctx } = requireDslContext(
+    "loader() must be called inside urls()",
+  );
 
   // Attach to last entry in stack
   if (!ctx.parent || !ctx.parent?.loader) {
@@ -792,10 +815,7 @@ const loader: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
     // Restore original parent
     ctx.parent = originalParent;
 
-    invariant(
-      Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-      `loader() use() callback must return an array of use items [${name}]`,
-    );
+    validateUseItems(result, name, "loader", "use");
   }
 
   ctx.parent.loader.push(loaderEntry);
@@ -807,9 +827,9 @@ const loader: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
  * Loading components are static (no context) and shown during navigation
  */
 const loading: RouteHelpers<any, any>["loading"] = (component, options) => {
-  const store = getContext();
-  const ctx = store.getStore();
-  if (!ctx) throw new Error("loading() must be called inside map()");
+  const { store, ctx } = requireDslContext(
+    "loading() must be called inside urls()",
+  );
 
   const parent = ctx.parent;
   if (!parent || !("loading" in parent)) {
@@ -849,9 +869,9 @@ const transition = (
   const children: (() => UseItems<AllUseItems>) | undefined =
     typeof configOrChildren === "function" ? configOrChildren : maybeChildren;
 
-  const store = getContext();
-  const ctx = store.getStore();
-  if (!ctx) throw new Error("transition() must be called inside map()");
+  const { store, ctx } = requireDslContext(
+    "transition() must be called inside urls()",
+  );
 
   const name = `$${store.getNextIndex("transition")}`;
 
@@ -868,68 +888,43 @@ const transition = (
   // Position 2: wrapper — create a transparent layout with transition config
   const namespace = `${ctx.namespace}.${store.getNextIndex("transition")}`;
   const entry = {
+    ...emptySegmentBase(),
     id: namespace,
     shortCode: store.getShortCode("layout"),
     type: "layout",
     parent: ctx.parent,
     handler: RootLayout,
-    loading: undefined,
     transition: config,
-    middleware: [],
-    revalidate: [],
-    errorBoundary: [],
-    notFoundBoundary: [],
-    layout: [],
-    parallel: {},
-    intercept: [],
-    loader: [],
   } satisfies EntryData;
 
-  const result = store.run(namespace, entry, children)?.flat(3);
-
-  invariant(
-    Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-    `transition() children callback must return an array of use items [${namespace}]`,
+  const result = runAndValidateUseItems(
+    store,
+    namespace,
+    entry,
+    children,
+    "transition",
+    "children",
   );
 
-  const hasRoutes =
-    result &&
-    Array.isArray(result) &&
-    result.some((item) => hasRoutesInItem(item));
-
-  if (!hasRoutes) {
-    const parent = ctx.parent;
-    if (parent && "layout" in parent) {
-      entry.parent = null;
-      parent.layout.push(entry);
-    }
-  }
+  if (isOrphan(result)) attachOrphanSibling(ctx.parent, entry);
 
   return { name: namespace, type: "transition" } as TransitionItem;
 };
 
 const route: RouteHelpers<any, any>["route"] = (name, handler, use) => {
-  const store = getContext();
-  const ctx = store.getStore();
-  if (!ctx) throw new Error("route() must be called inside map()");
+  const { store, ctx } = requireDslContext(
+    "route() must be called inside urls()",
+  );
 
   const namespace = `${ctx.namespace}.${store.getNextIndex("route")}.${name}`;
 
   const entry = {
+    ...emptySegmentBase(),
     id: namespace,
     shortCode: store.getShortCode("route"),
     type: "route",
     parent: ctx.parent,
     handler: handler as unknown as Handler<any, any, any>,
-    loading: undefined, // Allow loading() to attach loading state
-    middleware: [],
-    revalidate: [],
-    errorBoundary: [],
-    notFoundBoundary: [],
-    layout: [],
-    parallel: {},
-    intercept: [],
-    loader: [],
   } satisfies EntryData;
 
   /* We will throw if user is registring same route name twice */
@@ -944,10 +939,13 @@ const route: RouteHelpers<any, any>["route"] = (name, handler, use) => {
   const mergedUse = mergeHandlerUse(handlerUseFn, use, "route");
   /* Run use and attach handlers */
   if (mergedUse) {
-    const result = store.run(namespace, entry, mergedUse)?.flat(3);
-    invariant(
-      Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-      `route() use() callback must return an array of use items [${namespace}]`,
+    const result = runAndValidateUseItems(
+      store,
+      namespace,
+      entry,
+      mergedUse,
+      "route",
+      "use",
     );
     return { name: namespace, type: "route", uses: result } as RouteItem;
   }
@@ -957,9 +955,9 @@ const route: RouteHelpers<any, any>["route"] = (name, handler, use) => {
 };
 
 const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
-  const store = getContext();
-  const ctx = store.getStore();
-  if (!ctx) throw new Error("layout() must be called inside map()");
+  const { store, ctx } = requireDslContext(
+    "layout() must be called inside urls()",
+  );
 
   invariant(
     !ctx.parent || ctx.parent.type !== "parallel",
@@ -977,20 +975,12 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
 
   const urlPrefix = getUrlPrefix();
   const entry = {
+    ...emptySegmentBase(),
     id: namespace,
     shortCode,
     type: "layout",
     parent: ctx.parent,
     handler: unwrappedHandler,
-    loading: undefined, // Allow loading() to attach loading state
-    middleware: [],
-    revalidate: [],
-    errorBoundary: [],
-    notFoundBoundary: [],
-    parallel: {},
-    intercept: [],
-    layout: [],
-    loader: [],
     ...(urlPrefix ? { mountPath: urlPrefix } : {}),
     ...(isStatic
       ? {
@@ -1012,11 +1002,13 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
   // Run merged use callback if present
   let result: AllUseItems[] | undefined;
   if (mergedUse) {
-    result = store.run(namespace, entry, mergedUse)?.flat(3);
-
-    invariant(
-      Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-      `layout() use() callback must return an array of use items [${namespace}]`,
+    result = runAndValidateUseItems(
+      store,
+      namespace,
+      entry,
+      mergedUse,
+      "layout",
+      "use",
     );
   }
 
@@ -1058,9 +1050,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
         `Orphan layouts can only be defined inside route or layout > check [${namespace}]`,
       );
 
-      // Clear parent pointer for orphan layouts to prevent duplicate processing
-      entry.parent = null;
-      parent.layout.push(entry);
+      attachOrphanSibling(parent, entry);
     }
   }
 
@@ -1073,31 +1063,11 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
   } as LayoutItem;
 };
 
-const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
-  return (
-    typeof item === "undefined" ||
-    item === null ||
-    (item &&
-      typeof item === "object" &&
-      "type" in item &&
-      [
-        "layout",
-        "route",
-        "middleware",
-        "revalidate",
-        "parallel",
-        "intercept",
-        "loader",
-        "loading",
-        "errorBoundary",
-        "notFoundBoundary",
-        "when",
-        "cache",
-        "transition",
-        "include", // For urls() include() helper
-      ].includes(item.type))
-  );
-};
+const isValidUseItem = (item: any): item is AllUseItems | undefined | null =>
+  item == null ||
+  (typeof item === "object" &&
+    "type" in item &&
+    ALL_USE_ITEM_TYPES.has(item.type));
 
 // DSL helpers exported for direct import from @rangojs/router and for
 // assembly into the RouteHelpers object in helper-factories.ts. The route-item

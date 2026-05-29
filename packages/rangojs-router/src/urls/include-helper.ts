@@ -1,5 +1,9 @@
 import type { AllUseItems, IncludeItem } from "../route-types.js";
-import { getContext, getUrlPrefix, getNamePrefix } from "../server/context";
+import {
+  getUrlPrefix,
+  getNamePrefix,
+  requireDslContext,
+} from "../server/context";
 import {
   INTERNAL_INCLUDE_SCOPE_PREFIX,
   validateUserRouteName,
@@ -61,9 +65,7 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
     patterns: UrlPatterns<TEnv>,
     options?: IncludeOptions,
   ): IncludeItem => {
-    const store = getContext();
-    const ctx = store.getStore();
-    if (!ctx) throw new Error("include() must be called inside urls()");
+    const { ctx } = requireDslContext("include() must be called inside urls()");
 
     const explicitName = options?.name;
     const hasExplicitName = hasExplicitNameOption(options);

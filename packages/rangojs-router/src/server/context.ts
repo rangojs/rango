@@ -10,7 +10,7 @@ import type {
   ShouldRevalidateFn,
   TransitionConfig,
 } from "../types";
-import { invariant } from "../errors";
+import { invariant, DslContextError } from "../errors";
 import type { DefaultRouteName } from "../types/global-namespace.js";
 
 // ============================================================================
@@ -323,6 +323,24 @@ export const RangoContext: AsyncLocalStorage<HelperContext> = ((
   globalThis as any
 )[RSC_CONTEXT_KEY] ??= new AsyncLocalStorage<HelperContext>());
 
+/** shortCode prefix letter per entry type (e.g. "L0", "R2", "M1C0"). */
+const SHORT_CODE_PREFIX: Record<
+  "layout" | "parallel" | "route" | "loader" | "cache",
+  string
+> = {
+  layout: "L",
+  parallel: "P",
+  route: "R",
+  loader: "D",
+  cache: "C",
+};
+
+/** Post-increment a named per-store counter, returning the prior value. */
+function bumpCounter(store: HelperContext, key: string): number {
+  store.counters[key] ??= 0;
+  return store.counters[key]++;
+}
+
 export const getContext = (): {
   context: AsyncLocalStorage<HelperContext>;
   getStore: () => HelperContext;
@@ -389,10 +407,7 @@ export const getContext = (): {
     ) => {
       const store = context.getStore();
       invariant(store, "No context RangoContext available");
-      store.counters[type] ??= 0;
-      const index = store.counters[type];
-      store.counters[type] = index + 1;
-      return `$${type}.${index}`;
+      return `$${type}.${bumpCounter(store, type)}`;
     },
     getShortCode: (
       type: "layout" | "parallel" | "route" | "loader" | "cache",
@@ -401,16 +416,7 @@ export const getContext = (): {
       invariant(store, "No context RangoContext available");
 
       const parent = store.parent;
-      const prefix =
-        type === "layout"
-          ? "L"
-          : type === "parallel"
-            ? "P"
-            : type === "loader"
-              ? "D"
-              : type === "cache"
-                ? "C"
-                : "R";
+      const prefix = SHORT_CODE_PREFIX[type];
       const mountPrefix =
         store.mountIndex !== undefined ? `M${store.mountIndex}` : "";
 
@@ -421,10 +427,7 @@ export const getContext = (): {
         const counterKey = mountPrefix
           ? `${mountPrefix}_root_${type}`
           : `root_${type}`;
-        store.counters[counterKey] ??= 0;
-        const index = store.counters[counterKey];
-        store.counters[counterKey] = index + 1;
-        return `${mountPrefix}${prefix}${index}`;
+        return `${mountPrefix}${prefix}${bumpCounter(store, counterKey)}`;
       } else {
         // Child entry: use parent-scoped counter with includeScope appended.
         // When we're evaluating a lazy include's direct children, includeScope
@@ -432,10 +435,7 @@ export const getContext = (): {
         // parent's counter namespace so routes inside one include cannot
         // collide with siblings declared outside it.
         const counterKey = `${parent.shortCode}${includeScope}_${type}`;
-        store.counters[counterKey] ??= 0;
-        const index = store.counters[counterKey];
-        store.counters[counterKey] = index + 1;
-        return `${parent.shortCode}${includeScope}${prefix}${index}`;
+        return `${parent.shortCode}${includeScope}${prefix}${bumpCounter(store, counterKey)}`;
       }
     },
     runWithStore: <T>(
@@ -508,6 +508,31 @@ export const getContext = (): {
     },
   };
 };
+
+/**
+ * Acquire the active DSL build context, throwing `message` if a helper was
+ * called outside a urls()/map() builder. Returns the store API and the live
+ * HelperContext so callers avoid a second getContext() lookup.
+ */
+export function requireDslContext(message: string): {
+  store: ReturnType<typeof getContext>;
+  ctx: HelperContext;
+} {
+  const store = getContext();
+  const ctx = store.context.getStore();
+  if (!ctx) {
+    // The only reason the store is absent here is that a route-definition helper
+    // ran with no active RangoContext — i.e. outside a urls()/map() builder.
+    // Record that as the cause so the throw is self-explanatory, not a bare
+    // "must be called inside urls()" with no indication of the mechanism.
+    throw new DslContextError(message, {
+      cause:
+        "RangoContext store is undefined: a route-definition helper was called " +
+        "outside an active urls()/map() builder.",
+    });
+  }
+  return { store, ctx };
+}
 
 /**
  * Run a callback with specific URL and name prefixes
