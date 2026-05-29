@@ -143,8 +143,8 @@ by reference with `ctx.isAction(Action)` (rename-safe, where `CartActions` is an
 identity".
 
 The predicate arg carries the action's full context, not just its identity. Match
-*which* action with `ctx.isAction(addToCart)` (rename-safe); branch on *what it
-returned* with `ctx.actionResult` — the value your `"use server"` function
+_which_ action with `ctx.isAction(addToCart)` (rename-safe); branch on _what it
+returned_ with `ctx.actionResult` — the value your `"use server"` function
 returned, for outcome-conditional revalidation. The arg also exposes `actionId`
 (raw `path#export`), `actionUrl`, `formData`, `method`, and `stale` (cross-tab
 `_rsc_stale` signal). All are `undefined` on plain navigation (no action).
