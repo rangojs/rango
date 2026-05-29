@@ -13,6 +13,9 @@ import {
   getUrlPrefix,
   requireDslContext,
   type EntryData,
+  type EntryPropDatas,
+  type EntryPropSegments,
+  type HelperContext,
   type InterceptEntry,
 } from "../server/context";
 import { invariant } from "../errors";
@@ -69,7 +72,8 @@ const hasRoutesInItem = (item: AllUseItems): boolean => {
  * mountPath is intentionally NOT included — each call site adds it only where
  * the entry can carry a URL prefix (route/transition entries never do).
  */
-const emptySegmentBase = () => ({
+const emptySegmentBase = (): EntryPropDatas &
+  EntryPropSegments & { loading: undefined } => ({
   loading: undefined,
   middleware: [],
   revalidate: [],
@@ -130,6 +134,23 @@ const attachOrphanSibling = (
   entry.parent = null;
   if (parent && "layout" in parent) parent.layout.push(entry);
 };
+
+/**
+ * Run `fn` with `ctx.parent` temporarily redirected to `temp` — a satellite
+ * entry that captures the attachments declared by a use() callback — restoring
+ * the original parent afterward, including on throw. loader()/intercept() each
+ * build their own tempParent shape (intercept keeps a loading get/set accessor
+ * and a captured-layouts array); this only centralizes the save/restore.
+ */
+function withParent<T>(ctx: HelperContext, temp: EntryData, fn: () => T): T {
+  const original = ctx.parent;
+  ctx.parent = temp;
+  try {
+    return fn();
+  } finally {
+    ctx.parent = original;
+  }
+}
 
 const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
   const { store, ctx } = requireDslContext(
@@ -715,15 +736,13 @@ const intercept = (
 
   // Run merged use callback to collect loaders, revalidate, middleware, etc.
   if (mergedUse) {
-    // Create a temporary parent context for the use() callback
-    // so that middleware, loader, revalidate attach to the intercept entry
-    const originalParent = ctx.parent;
-
-    // Capture layouts in a temporary array
+    // Capture layout() calls into a temporary array
     const capturedLayouts: EntryData[] = [];
 
+    // Temporary parent so middleware/loader/revalidate/when attach to the
+    // intercept entry; the loading get/set accessor mirrors writes onto `entry`.
     const tempParent = {
-      ...originalParent,
+      ...ctx.parent,
       middleware: entry.middleware,
       revalidate: entry.revalidate,
       errorBoundary: entry.errorBoundary,
@@ -731,7 +750,6 @@ const intercept = (
       loader: entry.loader,
       layout: capturedLayouts, // Capture layout() calls
       when: entry.when, // Capture when() conditions
-      // Use getter/setter to capture loading on the entry
       get loading() {
         return entry.loading;
       },
@@ -739,12 +757,10 @@ const intercept = (
         entry.loading = value;
       },
     };
-    ctx.parent = tempParent as EntryData;
 
-    const result = mergedUse()?.flat(3);
-
-    // Restore original parent
-    ctx.parent = originalParent;
+    const result = withParent(ctx, tempParent as EntryData, () =>
+      mergedUse()?.flat(3),
+    );
 
     // Extract layout from captured layouts (use first one if multiple)
     // Layout inside intercept should always be ReactNode or Handler, not Record slots
@@ -788,32 +804,28 @@ const loader: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
 
   // If any use callback is in effect, run it to collect revalidation rules and cache config
   if (mergedUse) {
-    // Temporarily set context for revalidate()/cache() calls to target this loader
-    const originalParent = ctx.parent;
     // Create a temporary "parent" with type "loader" so cache() can detect it.
     // Save existing .cache to distinguish inherited config from newly set config.
-    const parentCache = (originalParent as any).cache;
+    const parentCache = (ctx.parent as any).cache;
     const tempParent = {
-      ...originalParent,
+      ...ctx.parent,
       type: "loader",
       revalidate: loaderEntry.revalidate,
     };
-    ctx.parent = tempParent as EntryData;
 
-    const result = mergedUse()?.flat(3);
+    const result = withParent(ctx, tempParent as EntryData, () =>
+      mergedUse()?.flat(3),
+    );
 
     // Copy cache config only if cache() was called during the use() callback.
-    // The spread from originalParent may carry an inherited .cache from
-    // a parent cache() boundary — only copy if it was newly set.
+    // The spread may carry an inherited .cache from a parent cache() boundary —
+    // only copy if it was newly set.
     if (
       (tempParent as any).cache &&
       (tempParent as any).cache !== parentCache
     ) {
       (loaderEntry as any).cache = (tempParent as any).cache;
     }
-
-    // Restore original parent
-    ctx.parent = originalParent;
 
     validateUseItems(result, name, "loader", "use");
   }
@@ -1087,4 +1099,6 @@ export {
   loading,
   transition,
   isValidUseItem,
+  emptySegmentBase,
+  runAndValidateUseItems,
 };

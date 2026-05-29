@@ -34,7 +34,10 @@ import {
   resolveHandlerUse,
   mergeHandlerUse,
 } from "../route-definition/resolve-handler-use.js";
-import { isValidUseItem } from "../route-definition/dsl-helpers.js";
+import {
+  emptySegmentBase,
+  runAndValidateUseItems,
+} from "../route-definition/dsl-helpers.js";
 
 /**
  * Apply URL prefix to a pattern
@@ -181,6 +184,7 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
               : () => handler;
 
     const entry = {
+      ...emptySegmentBase(),
       id: namespace,
       shortCode: store.getShortCode("route"),
       type: "route" as const,
@@ -188,15 +192,6 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
       handler: wrappedHandler,
       // Store the PREFIXED pattern for route matching
       pattern: prefixedPattern,
-      loading: undefined,
-      middleware: [],
-      revalidate: [],
-      errorBoundary: [],
-      notFoundBoundary: [],
-      layout: [],
-      parallel: {},
-      intercept: [],
-      loader: [],
       ...(urlPrefix ? { mountPath: urlPrefix } : {}),
       ...(isPassthroughHandler(handler)
         ? {
@@ -268,10 +263,13 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
 
     // Run merged use callback (handler.use defaults + explicit use) if present
     if (mergedUse) {
-      const result = store.run(namespace, entry, mergedUse)?.flat(3);
-      invariant(
-        Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-        `path() use() callback must return an array of use items [${namespace}]`,
+      const result = runAndValidateUseItems(
+        store,
+        namespace,
+        entry,
+        mergedUse,
+        "path",
+        "use",
       );
       return { name: namespace, type: "route", uses: result } as RouteItem;
     }
