@@ -74,8 +74,3 @@ details, but they are not the first stop for learning the public API.
 - [Loader client refresh key handoff](./internal/loader-client-refresh-key-handoff.md) -
   proposal handoff for adding a hook-level client refresh key to partition
   `useLoader()` / `useFetchLoader()` `load()` fan-out
-- [Routes DSL code-quality review](./internal/dsl-review.md) - proposal for
-  simplifying the DSL handling engine (`dsl-helpers.ts`, `urls/`, `context.ts`):
-  dedup the context guard / `EntryData` literal / orphan registration, share one
-  engine between `map()` and `urls()`, name the three `ctx.parent` retargeting
-  mechanisms; plus a flagged consumer-facing DSL section
