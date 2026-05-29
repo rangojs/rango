@@ -1,6 +1,7 @@
 import type { Plugin } from "vite";
 import { resolve } from "node:path";
 import * as Vite from "vite";
+import { resolveRscEntryFromConfig } from "../utils/shared-utils.js";
 
 /**
  * Plugin that auto-injects VERSION and routes-manifest into custom entry.rsc files.
@@ -20,18 +21,7 @@ export function createVersionInjectorPlugin(
 
     configResolved(config) {
       let entryPath = rscEntryPath;
-      // Cloudflare preset: read entry from resolved environment config.
-      // The @cloudflare/vite-plugin reads wrangler config (toml/json/jsonc)
-      // and sets optimizeDeps.entries on the RSC environment.
-      if (!entryPath) {
-        const rscEnvConfig = (config.environments as any)?.["rsc"];
-        const entries = rscEnvConfig?.optimizeDeps?.entries;
-        if (typeof entries === "string") {
-          entryPath = entries;
-        } else if (Array.isArray(entries) && entries.length > 0) {
-          entryPath = entries[0];
-        }
-      }
+      if (!entryPath) entryPath = resolveRscEntryFromConfig(config);
       if (entryPath) {
         resolvedEntryPath = resolve(config.root, entryPath);
       }
