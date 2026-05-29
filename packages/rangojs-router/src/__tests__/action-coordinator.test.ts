@@ -44,11 +44,39 @@ describe("classifyActionOutcome", () => {
     expect(classifyActionOutcome(baseInput())).toEqual({ type: "normal" });
   });
 
-  it("returns navigated-away when pathname changed", () => {
-    const result = classifyActionOutcome(
-      baseInput({ currentPathname: "/other" }),
-    );
-    expect(result.type).toBe("navigated-away");
+  describe("navigated-away scenario", () => {
+    it("detects a changed pathname (keys match -> historyKeyChanged false)", () => {
+      expect(
+        classifyActionOutcome(baseInput({ currentPathname: "/other" })),
+      ).toEqual({
+        type: "navigated-away",
+        historyKeyChanged: false,
+        onInterceptRoute: false,
+      });
+    });
+
+    it("detects a changed history key (historyKeyChanged true)", () => {
+      expect(
+        classifyActionOutcome(baseInput({ currentLocationKey: "key2" })),
+      ).toEqual({
+        type: "navigated-away",
+        historyKeyChanged: true,
+        onInterceptRoute: false,
+      });
+    });
+
+    it("sets onInterceptRoute when on an intercept route", () => {
+      const result = classifyActionOutcome(
+        baseInput({
+          currentLocationKey: "key2",
+          currentInterceptSource: "/source",
+        }),
+      );
+      expect(result).toMatchObject({
+        type: "navigated-away",
+        onInterceptRoute: true,
+      });
+    });
   });
 
   it("returns hmr-missing when reconciled < matched", () => {
@@ -181,6 +209,31 @@ describe("classifyActionOutcome", () => {
         }),
       );
       expect(result).toEqual({ type: "normal" });
+    });
+  });
+
+  describe("priority ordering", () => {
+    it("navigated-away outranks hmr-missing", () => {
+      const result = classifyActionOutcome(
+        baseInput({ currentPathname: "/other", reconciledSegmentCount: 1 }),
+      );
+      expect(result.type).toBe("navigated-away");
+    });
+
+    it("hmr-missing outranks consolidation", () => {
+      const actions = new Map<string, ActionEntry>();
+      actions.set("a-1", makeEntry({ id: "a-1", phase: "streaming" }));
+      const result = classifyActionOutcome(
+        baseInput({
+          handleId: "a-1",
+          reconciledSegmentCount: 1,
+          matchedCount: 3,
+          inflightActions: actions,
+          hadAnyConcurrentActions: true,
+          revalidatedSegments: new Set(["seg1"]),
+        }),
+      );
+      expect(result).toEqual({ type: "hmr-missing" });
     });
   });
 });

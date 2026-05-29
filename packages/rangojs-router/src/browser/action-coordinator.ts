@@ -1,8 +1,20 @@
-import {
-  classifyActionResponse,
-  type ActionScenario,
-} from "./action-response-classifier.js";
 import type { ActionEntry } from "./event-controller.js";
+
+/**
+ * Post-reconciliation action outcome (discriminated union). Error and
+ * full-update-unsupported cases are handled inline in the bridge before
+ * reconciliation; this only covers successfully-reconciled partial responses.
+ */
+export type ActionScenario =
+  | {
+      type: "navigated-away";
+      historyKeyChanged: boolean;
+      onInterceptRoute: boolean;
+    }
+  | { type: "hmr-missing" }
+  | { type: "consolidation-needed"; segmentIds: string[] }
+  | { type: "concurrent-skip"; otherFetchingCount: number }
+  | { type: "normal" };
 
 /**
  * Plain data inputs for classifying a post-reconciliation action outcome.
@@ -33,20 +45,15 @@ export interface ActionOutcomeInput {
   currentInterceptSource: string | null;
 }
 
-/**
- * Compute consolidation segments from concurrent action state.
- *
- * Returns segment IDs that need re-fetching when concurrent actions
- * have each revalidated different parts of the tree, or null if
- * consolidation is not needed.
- */
+// Segment IDs to re-fetch when concurrent actions each revalidated different
+// parts of the tree; null when consolidation does not apply. Returns null while
+// any action is still fetching — consolidation must wait for all to land.
 function computeConsolidationSegments(
   input: ActionOutcomeInput,
 ): string[] | null {
   if (!input.hadAnyConcurrentActions) return null;
   if (input.revalidatedSegments.size === 0) return null;
 
-  // Can't consolidate while any action is still waiting for a server response
   const stillFetchingCount = [...input.inflightActions.values()].filter(
     (a) => a.phase === "fetching",
   ).length;
@@ -55,9 +62,6 @@ function computeConsolidationSegments(
   return Array.from(input.revalidatedSegments);
 }
 
-/**
- * Count other actions still in "fetching" phase (excluding this handle).
- */
 function countOtherFetchingActions(input: ActionOutcomeInput): number {
   let count = 0;
   for (const [, a] of input.inflightActions) {
@@ -69,29 +73,42 @@ function countOtherFetchingActions(input: ActionOutcomeInput): number {
 }
 
 /**
- * Classify a post-reconciliation action outcome into one of 5 scenarios.
- *
- * This is the single entry point for post-action decision logic.
- * It gathers consolidation and concurrency data from the plain inputs,
- * then delegates to the pure classifyActionResponse function.
- *
- * The server-action-bridge calls this after reconciliation to decide
- * whether to render, skip, consolidate, or refetch.
+ * Classify a post-reconciliation action outcome. Ordered priority chain: each
+ * case assumes the earlier ones are false (e.g. concurrent-skip only applies on
+ * the still-current route, consolidation only once no action is still fetching).
+ * The bridge calls this to decide whether to render, skip, consolidate, or refetch.
  */
 export function classifyActionOutcome(
   input: ActionOutcomeInput,
 ): ActionScenario {
-  return classifyActionResponse({
-    actionStartPathname: input.actionStartPathname,
-    currentPathname: input.currentPathname,
-    actionStartLocationKey: input.actionStartLocationKey,
-    currentLocationKey: input.currentLocationKey,
-    reconciledSegmentCount: input.reconciledSegmentCount,
-    matchedCount: input.matchedCount,
-    currentInterceptSource: input.currentInterceptSource,
-    consolidationSegments: computeConsolidationSegments(input),
-    otherFetchingActionCount: countOtherFetchingActions(input),
-  });
-}
+  if (
+    input.currentPathname !== input.actionStartPathname ||
+    input.currentLocationKey !== input.actionStartLocationKey
+  ) {
+    return {
+      type: "navigated-away",
+      historyKeyChanged:
+        input.currentLocationKey !== input.actionStartLocationKey,
+      onInterceptRoute: input.currentInterceptSource !== null,
+    };
+  }
 
-export type { ActionScenario };
+  if (input.reconciledSegmentCount < input.matchedCount) {
+    return { type: "hmr-missing" };
+  }
+
+  const consolidationSegments = computeConsolidationSegments(input);
+  if (consolidationSegments && consolidationSegments.length > 0) {
+    return { type: "consolidation-needed", segmentIds: consolidationSegments };
+  }
+
+  const otherFetchingActionCount = countOtherFetchingActions(input);
+  if (otherFetchingActionCount > 0) {
+    return {
+      type: "concurrent-skip",
+      otherFetchingCount: otherFetchingActionCount,
+    };
+  }
+
+  return { type: "normal" };
+}

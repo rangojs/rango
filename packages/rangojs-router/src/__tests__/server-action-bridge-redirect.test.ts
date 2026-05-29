@@ -18,8 +18,8 @@ vi.mock("../browser/segment-reconciler.js", () => ({
   reconcileSegments: vi.fn(),
   reconcileErrorSegments: vi.fn(),
 }));
-vi.mock("../browser/action-response-classifier.js", () => ({
-  classifyActionResponse: vi.fn(() => "noop"),
+vi.mock("../browser/action-coordinator.js", () => ({
+  classifyActionOutcome: vi.fn(() => ({ type: "normal" })),
 }));
 vi.mock("../browser/network-error-handler.js", () => ({
   toNetworkError: () => null,
