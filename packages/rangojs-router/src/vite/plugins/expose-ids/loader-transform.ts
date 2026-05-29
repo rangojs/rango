@@ -1,5 +1,5 @@
 import type MagicString from "magic-string";
-import { hashId } from "../expose-id-utils.js";
+import { makeStubId } from "../expose-id-utils.js";
 import type { CreateExportBinding } from "./types.js";
 import { isExportOnlyFile } from "./export-analysis.js";
 
@@ -33,7 +33,7 @@ export function generateClientLoaderStubs(
 
   for (const binding of bindings) {
     for (const name of binding.exportNames) {
-      const loaderId = isBuild ? hashId(filePath, name) : `${filePath}#${name}`;
+      const loaderId = makeStubId(filePath, name, isBuild);
       lines.push(
         `export const ${name} = { __brand: "loader", $$id: "${loaderId}" };`,
       );
@@ -54,9 +54,7 @@ export function transformLoaders(
   for (const binding of bindings) {
     const exportName = binding.exportNames[0];
 
-    const loaderId = isBuild
-      ? hashId(filePath, exportName)
-      : `${filePath}#${exportName}`;
+    const loaderId = makeStubId(filePath, exportName, isBuild);
 
     // Inject $$id as hidden third parameter.
     // createLoader(fn) -> createLoader(fn, undefined, "id")
