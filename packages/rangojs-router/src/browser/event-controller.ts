@@ -429,22 +429,17 @@ export function createEventController(
   }
 
   function getActionState(actionId: string): TrackedActionState {
-    // Find the most recent action with this ID that's not settling
-    // Uses suffix matching when actionId is just a name (no #)
-    const activeEntry = [...inflightActions.values()]
-      .filter(
-        (a) => matchesActionId(actionId, a.actionId) && a.phase !== "settling",
-      )
-      .sort((a, b) => b.startedAt - a.startedAt)[0];
-
-    // Also check for settling entries to get result/error
-    const settlingEntry = [...inflightActions.values()]
-      .filter(
-        (a) => matchesActionId(actionId, a.actionId) && a.phase === "settling",
-      )
-      .sort((a, b) => b.startedAt - a.startedAt)[0];
-
-    const entry = activeEntry || settlingEntry;
+    // Prefer the most-recent non-settling entry; fall back to most-recent
+    // settling so a just-settled action's result/error stays readable.
+    const entry = [...inflightActions.values()]
+      .filter((a) => matchesActionId(actionId, a.actionId))
+      .reduce<ActionEntry | undefined>((best, a) => {
+        if (!best) return a;
+        const aActive = a.phase !== "settling";
+        const bActive = best.phase !== "settling";
+        if (aActive !== bActive) return aActive ? a : best;
+        return a.startedAt > best.startedAt ? a : best;
+      }, undefined);
 
     if (!entry) {
       return { ...DEFAULT_ACTION_STATE };
@@ -632,6 +627,19 @@ export function createEventController(
       doSettle();
     }
 
+    // streamingEnded is forced here for the "streaming never started" case so
+    // tryFinalize can run; otherwise the streaming token's end() finalizes.
+    function settleWith(result: NonNullable<typeof pendingResult>) {
+      if (!inflightActions.has(id) || settled) return;
+      actionCompleted = true;
+      entry.completed = true;
+      pendingResult = result;
+      if (entry.phase === "fetching" || streamingEnded) {
+        streamingEnded = true;
+        tryFinalize();
+      }
+    }
+
     return {
       id,
       abort,
@@ -668,35 +676,11 @@ export function createEventController(
       },
 
       complete(result?: unknown) {
-        if (!inflightActions.has(id) || settled) return;
-
-        actionCompleted = true;
-        entry.completed = true;
-        pendingResult = { type: "success", value: result };
-
-        // If streaming never started or already ended, finalize immediately
-        // Otherwise wait for streaming to end
-        if (entry.phase === "fetching" || streamingEnded) {
-          streamingEnded = true; // Mark as ended if never started
-          tryFinalize();
-        }
-        // If streaming is in progress, tryFinalize() will be called when streaming ends
+        settleWith({ type: "success", value: result });
       },
 
       fail(error: unknown) {
-        if (!inflightActions.has(id) || settled) return;
-
-        actionCompleted = true;
-        entry.completed = true;
-        pendingResult = { type: "error", value: error };
-
-        // If streaming never started or already ended, finalize immediately
-        // Otherwise wait for streaming to end
-        if (entry.phase === "fetching" || streamingEnded) {
-          streamingEnded = true; // Mark as ended if never started
-          tryFinalize();
-        }
-        // If streaming is in progress, tryFinalize() will be called when streaming ends
+        settleWith({ type: "error", value: error });
       },
 
       getRevalidatedSegments(): Set<string> {
