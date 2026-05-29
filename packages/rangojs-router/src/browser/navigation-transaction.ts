@@ -236,30 +236,16 @@ export function createNavigationTransaction(
           segments: ResolvedSegment[],
           overrides?: BoundCommitOverrides,
         ) => {
-          // Allow overrides to disable scroll (e.g., for intercepts)
-          const finalScroll =
-            overrides?.scroll !== undefined ? overrides.scroll : opts.scroll;
-          // Allow overrides to force replace (e.g., for intercepts)
-          const finalReplace =
-            overrides?.replace !== undefined ? overrides.replace : opts.replace;
-          // Intercept info: overrides take precedence, fallback to opts
-          const intercept =
-            overrides?.intercept !== undefined
-              ? overrides.intercept
-              : opts.intercept;
+          const finalScroll = overrides?.scroll ?? opts.scroll;
+          const finalReplace = overrides?.replace ?? opts.replace;
+          const intercept = overrides?.intercept ?? opts.intercept;
           const interceptSourceUrl =
-            overrides?.interceptSourceUrl !== undefined
-              ? overrides.interceptSourceUrl
-              : opts.interceptSourceUrl;
-          // Cache-only mode: overrides take precedence, fallback to opts
-          const cacheOnly =
-            overrides?.cacheOnly !== undefined
-              ? overrides.cacheOnly
-              : opts.cacheOnly;
-          // User state: overrides take precedence, fallback to opts
+            overrides?.interceptSourceUrl ?? opts.interceptSourceUrl;
+          const cacheOnly = overrides?.cacheOnly ?? opts.cacheOnly;
+          // state is `unknown` (null is meaningful) so `??` would wrongly drop a
+          // null override; serverState always comes from overrides, never opts.
           const state =
             overrides?.state !== undefined ? overrides.state : opts.state;
-          // Server-set location state: only from overrides (set by partial-update)
           const serverState = overrides?.serverState;
           return commit({
             ...opts,

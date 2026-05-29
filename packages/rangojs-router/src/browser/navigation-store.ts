@@ -283,18 +283,17 @@ export function createNavigationStore(
   /**
    * Create a debounced function that batches rapid calls
    */
+  // A non-keyed notifier is the keyed one restricted to a single constant key;
+  // its own keyed instance means the "" key never collides with action keys.
   function createDebouncedNotifier<T extends (...args: any[]) => void>(
     fn: T,
     ms: number = 20,
   ): T {
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    return ((...args: Parameters<T>) => {
-      if (timeout !== null) clearTimeout(timeout);
-      timeout = setTimeout(() => {
-        timeout = null;
-        fn(...args);
-      }, ms);
-    }) as T;
+    const keyed = createKeyedDebouncedNotifier(
+      (_key: string, ...args: any[]) => fn(...args),
+      ms,
+    );
+    return ((...args: Parameters<T>) => keyed("", ...args)) as T;
   }
 
   /**

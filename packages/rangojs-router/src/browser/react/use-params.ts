@@ -4,6 +4,8 @@ import { useContext, useState, useEffect, useRef } from "react";
 import { NavigationStoreContext } from "./context.js";
 import { shallowEqual } from "./shallow-equal.js";
 
+const EMPTY_PARAMS: Record<string, string> = Object.freeze({});
+
 /**
  * Hook to access the current route params.
  *
@@ -43,10 +45,7 @@ export function useParams<T>(
   const ctx = useContext(NavigationStoreContext);
 
   const [value, setValue] = useState<T | Record<string, string>>(() => {
-    if (!ctx) {
-      return selector ? selector({}) : {};
-    }
-    const params = ctx.eventController.getParams();
+    const params = ctx ? ctx.eventController.getParams() : EMPTY_PARAMS;
     return selector ? selector(params) : params;
   });
 

@@ -268,6 +268,20 @@ function matchesActionId(
   return entryActionId.endsWith(`#${subscriptionId}`);
 }
 
+// Coalesce rapid notifications into one microtask-deferred fan-out; the
+// setTimeout(0) batching prevents render storms. Each notifier owns its timer
+// so listener kinds coalesce independently.
+function makeDebouncedNotifier(listeners: Set<() => void>): () => void {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  return () => {
+    if (timeout !== null) clearTimeout(timeout);
+    timeout = setTimeout(() => {
+      timeout = null;
+      listeners.forEach((listener) => listener());
+    }, 0);
+  };
+}
+
 // ============================================================================
 // Implementation
 // ============================================================================
@@ -334,18 +348,7 @@ export function createEventController(
   const actionListeners = new Map<string, Set<ActionStateListener>>();
   const handleListeners = new Set<HandleListener>();
 
-  // Debounce state notifications to batch rapid updates
-  let notifyTimeout: ReturnType<typeof setTimeout> | null = null;
-
-  function notify() {
-    if (notifyTimeout !== null) {
-      clearTimeout(notifyTimeout);
-    }
-    notifyTimeout = setTimeout(() => {
-      notifyTimeout = null;
-      stateListeners.forEach((listener) => listener());
-    }, 0);
-  }
+  const notify = makeDebouncedNotifier(stateListeners);
 
   // Debounce per-action notifications
   const actionNotifyTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
@@ -371,18 +374,7 @@ export function createEventController(
     );
   }
 
-  // Debounce handle notifications
-  let handleNotifyTimeout: ReturnType<typeof setTimeout> | null = null;
-
-  function notifyHandles() {
-    if (handleNotifyTimeout !== null) {
-      clearTimeout(handleNotifyTimeout);
-    }
-    handleNotifyTimeout = setTimeout(() => {
-      handleNotifyTimeout = null;
-      handleListeners.forEach((listener) => listener());
-    }, 0);
-  }
+  const notifyHandles = makeDebouncedNotifier(handleListeners);
 
   // ========================================================================
   // Derived State
