@@ -15,6 +15,7 @@ import { getRangoState } from "./rango-state.js";
 import {
   extractRscHeaderUrl,
   emptyResponse,
+  handleReloadHeader,
   teeWithCompletion,
 } from "./response-adapter.js";
 import {
@@ -148,21 +149,17 @@ export function createNavigationClient(
         source: string,
       ): Response | Promise<Response> => {
         // Version mismatch — server wants a full page reload
-        const reload = extractRscHeaderUrl(response, "X-RSC-Reload");
-        if (reload === "blocked") {
-          resolveStreamComplete();
-          return emptyResponse();
-        }
-        if (reload) {
-          if (tx) {
-            browserDebugLog(tx, `version mismatch, reloading (${source})`, {
-              reloadUrl: reload.url,
-            });
-          }
-          window.location.href = reload.url;
-          // Block further processing — page is reloading
-          return new Promise<Response>(() => {});
-        }
+        const reloadResult = handleReloadHeader(response, {
+          onBlocked: resolveStreamComplete,
+          onReload: (url) => {
+            if (tx) {
+              browserDebugLog(tx, `version mismatch, reloading (${source})`, {
+                reloadUrl: url,
+              });
+            }
+          },
+        });
+        if (reloadResult) return reloadResult;
 
         // Server-side redirect without state: the server returned 204 with
         // X-RSC-Redirect instead of a 3xx (which fetch would auto-follow

@@ -364,11 +364,18 @@ export async function initBrowserApp(
           // Update version BEFORE rebuilding state so that
           // clearHistoryCache() runs first, then the fresh segment
           // cache entry we create below survives.
+          //
+          // Compare against the bridge's live version, not the init-time
+          // `version` const: after the first HMR bump the const is stale, so a
+          // later update with an unchanged version would otherwise re-clear the
+          // cache and re-broadcast across tabs/apps. The live read fires only
+          // on a genuine version change.
           const newVersion = payload.metadata.version;
-          if (newVersion && newVersion !== version) {
+          const currentVersion = navigationBridge.getVersion();
+          if (newVersion && newVersion !== currentVersion) {
             console.log(
               "[Rango] HMR: version changed",
-              version,
+              currentVersion,
               "→",
               newVersion,
               "clearing caches",
