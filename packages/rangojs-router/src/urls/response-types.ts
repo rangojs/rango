@@ -32,20 +32,31 @@ type ResponseReverseFunction = [DefaultReverseRouteMap] extends [
  * Symbol marking a route as a response route (non-RSC).
  * Stored on PathOptions and UrlPatterns to signal the trie to short-circuit.
  */
-export const RESPONSE_TYPE: unique symbol = Symbol.for(
-  "rangojs.responseType",
-) as any;
+export const RESPONSE_TYPE: unique symbol = Symbol.for("rangojs.responseType");
+
+/**
+ * Shared shape of a response-route handler: a function returning TReturn (or a
+ * promise of it), plus an optional composable `use` thunk merged at mount time.
+ */
+type ResponseHandlerOf<
+  TReturn,
+  TParams = Record<string, string>,
+  TEnv = any,
+> = ((
+  ctx: ResponseHandlerContext<TParams, TEnv>,
+) => TReturn | Promise<TReturn>) & {
+  /** Composable default DSL items merged when the handler is mounted. */
+  use?: () => UseItems<ResponseRouteUseItem>;
+};
 
 /**
  * Handler that must return Response (not ReactNode).
  * Used by path.image(), path.stream(), path.any() (binary/streaming data).
  */
-export type ResponseHandler<TParams = Record<string, string>, TEnv = any> = ((
-  ctx: ResponseHandlerContext<TParams, TEnv>,
-) => Response | Promise<Response>) & {
-  /** Composable default DSL items merged when the handler is mounted. */
-  use?: () => UseItems<ResponseRouteUseItem>;
-};
+export type ResponseHandler<
+  TParams = Record<string, string>,
+  TEnv = any,
+> = ResponseHandlerOf<Response, TParams, TEnv>;
 
 /**
  * JSON-serializable value type for auto-wrap support.
@@ -65,12 +76,7 @@ export type JsonValue =
 export type JsonResponseHandler<
   TParams = Record<string, string>,
   TEnv = any,
-> = ((
-  ctx: ResponseHandlerContext<TParams, TEnv>,
-) => JsonValue | Response | Promise<JsonValue | Response>) & {
-  /** Composable default DSL items merged when the handler is mounted. */
-  use?: () => UseItems<ResponseRouteUseItem>;
-};
+> = ResponseHandlerOf<JsonValue | Response, TParams, TEnv>;
 
 /**
  * Handler for text-based response routes (text, html, xml).
@@ -79,12 +85,7 @@ export type JsonResponseHandler<
 export type TextResponseHandler<
   TParams = Record<string, string>,
   TEnv = any,
-> = ((
-  ctx: ResponseHandlerContext<TParams, TEnv>,
-) => string | Response | Promise<string | Response>) & {
-  /** Composable default DSL items merged when the handler is mounted. */
-  use?: () => UseItems<ResponseRouteUseItem>;
-};
+> = ResponseHandlerOf<string | Response, TParams, TEnv>;
 
 /**
  * Lighter handler context for response routes.

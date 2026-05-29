@@ -11,122 +11,40 @@ import {
   when,
   errorBoundary,
   notFoundBoundary,
-  loaderFn,
-  loadingFn,
-  transitionFn,
-  routeFn,
+  route,
+  loader,
+  loading,
+  transition,
 } from "./dsl-helpers.js";
 import RootLayout from "../server/root-layout";
 import { invariant } from "../errors";
 
-/*
- * Create revalidate helper
+/**
+ * Assemble the RouteHelpers object. The helpers are the DSL functions
+ * themselves; the single cast erases the phantom generics (and the extra
+ * `route` key) that the per-router RouteHelpers<T, TEnv> type carries but the
+ * runtime functions do not.
  */
-const createRevalidateHelper = <TEnv>(): RouteHelpers<
-  any,
+function buildRouteHelpers<T extends RouteDefinition, TEnv>(): RouteHelpers<
+  T,
   TEnv
->["revalidate"] => {
-  return revalidate as RouteHelpers<any, TEnv>["revalidate"];
-};
-
-/**
- * Create errorBoundary helper
- */
-const createErrorBoundaryHelper = <TEnv>(): RouteHelpers<
-  any,
-  TEnv
->["errorBoundary"] => {
-  return errorBoundary as RouteHelpers<any, TEnv>["errorBoundary"];
-};
-
-/**
- * Create notFoundBoundary helper
- */
-const createNotFoundBoundaryHelper = <TEnv>(): RouteHelpers<
-  any,
-  TEnv
->["notFoundBoundary"] => {
-  return notFoundBoundary as RouteHelpers<any, TEnv>["notFoundBoundary"];
-};
-
-/**
- * Create middleware helper
- */
-const createMiddlewareHelper = <TEnv>(): RouteHelpers<
-  any,
-  TEnv
->["middleware"] => {
-  return middleware as RouteHelpers<any, TEnv>["middleware"];
-};
-
-/**
- * Create parallel helper
- */
-const createParallelHelper = <TEnv>(): RouteHelpers<any, TEnv>["parallel"] => {
-  return parallel as RouteHelpers<any, TEnv>["parallel"];
-};
-
-/**
- * Create intercept helper
- */
-const createInterceptHelper = <
-  const T extends RouteDefinition,
-  TEnv,
->(): RouteHelpers<T, TEnv>["intercept"] => {
-  return intercept as RouteHelpers<T, TEnv>["intercept"];
-};
-
-/**
- * Create loader helper
- */
-const createLoaderHelper = <TEnv>(): RouteHelpers<any, TEnv>["loader"] => {
-  return loaderFn as RouteHelpers<any, TEnv>["loader"];
-};
-
-/**
- * Create loading helper
- */
-const createLoadingHelper = (): RouteHelpers<any, any>["loading"] => {
-  return loadingFn;
-};
-
-/**
- * Create route helper
- */
-const createRouteHelper = <
-  const T extends RouteDefinition,
-  TEnv,
->(): RouteHelpers<T, TEnv>["route"] => {
-  return routeFn as unknown as RouteHelpers<T, TEnv>["route"];
-};
-
-/**
- * Create layout helper
- */
-const createLayoutHelper = <TEnv>(): RouteHelpers<any, TEnv>["layout"] => {
-  return layout as RouteHelpers<any, TEnv>["layout"];
-};
-
-/**
- * Create when helper for intercept conditions
- */
-const createWhenHelper = (): RouteHelpers<any, any>["when"] => {
-  return when;
-};
-
-/**
- * Create cache helper for cache configuration
- */
-const createCacheHelper = (): RouteHelpers<any, any>["cache"] => {
-  return cache;
-};
-
-/**
- * Create transition helper
- */
-const createTransitionHelper = (): RouteHelpers<any, any>["transition"] => {
-  return transitionFn as RouteHelpers<any, any>["transition"];
-};
+> {
+  return {
+    route,
+    layout,
+    parallel,
+    intercept,
+    middleware,
+    revalidate,
+    loader,
+    loading,
+    errorBoundary,
+    notFoundBoundary,
+    when,
+    cache,
+    transition,
+  } as unknown as RouteHelpers<T, TEnv>;
+}
 
 /**
  * Branded type for route handlers that carries the route type info.
@@ -152,21 +70,7 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
       "map() expects a builder function as its argument",
     );
     // Create helpers
-    const helpers: RouteHelpers<T, TEnv> = {
-      route: createRouteHelper<T, TEnv>(),
-      layout: createLayoutHelper<TEnv>(),
-      parallel: createParallelHelper<TEnv>(),
-      intercept: createInterceptHelper<T, TEnv>(),
-      middleware: createMiddlewareHelper<TEnv>(),
-      revalidate: createRevalidateHelper<TEnv>(),
-      loader: createLoaderHelper<TEnv>(),
-      loading: createLoadingHelper(),
-      errorBoundary: createErrorBoundaryHelper<TEnv>(),
-      notFoundBoundary: createNotFoundBoundaryHelper<TEnv>(),
-      when: createWhenHelper(),
-      cache: createCacheHelper(),
-      transition: createTransitionHelper(),
-    };
+    const helpers = buildRouteHelpers<T, TEnv>();
 
     return [layout(RootLayout, () => builder(helpers))].flat(3);
   };
@@ -182,19 +86,5 @@ export function createRouteHelpers<
   T extends RouteDefinition,
   TEnv,
 >(): RouteHelpers<T, TEnv> {
-  return {
-    route: createRouteHelper<T, TEnv>(),
-    layout: createLayoutHelper<TEnv>(),
-    parallel: createParallelHelper<TEnv>(),
-    intercept: createInterceptHelper<T, TEnv>(),
-    middleware: createMiddlewareHelper<TEnv>(),
-    revalidate: createRevalidateHelper<TEnv>(),
-    loader: createLoaderHelper<TEnv>(),
-    loading: createLoadingHelper(),
-    errorBoundary: createErrorBoundaryHelper<TEnv>(),
-    notFoundBoundary: createNotFoundBoundaryHelper<TEnv>(),
-    when: createWhenHelper(),
-    cache: createCacheHelper(),
-    transition: createTransitionHelper(),
-  };
+  return buildRouteHelpers<T, TEnv>();
 }

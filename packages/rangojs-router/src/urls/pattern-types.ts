@@ -1,10 +1,5 @@
-import type { ReactNode } from "react";
-import type { Handler, TrailingSlashMode } from "../types.js";
-import type {
-  AllUseItems,
-  RouteUseItem,
-  UrlPatternsBrand,
-} from "../route-types.js";
+import type { TrailingSlashMode } from "../types.js";
+import type { AllUseItems, UrlPatternsBrand } from "../route-types.js";
 import type { SearchSchema } from "../search-params.js";
 import { RESPONSE_TYPE } from "./response-types.js";
 import type { DefaultEnv } from "../types.js";
@@ -55,16 +50,6 @@ export interface PathOptions<
 }
 
 /**
- * Internal representation of a URL pattern definition
- */
-export interface PathDefinition {
-  pattern: string;
-  name?: string;
-  handler: ReactNode | Handler<any, any, any>;
-  use?: RouteUseItem[];
-}
-
-/**
  * Result of urls() - contains the route definitions
  */
 export interface UrlPatterns<
@@ -72,8 +57,6 @@ export interface UrlPatterns<
   TRoutes extends Record<string, any> = Record<string, string>,
   TResponses extends Record<string, unknown> = Record<string, unknown>,
 > {
-  /** Internal: route definitions */
-  readonly definitions: PathDefinition[];
   /** Internal: compiled handler function */
   readonly handler: () => AllUseItems[];
   /** Internal: trailing slash config per route name */

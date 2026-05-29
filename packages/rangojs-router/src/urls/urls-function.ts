@@ -3,7 +3,7 @@ import type { AllUseItems } from "../route-types.js";
 import { getContext } from "../server/context";
 import { invariant } from "../errors";
 import { createRouteHelpers } from "../route-definition.js";
-import type { PathDefinition, UrlPatterns } from "./pattern-types.js";
+import type { UrlPatterns } from "./pattern-types.js";
 import type { PathHelpers } from "./path-helper-types.js";
 import type { ExtractRoutes, ExtractResponses } from "./type-extraction.js";
 import { createPathHelper, attachPathResponseTags } from "./path-helper.js";
@@ -34,9 +34,6 @@ export function urls<
 >(
   builder: (helpers: PathHelpers<TEnv>) => TItems,
 ): UrlPatterns<TEnv, ExtractRoutes<TItems>, ExtractResponses<TItems>> {
-  // Collect path definitions during build
-  const definitions: PathDefinition[] = [];
-
   // Create the handler function that will be called by the router
   const handler = () => {
     invariant(
@@ -82,7 +79,6 @@ export function urls<
   // trailingSlash config is populated when handler() runs
   // We expose it via a getter that reads from the context after handler execution
   return {
-    definitions,
     handler,
     get trailingSlash() {
       // Get the trailingSlash map from the current context

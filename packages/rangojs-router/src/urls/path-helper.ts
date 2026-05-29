@@ -1,16 +1,11 @@
 import type { ReactNode } from "react";
 import type { Handler } from "../types.js";
-import type {
-  AllUseItems,
-  RouteItem,
-  RouteUseItem,
-  UseItems,
-} from "../route-types.js";
+import type { RouteItem, RouteUseItem, UseItems } from "../route-types.js";
 import {
-  getContext,
   getUrlPrefix,
   getNamePrefix,
   getRootScoped,
+  requireDslContext,
 } from "../server/context";
 import { invariant, DataNotFoundError } from "../errors";
 import { validateUserRouteName } from "../route-name.js";
@@ -39,35 +34,10 @@ import {
   resolveHandlerUse,
   mergeHandlerUse,
 } from "../route-definition/resolve-handler-use.js";
-
-/**
- * Check if a value is a valid use item
- */
-const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
-  return (
-    typeof item === "undefined" ||
-    item === null ||
-    (item &&
-      typeof item === "object" &&
-      "type" in item &&
-      [
-        "layout",
-        "route",
-        "middleware",
-        "revalidate",
-        "parallel",
-        "intercept",
-        "loader",
-        "loading",
-        "errorBoundary",
-        "notFoundBoundary",
-        "when",
-        "cache",
-        "transition",
-        "include",
-      ].includes(item.type))
-  );
-};
+import {
+  emptySegmentBase,
+  runAndValidateUseItems,
+} from "../route-definition/dsl-helpers.js";
 
 /**
  * Apply URL prefix to a pattern
@@ -112,9 +82,9 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
     optionsOrUse?: PathOptions | (() => UseItems<RouteUseItem>),
     maybeUse?: () => UseItems<RouteUseItem>,
   ): RouteItem => {
-    const store = getContext();
-    const ctx = store.getStore();
-    if (!ctx) throw new Error("path() must be called inside urls()");
+    const { store, ctx } = requireDslContext(
+      "path() must be called inside urls()",
+    );
 
     invariant(
       !ctx.parent || ctx.parent.type !== "parallel",
@@ -214,6 +184,7 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
               : () => handler;
 
     const entry = {
+      ...emptySegmentBase(),
       id: namespace,
       shortCode: store.getShortCode("route"),
       type: "route" as const,
@@ -221,15 +192,6 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
       handler: wrappedHandler,
       // Store the PREFIXED pattern for route matching
       pattern: prefixedPattern,
-      loading: undefined,
-      middleware: [],
-      revalidate: [],
-      errorBoundary: [],
-      notFoundBoundary: [],
-      layout: [],
-      parallel: {},
-      intercept: [],
-      loader: [],
       ...(urlPrefix ? { mountPath: urlPrefix } : {}),
       ...(isPassthroughHandler(handler)
         ? {
@@ -301,10 +263,13 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
 
     // Run merged use callback (handler.use defaults + explicit use) if present
     if (mergedUse) {
-      const result = store.run(namespace, entry, mergedUse)?.flat(3);
-      invariant(
-        Array.isArray(result) && result.every((item) => isValidUseItem(item)),
-        `path() use() callback must return an array of use items [${namespace}]`,
+      const result = runAndValidateUseItems(
+        store,
+        namespace,
+        entry,
+        mergedUse,
+        "path",
+        "use",
       );
       return { name: namespace, type: "route", uses: result } as RouteItem;
     }

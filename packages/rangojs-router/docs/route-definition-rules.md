@@ -192,10 +192,13 @@ If you need module-level isolation, omit the `name` option or use a namespace.
 
 ## TypeScript Coverage
 
-Some rules are enforced at the type level via branded union types (`RouteUseItem`,
-`ParallelUseItem`, etc.). TypeScript only checks the **direct child** of a
-callback — nested violations (e.g., `path` inside `layout` inside `path`) are
-NOT caught because the direct child (`LayoutItem`) is a valid member of the union.
+Some rules are enforced at the type level via discriminated union types
+(`RouteUseItem`, `ParallelUseItem`, etc.) — each helper returns an item carrying
+a `type` literal discriminant, and a callback's return type only admits the union
+members valid at that position (the items carry no nominal brand). TypeScript
+only checks the **direct child** of a callback — nested violations (e.g., `path`
+inside `layout` inside `path`) are NOT caught because the direct child
+(`LayoutItem`) is a valid member of the union.
 
 ### Caught by TypeScript (direct child violations)
 

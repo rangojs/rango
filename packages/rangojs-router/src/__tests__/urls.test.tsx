@@ -54,7 +54,6 @@ describe("urls()", () => {
       const patterns = urls(({ path }) => [path("/", () => <div>Home</div>)]);
 
       expect(typeof patterns.handler).toBe("function");
-      expect(patterns.definitions).toEqual([]);
     });
 
     it("should accept empty array", () => {

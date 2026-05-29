@@ -5,29 +5,29 @@
  */
 
 /**
- * Branded return types for route helpers
+ * Brand for UrlPatterns nominal typing (see pattern-types.ts). The route-item
+ * types below are discriminated by their `type` literal, so they carry no brand.
  */
-export declare const LayoutBrand: unique symbol;
-export declare const RouteBrand: unique symbol;
-export declare const ParallelBrand: unique symbol;
-export declare const InterceptBrand: unique symbol;
-export declare const MiddlewareBrand: unique symbol;
-export declare const RevalidateBrand: unique symbol;
-export declare const LoaderBrand: unique symbol;
-export declare const LoadingBrand: unique symbol;
-export declare const ErrorBoundaryBrand: unique symbol;
-export declare const NotFoundBoundaryBrand: unique symbol;
-export declare const WhenBrand: unique symbol;
-export declare const CacheBrand: unique symbol;
-export declare const TransitionBrand: unique symbol;
-export declare const IncludeBrand: unique symbol;
 export declare const UrlPatternsBrand: unique symbol;
 
 export type LayoutItem = {
   name: string;
   type: "layout";
   uses?: AllUseItems[];
-  [LayoutBrand]: void;
+};
+
+/**
+ * Phantom inference fields attached to wrapper items (layout/cache/transition)
+ * so the urls() type extractor can read their child routes/responses. The fields
+ * never exist at runtime.
+ */
+type WithChildren<
+  TBase,
+  TChildRoutes extends Record<string, any> = Record<string, string>,
+  TChildResponses extends Record<string, unknown> = Record<string, unknown>,
+> = TBase & {
+  readonly __childRoutes?: TChildRoutes;
+  readonly __childResponses?: TChildResponses;
 };
 
 /**
@@ -37,15 +37,11 @@ export type LayoutItem = {
 export type TypedLayoutItem<
   TChildRoutes extends Record<string, any> = Record<string, string>,
   TChildResponses extends Record<string, unknown> = Record<string, unknown>,
-> = LayoutItem & {
-  readonly __childRoutes?: TChildRoutes;
-  readonly __childResponses?: TChildResponses;
-};
+> = WithChildren<LayoutItem, TChildRoutes, TChildResponses>;
 export type RouteItem = {
   name: string;
   type: "route";
   uses?: AllUseItems[];
-  [RouteBrand]: void;
 };
 
 /**
@@ -67,64 +63,53 @@ export type ParallelItem = {
   name: string;
   type: "parallel";
   uses?: ParallelUseItem[];
-  [ParallelBrand]: void;
 };
 export type InterceptItem = {
   name: string;
   type: "intercept";
   uses?: InterceptUseItem[];
-  [InterceptBrand]: void;
 };
 export type LoaderItem = {
   name: string;
   type: "loader";
   uses?: LoaderUseItem[];
-  [LoaderBrand]: void;
 };
 export type MiddlewareItem = {
   name: string;
   type: "middleware";
   uses?: AllUseItems[];
-  [MiddlewareBrand]: void;
 };
 export type RevalidateItem = {
   name: string;
   type: "revalidate";
   uses?: AllUseItems[];
-  [RevalidateBrand]: void;
 };
 export type LoadingItem = {
   name: string;
   type: "loading";
-  [LoadingBrand]: void;
 };
 export type ErrorBoundaryItem = {
   name: string;
   type: "errorBoundary";
   uses?: AllUseItems[];
-  [ErrorBoundaryBrand]: void;
 };
 export type NotFoundBoundaryItem = {
   name: string;
   type: "notFoundBoundary";
   uses?: AllUseItems[];
-  [NotFoundBoundaryBrand]: void;
 };
 export type WhenItem = {
   name: string;
   type: "when";
-  [WhenBrand]: void;
 };
 export type CacheItem = {
   name: string;
   type: "cache";
   uses?: AllUseItems[];
-  [CacheBrand]: void;
 };
 export type TransitionItem = {
   name: string;
   type: "transition";
-  [TransitionBrand]: void;
 };
 
 /**
@@ -134,10 +119,7 @@ export type TransitionItem = {
 export type TypedTransitionItem<
   TChildRoutes extends Record<string, any> = Record<string, string>,
   TChildResponses extends Record<string, unknown> = Record<string, unknown>,
-> = TransitionItem & {
-  readonly __childRoutes?: TChildRoutes;
-  readonly __childResponses?: TChildResponses;
-};
+> = WithChildren<TransitionItem, TChildRoutes, TChildResponses>;
 
 /**
  * Typed cache item that carries child routes as phantom type
@@ -146,10 +128,7 @@ export type TypedTransitionItem<
 export type TypedCacheItem<
   TChildRoutes extends Record<string, any> = Record<string, string>,
   TChildResponses extends Record<string, unknown> = Record<string, unknown>,
-> = CacheItem & {
-  readonly __childRoutes?: TChildRoutes;
-  readonly __childResponses?: TChildResponses;
-};
+> = WithChildren<CacheItem, TChildRoutes, TChildResponses>;
 
 /**
  * Include item for URL pattern composition (used by urls() API)
@@ -184,7 +163,6 @@ export type IncludeItem = {
      */
     includeScope?: string;
   };
-  [IncludeBrand]: void;
 };
 
 /**

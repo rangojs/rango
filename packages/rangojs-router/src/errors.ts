@@ -110,6 +110,24 @@ export class BuildError extends Error {
 }
 
 /**
+ * Thrown when a route-definition DSL helper (route/layout/loader/cache/…) is
+ * called outside an active urls()/map() builder, so there is no
+ * AsyncLocalStorage build context to attach to. The message names the specific
+ * helper and how to fix it; the `cause` records the mechanical reason so the
+ * failure mode is identifiable (not conflated with an unrelated throw).
+ */
+export class DslContextError extends Error {
+  name = "DslContextError" as const;
+  cause?: unknown;
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message);
+    Object.setPrototypeOf(this, DslContextError.prototype);
+    this.cause = options?.cause;
+  }
+}
+
+/**
  * Thrown when a network request fails (server unreachable, no internet, etc.)
  * This error triggers the root error boundary with retry capability.
  *
