@@ -1,9 +1,15 @@
-import test, {
-  type Page,
-  type Locator,
-  type ConsoleMessage,
-  expect,
-} from "@playwright/test";
+import test, { type Page, type Locator, expect } from "@playwright/test";
+
+// The HMR await + event-capture helpers live in the shared @shared/e2e package
+// so the node test-app and the cloudflare app drive the same robust
+// implementation. Re-exported here so existing `./helper` imports are unchanged.
+export {
+  writeFileAndAwaitHmr,
+  writeFileBumpMtime,
+  captureHmrEvents,
+  ROUTE_REDISCOVERY_PATTERN,
+} from "@shared/e2e";
+export type { HmrEvent } from "@shared/e2e";
 
 export const testNoJs = test.extend({
   javaScriptEnabled: ({}, use) => use(false),
@@ -382,165 +388,5 @@ export function expectMaxTiming(elapsed: number, maximum: number) {
 //     invalidations.
 //
 
-export interface HmrEvent {
-  type: "js-update" | "full-reload" | "console";
-  detail: string;
-  timestamp: number;
-}
-
-let lastHmrWriteMtimeMs = 0;
-
-/**
- * Capture Vite HMR events from both console messages and WebSocket frames.
- * Returns a collector with typed event arrays and a dispose method.
- *
- * @example
- * const hmr = await captureHmrEvents(page);
- * fs.writeFileSync(filePath, modifiedContent);
- * await page.waitForTimeout(3000);
- * hmr.dispose();
- *
- * expect(hmr.fullReloads).toHaveLength(0);
- * expect(hmr.updates.length).toBeLessThanOrEqual(2);
- */
-/**
- * Write a file and wait for the dev server to log the expected HMR change.
- * Uses atomic replace + monotonic mtimes so repeated writes stay visible on
- * CI filesystems where watcher events can be flaky.
- */
-export async function writeFileAndAwaitHmr(
-  page: Page,
-  filePath: string,
-  content: string,
-  {
-    totalTimeoutMs = 15000,
-    retryIntervalMs = 3000,
-    getServerOutput,
-    serverOutputPattern,
-    waitForApplied,
-  }: {
-    totalTimeoutMs?: number;
-    retryIntervalMs?: number;
-    getServerOutput: () => string;
-    serverOutputPattern: RegExp;
-    waitForApplied?: (() => Promise<void>) | undefined;
-  },
-): Promise<void> {
-  const { renameSync, unlinkSync, utimesSync, writeFileSync } =
-    await import("node:fs");
-  const { basename, dirname, join } = await import("node:path");
-
-  const writeAttempt = (attempt: number) => {
-    const tempPath = join(
-      dirname(filePath),
-      `.${basename(filePath)}.hmr-${process.pid}-${attempt}.tmp`,
-    );
-    writeFileSync(tempPath, content);
-    try {
-      renameSync(tempPath, filePath);
-    } catch (error) {
-      unlinkSync(tempPath);
-      throw error;
-    }
-
-    // Some CI filesystems coalesce rapid writes; force a monotonic mtime so
-    // the watcher sees each attempt as a fresh change.
-    const nextMtimeMs = Math.max(Date.now(), lastHmrWriteMtimeMs + 1100);
-    lastHmrWriteMtimeMs = nextMtimeMs;
-    const nextMtime = new Date(nextMtimeMs);
-    utimesSync(filePath, nextMtime, nextMtime);
-  };
-
-  const deadline = Date.now() + totalTimeoutMs;
-  let attempt = 0;
-  let recentOutput = "";
-  let lastApplyError: unknown;
-  let sawServerSignal = false;
-  let sawBrowserStreamComplete = false;
-
-  const consoleHandler = (msg: ConsoleMessage) => {
-    if (
-      sawServerSignal &&
-      msg.text().includes("[Rango] HMR: RSC stream complete")
-    ) {
-      sawBrowserStreamComplete = true;
-    }
-  };
-
-  page.on("console", consoleHandler);
-
-  try {
-    while (Date.now() < deadline) {
-      attempt += 1;
-      const outputOffset = getServerOutput().length;
-      sawServerSignal = false;
-      sawBrowserStreamComplete = false;
-      writeAttempt(attempt);
-
-      const attemptDeadline =
-        Date.now() +
-        Math.max(1, Math.min(retryIntervalMs, deadline - Date.now()));
-
-      while (Date.now() < attemptDeadline) {
-        if (!sawServerSignal) {
-          recentOutput = getServerOutput().slice(outputOffset);
-          if (serverOutputPattern.test(recentOutput)) {
-            sawServerSignal = true;
-          }
-        }
-        if (sawServerSignal && !waitForApplied && sawBrowserStreamComplete) {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-
-      if (sawServerSignal && waitForApplied) {
-        try {
-          await waitForApplied();
-          return;
-        } catch (error) {
-          lastApplyError = error;
-        }
-      }
-    }
-
-    throw new Error(
-      `Timed out waiting for HMR after writing ${filePath}. ` +
-        `sawServerSignal=${sawServerSignal} ` +
-        `sawBrowserStreamComplete=${sawBrowserStreamComplete} ` +
-        `Recent server output:\n${recentOutput || "(empty)"}\n` +
-        `Last apply error:\n${String(lastApplyError ?? "(none)")}`,
-    );
-  } finally {
-    page.off("console", consoleHandler);
-  }
-}
-
-export async function captureHmrEvents(page: Page) {
-  const events: HmrEvent[] = [];
-  const updates: string[] = [];
-  const fullReloads: string[] = [];
-
-  const consoleHandler = (msg: ConsoleMessage) => {
-    const text = msg.text();
-    if (text.includes("[vite] hot updated:")) {
-      updates.push(text);
-      events.push({ type: "js-update", detail: text, timestamp: Date.now() });
-    }
-    if (text.includes("[vite] page reload") || text.includes("full reload")) {
-      fullReloads.push(text);
-      events.push({ type: "full-reload", detail: text, timestamp: Date.now() });
-    }
-  };
-
-  page.on("console", consoleHandler);
-
-  return {
-    events,
-    updates,
-    fullReloads,
-    dispose: () => {
-      page.off("console", consoleHandler);
-    },
-  };
-}
+// writeFileAndAwaitHmr, captureHmrEvents, HmrEvent and ROUTE_REDISCOVERY_PATTERN
+// are re-exported from @shared/e2e at the top of this file.
