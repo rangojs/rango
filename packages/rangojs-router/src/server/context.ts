@@ -748,6 +748,17 @@ const loaderScopeALS: AsyncLocalStorage<{ active: true }> = ((
   globalThis as any
 )[LOADER_SCOPE_KEY] ??= new AsyncLocalStorage<{ active: true }>());
 
+// Purity-only scope: marks that a loader FUNCTION BODY is executing, regardless
+// of how the loader was invoked (DSL via runInsideLoaderScope, or handler-
+// invoked via ctx.use). Consulted ONLY by isInsideCacheScope() to exempt
+// request-scoped reads. It deliberately does NOT affect isInsideLoaderScope(),
+// so rendered()/barrier/deadlock gating (which must distinguish DSL from
+// handler-invoked loaders) is unchanged.
+const LOADER_BODY_SCOPE_KEY = Symbol.for("rangojs-router:loader-body-scope");
+const loaderBodyScopeALS: AsyncLocalStorage<{ active: true }> = ((
+  globalThis as any
+)[LOADER_BODY_SCOPE_KEY] ??= new AsyncLocalStorage<{ active: true }>());
+
 /**
  * Check if the current execution is inside a cache() DSL boundary.
  * Returns false inside loader execution — loaders are always fresh
@@ -759,6 +770,10 @@ export function isInsideCacheScope(): boolean {
   // function re-executes on every request. Skip the guard when running
   // inside a loader.
   if (loaderScopeALS.getStore()?.active) return false;
+  // Also exempt handler-invoked loaders: their bodies run in a loader-body
+  // scope (not the DSL loader scope above), so request-scoped reads inside any
+  // loader — however invoked — are safe (loaders always re-run fresh).
+  if (loaderBodyScopeALS.getStore()?.active) return false;
   return true;
 }
 
@@ -778,4 +793,15 @@ export function isInsideLoaderScope(): boolean {
  */
 export function runInsideLoaderScope<T>(fn: () => T): T {
   return loaderScopeALS.run({ active: true }, fn);
+}
+
+/**
+ * Run `fn` inside a loader BODY scope. Marks loader-function execution for the
+ * cache-purity guard only (isInsideCacheScope), WITHOUT affecting
+ * isInsideLoaderScope()/rendered() gating. Applied to every loader body (DSL
+ * and handler-invoked via ctx.use) so request-scoped reads inside a loader
+ * never trip the cache-scope guards — loaders always run fresh.
+ */
+export function runInsideLoaderBodyScope<T>(fn: () => T): T {
+  return loaderBodyScopeALS.run({ active: true }, fn);
 }

@@ -24,7 +24,10 @@ import { isHandle, collectHandleData, type Handle } from "../handle.js";
 import { buildHandleSnapshot } from "../server/handle-store.js";
 import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import { _getRequestContext } from "../server/request-context.js";
-import { isInsideLoaderScope } from "../server/context.js";
+import {
+  isInsideLoaderScope,
+  runInsideLoaderBodyScope,
+} from "../server/context.js";
 import { debugLog } from "./logging.js";
 
 /**
@@ -353,8 +356,19 @@ function createLoaderExecutor<TEnv>(
     };
 
     const doneLoader = track(`loader:${loader.$$id}`, 2);
+    // Run the loader body inside loader scope so request-scoped reads
+    // (cookies()/headers() and non-cacheable ctx.get) are exempt from the
+    // cache-purity guards: loaders always run fresh, so their reads never leak
+    // into a cached segment. DSL loaders are already wrapped by fresh.ts; this
+    // also covers handler-invoked loaders (ctx.use(Loader) from a handler),
+    // which otherwise execute in the caller's cache scope and would wrongly
+    // throw. rendered() gating uses the captured isDslLoader (above), so this
+    // does not grant rendered() to handler-invoked loaders. Uses a body-only
+    // scope, so isInsideLoaderScope() / barrier / deadlock gating is unchanged.
     const promise = Promise.resolve(
-      loaderFn(loaderCtx as LoaderContext<any, TEnv>),
+      runInsideLoaderBodyScope(() =>
+        loaderFn(loaderCtx as LoaderContext<any, TEnv>),
+      ),
     ).finally(() => {
       pendingLoaders.delete(loader.$$id);
       doneLoader();

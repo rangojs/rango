@@ -171,6 +171,51 @@ test.describe("cache-scope-guard", () => {
     const html = await response.text();
     expect(html).toContain("cache() boundary");
   });
+
+  test("cookies() read inside cache() should throw", async ({ page }) => {
+    await page.goto(f.url("/cache-scope-guard/cookies-read-blocked"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+    await expect(page.getByTestId("csg-error-message")).toContainText(
+      "cache() boundary",
+    );
+  });
+
+  test("headers() read inside cache() should throw", async ({ page }) => {
+    await page.goto(f.url("/cache-scope-guard/headers-read-blocked"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+    await expect(page.getByTestId("csg-error-message")).toContainText(
+      "cache() boundary",
+    );
+  });
+
+  test("cookies() read inside a loader within cache() should be allowed", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-scope-guard/loader-cookies-allowed"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-loader-cookies-page")).toBeVisible();
+    await expect(page.getByTestId("csg-loader-cookies-value")).toHaveText(
+      "no-cookie",
+    );
+  });
+
+  test("cookies() read inside cache() should throw (SSR)", async ({
+    request,
+  }) => {
+    const response = await request.get(
+      f.url("/cache-scope-guard/cookies-read-blocked"),
+      { headers: { Accept: "text/html,application/xhtml+xml" } },
+    );
+    const html = await response.text();
+    expect(html).toContain("cache() boundary");
+  });
 });
 
 // ============================================================================
@@ -293,5 +338,35 @@ test.describe("cache-scope-guard (production)", () => {
     await page.goto(f.url("/cache-scope-guard/reqctx-header-blocked"));
     await waitForHydration(page);
     await expect(page.getByTestId("csg-error-page")).toBeVisible();
+  });
+
+  test("cookies() read inside cache() should render error boundary", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/cache-scope-guard/cookies-read-blocked"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+  });
+
+  test("headers() read inside cache() should render error boundary", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/cache-scope-guard/headers-read-blocked"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+  });
+
+  test("cookies() read inside a loader within cache() should be allowed", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-scope-guard/loader-cookies-allowed"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-loader-cookies-page")).toBeVisible();
+    await expect(page.getByTestId("csg-loader-cookies-value")).toHaveText(
+      "no-cookie",
+    );
   });
 });

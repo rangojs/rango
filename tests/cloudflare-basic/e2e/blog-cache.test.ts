@@ -349,7 +349,10 @@ function describeDocumentCacheHeaders(label: string, mode: "dev" | "build") {
             hitHeaders = res.headers();
             return hitHeaders["x-document-cache-status"];
           },
-          { timeout: 15000, message: "Expected /document-cache to serve a HIT" },
+          {
+            timeout: 15000,
+            message: "Expected /document-cache to serve a HIT",
+          },
         )
         .toBe("HIT");
 

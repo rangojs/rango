@@ -9,6 +9,7 @@
 
 import type { CookieOptions } from "../router/middleware-types.js";
 import { getRequestContext } from "./request-context.js";
+import { isInsideCacheScope } from "./context.js";
 import { INSIDE_CACHE_EXEC } from "../cache/taint.js";
 
 /**
@@ -84,10 +85,23 @@ export interface ReadonlyHeaders {
 type HeadersIterator<T> = IterableIterator<T>;
 
 /**
- * Throw if called inside a "use cache" function.
- * Reading request-scoped data (cookies, headers) inside a cached function
- * produces results that vary per request but the cache key does not include
- * those values, leading to one user's data being served to another.
+ * Throw if called inside a cache boundary — either a "use cache" function
+ * (`INSIDE_CACHE_EXEC` stamped on ctx by the cache runtime) or a `cache()`
+ * DSL boundary (`isInsideCacheScope()` — the render-store flag set while
+ * resolving a `type: "cache"` route entry).
+ *
+ * Reading request-scoped data (cookies, headers) inside a cached scope
+ * produces per-request values that are NOT reflected in the cache key, so
+ * they would be frozen into the shared cache entry and served to the wrong
+ * users. This is the same hazard for both scopes: a `cache()` boundary caches
+ * everything except loaders (it is the document-level "PPR shell"), so a read
+ * here is baked into the shell exactly like a `"use cache"` return value is
+ * baked into its cache entry.
+ *
+ * `isInsideCacheScope()` returns false inside loaders (loaders always run
+ * fresh on every request, even on a cache hit), so reading cookies()/headers()
+ * from a loader is allowed — loaders are the dynamic "holes" of a cached
+ * document.
  */
 function assertNotInsideCacheContext(ctx: unknown, fnName: string): void {
   if (
@@ -104,6 +118,16 @@ function assertNotInsideCacheContext(ctx: unknown, fnName: string): void {
         `as an argument:\n\n` +
         `  const locale = cookies().get("locale")?.value ?? "en";\n` +
         `  const data = await getCachedData(locale); // locale is now in the cache key`,
+    );
+  }
+  if (isInsideCacheScope()) {
+    throw new Error(
+      `${fnName}() cannot be called inside a cache() boundary. ` +
+        `A cache() scope caches everything except loaders, so request-scoped ` +
+        `data (cookies, headers) read here would be frozen into the shared ` +
+        `cached shell and served to other users. Read it inside a loader ` +
+        `instead — loaders always run fresh on every request, even on a cache hit:\n\n` +
+        `  loader("user", () => getUser(cookies().get("session")?.value));`,
     );
   }
 }
