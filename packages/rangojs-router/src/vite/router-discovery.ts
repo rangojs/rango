@@ -1034,6 +1034,49 @@ export function createRouterDiscoveryPlugin(
           });
         };
 
+        // Cloudflare dev only. workerd serves every request through the
+        // runner-worker singleton, which re-resolves the worker entry per
+        // request via runner.import("virtual:cloudflare/worker-entry"). The
+        // route table lives in the user's createRouter() instance, captured
+        // when that entry chain (entry -> router -> urls) was last evaluated
+        // and then cached in the runner's evaluatedModules. The route-file
+        // watcher refreshes discovery + types on the Node side, but the worker
+        // keeps serving the cached (stale) router: route-definition modules
+        // have no import.meta.hot boundary, so Vite never sends the worker an
+        // HMR update for them and the entry chain is never evicted.
+        //
+        // Fix: after discovery completes, (1) invalidate the worker env's
+        // Node-side module graph, then (2) send a full-reload to the worker.
+        // Step (2) alone is insufficient: the full-reload handler clears the
+        // runner's evaluatedModules and re-imports entrypoints, but each
+        // re-import fetches the module back through this Node-side graph, which
+        // still holds the pre-edit transform of urls.tsx — so createRouter()
+        // rebuilds the stale route table and the new route 404s/hits the
+        // catch-all. Invalidating the graph forces a fresh transform on
+        // re-fetch (the same mechanism refreshTempRscEnv uses for discovery),
+        // so the re-import re-runs createRouter() with the new routes. This is
+        // the programmatic equivalent of the dev-server "r + enter" restart,
+        // scoped to the worker environment instead of tearing down the server.
+        const forceCloudflareWorkerReload = (rscEnv: any) => {
+          if (!rscEnv?.hot) return;
+          try {
+            const graph = rscEnv.moduleGraph;
+            if (graph?.invalidateAll) {
+              graph.invalidateAll();
+              debugDiscovery?.("hmr: invalidated workerd rsc module graph");
+            }
+            rscEnv.hot.send({ type: "full-reload" });
+            debugDiscovery?.(
+              "hmr: forced workerd rsc env reload (full-reload)",
+            );
+          } catch (err: any) {
+            debugDiscovery?.(
+              "hmr: workerd reload failed: %s",
+              err?.message ?? err,
+            );
+          }
+        };
+
         const scheduleRouteRegeneration = () => {
           clearTimeout(routeChangeTimer);
           routeChangeTimer = setTimeout(() => {
@@ -1072,14 +1115,24 @@ export function createRouterDiscoveryPlugin(
             // routes that the static parser cannot resolve. Resolves the
             // discovery gate when complete.
             if (s.perRouterManifests.length > 0) {
-              refreshRuntimeDiscovery().catch((err: any) => {
-                console.warn(
-                  `[rango] Runtime re-discovery error: ${err.message}`,
-                );
-                // Even on error, unblock the gate so workerd's reload
-                // doesn't hang indefinitely against the previous manifest.
-                resolveDiscoveryGate();
-              });
+              refreshRuntimeDiscovery()
+                .then(() => {
+                  // Cloudflare dev (no main RSC runner): force the workerd
+                  // module runner to drop its cached worker-entry chain so the
+                  // next request re-evaluates createRouter() with the new
+                  // routes. Node-runner environments re-import via the runner
+                  // directly and need no worker HMR nudge.
+                  const env = (server.environments as any)?.rsc;
+                  if (env && !env.runner) forceCloudflareWorkerReload(env);
+                })
+                .catch((err: any) => {
+                  console.warn(
+                    `[rango] Runtime re-discovery error: ${err.message}`,
+                  );
+                  // Even on error, unblock the gate so workerd's reload
+                  // doesn't hang indefinitely against the previous manifest.
+                  resolveDiscoveryGate();
+                });
             }
           }, 100);
         };

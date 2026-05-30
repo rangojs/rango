@@ -383,6 +383,13 @@ export async function initBrowserApp(
             navigationBridge.updateVersion(newVersion);
           }
 
+          // Apply only partial segment updates. A non-partial payload during
+          // HMR is transient: the worker route table is still rebuilding after
+          // the edit, so the URL momentarily resolves to not-found/catch-all.
+          // Skip it -- the debounced follow-up refetch returns the settled
+          // route's partial payload and renders it below. We never reload here:
+          // a paramless document GET would run the SSR path and surface the
+          // not-found page during that same transient.
           if (payload.metadata?.isPartial) {
             const segments = payload.metadata.segments || [];
             const matched = payload.metadata.matched || [];

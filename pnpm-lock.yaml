@@ -164,6 +164,9 @@ importers:
       '@playwright/test':
         specifier: ^1.49.1
         version: 1.57.0
+      '@shared/e2e':
+        specifier: workspace:*
+        version: link:../../tests/shared-e2e
       '@types/node':
         specifier: ^24.10.1
         version: 24.10.4
@@ -306,6 +309,9 @@ importers:
       '@playwright/test':
         specifier: ^1.49.1
         version: 1.57.0
+      '@shared/e2e':
+        specifier: workspace:*
+        version: link:../shared-e2e
       '@types/react':
         specifier: 'catalog:'
         version: 19.2.7
@@ -432,6 +438,19 @@ importers:
       '@types/react':
         specifier: 'catalog:'
         version: 19.2.7
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  tests/shared-e2e:
+    dependencies:
+      '@playwright/test':
+        specifier: ^1.49.1
+        version: 1.57.0
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.10.4
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
