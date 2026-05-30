@@ -1013,6 +1013,16 @@ export function createRouterDiscoveryPlugin(
                 );
                 s.lastDiscoveryError = null;
               }
+              // Cloudflare dev: on a successful cycle drop the workerd runner's
+              // cached worker-entry chain so the next request re-evaluates
+              // createRouter() with the new routes. Fired here in the work path
+              // (not the caller's .then()) so a queued follow-up cycle that
+              // succeeds after an earlier failed cycle still reloads:
+              // runRefreshCycle recurses queued work without awaiting it, so the
+              // original call already resolved on the failed cycle. A failed
+              // cycle throws above and never reaches here, so a broken edit
+              // never reloads the worker onto bad source.
+              if (rscEnv && !rscEnv.runner) forceCloudflareWorkerReload(rscEnv);
             } catch (err: any) {
               s.lastDiscoveryError = {
                 message: err?.message ?? String(err),
@@ -1115,24 +1125,17 @@ export function createRouterDiscoveryPlugin(
             // routes that the static parser cannot resolve. Resolves the
             // discovery gate when complete.
             if (s.perRouterManifests.length > 0) {
-              refreshRuntimeDiscovery()
-                .then(() => {
-                  // Cloudflare dev (no main RSC runner): force the workerd
-                  // module runner to drop its cached worker-entry chain so the
-                  // next request re-evaluates createRouter() with the new
-                  // routes. Node-runner environments re-import via the runner
-                  // directly and need no worker HMR nudge.
-                  const env = (server.environments as any)?.rsc;
-                  if (env && !env.runner) forceCloudflareWorkerReload(env);
-                })
-                .catch((err: any) => {
-                  console.warn(
-                    `[rango] Runtime re-discovery error: ${err.message}`,
-                  );
-                  // Even on error, unblock the gate so workerd's reload
-                  // doesn't hang indefinitely against the previous manifest.
-                  resolveDiscoveryGate();
-                });
+              // The cloudflare workerd reload fires inside refreshRuntimeDiscovery
+              // on the successful cycle (see forceCloudflareWorkerReload call
+              // there) so queued follow-up cycles also trigger it.
+              refreshRuntimeDiscovery().catch((err: any) => {
+                console.warn(
+                  `[rango] Runtime re-discovery error: ${err.message}`,
+                );
+                // Even on error, unblock the gate so workerd's reload doesn't
+                // hang indefinitely against the previous manifest.
+                resolveDiscoveryGate();
+              });
             }
           }, 100);
         };
