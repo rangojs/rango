@@ -1141,6 +1141,54 @@ test.describe("cache-status-json (production)", () => {
   });
 });
 
+// __no_cache must bypass the cache in production too. Asserted on the payload
+// (prod has no debug logs): proven only by the pair — a cached route is stable
+// without the flag, and re-executes with it.
+test.describe("cache-no-cache-bypass (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("cached route is stable without the flag and re-executes with __no_cache", async ({
+    request,
+  }) => {
+    const get = async (suffix = "") => {
+      const res = await request.get(
+        f.url("/cache-response-type/data/777" + suffix),
+        { headers: { Accept: "application/json" } },
+      );
+      expect(res.status()).toBe(200);
+      return (await res.json()).data;
+    };
+
+    // Warm the cache, then poll until a request returns the cached value.
+    const first = await get();
+    await expect
+      .poll(async () => (await get()).ts, {
+        timeout: 15000,
+        message: "Expected /cache-response-type/data/777 to become cached",
+      })
+      .toBe(first.ts);
+
+    // Baseline (caching works): without the flag the route serves a HIT —
+    // a non-cached route would never produce a stable per-execution value.
+    const cachedA = await get();
+    const cachedB = await get();
+    expect(cachedA.ts).toBe(first.ts);
+    expect(cachedB.ts).toBe(first.ts);
+    expect(cachedB.rand).toBe(first.rand);
+
+    // Bypass: __no_cache re-executes the handler on every request. Assert on
+    // `rand` (Math.random), not `ts` — two back-to-back requests can land in the
+    // same millisecond and make a Date.now() inequality flake.
+    const bypass1 = await get("?__no_cache");
+    const bypass2 = await get("?__no_cache");
+    expect(bypass1.rand).not.toBe(first.rand);
+    expect(bypass2.rand).not.toBe(bypass1.rand);
+  });
+});
+
 // ============================================================================
 // Segment-level cache status behavior (dev)
 // ============================================================================

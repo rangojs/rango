@@ -1,5 +1,5 @@
 /**
- * rsc-router/loader (client version)
+ * @rangojs/router/loader (client version)
  *
  * Client-only stub for createLoader. Returns a minimal loader definition
  * ({ __brand, $$id }) that can be passed to hooks like useLoader.
@@ -38,10 +38,6 @@ export function createLoader<T>(
 
 // Implementation - client stub that just returns the loader definition
 // The $$id parameter is injected by Vite plugin, not user-provided
-//
-// NOTE: For export-only loader files, the Vite plugin replaces the entire
-// file with object literals (bypassing this function). This function only
-// runs when loaders are in mixed files (not export-only).
 export function createLoader<T>(
   _fn: LoaderFn<T, Record<string, string | undefined>, any>,
   _fetchable?: true | FetchableLoaderOptions,

@@ -46,6 +46,55 @@ describe("LoaderStore", () => {
     });
   });
 
+  describe("committed value tracking (hasValue)", () => {
+    it("an unseen bucket has hasValue false", () => {
+      expect(store.getSnapshot("foo").hasValue).toBe(false);
+    });
+
+    it("distinguishes a committed null from an empty bucket", () => {
+      const id = "foo";
+      const r = store.reserveRequestId(id);
+      store.finishData(id, r, null);
+      const snap = store.getSnapshot(id);
+      // A loader that resolves to null has committed a value: hasValue is true
+      // even though value is null, so readers do not treat it as "never loaded".
+      expect(snap.value).toBeNull();
+      expect(snap.hasValue).toBe(true);
+    });
+
+    it("preserves hasValue across an error after a committed value", () => {
+      const id = "foo";
+      const r1 = store.reserveRequestId(id);
+      store.finishData(id, r1, "good");
+      const r2 = store.reserveRequestId(id);
+      store.finishError(id, r2, new Error("boom"));
+      const snap = store.getSnapshot(id);
+      // finishError keeps the prior value and its hasValue flag.
+      expect(snap.value).toBe("good");
+      expect(snap.hasValue).toBe(true);
+    });
+
+    it("leaves hasValue false when the first request errors with no prior value", () => {
+      const id = "foo";
+      const r = store.reserveRequestId(id);
+      store.finishError(id, r, new Error("boom"));
+      const snap = store.getSnapshot(id);
+      expect(snap.value).toBeUndefined();
+      expect(snap.hasValue).toBe(false);
+    });
+
+    it("preserves hasValue across beginRequest", () => {
+      const id = "foo";
+      const r1 = store.reserveRequestId(id);
+      store.finishData(id, r1, null);
+      const r2 = store.reserveRequestId(id);
+      store.beginRequest(id, r2);
+      const snap = store.getSnapshot(id);
+      expect(snap.isLoading).toBe(true);
+      expect(snap.hasValue).toBe(true);
+    });
+  });
+
   describe("subscribe / notify", () => {
     it("notifies all subscribers on each mutation", () => {
       let aCount = 0;

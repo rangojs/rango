@@ -169,10 +169,11 @@ export function withCacheStore<TEnv>(
     // skip (client already had them). Segments where the handler intentionally
     // returned null are not revalidation skips — re-rendering them will still
     // produce null, so proactive caching would be wasted work.
-    const clientIdSet = new Set(ctx.clientSegmentIds);
     const hasNullComponents = allSegmentsToCache.some(
       (s) =>
-        s.component === null && s.type !== "loader" && clientIdSet.has(s.id),
+        s.component === null &&
+        s.type !== "loader" &&
+        ctx.clientSegmentSet.has(s.id),
     );
 
     const requestCtx = getRequestContext();

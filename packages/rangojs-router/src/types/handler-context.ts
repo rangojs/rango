@@ -567,8 +567,11 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
 
   // ── Segment metadata (which segment is being evaluated) ──────────────
 
-  /** The type of segment being revalidated. */
-  segmentType: "layout" | "route" | "parallel";
+  /**
+   * The type of segment being revalidated. `"loader"` is passed to revalidate
+   * functions attached to a `loader(Fn, () => [revalidate(...)])` registration.
+   */
+  segmentType: "layout" | "route" | "parallel" | "loader";
   /** Layout name (e.g., `"root"`, `"shop"`, `"auth"`). Only set for layout segments. */
   layoutName?: string;
   /** Slot name (e.g., `"@sidebar"`, `"@modal"`). Only set for parallel segments. */

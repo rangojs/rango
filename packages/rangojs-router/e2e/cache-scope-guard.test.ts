@@ -171,6 +171,68 @@ test.describe("cache-scope-guard", () => {
     const html = await response.text();
     expect(html).toContain("cache() boundary");
   });
+
+  test("cookies() read inside cache() should throw", async ({ page }) => {
+    await page.goto(f.url("/cache-scope-guard/cookies-read-blocked"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+    await expect(page.getByTestId("csg-error-message")).toContainText(
+      "cache() boundary",
+    );
+  });
+
+  test("headers() read inside cache() should throw", async ({ page }) => {
+    await page.goto(f.url("/cache-scope-guard/headers-read-blocked"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+    await expect(page.getByTestId("csg-error-message")).toContainText(
+      "cache() boundary",
+    );
+  });
+
+  test("cookies() read by a loader consumed via useLoader inside cache() is fresh per request (no cached-shell leak)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    const url = f.url("/cache-scope-guard/loader-cookies-allowed");
+    const root = f.url("/");
+
+    // First visitor: cookie "alice" — populates the cached static shell.
+    await page
+      .context()
+      .addCookies([{ name: "csg-session", value: "alice", url: root }]);
+    await page.goto(url);
+    await waitForHydration(page);
+    await expect(page.getByTestId("csg-loader-cookies-value")).toHaveText(
+      "alice",
+    );
+
+    // Second visitor: cookie "bob" — same URL, so the cached shell is served,
+    // but the cookie value rides the FRESH loader segment. If the cookie had
+    // been baked into the cached handler, bob would see "alice" (the leak).
+    await page.context().clearCookies();
+    await page
+      .context()
+      .addCookies([{ name: "csg-session", value: "bob", url: root }]);
+    await page.goto(url);
+    await waitForHydration(page);
+    await expect(page.getByTestId("csg-loader-cookies-value")).toHaveText(
+      "bob",
+    );
+  });
+
+  test("cookies() read inside cache() should throw (SSR)", async ({
+    request,
+  }) => {
+    const response = await request.get(
+      f.url("/cache-scope-guard/cookies-read-blocked"),
+      { headers: { Accept: "text/html,application/xhtml+xml" } },
+    );
+    const html = await response.text();
+    expect(html).toContain("cache() boundary");
+  });
 });
 
 // ============================================================================
@@ -293,5 +355,48 @@ test.describe("cache-scope-guard (production)", () => {
     await page.goto(f.url("/cache-scope-guard/reqctx-header-blocked"));
     await waitForHydration(page);
     await expect(page.getByTestId("csg-error-page")).toBeVisible();
+  });
+
+  test("cookies() read inside cache() should render error boundary", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/cache-scope-guard/cookies-read-blocked"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+  });
+
+  test("headers() read inside cache() should render error boundary", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/cache-scope-guard/headers-read-blocked"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("csg-error-page")).toBeVisible();
+  });
+
+  test("cookies() read by a loader consumed via useLoader inside cache() is fresh per request (no cached-shell leak)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    const url = f.url("/cache-scope-guard/loader-cookies-allowed");
+    const root = f.url("/");
+
+    await page
+      .context()
+      .addCookies([{ name: "csg-session", value: "alice", url: root }]);
+    await page.goto(url);
+    await waitForHydration(page);
+    await expect(page.getByTestId("csg-loader-cookies-value")).toHaveText(
+      "alice",
+    );
+
+    await page.context().clearCookies();
+    await page
+      .context()
+      .addCookies([{ name: "csg-session", value: "bob", url: root }]);
+    await page.goto(url);
+    await waitForHydration(page);
+    await expect(page.getByTestId("csg-loader-cookies-value")).toHaveText(
+      "bob",
+    );
   });
 });

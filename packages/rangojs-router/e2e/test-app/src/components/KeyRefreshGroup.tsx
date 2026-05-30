@@ -5,7 +5,11 @@ import {
   useRefreshLoaders,
   type LoaderDefinition,
 } from "@rangojs/router/client";
-import { KeyRefreshGroupLoaderA, KeyRefreshGroupLoaderB } from "../loaders.js";
+import {
+  KeyRefreshGroupLoaderA,
+  KeyRefreshGroupLoaderB,
+  KeyRefreshGroupFailLoader,
+} from "../loaders.js";
 import { KeyRefreshGroupButton } from "./KeyRefreshWidget.js";
 
 const GROUP = "account";
@@ -105,6 +109,57 @@ export function KeyRefreshMultiTagPage() {
       <KeyRefreshGroupButton id="right" group="right" />
       <KeyRefreshGroupButton id="all" group="all" />
       <KeyRefreshGroupButton id="both" group={["left", "right"]} />
+    </div>
+  );
+}
+
+const ERR_GROUP = "errgroup";
+
+/**
+ * One member of a group that contains a failing loader. Surfaces `error` rather
+ * than render-throwing — a group refresh never render-throws, so the default
+ * throwOnError reader still shows the error via the hook instead of tripping a
+ * boundary.
+ */
+function ErrorMember({ id, loader }: WidgetProps) {
+  const { data, error } = useFetchLoader(loader, { refreshGroup: ERR_GROUP });
+  return (
+    <div data-testid={`key-refresh-errgroup-${id}`}>
+      <span data-testid={`key-refresh-errgroup-${id}-value`}>
+        {data?.count ?? "—"}
+      </span>
+      <span data-testid={`key-refresh-errgroup-${id}-error`}>
+        {error ? error.message : "—"}
+      </span>
+    </div>
+  );
+}
+
+/** Refreshes the group; swallows the AggregateError at the await site. */
+function ErrorRefreshButton() {
+  const refresh = useRefreshLoaders();
+  return (
+    <button
+      data-testid="key-refresh-errgroup-refresh-btn"
+      onClick={() => refresh(ERR_GROUP).catch(() => {})}
+    >
+      Refresh group
+    </button>
+  );
+}
+
+/**
+ * A refresh group with one healthy and one always-failing member. Proves the
+ * failure contract: the page does not throw to an error boundary, the failing
+ * member exposes its error, and the healthy member still advances.
+ */
+export function KeyRefreshGroupErrorPage() {
+  return (
+    <div data-testid="key-refresh-errgroup-page">
+      <h1>Key Refresh — Group with a failing member</h1>
+      <ErrorMember id="ok" loader={KeyRefreshGroupLoaderA} />
+      <ErrorMember id="fail" loader={KeyRefreshGroupFailLoader} />
+      <ErrorRefreshButton />
     </div>
   );
 }

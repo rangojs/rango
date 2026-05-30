@@ -36,6 +36,13 @@
 
 export interface LoaderEntry<T = unknown> {
   readonly value: T | undefined;
+  /**
+   * Whether a load has committed a value to this bucket. Distinguishes a
+   * committed `null`/`undefined` result from "never loaded", so a loader that
+   * resolves to a falsy value is not mistaken for an empty bucket and is not
+   * overridden by the server-seeded context value.
+   */
+  readonly hasValue: boolean;
   readonly error: Error | null;
   readonly isLoading: boolean;
   /** Identifies the request that produced this snapshot. 0 means "no request". */
@@ -44,6 +51,7 @@ export interface LoaderEntry<T = unknown> {
 
 const EMPTY_SNAPSHOT: LoaderEntry = Object.freeze({
   value: undefined,
+  hasValue: false,
   error: null,
   isLoading: false,
   requestId: 0,
@@ -372,6 +380,7 @@ export class LoaderStore {
     if (e.snapshot.isLoading && e.snapshot.error === null) return;
     e.snapshot = Object.freeze({
       value: e.snapshot.value,
+      hasValue: e.snapshot.hasValue,
       error: null,
       isLoading: true,
       requestId,
@@ -389,6 +398,7 @@ export class LoaderStore {
     if (!e || requestId !== e.latestRequestId) return;
     e.snapshot = Object.freeze({
       value,
+      hasValue: true,
       error: null,
       isLoading: false,
       requestId,
@@ -407,6 +417,7 @@ export class LoaderStore {
     if (!e || requestId !== e.latestRequestId) return;
     e.snapshot = Object.freeze({
       value: e.snapshot.value,
+      hasValue: e.snapshot.hasValue,
       error,
       isLoading: false,
       requestId,

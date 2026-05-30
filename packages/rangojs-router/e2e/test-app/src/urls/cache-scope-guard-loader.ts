@@ -28,3 +28,13 @@ export const CookieWriterLoader = createLoader(async () => {
   jar.set("csg-loader-cookie", "written-by-loader", { path: "/" });
   return { wrote: true };
 });
+
+// Reads cookies() inside a loader within a cache() boundary — ALLOWED.
+// Loaders always run fresh, so reading request-scoped data is safe: the
+// purity guard (isInsideCacheScope) returns false inside loader scope.
+export const CookieReaderLoader = createLoader(async () => {
+  "use server";
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const session = cookies().get("csg-session")?.value;
+  return { session: session ?? "no-cookie" };
+});

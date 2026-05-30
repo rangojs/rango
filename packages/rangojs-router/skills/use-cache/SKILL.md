@@ -68,7 +68,10 @@ createRouter({
 
 - `"use cache"` (no name) resolves to `default`.
 - `"use cache: short"` resolves to the `short` profile.
-- Unknown profile names throw at build/boot time.
+- Unknown profile names throw at runtime, on the first invocation of the cached
+  function (the Vite transform does not validate names at build/boot). The error
+  is actionable -- it names the missing profile and shows the `createRouter({
+cacheProfiles: { ... } })` entry to add.
 
 ## Cache Key
 
@@ -77,11 +80,24 @@ use-cache:{functionId}:{serializedArgs}
 ```
 
 - `functionId` -- stable ID from Vite transform (module path + export name).
-- `serializedArgs` -- non-tainted arguments serialized via RSC `encodeReply()`.
+- `serializedArgs` -- key-generating arguments serialized via RSC `encodeReply()`.
+
+When there are no key-generating arguments, the key has no trailing colon -- it is
+just `use-cache:{functionId}`.
 
 Different functions always produce different cache keys, even for the same route.
 This is important for intercepted routes -- the path handler and intercept handler
 each have their own `functionId` and therefore their own cache entries.
+
+### Route context is folded into the key
+
+The tainted `ctx` object is excluded from arg serialization (see below), but
+route-identifying fields read off it are extracted into `serializedArgs`:
+`url.host`, route name (`_routeName`), `pathname`, `params`, response type
+(`_responseType`), and the user-facing sorted search params (internal `_rsc*`/`__`
+params excluded). The same cached function called with `ctx` on different routes,
+param combinations, hosts, response types, or query variants therefore produces
+distinct cache entries -- not one shared entry.
 
 ## Tainted Arguments (ctx, env, req)
 
@@ -89,6 +105,8 @@ Request-scoped objects are branded with `Symbol.for('rango:nocache')` at creatio
 When detected:
 
 1. **Excluded from cache key** -- request-scoped, not meaningful for keying.
+   (The route-identifying fields read off `ctx` are still folded in -- see
+   "Route context is folded into the key" above.)
 2. **Handle data captured on miss** -- side effects via `ctx.use(Handle)` are recorded.
 3. **Handle data replayed on hit** -- restored into the current request's HandleStore.
 
@@ -122,11 +140,15 @@ const data = await getCachedData(locale); // locale is now in the cache key
 These ctx methods **throw** inside a `"use cache"` function because their effects
 are lost on cache hit (the function body is skipped):
 
-- `ctx.set()` / `ctx.get()` for passing values to children
+- `ctx.set()` for passing values to children
 - `ctx.header()`
 - `ctx.setTheme()`
 - `ctx.setLocationState()`
 - `ctx.onResponse()`
+
+`ctx.get()` is **not** exec-guarded inside `"use cache"` -- it is a read, so it is
+safe. (It only throws when reading a non-cacheable variable inside the separate
+route-level `cache()` DSL boundary.)
 
 The error message recommends two alternatives:
 
@@ -304,8 +326,15 @@ export async function getProducts() {
 ## Backing Store
 
 Writes to the same `SegmentCacheStore` as `cache()` DSL, `Static()`, and `Prerender()`.
-One store, one configuration, one invalidation API. Tag-based invalidation
-(`revalidateTag`) works across all mechanisms.
+One store, one configuration.
+
+Cache entries (and `cacheProfiles`) accept an optional `tags` field, but the
+built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`) do not yet index or
+invalidate by tag -- tags are passed through to the store and otherwise ignored.
+Tag-based invalidation (`revalidateTag`) is a forward-looking API that requires a
+custom store with secondary indices. Today entries expire by TTL/SWR. The separate
+`revalidate()` export is the client-update axis (which segments re-render on a
+navigation or action), not a cache bust.
 
 ## Interaction with Other Caching
 

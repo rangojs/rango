@@ -283,6 +283,38 @@ async function* yieldFromStore<TEnv>(
 }
 
 /**
+ * Look up a prerendered (build-time cached) entry for the current route and, on
+ * a hit, yield its segments. Returns true when an entry was served (the caller
+ * should stop the pipeline) and false on a miss. Intercept navigations consult
+ * only the intercept-specific entry (`paramHash + "/i"`); a miss there falls
+ * through to the normal pipeline so intercept-resolution can run. Callers must
+ * guard on `prerenderStoreInstance` after `ensurePrerenderDeps()`.
+ */
+async function* tryPrerenderLookup<TEnv>(
+  ctx: MatchContext<TEnv>,
+  state: MatchPipelineState,
+  pipelineStart: number,
+  handleStoreRef?: HandleStore,
+): AsyncGenerator<ResolvedSegment, boolean> {
+  const paramHash = _hashParams!(ctx.matched.params);
+  const isPassthroughPrerenderRoute = ctx.entries.some(
+    (entry) => entry.type === "route" && entry.isPassthrough === true,
+  );
+  const lookupHash = ctx.isIntercept ? paramHash + "/i" : paramHash;
+  const entry = await prerenderStoreInstance!.get(
+    ctx.matched.routeKey,
+    lookupHash,
+    {
+      pathname: ctx.pathname,
+      isPassthroughRoute: isPassthroughPrerenderRoute,
+    },
+  );
+  if (!entry) return false;
+  yield* yieldFromStore(entry, ctx, state, pipelineStart, handleStoreRef);
+  return true;
+}
+
+/**
  * Async generator middleware type
  */
 export type GeneratorMiddleware<T> = (
@@ -334,54 +366,13 @@ export function withCacheLookup<TEnv>(
     if (!ctx.isAction && !isHmr && ctx.matched.pr) {
       await ensurePrerenderDeps();
       if (prerenderStoreInstance) {
-        const paramHash = _hashParams!(ctx.matched.params);
-        const isPassthroughPrerenderRoute = ctx.entries.some(
-          (entry) => entry.type === "route" && entry.isPassthrough === true,
+        const served = yield* tryPrerenderLookup(
+          ctx,
+          state,
+          pipelineStart,
+          handleStoreRef,
         );
-
-        if (ctx.isIntercept) {
-          // Intercept navigation: try intercept-specific prerender entry
-          const entry = await prerenderStoreInstance.get(
-            ctx.matched.routeKey,
-            paramHash + "/i",
-            {
-              pathname: ctx.pathname,
-              isPassthroughRoute: isPassthroughPrerenderRoute,
-            },
-          );
-          if (entry) {
-            yield* yieldFromStore(
-              entry,
-              ctx,
-              state,
-              pipelineStart,
-              handleStoreRef,
-            );
-            return;
-          }
-          // No intercept prerender -- fall through to normal pipeline
-          // (skip non-intercept prerender to let intercept-resolution run)
-        } else {
-          // Normal navigation: existing behavior
-          const entry = await prerenderStoreInstance.get(
-            ctx.matched.routeKey,
-            paramHash,
-            {
-              pathname: ctx.pathname,
-              isPassthroughRoute: isPassthroughPrerenderRoute,
-            },
-          );
-          if (entry) {
-            yield* yieldFromStore(
-              entry,
-              ctx,
-              state,
-              pipelineStart,
-              handleStoreRef,
-            );
-            return;
-          }
-        }
+        if (served) return;
       }
     }
 
@@ -404,51 +395,13 @@ export function withCacheLookup<TEnv>(
       if (hasStatic) {
         await ensurePrerenderDeps();
         if (prerenderStoreInstance) {
-          const paramHash = _hashParams!(ctx.matched.params);
-          const isPassthroughPrerenderRoute = ctx.entries.some(
-            (entry) => entry.type === "route" && entry.isPassthrough === true,
+          const served = yield* tryPrerenderLookup(
+            ctx,
+            state,
+            pipelineStart,
+            handleStoreRef,
           );
-
-          if (ctx.isIntercept) {
-            const entry = await prerenderStoreInstance.get(
-              ctx.matched.routeKey,
-              paramHash + "/i",
-              {
-                pathname: ctx.pathname,
-                isPassthroughRoute: isPassthroughPrerenderRoute,
-              },
-            );
-            if (entry) {
-              yield* yieldFromStore(
-                entry,
-                ctx,
-                state,
-                pipelineStart,
-                handleStoreRef,
-              );
-              return;
-            }
-            // No intercept prerender -- fall through to normal pipeline
-          } else {
-            const entry = await prerenderStoreInstance.get(
-              ctx.matched.routeKey,
-              paramHash,
-              {
-                pathname: ctx.pathname,
-                isPassthroughRoute: isPassthroughPrerenderRoute,
-              },
-            );
-            if (entry) {
-              yield* yieldFromStore(
-                entry,
-                ctx,
-                state,
-                pipelineStart,
-                handleStoreRef,
-              );
-              return;
-            }
-          }
+          if (served) return;
         }
       }
     }

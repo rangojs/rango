@@ -12,6 +12,7 @@ import {
 } from "../request-context.js";
 import { cookies, headers } from "../cookie-store.js";
 import { INSIDE_CACHE_EXEC } from "../../cache/taint.js";
+import { RangoContext, runInsideLoaderScope } from "../context.js";
 
 /** Helper: create a RequestContext and run `fn` inside it. */
 function withContext(
@@ -466,6 +467,70 @@ describe('"use cache" guards', () => {
 
     runWithRequestContext(ctx, () => {
       expect(headers().get("x-test")).toBe("val");
+    });
+  });
+});
+
+describe("cache() DSL scope guards", () => {
+  /**
+   * Run `fn` inside a request context AND a cache() DSL boundary — i.e. with
+   * the RangoContext render-store flag `insideCacheScope = true`, mirroring
+   * what segment resolution sets for a `type: "cache"` entry (fresh.ts:636).
+   * This is a different ALS from the request context, so both are entered.
+   */
+  function withCacheScope(fn: () => void) {
+    const ctx = createRequestContext({
+      env: {},
+      request: new Request("https://example.com", {
+        headers: { Cookie: "session=abc", Authorization: "Bearer tok" },
+      }),
+      url: new URL("https://example.com"),
+      variables: {},
+    });
+
+    runWithRequestContext(ctx, () => {
+      RangoContext.run({ insideCacheScope: true } as any, fn);
+    });
+  }
+
+  it("cookies() throws inside a cache() boundary", () => {
+    withCacheScope(() => {
+      expect(() => cookies()).toThrow(
+        /cannot be called inside a cache\(\) boundary/i,
+      );
+    });
+  });
+
+  it("headers() throws inside a cache() boundary", () => {
+    withCacheScope(() => {
+      expect(() => headers()).toThrow(
+        /cannot be called inside a cache\(\) boundary/i,
+      );
+    });
+  });
+
+  it("cache() boundary error tells you to read inside a loader", () => {
+    withCacheScope(() => {
+      expect(() => cookies()).toThrow(/loader/i);
+    });
+  });
+
+  it("cookies() is ALLOWED inside a loader, even within a cache() boundary", () => {
+    // Loaders are the dynamic holes of a cached document: they always run
+    // fresh on every request (even on a cache hit), so reading request-scoped
+    // data inside a loader is safe. isInsideCacheScope() returns false here.
+    withCacheScope(() => {
+      runInsideLoaderScope(() => {
+        expect(cookies().get("session")?.value).toBe("abc");
+      });
+    });
+  });
+
+  it("headers() is ALLOWED inside a loader, even within a cache() boundary", () => {
+    withCacheScope(() => {
+      runInsideLoaderScope(() => {
+        expect(headers().get("authorization")).toBe("Bearer tok");
+      });
     });
   });
 });

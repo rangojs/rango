@@ -155,6 +155,27 @@ export async function cachedReadsHeaders(ctx: any): Promise<string> {
 }
 
 /**
+ * Guard test: cookies() inside "use cache" with NO arguments. There is no
+ * tainted arg to stamp, so the guard relies on registerCachedFunction always
+ * stamping INSIDE_CACHE_EXEC on the ALS RequestContext.
+ */
+export async function cachedReadsCookiesNoArg(): Promise<string> {
+  "use cache";
+  cookies().get("test");
+  return "no-throw";
+}
+
+/**
+ * Guard test: headers() inside "use cache" with NO arguments. Same always-stamp
+ * RequestContext path as cachedReadsCookiesNoArg.
+ */
+export async function cachedReadsHeadersNoArg(): Promise<string> {
+  "use cache";
+  headers().get("x-test");
+  return "no-throw";
+}
+
+/**
  * Guard test: ctx.set() is called inside "use cache".
  * The handler-context set() should throw because side effects are lost on cache hit.
  */
