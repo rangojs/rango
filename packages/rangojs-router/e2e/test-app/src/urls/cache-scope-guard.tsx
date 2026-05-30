@@ -1,10 +1,18 @@
-import { urls, createVar, Meta, getRequestContext } from "@rangojs/router";
+import {
+  urls,
+  createVar,
+  Meta,
+  getRequestContext,
+  cookies,
+  headers,
+} from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 import {
   NonCacheableData,
   NonCacheableReaderLoader,
   AsyncNonCacheableReaderLoader,
   CookieWriterLoader,
+  CookieReaderLoader,
 } from "./cache-scope-guard-loader.js";
 
 const CacheableData = createVar<string>();
@@ -95,6 +103,27 @@ export const cacheScopeGuardPatterns = urls(
               data-testid="csg-link-async-loader"
             >
               async loader
+            </Link>
+            {" | "}
+            <Link
+              to="/cache-scope-guard/cookies-read-blocked"
+              data-testid="csg-link-cookies-read"
+            >
+              cookies() read
+            </Link>
+            {" | "}
+            <Link
+              to="/cache-scope-guard/headers-read-blocked"
+              data-testid="csg-link-headers-read"
+            >
+              headers() read
+            </Link>
+            {" | "}
+            <Link
+              to="/cache-scope-guard/loader-cookies-allowed"
+              data-testid="csg-link-loader-cookies"
+            >
+              loader cookies()
             </Link>
           </nav>
           <Outlet />
@@ -322,6 +351,58 @@ export const cacheScopeGuardPatterns = urls(
             },
             { name: "loaderCookieAllowed" },
             () => [loader(CookieWriterLoader)],
+          ),
+        ]),
+
+        // cookies() read inside cache() — BLOCKED (read-purity guard)
+        cache({ ttl: 600 }, () => [
+          errorBoundary((props) => (
+            <div data-testid="csg-error-page">
+              <span data-testid="csg-error-message">{props.error.message}</span>
+            </div>
+          )),
+          path(
+            "/cookies-read-blocked",
+            () => {
+              const session = cookies().get("csg-session")?.value;
+              return <div>Should not render: {session}</div>;
+            },
+            { name: "cookiesReadBlocked" },
+          ),
+        ]),
+
+        // headers() read inside cache() — BLOCKED (read-purity guard)
+        cache({ ttl: 600 }, () => [
+          errorBoundary((props) => (
+            <div data-testid="csg-error-page">
+              <span data-testid="csg-error-message">{props.error.message}</span>
+            </div>
+          )),
+          path(
+            "/headers-read-blocked",
+            () => {
+              const auth = headers().get("authorization");
+              return <div>Should not render: {auth}</div>;
+            },
+            { name: "headersReadBlocked" },
+          ),
+        ]),
+
+        // cookies() read inside a LOADER within cache() — ALLOWED
+        // Loaders always run fresh, so request-scoped reads are safe.
+        cache({ ttl: 600 }, () => [
+          path(
+            "/loader-cookies-allowed",
+            async (ctx) => {
+              const { session } = await ctx.use(CookieReaderLoader);
+              return (
+                <div data-testid="csg-loader-cookies-page">
+                  <span data-testid="csg-loader-cookies-value">{session}</span>
+                </div>
+              );
+            },
+            { name: "loaderCookiesAllowed" },
+            () => [loader(CookieReaderLoader)],
           ),
         ]),
 
