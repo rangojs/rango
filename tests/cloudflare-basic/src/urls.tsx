@@ -69,7 +69,17 @@ const docsPatterns = createDocsPatterns({ articles: docsArticles });
  * Main URL patterns - Django-style routing API
  */
 export const urlpatterns = urls(
-  ({ path, layout, parallel, loader, loading, cache, include, middleware }) => [
+  ({
+    path,
+    layout,
+    parallel,
+    loader,
+    loading,
+    cache,
+    include,
+    middleware,
+    transition,
+  }) => [
     // API routes (response routes - skip RSC pipeline)
     include("/api", apiPatterns, { name: "api" }),
 
@@ -267,7 +277,11 @@ export const urlpatterns = urls(
           "/features/:slug",
           FeatureDetailPage,
           { name: "featuresDetail" },
-          () => [loading(<FeatureLoading />)],
+          // transition() opts this route into same-route stale-while-revalidate:
+          // navigating between /features/:slug values holds the current content
+          // instead of flashing FeatureLoading. Cross-route navs (home ->
+          // feature) still remount and may show the skeleton.
+          () => [loading(<FeatureLoading />), transition()],
         ),
 
         // Blog routes with sidebar

@@ -1,5 +1,5 @@
 import { urls, cookies, Meta, Breadcrumbs, notFound } from "@rangojs/router";
-import { Link } from "@rangojs/router/client";
+import { Link, Outlet } from "@rangojs/router/client";
 import { RootLayout } from "./components/layouts/index.js";
 import { blogPatterns } from "./urls/blog.js";
 import { createFactoryHmrPatterns } from "./urls/factory-hmr.js";
@@ -84,7 +84,9 @@ import {
   ProductDetailLoader,
   CartQuantityLoader,
   SlowProductDetailLoader,
+  SwrProductLoader,
 } from "./loaders.js";
+import { SwrProductCounter } from "./components/SwrProductCounter.js";
 import { SlowProductLocationState } from "./location-states.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import { Modal } from "./components/Modal.js";
@@ -104,6 +106,20 @@ import {
 } from "./intercept-hmr-config.js";
 
 /**
+ * Shell layout for the block-form transition group. The transition() block
+ * wrapper layout is transparent (no testid), so this explicit shell gives the
+ * same-route-nav test a DOM node to assert the shared wrapper chain persists
+ * (is not remounted) across a cross-route navigation inside the block.
+ */
+function TxBlockShell(): React.ReactNode {
+  return (
+    <div data-testid="tx-block-shell">
+      <Outlet />
+    </div>
+  );
+}
+
+/**
  * Main URL patterns - Django-style routing API
  *
  * Core routes (index, product) and slow-product route are defined inline
@@ -118,6 +134,7 @@ export const urlpatterns = urls(
     intercept,
     loader,
     loading,
+    transition,
     when,
     middleware,
     parallel,
@@ -359,6 +376,184 @@ export const urlpatterns = urls(
         { name: "slowProduct.detail" },
         () => [loader(SlowProductDetailLoader)],
       ),
+
+      // Same-route stale-while-revalidate test route. Has a :param, a
+      // route-level loading() skeleton, AND opts in via transition(). So
+      // navigating /swr-product/1 -> /swr-product/2 reconciles the route
+      // subtree (param-agnostic key) and the existing transition startTransition
+      // wrap keeps the previous content on screen until the new loader resolves
+      // (no skeleton). Works on stable React (no ViewTransition needed).
+      path(
+        "/swr-product/:id",
+        async (ctx) => {
+          const { id, name, loadedAt } = await ctx.use(SwrProductLoader);
+          return (
+            <div data-testid="swr-product-page">
+              <h1 data-testid="swr-product-name">{name}</h1>
+              <p data-testid="swr-product-loaded-at">{loadedAt}</p>
+              <SwrProductCounter />
+              <nav>
+                <Link to="/swr-product/1" data-testid="swr-product-link-1">
+                  Product 1
+                </Link>
+                <Link to="/swr-product/2" data-testid="swr-product-link-2">
+                  Product 2
+                </Link>
+                <Link to="/swr-product/3" data-testid="swr-product-link-3">
+                  Product 3
+                </Link>
+                <Link
+                  to="/slow-streaming"
+                  data-testid="swr-product-cross-route-link"
+                >
+                  Cross-route (slow-streaming)
+                </Link>
+              </nav>
+            </div>
+          );
+        },
+        { name: "swrProduct.detail" },
+        () => [
+          loader(SwrProductLoader),
+          loading(
+            <div data-testid="swr-product-skeleton">Loading product…</div>,
+          ),
+          transition({}),
+        ],
+      ),
+
+      // Contrast route: same :param + loading() skeleton, but WITHOUT
+      // transition(). This is the default behavior — navigating between params
+      // remounts the route and shows the skeleton. Pins that the opt-in is
+      // required and the default is unchanged.
+      path(
+        "/plain-product/:id",
+        async (ctx) => {
+          const { id, name, loadedAt } = await ctx.use(SwrProductLoader);
+          return (
+            <div data-testid="plain-product-page">
+              <h1 data-testid="plain-product-name">{name}</h1>
+              <p data-testid="plain-product-loaded-at">{loadedAt}</p>
+              <SwrProductCounter />
+              <nav>
+                <Link to="/plain-product/1" data-testid="plain-product-link-1">
+                  Product 1
+                </Link>
+                <Link to="/plain-product/2" data-testid="plain-product-link-2">
+                  Product 2
+                </Link>
+              </nav>
+            </div>
+          );
+        },
+        { name: "plainProduct.detail" },
+        () => [
+          loader(SwrProductLoader),
+          loading(
+            <div data-testid="plain-product-skeleton">Loading product…</div>,
+          ),
+        ],
+      ),
+
+      // Block-form transition scope: two distinct param routes share ONE
+      // transition() wrapper. Same-route nav (/tx-group-a/1 -> /2) holds (the
+      // wrapper puts the route in a transition scope -> param-agnostic key).
+      // Cross-route nav (/tx-group-a -> /tx-group-b) remounts and shows the
+      // destination skeleton; the shared TxBlockShell + wrapper persist. This
+      // pins that transition GROUPING only affects animation, never hold/skeleton
+      // across different routes.
+      layout(TxBlockShell, () => [
+        transition({}, () => [
+          path(
+            "/tx-group-a/:id",
+            async (ctx) => {
+              const { name, loadedAt } = await ctx.use(SwrProductLoader);
+              return (
+                <div data-testid="tx-group-a-page">
+                  <h1 data-testid="tx-group-a-name">{name}</h1>
+                  <p data-testid="tx-group-a-loaded-at">{loadedAt}</p>
+                  <nav>
+                    <Link to="/tx-group-a/1" data-testid="tx-a-link-1">
+                      A1
+                    </Link>
+                    <Link to="/tx-group-a/2" data-testid="tx-a-link-2">
+                      A2
+                    </Link>
+                    <Link to="/tx-group-b/1" data-testid="tx-cross-b-link">
+                      to B
+                    </Link>
+                  </nav>
+                </div>
+              );
+            },
+            { name: "txGroup.a" },
+            () => [
+              loader(SwrProductLoader),
+              loading(<div data-testid="tx-group-a-skeleton">Loading…</div>),
+            ],
+          ),
+          path(
+            "/tx-group-b/:id",
+            async (ctx) => {
+              const { name, loadedAt } = await ctx.use(SwrProductLoader);
+              return (
+                <div data-testid="tx-group-b-page">
+                  <h1 data-testid="tx-group-b-name">{name}</h1>
+                  <p data-testid="tx-group-b-loaded-at">{loadedAt}</p>
+                </div>
+              );
+            },
+            { name: "txGroup.b" },
+            () => [
+              loader(SwrProductLoader),
+              loading(<div data-testid="tx-group-b-skeleton">Loading…</div>),
+            ],
+          ),
+        ]),
+      ]),
+
+      // Own-transitions: two routes each wrapped in its OWN transition() block.
+      // Navigating between them is cross-route -> remount -> destination skeleton
+      // (being in a transition scope never suppresses a cross-route skeleton).
+      transition({}, () => [
+        path(
+          "/own-tx-one/:id",
+          async (ctx) => {
+            const { name } = await ctx.use(SwrProductLoader);
+            return (
+              <div data-testid="own-tx-one-page">
+                <h1 data-testid="own-tx-one-name">{name}</h1>
+                <Link to="/own-tx-two/1" data-testid="own-tx-cross-link">
+                  to two
+                </Link>
+              </div>
+            );
+          },
+          { name: "ownTxOne" },
+          () => [
+            loader(SwrProductLoader),
+            loading(<div data-testid="own-tx-one-skeleton">Loading…</div>),
+          ],
+        ),
+      ]),
+      transition({}, () => [
+        path(
+          "/own-tx-two/:id",
+          async (ctx) => {
+            const { name } = await ctx.use(SwrProductLoader);
+            return (
+              <div data-testid="own-tx-two-page">
+                <h1 data-testid="own-tx-two-name">{name}</h1>
+              </div>
+            );
+          },
+          { name: "ownTxTwo" },
+          () => [
+            loader(SwrProductLoader),
+            loading(<div data-testid="own-tx-two-skeleton">Loading…</div>),
+          ],
+        ),
+      ]),
 
       // === PARALLEL SEGMENTS ===
       // Sidebar persists across all routes in this layout

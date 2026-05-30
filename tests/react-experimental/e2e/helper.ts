@@ -133,3 +133,84 @@ export async function expectNoReload(page: Page) {
     },
   };
 }
+
+/**
+ * Install a MutationObserver that flips a window flag the instant a node with
+ * the given test id is attached anywhere in the document. A point-in-time
+ * visibility check can race past a skeleton that appears-and-disappears within
+ * a frame (on experimental React the view-transition snapshot also masks the
+ * timing); the observer cannot miss it.
+ */
+export async function installSkeletonSentinel(
+  page: Page,
+  skeletonTestId: string,
+) {
+  await page.evaluate((id) => {
+    const w = window as unknown as { __swrSkeletonSeen?: boolean };
+    w.__swrSkeletonSeen = false;
+    const selector = `[data-testid="${id}"]`;
+    const seen = (node: Node): boolean =>
+      node instanceof Element &&
+      (node.matches(selector) || !!node.querySelector(selector));
+    if (document.querySelector(selector)) w.__swrSkeletonSeen = true;
+    new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (seen(node)) w.__swrSkeletonSeen = true;
+        }
+      }
+    }).observe(document.documentElement, { childList: true, subtree: true });
+  }, skeletonTestId);
+}
+
+export function skeletonSeen(page: Page): Promise<boolean> {
+  return page.evaluate(
+    () =>
+      (window as unknown as { __swrSkeletonSeen?: boolean })
+        .__swrSkeletonSeen === true,
+  );
+}
+
+/**
+ * Record calls to document.startViewTransition so a test can assert that a view
+ * transition fired and capture its semantic type(s). React experimental's
+ * client calls document.startViewTransition({ update, types }) for router-driven
+ * transitions; the wrapper MUST forward the argument and return the original's
+ * result, or React's transition never resolves. Install AFTER hydration and
+ * BEFORE the navigation click.
+ */
+export async function installVtRecorder(page: Page) {
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __vt?: { count: number; types: string[][] };
+    };
+    w.__vt = { count: 0, types: [] };
+    const doc = document as unknown as {
+      startViewTransition?: (arg: unknown) => unknown;
+    };
+    const orig = doc.startViewTransition?.bind(document);
+    if (!orig) return; // no View Transitions API -> count stays 0
+    doc.startViewTransition = (arg: unknown) => {
+      w.__vt!.count++;
+      const t =
+        arg && typeof arg === "object"
+          ? ((arg as { types?: unknown }).types ?? [])
+          : [];
+      w.__vt!.types.push(Array.isArray(t) ? [...(t as string[])] : []);
+      return orig(arg);
+    };
+  });
+}
+
+export function vtCount(page: Page): Promise<number> {
+  return page.evaluate(
+    () => (window as unknown as { __vt?: { count: number } }).__vt?.count ?? 0,
+  );
+}
+
+export function vtTypes(page: Page): Promise<string[][]> {
+  return page.evaluate(
+    () =>
+      (window as unknown as { __vt?: { types: string[][] } }).__vt?.types ?? [],
+  );
+}

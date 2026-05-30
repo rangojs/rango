@@ -1,5 +1,6 @@
 import { Meta } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
+import { Link } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 
 const featuresDetail: Record<
@@ -54,6 +55,16 @@ export async function FeatureDetailPage(ctx: HandlerContext<{ slug: string }>) {
         {feature.description}
       </p>
       <p data-testid="feature-details">{feature.details}</p>
+      {/* Sibling links enable same-route (feature -> feature) navigation, which
+          reconciles the route subtree and keeps this content visible while the
+          next feature loads (no skeleton flash). */}
+      <nav data-testid="feature-siblings">
+        {Object.keys(featuresDetail).map((s) => (
+          <Link key={s} to={`/features/${s}`} data-testid={`feature-nav-${s}`}>
+            {featuresDetail[s].name}
+          </Link>
+        ))}
+      </nav>
     </main>
   );
 }

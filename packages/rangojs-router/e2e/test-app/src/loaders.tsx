@@ -111,6 +111,18 @@ export const SlowProductDetailLoader = createLoader(async (ctx) => {
   return { product, loadedAt: new Date().toISOString() };
 });
 
+/**
+ * Loader for the same-route stale-while-revalidate navigation test
+ * (/swr-product/:id). A deterministic delay means a remount would show the
+ * route's loading skeleton, so the "no skeleton flash on same-route nav"
+ * assertion is meaningful. loadedAt distinguishes one resolution from the next.
+ */
+export const SwrProductLoader = createLoader(async (ctx) => {
+  const id = ctx.params.id!;
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  return { id, name: `Product ${id}`, loadedAt: new Date().toISOString() };
+});
+
 // Counter to track fetchable loader invocations
 let fetchableLoaderCount = 0;
 

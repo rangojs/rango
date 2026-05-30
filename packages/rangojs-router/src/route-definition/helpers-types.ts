@@ -449,10 +449,19 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
     ): CacheItem;
   };
   /**
-   * Attach a ViewTransition boundary to the current segment or a group of routes
+   * Attach a ViewTransition boundary to the current segment or a group of routes,
+   * and opt the route into same-route stale-while-revalidate navigation.
    *
-   * Wraps segment content with React's `<ViewTransition>` component.
-   * Only takes effect when React experimental is used (no-op on stable React).
+   * Two effects, both opt-in via this helper:
+   * - Same-route navigation (same route, different params, e.g. /product/1 ->
+   *   /product/2) reconciles the route subtree instead of remounting it, so the
+   *   previous content is held while the new loader resolves rather than flashing
+   *   the route's loading() skeleton. This works on ALL React versions (it is
+   *   plain startTransition + Suspense; see segment-system.tsx inTransitionScope).
+   * - On React experimental, the segment content is additionally wrapped in
+   *   `<ViewTransition>`, so the held same-route swap animates (update/share
+   *   morph) and cross-route swaps animate exit/enter. The animation layer is a
+   *   no-op on stable React; the content-hold is not.
    *
    * ```typescript
    * // Attach to a single route
