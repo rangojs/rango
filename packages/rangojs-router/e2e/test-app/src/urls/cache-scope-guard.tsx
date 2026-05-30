@@ -14,6 +14,7 @@ import {
   CookieWriterLoader,
   CookieReaderLoader,
 } from "./cache-scope-guard-loader.js";
+import { CacheScopeGuardCookieReader } from "../components/CacheScopeGuardCookieReader.js";
 
 const CacheableData = createVar<string>();
 
@@ -388,19 +389,19 @@ export const cacheScopeGuardPatterns = urls(
           ),
         ]),
 
-        // cookies() read inside a LOADER within cache() — ALLOWED
-        // Loaders always run fresh, so request-scoped reads are safe.
+        // cookies() read by a DSL LOADER, consumed via useLoader() inside a
+        // cache() boundary — SAFE. The loader is a fresh, never-cached segment;
+        // the cached handler renders only the static client-component shell, so
+        // the cookie value reflects the current request and is never baked into
+        // the shared cached output.
         cache({ ttl: 600 }, () => [
           path(
             "/loader-cookies-allowed",
-            async (ctx) => {
-              const { session } = await ctx.use(CookieReaderLoader);
-              return (
-                <div data-testid="csg-loader-cookies-page">
-                  <span data-testid="csg-loader-cookies-value">{session}</span>
-                </div>
-              );
-            },
+            () => (
+              <div data-testid="csg-loader-cookies-page">
+                <CacheScopeGuardCookieReader />
+              </div>
+            ),
             { name: "loaderCookiesAllowed" },
             () => [loader(CookieReaderLoader)],
           ),

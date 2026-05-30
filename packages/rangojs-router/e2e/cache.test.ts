@@ -1179,11 +1179,13 @@ test.describe("cache-no-cache-bypass (production)", () => {
     expect(cachedB.ts).toBe(first.ts);
     expect(cachedB.rand).toBe(first.rand);
 
-    // Bypass: __no_cache re-executes the handler on every request.
+    // Bypass: __no_cache re-executes the handler on every request. Assert on
+    // `rand` (Math.random), not `ts` — two back-to-back requests can land in the
+    // same millisecond and make a Date.now() inequality flake.
     const bypass1 = await get("?__no_cache");
     const bypass2 = await get("?__no_cache");
-    expect(bypass1.ts).not.toBe(first.ts);
-    expect(bypass2.ts).not.toBe(bypass1.ts);
+    expect(bypass1.rand).not.toBe(first.rand);
+    expect(bypass2.rand).not.toBe(bypass1.rand);
   });
 });
 

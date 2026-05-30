@@ -192,17 +192,34 @@ test.describe("cache-scope-guard", () => {
     );
   });
 
-  test("cookies() read inside a loader within cache() should be allowed", async ({
+  test("cookies() read by a loader consumed via useLoader inside cache() is fresh per request (no cached-shell leak)", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
+    const url = f.url("/cache-scope-guard/loader-cookies-allowed");
+    const root = f.url("/");
 
-    await page.goto(f.url("/cache-scope-guard/loader-cookies-allowed"));
+    // First visitor: cookie "alice" — populates the cached static shell.
+    await page
+      .context()
+      .addCookies([{ name: "csg-session", value: "alice", url: root }]);
+    await page.goto(url);
     await waitForHydration(page);
-
-    await expect(page.getByTestId("csg-loader-cookies-page")).toBeVisible();
     await expect(page.getByTestId("csg-loader-cookies-value")).toHaveText(
-      "no-cookie",
+      "alice",
+    );
+
+    // Second visitor: cookie "bob" — same URL, so the cached shell is served,
+    // but the cookie value rides the FRESH loader segment. If the cookie had
+    // been baked into the cached handler, bob would see "alice" (the leak).
+    await page.context().clearCookies();
+    await page
+      .context()
+      .addCookies([{ name: "csg-session", value: "bob", url: root }]);
+    await page.goto(url);
+    await waitForHydration(page);
+    await expect(page.getByTestId("csg-loader-cookies-value")).toHaveText(
+      "bob",
     );
   });
 
@@ -356,17 +373,30 @@ test.describe("cache-scope-guard (production)", () => {
     await expect(page.getByTestId("csg-error-page")).toBeVisible();
   });
 
-  test("cookies() read inside a loader within cache() should be allowed", async ({
+  test("cookies() read by a loader consumed via useLoader inside cache() is fresh per request (no cached-shell leak)", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
+    const url = f.url("/cache-scope-guard/loader-cookies-allowed");
+    const root = f.url("/");
 
-    await page.goto(f.url("/cache-scope-guard/loader-cookies-allowed"));
+    await page
+      .context()
+      .addCookies([{ name: "csg-session", value: "alice", url: root }]);
+    await page.goto(url);
     await waitForHydration(page);
-
-    await expect(page.getByTestId("csg-loader-cookies-page")).toBeVisible();
     await expect(page.getByTestId("csg-loader-cookies-value")).toHaveText(
-      "no-cookie",
+      "alice",
+    );
+
+    await page.context().clearCookies();
+    await page
+      .context()
+      .addCookies([{ name: "csg-session", value: "bob", url: root }]);
+    await page.goto(url);
+    await waitForHydration(page);
+    await expect(page.getByTestId("csg-loader-cookies-value")).toHaveText(
+      "bob",
     );
   });
 });

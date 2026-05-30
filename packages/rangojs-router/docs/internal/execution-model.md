@@ -389,10 +389,18 @@ DSL loaders (registered with `loader()`) and handler-called loaders
 - **`ctx.use(Loader)` in handlers** — escape hatch for reading loader
   data in handlers. The loader function itself runs fresh, but the
   handler embeds the result in JSX that is cached with the segment. On
-  cache hit the handler does not re-execute, so the loader result in the
-  cached output may be stale. Non-cacheable variable reads in the handler
-  still throw via the normal read guard. Response-level side effects in
-  handler code throw normally.
+  cache hit the handler does not re-execute, so the embedded value is
+  served from the stored shell. For request-scoped data (a loader that
+  reads `cookies()`/`headers()`) this is not merely stale — it is a
+  **cross-user leak**: one visitor's value, baked into the shared shell,
+  is served to later visitors until the entry expires. The cache-purity
+  guard does **not** catch this, because the request-scoped read happens
+  inside the (exempt) loader body, not in the handler. **Do not embed a
+  request-reading loader's result via `ctx.use()` in a cached handler —
+  consume it with `useLoader()` in a client component instead** (a fresh,
+  never-cached segment). Non-cacheable variable reads in the handler
+  itself still throw via the normal read guard. Response-level side
+  effects in handler code throw normally.
   Note: when a loader is registered via both DSL `loader()` and called
   via `ctx.use()` in the same route, the DSL registration starts the
   loader in loader scope before the handler runs. The handler's
