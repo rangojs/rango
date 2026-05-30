@@ -149,11 +149,22 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
     for (const [filePath, content] of entries) {
       writeFileBumpMtime(filePath, content);
     }
-    // Wait for the gen file to converge back to the committed baseline so the
-    // next test starts clean (and the working tree stays clean afterward).
-    await expect
-      .poll(() => readGen(), { timeout: GEN_TIMEOUT })
-      .toContain('about: "/about"');
+    // Wait for the gen file to converge all the way back to the committed
+    // baseline so the next test starts clean. A partial match (just the about
+    // route present) would pass while nested route types from include/remove
+    // tests are still stale, letting the next test start against a
+    // half-restored gen file or stale worker table and masking failures. Fall
+    // back to the about-route check only if the baseline snapshot (git show in
+    // beforeAll) was unavailable.
+    if (originalGenBaseline) {
+      await expect
+        .poll(() => readGen(), { timeout: GEN_TIMEOUT })
+        .toBe(originalGenBaseline);
+    } else {
+      await expect
+        .poll(() => readGen(), { timeout: GEN_TIMEOUT })
+        .toContain('about: "/about"');
+    }
   });
 
   // Force the gen file back to its committed baseline on suite exit, even if
@@ -211,18 +222,22 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
     await expectServed("/about", "catch-all-page");
   });
 
-  test("converges the open page to the catch-all when the viewed route is removed (no stale screen, no full-document reload)", async ({
+  test("converges the open page to the catch-all when the viewed route is removed", async ({
     page,
   }) => {
+    // The prior test removes then restores /about; the gen file reconverges
+    // before the worker finishes its reload, so wait for the worker to actually
+    // serve /about again before driving the browser to it (otherwise the first
+    // navigation can land on the catch-all).
+    await expectServed("/about", "about-page");
     await page.goto(f.url("/about"));
     await expect(page.getByTestId("about-page")).toBeVisible();
-    // Remove the route the page is currently displaying. The dev HMR refetch
-    // for /about now resolves through the catch-all server-side. The client
-    // must render that result in-page so the stale About tree is replaced,
-    // without a full-document reload (a paramless document GET would hit the
-    // SSR render path and could surface a transient not-found page while the
-    // worker route table is still rebuilding). The debounced HMR cycle
-    // converges on the catch-all via the rsc/partial path.
+    // Remove the route the page is currently displaying. Editing a route
+    // definition (urls.tsx has no HMR boundary, unlike the component-content
+    // edits in hmr.test.ts that update in-page without a reload) triggers a
+    // full-document reload, which lands on the catch-all now served by the
+    // reloaded worker. Assert the end state: the stale About tree is gone and
+    // the catch-all renders.
     mutateUrls(
       readUrls().replace(
         'path("/about", AboutPage, { name: "about" }),',
@@ -319,5 +334,50 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
     // The worker converges to the final route too, not an intermediate one.
     await expectServed("/burst-c", "about-page");
     await expectServed("/burst-a", "catch-all-page");
+  });
+
+  test("a failed discovery leaves the gen file intact and recovers on the next valid edit", async () => {
+    // Baseline.
+    await expectGen('about: "/about"', true);
+
+    const valid = readUrls();
+    // Snapshot the dev server's stderr length so we can detect the failure THIS
+    // edit causes rather than a stale one from an earlier test.
+    const stderrBefore = f.proc().stderr().length;
+    // A syntax error makes runtime rediscovery's import throw. The failed cycle
+    // sets lastDiscoveryError, preserves the last-good manifest, and gates off
+    // the workerd reload (the success path never runs) so the fix does not
+    // force-reload the worker onto broken code. The gen file is left intact:
+    // writeRouteTypesFiles never runs after discoverRouters throws, and the
+    // static write is skipped in cloudflare HMR. (Vite still serves the route's
+    // transform error while urls.tsx is broken — the reload gate governs the
+    // worker eviction, not Vite's own transform pipeline.)
+    mutateUrls(valid + '\nconst __brokenForHmrTest = "unterminated\n');
+    // Wait for the failed discovery cycle to actually run before editing again.
+    // Without this the broken and recovery writes can coalesce inside the 100ms
+    // debounce into a single successful cycle, never exercising the failure
+    // path. The failed cycle logs this on the dev server's stderr.
+    await expect
+      .poll(() => f.proc().stderr().slice(stderrBefore), {
+        timeout: GEN_TIMEOUT,
+      })
+      .toContain("Runtime re-discovery failed");
+    // The gen file must stay at the last-good baseline through the failed cycle.
+    expect(readGen()).toContain('about: "/about"');
+
+    // Fixing the source (with a renamed path) re-runs discovery successfully,
+    // clears the error, and now fires the gated reload — so types regenerate and
+    // the worker serves the new route without a manual restart.
+    writeFileBumpMtime(
+      urlsPath(),
+      valid.replace(
+        'path("/about", AboutPage, { name: "about" }),',
+        'path("/about-recovered", AboutPage, { name: "aboutRecovered" }),',
+      ),
+    );
+    await expectGen('aboutRecovered: "/about-recovered"', true);
+    await expectGen('about: "/about"', false);
+    await expectServed("/about-recovered", "about-page");
+    await expectServed("/about", "catch-all-page");
   });
 });
