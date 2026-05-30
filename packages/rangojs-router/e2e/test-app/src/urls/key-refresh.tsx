@@ -8,7 +8,10 @@ import { KeyRefreshErrorWidget } from "../components/KeyRefreshErrorWidget.js";
 import { KeyRefreshRegisteredWidget } from "../components/KeyRefreshRegisteredWidget.js";
 import { KeyRefreshParamWidget } from "../components/KeyRefreshParamWidget.js";
 import { KeyRefreshLifeLayout } from "../components/KeyRefreshLifeLayout.js";
-import { KeyRefreshGroupPage } from "../components/KeyRefreshGroup.js";
+import {
+  KeyRefreshGroupPage,
+  KeyRefreshMultiTagPage,
+} from "../components/KeyRefreshGroup.js";
 
 /**
  * Scenarios for the client refresh `key` option on useLoader / useFetchLoader.
@@ -29,6 +32,9 @@ import { KeyRefreshGroupPage } from "../components/KeyRefreshGroup.js";
  *                            reader resets when it unmounts.
  * /key-refresh-group       — cross-loader group: useRefreshLoaders() refreshes
  *                            two different loaders tagged with one refreshGroup.
+ * /key-refresh-multitag    — multi-tag: each read is tagged into several groups;
+ *                            a fine tag refreshes a subset, the coarse tag or a
+ *                            union argument refreshes the whole set.
  */
 export const keyRefreshPatterns = urls(({ path, layout }) => [
   path(
@@ -106,6 +112,11 @@ export const keyRefreshPatterns = urls(({ path, layout }) => [
   ]),
   path("/key-refresh-group", () => <KeyRefreshGroupPage />, {
     name: "keyRefreshGroup",
+  }),
+  // Multi-tag: one read tagged into several groups; a fine tag refreshes a
+  // subset, the coarse tag or the union argument refreshes the whole set.
+  path("/key-refresh-multitag", () => <KeyRefreshMultiTagPage />, {
+    name: "keyRefreshMultiTag",
   }),
   // Regression: a grouped no-key reader that loaded itself must still update on
   // a group refresh (load() and the group refresh must share the same bucket).

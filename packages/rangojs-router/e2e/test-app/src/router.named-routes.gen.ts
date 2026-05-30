@@ -142,6 +142,7 @@ export const NamedRoutes = {
   keyRefreshGroupPrivate: "/key-refresh-group-private",
   keyRefreshLifeA: "/key-refresh-life/a",
   keyRefreshLifeB: "/key-refresh-life/b",
+  keyRefreshMultiTag: "/key-refresh-multitag",
   keyRefreshMutation: "/key-refresh-mutation",
   keyRefreshNokey: "/key-refresh-nokey",
   keyRefreshParams: "/key-refresh-params",

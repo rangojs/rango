@@ -140,7 +140,7 @@ async function runScenario(page: Page) {
     page.locator('[data-testid="rl-product-prod-a-details-skeleton"]'),
   ).toHaveCount(0);
 
-  // --- Group: one useRefreshLoaders("metrics")() call = one server fetch PER
+  // --- Group: one useRefreshLoaders()("metrics") call = one server fetch PER
   // member (three different loaders), each advancing. ---
   const u0 = await calls(page, "users");
   const o0 = await calls(page, "orders");

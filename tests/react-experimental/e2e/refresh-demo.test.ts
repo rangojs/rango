@@ -97,7 +97,7 @@ async function runScenario(page: Page) {
     0,
   );
 
-  // Group: one useRefreshLoaders("metrics")() call = one server fetch per
+  // Group: one useRefreshLoaders()("metrics") call = one server fetch per
   // member (three distinct loaders).
   const u0 = await calls(page, "users");
   const o0 = await calls(page, "orders");

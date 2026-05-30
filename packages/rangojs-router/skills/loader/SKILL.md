@@ -98,9 +98,9 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 >   **client** refresh identity. It groups which mounted reads of one loader
 >   refresh together when one calls `load()`. It never touches the server
 >   request. For refreshing **different** loaders together, tag them with
->   `{ refreshGroup }` and call `useRefreshLoaders(name)()` (plain GET only).
->   See the hooks skill ("Scoping refetch with a `key`" and "Refreshing multiple
->   loaders together").
+>   `{ refreshGroup }` (one name or several) and call `useRefreshLoaders()(name)`
+>   (plain GET only). See the hooks skill ("Scoping refetch with a `key`" and
+>   "Refreshing multiple loaders together").
 > - `cache({ key })` — a **server** cache identity (storage hit/miss/ttl/swr).
 > - `revalidate()` — which **server** segments/loaders recompute during
 >   navigation and action refreshes.
