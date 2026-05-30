@@ -33,7 +33,7 @@ export const RevenueLoader = createLoader(async () => {
 }, true);
 
 // --- Refresh-group section: three DIFFERENT fetchable loaders tagged into one
-// group, so a single useRefreshLoaders("metrics")() refreshes all three. ---
+// group, so a single useRefreshLoaders()("metrics") refreshes all three. ---
 let usersCalls = 0;
 export const ActiveUsersLoader = createLoader(async () => {
   await delay(500);

@@ -187,17 +187,20 @@ export interface UseLoaderOptions {
    */
   key?: string;
   /**
-   * Cross-loader refresh group. Tag reads of DIFFERENT loaders with the same
-   * `refreshGroup` name, then call `useRefreshLoaders(name)()` to refresh the
-   * whole group at once. Each member is refreshed with a plain GET against the
-   * current route URL — no params, no body, no mutation methods — because a
-   * group spans heterogeneous loaders with different param/return shapes.
+   * Cross-loader refresh group tag(s). Tag reads of DIFFERENT loaders with a
+   * shared name, then call `useRefreshLoaders()(name)` to refresh the whole group
+   * at once. Pass an array to tag one read into several groups — it is refreshed
+   * when ANY of its groups is refreshed, so a coarse tag can cover the whole set
+   * while a finer tag targets a subset. Each member is refreshed with a plain GET
+   * against the current route URL — no params, no body, no mutation methods —
+   * because a group spans heterogeneous loaders with different param/return
+   * shapes.
    *
    * For parameterized sharing of a SINGLE loader, use `key` instead; group
    * members should be registered or non-parameterized-keyed reads (a plain-GET
    * group refresh would drop any per-call params).
    */
-  refreshGroup?: string;
+  refreshGroup?: string | string[];
 }
 
 /**
@@ -254,29 +257,42 @@ function useLoaderInternal<T>(
   // only hooks with the same `key` refresh together. Default (no key) keeps the
   // historical behavior: one bucket per loader id.
   const key = options?.key;
-  const refreshGroup = options?.refreshGroup;
+  // Normalize the refresh-group tag(s) to a stable, deduped, sorted list. The
+  // joined `groupKey` string is the subscribe effect's dependency, so passing an
+  // inline array literal (`refreshGroup={["a", "b"]}`) does not force a
+  // resubscribe on every render. An empty list means "no groups" — identical to
+  // omitting the option (`hasGroups` stays false, no private bucket is created).
+  const refreshGroupOption = options?.refreshGroup;
+  const groupKey =
+    refreshGroupOption === undefined
+      ? ""
+      : JSON.stringify(
+          typeof refreshGroupOption === "string"
+            ? [refreshGroupOption]
+            : [...new Set(refreshGroupOption)].sort(),
+        );
+  const groupList = useMemo<string[]>(
+    () => (groupKey === "" ? [] : (JSON.parse(groupKey) as string[])),
+    [groupKey],
+  );
+  const hasGroups = groupList.length > 0;
   // A grouped reader with no explicit key gets a private per-hook bucket so a
   // cross-loader group refresh cannot leak into the bare `loader.$$id` bucket
   // shared by unrelated unkeyed readers. Sharing within a group is opt-in via
   // an explicit `key`.
   const privateBucketIdRef = useRef<string | null>(null);
-  if (
-    refreshGroup !== undefined &&
-    key === undefined &&
-    privateBucketIdRef.current === null
-  ) {
+  if (hasGroups && key === undefined && privateBucketIdRef.current === null) {
     privateBucketIdRef.current = `__rg${privateGroupBucketSeq++}`;
   }
   const effectiveKey =
-    key ??
-    (refreshGroup !== undefined ? privateBucketIdRef.current! : undefined);
+    key ?? (hasGroups ? privateBucketIdRef.current! : undefined);
   const bucketKey =
     effectiveKey === undefined ? loaderId : `${loaderId}::${effectiveKey}`;
 
   // Plain-GET refresh thunk registered with the store for cross-loader group
   // refresh (useRefreshLoaders). Always shares into this hook's bucket, never
   // touches lastSharedRequestIdRef (so a group refresh never render-throws —
-  // errors surface via `error` and reject the refreshGroup() promise instead),
+  // errors surface via `error` and reject the refreshGroups() promise instead),
   // and sends no params/body. Stable across navigations (depends only on
   // loaderId + bucketKey), so the store keeps one current thunk per bucket.
   const groupRefetch = useCallback(async (): Promise<void> => {
@@ -340,16 +356,17 @@ function useLoaderInternal<T>(
       {
         loaderId,
         ephemeral: !hasContextData,
-        group: refreshGroup,
-        refetch: refreshGroup !== undefined ? groupRefetch : undefined,
+        group: hasGroups ? groupList : undefined,
+        refetch: hasGroups ? groupRefetch : undefined,
       },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional:
     // sharedSnapshot is captured for the one-shot init sync; we don't want
     // to re-subscribe on every snapshot change. bucketKey, hasContextData,
-    // refreshGroup, and groupRefetch are the only inputs that require a fresh
-    // subscription (groupRefetch is stable per bucketKey).
-  }, [bucketKey, hasContextData, refreshGroup, groupRefetch]);
+    // groupKey, and groupRefetch are the only inputs that require a fresh
+    // subscription (groupList is memoized on groupKey; groupRefetch is stable
+    // per bucketKey).
+  }, [bucketKey, hasContextData, groupKey, groupRefetch]);
 
   // Local state holds the result of:
   //   - parameterized / mutation `load()` calls (load({ params }), POST,
@@ -712,14 +729,21 @@ export function useFetchLoader<T>(
 }
 
 /**
- * Refresh every loader tagged with a shared `refreshGroup` name.
+ * Get a stable function that refreshes loaders by cross-loader group tag.
  *
- * Returns a stable async function that refreshes all currently-mounted reads
- * in the group with a plain GET against the current route URL. This is the
- * cross-loader counterpart to the single-loader `key`: use it to refresh a set
- * of DIFFERENT loaders together (e.g. profile + orders after an account
- * switch). Members are tagged via `useLoader(Loader, { refreshGroup })` /
- * `useFetchLoader(Loader, { refreshGroup })`.
+ * The returned `refresh(groups)` takes one group name or an array of names and
+ * re-runs every currently-mounted read tagged with ANY of them, with a plain GET
+ * against the current route URL. This is the cross-loader counterpart to the
+ * single-loader `key`: use it to refresh a set of DIFFERENT loaders together
+ * (e.g. profile + orders after an account switch). Members are tagged via
+ * `useLoader(Loader, { refreshGroup })` / `useFetchLoader(Loader, { refreshGroup })`,
+ * where `refreshGroup` is one name or several.
+ *
+ * Passing the group(s) to the returned function rather than to the hook lets a
+ * single `useRefreshLoaders()` instance refresh different groups depending on
+ * context, and lets one call refresh several groups at once — their members are
+ * unioned and deduped, so a loader tagged into two of the named groups is fetched
+ * exactly once.
  *
  * Group refresh never render-throws: a failing member surfaces its error via
  * that read's `error` state, and the returned promise rejects with an
@@ -736,15 +760,30 @@ export function useFetchLoader<T>(
  *   return <span>{data.name}</span>;
  * }
  * function Orders() {
- *   const { data } = useLoader(OrdersLoader, { key: userId, refreshGroup: "account" });
+ *   // Tagged into two groups: refreshed by "account" (the whole set) or "orders".
+ *   const { data } = useLoader(OrdersLoader, {
+ *     key: userId,
+ *     refreshGroup: ["account", "orders"],
+ *   });
  *   return <span>{data.count} orders</span>;
  * }
- * function RefreshButton() {
- *   const refreshAccount = useRefreshLoaders("account");
- *   return <button onClick={() => refreshAccount()}>Refresh</button>;
+ * function RefreshButtons() {
+ *   const refresh = useRefreshLoaders();
+ *   return (
+ *     <>
+ *       <button onClick={() => refresh("account")}>Refresh account</button>
+ *       <button onClick={() => refresh("orders")}>Refresh orders</button>
+ *       <button onClick={() => refresh(["account", "orders"])}>Refresh both</button>
+ *     </>
+ *   );
  * }
  * ```
  */
-export function useRefreshLoaders(group: string): () => Promise<void> {
-  return useCallback(() => loaderStore.refreshGroup(group), [group]);
+export function useRefreshLoaders(): (
+  groups: string | string[],
+) => Promise<void> {
+  return useCallback(
+    (groups: string | string[]) => loaderStore.refreshGroups(groups),
+    [],
+  );
 }

@@ -73,7 +73,7 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 | ---------------------- | --------------------------------------- |
 | `useLoader`            | Access loader data                      |
 | `useFetchLoader`       | Client-side fetch loader                |
-| `useRefreshLoaders`    | Refresh a cross-loader refresh group    |
+| `useRefreshLoaders`    | Refresh cross-loader refresh group(s)   |
 | `useNavigation`        | Navigation state                        |
 | `useRouter`            | Imperative navigation                   |
 | `usePathname`          | Current pathname                        |
@@ -138,7 +138,8 @@ URL pattern matching, middleware execution, segment resolution, error matching, 
 - `loader()` declarations, `createLoader()`, `useLoader()`, `useFetchLoader()`
 - `fetchable` loader mode for cacheable JSON/resource paths
 - Client refresh `key` (per-loader refresh groups) and `useRefreshLoaders()`
-  (cross-loader refresh groups via `refreshGroup`)
+  (cross-loader refresh groups via `refreshGroup`; reads may carry multiple group
+  tags, and the inverted hook takes the group(s) at call time)
 
 ### Request Context and Server Helpers
 

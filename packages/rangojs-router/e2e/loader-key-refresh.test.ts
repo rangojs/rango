@@ -19,6 +19,10 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
  *   - registered + key      -> keyed readers share; no-key reader keeps seed
  *   - lifecycle persistent  -> keyed reader in a layout survives navigation
  *   - lifecycle route-scoped-> keyed reader resets when it unmounts
+ *   - cross-loader group    -> useRefreshLoaders() refreshes tagged loaders
+ *   - multi-tag groups      -> a read tagged into several groups; a fine tag
+ *                              refreshes a subset, the coarse tag or a union
+ *                              argument refreshes the whole set
  */
 
 function describeKeyRefresh(label: string, mode: "dev" | "build") {
@@ -232,6 +236,47 @@ function describeKeyRefresh(label: string, mode: "dev" | "build") {
       await expect(testId(page, "key-refresh-group-B-value")).not.toHaveText(
         b1,
       );
+    });
+
+    test("multi-tag groups: fine tags refresh a subset, coarse/union refresh the set", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/key-refresh-multitag"));
+      await waitForHydration(page);
+
+      const a = testId(page, "key-refresh-mt-A-value");
+      const b = testId(page, "key-refresh-mt-B-value");
+
+      // A is tagged ["all", "left"], B is tagged ["all", "right"]; both empty.
+      await expect(a).toHaveText("—");
+      await expect(b).toHaveText("—");
+
+      // Fine tag "left" hits only A.
+      await testId(page, "key-refresh-group-btn-left").click();
+      await expect(a).not.toHaveText("—");
+      await expect(b).toHaveText("—");
+      const a1 = (await a.textContent())!;
+
+      // Fine tag "right" hits only B; A is untouched (its value holds).
+      await testId(page, "key-refresh-group-btn-right").click();
+      await expect(b).not.toHaveText("—");
+      await expect(a).toHaveText(a1);
+      const b1 = (await b.textContent())!;
+
+      // Coarse tag "all" refreshes the whole set — BOTH advance.
+      await testId(page, "key-refresh-group-btn-all").click();
+      await expect(a).not.toHaveText(a1);
+      await expect(b).not.toHaveText(b1);
+      const a2 = (await a.textContent())!;
+      const b2 = (await b.textContent())!;
+
+      // Union argument ["left", "right"] also refreshes both (each member's
+      // bucket is fetched once even though A and B sit in different fine tags).
+      await testId(page, "key-refresh-group-btn-both").click();
+      await expect(a).not.toHaveText(a2);
+      await expect(b).not.toHaveText(b2);
     });
 
     test("grouped no-key reader: a group refresh updates a value it loaded itself", async ({

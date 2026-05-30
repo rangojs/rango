@@ -225,7 +225,7 @@ export function GroupCard({
 
 /** Refreshes every loader tagged with refreshGroup="metrics" in one call. */
 export function GroupRefreshButton() {
-  const refresh = useRefreshLoaders("metrics");
+  const refresh = useRefreshLoaders();
   const [pending, setPending] = useState(false);
   return (
     <button
@@ -235,7 +235,7 @@ export function GroupRefreshButton() {
       onClick={async () => {
         setPending(true);
         try {
-          await refresh();
+          await refresh("metrics");
         } catch {
           /* members surface their own error; ignore here */
         } finally {

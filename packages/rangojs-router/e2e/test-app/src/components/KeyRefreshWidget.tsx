@@ -13,30 +13,34 @@ interface Props {
    */
   loaderKey?: string;
   /**
-   * Cross-loader refresh group. A grouped reader with no `loaderKey` gets a
-   * private bucket, so a group refresh cannot leak into the bare loader id
-   * bucket that unrelated unkeyed readers share.
+   * Cross-loader refresh group tag(s) — one name or several. A grouped reader
+   * with no `loaderKey` gets a private bucket, so a group refresh cannot leak
+   * into the bare loader id bucket that unrelated unkeyed readers share.
    */
-  refreshGroup?: string;
+  refreshGroup?: string | string[];
   /** Whether to render the load() button. Read-only siblings omit it. */
   withButton?: boolean;
 }
 
-/** Standalone button that refreshes a cross-loader group by name. */
+/**
+ * Standalone button that refreshes one or more cross-loader groups by name.
+ * `group` is passed straight to the inverted `useRefreshLoaders()` function, so
+ * an array triggers a single union refresh across the named groups.
+ */
 export function KeyRefreshGroupButton({
   id,
   group,
 }: {
   id: string;
-  group: string;
+  group: string | string[];
 }) {
-  const refresh = useRefreshLoaders(group);
+  const refresh = useRefreshLoaders();
   return (
     <button
       data-testid={`key-refresh-group-btn-${id}`}
-      onClick={() => refresh().catch(() => {})}
+      onClick={() => refresh(group).catch(() => {})}
     >
-      Refresh {group}
+      Refresh {Array.isArray(group) ? group.join("+") : group}
     </button>
   );
 }

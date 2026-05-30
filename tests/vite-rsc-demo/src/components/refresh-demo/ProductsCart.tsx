@@ -83,7 +83,7 @@ export function CartBadge({ id, label }: { id: string; label: string }) {
  * and fans the new count out to every cart badge.
  */
 function AddToCartButton({ id }: { id: string }) {
-  const refreshCart = useRefreshLoaders("cart");
+  const refreshCart = useRefreshLoaders();
   const [pending, startTransition] = useTransition();
   return (
     <button
@@ -93,7 +93,7 @@ function AddToCartButton({ id }: { id: string }) {
       onClick={() =>
         startTransition(async () => {
           await addToCart(id);
-          await refreshCart().catch(() => {});
+          await refreshCart("cart").catch(() => {});
         })
       }
     >
