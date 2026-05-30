@@ -9,9 +9,12 @@ export const routes = {
   home: "/",
   "layoutTx.a": "/layout-tx-a",
   "layoutTx.b": "/layout-tx-b",
+  "plainProduct.detail": "/plain-product/:id",
   prerender: "/prerender",
   "prerender.article": "/prerender/:slug",
+  refresh: "/refresh",
   static: "/static",
+  "swrProduct.detail": "/swr-product/:id",
   "transition.a": "/transition-a",
   "transition.b": "/transition-b",
 } as const;

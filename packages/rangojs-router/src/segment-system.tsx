@@ -216,6 +216,25 @@ export async function renderSegments(
   }
   // Separate segments by type, passing intercept segments for explicit injection
   const tree = segmentTreeWalk(normalizedSegments, normalizedInterceptSegments);
+
+  // A route is "in a transition scope" when its own segment OR any layout in
+  // its matched chain declares transition(). Both transition() forms land here:
+  // the per-route item form sets transition on the route entry, and the block
+  // wrapper form sets it on a transparent ancestor layout (dsl-helpers.ts). When
+  // in scope, the route and its route-owned layouts use param-agnostic keys so a
+  // same-route navigation reconciles (holds content) instead of remounting. The
+  // value is a static property of the route's position in the tree, so it is the
+  // same on every render of that route (SSR, navigation, action) — the keys
+  // never drift. Cross-route navigation still remounts: different routes have
+  // different segment ids regardless of transition scope.
+  const inTransitionScope = normalizedSegments.some(
+    (s) =>
+      s.transition != null &&
+      (s.type === "layout" ||
+        s.type === "route" ||
+        s.type === "error" ||
+        s.type === "notFound"),
+  );
   // Render content segments as siblings
   let content: ReactNode = null;
   for (const node of tree) {
@@ -228,17 +247,31 @@ export async function renderSegments(
     );
     const { component, id, params, loading } = node.segment;
 
-    // Only include params in key for segments that belong to the route
-    // - Routes: always include params (they render param-specific content)
-    // - Error/notFound segments: always include params (they replace failed route content)
-    // - Route's layouts (orphans): include params (children of parameterized route)
-    // - Parent chain layouts: exclude params (shared across routes, param-agnostic)
-    // This prevents unnecessary unmounting when params change
+    // Param-agnostic keys are opt-in via the transition() DSL (see
+    // inTransitionScope above). A route (and its route-owned layouts) inside a
+    // transition scope drops the param from its key, so navigating between two
+    // param values of the SAME route (e.g. /product/1 -> /product/2) reconciles
+    // the route subtree instead of remounting it. Combined with the
+    // startTransition wrap that shouldStartViewTransition already applies to
+    // transition routes (browser/partial-update.ts), the previous content stays
+    // on screen while the new loaders resolve (stale-while-revalidate) instead
+    // of flashing the loading skeleton. This works on stable React; experimental
+    // React adds the animated <ViewTransition> cross-fade on top.
+    //
+    // Outside a transition scope the key stays param-bearing and the route
+    // remounts on param change (the default: a fresh skeleton and fresh
+    // component state).
+    //
+    // error/notFound always keep param-bearing keys: createErrorSegment reuses
+    // the boundary layout's shortCode as the error segment id (router/
+    // error-handling.ts), so a param-agnostic error key could collide with that
+    // layout's key within the same render.
     const includeParams =
-      node.segment.type === "route" ||
       node.segment.type === "error" ||
       node.segment.type === "notFound" ||
-      (node.segment.type === "layout" && node.segment.belongsToRoute);
+      ((node.segment.type === "route" ||
+        (node.segment.type === "layout" && node.segment.belongsToRoute)) &&
+        !inTransitionScope);
 
     const paramStr =
       includeParams && params && Object.keys(params).length > 0

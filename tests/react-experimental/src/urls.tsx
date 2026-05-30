@@ -6,6 +6,8 @@ import { Counter } from "./components/Counter.js";
 import { Comments } from "./components/Comments.js";
 import { getCounter } from "./actions/counter.js";
 import { CommentsLoader } from "./loaders/comments.js";
+import { SwrProductLoader } from "./loaders/swr-product.js";
+import { SwrProductCounter } from "./components/SwrProductCounter.js";
 import { ViewTransition } from "react";
 import { ARTICLES } from "./data/articles.js";
 import {
@@ -1325,77 +1327,145 @@ function CardDetail(ctx: HandlerContext<{ slug: string }>) {
   );
 }
 
-export const urlpatterns = urls(({ path, layout, transition, loader }) => [
-  path("/", HomePage, { name: "home" }),
-  path("/about", AboutPage, { name: "about" }),
-  path("/counter", CounterPage, { name: "counter" }),
-  path("/refresh", RefreshDemoPage, { name: "refresh" }, () => [
-    loader(RevenueLoader),
-    loader(ProductLoader),
-  ]),
-
-  // Layout-level transition (no-children form, sibling of path()).
-  // Pins that back-nav fires the navigation-back transition type when the
-  // transition is attached at the LAYOUT segment, not the path segments.
-  layout(LayoutTxShell, () => [
-    transition({
-      enter: {
-        navigation: "slide-from-right",
-        "navigation-back": "slide-from-left",
-      },
-      exit: {
-        navigation: "slide-to-left",
-        "navigation-back": "slide-to-right",
-      },
-    }),
-    path("/layout-tx-a", LayoutTxAPage, { name: "layoutTx.a" }),
-    path("/layout-tx-b", LayoutTxBPage, { name: "layoutTx.b" }),
-  ]),
-  transition({ enter: "fade-in", exit: "fade-out" }, () => [
-    path("/static", StaticPage, { name: "static" }),
-    path("/prerender", PrerenderedPage, { name: "prerender" }),
-    path("/prerender/:slug", PrerenderedArticle, { name: "prerender.article" }),
-  ]),
-
-  // Direction-aware transitions (ViewTransitionClass object form)
-  path("/transition-a", TransitionPageA, { name: "transition.a" }, () => [
-    transition({
-      enter: {
-        navigation: "slide-from-right",
-        "navigation-back": "slide-from-left",
-      },
-      exit: {
-        navigation: "slide-to-left",
-        "navigation-back": "slide-to-right",
-      },
-    }),
-  ]),
-  path("/transition-b", TransitionPageB, { name: "transition.b" }, () => [
-    transition({
-      enter: {
-        navigation: "slide-from-right",
-        "navigation-back": "slide-from-left",
-      },
-      exit: {
-        navigation: "slide-to-left",
-        "navigation-back": "slide-to-right",
-      },
-    }),
-  ]),
-
-  // Blog — wrapper-position transition() enables startTransition for all
-  // child routes at once. Element-level <ViewTransition> wrappers in JSX handle the
-  // shared morphing (title, date, avatars fly between index and detail).
-  transition(() => [
-    path("/blog", BlogIndex, { name: "blog" }),
-    path("/blog/:slug", BlogDetail, { name: "blog.detail" }, () => [
-      loader(CommentsLoader),
+export const urlpatterns = urls(
+  ({ path, layout, transition, loader, loading }) => [
+    path("/", HomePage, { name: "home" }),
+    path("/about", AboutPage, { name: "about" }),
+    path("/counter", CounterPage, { name: "counter" }),
+    path("/refresh", RefreshDemoPage, { name: "refresh" }, () => [
+      loader(RevenueLoader),
+      loader(ProductLoader),
     ]),
-  ]),
 
-  // Cards — per-route transition() (same effect, different DSL position).
-  path("/cards", CardIndex, { name: "cards" }, () => [transition()]),
-  path("/cards/:slug", CardDetail, { name: "cards.detail" }, () => [
-    transition(),
-  ]),
-]);
+    // Layout-level transition (no-children form, sibling of path()).
+    // Pins that back-nav fires the navigation-back transition type when the
+    // transition is attached at the LAYOUT segment, not the path segments.
+    layout(LayoutTxShell, () => [
+      transition({
+        enter: {
+          navigation: "slide-from-right",
+          "navigation-back": "slide-from-left",
+        },
+        exit: {
+          navigation: "slide-to-left",
+          "navigation-back": "slide-to-right",
+        },
+      }),
+      path("/layout-tx-a", LayoutTxAPage, { name: "layoutTx.a" }),
+      path("/layout-tx-b", LayoutTxBPage, { name: "layoutTx.b" }),
+    ]),
+    transition({ enter: "fade-in", exit: "fade-out" }, () => [
+      path("/static", StaticPage, { name: "static" }),
+      path("/prerender", PrerenderedPage, { name: "prerender" }),
+      path("/prerender/:slug", PrerenderedArticle, {
+        name: "prerender.article",
+      }),
+    ]),
+
+    // Direction-aware transitions (ViewTransitionClass object form)
+    path("/transition-a", TransitionPageA, { name: "transition.a" }, () => [
+      transition({
+        enter: {
+          navigation: "slide-from-right",
+          "navigation-back": "slide-from-left",
+        },
+        exit: {
+          navigation: "slide-to-left",
+          "navigation-back": "slide-to-right",
+        },
+      }),
+    ]),
+    path("/transition-b", TransitionPageB, { name: "transition.b" }, () => [
+      transition({
+        enter: {
+          navigation: "slide-from-right",
+          "navigation-back": "slide-from-left",
+        },
+        exit: {
+          navigation: "slide-to-left",
+          "navigation-back": "slide-to-right",
+        },
+      }),
+    ]),
+
+    // Blog — wrapper-position transition() enables startTransition for all
+    // child routes at once. Element-level <ViewTransition> wrappers in JSX handle the
+    // shared morphing (title, date, avatars fly between index and detail).
+    transition(() => [
+      path("/blog", BlogIndex, { name: "blog" }),
+      path("/blog/:slug", BlogDetail, { name: "blog.detail" }, () => [
+        loader(CommentsLoader),
+      ]),
+    ]),
+
+    // Cards — per-route transition() (same effect, different DSL position).
+    path("/cards", CardIndex, { name: "cards" }, () => [transition()]),
+    path("/cards/:slug", CardDetail, { name: "cards.detail" }, () => [
+      transition(),
+    ]),
+
+    // Same-route stale-while-revalidate + morph: a :param route with a loading()
+    // skeleton AND transition(). On experimental React the persistent
+    // <ViewTransition> boundary animates the same-route param swap (morph) while
+    // the previous content is held — no skeleton flash. Mirrors the stable
+    // test-app swr-product route so the no-skeleton contract is proven on both.
+    path(
+      "/swr-product/:id",
+      async (ctx) => {
+        const { name, loadedAt } = await ctx.use(SwrProductLoader);
+        return (
+          <div data-testid="swr-product-page">
+            <h1 data-testid="swr-product-name">{name}</h1>
+            <p data-testid="swr-product-loaded-at">{loadedAt}</p>
+            <SwrProductCounter />
+            <nav>
+              <Link to="/swr-product/1" data-testid="swr-product-link-1">
+                1
+              </Link>
+              <Link to="/swr-product/2" data-testid="swr-product-link-2">
+                2
+              </Link>
+              <Link to="/swr-product/3" data-testid="swr-product-link-3">
+                3
+              </Link>
+            </nav>
+          </div>
+        );
+      },
+      { name: "swrProduct.detail" },
+      () => [
+        loader(SwrProductLoader),
+        loading(<div data-testid="swr-product-skeleton">Loading…</div>),
+        transition({}),
+      ],
+    ),
+
+    // Contrast: same :param + loading() but NO transition() -> remounts on param
+    // change and shows the skeleton (default behavior, unchanged).
+    path(
+      "/plain-product/:id",
+      async (ctx) => {
+        const { name } = await ctx.use(SwrProductLoader);
+        return (
+          <div data-testid="plain-product-page">
+            <h1 data-testid="plain-product-name">{name}</h1>
+            <SwrProductCounter />
+            <nav>
+              <Link to="/plain-product/1" data-testid="plain-product-link-1">
+                1
+              </Link>
+              <Link to="/plain-product/2" data-testid="plain-product-link-2">
+                2
+              </Link>
+            </nav>
+          </div>
+        );
+      },
+      { name: "plainProduct.detail" },
+      () => [
+        loader(SwrProductLoader),
+        loading(<div data-testid="plain-product-skeleton">Loading…</div>),
+      ],
+    ),
+  ],
+);
