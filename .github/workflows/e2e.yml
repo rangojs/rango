@@ -292,12 +292,14 @@ jobs:
           - project: production
             shard: 2
             shardTotal: 2
-          # HMR tests run serially (workers=1) to avoid filesystem interference
+          # HMR tests run serially (workers=1) to avoid filesystem interference.
+          # hmr-routes (route-types-hmr.test.ts) is intentionally absent: it is
+          # test.skip(isCI)'d because the file watcher is unreliable on GitHub
+          # Actions' virtualized FS, so the job ran zero tests. Run it locally:
+          # pnpm --filter @rangojs/router exec playwright test --project=hmr-routes
           - project: hmr-client
             workers: 1
           - project: hmr-loader
-            workers: 1
-          - project: hmr-routes
             workers: 1
           - project: hmr-intercept
             workers: 1
