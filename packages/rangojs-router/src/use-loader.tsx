@@ -377,9 +377,13 @@ function useLoaderInternal<T>(
   //     prevents two unrelated components from accidentally sharing data
   //     through the global store just because they reference the same
   //     loader id.
-  const [localFetchedData, setLocalFetchedData] = useState<T | undefined>(
-    undefined,
-  );
+  // `has` distinguishes a committed local result (including `null`/`undefined`)
+  // from "no local load yet", so a load() that resolves to a falsy value is not
+  // discarded in favor of the shared snapshot or the seeded context.
+  const [localFetchedData, setLocalFetchedData] = useState<{
+    has: boolean;
+    value: T | undefined;
+  }>({ has: false, value: undefined });
   const [localIsLoading, setLocalIsLoading] = useState(false);
   const [localError, setLocalError] = useState<Error | null>(null);
 
@@ -402,7 +406,7 @@ function useLoaderInternal<T>(
   const prevContextDataRef = useRef(contextData);
   useEffect(() => {
     if (prevContextDataRef.current !== contextData) {
-      setLocalFetchedData(undefined);
+      setLocalFetchedData({ has: false, value: undefined });
       setLocalIsLoading(false);
       setLocalError(null);
       lastSharedRequestIdRef.current = null;
@@ -413,10 +417,14 @@ function useLoaderInternal<T>(
     }
   }, [contextData, loaderId]);
 
-  // Read priority: a parameterized load() result overrides the shared
-  // snapshot; the shared snapshot overrides the server-seeded context.
-  const data =
-    localFetchedData ?? (sharedSnapshot.value as T | undefined) ?? contextData;
+  // Read priority: a committed parameterized load() result overrides the shared
+  // snapshot; a committed shared snapshot overrides the server-seeded context.
+  // `has`/`hasValue` gate each level so a committed falsy value is not skipped.
+  const data = localFetchedData.has
+    ? localFetchedData.value
+    : sharedSnapshot.hasValue
+      ? (sharedSnapshot.value as T | undefined)
+      : contextData;
   const isLoading = localIsLoading || sharedSnapshot.isLoading;
   const error = localError ?? sharedSnapshot.error;
 
@@ -570,7 +578,7 @@ function useLoaderInternal<T>(
           // if a newer load() was issued from this hook before this one
           // resolved, drop the stale result.
           startTransition(() => {
-            setLocalFetchedData(result);
+            setLocalFetchedData({ has: true, value: result });
             setLocalIsLoading(false);
           });
         }

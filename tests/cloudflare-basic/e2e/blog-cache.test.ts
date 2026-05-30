@@ -320,3 +320,94 @@ test.describe("proactive-caching", () => {
     await expect(testId(page, "proactive-item-b-page")).toBeVisible();
   });
 });
+
+// Document (edge HTTP-response) caching via CFCacheStore. A served HIT must
+// restore the route author's Cache-Control and must not leak the store's
+// internal edge headers (x-edge-cache-stale-at / x-edge-cache-status) to the
+// client. Runs against CFCacheStore in both dev and build.
+function describeDocumentCacheHeaders(label: string, mode: "dev" | "build") {
+  test.describe(`document-cache headers (${label})`, () => {
+    // Dev uses an isolated server so the shared dev server's CF cache state
+    // (mutated by the proactive-caching tests) cannot race this one.
+    const f = useFixture({
+      root: ".",
+      mode,
+      ...(mode === "dev" ? { isolatedServer: true } : {}),
+    });
+
+    test("served HIT restores the author's Cache-Control and hides internal edge headers", async ({
+      request,
+    }) => {
+      // Poll until the background cache write lands and the route serves a HIT.
+      let hitHeaders: Record<string, string> = {};
+      await expect
+        .poll(
+          async () => {
+            const res = await request.get(f.url("/document-cache"), {
+              headers: { Accept: "text/html" },
+            });
+            hitHeaders = res.headers();
+            return hitHeaders["x-document-cache-status"];
+          },
+          { timeout: 15000, message: "Expected /document-cache to serve a HIT" },
+        )
+        .toBe("HIT");
+
+      // Internal edge headers must never reach the client.
+      expect(hitHeaders["x-edge-cache-stale-at"]).toBeUndefined();
+      expect(hitHeaders["x-edge-cache-status"]).toBeUndefined();
+      // The author's Cache-Control is restored — not the internal edge
+      // `public, max-age=<ttl+swr>` the store uses to retain the entry.
+      expect(hitHeaders["cache-control"]).toBe(
+        "s-maxage=60, stale-while-revalidate=300",
+      );
+    });
+  });
+}
+
+describeDocumentCacheHeaders("dev", "dev");
+describeDocumentCacheHeaders("production", "build");
+
+test.describe("proactive-caching (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  // The null-component corruption this guards against (a proactively-cached
+  // layout served with a missing component) is store-level behavior, so it must
+  // be exercised against the production CFCacheStore, not just the dev path.
+  test("layout renders correctly after proactive caching", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    // Populate the cache for the index, then partial-nav to item-a so the layout
+    // is proactively cached (the partial response carries a null layout).
+    await page.goto(f.url("/proactive-cache"));
+    await waitForHydration(page);
+    await expect(testId(page, "proactive-cache-layout")).toBeVisible();
+
+    await testId(page, "proactive-nav-a").click();
+    await expect(testId(page, "proactive-item-a-page")).toBeVisible();
+
+    // Let the background proactive write settle (debug logs are off in prod).
+    await page.waitForTimeout(800);
+
+    await testId(page, "proactive-back-home").click();
+    await waitForHydration(page);
+
+    // Hard document request: the layout must come from the proactive cache with
+    // a real component, not a null one. The toHaveText assertion is load-bearing
+    // — a null-component corruption leaves the container present but empty.
+    await page.goto(f.url("/proactive-cache/item-a"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "proactive-cache-layout")).toBeVisible();
+    await expect(testId(page, "proactive-layout-title")).toHaveText(
+      "Proactive Cache Layout",
+    );
+    await expect(testId(page, "proactive-item-a-page")).toBeVisible();
+
+    await testId(page, "proactive-nav-b").click();
+    await expect(testId(page, "proactive-item-b-page")).toBeVisible();
+  });
+});

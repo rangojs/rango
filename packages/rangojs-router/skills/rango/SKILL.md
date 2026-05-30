@@ -28,7 +28,10 @@ with the shape, then pick a primitive.
   cache hit streams UI instantly while loaders resolve fresh alongside). Opt into
   caching explicitly. See `/loader` → "Parallel and streaming".
 - **One identity, one store** — loaders, handles, cached fns, and actions are all
-  `path#export`; all caches share one store; `revalidateTag` cuts across them.
+  `path#export`; all caches share one store. Entries expire by TTL/SWR; cache
+  entries accept an optional `tags` field, but built-in stores do not yet index
+  or invalidate by tag, so tag-based invalidation (`revalidateTag`) is a
+  forward-looking API requiring a custom store.
 - **Type-safe end to end** — route names, params, search schemas, loader return
   types, context vars, and `href` / `reverse` are checked at compile time
   (`/typesafety`).
@@ -82,8 +85,10 @@ To decide where something can live: **does it define a URL? structure, stays in
   (`set`/`header`/`setTheme`/`onResponse`/`setLocationState`) throw; `ctx.use(Handle)`
   is captured on miss and replayed on hit. (The non-cacheable read guard is a
   separate `cache()`-boundary check — see the correctness bullet below.)
-- One identity `path#export` (`functionId`/`$$id`/`actionId`); one store;
-  `revalidateTag` cuts across all cache mechanisms.
+- One identity `path#export` (`functionId`/`$$id`/`actionId`); one store. The
+  cross-cutting freshness mechanism today is TTL/SWR expiry; cache entries accept
+  an optional `tags` field, but built-in stores do not yet index or invalidate by
+  tag, so `revalidateTag` is forward-looking (requires a custom store).
 - `useLoader` / `useHandle` / `useFetchLoader` are client-only.
 - Caches are correctness-first: persistent store keys are version-segmented (no
   cross-deploy drift), the forward/back cache is mutation-aware, and
@@ -106,13 +111,13 @@ To decide where something can live: **does it define a URL? structure, stays in
 Same words, different jobs — this is the most common source of the
 `revalidate()`-is-caching misread.
 
-| You may know                               | Maps to Rango axis | Watch out                                                                                                                                                      |
-| ------------------------------------------ | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Next.js `export const revalidate = N`      | **Axis 1** (cache) | Same word, opposite meaning. Next's `revalidate` is time-based cache expiry; Rango's `revalidate()` is **axis 2**. Use `cache({ ttl })` for the Next behavior. |
-| Next.js `revalidatePath` / `revalidateTag` | **Axis 1** (cache) | Cache busting. Rango's tag bust is `revalidateTag`; there is no `revalidatePath`.                                                                              |
-| React Router / Remix `shouldRevalidate`    | **Axis 2**         | This is the correct mental model for Rango's `revalidate()`.                                                                                                   |
-| HTTP `Cache-Control` / ISR                 | **Axis 1**         | Edge/document layer — see `/document-cache`. Separate from both `cache()` and `revalidate()`.                                                                  |
-| Remix/RR `loader`                          | live data          | Like Rango loaders, fresh per request — but Rango loaders run in parallel and stream (latency overlaps first paint), and can opt into caching on demand.       |
+| You may know                               | Maps to Rango axis | Watch out                                                                                                                                                                                                                       |
+| ------------------------------------------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Next.js `export const revalidate = N`      | **Axis 1** (cache) | Same word, opposite meaning. Next's `revalidate` is time-based cache expiry; Rango's `revalidate()` is **axis 2**. Use `cache({ ttl })` for the Next behavior.                                                                  |
+| Next.js `revalidatePath` / `revalidateTag` | **Axis 1** (cache) | Cache busting. No shipped equivalent: entries accept `tags`, but built-in stores don't yet index/invalidate by tag, so `revalidateTag` is forward-looking (custom store); today entries expire by TTL/SWR. No `revalidatePath`. |
+| React Router / Remix `shouldRevalidate`    | **Axis 2**         | This is the correct mental model for Rango's `revalidate()`.                                                                                                                                                                    |
+| HTTP `Cache-Control` / ISR                 | **Axis 1**         | Edge/document layer — see `/document-cache`. Separate from both `cache()` and `revalidate()`.                                                                                                                                   |
+| Remix/RR `loader`                          | live data          | Like Rango loaders, fresh per request — but Rango loaders run in parallel and stream (latency overlaps first paint), and can opt into caching on demand.                                                                        |
 
 See `/cache-guide` for the axis-1 decision guide, `/loader` and `/route` for
 `revalidate()` (axis 2), and `/document-cache` for the edge layer.

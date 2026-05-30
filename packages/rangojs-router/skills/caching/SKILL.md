@@ -8,6 +8,12 @@ argument-hint: [setup]
 
 @rangojs/router supports segment-level caching with stale-while-revalidate (SWR) for optimal performance.
 
+> SWR support is store-specific. `CFCacheStore` revalidates segment, response,
+> and `"use cache"` entries in the background. `MemorySegmentCacheStore`
+> supports SWR for response and `"use cache"` item entries, but its
+> route-segment entries expire at TTL with no background revalidation — use
+> `CFCacheStore` for real segment SWR. See `/cache-guide`.
+
 ## Route-Level Caching with cache()
 
 Use the `cache()` DSL function to cache routes:
@@ -116,7 +122,6 @@ import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 
 const store = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 300 },
-  maxSize: 1000, // Max entries
 });
 ```
 

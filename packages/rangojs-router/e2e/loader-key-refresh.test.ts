@@ -238,6 +238,46 @@ function describeKeyRefresh(label: string, mode: "dev" | "build") {
       );
     });
 
+    test("group with a failing member: no render-throw, error surfaces, healthy member advances", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/key-refresh-group-error"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "key-refresh-errgroup-ok-value")).toHaveText(
+        "—",
+      );
+      await expect(testId(page, "key-refresh-errgroup-fail-error")).toHaveText(
+        "—",
+      );
+
+      // One group refresh runs both members. The failing one rejects, the
+      // healthy one resolves; the rejection must NOT trip an error boundary.
+      await testId(page, "key-refresh-errgroup-refresh-btn").click();
+
+      // Failing member surfaces its error via `error` (not a render-throw).
+      await expect(
+        testId(page, "key-refresh-errgroup-fail-error"),
+      ).not.toHaveText("—");
+      // Healthy member still advances despite the sibling failure.
+      await expect(
+        testId(page, "key-refresh-errgroup-ok-value"),
+      ).not.toHaveText("—");
+      const ok1 = (await testId(
+        page,
+        "key-refresh-errgroup-ok-value",
+      ).textContent())!;
+
+      // A second refresh still advances the healthy member (it keeps refetching
+      // even though its group sibling keeps failing).
+      await testId(page, "key-refresh-errgroup-refresh-btn").click();
+      await expect(
+        testId(page, "key-refresh-errgroup-ok-value"),
+      ).not.toHaveText(ok1);
+    });
+
     test("multi-tag groups: fine tags refresh a subset, coarse/union refresh the set", async ({
       page,
     }) => {

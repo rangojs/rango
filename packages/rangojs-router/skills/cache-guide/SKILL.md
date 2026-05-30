@@ -6,8 +6,9 @@ argument-hint:
 
 # cache() vs "use cache" — When to Use Which
 
-Both mechanisms share the same backing store, cache profiles, and tag-based
-invalidation. They differ in scope, cache key, execution model, and runtime control.
+Both mechanisms share the same backing store and cache profiles, and both accept
+an optional `tags` field (not yet honored by the built-in stores — see "Two axes"
+below). They differ in scope, cache key, execution model, and runtime control.
 
 ## Two axes — do not conflate
 
@@ -17,7 +18,10 @@ caching:
 
 1. **Stored-value freshness** — _is a cached value still good?_
    → `"use cache"` (fn/component), `cache()` (segment), loader `cache()` (loader data).
-   Entries are coupled across the one store by **tags** (`revalidateTag`).
+   Entries expire by **TTL/SWR**. They accept an optional `tags` field, but the
+   built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`) do not yet index or
+   invalidate by tag, so tag-based invalidation (`revalidateTag`) is a
+   forward-looking API requiring a custom store with secondary indices.
 2. **Client-update selection** — _should this segment re-run and stream to the
    client on this navigation/action?_
    → `revalidate()`. Covered in `/loader` and `/route`, **not here**.

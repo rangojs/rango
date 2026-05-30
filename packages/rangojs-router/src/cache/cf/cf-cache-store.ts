@@ -57,6 +57,15 @@ export const CACHE_STALE_AT_HEADER = "x-edge-cache-stale-at";
 export const CACHE_STATUS_HEADER = "x-edge-cache-status";
 
 /**
+ * Header stashing the route author's original Cache-Control on L1 document
+ * entries. putResponse/promoteResponseToL1 overwrite Cache-Control with a long
+ * `max-age` so the CF Cache API retains the entry across the whole SWR window;
+ * getResponse restores this original value before serving so the client and any
+ * upstream CDN see the author's intended directive, not the internal edge TTL.
+ */
+const CACHE_ORIG_CC_HEADER = "x-edge-cache-orig-cc";
+
+/**
  * Maximum age in seconds for REVALIDATING status before allowing new revalidation.
  * After this period, a stale entry in REVALIDATING status will trigger revalidation again.
  * @internal
@@ -182,7 +191,7 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    * Cache version string override. When this changes, all cached entries are
    * effectively invalidated (new keys won't match old entries).
    *
-   * Defaults to the auto-generated VERSION from `rsc-router:version` virtual module.
+   * Defaults to the auto-generated VERSION from the `@rangojs/router:version` virtual module.
    * Only set this if you need a custom versioning strategy.
    */
   version?: string;
@@ -419,7 +428,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       }
 
       // L2: persist to KV
-      this.kvSetSegment(key, data, staleAt, totalTtl);
+      this.kvSetSegment(key, data, staleAt, totalTtl, swrWindow);
     } catch (error) {
       console.error("[CFCacheStore] set failed:", error);
     }
@@ -478,13 +487,37 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const isStale = staleAt > 0 && Date.now() > staleAt;
 
       return {
-        response,
+        response: this.toClientResponse(response),
         shouldRevalidate: isStale,
       };
     } catch (error) {
       console.error("[CFCacheStore] getResponse failed:", error);
       return null;
     }
+  }
+
+  /**
+   * Strip internal edge headers and restore the author's Cache-Control before a
+   * cached document Response is served to a client. L1 entries carry the
+   * internal staleness/status headers and a rewritten Cache-Control; none of
+   * those should reach the browser or an upstream CDN.
+   */
+  private toClientResponse(response: Response): Response {
+    const headers = new Headers(response.headers);
+    const originalCacheControl = headers.get(CACHE_ORIG_CC_HEADER);
+    if (originalCacheControl !== null) {
+      headers.set("Cache-Control", originalCacheControl);
+    } else {
+      headers.delete("Cache-Control");
+    }
+    headers.delete(CACHE_ORIG_CC_HEADER);
+    headers.delete(CACHE_STALE_AT_HEADER);
+    headers.delete(CACHE_STATUS_HEADER);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
   }
 
   /**
@@ -513,8 +546,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           : [null, null]
         : [response.body, null];
 
-      // Clone and add cache headers
+      // Clone and add cache headers. The author's Cache-Control is stashed and
+      // replaced with a long max-age so the CF Cache API holds the entry across
+      // the SWR window; getResponse restores the original before serving.
       const headers = new Headers(response.headers);
+      const originalCacheControl = response.headers.get("Cache-Control");
+      if (originalCacheControl !== null) {
+        headers.set(CACHE_ORIG_CC_HEADER, originalCacheControl);
+      }
       headers.set("Cache-Control", `public, max-age=${totalTtl}`);
       headers.set(CACHE_STALE_AT_HEADER, String(staleAt));
 
@@ -764,13 +803,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     data: CachedEntryData,
     staleAt: number,
     totalTtl: number,
+    swrWindow: number,
   ): void {
     // KV requires expirationTtl >= 60s. Skip write for short-lived entries.
     if (!this.kv || !this.waitUntil || totalTtl < 60) return;
 
     const kvKey = this.toKVKey(key);
-    const swrWindow = totalTtl * 1000 - (staleAt - Date.now());
-    const expiresAt = staleAt + swrWindow;
+    const expiresAt = staleAt + swrWindow * 1000;
 
     this.waitUntil(async () => {
       try {
@@ -937,6 +976,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         const request = this.keyToRequest(`doc:${key}`);
 
         const headers = new Headers(envelope.hd);
+        const originalCacheControl = headers.get("Cache-Control");
+        if (originalCacheControl !== null) {
+          headers.set(CACHE_ORIG_CC_HEADER, originalCacheControl);
+        }
         headers.set("Cache-Control", `public, max-age=${remainingTtl}`);
         headers.set(CACHE_STALE_AT_HEADER, String(envelope.s));
 

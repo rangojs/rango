@@ -10,6 +10,7 @@ import { KeyRefreshParamWidget } from "../components/KeyRefreshParamWidget.js";
 import { KeyRefreshLifeLayout } from "../components/KeyRefreshLifeLayout.js";
 import {
   KeyRefreshGroupPage,
+  KeyRefreshGroupErrorPage,
   KeyRefreshMultiTagPage,
 } from "../components/KeyRefreshGroup.js";
 
@@ -112,6 +113,11 @@ export const keyRefreshPatterns = urls(({ path, layout }) => [
   ]),
   path("/key-refresh-group", () => <KeyRefreshGroupPage />, {
     name: "keyRefreshGroup",
+  }),
+  // Group with a failing member: a group refresh never render-throws — the
+  // failing member surfaces its error while the healthy member still advances.
+  path("/key-refresh-group-error", () => <KeyRefreshGroupErrorPage />, {
+    name: "keyRefreshGroupError",
   }),
   // Multi-tag: one read tagged into several groups; a fine tag refreshes a
   // subset, the coarse tag or the union argument refreshes the whole set.

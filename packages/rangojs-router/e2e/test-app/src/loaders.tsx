@@ -849,6 +849,16 @@ export const KeyRefreshGroupLoaderB = createLoader(async () => {
   return { count: keyRefreshGroupBCount };
 }, true);
 
+// Always-failing fetchable loader for the group-refresh failure test. Proves a
+// group refresh never render-throws: the failing member surfaces its error via
+// `error` while the healthy member in the same group still advances.
+export const KeyRefreshGroupFailLoader = createLoader(
+  async (): Promise<{ count: number }> => {
+    throw new Error("group-refresh: member failed by design");
+  },
+  true,
+);
+
 // Param/body echo for the widened-key semantics tests: a keyed parameterized
 // GET shares within the key, while a keyed mutation (POST/body) stays local.
 // Reads the tag from the JSON body (mutations) or from params (GET).
