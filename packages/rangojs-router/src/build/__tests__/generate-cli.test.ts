@@ -45,6 +45,35 @@ describe("generate-cli e2e fixtures", () => {
   // -----------------------------------------------------------------------
 
   describe("writePerModuleRouteTypesForFile", () => {
+    it("writes a sibling .gen.ts for a .jsx source instead of overwriting it", () => {
+      // Regression: the gen-path replace used /\.(tsx?)$/, so a .jsx/.js source
+      // produced genPath === filePath and clobbered the source file. It must
+      // emit a sibling <name>.gen.ts and leave the source untouched.
+      const dir = mkdtempSync(join(tmpdir(), "rango-jsx-gen-"));
+      const jsxPath = join(dir, "urls.jsx");
+      const source = [
+        'import { urls } from "@rangojs/router";',
+        "export const patterns = urls(({ path }) => [",
+        '  path("/", () => null, { name: "home" }),',
+        '  path("/about", () => null, { name: "about" }),',
+        "]);",
+        "",
+      ].join("\n");
+      writeFileSync(jsxPath, source);
+
+      writePerModuleRouteTypesForFile(jsxPath);
+
+      const genPath = join(dir, "urls.gen.ts");
+      expect(existsSync(genPath)).toBe(true);
+      // Source must be byte-for-byte untouched (not overwritten with gen output).
+      expect(readFileSync(jsxPath, "utf-8")).toBe(source);
+      const gen = readFileSync(genPath, "utf-8");
+      expect(gen).toContain('home: "/",');
+      expect(gen).toContain('about: "/about",');
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
     it("generates correct routes for main urls module with includes", () => {
       const mainUrls = join(fixtureDir, "urls.tsx");
       writePerModuleRouteTypesForFile(mainUrls);

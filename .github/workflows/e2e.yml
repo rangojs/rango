@@ -513,6 +513,55 @@ jobs:
           path: tests/react-experimental/playwright-report/
           retention-days: 7
 
+  no-typescript-e2e:
+    needs: [install-playwright, smoke-e2e]
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
+
+      - name: Restore Playwright browsers
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-browsers-
+
+      - name: Install Playwright system deps
+        run: pnpm --filter no-typescript exec playwright install-deps chromium
+
+      - name: Run no-typescript e2e tests
+        run: pnpm --filter no-typescript test:e2e
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: playwright-report-no-typescript
+          path: tests/no-typescript/playwright-report/
+          retention-days: 7
+
   cloudflare-stress-demo-e2e:
     needs: [install-playwright, smoke-e2e]
     if: |
