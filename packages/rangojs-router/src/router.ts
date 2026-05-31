@@ -155,6 +155,7 @@ export function createRouter<TEnv = any>(
     timeouts: timeoutsOption,
     onTimeout,
     originCheck: originCheckOption,
+    viewTransition: viewTransitionOption = "auto",
   } = options;
 
   // Normalize basename: ensure leading slash, strip trailing slash.
@@ -534,6 +535,7 @@ export function createRouter<TEnv = any>(
     findNearestNotFoundBoundary,
     notFoundComponent: notFound,
     callOnError,
+    viewTransitionDefault: viewTransitionOption,
   };
 
   // Match API dependencies

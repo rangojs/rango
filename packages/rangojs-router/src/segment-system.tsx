@@ -99,8 +99,11 @@ function createViewTransitionBoundary(
   transition: NonNullable<ResolvedSegment["transition"]>,
   children: ReactNode,
 ): ReactNode {
+  // `viewTransition` is a router-specific flag (boundary opt-out), not a React
+  // <ViewTransition> prop — strip it so it never reaches React.
+  const { viewTransition: _viewTransition, ...vtProps } = transition;
   return createElement(ReactViewTransition, {
-    ...transition,
+    ...vtProps,
     children,
   });
 }
@@ -319,12 +322,25 @@ export async function renderSegments(
     // subtree update on the layout-level VT — which would otherwise make
     // React's commit walker fire `document.startViewTransition` and apply
     // view-transition-names to the underlying main subtree (cover/title/etc.).
+    //
+    // `transition.viewTransition === false` opts out of the router-owned
+    // boundary only. Driving (the startTransition wrap in browser/partial-update.ts
+    // and the param-agnostic key/hold below) keys off transition *presence*, not
+    // this flag, so a boundary-less transition still holds content and lets
+    // consumer-placed <ViewTransition> elements animate. The global
+    // createRouter({ viewTransition }) default is resolved into this field
+    // during segment resolution (only `false` is stamped; unset/"auto" is left
+    // as-is and means "wrap"), so this gate needs no router-option threading.
     let outletContent: ReactNode =
       node.segment.type === "layout" ? content : null;
 
     const transition = node.segment.transition;
 
-    if (ReactViewTransition && transition) {
+    if (
+      ReactViewTransition &&
+      transition &&
+      transition.viewTransition !== false
+    ) {
       if (node.segment.type === "layout") {
         outletContent = wrapDefaultOutletContent(outletContent, transition);
       } else {

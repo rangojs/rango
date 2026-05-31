@@ -28,6 +28,7 @@ import {
   resolveLayoutComponent,
   resolveWithErrorBoundary,
 } from "./helpers.js";
+import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
 import {
@@ -224,7 +225,10 @@ export async function resolveSegment<TEnv>(
       index: 0,
       component,
       loading: entry.loading === false ? null : entry.loading,
-      transition: entry.transition,
+      transition: applyViewTransitionDefault(
+        entry.transition,
+        deps.viewTransitionDefault,
+      ),
       params,
       belongsToRoute: false,
       layoutName: entry.id,
@@ -359,7 +363,10 @@ export async function resolveSegment<TEnv>(
       index: 0,
       component: component ?? null,
       loading: entry.loading === false ? null : entry.loading,
-      transition: entry.transition,
+      transition: applyViewTransitionDefault(
+        entry.transition,
+        deps.viewTransitionDefault,
+      ),
       params,
       belongsToRoute: true,
       ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
@@ -443,7 +450,10 @@ export async function resolveOrphanLayout<TEnv>(
     belongsToRoute,
     layoutName: orphan.id,
     loading: orphan.loading === false ? null : orphan.loading,
-    transition: orphan.transition,
+    transition: applyViewTransitionDefault(
+      orphan.transition,
+      deps.viewTransitionDefault,
+    ),
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
   });
 
@@ -565,7 +575,10 @@ export async function resolveParallelEntry<TEnv>(
       index: 0,
       component,
       loading: parallelEntry.loading === false ? null : parallelEntry.loading,
-      transition: parallelEntry.transition,
+      transition: applyViewTransitionDefault(
+        parallelEntry.transition,
+        deps.viewTransitionDefault,
+      ),
       params,
       slot,
       belongsToRoute,

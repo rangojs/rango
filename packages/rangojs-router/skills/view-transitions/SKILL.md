@@ -6,11 +6,33 @@ argument-hint: [layout|route|parallel|intercept]
 
 # View Transitions
 
-Rango wires React's experimental `<ViewTransition>` into the segment tree via the `transition()` helper. Each segment can declare its own transition config; rango wraps it at the right tree position so navigations morph the right pieces and modals do not.
+`transition()` opts a route (or group of routes) into transition-driven navigation. It does two things, and you choose how far to go:
 
-> Requires React experimental (the build that exports `<ViewTransition>` and `addTransitionType`). With stable React, `transition()` is a no-op — your routes still render, just without view-transition wrappers.
+1. **`startTransition` (the foundation).** The navigation commit is driven through React's `startTransition`. That holds the previous content across a same-route navigation (stale-while-revalidate — no loading-skeleton flash) and is the **precondition** for any view-transition animation. Works on **all** React versions.
+2. **`<ViewTransition>` (the animation, layered on top).** On experimental React, rango also wraps the segment content in React's `<ViewTransition>` so the swap cross-fades/morphs. This is the only part that needs experimental React; pass `viewTransition: false` to keep #1 without it (and place your own `<ViewTransition>` where you want it).
 
-## What `transition()` does
+> The `<ViewTransition>` layer requires React experimental (the build that exports `<ViewTransition>` / `addTransitionType`). On stable React that layer is a no-op — but the `startTransition` driving (content hold) still applies.
+
+## Purpose: `startTransition` vs `<ViewTransition>`
+
+These are two **independent** mechanisms. `startTransition` controls _fallbacks_ (hold the old content vs. flash the Suspense skeleton) and is what lets a view transition fire at all; the `<ViewTransition>` boundary is the _visual cross-fade_.
+
+|                            | `startTransition` **OFF**                                                      | `startTransition` **ON**                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| **`<ViewTransition>` OFF** | plain nav — remount on param change, skeleton flash, no animation              | **hold** content (no skeleton flash); a consumer-placed `<ViewTransition>` still morphs; no router cross-fade |
+| **`<ViewTransition>` ON**  | **impossible** — React never activates `<ViewTransition>` outside a Transition | hold + router cross-fade                                                                                      |
+
+The bottom-left cell is the key constraint: a view transition cannot exist without a `startTransition`. So once you reach for `transition()`, the only real choice is _startTransition_ vs _startTransition + ViewTransition_:
+
+| What you want                          | Config                                              | Effect                                                                                                 |
+| -------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| nothing (default nav)                  | no `transition()`                                   | remount + skeleton on param change                                                                     |
+| `startTransition` only                 | `transition({ viewTransition: false })`             | hold content; place your own `<ViewTransition>` where you want it                                      |
+| `startTransition` + `<ViewTransition>` | `transition({})` / `transition({ enter, exit, … })` | hold + router cross-fade (experimental React; on stable it degrades to the `startTransition`-only row) |
+
+`createRouter({ viewTransition: "auto" \| false })` sets the app-wide default for the third row; a per-segment `viewTransition` wins. See [Opting out of the router boundary](#opting-out-of-the-router-boundary-place-your-own-viewtransition) for the full opt-out story.
+
+## What `transition()` does (wrap location)
 
 `transition(config)` attaches a [`TransitionConfig`](#transitionconfig) to the surrounding entry. Where the wrap actually lands in the rendered React tree depends on the segment type:
 
@@ -186,12 +208,72 @@ interface TransitionConfig {
   share?: string | Record<string, string>;
   default?: string | Record<string, string>; // fallback for any phase
   name?: string; // explicit view-transition-name
+  viewTransition?: "auto" | false; // boundary opt-out (see below)
 }
 ```
 
 - `default` is the catch-all if a phase-specific prop is unset.
 - The object form keys are React transition types tagged by rango: `"navigation"` (forward navigations), `"navigation-back"` (popstate cache restores), and `"action"` (partial-update action/refetch paths only — see the caveat in "Direction-aware transitions").
 - `name` lets you participate in cross-page morphs by name (advanced; you usually don't need this on a layout/route-level wrap).
+- `viewTransition` toggles whether rango places its own `<ViewTransition>` boundary. `"auto"` (default) wraps as described above; `false` opts out — see the next section.
+
+## Opting out of the router boundary (place your own `<ViewTransition>`)
+
+By default a `transition()` segment gets a rango-placed `<ViewTransition>` boundary — a cross-fade of the whole outlet/route. If you'd rather animate specific elements yourself (place `<ViewTransition name="...">` in your components), set `viewTransition: false`. The router then contributes **no boundary of its own** but still:
+
+- drives the navigation commit through `startTransition` (so React runs `document.startViewTransition`, and your own `<ViewTransition>` elements animate on navigation — driving is what they need, not a router boundary), and
+- holds same-route content (stale-while-revalidate; no skeleton flash).
+
+```tsx
+// Router drives the transition + holds content, but places NO cross-fade.
+// Only your <ViewTransition name="hero"> morphs.
+urls(({ path, transition }) => [
+  path("/product/:id", ProductPage, { name: "product" }, () => [
+    transition({ viewTransition: false }),
+  ]),
+]);
+
+// ProductPage renders the boundary itself, exactly where it's wanted:
+function ProductPage() {
+  return (
+    <ViewTransition name="hero">
+      <img src={cover} />
+    </ViewTransition>
+  );
+}
+```
+
+This is the rango analogue of the "router triggers, you place the names" model used by React Router / TanStack: rango guarantees navigations run inside a React transition; you own the boundaries.
+
+**App-wide default.** Flip the default for every `transition()` segment at the router level. A per-segment `viewTransition` still overrides it.
+
+```ts
+const router = createRouter<AppEnv>({ viewTransition: false });
+// Now `transition({})` drives + holds but places no boundary anywhere.
+// Re-enable a router boundary on one route with transition({ viewTransition: "auto" }).
+```
+
+**Precedence (per-route vs router default).** A bare `transition({})` has no per-route `viewTransition`, so it inherits the router default (`"auto"` unless `createRouter({ viewTransition: false })`). An explicit per-route value always wins. The `viewTransition` flag only toggles the boundary — `startTransition` driving and content-hold are on in every row below (they key off `transition()` presence, not this flag):
+
+| per-route (`transition(...)`)            | router (`createRouter`) | resolved boundary        | result      |
+| ---------------------------------------- | ----------------------- | ------------------------ | ----------- |
+| `transition({})` (unset)                 | `"auto"` (default)      | wrap                     | **ST + VT** |
+| `transition({})` (unset)                 | `false`                 | no wrap                  | **ST only** |
+| `transition({ viewTransition: "auto" })` | `"auto"`                | wrap                     | ST + VT     |
+| `transition({ viewTransition: "auto" })` | `false`                 | wrap (per-route wins)    | **ST + VT** |
+| `transition({ viewTransition: false })`  | `"auto"`                | no wrap (per-route wins) | **ST only** |
+| `transition({ viewTransition: false })`  | `false`                 | no wrap                  | ST only     |
+
+On stable React the "VT" column is always a no-op (there is no `<ViewTransition>`), so every row collapses to its `startTransition`-only behavior there.
+
+| Config                                               | Router boundary  | startTransition driving (no skeleton flash) | Your own `<ViewTransition name>`   |
+| ---------------------------------------------------- | ---------------- | ------------------------------------------- | ---------------------------------- |
+| no `transition()`                                    | —                | no                                          | does not fire on nav               |
+| `transition({})` / `{ viewTransition: "auto" }`      | yes (cross-fade) | yes                                         | fires, under the router cross-fade |
+| `transition({ viewTransition: false })`              | none             | yes                                         | fires alone                        |
+| global `viewTransition: false`, route `transition()` | none             | yes                                         | fires alone                        |
+
+> On **stable** React there is no `<ViewTransition>` at all, so `viewTransition: false` is visually a no-op there — but the startTransition driving and content-hold still apply, identical to `transition({})`.
 
 ## Recommendations
 

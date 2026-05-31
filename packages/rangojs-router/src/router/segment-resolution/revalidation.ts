@@ -39,6 +39,7 @@ import {
   resolveLayoutComponent,
   resolveWithErrorBoundary,
 } from "./helpers.js";
+import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { getRouterContext } from "../router-context.js";
 import { resolveSink, safeEmit } from "../telemetry.js";
 import {
@@ -593,7 +594,10 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       index: 0,
       component,
       loading: parallelEntry.loading === false ? null : parallelEntry.loading,
-      transition: parallelEntry.transition,
+      transition: applyViewTransitionDefault(
+        parallelEntry.transition,
+        deps.viewTransitionDefault,
+      ),
       params,
       slot,
       _handlerRan: handlerRan,
@@ -803,7 +807,10 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
     index: 0,
     component: resolvedComponent,
     loading: entry.loading === false ? null : entry.loading,
-    transition: entry.transition,
+    transition: applyViewTransitionDefault(
+      entry.transition,
+      deps.viewTransitionDefault,
+    ),
     params,
     belongsToRoute,
     ...(entry.type === "layout" || entry.type === "cache"
@@ -1137,7 +1144,10 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     belongsToRoute,
     layoutName: orphan.id,
     loading: orphan.loading === false ? null : orphan.loading,
-    transition: orphan.transition,
+    transition: applyViewTransitionDefault(
+      orphan.transition,
+      deps.viewTransitionDefault,
+    ),
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
   });
 
@@ -1294,7 +1304,10 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       index: 0,
       component,
       loading: parallelEntry.loading === false ? null : parallelEntry.loading,
-      transition: parallelEntry.transition,
+      transition: applyViewTransitionDefault(
+        parallelEntry.transition,
+        deps.viewTransitionDefault,
+      ),
       params,
       slot,
       _handlerRan: handlerRan,
