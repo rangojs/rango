@@ -422,6 +422,51 @@ export const urlpatterns = urls(
         ],
       ),
 
+      // Boundary opt-out variant: identical to /swr-product but opts out of the
+      // router's own <ViewTransition> via transition({ viewTransition: false }).
+      // Pins that the flag keeps the startTransition driving and content-hold:
+      // navigating /swr-product-vtoff/1 -> /2 must still reconcile and hold the
+      // previous content (no skeleton flash) on stable React, exactly like
+      // transition({}). The flag only suppresses the boundary (a no-op visually
+      // on stable React, which has no ViewTransition), never the hold.
+      path(
+        "/swr-product-vtoff/:id",
+        async (ctx) => {
+          const { name, loadedAt } = await ctx.use(SwrProductLoader);
+          return (
+            <div data-testid="swr-product-vtoff-page">
+              <h1 data-testid="swr-product-vtoff-name">{name}</h1>
+              <p data-testid="swr-product-vtoff-loaded-at">{loadedAt}</p>
+              <SwrProductCounter />
+              <nav>
+                <Link
+                  to="/swr-product-vtoff/1"
+                  data-testid="swr-product-vtoff-link-1"
+                >
+                  Product 1
+                </Link>
+                <Link
+                  to="/swr-product-vtoff/2"
+                  data-testid="swr-product-vtoff-link-2"
+                >
+                  Product 2
+                </Link>
+              </nav>
+            </div>
+          );
+        },
+        { name: "swrProductVtoff.detail" },
+        () => [
+          loader(SwrProductLoader),
+          loading(
+            <div data-testid="swr-product-vtoff-skeleton">
+              Loading product…
+            </div>,
+          ),
+          transition({ viewTransition: false }),
+        ],
+      ),
+
       // Contrast route: same :param + loading() skeleton, but WITHOUT
       // transition(). This is the default behavior — navigating between params
       // remounts the route and shows the skeleton. Pins that the opt-in is

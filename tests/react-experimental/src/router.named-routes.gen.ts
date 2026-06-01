@@ -17,6 +17,14 @@ export const NamedRoutes = {
   "swrProduct.detail": "/swr-product/:id",
   "transition.a": "/transition-a",
   "transition.b": "/transition-b",
+  "vt.auto.x": "/vt-auto-x",
+  "vt.auto.y": "/vt-auto-y",
+  "vt.forceAuto.x": "/vt-force-auto-x",
+  "vt.forceAuto.y": "/vt-force-auto-y",
+  "vt.off.x": "/vt-off-x",
+  "vt.off.y": "/vt-off-y",
+  "vt.user.x": "/vt-user-x",
+  "vt.user.y": "/vt-user-y",
 } as const;
 
 declare global {

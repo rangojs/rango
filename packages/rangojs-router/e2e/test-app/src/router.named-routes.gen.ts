@@ -290,6 +290,7 @@ export const NamedRoutes = {
   "static-shell": "/static-shell/:tag",
   streamModeTest: "/stream-mode-test",
   "swrProduct.detail": "/swr-product/:id",
+  "swrProductVtoff.detail": "/swr-product-vtoff/:id",
   testClearErrorLog: "/__test/clear-error-log",
   testLastError: "/__test/last-error",
   testLoaderIds: "/__test/loader-ids",

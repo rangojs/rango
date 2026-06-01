@@ -720,6 +720,123 @@ function LayoutTxBPage(ctx: HandlerContext) {
 }
 
 // ---------------------------------------------------------------------------
+// View-transition boundary opt-out fixtures
+//
+// All three route pairs use transition() so navigation is driven through
+// startTransition. The transition({ viewTransition }) flag only toggles
+// whether the ROUTER places its own <ViewTransition> boundary. The e2e
+// (view-transition-optout.test.ts) spies on document.startViewTransition to
+// assert the boundary is or isn't placed:
+//   - vt-auto-*: transition({})            -> router boundary -> VT fires.
+//   - vt-off-*:  transition({ vt: false }) -> no boundary, no user VT -> no VT.
+//   - vt-user-*: transition({ vt: false }) + a consumer-placed <ViewTransition>
+//                -> no router boundary, but the consumer's named morph fires.
+// ---------------------------------------------------------------------------
+
+function VtAutoXPage() {
+  return (
+    <main data-testid="vt-auto-x-page">
+      <h1>VT Auto X</h1>
+      <Link to="/vt-auto-y" data-testid="nav-vt-auto-y">
+        Go to Y
+      </Link>
+    </main>
+  );
+}
+
+function VtAutoYPage() {
+  return (
+    <main data-testid="vt-auto-y-page">
+      <h1>VT Auto Y</h1>
+      <Link to="/vt-auto-x" data-testid="nav-vt-auto-x">
+        Go to X
+      </Link>
+    </main>
+  );
+}
+
+function VtOffXPage() {
+  return (
+    <main data-testid="vt-off-x-page">
+      <h1>VT Off X</h1>
+      <Link to="/vt-off-y" data-testid="nav-vt-off-y">
+        Go to Y
+      </Link>
+    </main>
+  );
+}
+
+function VtOffYPage() {
+  return (
+    <main data-testid="vt-off-y-page">
+      <h1>VT Off Y</h1>
+      <Link to="/vt-off-x" data-testid="nav-vt-off-x">
+        Go to X
+      </Link>
+    </main>
+  );
+}
+
+function VtUserXPage() {
+  return (
+    <main data-testid="vt-user-x-page">
+      <h1>VT User X</h1>
+      <ViewTransition name="vt-user-shared">
+        <div
+          data-testid="vt-user-box"
+          style={{ width: "80px", height: "80px", background: "#3b82f6" }}
+        />
+      </ViewTransition>
+      <Link to="/vt-user-y" data-testid="nav-vt-user-y">
+        Go to Y
+      </Link>
+    </main>
+  );
+}
+
+function VtUserYPage() {
+  return (
+    <main data-testid="vt-user-y-page">
+      <h1>VT User Y</h1>
+      <ViewTransition name="vt-user-shared">
+        <div
+          data-testid="vt-user-box"
+          style={{ width: "80px", height: "80px", background: "#ef4444" }}
+        />
+      </ViewTransition>
+      <Link to="/vt-user-x" data-testid="nav-vt-user-x">
+        Go to X
+      </Link>
+    </main>
+  );
+}
+
+// Per-route transition({ viewTransition: "auto" }) — explicitly forces the
+// router boundary. Under a global viewTransition:false default, these must
+// still fire (the per-segment value overrides the global default).
+function VtForceAutoXPage() {
+  return (
+    <main data-testid="vt-force-auto-x-page">
+      <h1>VT Force Auto X</h1>
+      <Link to="/vt-force-auto-y" data-testid="nav-vt-force-auto-y">
+        Go to Y
+      </Link>
+    </main>
+  );
+}
+
+function VtForceAutoYPage() {
+  return (
+    <main data-testid="vt-force-auto-y-page">
+      <h1>VT Force Auto Y</h1>
+      <Link to="/vt-force-auto-x" data-testid="nav-vt-force-auto-x">
+        Go to X
+      </Link>
+    </main>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Blog example — "Floating Elements"
 // Shared element transitions: title, date, avatars morph between list/detail
 // ---------------------------------------------------------------------------
@@ -1354,6 +1471,41 @@ export const urlpatterns = urls(
       path("/layout-tx-a", LayoutTxAPage, { name: "layoutTx.a" }),
       path("/layout-tx-b", LayoutTxBPage, { name: "layoutTx.b" }),
     ]),
+
+    // View-transition boundary opt-out: transition({ viewTransition }) toggles
+    // only the router-placed boundary. All three pairs drive navigation; the
+    // e2e asserts (via a startViewTransition spy) which placements fire.
+    path("/vt-auto-x", VtAutoXPage, { name: "vt.auto.x" }, () => [
+      transition({}),
+    ]),
+    path("/vt-auto-y", VtAutoYPage, { name: "vt.auto.y" }, () => [
+      transition({}),
+    ]),
+    path("/vt-off-x", VtOffXPage, { name: "vt.off.x" }, () => [
+      transition({ viewTransition: false }),
+    ]),
+    path("/vt-off-y", VtOffYPage, { name: "vt.off.y" }, () => [
+      transition({ viewTransition: false }),
+    ]),
+    path("/vt-user-x", VtUserXPage, { name: "vt.user.x" }, () => [
+      transition({ viewTransition: false }),
+    ]),
+    path("/vt-user-y", VtUserYPage, { name: "vt.user.y" }, () => [
+      transition({ viewTransition: false }),
+    ]),
+    // Explicit per-route boundary — overrides a global viewTransition:false.
+    path(
+      "/vt-force-auto-x",
+      VtForceAutoXPage,
+      { name: "vt.forceAuto.x" },
+      () => [transition({ viewTransition: "auto" })],
+    ),
+    path(
+      "/vt-force-auto-y",
+      VtForceAutoYPage,
+      { name: "vt.forceAuto.y" },
+      () => [transition({ viewTransition: "auto" })],
+    ),
     transition({ enter: "fade-in", exit: "fade-out" }, () => [
       path("/static", StaticPage, { name: "static" }),
       path("/prerender", PrerenderedPage, { name: "prerender" }),

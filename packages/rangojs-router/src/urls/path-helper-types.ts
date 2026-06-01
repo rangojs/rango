@@ -350,7 +350,15 @@ export type PathHelpers<TEnv> = {
   };
 
   /**
-   * Attach a ViewTransition boundary to the current segment or a group of routes
+   * Opt a route (or group of routes) into transition-driven navigation.
+   *
+   * Two independent layers: (1) startTransition, on all React versions, holds
+   * the previous content across a same-route nav (no skeleton flash) and is the
+   * precondition for any view transition; (2) on experimental React, an
+   * additional `<ViewTransition>` boundary cross-fades/morphs the swap. Pass
+   * `{ viewTransition: false }` to keep #1 without the router boundary. A view
+   * transition cannot fire without a startTransition. See
+   * skills/view-transitions for the startTransition x ViewTransition matrix.
    */
   transition: {
     (): TransitionItem;

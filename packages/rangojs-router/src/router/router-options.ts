@@ -358,6 +358,30 @@ export interface RangoOptions<TEnv = any> {
   theme?: import("../theme/types.js").ThemeConfig | true;
 
   /**
+   * Default for whether the router wraps `transition()` segments in its own
+   * React `<ViewTransition>` boundary (experimental React only).
+   *
+   * - "auto" (default): every route/layout that opts in via `transition()`
+   *   gets a router-owned cross-fade.
+   * - false: the router never places its own boundary. Routes that use
+   *   `transition()` still drive navigation through startTransition (so loaders
+   *   hold instead of flashing a skeleton) and still let consumer-placed
+   *   `<ViewTransition>` elements animate — the router just contributes no
+   *   cross-fade of its own. This is the "router triggers, you place the
+   *   transitions" model.
+   *
+   * A per-segment `transition({ viewTransition })` overrides this default.
+   *
+   * @example
+   * ```typescript
+   * // App-wide: drive + hold, but never auto-wrap. Place <ViewTransition>
+   * // yourself in components where you want a morph.
+   * const router = createRouter<AppEnv>({ viewTransition: false });
+   * ```
+   */
+  viewTransition?: "auto" | false;
+
+  /**
    * URL patterns to register with the router.
    *
    * Accepts either a `UrlPatterns` object from `urls()` or a builder function

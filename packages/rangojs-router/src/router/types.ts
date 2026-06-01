@@ -98,6 +98,14 @@ export interface SegmentResolutionDeps<TEnv = any> {
   ) => ReactNode | NotFoundBoundaryHandler | null;
   notFoundComponent?: ReactNode | ((props: { pathname: string }) => ReactNode);
   callOnError: (error: unknown, phase: ErrorPhase, context: any) => void;
+  /**
+   * Router-level default for the per-segment `transition({ viewTransition })`
+   * flag, from createRouter({ viewTransition }). Resolved into each segment's
+   * transition config during resolution (only `false` is stamped) so the render
+   * gate reads the boundary decision off the segment on both server and client.
+   * Undefined is treated as "auto" (wrap).
+   */
+  viewTransitionDefault?: "auto" | false;
 }
 
 /**

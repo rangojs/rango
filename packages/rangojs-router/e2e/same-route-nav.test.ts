@@ -109,6 +109,36 @@ function describeSameRouteNav(label: string, mode: "dev" | "build") {
       expect(await skeletonSeen(page)).toBe(false);
     });
 
+    test("transition({ viewTransition: false }) still holds content and never flashes the skeleton", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      // The boundary opt-out keeps the startTransition driving + content-hold;
+      // only the router-placed <ViewTransition> is suppressed (a no-op on
+      // stable React). So this route holds exactly like transition({}).
+      await page.goto(f.url("/swr-product-vtoff/1"));
+      await waitForHydration(page);
+      await expect(testId(page, "swr-product-vtoff-name")).toHaveText(
+        "Product 1",
+      );
+
+      await using __ = await expectNoReload(page);
+      await installSkeletonSentinel(page, "swr-product-vtoff-skeleton");
+
+      await testId(page, "swr-product-vtoff-link-2").click();
+
+      // Previous content stays on screen while the new loader is pending...
+      await expect(testId(page, "swr-product-vtoff-name")).toHaveText(
+        "Product 1",
+      );
+      // ...then swaps once it resolves, with no skeleton ever attached.
+      await expect(testId(page, "swr-product-vtoff-name")).toHaveText(
+        "Product 2",
+      );
+      expect(await skeletonSeen(page)).toBe(false);
+    });
+
     test("same-route nav reconciles the subtree (local state persists)", async ({
       page,
     }) => {
