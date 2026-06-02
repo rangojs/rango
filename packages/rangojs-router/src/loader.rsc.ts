@@ -21,6 +21,7 @@ import {
   registerFetchableLoader,
   getFetchableLoader,
 } from "./server/fetchable-loader-store.js";
+import { missingInjectedIdError } from "./missing-id-error.js";
 
 export { getFetchableLoader };
 
@@ -53,11 +54,7 @@ export function createLoader<T>(
   const loaderId = __injectedId || "";
 
   if (!loaderId && process.env.NODE_ENV === "development") {
-    throw new Error(
-      "[rango] Loader is missing $$id. " +
-        "Make sure the exposeInternalIds Vite plugin is enabled and " +
-        "the loader is exported with: export const MyLoader = createLoader(...)",
-    );
+    throw missingInjectedIdError("Loader", "createLoader");
   }
 
   // If not fetchable, store fn in registry (for SSR ctx.use() resolution)

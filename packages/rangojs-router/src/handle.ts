@@ -1,3 +1,5 @@
+import { missingInjectedIdError } from "./missing-id-error.js";
+
 /**
  * Handle definition for accumulating data across route segments.
  *
@@ -96,11 +98,7 @@ export function createHandle<TData, TAccumulated = TData[]>(
   const handleId = __injectedId ?? "";
 
   if (!handleId && process.env.NODE_ENV === "development") {
-    throw new Error(
-      "[rango] Handle is missing $$id. " +
-        "Make sure the exposeInternalIds Vite plugin is enabled and " +
-        "the handle is exported with: export const MyHandle = createHandle(...)",
-    );
+    throw missingInjectedIdError("Handle", "createHandle");
   }
 
   const collectFn =

@@ -18,6 +18,7 @@ import type {
   LoaderDefinition,
   LoaderFn,
 } from "./types.js";
+import { missingInjectedIdError } from "./missing-id-error.js";
 
 // Overload 1: With function only (not fetchable)
 export function createLoader<T>(
@@ -46,11 +47,7 @@ export function createLoader<T>(
   const loaderId = __injectedId || "";
 
   if (!loaderId && process.env.NODE_ENV === "development") {
-    throw new Error(
-      "[rango] Loader is missing $$id. " +
-        "Make sure the exposeInternalIds Vite plugin is enabled and " +
-        "the loader is exported with: export const MyLoader = createLoader(...)",
-    );
+    throw missingInjectedIdError("Loader", "createLoader");
   }
 
   return {
