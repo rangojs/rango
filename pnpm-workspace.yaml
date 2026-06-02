@@ -3,6 +3,7 @@ packages:
   - "packages/rangojs-router/e2e/test-app"
   - "packages/rangojs-router/e2e/e2e-basic"
   - "packages/rangojs-router/e2e/e2e-timeout"
+  - "packages/rangojs-router/e2e/mini"
   - "examples/*"
   - "tests/*"
 
