@@ -49,14 +49,20 @@ import {
   NavHooksDemo,
   LinkStatusDemo,
   StaticHref,
+  GlobalReverse,
 } from "./client.js";
 
 // ---------------------------------------------------------------------------
 // Server-only config (declared at the top, referenced in the tree below).
 // Context-var tokens are set in middleware and read in handlers; the client
 // imports none of it. (The product catalog and its loader live in the products
-// route module, urls/products.tsx — that group was extracted into its own file
-// so the plugin emits a per-module routes map for useReverse.)
+// route module, urls/products.tsx. That group lives in its own file to
+// demonstrate the mount-aware, local-name useReverse variant, whose per-module
+// routes map is emitted by `rango generate` — CLI-only. useReverse does NOT
+// require this: GlobalReverse on the home page reverses against the auto-emitted
+// router.named-routes.gen.ts with full dotted global names — but only because it
+// renders at the root mount; that inline form is mount-unaware (absolute paths)
+// and would double-prefix under a non-root include.)
 // ---------------------------------------------------------------------------
 
 // Typed context-var tokens — set in middleware, read in handlers.
@@ -211,6 +217,7 @@ export const router = createRouter({
                   <ClockWidget />
                   <FetchEcho />
                   <StaticHref />
+                  <GlobalReverse />
                 </div>
               );
             },

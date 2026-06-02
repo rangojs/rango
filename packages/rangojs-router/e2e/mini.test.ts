@@ -380,6 +380,25 @@ function miniTests(f: Fixture) {
     await expect(page.getByTestId("reverse-detail")).toHaveText("/products/2");
   });
 
+  test("useReverse: dotted global names via the named-routes gen (root mount)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+    // GlobalReverse calls useReverse(NamedRoutes) with dot-prefixed GLOBAL names
+    // (".home", ".products.detail") against the auto-emitted
+    // router.named-routes.gen.ts — no per-module gen. At the root mount the
+    // global map's absolute paths pass through unchanged (the mount prefix is
+    // empty); off-root this form would double-prefix, which is why the demo is
+    // root-only.
+    await expect(page.getByTestId("global-reverse-home")).toHaveText("/");
+    await expect(page.getByTestId("global-reverse-product")).toHaveText(
+      "/products/2",
+    );
+  });
+
   test("scroll restoration: ScrollRestoration sets manual mode", async ({
     page,
   }) => {

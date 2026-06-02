@@ -47,9 +47,16 @@ import {
   addToCart,
   saveFlashRedirect,
 } from "./actions.js";
-// Per-module routes map (emitted by `rango generate src/urls/products.tsx`),
-// imported only for the client-side useReverse scoped reverse.
+// Per-module routes map (emitted by `rango generate src/urls/products.tsx`) for
+// mount-aware, local-name useReverse (".index"/".detail").
 import { routes as productsRoutes } from "./urls/products.gen.js";
+// Combined named-routes map (auto-emitted by the dev/build plugin). useReverse
+// also accepts THIS, using full dotted global names (".products.detail") — no
+// per-module gen required. useReverse always joins the current mount, and the
+// global map's paths are absolute, so this form is correct only at the root
+// mount (where the mount prefix is empty); under a non-root mount it would
+// double-prefix.
+import { NamedRoutes } from "./router.named-routes.gen.js";
 
 // ---------------------------------------------------------------------------
 // Navigation chrome
@@ -286,6 +293,21 @@ export function ProductsReverse() {
       <span data-testid="reverse-index">{reverse(".index")}</span>
       <span data-testid="reverse-detail">
         {reverse(".detail", { id: "2" })}
+      </span>
+    </div>
+  );
+}
+
+// useReverse over the COMBINED named-routes gen (router.named-routes.gen.ts),
+// using full dotted GLOBAL names — no per-module gen required. Rendered at the
+// root (mount "/"), where the global map's absolute paths pass through unchanged.
+export function GlobalReverse() {
+  const reverse = useReverse(NamedRoutes);
+  return (
+    <div data-testid="global-reverse">
+      <span data-testid="global-reverse-home">{reverse(".home")}</span>
+      <span data-testid="global-reverse-product">
+        {reverse(".products.detail", { id: "2" })}
       </span>
     </div>
   );

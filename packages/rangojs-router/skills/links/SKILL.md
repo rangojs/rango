@@ -273,7 +273,7 @@ function MountInfo() {
 
 Hook that returns a typed local reverse function for a `routes` map imported from a generated `.gen.ts` next to a `urls()` module. The route map is the **exposure boundary** — `useReverse` only knows about names in that map, never the full app manifest.
 
-> Import the per-module `routes` (e.g. `urls/blog.gen.ts`), **not** `router.named-routes.gen.ts`. The named-routes file is the whole app manifest and is server-only data — importing it into a client component pulls every route name into the client bundle.
+> **Which map?** `useReverse` accepts any routes map. Prefer the per-module `routes` (e.g. `urls/blog.gen.ts`): it gives **mount-aware** local `.name` reverse (auto-prefixes the `include()` mount) and only that module's names enter the client bundle. You _can_ instead pass `router.named-routes.gen.ts` (`NamedRoutes`) for full dotted **global** names (`.blog.post`) — it is a plain importable map and works on the client (it is **not** server-only) — but its paths are **absolute**, so it is not mount-aware (use it at the root; under a non-root mount it double-prefixes), and importing it pulls every route name and pattern in the app into the client bundle (a small names-to-paths map — not components or loaders), versus the per-module map which exposes only one module's names. So the per-module map is preferred for in-module links; the named-routes map is the escape hatch for global names.
 
 ```tsx
 "use client";
@@ -369,7 +369,7 @@ Both happen synchronously during `reverse()` — wrap calls in try/catch (or an 
 
 ### Names are dot-only on the client
 
-`useReverse` accepts only `.name` (and dotted variants like `.nested.index`). There is no global namespace on the client — the import IS the scope. To link into a different module, import that module's `routes`:
+`useReverse` always requires a leading dot — even the global names from `router.named-routes.gen.ts` are addressed with a leading dot on the client (e.g. `reverse(".blog.post", { slug })`, **not** `reverse("blog.post", …)`, which throws). The map you import IS the scope: a per-module `routes` exposes that module's local, **mount-aware** names; `NamedRoutes` exposes the full set of global names whose paths are **absolute** (root-relative), so that form is mount-unaware (root mount only). To link into a different module with the per-module approach, import that module's `routes`:
 
 ```tsx
 import { routes as blogRoutes } from "../urls/blog.gen.js";
