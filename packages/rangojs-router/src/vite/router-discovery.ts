@@ -17,6 +17,7 @@ import {
   findNestedRouterConflict,
   findRouterFiles,
 } from "../build/generate-route-types.js";
+import { firstCodeMatchIndex } from "../build/route-types/source-scan.js";
 import { createVersionPlugin } from "./plugins/version-plugin.js";
 import { createVirtualStubPlugin } from "./plugins/virtual-stub-plugin.js";
 import {
@@ -1184,8 +1185,19 @@ export function createRouterDiscoveryPlugin(
               trimmed.startsWith('"use client"') ||
               trimmed.startsWith("'use client'");
             if (!inRecoveryMode && isUseClient) return;
-            const hasUrls = source.includes("urls(");
-            const hasCreateRouter = /\bcreateRouter\s*[<(]/.test(source);
+            // Cheap raw pre-check first; only when a candidate token is present
+            // do we confirm it occurs in real code (not a comment/string) via a
+            // single allocation-free code-region scan. Most saved files contain
+            // neither token and skip the scan entirely. This avoids a comment or
+            // string mention spuriously marking a file relevant and triggering an
+            // unnecessary re-discovery on save.
+            let hasUrls = source.includes("urls(");
+            let hasCreateRouter = /\bcreateRouter\s*[<(]/.test(source);
+            if (hasUrls) hasUrls = firstCodeMatchIndex(source, /urls\(/g) >= 0;
+            if (hasCreateRouter) {
+              hasCreateRouter =
+                firstCodeMatchIndex(source, /\bcreateRouter\s*[<(]/g) >= 0;
+            }
             if (!inRecoveryMode && !hasUrls && !hasCreateRouter) return;
             if (inRecoveryMode) {
               debugDiscovery?.(

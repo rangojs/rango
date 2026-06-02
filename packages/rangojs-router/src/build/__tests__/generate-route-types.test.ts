@@ -88,6 +88,32 @@ describe("writeCombinedRouteTypes", () => {
     expect(discovered).not.toContain(nestedRouter);
   });
 
+  it("ignores a createRouter( mention inside a comment or string literal", () => {
+    const appDir = join(tempDir, "src", "app");
+    const utilsDir = join(tempDir, "src", "utils");
+    mkdirSync(appDir, { recursive: true });
+    mkdirSync(utilsDir, { recursive: true });
+
+    const realRouter = join(appDir, "router.ts");
+    const decoy = join(utilsDir, "helpers.ts");
+
+    writeFileSync(realRouter, routerSource("./urls.js"));
+    // Mentions createRouter( only in a comment and a string — it must NOT be
+    // detected as a router file (regression for a spurious "Multiple routers
+    // found" error caused by scanning raw source).
+    writeFileSync(
+      decoy,
+      `// The router entry calls createRouter() exactly once.\n` +
+        `export const note = "see createRouter(opts) in the docs";\n` +
+        `export function helper(): number {\n  return 42;\n}\n`,
+    );
+
+    const discovered = findRouterFiles(tempDir);
+
+    expect(discovered).toContain(realRouter);
+    expect(discovered).not.toContain(decoy);
+  });
+
   it("detects explicit nested router conflicts", () => {
     const appRouter = join(tempDir, "src", "app", "router.ts");
     const nestedRouter = join(tempDir, "src", "app", "nested", "router.ts");

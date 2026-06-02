@@ -15,6 +15,7 @@ import {
 import ts from "typescript";
 import { generateRouteTypesSource } from "./codegen.js";
 import type { ScanFilter } from "./scan-filter.js";
+import { firstCodeMatchIndex } from "./source-scan.js";
 import {
   resolveImportedVariable,
   resolveImportPath,
@@ -38,6 +39,8 @@ function countPublicRouteEntries(source: string): number {
 }
 
 const ROUTER_CALL_PATTERN = /\bcreateRouter\s*[<(]/;
+// Global variant for the code-region scan (firstCodeMatchIndex sets lastIndex).
+const ROUTER_CALL_PATTERN_G = /\bcreateRouter\s*[<(]/g;
 
 function isRoutableSourceFile(name: string): boolean {
   return (
@@ -90,7 +93,17 @@ function findRouterFilesRecursive(
 
     try {
       const source = readFileSync(fullPath, "utf-8");
-      if (ROUTER_CALL_PATTERN.test(source)) {
+      // Fast path: most files contain no `createRouter(` at all, so the cheap
+      // raw regex short-circuits before the code-region scan. Only a file that
+      // mentions the token (real call OR a comment/string mention) is rescanned
+      // over code regions — allocation-free, never building a stripped copy —
+      // so a mention inside a comment or string is not mistaken for a real
+      // router file (which previously triggered a spurious "Multiple routers
+      // found" error).
+      if (
+        ROUTER_CALL_PATTERN.test(source) &&
+        firstCodeMatchIndex(source, ROUTER_CALL_PATTERN_G) >= 0
+      ) {
         routerFilesInDir.push(fullPath);
       }
     } catch {
