@@ -220,6 +220,7 @@ Grouped by concern — read when you need to…
 | `/tailwind`         | Set up Tailwind CSS v4 with `?url` imports                                |
 | `/view-transitions` | React View Transitions on layouts, routes, and parallel slots             |
 | `/breadcrumbs`      | Built-in Breadcrumbs handle for breadcrumb navigation                     |
+| `/react-compiler`   | Enable React Compiler (opt-in) the vite-rsc way; client-only scope        |
 
 **Observability & production health**:
 
