@@ -108,10 +108,12 @@ export function ClientReverseNav() {
         }
       />
 
-      <CaptureReverseError
-        testid="cr-no-dot"
-        call={() => (reverse as unknown as (n: string) => string)("index")}
-      />
+      {/* The leading dot is optional: a non-dotted name resolves identically to
+          the dotted form (both mount-prefixed against the same map). */}
+      <span data-testid="cr-no-dot">{reverse("index")}</span>
+      <span data-testid="cr-no-dot-detail">
+        {reverse("detail", { postId: "p1" })}
+      </span>
 
       <Link to={crLinkTo(mount, "/zeta")} data-testid="cr-link-switch-tenant">
         switch tenant

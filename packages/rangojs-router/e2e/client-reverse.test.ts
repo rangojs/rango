@@ -67,15 +67,17 @@ async function assertNavSurface(
   // nested key (".nested.index") resolves against the local map
   await expect(testId(page, "cr-nested-index")).toHaveText(`${base}/nested`);
 
+  // the leading dot is OPTIONAL: a non-dotted name resolves identically to the
+  // dotted form (both mount-prefixed against the same map).
+  await expect(testId(page, "cr-no-dot")).toHaveText(base);
+  await expect(testId(page, "cr-no-dot-detail")).toHaveText(`${base}/posts/p1`);
+
   // error messages
   await expect(testId(page, "cr-unknown")).toHaveText(
-    `ERROR: Unknown local route: ".not-a-route"`,
+    `ERROR: Unknown route: ".not-a-route"`,
   );
   await expect(testId(page, "cr-missing-param")).toHaveText(
     `ERROR: Missing param "postId" for route ".detail"`,
-  );
-  await expect(testId(page, "cr-no-dot")).toHaveText(
-    `ERROR: Local route names must start with ".": "index"`,
   );
 }
 

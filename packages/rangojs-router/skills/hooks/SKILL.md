@@ -868,7 +868,7 @@ function MountInfo() {
 
 ### useReverse(routes)
 
-Mount-aware local reverse for client components. Import the generated `routes` map from a `urls()` module's `.gen.ts` and call `reverse(".name", params?)`. Auto-fills params from `useParams()`; explicit params override.
+Mount-aware local reverse for client components. Import the generated `routes` map from a `urls()` module's `.gen.ts` and call `reverse("name", params?)` — the leading dot is optional. Auto-fills params from `useParams()`; explicit params override.
 
 > Per-module `*.gen.ts` files are **CLI opt-in and not Vite-watched** — run `rango generate <urls-file>` (or wire it into `predev`) and re-run it whenever the module's routes change. See `/links` for the full generated-file setup and exposure-boundary rules.
 
@@ -881,8 +881,8 @@ function BlogNav() {
   const reverse = useReverse(blogRoutes);
   return (
     <nav>
-      <Link to={reverse(".index")}>Blog</Link>
-      <Link to={reverse(".post", { postId: "hello" })}>Post</Link>
+      <Link to={reverse("index")}>Blog</Link>
+      <Link to={reverse("post", { postId: "hello" })}>Post</Link>
     </nav>
   );
 }

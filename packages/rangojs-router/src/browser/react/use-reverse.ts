@@ -34,11 +34,18 @@ function joinMount(mount: string, pattern: string): string {
 /**
  * Mount-aware reverse function for a locally-imported `routes` map.
  *
- * Resolves dot-prefixed route names against the passed `routes` (typically
- * a generated `routes` from a `urls()` module's `.gen.ts`), prefixes the
- * result with the surrounding `include()` mount path, and substitutes
- * params — auto-filling from the current matched route's params and
- * letting explicit params override.
+ * The `routes` map you pass IS the scope: `reverse("name")` looks the name up
+ * in that map (verbatim), prefixes the result with the surrounding `include()`
+ * mount path via `useMount()`, and substitutes params — auto-filling from the
+ * current matched route's params, with explicit params overriding. A module's
+ * components can therefore reverse their own routes without knowing where the
+ * module is mounted: include it under any prefix and the URLs resolve correctly.
+ *
+ * The leading dot is optional and cosmetic: `reverse("post")` and
+ * `reverse(".post")` resolve identically. The dot exists only as a readability
+ * convention and for parity with `ctx.reverse(".name")` on the server; here the
+ * passed map is the scope, so there is no separate global namespace to
+ * disambiguate and the dot carries no meaning.
  *
  * @example
  * ```tsx
@@ -50,8 +57,8 @@ function joinMount(mount: string, pattern: string): string {
  *   const reverse = useReverse(blogRoutes);
  *   return (
  *     <>
- *       <Link to={reverse(".index")}>Blog</Link>
- *       <Link to={reverse(".post", { postId: "hello" })}>Post</Link>
+ *       <Link to={reverse("index")}>Blog</Link>
+ *       <Link to={reverse("post", { postId: "hello" })}>Post</Link>
  *     </>
  *   );
  * }
@@ -69,14 +76,14 @@ export function useReverse<const TRoutes extends LocalRouteMap>(
       explicitParams?: Record<string, string | undefined>,
       search?: Record<string, unknown>,
     ): string => {
-      if (!name.startsWith(".")) {
-        throw new Error(`Local route names must start with ".": "${name}"`);
-      }
-      const lookupName = name.slice(1);
+      // The leading dot is optional. The passed map IS the scope, so a dot to
+      // signal "local" is unnecessary — "detail" and ".detail" resolve the same.
+      // A dot is accepted (and stripped) for readability / ctx.reverse parity.
+      const lookupName = name.startsWith(".") ? name.slice(1) : name;
       const entry = (routes as LocalRouteMap)[lookupName];
       const pattern = getPattern(entry);
       if (pattern === undefined) {
-        throw new Error(`Unknown local route: "${name}"`);
+        throw new Error(`Unknown route: "${name}"`);
       }
 
       const joined = joinMount(mount, pattern);
