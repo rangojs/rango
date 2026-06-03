@@ -374,10 +374,17 @@ function miniTests(f: Fixture) {
 
     await page.goto(f.url("/products"));
     await waitForHydration(page);
-    // useReverse(productsRoutes) resolves dot-prefixed local names against the
-    // per-module gen, auto-prefixing the include() mount "/products".
+    // useReverse(productsRoutes) resolves names against the per-module gen,
+    // auto-prefixing the include() mount "/products".
     await expect(page.getByTestId("reverse-index")).toHaveText("/products");
     await expect(page.getByTestId("reverse-detail")).toHaveText("/products/2");
+    // the leading dot is optional — non-dotted resolves identically.
+    await expect(page.getByTestId("reverse-index-nodot")).toHaveText(
+      "/products",
+    );
+    await expect(page.getByTestId("reverse-detail-nodot")).toHaveText(
+      "/products/2",
+    );
   });
 
   test("useReverse: dotted global names via the named-routes gen (root mount)", async ({

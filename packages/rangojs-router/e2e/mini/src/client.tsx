@@ -283,9 +283,10 @@ export function StaticHref() {
   return <span data-testid="static-href">{href("/counter")}</span>;
 }
 
-// Mount-aware client reverse: resolves dot-prefixed local names against the
-// products module's generated routes map, auto-prefixing the include() mount
-// ("/products"). Rendered inside the products layout so the mount is in scope.
+// Mount-aware client reverse: resolves names against the products module's
+// generated routes map, auto-prefixing the include() mount ("/products").
+// Rendered inside the products layout so the mount is in scope. The leading dot
+// is optional — reverse("detail") and reverse(".detail") resolve identically.
 export function ProductsReverse() {
   const reverse = useReverse(productsRoutes);
   return (
@@ -293,6 +294,11 @@ export function ProductsReverse() {
       <span data-testid="reverse-index">{reverse(".index")}</span>
       <span data-testid="reverse-detail">
         {reverse(".detail", { id: "2" })}
+      </span>
+      {/* same map, no leading dot — identical results */}
+      <span data-testid="reverse-index-nodot">{reverse("index")}</span>
+      <span data-testid="reverse-detail-nodot">
+        {reverse("detail", { id: "2" })}
       </span>
     </div>
   );

@@ -13,7 +13,7 @@ argument-hint: [ctx.reverse|href|useHref|useMount|useReverse|scopedReverse]
 **On the client, two patterns:**
 
 1. **Receive URLs as props / loader data / action return.** The default. The server has the full route manifest and handler context — generate URLs there and hand strings to client components.
-2. **`useReverse(routes)`.** Import a generated `routes` map from a `urls()` module's `.gen.ts` and call `reverse(".name", params?)`. Mount-aware via `useMount()`, auto-fills params from `useParams()`, fully typed from the imported map. Use this when a client component needs to generate URLs into a known module without round-tripping through the server.
+2. **`useReverse(routes)`.** Import a generated `routes` map from a `urls()` module's `.gen.ts` and call `reverse("name", params?)` (the leading dot is optional). Mount-aware via `useMount()`, auto-fills params from `useParams()`, fully typed from the imported map. Use this when a client component needs to generate URLs into a known module without round-tripping through the server.
 
 `ctx.reverse()` itself is **server-only** — it depends on the full route manifest and handler context. Client components never import or call it.
 
@@ -273,7 +273,7 @@ function MountInfo() {
 
 Hook that returns a typed local reverse function for a `routes` map imported from a generated `.gen.ts` next to a `urls()` module. The route map is the **exposure boundary** — `useReverse` only knows about names in that map, never the full app manifest.
 
-> **Which map?** `useReverse` accepts any routes map. Prefer the per-module `routes` (e.g. `urls/blog.gen.ts`): it gives **mount-aware** local `.name` reverse (auto-prefixes the `include()` mount) and only that module's names enter the client bundle. You _can_ instead pass `router.named-routes.gen.ts` (`NamedRoutes`) for full dotted **global** names (`.blog.post`) — it is a plain importable map and works on the client (it is **not** server-only) — but its paths are **absolute**, so it is not mount-aware (use it at the root; under a non-root mount it double-prefixes), and importing it pulls every route name and pattern in the app into the client bundle (a small names-to-paths map — not components or loaders), versus the per-module map which exposes only one module's names. So the per-module map is preferred for in-module links; the named-routes map is the escape hatch for global names.
+> **Which map?** `useReverse` accepts any routes map. Prefer the per-module `routes` (e.g. `urls/blog.gen.ts`): it gives **mount-aware** local `.name` reverse (auto-prefixes the `include()` mount) and only that module's names enter the client bundle. You _can_ instead pass `router.named-routes.gen.ts` (`NamedRoutes`) for **global** names (`blog.post`; the leading dot is optional) — it is a plain importable map and works on the client (it is **not** server-only) — but its paths are **absolute** while `useReverse` mount-prefixes, so it is correct only at the root mount (under a non-root mount it double-prefixes), and importing it pulls every route name and pattern in the app into the client bundle (a small names-to-paths map — not components or loaders), versus the per-module map which exposes only one module's names. So the per-module map is preferred for in-module links; the named-routes map is the escape hatch for global names.
 
 ```tsx
 "use client";
@@ -285,8 +285,8 @@ export function BlogNav() {
 
   return (
     <nav>
-      <Link to={reverse(".index")}>Blog</Link>
-      <Link to={reverse(".post", { postId: "hello" })}>Post</Link>
+      <Link to={reverse("index")}>Blog</Link>
+      <Link to={reverse("post", { postId: "hello" })}>Post</Link>
     </nav>
   );
 }
@@ -294,7 +294,7 @@ export function BlogNav() {
 
 ### How it resolves
 
-1. Strips the leading `.` and looks up the name in the imported `routes` map.
+1. Strips an optional leading `.` and looks up the name in the imported `routes` map.
 2. Joins the local pattern with the surrounding `useMount()` value — the include's URL pattern.
 3. Substitutes params: explicit params from the call, then auto-filled from `useParams()` for anything still unresolved (mount params like `:tenantId` flow in this way).
 4. Appends a query string if a search object is passed and the route has a `search` schema.
@@ -362,14 +362,14 @@ reverse(".search", {}, { q: "hello world", page: 2 });
 
 ### Errors
 
-- Unknown name: throws `Unknown local route: ".not-a-route"`.
+- Unknown name: throws `Unknown route: ".not-a-route"`.
 - Missing required param: throws `Missing param "postId" for route ".detail"`.
 
 Both happen synchronously during `reverse()` — wrap calls in try/catch (or an ErrorBoundary if the throw happens during render) when you need to surface them as UI.
 
-### Names are dot-only on the client
+### The leading dot is optional
 
-`useReverse` always requires a leading dot — even the global names from `router.named-routes.gen.ts` are addressed with a leading dot on the client (e.g. `reverse(".blog.post", { slug })`, **not** `reverse("blog.post", …)`, which throws). The map you import IS the scope: a per-module `routes` exposes that module's local, **mount-aware** names; `NamedRoutes` exposes the full set of global names whose paths are **absolute** (root-relative), so that form is mount-unaware (root mount only). To link into a different module with the per-module approach, import that module's `routes`:
+`reverse("post")` and `reverse(".post")` resolve **identically** — the leading dot is cosmetic. The map you import IS the scope, so there is no separate global namespace to disambiguate and the dot carries no meaning; it exists only as a readability convention and for parity with `ctx.reverse(".name")` on the server. To link into a different module, import that module's `routes`:
 
 ```tsx
 import { routes as blogRoutes } from "../urls/blog.gen.js";
@@ -380,8 +380,8 @@ function CrossNav() {
   const shop = useReverse(shopRoutes);
   return (
     <nav>
-      <Link to={blog(".index")}>Blog</Link>
-      <Link to={shop(".cart")}>Cart</Link>
+      <Link to={blog("index")}>Blog</Link>
+      <Link to={shop("cart")}>Cart</Link>
     </nav>
   );
 }
