@@ -1,5 +1,6 @@
 import { cloudflare } from "@cloudflare/vite-plugin";
-import react from "@vitejs/plugin-react";
+import react, { reactCompilerPreset } from "@vitejs/plugin-react";
+import babel from "@rolldown/plugin-babel";
 import { defineConfig, type Plugin } from "vite";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,6 +48,14 @@ export default defineConfig({
   plugins: [
     parityAliasPlugin(),
     react(),
+    // React Compiler per the @vitejs/plugin-rsc example. plugin-react v6 runs
+    // oxc (no internal Babel), so the compiler is a separate top-level
+    // @rolldown/plugin-babel ordered after react() and before the plugin that
+    // supplies @vitejs/plugin-rsc (here the cloudflare plugin).
+    // reactCompilerPreset() gates itself via applyToEnvironmentHook
+    // (consumer === "client"), so it compiles client components only; ssr/rsc
+    // are left untouched (matches the upstream example).
+    babel({ presets: [reactCompilerPreset()] }),
     rango({ preset: "cloudflare", buildEnv: "auto" }),
     cloudflare({
       configPath: "./wrangler.json",
