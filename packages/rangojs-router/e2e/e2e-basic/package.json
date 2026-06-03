@@ -15,8 +15,13 @@
     "react-dom": "catalog:"
   },
   "devDependencies": {
+    "@babel/core": "catalog:",
+    "@rolldown/plugin-babel": "catalog:",
+    "@types/babel__core": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "babel-plugin-react-compiler": "catalog:",
     "typescript": "^5.3.0",
     "vite": "catalog:"
   }
