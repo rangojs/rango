@@ -1,4 +1,5 @@
 import test, { type Page, type Locator, expect } from "@playwright/test";
+import { type Fixture, useFixture } from "./fixture";
 
 /**
  * Clear the shopping cart by clicking the clear cart button if it exists.
@@ -29,6 +30,31 @@ export async function clearCart(page: Page, shopUrl: string) {
 export const testNoJs = test.extend({
   javaScriptEnabled: ({}, use) => use(false),
 });
+
+/**
+ * Declare a production-mode describe. The "(production)" tag and the build
+ * fixture are wired here, so the title can never drift out of the production
+ * Playwright project (the bucketing guard in tools/check-e2e-bucketing.mjs
+ * enforces this for any describe still written by hand). The build fixture is
+ * passed to the body; use f.url(...) for navigation.
+ *
+ * Usage:
+ *   prodDescribe("composition-routes", (f) => {
+ *     test("renders index", async ({ page }) => {
+ *       await page.goto(f.url("/composition"));
+ *     });
+ *   });
+ */
+export function prodDescribe(
+  name: string,
+  body: (f: Fixture) => void,
+  options: Omit<Parameters<typeof useFixture>[0], "mode"> = { root: "." },
+): void {
+  test.describe(`${name} (production)`, () => {
+    const f = useFixture({ ...options, mode: "build" });
+    body(f);
+  });
+}
 
 export async function waitForHydration(page: Page) {
   const hydrationErrors: string[] = [];

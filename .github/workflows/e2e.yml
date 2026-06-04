@@ -46,6 +46,9 @@ jobs:
       - name: Run oxlint
         run: pnpm lint
 
+      - name: Check e2e dev/prod bucketing
+        run: pnpm check:e2e-bucketing
+
   format:
     needs: [debounce]
     runs-on: ubuntu-latest

@@ -1699,7 +1699,7 @@ test.describe("cache-loader-null (production)", () => {
 // Search params cache isolation (dev)
 // ============================================================================
 
-test.describe("cache-search-params-isolation-dev", () => {
+test.describe("cache-search-params-isolation (dev)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
@@ -1752,7 +1752,7 @@ test.describe("cache-search-params-isolation-dev", () => {
 // Search params cache isolation (production)
 // ============================================================================
 
-test.describe("cache-search-params-isolation-prod", () => {
+test.describe("cache-search-params-isolation (production)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "build",
