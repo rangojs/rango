@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { test as devTest, devURL } from "./dev-fixture";
-import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError } from "./helper";
+import { prodDescribe, waitForHydration, expectNoPageError } from "./helper";
 
 /**
  * Composition tests (dev mode) - verify globally imported helpers work
@@ -46,12 +45,7 @@ devTest.describe("composition-routes", () => {
 /**
  * Composition tests (production build)
  */
-test.describe("composition-routes-build", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "build",
-  });
-
+prodDescribe("composition-routes", (f) => {
   test("should render composition index page in production", async ({
     page,
   }) => {

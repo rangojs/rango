@@ -13,6 +13,30 @@
 - **HMR watcher tests** (`route-types-hmr.test.ts`) are skipped on CI due to unreliable file watcher behavior on GitHub Actions. When changing route types generation or the Vite plugin watcher code, run these tests locally before opening a PR: `pnpm --filter @rangojs/router exec playwright test route-types-hmr --project=hmr`
 - **MANDATORY**: All e2e tests MUST cover BOTH dev AND production modes. Never write a dev-only test. When adding new e2e test cases, always add the production counterpart. Verify output in both modes. Any gap in production test coverage must be flagged immediately — it is not acceptable. Test the cloudflare basic app and e2e test app.
 
+### Dev/prod bucketing convention
+
+E2e suites split dev vs production by **grepping the describe title**: the `production` Playwright project matches titles containing `(production)`; the `dev` project matches everything else. A production-mode describe (one wiring `useFixture({ mode: "build" })`) whose title omits `(production)` silently lands in the **dev** bucket — production coverage is lost with no error. This has bitten the repo (`(prod)` vs `(production)`, `-build`/`-prod` suffixes).
+
+Rules:
+
+- A build-fixture describe MUST be titled `... (production)`. A dev-fixture describe (`devURL`/`mode: "dev"`) must NOT contain `(production)`.
+- Prefer the `prodDescribe(name, (f) => { ... })` helper (e.g. `tests/vite-rsc-demo/e2e/helper.ts`) — it generates the `(production)` tag and wires the build fixture, so the title can never drift. Use `f.url(...)` for navigation.
+- `pnpm check:e2e-bucketing` enforces this (runs in CI lint + lefthook pre-commit), matching each suite's real production grep and recognizing chained describes (`test.describe.serial`, etc.). `pnpm check:e2e-parity` is an advisory report of dev describes lacking a `(production)` sibling.
+- Helper-generated dev/prod pairs that pass a `mode` variable to `useFixture` (e.g. `defineSpec(label, mode)`) are a guard blind spot — the static check cannot tie the mode to the title. The helper itself must couple `mode: "build"` with a `(production)` title. `pnpm check:e2e-parity` lists these "guard-blind" describes.
+
+### Running a subset of e2e tests locally
+
+`playwright test --grep X` can balloon into running an entire suite. Two causes:
+
+1. **Project dependencies run unfiltered.** The `production` project depends on `dev` (which depends on `dev-warmup`), and `--grep` does NOT filter dependency projects — so grepping one production test pulls in the full ~200-test `dev` suite (measured: 208 vs 1). Add **`--no-deps`** to run only the matched tests.
+2. **`--grep` is a regex.** A pasted title with `()` / `[]` / `?` (the `(production)` tag itself, or `include("/oi/:locale?")`) silently mis-matches. Use a metacharacter-free title fragment, or escape the metacharacters.
+
+Reliable recipe:
+
+- Suites whose `playwright.config` `webServer` runs `pnpm build` (rangojs-router, cloudflare-basic): `pnpm exec playwright test --project=production --no-deps --grep "<metachar-free fragment>"` — the webServer still builds/serves; only the dependency test projects are skipped.
+- Suites where the build is a `build` setup project, not a webServer (vite-rsc-demo, no-typescript): build once first (`pnpm build` in the app), then add `--no-deps`.
+- Match by a stable title fragment, not `file:line` — for react-compiler apps (cloudflare-basic, vite-rsc-demo) `--list` line numbers reflect babel-transformed positions, not source.
+
 ## API Hygiene
 
 - **Pre-release rule**: No deprecated public API in main before first stable external adoption. Remove transitional types and functions instead of marking them deprecated.
