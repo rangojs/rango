@@ -231,47 +231,50 @@ export type LocalReverseParams<TPattern extends string> =
   };
 
 /**
- * Type-safe local reverse function with dot-prefixed names only.
+ * Type-safe local reverse function.
  *
  * Returned by `useReverse(routes)` on the client. The route map is the
  * exposure boundary (a generated `routes` from a `urls()` module) and the
- * scope is implicit from that import — there is no global namespace, so
- * names must be dot-prefixed to mirror `ctx.reverse(".name")`.
+ * scope is implicit from that import. Names may be written with or without a
+ * leading dot — `reverse("post")` and `reverse(".post")` are identical. The dot
+ * is a cosmetic readability convention (and parity with `ctx.reverse(".name")`);
+ * there is no separate global namespace here, so it carries no meaning.
  *
  * @example
  * ```typescript
  * const reverse = useReverse(blogRoutes);
- * reverse(".index");                         // ✓ no params
- * reverse(".post", { postId: "hello" });     // ✓ with params
- * reverse(".search", {}, { q: "hi" });       // ✓ with search schema
- * reverse(".typo");                          // ✗ compile error
+ * reverse("index");                          // ✓ no params (dot optional)
+ * reverse(".index");                         // ✓ identical to the above
+ * reverse("post", { postId: "hello" });      // ✓ with params
+ * reverse("search", {}, { q: "hi" });        // ✓ with search schema
+ * reverse("typo");                           // ✗ compile error
  * ```
  */
 export type LocalReverseFunction<TLocalRoutes> = {
   /**
-   * Dot-prefixed local route without params
+   * Route without params (leading dot optional)
    */
   <TName extends keyof TLocalRoutes & string>(
     name: IsEmptyObject<
       ExtractParams<RoutePatternFor<TLocalRoutes, TName>>
     > extends true
-      ? `.${TName}`
+      ? TName | `.${TName}`
       : never,
   ): string;
 
   /**
-   * Dot-prefixed local route with params
+   * Route with params (leading dot optional)
    */
   <TName extends keyof TLocalRoutes & string>(
-    name: `.${TName}`,
+    name: TName | `.${TName}`,
     params: LocalReverseParams<RoutePatternFor<TLocalRoutes, TName>>,
   ): string;
 
   /**
-   * Dot-prefixed local route with params and search
+   * Route with params and search (leading dot optional)
    */
   <TName extends keyof TLocalRoutes & string>(
-    name: `.${TName}`,
+    name: TName | `.${TName}`,
     params: LocalReverseParams<RoutePatternFor<TLocalRoutes, TName>>,
     search: ResolveSearchSchema<ExtractSearchSchema<TLocalRoutes, TName>>,
   ): string;

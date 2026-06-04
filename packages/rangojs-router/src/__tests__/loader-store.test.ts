@@ -46,6 +46,55 @@ describe("LoaderStore", () => {
     });
   });
 
+  describe("committed value tracking (hasValue)", () => {
+    it("an unseen bucket has hasValue false", () => {
+      expect(store.getSnapshot("foo").hasValue).toBe(false);
+    });
+
+    it("distinguishes a committed null from an empty bucket", () => {
+      const id = "foo";
+      const r = store.reserveRequestId(id);
+      store.finishData(id, r, null);
+      const snap = store.getSnapshot(id);
+      // A loader that resolves to null has committed a value: hasValue is true
+      // even though value is null, so readers do not treat it as "never loaded".
+      expect(snap.value).toBeNull();
+      expect(snap.hasValue).toBe(true);
+    });
+
+    it("preserves hasValue across an error after a committed value", () => {
+      const id = "foo";
+      const r1 = store.reserveRequestId(id);
+      store.finishData(id, r1, "good");
+      const r2 = store.reserveRequestId(id);
+      store.finishError(id, r2, new Error("boom"));
+      const snap = store.getSnapshot(id);
+      // finishError keeps the prior value and its hasValue flag.
+      expect(snap.value).toBe("good");
+      expect(snap.hasValue).toBe(true);
+    });
+
+    it("leaves hasValue false when the first request errors with no prior value", () => {
+      const id = "foo";
+      const r = store.reserveRequestId(id);
+      store.finishError(id, r, new Error("boom"));
+      const snap = store.getSnapshot(id);
+      expect(snap.value).toBeUndefined();
+      expect(snap.hasValue).toBe(false);
+    });
+
+    it("preserves hasValue across beginRequest", () => {
+      const id = "foo";
+      const r1 = store.reserveRequestId(id);
+      store.finishData(id, r1, null);
+      const r2 = store.reserveRequestId(id);
+      store.beginRequest(id, r2);
+      const snap = store.getSnapshot(id);
+      expect(snap.isLoading).toBe(true);
+      expect(snap.hasValue).toBe(true);
+    });
+  });
+
   describe("subscribe / notify", () => {
     it("notifies all subscribers on each mutation", () => {
       let aCount = 0;
@@ -416,7 +465,7 @@ describe("LoaderStore", () => {
     });
   });
 
-  describe("refreshGroup (cross-loader)", () => {
+  describe("refreshGroups (cross-loader)", () => {
     it("calls the refetch thunk for each bucket in the group", async () => {
       const a = vi.fn().mockResolvedValue(undefined);
       const b = vi.fn().mockResolvedValue(undefined);
@@ -430,7 +479,7 @@ describe("LoaderStore", () => {
         group: "account",
         refetch: b,
       });
-      await store.refreshGroup("account");
+      await store.refreshGroups("account");
       expect(a).toHaveBeenCalledTimes(1);
       expect(b).toHaveBeenCalledTimes(1);
     });
@@ -447,7 +496,7 @@ describe("LoaderStore", () => {
         group: "account",
         refetch: fn,
       });
-      await store.refreshGroup("account");
+      await store.refreshGroups("account");
       expect(fn).toHaveBeenCalledTimes(1);
     });
 
@@ -465,7 +514,7 @@ describe("LoaderStore", () => {
         refetch: b,
       });
       unsubB();
-      await store.refreshGroup("account");
+      await store.refreshGroups("account");
       expect(a).toHaveBeenCalledTimes(1);
       expect(b).not.toHaveBeenCalled();
     });
@@ -483,7 +532,7 @@ describe("LoaderStore", () => {
         group: "account",
         refetch: bad,
       });
-      await expect(store.refreshGroup("account")).rejects.toBeInstanceOf(
+      await expect(store.refreshGroups("account")).rejects.toBeInstanceOf(
         AggregateError,
       );
       // The healthy member still ran despite the sibling's failure.
@@ -491,7 +540,7 @@ describe("LoaderStore", () => {
     });
 
     it("is a no-op for an unknown group", async () => {
-      await expect(store.refreshGroup("nope")).resolves.toBeUndefined();
+      await expect(store.refreshGroups("nope")).resolves.toBeUndefined();
     });
 
     it("lets one bucket belong to multiple groups (different subscribers)", async () => {
@@ -507,9 +556,9 @@ describe("LoaderStore", () => {
         group: "g2",
         refetch: fn,
       });
-      await store.refreshGroup("g1");
+      await store.refreshGroups("g1");
       expect(fn).toHaveBeenCalledTimes(1);
-      await store.refreshGroup("g2");
+      await store.refreshGroups("g2");
       expect(fn).toHaveBeenCalledTimes(2);
     });
 
@@ -527,9 +576,9 @@ describe("LoaderStore", () => {
       });
       unsub2();
       // g2 lost its only subscriber, so the bucket left g2 — but stays in g1.
-      await store.refreshGroup("g2");
+      await store.refreshGroups("g2");
       expect(fn).not.toHaveBeenCalled();
-      await store.refreshGroup("g1");
+      await store.refreshGroups("g1");
       expect(fn).toHaveBeenCalledTimes(1);
     });
 
@@ -547,12 +596,90 @@ describe("LoaderStore", () => {
       });
       u1();
       // One subscriber still wants group "g", so the bucket remains in it.
-      await store.refreshGroup("g");
+      await store.refreshGroups("g");
       expect(fn).toHaveBeenCalledTimes(1);
       u2();
       // Now the last "g" subscriber is gone — the bucket leaves the group.
-      await store.refreshGroup("g");
+      await store.refreshGroups("g");
       expect(fn).toHaveBeenCalledTimes(1);
+    });
+
+    it("a single subscriber tagged with multiple groups joins all of them", async () => {
+      const fn = vi.fn().mockResolvedValue(undefined);
+      // One read, tagged into two groups at once via an array.
+      store.subscribe("L::k", () => {}, {
+        loaderId: "L",
+        group: ["g1", "g2"],
+        refetch: fn,
+      });
+      await store.refreshGroups("g1");
+      expect(fn).toHaveBeenCalledTimes(1);
+      await store.refreshGroups("g2");
+      expect(fn).toHaveBeenCalledTimes(2);
+    });
+
+    it("refreshGroups(array) refreshes the union of members across the named groups", async () => {
+      const a = vi.fn().mockResolvedValue(undefined);
+      const b = vi.fn().mockResolvedValue(undefined);
+      store.subscribe("La::u", () => {}, {
+        loaderId: "La",
+        group: "g1",
+        refetch: a,
+      });
+      store.subscribe("Lb::u", () => {}, {
+        loaderId: "Lb",
+        group: "g2",
+        refetch: b,
+      });
+      await store.refreshGroups(["g1", "g2"]);
+      expect(a).toHaveBeenCalledTimes(1);
+      expect(b).toHaveBeenCalledTimes(1);
+    });
+
+    it("refreshGroups(array) fetches a bucket in two of the named groups only once", async () => {
+      const fn = vi.fn().mockResolvedValue(undefined);
+      store.subscribe("L::k", () => {}, {
+        loaderId: "L",
+        group: ["g1", "g2"],
+        refetch: fn,
+      });
+      // The bucket is a member of both requested groups — union+dedup means one
+      // refetch, not two.
+      await store.refreshGroups(["g1", "g2"]);
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+
+    it("dedups repeated group names in a single subscriber's tag list", async () => {
+      const fn = vi.fn().mockResolvedValue(undefined);
+      const unsub = store.subscribe("L::k", () => {}, {
+        loaderId: "L",
+        group: ["g", "g"],
+        refetch: fn,
+      });
+      await store.refreshGroups("g");
+      expect(fn).toHaveBeenCalledTimes(1);
+      // A repeated tag must not inflate the refcount: one unsubscribe fully
+      // removes the bucket from the group.
+      unsub();
+      await store.refreshGroups("g");
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+
+    it("a multi-tag subscriber leaves all of its groups on unsubscribe", async () => {
+      const fn = vi.fn().mockResolvedValue(undefined);
+      const unsub = store.subscribe("L::k", () => {}, {
+        loaderId: "L",
+        group: ["g1", "g2"],
+        refetch: fn,
+      });
+      unsub();
+      await store.refreshGroups("g1");
+      await store.refreshGroups("g2");
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op for an empty group list", async () => {
+      await expect(store.refreshGroups([])).resolves.toBeUndefined();
     });
   });
 });

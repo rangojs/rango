@@ -287,17 +287,23 @@ Bucket reset has two boundaries:
   navigation; a route-scoped reader's value is reclaimed on unmount.
 
 **Cross-loader refresh groups.** `key` partitions readers of one loader; the
-`refreshGroup` option + `useRefreshLoaders(name)` refresh **different** loaders
-together. The store keeps a `groups: Map<name, Set<bucketKey>>` index, with
-membership refcounted per subscriber on each entry (`entry.groups: Map<name,
-count>`) so a bucket can belong to several groups at once and leaves a group only
-when that group's last subscriber unmounts — independent of subscribe/unsubscribe
-order. `refreshGroup(name)` runs each member's registered plain-GET thunk (deduped
-by bucket, current route URL, no params/body), `Promise.allSettled`s them, and
-rejects with an `AggregateError` on any failure. Group refresh never
-render-throws — failures surface via each member's `error` and the returned
-promise; handle them at the await site. It is GET-only by design: a group spans
-heterogeneous loaders, so there is no coherent params or aggregate return type.
+`refreshGroup` option + `useRefreshLoaders()` refresh **different** loaders
+together. A read may be tagged with one group name or several (`refreshGroup` is
+`string | string[]`), and the inverted hook takes the group(s) at call time:
+`useRefreshLoaders()` returns `refresh(groups: string | string[])`. The store
+keeps a `groups: Map<name, Set<bucketKey>>` index, with membership refcounted per
+subscriber on each entry (`entry.groups: Map<name, count>`) so a bucket can belong
+to several groups at once — whether from one read carrying multiple tags or
+different reads tagging the same keyed bucket — and leaves a group only when that
+group's last subscriber unmounts, independent of subscribe/unsubscribe order.
+`refreshGroups(names)` unions the member buckets across every named group (deduped
+by bucket key, so a bucket in two of the named groups fetches once), runs each
+member's registered plain-GET thunk (current route URL, no params/body),
+`Promise.allSettled`s them, and rejects with an `AggregateError` on any failure.
+Group refresh never render-throws — failures surface via each member's `error` and
+the returned promise; handle them at the await site. It is GET-only by design: a
+group spans heterogeneous loaders, so there is no coherent params or aggregate
+return type.
 
 A grouped reader with **no explicit `key`** is given a private per-hook bucket
 (`loader.$$id::<private>`) rather than the bare `loader.$$id` bucket. Otherwise a
@@ -383,10 +389,18 @@ DSL loaders (registered with `loader()`) and handler-called loaders
 - **`ctx.use(Loader)` in handlers** — escape hatch for reading loader
   data in handlers. The loader function itself runs fresh, but the
   handler embeds the result in JSX that is cached with the segment. On
-  cache hit the handler does not re-execute, so the loader result in the
-  cached output may be stale. Non-cacheable variable reads in the handler
-  still throw via the normal read guard. Response-level side effects in
-  handler code throw normally.
+  cache hit the handler does not re-execute, so the embedded value is
+  served from the stored shell. For request-scoped data (a loader that
+  reads `cookies()`/`headers()`) this is not merely stale — it is a
+  **cross-user leak**: one visitor's value, baked into the shared shell,
+  is served to later visitors until the entry expires. The cache-purity
+  guard does **not** catch this, because the request-scoped read happens
+  inside the (exempt) loader body, not in the handler. **Do not embed a
+  request-reading loader's result via `ctx.use()` in a cached handler —
+  consume it with `useLoader()` in a client component instead** (a fresh,
+  never-cached segment). Non-cacheable variable reads in the handler
+  itself still throw via the normal read guard. Response-level side
+  effects in handler code throw normally.
   Note: when a loader is registered via both DSL `loader()` and called
   via `ctx.use()` in the same route, the DSL registration starts the
   loader in loader scope before the handler runs. The handler's

@@ -3,6 +3,7 @@ import {
   CFCacheStore,
   CACHE_STALE_AT_HEADER,
   CACHE_STATUS_HEADER,
+  MAX_REVALIDATION_INTERVAL,
 } from "../cf-cache-store";
 import type { CachedEntryData } from "../../types";
 
@@ -549,6 +550,61 @@ describe("CFCacheStore", () => {
       expect(result2!.shouldRevalidate).toBe(false);
     });
 
+    // Stamp the stored REVALIDATING entry with an `Age` header to model a
+    // background revalidation that started but never completed.
+    const stampAge = async (key: string, age: number) => {
+      const reqUrl =
+        "https://rsc-cache.internal.com/" + encodeURIComponent(`fn:${key}`);
+      const stored = await mockCaches.default.match(new Request(reqUrl));
+      const stamped = new Response(stored!.body, {
+        status: stored!.status,
+        headers: new Headers(stored!.headers),
+      });
+      stamped.headers.set("age", String(age));
+      await mockCaches.default.put(new Request(reqUrl), stamped);
+    };
+
+    it("re-triggers revalidation when a REVALIDATING entry reaches MAX_REVALIDATION_INTERVAL", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.setItem("fn-stuck", "value", { ttl: 60, swr: 300 });
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      vi.advanceTimersByTime(120 * 1000); // past ttl, within swr
+
+      // First get marks REVALIDATING. A healthy background revalidation would
+      // refresh the entry; simulate a hung one by leaving it REVALIDATING.
+      expect((await store.getItem("fn-stuck"))!.shouldRevalidate).toBe(true);
+      // Recent REVALIDATING (age 0 < interval): guarded, no re-trigger.
+      expect((await store.getItem("fn-stuck"))!.shouldRevalidate).toBe(false);
+
+      // age === interval: the guard expires and the next get re-triggers, so a
+      // dropped revalidation can never pin the entry stale forever.
+      await stampAge("fn-stuck", MAX_REVALIDATION_INTERVAL);
+      expect((await store.getItem("fn-stuck"))!.shouldRevalidate).toBe(true);
+    });
+
+    it("does not re-trigger one second before MAX_REVALIDATION_INTERVAL", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.setItem("fn-edge", "value", { ttl: 60, swr: 300 });
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      vi.advanceTimersByTime(120 * 1000);
+
+      expect((await store.getItem("fn-edge"))!.shouldRevalidate).toBe(true);
+
+      // age === interval - 1: still within the guard window (`age < interval`).
+      await stampAge("fn-edge", MAX_REVALIDATION_INTERVAL - 1);
+      expect((await store.getItem("fn-edge"))!.shouldRevalidate).toBe(false);
+    });
+
     it("should return shouldRevalidate=false for fresh items", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
@@ -724,6 +780,56 @@ describe("CFCacheStore", () => {
 
       expect(mockCtx.waitUntil).toHaveBeenCalledTimes(1);
       expect(mockCtx.waitUntil).toHaveBeenCalledWith(expect.any(Promise));
+    });
+
+    it("strips internal edge headers and restores the author's Cache-Control on serve", async () => {
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      const response = new Response("body", {
+        headers: {
+          "Content-Type": "text/html",
+          "Cache-Control": "s-maxage=60, stale-while-revalidate=300",
+          "X-Custom": "keep-me",
+        },
+      });
+
+      await store.putResponse("doc-clean", response, 60, 300);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      const result = await store.getResponse("doc-clean");
+      // Internal edge headers must never reach the client.
+      expect(result!.response.headers.get(CACHE_STALE_AT_HEADER)).toBeNull();
+      expect(result!.response.headers.get(CACHE_STATUS_HEADER)).toBeNull();
+      expect(result!.response.headers.get("x-edge-cache-orig-cc")).toBeNull();
+      // The author's Cache-Control is restored, not the internal edge max-age.
+      expect(result!.response.headers.get("Cache-Control")).toBe(
+        "s-maxage=60, stale-while-revalidate=300",
+      );
+      // Unrelated headers pass through untouched.
+      expect(result!.response.headers.get("X-Custom")).toBe("keep-me");
+
+      // The stored L1 entry keeps the long max-age so the CF Cache API retains
+      // it across the whole SWR window.
+      const stored = await mockCaches.default.match(
+        new Request(
+          "https://rsc-cache.internal.com/" +
+            encodeURIComponent("doc:doc-clean"),
+        ),
+      );
+      expect(stored?.headers.get("Cache-Control")).toBe("public, max-age=360");
+    });
+
+    it("drops the synthetic Cache-Control when the response carried none", async () => {
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+
+      await store.putResponse("doc-nocc", new Response("body"), 60);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      const result = await store.getResponse("doc-nocc");
+      expect(result!.response.headers.get("Cache-Control")).toBeNull();
+      expect(result!.response.headers.get(CACHE_STALE_AT_HEADER)).toBeNull();
     });
   });
 

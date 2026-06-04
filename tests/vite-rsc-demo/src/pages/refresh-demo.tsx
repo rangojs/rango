@@ -84,7 +84,7 @@ export function RefreshDemoPage() {
         <h2>Refresh group &quot;metrics&quot;</h2>
         <p style={{ color: "#57606a", maxWidth: 760 }}>
           Three different loaders tagged <code>refreshGroup="metrics"</code>.
-          One <code>useRefreshLoaders("metrics")()</code> call refreshes all
+          One <code>useRefreshLoaders()("metrics")</code> call refreshes all
           three at once (plain GET each, in parallel).
         </p>
         <div style={{ marginTop: 12 }}>
@@ -122,8 +122,8 @@ export function RefreshDemoPage() {
           <code>load(&#123; params: &#123; cursor &#125; &#125;)</code> and
           appends the next page. <b>Add to cart</b> is a server action; the cart
           count re-renders via the refresh primitive (
-          <code>useRefreshLoaders("cart")</code>), not from the action's return
-          value. Both cart badges read <code>CartLoader</code> with{" "}
+          <code>useRefreshLoaders()("cart")</code>), not from the action's
+          return value. Both cart badges read <code>CartLoader</code> with{" "}
           <code>key="cart"</code>, so one refresh fans the new count out to both
           at once.
         </p>

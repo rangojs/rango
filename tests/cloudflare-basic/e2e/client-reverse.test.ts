@@ -4,8 +4,9 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
 
 /**
  * Minimal cloudflare-basic coverage for the client `useReverse(routes)` hook.
- * Verifies: dot-prefix resolution, mount-relative joining, autofill from
- * `useParams()`, and explicit-override on the Cloudflare preset.
+ * Verifies: name resolution (the leading dot is optional), mount-relative
+ * joining, autofill from `useParams()`, and explicit-override on the
+ * Cloudflare preset.
  */
 
 async function assertReverseSurface(page: Page, opts: { tenantId: string }) {
@@ -24,6 +25,9 @@ async function assertReverseSurface(page: Page, opts: { tenantId: string }) {
   await expect(testId(page, "cr-cf-post-override")).toHaveText(
     `/cr/other/posts/p2`,
   );
+  // the leading dot is optional — non-dotted resolves identically to dotted.
+  await expect(testId(page, "cr-cf-index-nodot")).toHaveText(base);
+  await expect(testId(page, "cr-cf-post-nodot")).toHaveText(`${base}/posts/p1`);
 }
 
 function describeForMode(label: string, mode: "dev" | "build") {

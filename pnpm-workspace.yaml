@@ -3,6 +3,7 @@ packages:
   - "packages/rangojs-router/e2e/test-app"
   - "packages/rangojs-router/e2e/e2e-basic"
   - "packages/rangojs-router/e2e/e2e-timeout"
+  - "packages/rangojs-router/e2e/mini"
   - "examples/*"
   - "tests/*"
 
@@ -14,3 +15,10 @@ catalog:
   "@types/react": ^19.2.7
   "@types/react-dom": ^19.2.3
   vite: ^8.0.0
+  # React Compiler (wired via @rolldown/plugin-babel, since plugin-react v6 uses
+  # oxc and no longer runs Babel internally). reactCompilerPreset comes from
+  # @vitejs/plugin-react. React 19 ships react/compiler-runtime in-tree.
+  "@rolldown/plugin-babel": ^0.2.0
+  "babel-plugin-react-compiler": ^1.0.0
+  "@babel/core": ^7.26.0
+  "@types/babel__core": ^7.20.5

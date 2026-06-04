@@ -1,13 +1,48 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, testId } from "./helper";
+import { writeFileBumpMtime } from "@shared/e2e";
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
 
-// Route mutation tests are too flaky on GH Actions due to unreliable inotify
-// on overlayfs. Run locally only; skip in CI.
-test.describe.serial("hmr-route-mutations", () => {
+/**
+ * Cloudflare HMR route-mutation tests.
+ *
+ * Covers two contracts that must both stay fresh when route definitions are
+ * edited in cloudflare dev:
+ *
+ * 1. Type generation: editing the route definitions re-runs discovery (via the
+ *    temp Node RSC runner, since workerd has no module runner) and regenerates
+ *    `router.named-routes.gen.ts`. Driven by the plugin's route-file watcher.
+ *
+ * 2. Live serving: workerd serves the newly added/removed/renamed route on the
+ *    next request without a manual restart. workerd resolves the request
+ *    handler per request via `runner.import("virtual:cloudflare/worker-entry")`
+ *    against the runner-worker singleton's module cache. Route-definition
+ *    modules have no `import.meta.hot` boundary, so Vite never sends the worker
+ *    an HMR update for them; the cached entry chain (entry -> router -> urls ->
+ *    createRouter) is never evicted and the worker keeps serving the stale
+ *    router. The rango plugin closes this gap: after discovery completes it
+ *    sends a `full-reload` to the `rsc` (workerd) environment
+ *    (`forceCloudflareWorkerReload` in src/vite/router-discovery.ts), which
+ *    clears the runner's evaluatedModules so the next request re-runs
+ *    createRouter() with the new routes. This is the scoped, programmatic
+ *    equivalent of the dev-server `r`+enter restart.
+ *
+ * Local-only: route-file watching is unreliable on GH Actions overlayfs.
+ * There is no production counterpart: HMR is dev-only (the fix lives in
+ * configureServer and never runs in a built worker); production route serving
+ * is covered by the rest of the cloudflare-basic e2e suite.
+ *
+ * Mutations are written via writeFileBumpMtime (shared @shared/e2e): an
+ * in-place write + strictly monotonic mtime so the watcher cannot coalesce or
+ * drop the change event.
+ *
+ * Serving markers: a freshly-served route renders `data-testid="about-page"`
+ * (the routes below mount AboutPage); a stale/absent route falls through to the
+ * `path("/*", CatchAllPage)` wildcard, rendering `data-testid="catch-all-page"`.
+ */
+test.describe.serial("hmr-route-mutations (types + live serving)", () => {
   test.skip(
     !!process.env.CI,
     "Skipped in CI — inotify unreliable on GH Actions",
@@ -17,511 +52,332 @@ test.describe.serial("hmr-route-mutations", () => {
     mode: "dev",
   });
 
-  test.setTimeout(90000);
+  test.setTimeout(60000);
 
-  // Generous timeout for route tree mutations - the program reload
-  // cycle (file change -> gen file -> virtual module -> program reload)
-  // can take 10-20s depending on system load.
-  const ROUTE_CHANGE_TIMEOUT = 30000;
-
-  // Restore git-tracked sources in case a prior timed-out test left
-  // modified files on disk (afterEach does not run when workers crash).
-  test.beforeAll(() => {
-    try {
-      execSync("git checkout -- src/urls.tsx", {
-        cwd: f.root,
-        stdio: "ignore",
-      });
-    } catch {}
-  });
-
-  const originalContents = new Map<string, string>();
+  // Allow time for the file-change -> debounce -> discovery -> gen-write cycle
+  // and the subsequent workerd full-reload to land.
+  const GEN_TIMEOUT = 30000;
 
   function urlsPath() {
     return path.join(f.root, "src/urls.tsx");
   }
-
+  function genPath() {
+    return path.join(f.root, "src/router.named-routes.gen.ts");
+  }
   function readUrls() {
     return fs.readFileSync(urlsPath(), "utf-8");
   }
+  function readGen() {
+    return fs.readFileSync(genPath(), "utf-8");
+  }
 
-  function saveAndWrite(filePath: string, content: string) {
+  // Poll the generated named-routes file until it does (or does not) contain a
+  // snippet. The gen file is rewritten by the discovery pass the route-file
+  // watcher triggers on each edit.
+  async function expectGen(snippet: string, present: boolean) {
+    await expect
+      .poll(() => readGen().includes(snippet), { timeout: GEN_TIMEOUT })
+      .toBe(present);
+  }
+
+  // Poll the dev server until the route is served by the expected page. After a
+  // route edit the worker re-evaluates createRouter() on the next request once
+  // the plugin's full-reload lands, so this converges shortly after expectGen.
+  // The Accept: text/html header is required: without it the worker returns the
+  // RSC Flight payload (no literal data-testid attributes) instead of SSR HTML,
+  // so the marker check would never match.
+  async function expectServed(
+    route: string,
+    marker: "about-page" | "catch-all-page",
+  ) {
+    await expect
+      .poll(
+        async () => {
+          const res = await fetch(f.url(route), {
+            headers: { Accept: "text/html" },
+          });
+          const body = await res.text();
+          return body.includes(`data-testid="${marker}"`);
+        },
+        { timeout: GEN_TIMEOUT },
+      )
+      .toBe(true);
+  }
+
+  const originalContents = new Map<string, string>();
+  let originalGenBaseline = "";
+
+  function recordOriginal(filePath: string) {
     if (!originalContents.has(filePath)) {
       originalContents.set(filePath, fs.readFileSync(filePath, "utf-8"));
     }
-    fs.writeFileSync(filePath, content, "utf-8");
   }
 
-  // Write a file and periodically re-touch it to ensure the watcher picks
-  // up the change even when a prior HMR cycle is still settling. Returns a
-  // cleanup function to stop the periodic re-touch.
-  function writeWithRetouch(
-    filePath: string,
-    content: string,
-    intervalMs = 8000,
-  ) {
-    saveAndWrite(filePath, content);
-    const timer = setInterval(() => {
-      fs.writeFileSync(filePath, content, "utf-8");
-    }, intervalMs);
-    return () => clearInterval(timer);
+  // Mutate urls.tsx, recording the pre-mutation content for restoration.
+  function mutateUrls(content: string) {
+    recordOriginal(urlsPath());
+    writeFileBumpMtime(urlsPath(), content);
   }
+
+  // Restore git-tracked sources in case a prior crashed run left files dirty,
+  // and snapshot the gen-file baseline so afterAll can force it back (a dirty
+  // gen file would fail typecheck).
+  test.beforeAll(() => {
+    try {
+      execSync("git checkout -- src/urls.tsx src/router.named-routes.gen.ts", {
+        cwd: f.root,
+        stdio: "ignore",
+      });
+    } catch {}
+    try {
+      const repoRoot = execSync("git rev-parse --show-toplevel", {
+        cwd: f.root,
+        encoding: "utf-8",
+      }).trim();
+      const rel = path.relative(repoRoot, genPath());
+      originalGenBaseline = execSync(`git show HEAD:${rel}`, {
+        cwd: f.root,
+        encoding: "utf-8",
+      });
+    } catch {}
+  });
 
   test.afterEach(async () => {
-    for (const [filePath, content] of originalContents) {
-      fs.writeFileSync(filePath, content, "utf-8");
-    }
+    if (originalContents.size === 0) return;
+    const entries = [...originalContents];
     originalContents.clear();
-    // Wait for program reload to process restores
-    await new Promise((r) => setTimeout(r, 5000));
+    for (const [filePath, content] of entries) {
+      writeFileBumpMtime(filePath, content);
+    }
+    // Wait for the gen file to converge all the way back to the committed
+    // baseline so the next test starts clean. A partial match (just the about
+    // route present) would pass while nested route types from include/remove
+    // tests are still stale, letting the next test start against a
+    // half-restored gen file or stale worker table and masking failures. Fall
+    // back to the about-route check only if the baseline snapshot (git show in
+    // beforeAll) was unavailable.
+    if (originalGenBaseline) {
+      await expect
+        .poll(() => readGen(), { timeout: GEN_TIMEOUT })
+        .toBe(originalGenBaseline);
+    } else {
+      await expect
+        .poll(() => readGen(), { timeout: GEN_TIMEOUT })
+        .toContain('about: "/about"');
+    }
   });
 
-  // First route-tree change after `rm -rf node_modules/.vite` may cause Vite
-  // to discover new client deps (e.g. spin-delay) → `✨ new dependencies
-  // optimized` → full page reload. This warmup adds a real route to trigger
-  // that discovery so subsequent tests get clean program reloads.
-  // Uses fs.writeFileSync directly (not saveAndWrite) so afterEach doesn't
-  // restore — beforeAll's git checkout handles cleanup on the next run.
-  test("warmup: preheat dep optimizer with route addition", async ({
-    page,
-  }) => {
-    test.setTimeout(60_000);
+  // Force the gen file back to its committed baseline on suite exit, even if
+  // the watcher didn't regenerate it before shutdown.
+  test.afterAll(() => {
+    if (originalGenBaseline) {
+      fs.writeFileSync(genPath(), originalGenBaseline, "utf-8");
+    }
+  });
 
+  // Warmup: the first route edit after a clean vite cache can trigger Vite's
+  // dep optimizer. Add then remove a throwaway route to absorb that cycle so
+  // subsequent tests see clean discovery passes. Manages its own restore.
+  test("warmup: absorb dep-optimizer cycle on first route edit", async () => {
     const content = readUrls();
     const modified = content.replace(
       'path("/about", AboutPage, { name: "about" }),',
       `path("/about", AboutPage, { name: "about" }),
-        path("/hmr-warmup", () => <div>warmup</div>, { name: "hmrWarmup" }),`,
-    );
-    const p = urlsPath();
-    fs.writeFileSync(p, modified, "utf-8");
-    const retouchTimer = setInterval(() => {
-      fs.writeFileSync(p, modified, "utf-8");
-    }, 8000);
-
-    // Wait for the route to become available (absorbs dep optimization reload)
-    await expect(async () => {
-      await page.goto(f.url("/hmr-warmup"));
-      await expect(
-        page.locator("div").filter({ hasText: "warmup" }),
-      ).toBeVisible({
-        timeout: 2000,
-      });
-    }).toPass({ timeout: 45_000, intervals: [2_000, 3_000, 5_000] });
-    clearInterval(retouchTimer);
-
-    // Restore and let the program reload settle before real tests
-    fs.writeFileSync(p, content, "utf-8");
-    await new Promise((r) => setTimeout(r, 8000));
-  });
-
-  // -- Group 1: Basic Add/Remove/Rename --
-
-  test("should serve a newly added route", async ({ page }) => {
-    const content = readUrls();
-    const modified = content.replace(
-      'path("/about", AboutPage, { name: "about" }),',
-      `path("/about", AboutPage, { name: "about" }),
-        path("/hmr-test-route", () => <div data-testid="hmr-new-route">HMR New Route</div>, { name: "hmrTest" }),`,
+        path("/hmr-warmup", AboutPage, { name: "hmrWarmup" }),`,
     );
     expect(modified).not.toBe(content);
-    const stopRetouch = writeWithRetouch(urlsPath(), modified);
-
-    await expect(async () => {
-      await page.goto(f.url("/hmr-test-route"));
-      await expect(testId(page, "hmr-new-route")).toBeVisible({
-        timeout: 2000,
-      });
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
-
-    await expect(testId(page, "hmr-new-route")).toHaveText("HMR New Route");
+    writeFileBumpMtime(urlsPath(), modified);
+    await expectGen('hmrWarmup: "/hmr-warmup"', true);
+    writeFileBumpMtime(urlsPath(), content);
+    await expectGen("hmrWarmup", false);
   });
 
-  test("should fall through to catch-all for a removed route", async ({
+  test("regenerates types and serves a newly added route", async () => {
+    await expectGen("hmrTest", false);
+    // Before the add the path falls through to the wildcard catch-all.
+    await expectServed("/hmr-test-route", "catch-all-page");
+    mutateUrls(
+      readUrls().replace(
+        'path("/about", AboutPage, { name: "about" }),',
+        `path("/about", AboutPage, { name: "about" }),
+        path("/hmr-test-route", AboutPage, { name: "hmrTest" }),`,
+      ),
+    );
+    await expectGen('hmrTest: "/hmr-test-route"', true);
+    // After the add workerd must serve the new route without a manual restart.
+    await expectServed("/hmr-test-route", "about-page");
+  });
+
+  test("drops types and stops serving a removed route", async () => {
+    await expectGen('about: "/about"', true);
+    await expectServed("/about", "about-page");
+    mutateUrls(
+      readUrls().replace(
+        'path("/about", AboutPage, { name: "about" }),',
+        "// removed for HMR test",
+      ),
+    );
+    await expectGen('about: "/about"', false);
+    // The removed path now falls through to the wildcard catch-all.
+    await expectServed("/about", "catch-all-page");
+  });
+
+  test("converges the open page to the catch-all when the viewed route is removed", async ({
     page,
   }) => {
-    // Verify route works initially
+    // The prior test removes then restores /about; the gen file reconverges
+    // before the worker finishes its reload, so wait for the worker to actually
+    // serve /about again before driving the browser to it (otherwise the first
+    // navigation can land on the catch-all).
+    await expectServed("/about", "about-page");
     await page.goto(f.url("/about"));
-    await waitForHydration(page);
-    await expect(testId(page, "about-page")).toBeVisible();
-
-    const content = readUrls();
-    const modified = content.replace(
-      'path("/about", AboutPage, { name: "about" }),',
-      '// path("/about", AboutPage, { name: "about" }),',
+    await expect(page.getByTestId("about-page")).toBeVisible();
+    // Remove the route the page is currently displaying. Editing a route
+    // definition (urls.tsx has no HMR boundary, unlike the component-content
+    // edits in hmr.test.ts that update in-page without a reload) triggers a
+    // full-document reload, which lands on the catch-all now served by the
+    // reloaded worker. Assert the end state: the stale About tree is gone and
+    // the catch-all renders.
+    mutateUrls(
+      readUrls().replace(
+        'path("/about", AboutPage, { name: "about" }),',
+        "// removed for HMR reload test",
+      ),
     );
-    expect(modified).not.toBe(content);
-    const stopRetouch = writeWithRetouch(urlsPath(), modified);
-
-    await expect(async () => {
-      await page.goto(f.url("/about"));
-      await expect(testId(page, "catch-all-page")).toBeVisible({
-        timeout: 2000,
-      });
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
+    await expectGen('about: "/about"', false);
+    // /about now falls through to the wildcard catch-all, rendered in-page;
+    // the stale About page must be gone.
+    await expect(page.getByTestId("catch-all-page")).toBeVisible({
+      timeout: GEN_TIMEOUT,
+    });
+    await expect(page.getByTestId("about-page")).toHaveCount(0);
   });
 
-  test("should serve a route at its new path after path rename", async ({
-    page,
-  }) => {
-    const content = readUrls();
-    const modified = content.replace(
-      'path("/about", AboutPage, { name: "about" }),',
-      'path("/about-us", AboutPage, { name: "aboutUs" }),',
+  test("updates types and serves the new path when a route path is renamed", async () => {
+    mutateUrls(
+      readUrls().replace(
+        'path("/about", AboutPage, { name: "about" }),',
+        'path("/about-us", AboutPage, { name: "aboutUs" }),',
+      ),
     );
-    expect(modified).not.toBe(content);
-    const stopRetouch = writeWithRetouch(urlsPath(), modified);
-
-    // New path should work
-    await expect(async () => {
-      await page.goto(f.url("/about-us"));
-      await expect(testId(page, "about-page")).toBeVisible({ timeout: 2000 });
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
-
-    // Old path should hit catch-all
-    await page.goto(f.url("/about"));
-    await expect(testId(page, "catch-all-page")).toBeVisible();
+    await expectGen('aboutUs: "/about-us"', true);
+    await expectGen('about: "/about"', false);
+    // New path serves the page; old path falls through to the catch-all.
+    await expectServed("/about-us", "about-page");
+    await expectServed("/about", "catch-all-page");
   });
 
-  test("should serve route at new path when only URL changes (name preserved)", async ({
-    page,
-  }) => {
-    const content = readUrls();
-    const modified = content.replace(
-      'path("/counter", CounterPage, { name: "counter" }),',
-      'path("/counter-v2", CounterPage, { name: "counter" }),',
+  test("updates types when only the URL changes (name preserved)", async () => {
+    mutateUrls(
+      readUrls().replace(
+        'path("/counter", CounterPage, { name: "counter" }),',
+        'path("/counter-v2", CounterPage, { name: "counter" }),',
+      ),
     );
-    expect(modified).not.toBe(content);
-    const stopRetouch = writeWithRetouch(urlsPath(), modified);
-
-    await expect(async () => {
-      await page.goto(f.url("/counter-v2"));
-      await expect(testId(page, "counter-page")).toBeVisible({ timeout: 2000 });
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
-
-    await page.goto(f.url("/counter"));
-    await expect(testId(page, "catch-all-page")).toBeVisible();
+    await expectGen('counter: "/counter-v2"', true);
   });
 
-  // -- Group 2: Sequential & Burst Edits --
+  test("updates types when only the route name changes (path preserved)", async () => {
+    await expectGen('about: "/about"', true);
+    mutateUrls(
+      readUrls().replace(
+        'path("/about", AboutPage, { name: "about" }),',
+        'path("/about", AboutPage, { name: "aboutRenamed" }),',
+      ),
+    );
+    await expectGen('aboutRenamed: "/about"', true);
+    await expectGen('about: "/about"', false);
+  });
 
-  test("should handle sequential add, rename, remove", async ({ page }) => {
-    const p = urlsPath();
+  test("drops nested types when an include is removed", async () => {
+    await expectGen("composition.index", true);
+    mutateUrls(
+      readUrls().replace(
+        /include\("\/composition", compositionPatterns,\s*\{[^}]*name:\s*"composition"[^}]*\}\s*\),/,
+        "// include removed for HMR test",
+      ),
+    );
+    await expectGen("composition.index", false);
+  });
 
-    // Step 1: Add route
+  test("restores nested types when an include is re-added", async () => {
     const original = readUrls();
-    const withRoute = original.replace(
-      'path("/about", AboutPage, { name: "about" }),',
-      `path("/about", AboutPage, { name: "about" }),
-        path("/hmr-sequential", () => <div data-testid="hmr-sequential">Sequential</div>, { name: "hmrSequential" }),`,
+    mutateUrls(
+      original.replace(
+        /include\("\/composition", compositionPatterns,\s*\{[^}]*name:\s*"composition"[^}]*\}\s*\),/,
+        "// include removed for HMR test",
+      ),
     );
-    let stopRetouch = writeWithRetouch(p, withRoute);
-
-    await expect(async () => {
-      await page.goto(f.url("/hmr-sequential"));
-      await expect(testId(page, "hmr-sequential")).toBeVisible({
-        timeout: 2000,
-      });
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
-
-    // Step 2: Rename path
-    const renamed = readUrls().replace("/hmr-sequential", "/hmr-sequential-v2");
-    stopRetouch = writeWithRetouch(p, renamed);
-
-    await expect(async () => {
-      await page.goto(f.url("/hmr-sequential-v2"));
-      await expect(testId(page, "hmr-sequential")).toBeVisible({
-        timeout: 2000,
-      });
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
-
-    await page.goto(f.url("/hmr-sequential"));
-    await expect(testId(page, "catch-all-page")).toBeVisible();
-
-    // Step 3: Remove route
-    const removed = readUrls().replace(
-      /\s*path\("\/hmr-sequential-v2".*\{[^}]*name:\s*"hmrSequential"[^}]*\}\s*\),/,
-      "",
-    );
-    stopRetouch = writeWithRetouch(p, removed);
-
-    await expect(async () => {
-      await page.goto(f.url("/hmr-sequential-v2"));
-      await expect(testId(page, "catch-all-page")).toBeVisible({
-        timeout: 2000,
-      });
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
+    await expectGen("composition.index", false);
+    // Restore the include in-test (afterEach also restores; this pins the
+    // re-add path explicitly).
+    writeFileBumpMtime(urlsPath(), original);
+    await expectGen("composition.index", true);
   });
 
-  test("should handle burst rapid edits and serve final state", async ({
-    page,
-  }) => {
-    const p = urlsPath();
+  test("converges types to the final state after rapid sequential edits", async () => {
+    recordOriginal(urlsPath());
     const original = readUrls();
-
-    // 3 rapid writes with no delay
-    const v1 = original.replace(
-      'path("/about", AboutPage, { name: "about" }),',
-      `path("/about", AboutPage, { name: "about" }),
-        path("/hmr-burst", () => <div data-testid="hmr-burst">Burst V1</div>, { name: "hmrBurst" }),`,
-    );
-    saveAndWrite(p, v1);
-
-    const v2 = v1.replace("Burst V1", "Burst V2");
-    fs.writeFileSync(p, v2, "utf-8");
-
-    const v3 = v2.replace("Burst V2", "Burst V3");
-    const stopRetouch = writeWithRetouch(p, v3);
-
-    await expect(async () => {
-      await page.goto(f.url("/hmr-burst"));
-      await expect(testId(page, "hmr-burst")).toHaveText("Burst V3", {
-        timeout: 2000,
-      });
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
+    const variant = (suffix: string, name: string) =>
+      original.replace(
+        'path("/about", AboutPage, { name: "about" }),',
+        `path("/about", AboutPage, { name: "about" }),
+        path("/burst-${suffix}", AboutPage, { name: "${name}" }),`,
+      );
+    // Three rapid writes; the gen file must converge to the LAST write only.
+    writeFileBumpMtime(urlsPath(), variant("a", "burstA"));
+    writeFileBumpMtime(urlsPath(), variant("b", "burstB"));
+    writeFileBumpMtime(urlsPath(), variant("c", "burstC"));
+    await expectGen('burstC: "/burst-c"', true);
+    await expectGen("burstA", false);
+    await expectGen("burstB", false);
+    // The worker converges to the final route too, not an intermediate one.
+    await expectServed("/burst-c", "about-page");
+    await expectServed("/burst-a", "catch-all-page");
   });
 
-  test("should handle burst multiple name changes", async ({ page }) => {
-    const p = urlsPath();
-    const original = readUrls();
+  test("a failed discovery leaves the gen file intact and recovers on the next valid edit", async () => {
+    // Baseline.
+    await expectGen('about: "/about"', true);
 
-    // 3 rapid writes, each renaming a different route name
-    const w1 = original.replace('{ name: "about" }', '{ name: "aboutV1" }');
-    saveAndWrite(p, w1);
+    const valid = readUrls();
+    // Snapshot the dev server's stderr length so we can detect the failure THIS
+    // edit causes rather than a stale one from an earlier test.
+    const stderrBefore = f.proc().stderr().length;
+    // A syntax error makes runtime rediscovery's import throw. The failed cycle
+    // sets lastDiscoveryError, preserves the last-good manifest, and gates off
+    // the workerd reload (the success path never runs) so the fix does not
+    // force-reload the worker onto broken code. The gen file is left intact:
+    // writeRouteTypesFiles never runs after discoverRouters throws, and the
+    // static write is skipped in cloudflare HMR. (Vite still serves the route's
+    // transform error while urls.tsx is broken — the reload gate governs the
+    // worker eviction, not Vite's own transform pipeline.)
+    mutateUrls(valid + '\nconst __brokenForHmrTest = "unterminated\n');
+    // Wait for the failed discovery cycle to actually run before editing again.
+    // Without this the broken and recovery writes can coalesce inside the 100ms
+    // debounce into a single successful cycle, never exercising the failure
+    // path. The failed cycle logs this on the dev server's stderr.
+    await expect
+      .poll(() => f.proc().stderr().slice(stderrBefore), {
+        timeout: GEN_TIMEOUT,
+      })
+      .toContain("Runtime re-discovery failed");
+    // The gen file must stay at the last-good baseline through the failed cycle.
+    expect(readGen()).toContain('about: "/about"');
 
-    const w2 = w1.replace('{ name: "counter" }', '{ name: "counterV1" }');
-    fs.writeFileSync(p, w2, "utf-8");
-
-    const w3 = w2.replace('{ name: "home" }', '{ name: "homeV1" }');
-    const stopRetouch = writeWithRetouch(p, w3);
-
-    // All routes should still serve at their original URLs
-    await expect(async () => {
-      await page.goto(f.url("/about"));
-      await expect(testId(page, "about-page")).toBeVisible({ timeout: 2000 });
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
-
-    await page.goto(f.url("/counter"));
-    await expect(testId(page, "counter-page")).toBeVisible();
-
-    await page.goto(f.url("/"));
-    await expect(testId(page, "home-page")).toBeVisible();
-  });
-
-  // -- Group 3: Include Patterns --
-
-  test("should remove included routes when include is commented out", async ({
-    page,
-  }) => {
-    // Verify route works initially
-    await page.goto(f.url("/composition"));
-    await waitForHydration(page);
-    await expect(testId(page, "composition-index")).toBeVisible();
-
-    const content = readUrls();
-    const modified = content.replace(
-      /include\("\/composition", compositionPatterns,\s*\{[^}]*name:\s*"composition"[^}]*\}\s*\),/,
-      '// include("/composition", compositionPatterns, { name: "composition" }),',
+    // Fixing the source (with a renamed path) re-runs discovery successfully,
+    // clears the error, and now fires the gated reload — so types regenerate and
+    // the worker serves the new route without a manual restart.
+    writeFileBumpMtime(
+      urlsPath(),
+      valid.replace(
+        'path("/about", AboutPage, { name: "about" }),',
+        'path("/about-recovered", AboutPage, { name: "aboutRecovered" }),',
+      ),
     );
-    expect(modified).not.toBe(content);
-    const stopRetouch = writeWithRetouch(urlsPath(), modified);
-
-    await expect(async () => {
-      await page.goto(f.url("/composition"));
-      await expect(testId(page, "catch-all-page")).toBeVisible({
-        timeout: 2000,
-      });
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
-  });
-
-  test("should restore included routes when include is uncommented", async ({
-    page,
-  }) => {
-    const content = readUrls();
-    const removed = content.replace(
-      /include\("\/composition", compositionPatterns,\s*\{[^}]*name:\s*"composition"[^}]*\}\s*\),/,
-      '// include("/composition", compositionPatterns, { name: "composition" }),',
-    );
-    let stopRetouch = writeWithRetouch(urlsPath(), removed);
-
-    // Wait for removal to take effect
-    await expect(async () => {
-      await page.goto(f.url("/composition"));
-      await expect(testId(page, "catch-all-page")).toBeVisible({
-        timeout: 2000,
-      });
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
-
-    // Restore original
-    stopRetouch = writeWithRetouch(urlsPath(), content);
-
-    await expect(async () => {
-      await page.goto(f.url("/composition"));
-      await expect(testId(page, "composition-index")).toBeVisible({
-        timeout: 2000,
-      });
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
-  });
-
-  // -- Group 4: Layout Mutations --
-
-  test("should render new layout wrapper after adding layout()", async ({
-    page,
-  }) => {
-    const content = readUrls();
-
-    // Add Outlet import and wrap theme route in a layout
-    let modified = content.replace(
-      'import { urls, cookies, type ResponseHandlerContext } from "@rangojs/router";',
-      `import { urls, cookies, type ResponseHandlerContext } from "@rangojs/router";
-import { Outlet } from "@rangojs/router/client";`,
-    );
-    modified = modified.replace(
-      'path("/theme", ThemePage, { name: "theme" }),',
-      `layout(() => <div data-testid="hmr-layout-wrapper"><Outlet /></div>, () => [
-            path("/theme", ThemePage, { name: "theme" }),
-          ]),`,
-    );
-    expect(modified).not.toBe(content);
-    const stopRetouch = writeWithRetouch(urlsPath(), modified);
-
-    await expect(async () => {
-      await page.goto(f.url("/theme"));
-      await expect(
-        page.locator('[data-testid="hmr-layout-wrapper"]'),
-      ).toBeVisible({ timeout: 2000 });
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
-
-    // Theme content should still render inside the layout
-    await expect(page.locator(".theme-page")).toBeVisible();
-  });
-
-  test("should unwrap routes when layout() is removed", async ({ page }) => {
-    // Verify layout exists initially
-    await page.goto(f.url("/proactive-cache"));
-    await waitForHydration(page);
-    await expect(testId(page, "proactive-cache-layout")).toBeVisible();
-    await expect(testId(page, "proactive-index-page")).toBeVisible();
-
-    const content = readUrls();
-    const modified = content.replace(
-      `layout(<ProactiveCacheLayout />, () => [
-            path("/proactive-cache", ProactiveCacheIndexPage, {
-              name: "proactiveCache",
-            }),
-            path("/proactive-cache/item-a", ProactiveCacheItemAPage, {
-              name: "proactiveCacheItemA",
-            }),
-            path("/proactive-cache/item-b", ProactiveCacheItemBPage, {
-              name: "proactiveCacheItemB",
-            }),
-          ]),`,
-      `path("/proactive-cache", ProactiveCacheIndexPage, {
-              name: "proactiveCache",
-            }),
-            path("/proactive-cache/item-a", ProactiveCacheItemAPage, {
-              name: "proactiveCacheItemA",
-            }),
-            path("/proactive-cache/item-b", ProactiveCacheItemBPage, {
-              name: "proactiveCacheItemB",
-            }),`,
-    );
-    expect(modified).not.toBe(content);
-    const stopRetouch = writeWithRetouch(urlsPath(), modified);
-
-    await expect(async () => {
-      await page.goto(f.url("/proactive-cache"));
-      await expect(testId(page, "proactive-index-page")).toBeVisible({
-        timeout: 2000,
-      });
-      // Layout should no longer be present — only passes after HMR processes
-      await expect(testId(page, "proactive-cache-layout")).not.toBeVisible({
-        timeout: 2000,
-      });
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
-  });
-
-  // -- Group 5: Parallel Route Mutations --
-
-  test("should remove parallel content when parallel() is removed", async ({
-    page,
-  }) => {
-    // Verify sidebar renders initially
-    await page.goto(f.url("/blog"));
-    await waitForHydration(page);
-    await expect(testId(page, "blog-index")).toBeVisible();
-    // Sidebar or its skeleton should be present
-    await expect(
-      testId(page, "blog-sidebar").or(testId(page, "sidebar-skeleton")),
-    ).toBeVisible();
-
-    const content = readUrls();
-    const modified = content.replace(
-      `parallel({ "@sidebar": BlogSidebarHandler }, () => [
-            loader(BlogSidebarLoader, () => [cache()]),
-            loading(<SidebarSkeleton />),
-          ]),`,
-      `// parallel removed for HMR test`,
-    );
-    expect(modified).not.toBe(content);
-    const stopRetouch = writeWithRetouch(urlsPath(), modified);
-
-    await expect(async () => {
-      await page.goto(f.url("/blog"));
-      await expect(testId(page, "blog-index")).toBeVisible({ timeout: 2000 });
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
-
-    // Sidebar and skeleton should both be gone
-    await expect(testId(page, "blog-sidebar")).not.toBeVisible();
-    await expect(testId(page, "sidebar-skeleton")).not.toBeVisible();
-  });
-
-  test("should restore parallel content when parallel() is re-added", async ({
-    page,
-  }) => {
-    const content = readUrls();
-    const removed = content.replace(
-      `parallel({ "@sidebar": BlogSidebarHandler }, () => [
-            loader(BlogSidebarLoader, () => [cache()]),
-            loading(<SidebarSkeleton />),
-          ]),`,
-      `// parallel removed for HMR test`,
-    );
-    let stopRetouch = writeWithRetouch(urlsPath(), removed);
-
-    // Wait for removal to take effect
-    await expect(async () => {
-      await page.goto(f.url("/blog"));
-      await expect(testId(page, "blog-index")).toBeVisible({ timeout: 2000 });
-      await expect(testId(page, "blog-sidebar")).not.toBeVisible();
-      await expect(testId(page, "sidebar-skeleton")).not.toBeVisible();
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
-
-    // Restore original
-    stopRetouch = writeWithRetouch(urlsPath(), content);
-
-    await expect(async () => {
-      await page.goto(f.url("/blog"));
-      await expect(
-        testId(page, "blog-sidebar").or(testId(page, "sidebar-skeleton")),
-      ).toBeVisible({ timeout: 2000 });
-    }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-    stopRetouch();
+    await expectGen('aboutRecovered: "/about-recovered"', true);
+    await expectGen('about: "/about"', false);
+    await expectServed("/about-recovered", "about-page");
+    await expectServed("/about", "catch-all-page");
   });
 });

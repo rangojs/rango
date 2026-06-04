@@ -10,7 +10,10 @@ export type ViewTransitionClass = Record<string, string> | string;
 
 /**
  * Configuration for React's <ViewTransition> component.
- * Maps directly to ViewTransitionProps (minus children/ref/callbacks).
+ *
+ * The phase fields (enter/exit/update/share/default/name) map directly to
+ * ViewTransitionProps (minus children/ref/callbacks). The `viewTransition`
+ * field is router-specific and is stripped before the config reaches React.
  */
 export interface TransitionConfig {
   enter?: ViewTransitionClass;
@@ -19,6 +22,20 @@ export interface TransitionConfig {
   share?: ViewTransitionClass;
   default?: ViewTransitionClass;
   name?: string;
+  /**
+   * Whether the router wraps this segment's content in its own
+   * <ViewTransition> boundary.
+   *
+   * - "auto" (default): the router places the boundary, producing the
+   *   router-owned cross-fade described by the phase fields above.
+   * - false: the router places no boundary. The navigation commit is still
+   *   driven through startTransition (so loaders hold instead of flashing a
+   *   skeleton, and consumer-placed <ViewTransition> elements still animate),
+   *   but the router contributes no cross-fade of its own.
+   *
+   * When unset, inherits the createRouter({ viewTransition }) default.
+   */
+  viewTransition?: "auto" | false;
 }
 
 /**

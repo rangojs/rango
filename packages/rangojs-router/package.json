@@ -1,6 +1,6 @@
 {
   "name": "@rangojs/router",
-  "version": "0.0.0-experimental.111",
+  "version": "0.0.0-experimental.114",
   "description": "Django-inspired RSC router with composable URL patterns",
   "keywords": [
     "react",
@@ -138,6 +138,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.strict-check.json --noEmit && tsc -p tsconfig.augment-check.json --noEmit",
     "test": "playwright test",
     "test:ui": "playwright test --ui",
+    "test:hmr-local": "playwright test --project=dev-warmup --project=hmr-routes --project=hmr-basename --project=hmr-prerender --no-deps --workers=1",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest"
   },
@@ -151,6 +152,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",
+    "@shared/e2e": "workspace:*",
     "@types/node": "^24.10.1",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",

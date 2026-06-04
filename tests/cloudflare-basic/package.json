@@ -11,7 +11,8 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:hmr-local": "playwright test --project=hmr --no-deps --workers=1"
   },
   "dependencies": {
     "@rangojs/router": "workspace:*",
@@ -21,12 +22,17 @@
     "spin-delay": "^2.0.1"
   },
   "devDependencies": {
+    "@babel/core": "catalog:",
     "@cloudflare/vite-plugin": "^1.38.0",
     "@cloudflare/workers-types": "^4.20260523.1",
     "@playwright/test": "^1.49.1",
+    "@rolldown/plugin-babel": "catalog:",
+    "@shared/e2e": "workspace:*",
+    "@types/babel__core": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
+    "babel-plugin-react-compiler": "catalog:",
     "tinyexec": "^0.3.2",
     "typescript": "^5.7.0",
     "vite": "catalog:",

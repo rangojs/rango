@@ -10,6 +10,9 @@ pre-commit:
     - name: lint
       run: pnpm -w run lint
       glob: "*.{ts,tsx,js,jsx}"
+    - name: e2e-bucketing
+      run: node tools/check-e2e-bucketing.mjs
+      glob: "*.test.{ts,tsx,js,jsx}"
 
 post-merge:
   jobs:

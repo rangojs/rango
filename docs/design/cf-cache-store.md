@@ -1,5 +1,10 @@
 # Cloudflare Cache Store Design
 
+> **Historical design document.** This captures the original design narrative for
+> `CFCacheStore`. For the shipped API and current usage, see the `caching` and
+> `cache-guide` skills (`packages/rangojs-router/skills/caching`,
+> `packages/rangojs-router/skills/cache-guide`).
+
 ## Overview
 
 Production cache store implementation for Cloudflare Workers using the Edge Cache API as the primary storage layer, with optional Workers KV for persistence.
@@ -158,32 +163,38 @@ new CFCacheStore({ ctx, kv: env.CACHE_KV, defaults: { ttl: 60, swr: 300 } });
 ### Basic Setup (Edge Cache Only)
 
 ```typescript
-import { createRSCHandler } from "rsc-router/rsc";
-import { CFCacheStore } from "rsc-router/cf";
+import { createRouter } from "@rangojs/router";
+import { CFCacheStore } from "@rangojs/router/cache";
 
-export default createRSCHandler({
-  router,
-  cache: {
+const router = createRouter<AppBindings>({
+  document: Document,
+  urls: urlpatterns,
+  cache: (env, ctx) => ({
     store: new CFCacheStore({
+      ctx,
       defaults: { ttl: 60, swr: 300 },
     }),
-  },
+    enabled: true,
+  }),
 });
 ```
 
 ### With KV Persistence (Phase 2)
 
 ```typescript
-import { createRSCHandler } from "rsc-router/rsc";
-import { CFCacheStore } from "rsc-router/cf";
+import { createRouter } from "@rangojs/router";
+import { CFCacheStore } from "@rangojs/router/cache";
 
-export default createRSCHandler({
-  router,
-  cache: (env) => ({
+const router = createRouter<AppBindings>({
+  document: Document,
+  urls: urlpatterns,
+  cache: (env, ctx) => ({
     store: new CFCacheStore({
+      ctx,
       kv: env.CACHE_KV,
       defaults: { ttl: 60, swr: 300 },
     }),
+    enabled: true,
   }),
 });
 ```
@@ -702,7 +713,7 @@ Cloudflare Cache API limits:
 ## File Structure
 
 ```
-packages/rsc-router/src/cache/
+packages/rangojs-router/src/cache/
 ├── cache-scope.ts         # CacheScope with lookupRoute/cacheRoute
 ├── types.ts               # SegmentCacheStore, CacheGetResult interfaces
 ├── memory-segment-store.ts # In-memory store for development

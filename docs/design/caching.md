@@ -1,5 +1,7 @@
 # RSC Router Caching Design
 
+> **Historical design context.** This document captures the original design and POC narrative for segment caching. Some examples below predate the shipped API surface and are kept for the reasoning they record, not as copy-paste references. For the current, shipped API see the skills: `skills/caching`, `skills/cache-guide`, `skills/use-cache`, and `skills/document-cache`. The package is `@rangojs/router`; cache stores and the document-cache middleware are imported from `@rangojs/router/cache`.
+
 ## Implementation Status
 
 ### ✅ Completed
@@ -17,8 +19,8 @@
 
 ### 🚧 Remaining
 
-- **Production storage backends** - Cloudflare KV, Redis adapters
-- **Cache invalidation API** - Tag-based invalidation (tags are accepted in config but not yet indexed by built-in stores), manual purge
+- **Production storage backends** - `CFCacheStore` (Cloudflare Cache API L1 + KV L2) is shipped from `@rangojs/router/cache`. Redis and other adapters are still future work.
+- **Cache invalidation API** - `cache()` and cache profiles accept an optional `tags` field, but the built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`) do **not** index or invalidate by tag. Tag-based invalidation (`revalidateTag`) is forward-looking and requires a custom store with secondary indices; today entries expire by TTL/SWR. A manual purge API is also still future work.
 - **Proactive caching** - Render null-component segments in background for complete cache entries
 - **RSC stream caching** - Cache serialized stream directly (avoid deserialize/reserialize)
 
@@ -118,10 +120,10 @@ Key points:
 
 ```typescript
 cache({ ttl: 60 }, () => [
-  layout(<BlogLayout />),      // cached individually
-  route("post/:slug"),         // cached individually
-  route("list"),               // cached individually
-  route("sidebar"),            // cached individually
+  layout(<BlogLayout />),       // cached individually
+  path("post/:slug"),          // cached individually
+  path("list"),                // cached individually
+  path("sidebar"),             // cached individually
 ])
 ```
 
@@ -133,14 +135,14 @@ Override TTL or opt out:
 cache({ ttl: 60 }, () => [
   layout(<BlogLayout />),
 
-  route("post/:slug"),
+  path("post/:slug"),
 
-  route("admin", () => [
+  path("admin", () => [
     cache(false),  // opt out of caching
   ]),
 
   cache({ ttl: 300 }, () => [
-    route("static-page"),  // longer TTL
+    path("static-page"),  // longer TTL
   ]),
 ])
 ```
@@ -150,7 +152,7 @@ cache({ ttl: 60 }, () => [
 Loaders can have their own cache configuration:
 
 ```typescript
-route("post/:slug", () => [
+path("post/:slug", () => [
   loader(PostLoader), // inherits cache from boundary
 
   loader(ViewCount, () => [
@@ -172,7 +174,7 @@ Cache complete RSC response for a route:
 ```typescript
 cache({ ttl: 3600 }, () => [
   layout(<StaticLayout />),
-  route("about"),
+  path("about"),
 ])
 ```
 
@@ -188,7 +190,7 @@ Similar to Next.js 16's PPR (Partial Prerendering) with `use cache`:
 ```typescript
 cache({ ttl: 60 }, () => [
   layout(<BlogLayout />),  // shell - cached
-  route("post/:slug", () => [
+  path("post/:slug", () => [
     loader(PostLoader),    // streams fresh through Suspense
   ]),
 ])
@@ -222,7 +224,7 @@ Response: composed from cached segments
 Loader results cached independently:
 
 ```typescript
-loader(PostLoader, () => [cache({ ttl: 30 })]);
+path("post/:slug", () => [loader(PostLoader, () => [cache({ ttl: 30 })])]);
 ```
 
 Allows same loader data to be reused across different segments/routes.
@@ -274,7 +276,7 @@ layout(<RootLayout />),  // NOT cached - always fresh
 cache({ ttl: 60 }, () => [
   layout(<BlogLayout />),        // Proactive caching applies
   parallel({ "@sidebar": ... }), // Proactive caching applies
-  route("post/:id", ...),        // Proactive caching applies
+  path("post/:id", ...),         // Proactive caching applies
 ]),
 ```
 
@@ -339,24 +341,27 @@ interface CachedEntryData {
 ### Handler Configuration
 
 ```typescript
-import { createRSCHandler, MemorySegmentCacheStore } from "rsc-router/rsc";
+import { createRouter } from "@rangojs/router";
+import { MemorySegmentCacheStore, CFCacheStore } from "@rangojs/router/cache";
 
 // Store with defaults - TTL/SWR inherited by all cache() boundaries
 const cacheStore = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 300 },
 });
 
-export default createRSCHandler({
-  router,
+export const router = createRouter({
+  document: Document,
   cache: { store: cacheStore },
 });
 
-// Dynamic config with env (for Cloudflare bindings)
-export default createRSCHandler({
-  router,
-  cache: (env) => ({
-    store: new KVSegmentCacheStore(env.Bindings.CACHE_KV, {
-      defaults: { ttl: 60 },
+// Dynamic config with env + ctx (for Cloudflare bindings)
+export const router = createRouter({
+  document: Document,
+  cache: (env, ctx) => ({
+    store: new CFCacheStore({
+      defaults: { ttl: 60, swr: 300 },
+      ctx: ctx!, // Always provided in Cloudflare Workers
+      kv: env.KV, // KV L2 for global persistence
     }),
   }),
 });
@@ -364,14 +369,15 @@ export default createRSCHandler({
 
 ### Implementations
 
-**Available:**
+**Available** (from `@rangojs/router/cache`):
 
-- `MemorySegmentCacheStore` - In-memory Map, survives HMR via `globalThis`
+- `MemorySegmentCacheStore` - In-memory Map; named stores survive HMR via `globalThis`
+- `CFCacheStore` - Cloudflare edge store (Cache API L1 + optional KV L2 for cross-colo persistence), full SWR support
 
 **Planned:**
 
-- Cloudflare KV adapter
 - Redis adapter
+- Other distributed backends
 
 ## Handle Data Caching
 
@@ -570,7 +576,7 @@ Loaders fetch dynamic data and should run fresh by default. Only the component s
 cache({ ttl: 60 }, () => [
   layout(<BlogLayout />),      // ✅ Cached (component)
 
-  route("post/:slug", () => [
+  path("post/:slug", () => [
     loader(PostLoader),        // ❌ NOT cached (runs fresh)
     loader(ViewCount),         // ❌ NOT cached (runs fresh)
   ]),
@@ -582,7 +588,7 @@ cache({ ttl: 60 }, () => [
 Use `cache()` wrapper to explicitly cache loader results:
 
 ```typescript
-route("post/:slug", () => [
+path("post/:slug", () => [
   // Fresh loader (default)
   loader(PostLoader),
 
@@ -622,19 +628,19 @@ This requires separating:
 cache({ ttl: 60 }, () => [
   layout(<RootLayout />),           // ttl: 60
 
-  route("blog", () => [
+  path("blog", () => [
     layout(<BlogLayout />),         // ttl: 60 (inherited)
-    route("post/:slug"),            // ttl: 60 (inherited)
+    path("post/:slug"),             // ttl: 60 (inherited)
   ]),
 
   // Override for specific section
   cache({ ttl: 300 }, () => [
-    route("static-page"),           // ttl: 300 (overridden)
+    path("static-page"),            // ttl: 300 (overridden)
   ]),
 
   // Opt out of caching
   cache(false, () => [
-    route("admin"),                 // ❌ Not cached
+    path("admin"),                  // ❌ Not cached
   ]),
 ])
 ```
@@ -699,19 +705,19 @@ const appStore = new MemorySegmentCacheStore({
   defaults: { ttl: 60 },  // 60s default
 });
 
-export default createRSCHandler({
-  router,
+export const router = createRouter({
+  document: Document,
   cache: { store: appStore },
 });
 
-// In route definition:
+// In route definition (inside urls()):
 cache(() => [                               // Uses appStore (ttl: 60)
   layout(<ShopLayout />),
-  route("products/:id"),
+  path("products/:id"),
 
   cache({ store: checkoutStore }, () => [   // Uses checkoutStore (ttl: 10)
     layout(<CheckoutLayout />),
-    route("checkout"),
+    path("checkout"),
   ]),
 ])
 ```
@@ -740,7 +746,7 @@ cache(
       return true;
     },
   },
-  () => [route("product/:id")],
+  () => [path("product/:id")],
 );
 ```
 
@@ -753,7 +759,7 @@ cache(
     // Include query params in cache key
     key: (ctx) => `product-${ctx.params.id}-${ctx.searchParams.get("variant")}`,
   },
-  () => [route("product/:id")],
+  () => [path("product/:id")],
 );
 ```
 
@@ -765,12 +771,11 @@ cache(
     ttl: 300,
     tags: (ctx) => [`product:${ctx.params.id}`, "products", "catalog"],
   },
-  () => [route("product/:id")],
+  () => [path("product/:id")],
 );
-
-// Later, in a server action:
-await invalidateCache({ tags: ["products"] });
 ```
+
+The `tags` field is accepted today and passed to the store, but the built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`) do **not** index or invalidate by tag. Tag-based invalidation (`revalidateTag`) is forward-looking: it requires a custom store that maintains secondary indices from tag to cache key. There is no shipped `invalidateCache()` / `revalidateTag()` function; today entries expire by TTL/SWR. Note that the separate `revalidate()` export is a client-update axis (which segments re-render on a navigation or action), not a cache bust.
 
 ---
 
@@ -778,14 +783,12 @@ await invalidateCache({ tags: ["products"] });
 
 ### Invalidation
 
-TBD - to be determined.
+Today, cache entries expire by TTL/SWR only. Other mechanisms remain forward-looking:
 
-Options under consideration:
-
-- TTL-based expiration
-- Tag-based invalidation
-- Manual purge API
-- Server action integration
+- TTL-based expiration (shipped)
+- Tag-based invalidation (`revalidateTag`) - not shipped; `tags` are accepted in config but built-in stores do not index by them, so this needs a custom store with secondary indices
+- Manual purge API (not shipped)
+- Server action integration (not shipped)
 
 ### Handle Data with Promises
 
@@ -915,8 +918,7 @@ The proactive caching closure captures the original `request` object. If the req
 
 ### Console Logging
 
-The caching system has extensive `console.log` statements for debugging. Consider:
+Cache logging is gated behind the `INTERNAL_RANGO_DEBUG` flag (see `src/internal-debug.ts`); cache modules such as `cache-scope.ts` and `loader-cache.ts` wrap their `console.log` calls in that check (e.g. `debugCacheLog()`), so production runs are silent by default. Performance traces are similarly gated behind `debugPerformance`. There are no longer unconditional `console.log` statements in the cache path. Possible future refinements:
 
-- Adding a debug flag to control verbosity
-- Using structured logging for production
+- Structured logging for production
 - Log levels (debug/info/warn/error)

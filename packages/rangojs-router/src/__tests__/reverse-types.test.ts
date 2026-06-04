@@ -9,6 +9,7 @@ import { describe, it, expectTypeOf } from "vitest";
 import type {
   ReverseFunction,
   ScopedReverseFunction,
+  LocalReverseFunction,
   ParamsFor,
 } from "../reverse.js";
 import type { ExtractParams, Handler } from "../types.js";
@@ -182,6 +183,33 @@ describe("ScopedReverseFunction type structure", () => {
     expectTypeOf<Href>().toBeCallableWith("article", { slug: "design" });
     // @ts-expect-error - ".blog.post" is global, must use "blog.post"
     expectTypeOf<Href>().toBeCallableWith(".blog.post", { slug: "hello" });
+  });
+});
+
+describe("LocalReverseFunction type structure (useReverse)", () => {
+  it("accepts names with OR without a leading dot (the dot is optional)", () => {
+    type Local = LocalReverseFunction<BlogRoutes>;
+    // paramless route — both forms resolve identically
+    expectTypeOf<Local>().toBeCallableWith("index");
+    expectTypeOf<Local>().toBeCallableWith(".index");
+    // route with params — both forms
+    expectTypeOf<Local>().toBeCallableWith("post", { slug: "hello" });
+    expectTypeOf<Local>().toBeCallableWith(".post", { slug: "hello" });
+    expectTypeOf<Local>().toBeCallableWith("category", { categoryId: "tech" });
+    expectTypeOf<Local>().toBeCallableWith(".category", { categoryId: "tech" });
+  });
+
+  it("returns string", () => {
+    type Local = LocalReverseFunction<BlogRoutes>;
+    expectTypeOf<Local>().returns.toBeString();
+  });
+
+  it("rejects unknown names in either form", () => {
+    type Local = LocalReverseFunction<BlogRoutes>;
+    // @ts-expect-error - "typo" is not a route in the map
+    expectTypeOf<Local>().toBeCallableWith("typo");
+    // @ts-expect-error - ".typo" is not a route in the map
+    expectTypeOf<Local>().toBeCallableWith(".typo");
   });
 });
 

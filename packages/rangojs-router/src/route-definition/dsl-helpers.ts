@@ -866,8 +866,11 @@ const loading: RouteHelpers<any, any>["loading"] = (component, options) => {
 };
 
 /**
- * Transition helper - attaches a ViewTransition config to the current entry
- * or wraps a group of routes in a transparent layout with ViewTransition
+ * Transition helper - opts the entry (or a wrapped group of routes) into
+ * transition-driven navigation by attaching a TransitionConfig. This drives the
+ * commit through startTransition (content hold on all React versions) and, on
+ * experimental React, places a `<ViewTransition>` boundary unless
+ * `viewTransition: false`. See skills/view-transitions for the matrix.
  */
 const transition = (
   configOrChildren?: TransitionConfig | (() => UseItems<AllUseItems>),

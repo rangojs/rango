@@ -99,8 +99,11 @@ function createViewTransitionBoundary(
   transition: NonNullable<ResolvedSegment["transition"]>,
   children: ReactNode,
 ): ReactNode {
+  // `viewTransition` is a router-specific flag (boundary opt-out), not a React
+  // <ViewTransition> prop — strip it so it never reaches React.
+  const { viewTransition: _viewTransition, ...vtProps } = transition;
   return createElement(ReactViewTransition, {
-    ...transition,
+    ...vtProps,
     children,
   });
 }
@@ -216,6 +219,25 @@ export async function renderSegments(
   }
   // Separate segments by type, passing intercept segments for explicit injection
   const tree = segmentTreeWalk(normalizedSegments, normalizedInterceptSegments);
+
+  // A route is "in a transition scope" when its own segment OR any layout in
+  // its matched chain declares transition(). Both transition() forms land here:
+  // the per-route item form sets transition on the route entry, and the block
+  // wrapper form sets it on a transparent ancestor layout (dsl-helpers.ts). When
+  // in scope, the route and its route-owned layouts use param-agnostic keys so a
+  // same-route navigation reconciles (holds content) instead of remounting. The
+  // value is a static property of the route's position in the tree, so it is the
+  // same on every render of that route (SSR, navigation, action) — the keys
+  // never drift. Cross-route navigation still remounts: different routes have
+  // different segment ids regardless of transition scope.
+  const inTransitionScope = normalizedSegments.some(
+    (s) =>
+      s.transition != null &&
+      (s.type === "layout" ||
+        s.type === "route" ||
+        s.type === "error" ||
+        s.type === "notFound"),
+  );
   // Render content segments as siblings
   let content: ReactNode = null;
   for (const node of tree) {
@@ -228,17 +250,31 @@ export async function renderSegments(
     );
     const { component, id, params, loading } = node.segment;
 
-    // Only include params in key for segments that belong to the route
-    // - Routes: always include params (they render param-specific content)
-    // - Error/notFound segments: always include params (they replace failed route content)
-    // - Route's layouts (orphans): include params (children of parameterized route)
-    // - Parent chain layouts: exclude params (shared across routes, param-agnostic)
-    // This prevents unnecessary unmounting when params change
+    // Param-agnostic keys are opt-in via the transition() DSL (see
+    // inTransitionScope above). A route (and its route-owned layouts) inside a
+    // transition scope drops the param from its key, so navigating between two
+    // param values of the SAME route (e.g. /product/1 -> /product/2) reconciles
+    // the route subtree instead of remounting it. Combined with the
+    // startTransition wrap that shouldStartViewTransition already applies to
+    // transition routes (browser/partial-update.ts), the previous content stays
+    // on screen while the new loaders resolve (stale-while-revalidate) instead
+    // of flashing the loading skeleton. This works on stable React; experimental
+    // React adds the animated <ViewTransition> cross-fade on top.
+    //
+    // Outside a transition scope the key stays param-bearing and the route
+    // remounts on param change (the default: a fresh skeleton and fresh
+    // component state).
+    //
+    // error/notFound always keep param-bearing keys: createErrorSegment reuses
+    // the boundary layout's shortCode as the error segment id (router/
+    // error-handling.ts), so a param-agnostic error key could collide with that
+    // layout's key within the same render.
     const includeParams =
-      node.segment.type === "route" ||
       node.segment.type === "error" ||
       node.segment.type === "notFound" ||
-      (node.segment.type === "layout" && node.segment.belongsToRoute);
+      ((node.segment.type === "route" ||
+        (node.segment.type === "layout" && node.segment.belongsToRoute)) &&
+        !inTransitionScope);
 
     const paramStr =
       includeParams && params && Object.keys(params).length > 0
@@ -286,12 +322,25 @@ export async function renderSegments(
     // subtree update on the layout-level VT — which would otherwise make
     // React's commit walker fire `document.startViewTransition` and apply
     // view-transition-names to the underlying main subtree (cover/title/etc.).
+    //
+    // `transition.viewTransition === false` opts out of the router-owned
+    // boundary only. Driving (the startTransition wrap in browser/partial-update.ts
+    // and the param-agnostic key/hold below) keys off transition *presence*, not
+    // this flag, so a boundary-less transition still holds content and lets
+    // consumer-placed <ViewTransition> elements animate. The global
+    // createRouter({ viewTransition }) default is resolved into this field
+    // during segment resolution (only `false` is stamped; unset/"auto" is left
+    // as-is and means "wrap"), so this gate needs no router-option threading.
     let outletContent: ReactNode =
       node.segment.type === "layout" ? content : null;
 
     const transition = node.segment.transition;
 
-    if (ReactViewTransition && transition) {
+    if (
+      ReactViewTransition &&
+      transition &&
+      transition.viewTransition !== false
+    ) {
       if (node.segment.type === "layout") {
         outletContent = wrapDefaultOutletContent(outletContent, transition);
       } else {

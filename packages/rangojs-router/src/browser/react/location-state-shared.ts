@@ -3,6 +3,8 @@
  * No "use client" directive so it can be imported from RSC
  */
 
+import type { ReactElement } from "react";
+
 /**
  * Internal entry representing a state value with its unique key.
  * When __rsc_ls_lazy is true, __rsc_ls_value holds a getter function
@@ -21,6 +23,88 @@ export interface LocationStateOptions {
   /** When true, the state is cleared from history after first read (flash message pattern) */
   flash?: boolean;
 }
+
+type LocationStateUnsafeFn = (...args: never[]) => unknown;
+
+// Broadest constructor signature (`abstract` covers both abstract and concrete
+// classes). A class passed as state has a `new` signature, not a call signature,
+// so it slips past LocationStateUnsafeFn; at runtime the lazy-getter path
+// (`typeof value === "function"`) then mistakes it for a getter and throws.
+type LocationStateUnsafeCtor = abstract new (...args: never[]) => unknown;
+
+// `unknown` cannot be verified serializable, so it is rejected (callers must
+// supply a concrete type). `any` deliberately defeats type checking and is NOT
+// guardable — it is assignable to the branded error too, so the check always
+// passes; it remains an explicit escape hatch.
+type IsAny<T> = 0 extends 1 & T ? true : false;
+type IsUnknown<T> =
+  IsAny<T> extends true ? false : unknown extends T ? true : false;
+
+/**
+ * Branded error surfaced when a value that cannot live in location state is
+ * used. Location state is written into `history.state`, which uses the
+ * structured clone algorithm; React elements, functions, and symbols throw a
+ * `DataCloneError` at runtime. Carries a human-readable reason so the compile
+ * error explains the fix.
+ */
+export type LocationStateUnsafe<Reason extends string> = {
+  readonly __rango_location_state_unsafe: Reason;
+};
+
+/**
+ * Maps `T` to itself when it is safe to store in location state, or to a branded
+ * {@link LocationStateUnsafe} error for the disallowed parts: `unknown`, React
+ * elements (RSC/JSX content), functions, class constructors, and symbols.
+ * Recurses through arrays, `Map`, `Set`, and plain objects; structured-clone
+ * built-ins (`Date`, `RegExp`, typed arrays, `Blob`, `File`, `FormData`) pass
+ * through. Consumed by {@link ValidateLocationState}, which is intersected into a
+ * definition's value parameter so posting RSC content is a COMPILE error, not a
+ * runtime `DataCloneError`. (`any` is unguardable and remains an escape hatch.)
+ */
+export type LocationStateSafe<T> =
+  IsUnknown<T> extends true
+    ? LocationStateUnsafe<"location state needs an explicit, concrete type; `unknown` cannot be verified as serializable">
+    : T extends LocationStateUnsafeFn
+      ? LocationStateUnsafe<"functions cannot be stored in location state">
+      : T extends LocationStateUnsafeCtor
+        ? LocationStateUnsafe<"class constructors cannot be stored in location state">
+        : T extends symbol
+          ? LocationStateUnsafe<"symbols cannot be stored in location state">
+          : T extends ReactElement
+            ? LocationStateUnsafe<"React/RSC content cannot be stored in location state; store plain data and render it on arrival">
+            : T extends string | number | boolean | bigint | null | undefined
+              ? T
+              : T extends
+                    | Date
+                    | RegExp
+                    | ArrayBuffer
+                    | ArrayBufferView
+                    | Blob
+                    | File
+                    | FormData
+                ? T
+                : T extends ReadonlyMap<infer K, infer V>
+                  ? ReadonlyMap<LocationStateSafe<K>, LocationStateSafe<V>>
+                  : T extends ReadonlySet<infer V>
+                    ? ReadonlySet<LocationStateSafe<V>>
+                    : T extends readonly unknown[]
+                      ? { [K in keyof T]: LocationStateSafe<T[K]> }
+                      : T extends object
+                        ? { [K in keyof T]: LocationStateSafe<T[K]> }
+                        : T;
+
+/**
+ * `unknown` (a no-op) when `T` is safe to store in location state, otherwise a
+ * branded {@link LocationStateUnsafe} object. Intersected into the value
+ * parameter of a definition's call and `write()` so POSTING RSC content (or any
+ * non-serializable value) is a compile error whose text carries the reason —
+ * without a `TState extends ...` self-constraint, which TypeScript rejects as
+ * circular (TS2313). For safe `T`, `value & unknown` collapses back to `value`,
+ * so valid usage is unchanged.
+ */
+export type ValidateLocationState<T> = [T] extends [LocationStateSafe<T>]
+  ? unknown
+  : LocationStateUnsafe<"location state must be serializable: React/RSC content, functions, and symbols cannot be stored — pass plain data and render it on arrival">;
 
 /**
  * Type-safe location state definition
@@ -59,7 +143,7 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
    *
    * Client-only: throws when called on the server (no history available).
    */
-  write(value: TState): void;
+  write(value: TState & ValidateLocationState<TState>): void;
   /**
    * Statically remove this definition's slot from the current history entry,
    * leaving any other keys on history.state untouched. Idempotent: removing
@@ -118,7 +202,10 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
  */
 export function createLocationState<TState>(
   options?: LocationStateOptions,
-): LocationStateDefinition<[TState | (() => TState)], TState> {
+): LocationStateDefinition<
+  [(TState | (() => TState)) & ValidateLocationState<TState>],
+  TState
+> {
   const flash = options?.flash ?? false;
   let _key: string | undefined;
 
@@ -209,7 +296,10 @@ export function createLocationState<TState>(
     enumerable: true,
   });
 
-  return fn as LocationStateDefinition<[TState | (() => TState)], TState>;
+  return fn as unknown as LocationStateDefinition<
+    [(TState | (() => TState)) & ValidateLocationState<TState>],
+    TState
+  >;
 }
 
 /**

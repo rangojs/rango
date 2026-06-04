@@ -268,7 +268,11 @@ reads (keyed or not) reset on navigation from fresh route data, as before.
 **Refreshing multiple loaders together (`refreshGroup` + `useRefreshLoaders`)**:
 
 `key` groups readers of one loader. To refresh **different** loaders together,
-tag them with the same `refreshGroup` and trigger them with `useRefreshLoaders`:
+tag them with a shared `refreshGroup` name and trigger them with
+`useRefreshLoaders()`. The hook takes no argument; you pass the group(s) to the
+function it returns, so one `useRefreshLoaders()` can refresh different groups
+depending on context. A read may carry **several** tags — pass an array — and is
+refreshed when **any** of its groups is refreshed:
 
 ```tsx
 function Profile() {
@@ -279,33 +283,47 @@ function Profile() {
   return <span>{data.name}</span>;
 }
 function Orders() {
+  // Tagged into two groups: refreshed by "account" (the whole set) or the
+  // finer "orders" tag.
   const { data } = useLoader(OrdersLoader, {
     key: userId,
-    refreshGroup: "account",
+    refreshGroup: ["account", "orders"],
   });
   return <span>{data.count} orders</span>;
 }
-function RefreshButton() {
-  const refreshAccount = useRefreshLoaders("account");
-  return <button onClick={() => refreshAccount()}>Refresh</button>;
+function RefreshButtons() {
+  const refresh = useRefreshLoaders();
+  return (
+    <>
+      <button onClick={() => refresh("account")}>Refresh account</button>
+      <button onClick={() => refresh("orders")}>Refresh orders only</button>
+      <button onClick={() => refresh(["account", "orders"])}>
+        Refresh both
+      </button>
+    </>
+  );
 }
 ```
 
-`refreshAccount()` re-runs every currently-mounted member with a **plain GET**
-against the current route URL — no params, no body, no mutation methods, because
-a group spans loaders with different shapes. It returns a promise that resolves
+`refresh(groups)` accepts one name or an array and re-runs every currently-mounted
+member tagged with **any** of them, with a **plain GET** against the current route
+URL — no params, no body, no mutation methods, because a group spans loaders with
+different shapes. A member that sits in two of the requested groups is fetched
+once (members are unioned and deduped by read). It returns a promise that resolves
 when all members settle and **rejects with an `AggregateError`** if any fail;
 group refresh never render-throws, so handle failures at the await site
-(`await refreshAccount().catch(...)`). Each failing member also exposes its error
-via its own read's `error`.
+(`await refresh("account").catch(...)`). Each failing member also exposes its
+error via its own read's `error`.
 
-Sharing within a group is opt-in via `key`: members that share a `key` share one
-value (and one fetch); a grouped reader **without** a `key` gets its own private
-bucket, so a group refresh updates only that read and never leaks into unrelated
-unkeyed reads of the same loader. A bucket may belong to several groups at once
-(different reads can tag the same keyed bucket with different group names).
-Keep parameterized loaders on the single-loader `key` — a plain-GET group refresh
-sends no params.
+Multiple tags give you granular vs. whole-set refresh from one place: a coarse
+tag (`"account"`) covers everything, while a finer tag (`"orders"`) targets a
+subset. Sharing within a group is opt-in via `key`: members that share a `key`
+share one value (and one fetch); a grouped reader **without** a `key` gets its own
+private bucket, so a group refresh updates only that read and never leaks into
+unrelated unkeyed reads of the same loader. A bucket may belong to several groups
+at once (one read tagged with multiple names, or different reads tagging the same
+keyed bucket with different names). Keep parameterized loaders on the single-loader
+`key` — a plain-GET group refresh sends no params.
 
 **Load options**:
 
@@ -850,7 +868,7 @@ function MountInfo() {
 
 ### useReverse(routes)
 
-Mount-aware local reverse for client components. Import the generated `routes` map from a `urls()` module's `.gen.ts` and call `reverse(".name", params?)`. Auto-fills params from `useParams()`; explicit params override.
+Mount-aware local reverse for client components. Import the generated `routes` map from a `urls()` module's `.gen.ts` and call `reverse("name", params?)` — the leading dot is optional. Auto-fills params from `useParams()`; explicit params override.
 
 > Per-module `*.gen.ts` files are **CLI opt-in and not Vite-watched** — run `rango generate <urls-file>` (or wire it into `predev`) and re-run it whenever the module's routes change. See `/links` for the full generated-file setup and exposure-boundary rules.
 
@@ -863,8 +881,8 @@ function BlogNav() {
   const reverse = useReverse(blogRoutes);
   return (
     <nav>
-      <Link to={reverse(".index")}>Blog</Link>
-      <Link to={reverse(".post", { postId: "hello" })}>Post</Link>
+      <Link to={reverse("index")}>Blog</Link>
+      <Link to={reverse("post", { postId: "hello" })}>Post</Link>
     </nav>
   );
 }
@@ -888,7 +906,7 @@ See `/links` for the full URL generation guide. `ctx.reverse()` is server-only; 
 | `useLinkStatus()`     | Link pending state                | { pending }                                                        |
 | `useLoader()`         | Loader data (strict)              | data, isLoading, error                                             |
 | `useFetchLoader()`    | Loader with on-demand fetch       | data, load, isLoading                                              |
-| `useRefreshLoaders()` | Refresh a cross-loader group      | `(group) => () => Promise<void>`                                   |
+| `useRefreshLoaders()` | Refresh cross-loader group(s)     | `() => (groups: string \| string[]) => Promise<void>`              |
 | `useHandle()`         | Accumulated handle data           | T (handle type)                                                    |
 | `useAction()`         | Server action state               | state, error, result                                               |
 | `useLocationState()`  | History state (persists or flash) | T \| undefined                                                     |

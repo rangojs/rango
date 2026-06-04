@@ -111,6 +111,18 @@ export const SlowProductDetailLoader = createLoader(async (ctx) => {
   return { product, loadedAt: new Date().toISOString() };
 });
 
+/**
+ * Loader for the same-route stale-while-revalidate navigation test
+ * (/swr-product/:id). A deterministic delay means a remount would show the
+ * route's loading skeleton, so the "no skeleton flash on same-route nav"
+ * assertion is meaningful. loadedAt distinguishes one resolution from the next.
+ */
+export const SwrProductLoader = createLoader(async (ctx) => {
+  const id = ctx.params.id!;
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  return { id, name: `Product ${id}`, loadedAt: new Date().toISOString() };
+});
+
 // Counter to track fetchable loader invocations
 let fetchableLoaderCount = 0;
 
@@ -848,6 +860,16 @@ export const KeyRefreshGroupLoaderB = createLoader(async () => {
   keyRefreshGroupBCount++;
   return { count: keyRefreshGroupBCount };
 }, true);
+
+// Always-failing fetchable loader for the group-refresh failure test. Proves a
+// group refresh never render-throws: the failing member surfaces its error via
+// `error` while the healthy member in the same group still advances.
+export const KeyRefreshGroupFailLoader = createLoader(
+  async (): Promise<{ count: number }> => {
+    throw new Error("group-refresh: member failed by design");
+  },
+  true,
+);
 
 // Param/body echo for the widened-key semantics tests: a keyed parameterized
 // GET shares within the key, while a keyed mutation (POST/body) stays local.

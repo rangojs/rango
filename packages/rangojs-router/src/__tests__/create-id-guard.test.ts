@@ -6,12 +6,32 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+function messageOf(fn: () => unknown): string {
+  try {
+    fn();
+  } catch (e) {
+    return (e as Error).message;
+  }
+  throw new Error("expected the call to throw");
+}
+
 describe("createLoader missing $$id guard", () => {
   it("throws in development when __injectedId is missing", () => {
     vi.stubEnv("NODE_ENV", "development");
     expect(() => createLoader(async () => ({ data: 1 }))).toThrow(
       "Loader is missing $$id",
     );
+  });
+
+  it("gives located, actionable guidance for a non-exported loader", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const msg = messageOf(() => createLoader(async () => ({ data: 1 })));
+    expect(msg).toContain("Loader is missing $$id");
+    expect(msg).toContain("export const X = createLoader(...)");
+    expect(msg).toContain("export it as `export const`");
+    expect(msg).toContain('"Unsupported createLoader shape"');
+    // Best-effort call site parsed from the stack: "path:line:column".
+    expect(msg).toMatch(/created at .+:\d+:\d+/);
   });
 
   it("succeeds when __injectedId is provided", () => {
@@ -29,6 +49,15 @@ describe("createHandle missing $$id guard", () => {
   it("throws in development when __injectedId is missing", () => {
     vi.stubEnv("NODE_ENV", "development");
     expect(() => createHandle()).toThrow("Handle is missing $$id");
+  });
+
+  it("gives located, actionable guidance for a non-exported handle", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const msg = messageOf(() => createHandle());
+    expect(msg).toContain("Handle is missing $$id");
+    expect(msg).toContain("export const X = createHandle(...)");
+    expect(msg).toContain('"Unsupported createHandle shape"');
+    expect(msg).toMatch(/created at .+:\d+:\d+/);
   });
 
   it("succeeds when __injectedId is provided", () => {

@@ -36,6 +36,13 @@
 
 export interface LoaderEntry<T = unknown> {
   readonly value: T | undefined;
+  /**
+   * Whether a load has committed a value to this bucket. Distinguishes a
+   * committed `null`/`undefined` result from "never loaded", so a loader that
+   * resolves to a falsy value is not mistaken for an empty bucket and is not
+   * overridden by the server-seeded context value.
+   */
+  readonly hasValue: boolean;
   readonly error: Error | null;
   readonly isLoading: boolean;
   /** Identifies the request that produced this snapshot. 0 means "no request". */
@@ -44,6 +51,7 @@ export interface LoaderEntry<T = unknown> {
 
 const EMPTY_SNAPSHOT: LoaderEntry = Object.freeze({
   value: undefined,
+  hasValue: false,
   error: null,
   isLoading: false,
   requestId: 0,
@@ -67,14 +75,15 @@ export interface SubscribeOptions {
    */
   ephemeral?: boolean;
   /**
-   * Cross-loader refresh group name. Tags this bucket so `refreshGroup(name)`
-   * can refresh it alongside buckets of other loaders. Group membership follows
-   * subscriber presence: a bucket leaves its group when its last subscriber
-   * unsubscribes.
+   * Cross-loader refresh group name(s). Tags this bucket so `refreshGroups(name)`
+   * can refresh it alongside buckets of other loaders. A bucket may be tagged
+   * with several group names at once (pass an array); it is then refreshed when
+   * ANY of its groups is refreshed. Group membership follows subscriber presence:
+   * a bucket leaves a group when that group's last subscriber unsubscribes.
    */
-  group?: string;
+  group?: string | string[];
   /**
-   * Plain-GET refresh thunk used by `refreshGroup`. Provided alongside `group`.
+   * Plain-GET refresh thunk used by `refreshGroups`. Provided alongside `group`.
    * Refreshes this bucket in place (no params/body) and rejects on failure.
    */
   refetch?: () => Promise<void>;
@@ -102,20 +111,31 @@ interface InternalEntry {
   /**
    * Cross-loader refresh groups this bucket belongs to, mapped to the number of
    * current subscribers that requested each group. A bucket can be in several
-   * groups at once (different subscribers may tag the same shared bucket with
-   * different group names); refcounting keeps membership independent of
-   * subscribe/unsubscribe order.
+   * groups at once (one read tagged with multiple names, or different subscribers
+   * tagging the same shared bucket with different names); refcounting keeps
+   * membership independent of subscribe/unsubscribe order.
    */
   groups: Map<string, number>;
-  /** Plain-GET refresh thunk for `refreshGroup`, set while in any group. */
+  /** Plain-GET refresh thunk for `refreshGroups`, set while in any group. */
   refetch: (() => Promise<void>) | undefined;
+}
+
+/**
+ * Normalize a group tag option (`undefined | string | string[]`) to a deduped
+ * list of names. Deduping keeps a single subscriber from being counted more than
+ * once in one group when the caller passes a repeated name.
+ */
+function normalizeGroups(group: string | string[] | undefined): string[] {
+  if (group === undefined) return [];
+  if (typeof group === "string") return [group];
+  return [...new Set(group)];
 }
 
 export class LoaderStore {
   private readonly entries = new Map<string, InternalEntry>();
   /** loader.$$id -> set of bucket keys, so clearFamily() can reach every bucket. */
   private readonly families = new Map<string, Set<string>>();
-  /** refresh group name -> set of bucket keys, for refreshGroup(). */
+  /** refresh group name -> set of bucket keys, for refreshGroups(). */
   private readonly groups = new Map<string, Set<string>>();
 
   private getOrCreate(bucketKey: string): InternalEntry {
@@ -163,8 +183,11 @@ export class LoaderStore {
     e.loaderId = loaderId;
     this.registerFamily(loaderId, bucketKey);
     if (options?.ephemeral !== true) e.sticky = true;
-    const group = options?.group;
-    if (group !== undefined) {
+    // Normalize the group tag(s) to a deduped list so one subscriber is counted
+    // once per distinct group, and subscribe/unsubscribe stay symmetric (the
+    // same list drives both addToGroup and releaseGroup).
+    const groups = normalizeGroups(options?.group);
+    for (const group of groups) {
       this.addToGroup(group, bucketKey, e, options?.refetch);
     }
     // A fresh subscriber means the bucket is wanted again: cancel any pending
@@ -174,11 +197,11 @@ export class LoaderStore {
     e.listeners.add(cb);
     return () => {
       e.listeners.delete(cb);
-      // Group membership is refcounted per subscriber so refreshGroup() never
+      // Group membership is refcounted per subscriber so refreshGroups() never
       // fetches for an unmounted reader, and a bucket shared by subscribers in
       // different groups stays in each group until ALL of that group's
       // subscribers have left (order-independent).
-      if (group !== undefined) this.releaseGroup(group, bucketKey, e);
+      for (const group of groups) this.releaseGroup(group, bucketKey, e);
       this.maybeScheduleRefcountClear(bucketKey, e);
     };
   }
@@ -232,17 +255,27 @@ export class LoaderStore {
   }
 
   /**
-   * Refresh every currently-mounted bucket in a cross-loader refresh group with
-   * a plain GET (no params/body). Buckets are deduped by key, so multiple reads
-   * of one bucket trigger a single fetch. Resolves when all refreshes settle;
-   * rejects with an `AggregateError` of the failures if any member fails — each
-   * failing member also records its error on its own snapshot.
+   * Refresh every currently-mounted bucket tagged with ANY of the given group
+   * names, with a plain GET (no params/body). Accepts a single name or an array
+   * of names. A bucket that belongs to more than one of the named groups is
+   * refreshed exactly once (members are unioned and deduped by bucket key), as
+   * are multiple reads of one bucket. Resolves when all refreshes settle; rejects
+   * with an `AggregateError` of the failures if any member fails — each failing
+   * member also records its error on its own snapshot.
    */
-  async refreshGroup(group: string): Promise<void> {
-    const members = this.groups.get(group);
-    if (!members || members.size === 0) return;
+  async refreshGroups(groups: string | string[]): Promise<void> {
+    const names = typeof groups === "string" ? [groups] : groups;
+    // Union the member buckets across every named group, deduped by key, so a
+    // bucket tagged into two of the requested groups is fetched a single time.
+    const buckets = new Set<string>();
+    for (const name of names) {
+      const members = this.groups.get(name);
+      if (!members) continue;
+      for (const bucketKey of members) buckets.add(bucketKey);
+    }
+    if (buckets.size === 0) return;
     const thunks: Array<() => Promise<void>> = [];
-    for (const bucketKey of members) {
+    for (const bucketKey of buckets) {
       const e = this.entries.get(bucketKey);
       if (!e || e.listeners.size === 0 || !e.refetch) continue;
       thunks.push(e.refetch);
@@ -253,9 +286,10 @@ export class LoaderStore {
       .filter((r): r is PromiseRejectedResult => r.status === "rejected")
       .map((r) => r.reason);
     if (reasons.length > 0) {
+      const label = names.map((n) => `"${n}"`).join(", ");
       throw new AggregateError(
         reasons,
-        `refreshGroup("${group}") had ${reasons.length} failure(s)`,
+        `refreshGroups(${label}) had ${reasons.length} failure(s)`,
       );
     }
   }
@@ -346,6 +380,7 @@ export class LoaderStore {
     if (e.snapshot.isLoading && e.snapshot.error === null) return;
     e.snapshot = Object.freeze({
       value: e.snapshot.value,
+      hasValue: e.snapshot.hasValue,
       error: null,
       isLoading: true,
       requestId,
@@ -363,6 +398,7 @@ export class LoaderStore {
     if (!e || requestId !== e.latestRequestId) return;
     e.snapshot = Object.freeze({
       value,
+      hasValue: true,
       error: null,
       isLoading: false,
       requestId,
@@ -381,6 +417,7 @@ export class LoaderStore {
     if (!e || requestId !== e.latestRequestId) return;
     e.snapshot = Object.freeze({
       value: e.snapshot.value,
+      hasValue: e.snapshot.hasValue,
       error,
       isLoading: false,
       requestId,

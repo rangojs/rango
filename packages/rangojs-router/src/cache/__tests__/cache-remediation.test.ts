@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { HandleStore } from "../../server/handle-store.js";
+import { USE_CACHE_DIRECTIVE_RE } from "../../vite/plugins/use-cache-transform.js";
 
 // ============================================================================
 // 1. Profile validation and grammar (exercises production code)
@@ -132,9 +133,8 @@ describe("multi-router profile isolation", () => {
 // ============================================================================
 
 describe("use-cache directive grammar", () => {
-  // The regex used by the Vite transform for function-level directives.
-  // Must stay in sync with use-cache-transform.ts.
-  const directiveRegex = /^use cache(:\s*[\w-]+)?$/;
+  // The exact regex used by the Vite transform for function-level directives.
+  const directiveRegex = USE_CACHE_DIRECTIVE_RE;
 
   it("matches plain 'use cache'", () => {
     expect(directiveRegex.test("use cache")).toBe(true);

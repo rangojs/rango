@@ -700,4 +700,68 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(stampedDuringBgExec).toBe(false);
     expect(INSIDE_CACHE_EXEC in requestCtxObj).toBe(false);
   });
+
+  it("produces separate cache entries for different response types at the same URL", async () => {
+    const mockStore = {
+      getItem: vi.fn().mockResolvedValue(null),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+    const mockHandleStore = {
+      push: vi.fn(),
+      settled: Promise.resolve(),
+      getDataForSegment: vi.fn().mockReturnValue({}),
+    };
+    const waitUntilFns: Array<() => Promise<void>> = [];
+
+    mockGetRequestContext.mockReturnValue({
+      _cacheStore: mockStore,
+      _cacheProfiles: { default: { ttl: 60 } },
+      _handleStore: mockHandleStore,
+      waitUntil: (fn: () => Promise<void>) => {
+        waitUntilFns.push(fn);
+      },
+    });
+
+    const fn = async (_ctx: any) => "result";
+    const cached = registerCachedFunction(fn, "shared-fn", "default");
+
+    // Same fn id, host, pathname, params — differ only by _responseType.
+    const base = {
+      [NOCACHE_SYMBOL]: true,
+      params: { id: "1" },
+      pathname: "/data/1",
+      searchParams: new URLSearchParams(),
+      url: new URL("https://example.com/data/1"),
+    };
+    await cached({ ...base, _responseType: "json" });
+    for (const f of waitUntilFns) await f();
+    await cached({ ...base, _responseType: "text" });
+    for (const f of waitUntilFns.slice(1)) await f();
+
+    expect(mockStore.setItem).toHaveBeenCalledTimes(2);
+    const keyJson = mockStore.setItem.mock.calls[0][0] as string;
+    const keyText = mockStore.setItem.mock.calls[1][0] as string;
+    expect(keyJson).not.toBe(keyText);
+  });
+
+  it("throws at invocation when the cached function references an unknown profile", async () => {
+    const mockStore = {
+      getItem: vi.fn().mockResolvedValue(null),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+    mockGetRequestContext.mockReturnValue({
+      _cacheStore: mockStore,
+      // The "typo" profile is not registered.
+      _cacheProfiles: { default: { ttl: 60 } },
+      waitUntil: (fn: () => Promise<void>) => fn(),
+    });
+
+    const fn = async () => "result";
+    const cached = registerCachedFunction(fn, "needs-profile", "typo");
+
+    await expect(cached()).rejects.toThrow(/uses unknown cache profile "typo"/);
+    // The message points the author at the fix.
+    await expect(cached()).rejects.toThrow(/cacheProfiles/);
+    expect(mockStore.setItem).not.toHaveBeenCalled();
+  });
 });

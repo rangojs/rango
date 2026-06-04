@@ -9,11 +9,13 @@ let mockRequestContext: any = null;
 vi.mock("../../server/context", () => ({
   track: () => () => {},
   isInsideLoaderScope: () => mockInsideLoaderScope,
+  runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
 }));
 
 vi.mock("../../server/context.js", () => ({
   track: () => () => {},
   isInsideLoaderScope: () => mockInsideLoaderScope,
+  runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
 }));
 
 vi.mock("../../server/request-context.js", () => ({

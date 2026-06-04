@@ -449,10 +449,30 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
     ): CacheItem;
   };
   /**
-   * Attach a ViewTransition boundary to the current segment or a group of routes
+   * Opt a route (or group of routes) into transition-driven navigation.
    *
-   * Wraps segment content with React's `<ViewTransition>` component.
-   * Only takes effect when React experimental is used (no-op on stable React).
+   * `transition()` does two independent things, and you choose how far to go:
+   * 1. startTransition (ALL React versions): the navigation commit is driven
+   *    through React's startTransition, so a same-route nav (same route,
+   *    different params, e.g. /product/1 -> /product/2) holds the previous
+   *    content while the new loader resolves instead of flashing the route's
+   *    loading() skeleton (see segment-system.tsx inTransitionScope). This is
+   *    also the precondition for any view-transition animation.
+   * 2. <ViewTransition> (experimental React only): the segment content is also
+   *    wrapped in React's <ViewTransition>, so the held swap cross-fades/morphs.
+   *    Layered on by default; pass { viewTransition: false } to keep #1 without
+   *    the router boundary (and place your own <ViewTransition> instead).
+   *
+   * A view transition cannot fire without a startTransition, so the meaningful
+   * choices are (see skills/view-transitions for the full matrix):
+   * - no transition()                         -> neither (remount + skeleton)
+   * - transition({ viewTransition: false })   -> startTransition only (hold)
+   * - transition({}) / transition({ enter… })  -> startTransition + ViewTransition
+   *
+   * Precedence: a bare transition({}) inherits createRouter({ viewTransition })
+   * (default "auto"); an explicit per-route `viewTransition` always wins. So
+   * transition({}) is startTransition + ViewTransition under the default and
+   * startTransition only when the router sets viewTransition: false.
    *
    * ```typescript
    * // Attach to a single route
@@ -466,13 +486,14 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   path("/about", AboutPage),
    * ])
    *
-   * // Direction-aware transitions
-   * transition({
-   *   enter: { "navigation": "slide-right", "navigation-back": "slide-left" },
-   *   exit: { "navigation": "slide-left", "navigation-back": "slide-right" },
-   * })
+   * // Hold content + drive view transitions, but place no router boundary:
+   * path("/product/:id", ProductPage, { name: "product" }, () => [
+   *   transition({ viewTransition: false }),
+   * ])
    * ```
-   * @param config - ViewTransition configuration (enter, exit, update, share, default, name)
+   * @param config - ViewTransition configuration (enter, exit, update, share,
+   *   default, name) plus `viewTransition: "auto" | false` to toggle the router
+   *   boundary (createRouter({ viewTransition }) sets the app-wide default)
    * @param children - Optional callback returning child routes to wrap
    */
   transition: {

@@ -295,6 +295,25 @@ describe("segment-system", () => {
         });
       });
 
+      it("uses a param-agnostic key for a route in a transition scope, param-bearing otherwise", async () => {
+        // transition() opt-in: a route in a transition scope drops the param
+        // from its key so a same-route param change reconciles (holds content)
+        // instead of remounting. Without transition() the key keeps the param
+        // (the default: remount on param change). This pins the contract that
+        // segment-system.tsx's inTransitionScope derivation encodes.
+        const inScope = await renderSegments([
+          seg({ id: "R0", type: "route", params: { id: "1" }, transition: {} }),
+        ]);
+        const notInScope = await renderSegments([
+          seg({ id: "R0", type: "route", params: { id: "1" } }),
+        ]);
+
+        // result is the RootErrorBoundary wrapper; its child is the route's
+        // OutletProvider, whose React key is the computed segment key.
+        expect((inScope as any).props.children.key).toBe("R0");
+        expect((notInScope as any).props.children.key).toBe("R0-id=1");
+      });
+
       it("excludes params from key for non-belongsToRoute layouts", async () => {
         // Layout that is shared (not belongsToRoute) should use just ID as key
         const segments: ResolvedSegment[] = [

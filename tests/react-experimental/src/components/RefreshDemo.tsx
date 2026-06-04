@@ -254,9 +254,9 @@ export function VtProductCard({
   );
 }
 
-/** One useRefreshLoaders("metrics")() call cross-fades every group member. */
+/** One useRefreshLoaders()("metrics") call cross-fades every group member. */
 export function VtGroupRefreshButton() {
-  const refresh = useRefreshLoaders("metrics");
+  const refresh = useRefreshLoaders();
   const [pending, setPending] = useState(false);
   return (
     <button
@@ -266,7 +266,7 @@ export function VtGroupRefreshButton() {
       onClick={async () => {
         setPending(true);
         try {
-          await refresh();
+          await refresh("metrics");
         } catch {
           /* members surface their own error */
         } finally {

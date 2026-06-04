@@ -97,7 +97,10 @@ export function writePerModuleRouteTypesForFile(filePath: string): void {
       routes = extractRoutesFromSource(source);
     }
 
-    const genPath = filePath.replace(/\.(tsx?)$/, ".gen.ts");
+    // Match .ts/.tsx/.js/.jsx (same as router-processing.ts / router-transform.ts).
+    // Without the jsx? branch a .jsx/.js source produced genPath === filePath,
+    // overwriting the source file instead of writing a sibling .gen.ts.
+    const genPath = filePath.replace(/\.(tsx?|jsx?)$/, ".gen.ts");
 
     // When a urls() variable was found but static resolution yields zero
     // routes, write an empty placeholder so generated imports stay

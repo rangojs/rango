@@ -6,8 +6,9 @@ argument-hint:
 
 # cache() vs "use cache" — When to Use Which
 
-Both mechanisms share the same backing store, cache profiles, and tag-based
-invalidation. They differ in scope, cache key, execution model, and runtime control.
+Both mechanisms share the same backing store and cache profiles, and both accept
+an optional `tags` field (not yet honored by the built-in stores — see "Two axes"
+below). They differ in scope, cache key, execution model, and runtime control.
 
 ## Two axes — do not conflate
 
@@ -17,7 +18,10 @@ caching:
 
 1. **Stored-value freshness** — _is a cached value still good?_
    → `"use cache"` (fn/component), `cache()` (segment), loader `cache()` (loader data).
-   Entries are coupled across the one store by **tags** (`revalidateTag`).
+   Entries expire by **TTL/SWR**. They accept an optional `tags` field, but the
+   built-in stores (`MemorySegmentCacheStore`, `CFCacheStore`) do not yet index or
+   invalidate by tag, so tag-based invalidation (`revalidateTag`) is a
+   forward-looking API requiring a custom store with secondary indices.
 2. **Client-update selection** — _should this segment re-run and stream to the
    client on this navigation/action?_
    → `revalidate()`. Covered in `/loader` and `/route`, **not here**.
@@ -58,12 +62,16 @@ There are two guard models to keep separate. Both block response side effects
 else they allow:
 
 - **`cache()` boundary guard** (route-level) — fires while the handler runs on a
-  miss. `ctx.get(nonCacheableVar)` throws (a tainted value would be baked into the
-  cached segment) and response side effects (`ctx.header()`, `ctx.setCookie()`,
+  miss. `cookies()` and `headers()` throw (request-scoped data would be baked into
+  the shared cached shell), `ctx.get(nonCacheableVar)` throws (a tainted value
+  would be baked in), and response side effects (`ctx.header()`, `ctx.setCookie()`,
   `ctx.setStatus()`, `ctx.onResponse()`) throw. `ctx.set()` of a cacheable var is
-  **allowed** — children are cached too and can read it.
-- **`"use cache"` exec-guard** (function-level) — stricter: inside the cached
-  function `cookies()`, `headers()`, `ctx.set()`, and `ctx.header()` all throw.
+  **allowed** — children are cached too and can read it. **Loaders are exempt**
+  (they always run fresh) — read request data inside a loader.
+- **`"use cache"` exec-guard** (function-level) — the same request-scoped APIs
+  throw inside the cached function (`cookies()`, `headers()`, `ctx.set()`,
+  `ctx.header()`); additionally, tainted `ctx`/`env`/`req` args are excluded from
+  the cache key.
 
 ### Cross-deploy safety: version-segmented store keys
 
@@ -331,18 +339,21 @@ specifies `cache: false`, the value is non-cacheable.
 
 **Behavior inside a `cache()` boundary:**
 
-| Operation                         | Inside a `cache()` boundary                        |
-| --------------------------------- | -------------------------------------------------- |
-| `ctx.get(cacheableVar)`           | Allowed                                            |
-| `ctx.get(nonCacheableVar)`        | Throws (would be baked in)                         |
-| `ctx.set(var, value)` (cacheable) | Allowed                                            |
-| `ctx.header()` / cookie writes    | Throws (response side effect would be lost on hit) |
+| Operation                                 | Inside a `cache()` boundary                            |
+| ----------------------------------------- | ------------------------------------------------------ |
+| `cookies()` / `headers()` (read or write) | Throws (request-scoped, would poison the shared entry) |
+| `ctx.get(cacheableVar)`                   | Allowed                                                |
+| `ctx.get(nonCacheableVar)`                | Throws (would be baked in)                             |
+| `ctx.set(var, value)` (cacheable)         | Allowed                                                |
+| `ctx.header()` / cookie writes            | Throws (response side effect would be lost on hit)     |
+| Any of the above **inside a loader**      | Allowed (loaders always run fresh)                     |
 
-(Inside a `"use cache"` function the scoping differs: `ctx.set`, `ctx.header()`,
-`cookies()`, and `headers()` **throw** via the cache-exec guard. Inside
-`cache()`, response side effects throw via the cache-boundary guard, while the
-`ctx.get(nonCacheableVar)` taint check above is tied to the `cache()` boundary —
-see "Headers and Cookies" and the precise guarantee below.)
+(Both scopes block the same request-scoped APIs — `cookies()`, `headers()`,
+response side effects, and non-cacheable `ctx.get()` — because each would leak
+per-request data into a shared cache entry. The `cache()` boundary tracks the
+scope via `isInsideCacheScope()`; `"use cache"` uses the exec guard and also
+excludes tainted `ctx`/`env`/`req` args from the cache key. Loaders are exempt in
+both — see "Headers and Cookies" and the precise guarantee below.)
 
 Write is dumb — `ctx.set()` stores the cache metadata but does not enforce.
 Enforcement happens at read time (`ctx.get()`), where ALS detects the cache
@@ -379,10 +390,10 @@ layout((ctx) => {
 So do **not** read this as "you can't cache user data" — that overstates it and
 breeds the false confidence that makes the derived leak _more_ likely. The guard
 is deliberately non-propagating (propagation would cost a wrapper per derivation
-on the hot path), and it is scoped to the `cache()` segment boundary — `"use
-cache"` functions guard request data differently (tainted `ctx`/`env`/`req` args
-are excluded from the cache key, and `cookies()` / `headers()` throw inside them;
-see "Headers and Cookies"). The pattern that stays safe is also the natural one:
+on the hot path), and it is scoped to the `cache()` segment boundary. `"use
+cache"` functions block the same request-scoped reads (`cookies()` / `headers()`
+throw inside them) and additionally exclude tainted `ctx`/`env`/`req` args from
+the cache key. The pattern that stays safe is also the natural one:
 **read tainted context at the point of use, in the path that needs it (a loader or
 live segment) — never extract user data into a plain value and cache that.**
 Loaders are exempt because they run outside the cache scope and resolve fresh

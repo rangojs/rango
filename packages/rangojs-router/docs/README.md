@@ -29,6 +29,12 @@ that route tree.
 - [`"use cache"` API design](./use-cache-api-design.md) - function/component
   caching and cache profiles
 
+## Build Integrations
+
+- [React Compiler](./react-compiler.md) - opt-in wiring via `@rolldown/plugin-babel`
+  - `reactCompilerPreset()` for both the default and `cloudflare` presets, plus how
+    it interacts with build-time prerender
+
 ## Observability
 
 - [Telemetry & Performance Timeline](./telemetry.md) - `debugPerformance`

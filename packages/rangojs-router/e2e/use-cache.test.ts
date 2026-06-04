@@ -170,6 +170,30 @@ test.describe("use-cache basic", () => {
     expect(body.data.message).toMatch(/headers\(\) cannot be called inside/i);
   });
 
+  test("cookies() throws inside a no-argument 'use cache' function", async ({
+    request,
+  }) => {
+    const res = await request.get(
+      f.url("/use-cache-test/guard-cookies-no-arg"),
+    );
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.data.threw).toBe(true);
+    expect(body.data.message).toMatch(/cookies\(\) cannot be called inside/i);
+  });
+
+  test("headers() throws inside a no-argument 'use cache' function", async ({
+    request,
+  }) => {
+    const res = await request.get(
+      f.url("/use-cache-test/guard-headers-no-arg"),
+    );
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.data.threw).toBe(true);
+    expect(body.data.message).toMatch(/headers\(\) cannot be called inside/i);
+  });
+
   test("ctx.set() throws inside a 'use cache' function", async ({ page }) => {
     using _ = expectNoPageError(page);
 
@@ -441,6 +465,30 @@ test.describe("use-cache basic (production)", () => {
     expect(res.status()).toBe(200);
     const body = await res.json();
 
+    expect(body.data.threw).toBe(true);
+    expect(body.data.message).toMatch(/headers\(\) cannot be called inside/i);
+  });
+
+  test("cookies() throws inside a no-argument 'use cache' function", async ({
+    request,
+  }) => {
+    const res = await request.get(
+      f.url("/use-cache-test/guard-cookies-no-arg"),
+    );
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.data.threw).toBe(true);
+    expect(body.data.message).toMatch(/cookies\(\) cannot be called inside/i);
+  });
+
+  test("headers() throws inside a no-argument 'use cache' function", async ({
+    request,
+  }) => {
+    const res = await request.get(
+      f.url("/use-cache-test/guard-headers-no-arg"),
+    );
+    expect(res.status()).toBe(200);
+    const body = await res.json();
     expect(body.data.threw).toBe(true);
     expect(body.data.message).toMatch(/headers\(\) cannot be called inside/i);
   });

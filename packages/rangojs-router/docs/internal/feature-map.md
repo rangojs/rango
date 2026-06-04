@@ -73,7 +73,7 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 | ---------------------- | --------------------------------------- |
 | `useLoader`            | Access loader data                      |
 | `useFetchLoader`       | Client-side fetch loader                |
-| `useRefreshLoaders`    | Refresh a cross-loader refresh group    |
+| `useRefreshLoaders`    | Refresh cross-loader refresh group(s)   |
 | `useNavigation`        | Navigation state                        |
 | `useRouter`            | Imperative navigation                   |
 | `usePathname`          | Current pathname                        |
@@ -138,7 +138,8 @@ URL pattern matching, middleware execution, segment resolution, error matching, 
 - `loader()` declarations, `createLoader()`, `useLoader()`, `useFetchLoader()`
 - `fetchable` loader mode for cacheable JSON/resource paths
 - Client refresh `key` (per-loader refresh groups) and `useRefreshLoaders()`
-  (cross-loader refresh groups via `refreshGroup`)
+  (cross-loader refresh groups via `refreshGroup`; reads may carry multiple group
+  tags, and the inverted hook takes the group(s) at call time)
 
 ### Request Context and Server Helpers
 
@@ -171,7 +172,7 @@ Server action execution pipeline, `useAction()` state tracking, action ID extrac
 
 - Route-level loading boundaries via `loading()`
 - Error/not-found boundary composition
-- View Transition config via `transition()` — wrap location depends on segment type (layout: default outlet content; route: route component; parallel/intercept slot: slot content). See [skills/view-transitions](../../skills/view-transitions/SKILL.md).
+- `transition()` — opts a route into same-route stale-while-revalidate AND (on experimental React) View Transition animation. (1) Content hold (all React versions): a route in a transition scope (itself, or any layout in its matched chain, declares `transition()`) gets a param-agnostic key in `segment-system.tsx` (`inTransitionScope` → `includeParams`), so a same-route param change (e.g. `/product/1` → `/product/2`) reconciles the route subtree instead of remounting it; the `startTransition` wrap `shouldStartViewTransition` already applies (`browser/partial-update.ts`) then holds the previous content while the new loader resolves — no skeleton flash. Cross-route navs and routes without `transition()` remount as before. (2) Animation (experimental React only): the segment content is wrapped in `<ViewTransition>`, so the held same-route swap morphs (`update`/`share`) and cross-route swaps animate `enter`/`exit`; wrap location depends on segment type (layout: default outlet content; route: route component; parallel/intercept slot: slot content). (3) Boundary opt-out: `transition({ viewTransition: false })` suppresses the `<ViewTransition>` wrap (job 2) while keeping the content hold and `startTransition` driving (job 1) — so consumer-placed `<ViewTransition>` elements still animate but rango adds no cross-fade of its own. `createRouter({ viewTransition: "auto" | false })` sets the app-wide default; the per-segment value wins. The global default is resolved into each segment's transition config during resolution (`router/segment-resolution/view-transition-default.ts` `applyViewTransitionDefault`, applied in `fresh.ts`/`revalidation.ts`; only `false` is stamped, unset/`"auto"` is left as-is) so the render gate (`segment-system.tsx`, `transition.viewTransition !== false`) reads the boundary decision off the segment on both server and client without threading the option to the client. See [skills/view-transitions](../../skills/view-transitions/SKILL.md).
 - Parallel slot streaming: `loading()` + `loader()` on a parallel makes it an independent streaming unit (own `LoaderBoundary`, non-blocking across SSR, SPA navigation, and cache-hit paths). Without `loading()`, parallel loaders block the parent layout.
 - Slot override dedup: last `parallel()` definition wins per `@slot` name, enabling composition overrides
 - Modal/intercept rendering via `intercept()` with `when()` conditions

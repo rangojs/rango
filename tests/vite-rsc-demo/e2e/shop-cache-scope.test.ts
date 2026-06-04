@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { test as devTest, devURL } from "./dev-fixture";
-import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError } from "./helper";
+import { prodDescribe, waitForHydration, expectNoPageError } from "./helper";
 
 /**
  * Cache scope + loader side-effect tests
@@ -70,15 +69,13 @@ devTest.describe("cache-scope-loader-side-effects (dev)", () => {
 });
 
 // ---------- PRODUCTION ----------
-const prod = useFixture({ root: ".", mode: "build" });
-
-test.describe("cache-scope-loader-side-effects (prod)", () => {
+prodDescribe("cache-scope-loader-side-effects", (f) => {
   test("document request to /shop succeeds (loader setCookie inside cache boundary)", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
 
-    const response = await page.goto(prod.url("/shop"));
+    const response = await page.goto(f.url("/shop"));
     expect(response?.status()).toBe(200);
 
     await waitForHydration(page);
@@ -88,7 +85,7 @@ test.describe("cache-scope-loader-side-effects (prod)", () => {
   test("client navigation to /shop succeeds", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(prod.url("/"));
+    await page.goto(f.url("/"));
     await waitForHydration(page);
 
     await page.locator('a[href="/shop"]').first().click();
@@ -102,7 +99,7 @@ test.describe("cache-scope-loader-side-effects (prod)", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(prod.url("/shop"));
+    await page.goto(f.url("/shop"));
     await waitForHydration(page);
     await expect(page.locator("text=All Products")).toBeVisible();
 

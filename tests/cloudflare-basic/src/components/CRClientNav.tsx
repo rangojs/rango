@@ -29,6 +29,12 @@ export function CRClientNav() {
         {reverse(".post", { tenantId: "other", postId: "p2" })}
       </span>
 
+      {/* the leading dot is optional — non-dotted resolves identically */}
+      <span data-testid="cr-cf-index-nodot">{reverse("index")}</span>
+      <span data-testid="cr-cf-post-nodot">
+        {reverse("post", { postId: "p1" })}
+      </span>
+
       <Link
         to={params.tenantId === "acme" ? "/cr/zeta" : "/cr/acme/posts/p1"}
         data-testid="cr-cf-link"

@@ -389,8 +389,8 @@ Current problems:
 
 - The historical examples show `Handler<"index", routes>` and
   `scopedReverse<routes>()` using bare local names. Current local-map handler
-  typing expects dot-prefixed local names (`Handler<".index", routes>`), and
-  `useReverse(routes)` also uses dot-prefixed names.
+  typing expects dot-prefixed local names (`Handler<".index", routes>`);
+  `useReverse(routes)` accepts either form (the leading dot is optional).
 
 Suggested change:
 

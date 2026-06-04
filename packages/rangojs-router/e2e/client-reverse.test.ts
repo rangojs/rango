@@ -67,15 +67,17 @@ async function assertNavSurface(
   // nested key (".nested.index") resolves against the local map
   await expect(testId(page, "cr-nested-index")).toHaveText(`${base}/nested`);
 
+  // the leading dot is OPTIONAL: a non-dotted name resolves identically to the
+  // dotted form (both mount-prefixed against the same map).
+  await expect(testId(page, "cr-no-dot")).toHaveText(base);
+  await expect(testId(page, "cr-no-dot-detail")).toHaveText(`${base}/posts/p1`);
+
   // error messages
   await expect(testId(page, "cr-unknown")).toHaveText(
-    `ERROR: Unknown local route: ".not-a-route"`,
+    `ERROR: Unknown route: ".not-a-route"`,
   );
   await expect(testId(page, "cr-missing-param")).toHaveText(
     `ERROR: Missing param "postId" for route ".detail"`,
-  );
-  await expect(testId(page, "cr-no-dot")).toHaveText(
-    `ERROR: Local route names must start with ".": "index"`,
   );
 }
 
@@ -149,6 +151,58 @@ function describeForMode(label: string, mode: "dev" | "build") {
         "/cr/a/zeta/posts/p2",
       );
       await expect(testId(page, "cr-index")).toHaveText("/cr/a/zeta");
+    });
+
+    test("resolves from WITHIN a nested include — mount accumulates both levels", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      // /cr/a/:tenantId/nested is a 2-level include: clientReversePatterns
+      // (mounted at /cr/a/:tenantId) includes clientReverseNestedPatterns at
+      // "/nested", which renders ClientReverseNav too. This pins that
+      // useMount() accumulates the FULL nested path (not just "/nested") and
+      // that useReverse() resolves every shape against it.
+      await page.goto(f.url("/cr/a/acme/nested"));
+
+      // SSR parity: the resolved index href is already correct pre-hydration.
+      const ssrIndex = await testId(page, "cr-index").textContent();
+      expect(ssrIndex).toBe("/cr/a/acme/nested");
+
+      await waitForHydration(page);
+
+      // useMount() is the accumulated 2-level mount PATTERN, not just "/nested".
+      await expect(testId(page, "cr-mount")).toHaveText(
+        "/cr/a/:tenantId/nested",
+      );
+      await expect(testId(page, "cr-tenant")).toHaveText("acme");
+
+      // ".index" "/" collapses onto the nested mount; :tenantId autofilled.
+      await expect(testId(page, "cr-index")).toHaveText("/cr/a/acme/nested");
+
+      // params + autofill resolve against the nested mount.
+      await expect(testId(page, "cr-detail-explicit")).toHaveText(
+        "/cr/a/acme/nested/posts/p1",
+      );
+      await expect(testId(page, "cr-detail-autofill-tenant")).toHaveText(
+        "/cr/a/acme/nested/posts/p2",
+      );
+      await expect(testId(page, "cr-optional-omitted")).toHaveText(
+        "/cr/a/acme/nested/items/i1",
+      );
+      await expect(testId(page, "cr-search")).toHaveText(
+        "/cr/a/acme/nested/search?q=hello%20world&page=2",
+      );
+
+      // ".nested.index" resolves to ".../nested/nested" here BY DESIGN: this
+      // component is bound to the OUTER module's map (whose ".nested.index"
+      // pattern is "/nested") yet renders AT the nested mount, so joinMount
+      // prepends the nested mount. useReverse couples a static module map with
+      // the runtime useMount() — they line up only when a component renders
+      // within the module its map describes. This asserts that invariant.
+      await expect(testId(page, "cr-nested-index")).toHaveText(
+        "/cr/a/acme/nested/nested",
+      );
     });
   });
 }

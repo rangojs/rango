@@ -11,6 +11,8 @@ import {
   getCachedActionData,
   cachedReadsCookies,
   cachedReadsHeaders,
+  cachedReadsCookiesNoArg,
+  cachedReadsHeadersNoArg,
   cachedCallsCtxSet,
   cachedCallsCtxHeadersSet,
   getSwrTestData,
@@ -491,6 +493,41 @@ export const useCachePatterns = urls(
         }
       },
       { name: "useCacheTest.guardHeaders" },
+    ),
+
+    // Guard: cookies() throws inside "use cache" with NO tainted args — proves
+    // the always-stamp-RequestContext path, not the tainted-args stamp.
+    path.json(
+      "/guard-cookies-no-arg",
+      async () => {
+        try {
+          await cachedReadsCookiesNoArg();
+          return { threw: false, message: null };
+        } catch (e) {
+          return {
+            threw: true,
+            message: e instanceof Error ? e.message : String(e),
+          };
+        }
+      },
+      { name: "useCacheTest.guardCookiesNoArg" },
+    ),
+
+    // Guard: headers() throws inside "use cache" with NO tainted args.
+    path.json(
+      "/guard-headers-no-arg",
+      async () => {
+        try {
+          await cachedReadsHeadersNoArg();
+          return { threw: false, message: null };
+        } catch (e) {
+          return {
+            threw: true,
+            message: e instanceof Error ? e.message : String(e),
+          };
+        }
+      },
+      { name: "useCacheTest.guardHeadersNoArg" },
     ),
 
     // Guard: ctx.set() throws inside "use cache" when handler ctx is passed.

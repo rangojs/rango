@@ -188,6 +188,32 @@ export class CacheScope {
   }
 
   /**
+   * Evaluate the cache `condition` predicate. Returns false (skip the cache
+   * operation) when the predicate returns false or throws; returns true when
+   * there is no condition or no request context to evaluate it against.
+   */
+  private conditionAllows(op: "read" | "write"): boolean {
+    if (this.config === false || !this.config.condition) return true;
+    const requestCtx = getRequestContext();
+    if (!requestCtx) return true;
+    try {
+      if (!this.config.condition(requestCtx)) {
+        debugCacheLog(
+          `[CacheScope] condition returned false, skipping cache ${op}`,
+        );
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.error(
+        `[CacheScope] condition function threw, skipping cache ${op}:`,
+        error,
+      );
+      return false;
+    }
+  }
+
+  /**
    * Lookup cached segments for a route (single cache entry per request).
    * Returns { segments, shouldRevalidate } or null if cache miss.
    *
@@ -204,27 +230,7 @@ export class CacheScope {
     shouldRevalidate: boolean;
   } | null> {
     if (!this.enabled) return null;
-
-    // Evaluate condition — skip cache read when condition returns false
-    if (this.config !== false && this.config.condition) {
-      const requestCtx = getRequestContext();
-      if (requestCtx) {
-        try {
-          if (!this.config.condition(requestCtx)) {
-            debugCacheLog(
-              `[CacheScope] condition returned false, skipping cache read`,
-            );
-            return null;
-          }
-        } catch (error) {
-          console.error(
-            `[CacheScope] condition function threw, skipping cache read:`,
-            error,
-          );
-          return null;
-        }
-      }
-    }
+    if (!this.conditionAllows("read")) return null;
 
     const store = this.getStore();
     if (!store) return null;
@@ -284,27 +290,7 @@ export class CacheScope {
     isIntercept?: boolean,
   ): Promise<void> {
     if (!this.enabled || segments.length === 0) return;
-
-    // Evaluate condition — skip cache write when condition returns false
-    if (this.config !== false && this.config.condition) {
-      const conditionCtx = getRequestContext();
-      if (conditionCtx) {
-        try {
-          if (!this.config.condition(conditionCtx)) {
-            debugCacheLog(
-              `[CacheScope] condition returned false, skipping cache write`,
-            );
-            return;
-          }
-        } catch (error) {
-          console.error(
-            `[CacheScope] condition function threw, skipping cache write:`,
-            error,
-          );
-          return;
-        }
-      }
-    }
+    if (!this.conditionAllows("write")) return;
 
     const store = this.getStore();
     if (!store) return;

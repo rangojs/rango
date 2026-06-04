@@ -12,9 +12,12 @@
 > the original proposal.
 >
 > **Follow-up also shipped:** cross-loader refresh groups — the `refreshGroup`
-> option + `useRefreshLoaders(name)` hook (plain-GET refresh of many different
-> loaders at once, GET-only, `AggregateError` on failure, never render-throws).
-> Backed by a `groups` index in `loader-store.ts`; e2e `/key-refresh-group`.
+> option (`string | string[]`, so one read can carry several tags) + the inverted
+> `useRefreshLoaders()` hook, whose returned `refresh(groups)` takes one group or
+> an array and refreshes the union (plain-GET refresh of many different loaders at
+> once, GET-only, `AggregateError` on failure, never render-throws). Backed by a
+> `groups` index + `refreshGroups()` in `loader-store.ts`; e2e `/key-refresh-group`
+> and `/key-refresh-multitag`.
 
 ## Problem
 

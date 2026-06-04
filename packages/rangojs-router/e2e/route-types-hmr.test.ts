@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
+import { writeFileBumpMtime } from "./helper";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { execSync } from "node:child_process";
@@ -13,8 +14,15 @@ import { execSync } from "node:child_process";
  * 5. Adding a search schema should update the types file
  * 6. Adding/removing an include() should update the types file
  * 7. Runtime reverse() should reflect route changes (add/remove/rename)
+ * 8. Rapid sequential edits converge to the final state (no stale intermediate)
  *
  * These tests must run serially since they modify shared source files.
+ * Route-definition mutations are written via writeFileBumpMtime (shared
+ * @shared/e2e helper): an atomic replace plus a strictly monotonic mtime, so a
+ * watcher running alongside the shared dev server cannot coalesce or drop the
+ * change event. The recovery test's intentional same-cycle double-write keeps
+ * using a plain back-to-back fs.writeFile so both edits land in one debounced
+ * rediscovery cycle.
  */
 
 // Filesystem watcher events can be slow on CI Linux runners under parallel
@@ -94,10 +102,10 @@ test.describe.serial("route-types-hmr", () => {
     originalGenContent = gitBaseline(genFilePath);
 
     // Write baselines to disk in case a prior crash left stale modifications.
-    await fs.writeFile(blogUrlsPath, originalBlogContent);
-    await fs.writeFile(mainUrlsPath, originalMainUrlsContent);
-    await fs.writeFile(handlersPath, originalHandlersContent);
-    await fs.writeFile(factoryHmrPath, originalFactoryHmrContent);
+    writeFileBumpMtime(blogUrlsPath, originalBlogContent);
+    writeFileBumpMtime(mainUrlsPath, originalMainUrlsContent);
+    writeFileBumpMtime(handlersPath, originalHandlersContent);
+    writeFileBumpMtime(factoryHmrPath, originalFactoryHmrContent);
     await fs.writeFile(genFilePath, originalGenContent);
   });
 
@@ -109,10 +117,10 @@ test.describe.serial("route-types-hmr", () => {
 
   test.afterEach(async () => {
     if (dirtyGuardMessage) return;
-    await fs.writeFile(blogUrlsPath, originalBlogContent);
-    await fs.writeFile(mainUrlsPath, originalMainUrlsContent);
-    await fs.writeFile(handlersPath, originalHandlersContent);
-    await fs.writeFile(factoryHmrPath, originalFactoryHmrContent);
+    writeFileBumpMtime(blogUrlsPath, originalBlogContent);
+    writeFileBumpMtime(mainUrlsPath, originalMainUrlsContent);
+    writeFileBumpMtime(handlersPath, originalHandlersContent);
+    writeFileBumpMtime(factoryHmrPath, originalFactoryHmrContent);
     // Wait for HMR + re-discovery to regenerate the gen file.
     // Verify the gen file is restored to avoid stale modifications
     // leaking when the dev server shuts down before the watcher fires.
@@ -144,7 +152,7 @@ test.describe.serial("route-types-hmr", () => {
     path("/:postId/comments", BlogPostHandler, { name: "comments" }),`,
     );
     expect(modified).not.toBe(originalBlogContent);
-    await fs.writeFile(blogUrlsPath, modified);
+    writeFileBumpMtime(blogUrlsPath, modified);
 
     // Wait for HMR + re-discovery + file write
     await expect(async () => {
@@ -161,7 +169,7 @@ test.describe.serial("route-types-hmr", () => {
       `path("/:postId", BlogPostHandler, { name: "post" }),
     path("/:postId/comments", BlogPostHandler, { name: "comments" }),`,
     );
-    await fs.writeFile(blogUrlsPath, modified);
+    writeFileBumpMtime(blogUrlsPath, modified);
 
     // Wait for it to appear
     await expect(async () => {
@@ -170,7 +178,7 @@ test.describe.serial("route-types-hmr", () => {
     }).toPass({ timeout: WATCHER_TIMEOUT });
 
     // Now remove it by restoring original
-    await fs.writeFile(blogUrlsPath, originalBlogContent);
+    writeFileBumpMtime(blogUrlsPath, originalBlogContent);
 
     // Wait for it to disappear
     await expect(async () => {
@@ -227,7 +235,7 @@ test.describe.serial("route-types-hmr", () => {
       '{ name: "article" }',
     );
     expect(modified).not.toBe(originalBlogContent);
-    await fs.writeFile(blogUrlsPath, modified);
+    writeFileBumpMtime(blogUrlsPath, modified);
 
     await expect(async () => {
       const after = await fs.readFile(genFilePath, "utf-8");
@@ -247,7 +255,7 @@ test.describe.serial("route-types-hmr", () => {
       '{ name: "post", search: { tag: "string", draft: "boolean?" } }',
     );
     expect(modified).not.toBe(originalBlogContent);
-    await fs.writeFile(blogUrlsPath, modified);
+    writeFileBumpMtime(blogUrlsPath, modified);
 
     await expect(async () => {
       const after = await fs.readFile(genFilePath, "utf-8");
@@ -264,7 +272,7 @@ test.describe.serial("route-types-hmr", () => {
       '{ name: "post" }',
       '{ name: "post", search: { tag: "string", draft: "boolean?" } }',
     );
-    await fs.writeFile(blogUrlsPath, withSchema);
+    writeFileBumpMtime(blogUrlsPath, withSchema);
 
     await expect(async () => {
       const content = await fs.readFile(genFilePath, "utf-8");
@@ -273,7 +281,7 @@ test.describe.serial("route-types-hmr", () => {
     }).toPass({ timeout: WATCHER_TIMEOUT });
 
     // Remove the search schema by restoring the original
-    await fs.writeFile(blogUrlsPath, originalBlogContent);
+    writeFileBumpMtime(blogUrlsPath, originalBlogContent);
 
     await expect(async () => {
       const after = await fs.readFile(genFilePath, "utf-8");
@@ -295,7 +303,7 @@ test.describe.serial("route-types-hmr", () => {
       '// include("/blog", blogPatterns, { name: "blog" }),',
     );
     expect(modified).not.toBe(originalMainUrlsContent);
-    await fs.writeFile(mainUrlsPath, modified);
+    writeFileBumpMtime(mainUrlsPath, modified);
 
     await expect(async () => {
       const after = await fs.readFile(genFilePath, "utf-8");
@@ -310,7 +318,7 @@ test.describe.serial("route-types-hmr", () => {
       'include("/blog", blogPatterns, { name: "blog" }),',
       '// include("/blog", blogPatterns, { name: "blog" }),',
     );
-    await fs.writeFile(mainUrlsPath, removed);
+    writeFileBumpMtime(mainUrlsPath, removed);
 
     await expect(async () => {
       const content = await fs.readFile(genFilePath, "utf-8");
@@ -318,13 +326,50 @@ test.describe.serial("route-types-hmr", () => {
     }).toPass({ timeout: WATCHER_TIMEOUT });
 
     // Restore the include
-    await fs.writeFile(mainUrlsPath, originalMainUrlsContent);
+    writeFileBumpMtime(mainUrlsPath, originalMainUrlsContent);
 
     await expect(async () => {
       const after = await fs.readFile(genFilePath, "utf-8");
       expect(after).toContain('"blog.index"');
       expect(after).toContain('"blog.post"');
     }).toPass({ timeout: WATCHER_TIMEOUT });
+  });
+
+  test("should converge to the final state after rapid sequential edits", async () => {
+    // Three rapid writes to the same route file, each adding a differently
+    // named route. writeFileBumpMtime forces a monotonic mtime per write so the
+    // watcher cannot silently coalesce them into a stale intermediate; the gen
+    // file and runtime manifest must reflect only the LAST write.
+    const mkVariant = (suffix: string, name: string) =>
+      originalBlogContent.replace(
+        'path("/:postId", BlogPostHandler, { name: "post" }),',
+        `path("/:postId", BlogPostHandler, { name: "post" }),
+    path("/:postId/${suffix}", BlogPostHandler, { name: "${name}" }),`,
+      );
+    writeFileBumpMtime(blogUrlsPath, mkVariant("b1", "burstA"));
+    writeFileBumpMtime(blogUrlsPath, mkVariant("b2", "burstB"));
+    writeFileBumpMtime(blogUrlsPath, mkVariant("b3", "burstC"));
+
+    // Gen file converges to the final write only.
+    await expect(async () => {
+      const gen = await fs.readFile(genFilePath, "utf-8");
+      expect(gen).toContain('"blog.burstC"');
+      expect(gen).toContain("/blog/:postId/b3");
+      expect(gen).not.toContain('"blog.burstA"');
+      expect(gen).not.toContain('"blog.burstB"');
+    }).toPass({ timeout: WATCHER_TIMEOUT });
+
+    // Runtime manifest converges to the same final state.
+    await expect(async () => {
+      const result = await queryReverse([
+        "blog.burstA",
+        "blog.burstB",
+        "blog.burstC",
+      ]);
+      expect(result["blog.burstC"]).toBe("/blog/:postId/b3");
+      expect(result["blog.burstA"]).toBeNull();
+      expect(result["blog.burstB"]).toBeNull();
+    }).toPass({ timeout: RUNTIME_TIMEOUT });
   });
 
   // -- Runtime reverse() tests --
@@ -351,7 +396,7 @@ test.describe.serial("route-types-hmr", () => {
       `path("/:postId", BlogPostHandler, { name: "post" }),
     path("/:postId/comments", BlogPostHandler, { name: "comments" }),`,
     );
-    await fs.writeFile(blogUrlsPath, modified);
+    writeFileBumpMtime(blogUrlsPath, modified);
 
     // Wait for gen file to update (confirms watcher ran)
     await expect(async () => {
@@ -373,7 +418,7 @@ test.describe.serial("route-types-hmr", () => {
       `path("/:postId", BlogPostHandler, { name: "post" }),
     path("/:postId/comments", BlogPostHandler, { name: "comments" }),`,
     );
-    await fs.writeFile(blogUrlsPath, modified);
+    writeFileBumpMtime(blogUrlsPath, modified);
 
     await expect(async () => {
       const result = await queryReverse(["blog.comments"]);
@@ -381,7 +426,7 @@ test.describe.serial("route-types-hmr", () => {
     }).toPass({ timeout: WATCHER_TIMEOUT });
 
     // Remove the route by restoring original
-    await fs.writeFile(blogUrlsPath, originalBlogContent);
+    writeFileBumpMtime(blogUrlsPath, originalBlogContent);
 
     // Wait for gen file to update
     await expect(async () => {
@@ -500,7 +545,7 @@ test.describe.serial("route-types-hmr", () => {
     path("/gamma", AlphaHandler, { name: "gamma" }),`,
     );
     expect(modified).not.toBe(originalFactoryHmrContent);
-    await fs.writeFile(factoryHmrPath, modified);
+    writeFileBumpMtime(factoryHmrPath, modified);
 
     // The static parser can't see factory routes, so we skip the gen file
     // check and go straight to the runtime manifest which is updated by
@@ -524,7 +569,7 @@ test.describe.serial("route-types-hmr", () => {
       `path("/beta", BetaHandler, { name: "beta" }),
     path("/gamma", AlphaHandler, { name: "gamma" }),`,
     );
-    await fs.writeFile(factoryHmrPath, withGamma);
+    writeFileBumpMtime(factoryHmrPath, withGamma);
 
     await expect(async () => {
       const result = await queryReverse(["factoryHmr.gamma"]);
@@ -532,7 +577,7 @@ test.describe.serial("route-types-hmr", () => {
     }).toPass({ timeout: WATCHER_TIMEOUT });
 
     // Remove gamma by restoring original
-    await fs.writeFile(factoryHmrPath, originalFactoryHmrContent);
+    writeFileBumpMtime(factoryHmrPath, originalFactoryHmrContent);
 
     // Verify gamma is purged from the runtime manifest.
     // This exercises: clearAllRouterData() in propagateDiscoveryState()
@@ -614,7 +659,7 @@ test.describe.serial("route-types-hmr", () => {
       //    handlers file has no urls()/createRouter, so the pre-fix
       //    watcher would skip it. Recovery mode must trigger
       //    rediscovery anyway because lastDiscoveryError is set.
-      await fs.writeFile(handlersPath, originalHandlersContent);
+      writeFileBumpMtime(handlersPath, originalHandlersContent);
 
       // 4. Recovery rediscovery succeeds, gen file gets the new route.
       await expect(async () => {
@@ -631,7 +676,7 @@ test.describe.serial("route-types-hmr", () => {
     } finally {
       // Restore the route file (afterEach also does this; we do it
       // here for promptness so a subsequent test sees a clean state).
-      await fs.writeFile(blogUrlsPath, originalBlogContent);
+      writeFileBumpMtime(blogUrlsPath, originalBlogContent);
     }
   });
 });

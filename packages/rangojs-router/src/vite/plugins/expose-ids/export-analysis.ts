@@ -6,6 +6,7 @@ import {
   buildExportMap,
   escapeRegExp,
 } from "../expose-id-utils.js";
+import { codeMatchIndices } from "../../../build/route-types/source-scan.js";
 import type { CreateExportBinding } from "./types.js";
 
 /**
@@ -59,19 +60,57 @@ export function isExportOnlyFile(
   return true;
 }
 
-// NOTE: This regex may over-count when the fn name appears inside strings or
-// comments, but it's only used for the warning heuristic (totalCalls >
-// supportedBindings) and the inline-extraction pre-check, so over-counting
-// triggers a harmless extra AST parse rather than affecting correctness.
+function createCallPattern(fnNames: string[]): RegExp {
+  return new RegExp(
+    `\\b(?:${fnNames.map(escapeRegExp).join("|")})\\s*(?:<[^>]*>\\s*)?\\(`,
+    "g",
+  );
+}
+
+// Counts real create*() call sites, ignoring occurrences inside comments and
+// string literals. Used by the unsupported-shape warning heuristic and the
+// inline-extraction pre-check.
 export function countCreateCallsForNames(
   code: string,
   fnNames: string[],
 ): number {
-  const pattern = new RegExp(
-    `\\b(?:${fnNames.map(escapeRegExp).join("|")})\\s*(?:<[^>]*>\\s*)?\\(`,
-    "g",
-  );
-  return (code.match(pattern) || []).length;
+  return codeMatchIndices(code, createCallPattern(fnNames)).length;
+}
+
+/** Convert a 0-based byte offset to a 1-based { line, column }. */
+export function offsetToLineColumn(
+  code: string,
+  index: number,
+): { line: number; column: number } {
+  let line = 1;
+  let lineStart = 0;
+  const end = Math.min(index, code.length);
+  for (let i = 0; i < end; i++) {
+    if (code[i] === "\n") {
+      line++;
+      lineStart = i + 1;
+    }
+  }
+  return { line, column: index - lineStart + 1 };
+}
+
+/**
+ * Locate every real create*() call site (comment/string-free) that is NOT one
+ * of the supported, id-injectable export bindings, returning each as a 1-based
+ * { line, column }. The empty result means every call is in a supported shape.
+ * Both binding-collection paths anchor `callExprStart` at the start of the
+ * create* identifier — exactly where this pattern matches — so the set
+ * difference is exact.
+ */
+export function findUnsupportedCreateCallSites(
+  code: string,
+  fnNames: string[],
+  supportedBindings: CreateExportBinding[],
+): Array<{ line: number; column: number }> {
+  const supported = new Set(supportedBindings.map((b) => b.callExprStart));
+  return codeMatchIndices(code, createCallPattern(fnNames))
+    .filter((index) => !supported.has(index))
+    .map((index) => offsetToLineColumn(code, index));
 }
 
 export function getImportedFnNames(
@@ -306,9 +345,25 @@ export function collectCreateExportBindings(
 export function buildUnsupportedShapeWarning(
   filePath: string,
   fnName: string,
+  sites: Array<{ line: number; column: number }> = [],
 ): string {
-  return [
-    `[rango] Unsupported ${fnName} shape in "${filePath}".`,
+  const lines = [`[rango] Unsupported ${fnName} shape in "${filePath}".`];
+
+  // Point at the exact call(s) so the location is clickable in the terminal/IDE
+  // (file:line:column) instead of leaving the user to scan the whole file.
+  if (sites.length === 1) {
+    const s = sites[0];
+    lines.push(
+      `The ${fnName}(...) call at ${filePath}:${s.line}:${s.column} has no stable $$id injected — it is not in a supported shape.`,
+    );
+  } else if (sites.length > 1) {
+    lines.push(
+      `These ${fnName}(...) calls have no stable $$id injected — they are not in a supported shape:`,
+    );
+    for (const s of sites) lines.push(`  - ${filePath}:${s.line}:${s.column}`);
+  }
+
+  lines.push(
     `Supported shapes are:`,
     `  - export const X = ${fnName}(...)`,
     `  - const X = ${fnName}(...); export { X }`,
@@ -316,5 +371,6 @@ export function buildUnsupportedShapeWarning(
     `Potentially unsupported forms include:`,
     `  - export let/var X = ${fnName}(...)`,
     `  - inline ${fnName}(...) calls`,
-  ].join("\n");
+  );
+  return lines.join("\n");
 }

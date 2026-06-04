@@ -19,11 +19,15 @@
     "react-dom": "catalog:"
   },
   "devDependencies": {
+    "@babel/core": "catalog:",
     "@playwright/test": "^1.49.1",
+    "@rolldown/plugin-babel": "catalog:",
+    "@types/babel__core": "catalog:",
     "@types/node": "^24.10.1",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
+    "babel-plugin-react-compiler": "catalog:",
     "tinyexec": "^0.3.2",
     "typescript": "^5.9.3",
     "vite": "catalog:",

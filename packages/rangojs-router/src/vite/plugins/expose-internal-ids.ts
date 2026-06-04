@@ -28,6 +28,7 @@ import {
   getImportedFnNames,
   collectCreateExportBindings,
   buildUnsupportedShapeWarning,
+  findUnsupportedCreateCallSites,
   isExportOnlyFile,
 } from "./expose-ids/export-analysis.js";
 import {
@@ -370,14 +371,21 @@ ${lazyImports.join(",\n")}
           if (!hasCode) continue;
 
           const fnNames = getFnNames(cfg.fnName);
-          const totalCalls = countCreateCallsForNames(code, fnNames);
-          const supportedBindings = getBindings(code, fnNames).length;
-          if (totalCalls <= supportedBindings) continue;
+          // Locate the real (comment/string-free) create* calls not covered by
+          // a supported, id-injectable export shape. Empty means every call is
+          // fine — in particular, a create*() token in a comment or string no
+          // longer trips a spurious warning.
+          const sites = findUnsupportedCreateCallSites(
+            code,
+            fnNames,
+            getBindings(code, fnNames),
+          );
+          if (sites.length === 0) continue;
 
           const warnKey = `${id}::${cfg.fnName}`;
           if (unsupportedShapeWarnings.has(warnKey)) continue;
           unsupportedShapeWarnings.add(warnKey);
-          this.warn(buildUnsupportedShapeWarning(filePath, cfg.fnName));
+          this.warn(buildUnsupportedShapeWarning(filePath, cfg.fnName, sites));
         }
 
         // --- Loader: track for manifest (RSC env only) ---

@@ -30,6 +30,13 @@ const CACHE_RUNTIME_IMPORT = "@rangojs/router/cache-runtime";
 // and should not be wrapped (children can't be cache-keyed).
 const LAYOUT_TEMPLATE_PATTERN = /\/(layout|template)\.(tsx?|jsx?)$/;
 
+/**
+ * Grammar for a valid function-level directive: `use cache` optionally followed
+ * by `: <profile-name>`. The single source of truth for both the transform and
+ * the near-miss validator below.
+ */
+export const USE_CACHE_DIRECTIVE_RE: RegExp = /^use cache(:\s*[\w-]+)?$/;
+
 export function useCacheTransform(): Plugin {
   let projectRoot = "";
   let isBuild = false;
@@ -116,9 +123,9 @@ export function useCacheTransform(): Plugin {
           transformHoistInlineDirective,
         );
 
-        // Always check for near-miss directives, even when valid directives
-        // exist. A file may contain both valid and invalid "use cache" directives
-        // in different functions — the invalid ones should still warn.
+        // Check for near-miss directives on the function-level path. The
+        // file-level branch above returns earlier (it wraps every export
+        // regardless), so this runs only when there is no file-level directive.
         warnOnNearMissDirectives(ast, id, this.warn.bind(this));
 
         if (functionResult) return functionResult;
@@ -219,7 +226,7 @@ function transformFunctionLevelUseCache(
 ) {
   try {
     const { output, names } = transformHoistInlineDirective(code, ast, {
-      directive: /^use cache(:\s*[\w-]+)?$/,
+      directive: USE_CACHE_DIRECTIVE_RE,
       runtime: (
         value: string,
         name: string,
@@ -274,11 +281,6 @@ function findFileLevelDirective(
 }
 
 /**
- * The valid directive regex (must stay in sync with transformFunctionLevelUseCache).
- */
-const VALID_DIRECTIVE_RE = /^use cache(:\s*[\w-]+)?$/;
-
-/**
  * Regex for near-miss: starts with "use cache:" but has invalid tokens.
  */
 const NEAR_MISS_RE = /^use cache:\s*.+$/;
@@ -307,7 +309,7 @@ function warnOnNearMissDirectives(
       if (
         value.startsWith("use cache") &&
         NEAR_MISS_RE.test(value) &&
-        !VALID_DIRECTIVE_RE.test(value)
+        !USE_CACHE_DIRECTIVE_RE.test(value)
       ) {
         const profilePart = value.slice("use cache:".length).trim();
         warn(

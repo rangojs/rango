@@ -1,0 +1,26 @@
+{
+  "name": "no-typescript",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "playwright test --project=dev",
+    "test:e2e": "playwright test",
+    "test:full": "playwright test",
+    "test:production": "playwright test --project=production",
+    "test:ui": "playwright test --ui"
+  },
+  "dependencies": {
+    "@rangojs/router": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "tinyexec": "^0.3.2",
+    "vite": "catalog:"
+  }
+}

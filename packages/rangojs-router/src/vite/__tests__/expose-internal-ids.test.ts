@@ -618,6 +618,39 @@ layout(createHandle(() => []));
     const [msg] = ctx.warn.mock.calls[0];
     expect(msg).toContain("Unsupported createHandle shape");
   });
+
+  it("points to the offending call location (file:line:column)", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+export let LocalLoader = createLoader(async () => ({ ok: true }));
+`;
+    const ctx = rscCtx();
+    plugin.transform.call(ctx, code, FILE_ID);
+
+    const [msg] = ctx.warn.mock.calls[0];
+    // The unsupported createLoader call sits on line 2; the warning names the
+    // exact, clickable location (file:line:column) rather than just the file.
+    expect(msg).toMatch(/urls\.tsx:2:\d+/);
+  });
+
+  it("does not warn when createLoader appears only in a comment or string", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    // Regression: a create*() token mentioned in a comment or string literal
+    // must not be miscounted as a call (previously produced a spurious warning).
+    const code = `import { createLoader } from "@rangojs/router";
+// see createLoader(x) — a mention in a comment must not warn
+const doc = "call createLoader(y) like so";
+export const MyLoader = createLoader(async () => ({ ok: true }));
+`;
+    const ctx = rscCtx();
+    plugin.transform.call(ctx, code, FILE_ID);
+
+    expect(ctx.warn).not.toHaveBeenCalled();
+  });
 });
 
 describe("exposeInternalIds - alias support (strict create APIs)", () => {
