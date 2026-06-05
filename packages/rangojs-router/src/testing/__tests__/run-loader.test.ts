@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { runLoader } from "../run-loader.js";
 import { createVar } from "../../context-var.js";
+import { createHandle } from "../../handle.js";
 import type { LoaderContext, LoaderDefinition } from "../../types.js";
 
 describe("runLoader", () => {
@@ -112,6 +113,51 @@ describe("runLoader", () => {
         return null;
       }),
     ).rejects.toThrow(/rendered\(\) is not available/);
+  });
+
+  describe("rendered barrier + handle reads (rendered + handles options)", () => {
+    it("mocks ctx.rendered() and seeds ctx.use(handle) by reference", async () => {
+      const Products = createHandle<string>();
+      const data = await runLoader(
+        async (ctx) => {
+          await ctx.rendered();
+          const ids = ctx.use(Products) as string[];
+          return { count: ids.length, first: ids[0] };
+        },
+        { rendered: true, handles: [[Products, ["a", "b", "c"]]] },
+      );
+      expect(data).toEqual({ count: 3, first: "a" });
+    });
+
+    it("accepts a function form of rendered for custom timing/side effects", async () => {
+      let barrierRan = false;
+      const data = await runLoader(
+        async (ctx) => {
+          await ctx.rendered();
+          return { ok: true };
+        },
+        {
+          rendered: () => {
+            barrierRan = true;
+          },
+        },
+      );
+      expect(barrierRan).toBe(true);
+      expect(data).toEqual({ ok: true });
+    });
+
+    it("still throws on ctx.rendered() when the option is not set", async () => {
+      const Products = createHandle<string>();
+      await expect(
+        runLoader(
+          async (ctx) => {
+            await ctx.rendered();
+            return ctx.use(Products);
+          },
+          { handles: [[Products, ["a"]]] },
+        ),
+      ).rejects.toThrow(/rendered\(\) is not available/);
+    });
   });
 
   it("throws on ctx.reverse() use without a routeMap", async () => {

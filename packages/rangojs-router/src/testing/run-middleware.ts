@@ -21,14 +21,11 @@ import {
 } from "../server/request-context.js";
 import { executeLoaderMiddleware } from "../router/middleware.js";
 import { createReverseFunction } from "../router/handler-context.js";
-import type {
-  MiddlewareContext,
-  MiddlewareFn,
-} from "../router/middleware-types.js";
-import type { ContextVar } from "../context-var.js";
+import type { MiddlewareFn } from "../router/middleware-types.js";
 import {
   createTestRequestContext,
   type CreateTestContextOptions,
+  type VarsInit,
 } from "./internal/context.js";
 
 /**
@@ -39,8 +36,8 @@ export interface RunMiddlewareOptions<TEnv = any> {
   env?: TEnv;
   /** Route params surfaced as `ctx.params`. */
   params?: Record<string, string>;
-  /** Variables a prior middleware would have set, as [key, value] entries. */
-  vars?: Iterable<readonly [ContextVar<unknown> | string, unknown]>;
+  /** Variables a prior middleware would have set (object or [key, value] list). */
+  vars?: VarsInit;
   /** Route name -> pattern map enabling `ctx.reverse()`. */
   routeMap?: Record<string, string>;
   /** Matched route name for scoped `.name` reverse resolution. */
@@ -61,9 +58,11 @@ export interface RunMiddlewareResult<TEnv = any> {
   response: Response;
   /**
    * The underlying RequestContext. Read `ctx.cookies()`, `ctx.get(...)`, and
-   * `ctx.res.headers` to assert on the chain's effects.
+   * `ctx.res.headers` to assert on the chain's effects. (This is always the
+   * RequestContext the chain ran under — not a per-middleware MiddlewareContext —
+   * so `ctx.cookies()` and the other RequestContext accessors are available.)
    */
-  ctx: RequestContext<TEnv> | MiddlewareContext<TEnv>;
+  ctx: RequestContext<TEnv>;
   /** Number of times the terminal handler ran (0 = short-circuited, 1 = passed through). */
   nextCalled: number;
 }

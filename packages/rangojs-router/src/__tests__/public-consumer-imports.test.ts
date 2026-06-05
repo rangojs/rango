@@ -53,6 +53,9 @@ function runConsumerTypecheck(files: Record<string, string>) {
             "@rangojs/router/rsc": [publicTypeEntry("./rsc")],
             "@rangojs/router/ssr": [publicTypeEntry("./ssr")],
             "@rangojs/router/testing": [publicTypeEntry("./testing")],
+            "@rangojs/router/testing/vitest": [
+              publicTypeEntry("./testing/vitest"),
+            ],
             "@rangojs/router/testing/dom": [publicTypeEntry("./testing/dom")],
             "@rangojs/router/testing/e2e": [publicTypeEntry("./testing/e2e")],
             "@rangojs/router/testing/flight": [
@@ -180,6 +183,7 @@ import {
   assertGeneratedRoutesMatch,
   createCacheSink,
 } from "@rangojs/router/testing";
+import { rangoTestAliases } from "@rangojs/router/testing/vitest";
 import { renderRoute } from "@rangojs/router/testing/dom";
 import { createRangoE2E } from "@rangojs/router/testing/e2e";
 import { renderToFlightString, flightMatchers } from "@rangojs/router/testing/flight";
@@ -187,6 +191,7 @@ import { renderToFlightString, flightMatchers } from "@rangojs/router/testing/fl
 void runMiddleware;
 void runLoader;
 void dispatch;
+void rangoTestAliases;
 void renderRoute;
 void assertCacheStatus;
 void assertGeneratedRoutesMatch;

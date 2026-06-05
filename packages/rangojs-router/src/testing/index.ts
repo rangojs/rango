@@ -41,7 +41,11 @@ export type {
   RunMiddlewareResult,
 } from "./run-middleware.js";
 export { runLoader } from "./run-loader.js";
-export type { RunLoaderOptions, UseResolver } from "./run-loader.js";
+export type {
+  RunLoaderOptions,
+  UseResolver,
+  TestLoaderContext,
+} from "./run-loader.js";
 
 // Integration
 export { dispatch } from "./dispatch.js";
@@ -83,6 +87,7 @@ export {
 export type {
   CreateTestContextOptions,
   TestRequestContext,
+  VarsInit,
 } from "./internal/context.js";
 
 // The E2E harness is NOT re-exported here: it must be imported from

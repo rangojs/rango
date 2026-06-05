@@ -18,13 +18,14 @@
  *   - It will NOT catch real Flight serialization errors (non-serializable
  *     props crossing the RSC boundary), loader execution on the server,
  *     middleware, or handler ordering. Those are renderServer / e2e territory.
- *   - Loader data is SEEDED directly into client context (see `loaderData`
- *     option) — loaders are never executed. This exercises the read path
- *     (useLoader / useFetchLoader from context), not the run path.
+ *   - Loader data, location state, and handle output are SEEDED directly into
+ *     client context (see the `loaders` / `locationState` / `handles` options) —
+ *     nothing is executed on the server. This exercises the read path
+ *     (useLoader / useLocationState / useHandle from context), not the run path.
  * What it DOES cover: client hooks that read NavigationProvider /
  * OutletContext — useParams, useReverse, useHref, useMount, useNavigation,
- * useRouter, usePathname, useSearchParams, Outlet nesting, and useLoader /
- * useFetchLoader reading seeded context data.
+ * useRouter, usePathname, useSearchParams, Outlet nesting, useLoader /
+ * useFetchLoader (seeded data), useLocationState (seeded), and useHandle (seeded).
  */
 
 import type { ReactNode, ComponentType } from "react";
@@ -40,8 +41,50 @@ import type { EventController } from "../browser/event-controller.js";
 import type { ResolvedSegment, RscMetadata } from "../browser/types.js";
 import { NavigationProvider } from "../browser/react/NavigationProvider.js";
 import { compilePattern } from "../router/pattern-matching.js";
+import type { LoaderDefinition } from "../types.js";
+import type { LocationStateDefinition } from "../browser/react/location-state-shared.js";
+import type { Handle } from "../handle.js";
 
 const TEST_ORIGIN = "http://localhost";
+
+/**
+ * Seed shape for `options.handle`, matching the handle wire format:
+ * `{ [handleName]: { [segmentId]: pushedValues[] } }` (each segment accumulates
+ * an array of values pushed for that handle).
+ */
+export type HandleDataSeed = Record<string, Record<string, unknown[]>>;
+
+// Loaders and location-state defs carry an id (`$$id` / `__rsc_ls_key`) that the
+// Vite plugin injects at build time; in a bare test it is "". These helpers
+// assign a synthetic stable id (mutating the handle, tracked per-object) so that
+// seeding by reference lines up with the read path (useLoader / useLocationState
+// both read the id off the handle at call time).
+const syntheticIds = new WeakMap<object, string>();
+let syntheticIdCounter = 0;
+
+function ensureSyntheticId(
+  handle: object,
+  field: "$$id" | "__rsc_ls_key",
+): string {
+  const existing = (handle as Record<string, string>)[field];
+  if (existing) return existing;
+  let id = syntheticIds.get(handle);
+  if (!id) {
+    id = `__rango_test_id_${syntheticIdCounter++}`;
+    syntheticIds.set(handle, id);
+  }
+  (handle as Record<string, string>)[field] = id;
+  return id;
+}
+
+/** One-level clone of a raw handle seed so we don't mutate the caller's object. */
+function cloneHandleSeed(seed?: HandleDataSeed): HandleDataSeed {
+  const out: HandleDataSeed = {};
+  for (const [name, segMap] of Object.entries(seed ?? {})) {
+    out[name] = { ...segMap };
+  }
+  return out;
+}
 
 /**
  * One node of the route definition passed to renderRoute. The array models a
@@ -90,13 +133,61 @@ export interface RenderRouteOptions {
    */
   loaderData?: Record<string, unknown>;
   /**
+   * Loaders to seed by REFERENCE — the robust way to test a component that calls
+   * `useLoader(loader)`. A real `createLoader()` handle has an empty `$$id` in a
+   * bare test (the id is injected by the Vite plugin at build time), so keying
+   * `loaderData` by `$$id` collides under `""` and `useLoader` resolves nothing.
+   * Passing `[loader, data]` pairs lets renderRoute assign a synthetic stable id
+   * and wire `useLoader` to it. Prefer this over `loaderData` for real handles.
+   *
+   * @example
+   * renderRoute([{ path: "/cart", Component: CartBadge }], {
+   *   loaders: [[CartLoader, { itemCount: 3, total: 89.97 }]],
+   * });
+   */
+  loaders?: ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>;
+  /**
    * Explicit params. Merged over (and overriding) params extracted from
    * `initialUrl`. Use this when the URL alone cannot express the params, or to
    * avoid relying on URL parsing.
    */
   params?: Record<string, string>;
-  /** Reserved for future handle-data seeding. Currently informational. */
-  handle?: unknown;
+  /**
+   * Location-state values to seed by REFERENCE, for components that call
+   * `useLocationState(StateDef)`. Like loaders, a real `createLocationState()`
+   * handle has an empty injected key in a bare test, so pass `[def, value]`
+   * pairs; renderRoute assigns a synthetic key and writes it to `history.state`.
+   *
+   * @example
+   * renderRoute([{ path: "/", Component: FlashBanner }], {
+   *   locationState: [[FlashMessage, { text: "Saved" }]],
+   * });
+   */
+  locationState?: ReadonlyArray<
+    readonly [LocationStateDefinition<any, any>, unknown]
+  >;
+  /**
+   * Handles to seed by REFERENCE, for components that read handle output via
+   * `useHandle(SomeHandle)` (e.g. a client `Breadcrumbs` trail). Each entry is
+   * `[handle, pushedValues[]]` — the values a route's handlers would have pushed;
+   * renderRoute attaches them to the leaf route segment under the handle's id.
+   * Built-in handles (Breadcrumbs/Meta) have stable ids and work directly.
+   *
+   * Most handle usage is server-side (`ctx.use(...)`) and is better covered by
+   * `renderToFlightString`/e2e; this seeds the client read path only.
+   *
+   * @example
+   * renderRoute([{ path: "/p", Component: BreadcrumbTrail }], {
+   *   handles: [[Breadcrumbs, [{ label: "Home", href: "/" }, { label: "P", href: "/p" }]]],
+   * });
+   */
+  handles?: ReadonlyArray<readonly [Handle<any, any>, unknown[]]>;
+  /**
+   * Advanced: raw handle data in wire format
+   * `{ [handleId]: { [segmentId]: pushedValues[] } }`. Prefer `handles` (which
+   * computes the segment id for you). Merged with `handles`.
+   */
+  handle?: HandleDataSeed;
   /**
    * Route name -> pattern map. Informational for parity with the server test
    * context; client useReverse takes its map directly as an argument, so this
@@ -274,7 +365,28 @@ export async function renderRoute(
   const initialUrl = options.initialUrl ?? staticPrefix(leaf.path) ?? "/";
   const url = new URL(initialUrl, TEST_ORIGIN);
 
-  const loaderData = options.loaderData ?? {};
+  // Seed loader data: explicit-id entries from `loaderData`, plus by-reference
+  // entries from `loaders` (assigning synthetic ids to real handles whose `$$id`
+  // is empty in a bare test).
+  const loaderData: Record<string, unknown> = { ...(options.loaderData ?? {}) };
+  for (const [loader, data] of options.loaders ?? []) {
+    loaderData[ensureSyntheticId(loader as object, "$$id")] = data;
+  }
+
+  // Seed location state into history.state so useLocationState(def) resolves.
+  // Keyed defs read history.state[def.__rsc_ls_key]; assign a synthetic key when
+  // the injected one is empty (bare test). RESET history.state to only this
+  // call's seeds (not a merge) so a previous render's seeded state does not leak
+  // into a later render in the same DOM environment.
+  if (typeof window !== "undefined") {
+    const stateObj: Record<string, unknown> = {};
+    for (const [def, value] of options.locationState ?? []) {
+      stateObj[ensureSyntheticId(def as object, "__rsc_ls_key")] = value;
+    }
+    // No URL arg: useLocationState reads history.state (not the URL), and passing
+    // a TEST_ORIGIN URL would trip the DOM env's same-origin check.
+    window.history.replaceState(stateObj, "");
+  }
 
   // Resolve params: URL-extracted params first, explicit params override.
   const resolve = (pathname: string): ResolvedMatch => {
@@ -300,10 +412,28 @@ export async function renderRoute(
     initialSegments,
     crossTabSync: false,
   });
+  // Seed handle data: raw `handle` entries plus by-reference `handles` attached
+  // to the leaf route segment under each handle's id (so useHandle(handle)
+  // resolves the pushed values).
+  const leafRouteSegmentId =
+    [...initialSegments].reverse().find((s) => s.type === "route")?.id ??
+    initialSegments[initialSegments.length - 1]?.id;
+  const handleSeed: HandleDataSeed = cloneHandleSeed(options.handle);
+  for (const [handle, values] of options.handles ?? []) {
+    if (leafRouteSegmentId === undefined) continue;
+    // Assign a synthetic id when the handle's own id is empty (a local
+    // createHandle() in a bare test — the id is plugin-injected). Built-in
+    // handles keep their stable id (and their registered collect); empty-id
+    // handles fall back to the default flatten collect, which is correct for the
+    // common no-custom-collect handle (e.g. Breadcrumbs).
+    const id = ensureSyntheticId(handle as object, "$$id");
+    (handleSeed[id] ??= {})[leafRouteSegmentId] = values;
+  }
+
   const eventController = createEventController({ initialLocation: url });
   eventController.setParams(initialMatch.params);
   eventController.setHandleData(
-    {},
+    handleSeed,
     initialSegments.map((s) => s.id),
   );
 

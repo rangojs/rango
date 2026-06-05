@@ -131,6 +131,10 @@
       "types": "./src/testing/index.ts",
       "default": "./src/testing/index.ts"
     },
+    "./testing/vitest": {
+      "types": "./src/testing/vitest.ts",
+      "default": "./src/testing/vitest.ts"
+    },
     "./testing/dom": {
       "types": "./src/testing/dom.entry.ts",
       "default": "./src/testing/dom.entry.ts"

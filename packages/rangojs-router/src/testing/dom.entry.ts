@@ -18,4 +18,5 @@ export type {
   RenderRouteOptions,
   TestRouterHandle,
   RenderRouteResult,
+  HandleDataSeed,
 } from "./render-route.js";

@@ -20,10 +20,57 @@
 import { getGlobalRouteMap } from "../route-map-builder.js";
 
 /**
- * Router shape this check depends on: just a runtime route map.
+ * Router shape this check depends on: a runtime route map, plus the optional
+ * `findMatch` used to force-expand lazy `include()`d routes (see below).
  */
 interface RouterWithRouteMap {
   routeMap: Record<string, unknown>;
+  findMatch?: (pathname: string) => unknown;
+}
+
+/**
+ * Derive a best-effort concrete path from a route pattern so `findMatch` can be
+ * invoked to expand a lazy include. `:param`, `:param(constraint)`, optional
+ * `:param?`, and `*` are all replaced with a literal segment. A constrained
+ * param may not match its constraint (so that one route's match fails), but
+ * since matching ANY route in an include expands ALL of the include's routes,
+ * a sibling route in the same include will still trigger expansion.
+ */
+function concretePath(pattern: string): string {
+  return (
+    pattern
+      .replace(/:[A-Za-z0-9_]+\([^)]*\)\??/g, "x") // :p(constraint) / optional
+      .replace(/:[A-Za-z0-9_]+\??/g, "x") // :p or :p?
+      .replace(/\*/g, "x") // wildcard
+      .replace(/\/{2,}/g, "/") || "/"
+  );
+}
+
+/**
+ * Force-expand the router's lazy `include()`d routes into `router.routeMap`.
+ *
+ * All Rango includes are lazy — their child routes only populate `routeMap` when
+ * the router first matches a path inside them (in production the build-time
+ * manifest virtual carries the full map; in a bare test that virtual is absent).
+ * To make the whole-app drift check work in a unit test, we trigger expansion by
+ * calling `findMatch` on a concrete path derived from each known pattern. This is
+ * idempotent and side-effect-free beyond populating the route map. Routers that
+ * don't expose `findMatch` (e.g. a plain `{ routeMap }` object) are left as-is.
+ */
+function expandLazyIncludes(
+  router: RouterWithRouteMap,
+  patterns: Iterable<string>,
+): void {
+  const findMatch = router.findMatch;
+  if (typeof findMatch !== "function") return;
+  for (const pattern of patterns) {
+    try {
+      findMatch.call(router, concretePath(pattern));
+    } catch {
+      // A pattern that fails to match (constrained param, etc.) is fine — a
+      // sibling route in the same include still triggers expansion.
+    }
+  }
 }
 
 /**
@@ -74,8 +121,18 @@ export function diffGeneratedRoutes(
   router: RouterWithRouteMap,
   generatedMap?: Record<string, unknown>,
 ): GeneratedRoutesDiff {
-  const runtime = router.routeMap as Record<string, unknown>;
   const generated = generatedMap ?? getGlobalRouteMap();
+
+  // Lazy `include()`d routes are absent from `routeMap` until first matched, so
+  // expand them first (using the generated patterns to drive the matches) —
+  // otherwise every included route is a false `missing`. No-op for plain
+  // `{ routeMap }` objects that don't expose `findMatch`.
+  expandLazyIncludes(
+    router,
+    Object.values(generated).map((v) => patternOf(v)),
+  );
+
+  const runtime = router.routeMap as Record<string, unknown>;
 
   const missing: string[] = [];
   const extra: string[] = [];

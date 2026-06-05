@@ -45,20 +45,22 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 
 ## The testing surface, mapped to the API
 
-| You ship / consume…                         | Test that…                                      | Layer               | Primitive                                      | Skill                                    |
-| ------------------------------------------- | ----------------------------------------------- | ------------------- | ---------------------------------------------- | ---------------------------------------- |
-| `reverse` / `useReverse` / `href`           | the URL is correct; misuse fails to compile     | unit + types        | call directly; `@ts-expect-error`              | `/typesafety`, `/links`                  |
-| a `loader()` body                           | data logic given params/env/vars/search         | unit (node)         | `runLoader` (raw fn)                           | `/loader`                                |
-| `middleware()` (auth, logging)              | ordering, short-circuit, cookie/header merge    | unit (node)         | `runMiddleware`                                | `/middleware`                            |
-| a client component reading router context   | it renders given params/loaderData/Outlet       | unit (DOM)          | `renderRoute`                                  | `/hooks`                                 |
-| a response route (`path.json/.text/...`)    | status, content-type, body, content negotiation | integration         | `dispatch`                                     | `/response-routes`, `/mime-routes`       |
-| a redirect / `404` / middleware redirect    | the `Response` (status + `Location`)            | integration         | `dispatch`                                     | `/middleware`, `/route`                  |
-| an async Server Component                   | real Flight output / serialization shape        | RSC unit            | `renderToFlightString` + `toMatchFlight`       | `/route`                                 |
-| a `"use server"` action + revalidation flow | the mutate -> reload -> UI update, JS and no-JS | e2e                 | `parityDescribe` + `expectParity`              | `/server-actions`                        |
-| navigation / hydration / view transitions   | no reload, no page error, correct pathname      | e2e                 | `parityDescribe`, `waitForHydration`, matchers | `/hooks`, `/view-transitions`            |
-| `cache()` / `"use cache"` / loader cache    | hit/miss/stale across two requests              | e2e + signal        | `assertCacheStatus` / telemetry sink           | `/caching`, `/use-cache`, `/cache-guide` |
-| `Prerender(...)` routes                     | served from a build-time artifact (a cache hit) | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`        | `/prerender`                             |
-| the generated `*.named-routes.gen.ts`       | it matches the runtime route map (drift in CI)  | unit (node)         | `assertGeneratedRoutesMatch`                   | `/typesafety`                            |
+| You ship / consume…                           | Test that…                                      | Layer               | Primitive                                      | Skill                                    |
+| --------------------------------------------- | ----------------------------------------------- | ------------------- | ---------------------------------------------- | ---------------------------------------- |
+| `reverse` / `useReverse` / `href`             | the URL is correct; misuse fails to compile     | unit + types        | call directly; `@ts-expect-error`              | `/typesafety`, `/links`                  |
+| a `loader()` body                             | data logic given params/env/vars/search         | unit (node)         | `runLoader` (raw fn)                           | `/loader`                                |
+| `middleware()` (auth, logging)                | ordering, short-circuit, cookie/header merge    | unit (node)         | `runMiddleware`                                | `/middleware`                            |
+| a client component reading router context     | it renders given params/loaderData/Outlet       | unit (DOM)          | `renderRoute`                                  | `/hooks`                                 |
+| a component reading `useLocationState`        | it renders the seeded location-state value      | unit (DOM)          | `renderRoute` (`locationState` option)         | `/location-state`                        |
+| a component reading `useHandle` (Breadcrumbs) | it renders the seeded handle output             | unit (DOM)          | `renderRoute` (`handles` option)               | `/handles`                               |
+| a response route (`path.json/.text/...`)      | status, content-type, body, content negotiation | integration         | `dispatch`                                     | `/response-routes`, `/mime-routes`       |
+| a redirect / `404` / middleware redirect      | the `Response` (status + `Location`)            | integration         | `dispatch`                                     | `/middleware`, `/route`                  |
+| an async Server Component                     | real Flight output / serialization shape        | RSC unit            | `renderToFlightString` + `toMatchFlight`       | `/route`                                 |
+| a `"use server"` action + revalidation flow   | the mutate -> reload -> UI update, JS and no-JS | e2e                 | `parityDescribe` + `expectParity`              | `/server-actions`                        |
+| navigation / hydration / view transitions     | no reload, no page error, correct pathname      | e2e                 | `parityDescribe`, `waitForHydration`, matchers | `/hooks`, `/view-transitions`            |
+| `cache()` / `"use cache"` / loader cache      | hit/miss/stale across two requests              | e2e + signal        | `assertCacheStatus` / telemetry sink           | `/caching`, `/use-cache`, `/cache-guide` |
+| `Prerender(...)` routes                       | served from a build-time artifact (a cache hit) | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`        | `/prerender`                             |
+| the generated `*.named-routes.gen.ts`         | it matches the runtime route map (drift in CI)  | unit (node)         | `assertGeneratedRoutesMatch`                   | `/typesafety`                            |
 
 ## Setup
 
@@ -85,13 +87,62 @@ pnpm add -D vitest @testing-library/react happy-dom @playwright/test
   Playwright runner) and never imports `@playwright/test` at runtime — you pass
   your own `test`/`expect` into `createRangoE2E`.
 
+### Resolving `@rangojs/router` in a unit test — use the preset
+
+Importing your own app's router / loaders / middleware in a bare Vitest process
+does **not** work out of the box, and the failure is non-obvious:
+
+- `@rangojs/router` resolves to **server-only stubs** outside the `react-server`
+  condition — `urls()`, `createRouter()`, `cookies()`, `getRequestContext()`
+  _throw_ ("only available … in a react-server/RSC environment"). So importing
+  your router fails immediately.
+- Vitest does **not** apply the `react-server` condition to bare-package exports
+  resolution, and enabling it globally flips React to its server build (no
+  `createContext`), which crashes the router's client-boundary imports.
+
+The fix is to alias **only** the bare `@rangojs/router` specifier to its
+react-server entry (real impls) while leaving React as the client build. Rather
+than hand-assemble that, use the shipped preset:
+
+```ts
+// vitest.config.ts  (the node + DOM project)
+import { defineConfig } from "vitest/config";
+import { rangoTestAliases } from "@rangojs/router/testing/vitest";
+
+export default defineConfig({
+  test: {
+    globals: true,
+    include: ["test/**/*.{test,spec}.{ts,tsx}"],
+    environment: "node", // renderRoute tests use a `// @vitest-environment happy-dom` pragma
+  },
+  resolve: {
+    // `cloudflare: true` also stubs the cloudflare:workers / cloudflare:email
+    // runtime virtuals a Cloudflare app's route tree imports.
+    alias: rangoTestAliases({ cloudflare: true }),
+  },
+});
+```
+
+`rangoTestAliases()` aliases the bare `@rangojs/router` to its real impls and
+stubs the build-only `@rangojs/router:version` and `@vitejs/plugin-rsc/rsc`
+virtuals — so you do **not** need a per-file `vi.mock("@vitejs/plugin-rsc/rsc")`.
+
+> **Limitation:** even with the preset, the **full** app router cannot be
+> imported if it uses `Prerender()` / `createLoader()` — their build-time
+> `$$id` is injected by the rango Vite plugin and is absent in a bare test, so
+> the real `Prerender()` throws "missing $$id". For `dispatch`, build a router
+> from an importable, `Prerender`-free include (e.g. your API routes); assert
+> whole-router behavior with e2e.
+
 ### Two vitest projects
 
 You need two, because real Flight rendering requires the `react-server` node
 condition, and that condition flips React to its server (no client hooks) build —
-which would break every client/`renderRoute` test.
+which would break every client/`renderRoute` test. The Flight project does **not**
+use the preset (its `@rangojs/router` alias would crash under the server React
+build); Flight tests cover pure leaf server components.
 
-`vitest.config.ts` (the default node + DOM project) — your normal config.
+`vitest.config.ts` (the default node + DOM project) — uses the preset, above.
 
 `vitest.rsc.config.ts` (the Flight project):
 
@@ -194,16 +245,34 @@ it("returns the product and a self link", async () => {
 ```
 
 Options: `params` (also surfaced as `routeParams`), `search`, `env`, `vars`
-(string key or `createVar()` handle), `method`/`body`/`formData`,
-`routeMap`/`routeName`, and `use` (resolver for `ctx.use(OtherLoader)`). Without
-`use`, `ctx.use` runs a dependency's own `fn` if it carries one.
+(an object `{ key: value }`, or `[key, value]` tuples where the key may be a
+`createVar()` handle), `method`/`body`/`formData`, `routeMap`/`routeName`, and
+`use` (resolver for `ctx.use(OtherLoader)`). Without `use`, `ctx.use` runs a
+dependency's own `fn` if it carries one. In the body, `ctx.reverse` accepts any
+name from `routeMap` and `ctx.get` accepts any string key or `createVar()` handle
+(both are driven by the options, so neither is bound to the app's global
+augmentation).
 
-Unit-only limitations — document them in the test, do not work around them:
+Unit-only limitations:
 
 - `ctx.reverse(...)` throws without `routeMap`.
-- `ctx.rendered()` throws — the DSL render barrier only exists during a full
-  match. `ctx.isAction(...)` (action-render context) is likewise unavailable.
-  Cover those with e2e (or `renderToFlightString` for render output).
+- `ctx.isAction(...)` (action-render context) is unavailable — cover with e2e.
+- `ctx.rendered()` throws **by default** (the real render barrier only exists
+  during a full match). For a loader that awaits the barrier then reads handle
+  data — `await ctx.rendered(); ctx.use(SomeHandle)` (the "rendered barrier"
+  pattern) — pass `{ rendered: true }` to mock the barrier and `{ handles:
+[[SomeHandle, accumulatedData]] }` to seed the handle read:
+
+  ```ts
+  const data = await runLoader(livePricesBody, {
+    rendered: true,
+    handles: [[RenderedProducts, ["widget-a", "widget-b"]]],
+  });
+  ```
+
+  This unit-tests the loader's POST-barrier compute logic against the seeded
+  handle data. It does NOT exercise the real push -> accumulate -> barrier wiring
+  (handlers actually pushing the data, the barrier's timing) — keep that in e2e.
 
 ### Middleware
 
@@ -276,6 +345,49 @@ the layout chain root-to-leaf, last entry is the leaf. Seed `useLoader` reads vi
 `options.loaderData` keyed by `$$id`; route them to a layout with that spec's
 `loaderIds`.
 
+Testing a component that reads `useLoader`: seed the loader BY REFERENCE via the
+`loaders` option, not `loaderData`. A real `createLoader(fn)` handle has
+`$$id === ""` in a bare test (the id is plugin-injected at build time), so keying
+`loaderData` by `$$id` would collide under `""`; passing `[loader, data]` pairs
+lets renderRoute assign a synthetic stable id and wire `useLoader` to it:
+
+```tsx
+const { getByTitle } = await renderRoute(
+  [{ path: "/cart", Component: CartBadge }],
+  { loaders: [[CartLoader, { itemCount: 3, total: 89.97 }]] },
+);
+```
+
+Seed `useLocationState(def)` reads with the `locationState` option (`[def, value]`
+pairs), and `useHandle(handle)` reads (e.g. a client Breadcrumbs trail) with the
+`handles` option (`[handle, pushedValues[]]` pairs) — both seed by reference for
+the same plugin-injected-id reason. A component reading only `useParams` /
+`useReverse` / `useNavigation` needs no seeding.
+
+Testing a handle's `collect`/accumulator: a handle's collect function (the
+`createHandle(collect)` argument that maps per-segment pushes to the accumulated
+value) is a **pure function** — export it and call it directly:
+
+```ts
+// breadcrumbs.ts
+export function collectBreadcrumbs(segments: Item[][]): Item[] {
+  return segments.flat();
+}
+export const Breadcrumbs = createHandle<Item, Item[]>(collectBreadcrumbs);
+
+// breadcrumbs.test.ts
+expect(collectBreadcrumbs([[home], [post]])).toEqual([home, post]);
+```
+
+There is no `runHandle` primitive, and one can't introspect an inline collect:
+`createHandle` keeps the collect off the (serializable) handle and only registers
+it in a private module registry when the `$$id` is non-empty — which it is not in
+a bare test. CAVEAT for `renderRoute`'s `handles` seeding: because a consumer
+handle's collect is not registered in a bare test, the seeded per-segment values
+are aggregated with the **default flatten**, not your custom collect. So for a
+custom-collect handle, test the collect directly (above) and seed `renderRoute`
+with values whose flatten equals the shape your component should see.
+
 Fidelity caveat: client tree only. It will NOT catch server/client boundary
 remount bugs, real Flight serialization, loader execution, middleware, or handler
 ordering — those need `renderToFlightString` or e2e. Loader data is seeded, never
@@ -290,46 +402,45 @@ run.
 and global + route-level middleware short-circuits. An RSC (component) route
 throws a clear directive error.
 
-The Vite-env / vi.mock requirement: importing your _router_ transitively imports
-`@vitejs/plugin-rsc/rsc`, whose top-level body imports Vite virtual modules that
-do not resolve in plain node. `dispatch` itself is virtual-free; the router is
-not. So either run `dispatch` tests in a Vite-RSC-capable env, or mock the module
-before importing the router:
+Setup: use the `rangoTestAliases()` preset (above) so `@rangojs/router` resolves
+to real impls and the `@vitejs/plugin-rsc/rsc` virtual is stubbed — no per-file
+`vi.mock` needed. `dispatch` accepts your public router type directly (no cast).
+
+Because the full app router usually can't be imported in a bare test (the
+`Prerender`/`createLoader` `$$id` limitation above), build a router from an
+importable, `Prerender`-free include — typically your response/API routes:
 
 ```ts
-import { describe, it, expect, vi } from "vitest";
-
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  createFromReadableStream: vi.fn(),
-  renderToReadableStream: vi.fn(),
-  loadServerAction: vi.fn(),
-  decodeReply: vi.fn(),
-  decodeAction: vi.fn(),
-  decodeFormState: vi.fn(),
-  createTemporaryReferenceSet: vi.fn(),
-}));
-
+import { describe, it, expect } from "vitest";
 import { dispatch } from "@rangojs/router/testing";
-import { router } from "../src/router";
+import { createRouter } from "@rangojs/router";
+import { apiPatterns } from "../src/api/urls"; // path.json(...) routes, no Prerender
 
-it("emits a 308 redirect for a trailing-slash mismatch", async () => {
-  const res = await dispatch(router, "/old?ref=email");
-  expect(res.status).toBe(308);
-  expect(res.headers.get("Location")).toBe("/old/?ref=email"); // query preserved
+const router = createRouter().routes(apiPatterns);
+
+it("serializes a JSON response route, auto-wrapped under { data }", async () => {
+  const res = await dispatch(router, "/health");
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toBe(
+    "application/json;charset=utf-8",
+  );
+  expect(await res.json()).toEqual({ data: { status: "ok" } });
+});
+
+it("maps a thrown RouterError to its status + typed JSON envelope", async () => {
+  const res = await dispatch(router, "/products/999"); // handler throws RouterError 404
+  expect(res.status).toBe(404);
+  expect((await res.json()).error.code).toBe("NOT_FOUND");
 });
 
 it("returns 404 for an unmatched path", async () => {
   expect((await dispatch(router, "/nope")).status).toBe(404);
 });
-
-it("serializes a text response route", async () => {
-  const res = await dispatch(router, "/api/ping");
-  expect(res.headers.get("content-type")).toBe("text/plain;charset=utf-8");
-  expect(await res.text()).toBe("pong");
-});
 ```
 
-JSON response routes are auto-wrapped as `{ data: <value> }`. Cookies and
+`dispatch` also covers trailing-slash/redirect targets (`findMatch`) — a
+redirected path returns a 308 with the `Location` (query preserved). JSON
+response routes are auto-wrapped as `{ data: <value> }`. Cookies and
 `ctx.header(...)` set inside a response-route handler surface on the returned
 `Response`. Pass env via `{ env }`.
 
@@ -373,6 +484,18 @@ snapshotting the payload shape, not hydratable. A fully interactive, clickable
 DOM `renderServer` (hydrated) is a deferred follow-up: the react-server vs
 default condition wall needs a two-environment setup, which v1 does not ship. For
 interactive server-component behavior today, use e2e.
+
+Consumer caveat: a server component that imports a server API from the
+`@rangojs/router` **barrel** (e.g. `getRequestContext`, `cookies`) cannot be
+flight-tested in a bare consumer project — under the Flight project's
+`react-server` condition the bare specifier still resolves to the throwing
+server-only stub, and the preset's alias (which fixes that for the node project)
+crashes under the server React build on the router's `virtual:` imports. So keep
+Flight tests to **pure leaf** server components (no `@rangojs/router` imports);
+the example above reads params via the request context the test harness sets up,
+which works because `renderToFlightString` enters `runWithRequestContext` for
+you — but a component that itself calls `getRequestContext()` from the barrel is
+outside v1 scope (cover it with e2e).
 
 ## E2E with dev/prod and PE parity
 
@@ -514,30 +637,50 @@ All from `@rangojs/router/testing` unless noted — `renderRoute` is from
 the Flight helpers from `@rangojs/router/testing/flight`.
 
 ```ts
+// Setup — @rangojs/router/testing/vitest (node/DOM project resolve.alias)
+rangoTestAliases(opts?: { cloudflare?: boolean }): { find: string|RegExp; replacement: string }[];
+// resolve: { alias: rangoTestAliases({ cloudflare: true }) }
+
 // Unit
 runMiddleware(
   mw: MiddlewareFn | MiddlewareFn[],
   request: Request | string,
   opts?: { env?, params?, vars?, routeMap?, routeName?, next?: () => Promise<Response> },
-): Promise<{ response: Response; ctx; nextCalled: number }>;
-// const { response, nextCalled } = await runMiddleware(authMw, "/dashboard", { vars: [["user", u]] });
+): Promise<{ response: Response; ctx: RequestContext; nextCalled: number }>;
+// `ctx` is the RequestContext the chain ran under (read ctx.cookies(), ctx.get(...))
+// const { response, nextCalled } = await runMiddleware(authMw, "/dashboard", { vars: { user: u } });
 
 runLoader<T>(
   loaderFn: (ctx) => T | Promise<T>,   // RAW function, NOT createLoader(...)
-  opts?: { params?, search?, env?, request?, vars?, routeMap?, routeName?, method?, body?, formData?, use? },
+  opts?: { params?, search?, env?, request?, vars?, routeMap?, routeName?, method?, body?,
+           formData?, use?, rendered?, handles? },
 ): Promise<T>;
+// vars accepts an object ({ user: u }) or [key, value] tuples ([[userVar, u]]).
+// In the body, ctx.reverse accepts any routeMap name and ctx.get any string/ContextVar.
+// rendered: true mocks ctx.rendered(); handles: [[H, accumulated]] seeds ctx.use(H).
 // const data = await runLoader(loaderBody, { params: { id: "1" }, env });
 
 // Component — @rangojs/router/testing/dom (DOM env + @testing-library/react)
 renderRoute(                            // async; lazy-loads RTL at call time
   routes: RenderRouteSpec[],            // root->leaf; last = leaf route
-  options?: { initialUrl?, loaderData?, params?, handle?, routeMap? },
+  options?: {
+    initialUrl?, params?, routeMap?,
+    loaders?: [loader, data][],         // seed useLoader by REFERENCE (real handles)
+    loaderData?: Record<$$id, data>,    // seed useLoader by explicit $$id
+    locationState?: [def, value][],     // seed useLocationState by REFERENCE
+    handles?: [handle, pushedValues[]][],// seed useHandle by REFERENCE
+    handle?,                            // advanced: raw handle wire data
+  },
 ): Promise<RenderResult & { router }>;
 // const { getByTestId, router } = await renderRoute([{ path: "/p/:id", Component: P }], { initialUrl: "/p/1" });
+// useLoader:        renderRoute([{ path: "/c", Component: CartBadge }], { loaders: [[CartLoader, cart]] });
+// useLocationState: renderRoute([{ path: "/s", Component: FlashBanner }], { locationState: [[FlashMessage, { text: "Saved" }]] });
+// useHandle:        renderRoute([{ path: "/p", Component: Trail }], { handles: [[Breadcrumbs, [{ label: "Home", href: "/" }]]] });
 
 // Integration — @rangojs/router/testing
-dispatch(router, request: Request | string, opts?: { env? }): Promise<Response>;
-// vi.mock("@vitejs/plugin-rsc/rsc") first; const res = await dispatch(router, "/api/health");
+dispatch(router: Rango, request: Request | string, opts?: { env? }): Promise<Response>;
+// accepts your public router type (no cast); use rangoTestAliases() for setup.
+// const res = await dispatch(createRouter().routes(apiPatterns), "/health");
 
 // RSC — @rangojs/router/testing/flight, react-server vitest project only
 renderToFlightString(element, opts?: { url?, headers?, env?, params?, routeName? }): Promise<string>;
@@ -555,6 +698,10 @@ filterCacheDecisions(events): CacheDecisionEvent[];
 diffGeneratedRoutes(router, generatedMap?): { missing, extra, mismatch, ok };
 assertGeneratedRoutesMatch(router, generatedMap?): void;
 // import NamedRoutes from "./router.named-routes.gen"; assertGeneratedRoutesMatch(router, NamedRoutes);
+// include()-using apps: lazy include()d routes are absent from router.routeMap
+// until first matched, so diffGeneratedRoutes force-expands them (via findMatch
+// on each generated pattern) before diffing — the whole-app drift check works in
+// a unit test. (Plain `{ routeMap }` objects without findMatch are diffed as-is.)
 
 // Advanced context construction
 createTestRequestContext(opts); toRequest(...); seedVariables(...);

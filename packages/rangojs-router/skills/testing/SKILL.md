@@ -108,7 +108,7 @@ it("passes through when the user is present", async () => {
     requireUser,
     "/dashboard",
     {
-      vars: [["user", { id: 1 }]],
+      vars: { user: { id: 1 } }, // object form; or [[key, value]] tuples (key may be a createVar())
     },
   );
   expect(nextCalled).toBe(1);
@@ -282,43 +282,51 @@ reuses the router's own `previewMatch`, so middleware collection is the router's
 not a re-implementation. Hitting an RSC (component) route throws a clear
 directive error.
 
-PROMINENT CAVEAT: importing your _router_ transitively pulls in
-`@vitejs/plugin-rsc/rsc`, whose top-level body imports Vite virtual modules that
-do not resolve in plain node. `dispatch.ts` itself is virtual-free, but the
-router is not. Run `dispatch` tests in a Vite-RSC-capable env, **or**
-`vi.mock("@vitejs/plugin-rsc/rsc")` at the top of the file (the router's own
-`response-route-handler.test.ts` does exactly this):
+SETUP CAVEAT (use the preset): `@rangojs/router` resolves to server-only STUBS
+outside the `react-server` condition (urls/createRouter/cookies/getRequestContext
+throw), and importing your router also pulls `@vitejs/plugin-rsc/rsc` (whose body
+imports Vite virtuals). Vitest does not apply the `react-server` condition to
+bare-package resolution. The preset `@rangojs/router/testing/vitest` handles all
+of it — alias `@rangojs/router` to real impls + stub the virtuals — so no
+per-file `vi.mock` is needed:
 
 ```ts
-import { describe, it, expect, vi } from "vitest";
+// vitest.config.ts
+import { defineConfig } from "vitest/config";
+import { rangoTestAliases } from "@rangojs/router/testing/vitest";
+export default defineConfig({
+  test: {
+    globals: true,
+    include: ["test/**/*.test.{ts,tsx}"],
+    environment: "node",
+  },
+  resolve: { alias: rangoTestAliases({ cloudflare: true }) },
+});
+```
 
-// MUST precede importing the router; its match path pulls in plugin-rsc/rsc.
-vi.mock("@vitejs/plugin-rsc/rsc", () => ({
-  createFromReadableStream: vi.fn(),
-  renderToReadableStream: vi.fn(),
-  loadServerAction: vi.fn(),
-  decodeReply: vi.fn(),
-  decodeAction: vi.fn(),
-  decodeFormState: vi.fn(),
-  createTemporaryReferenceSet: vi.fn(),
-}));
+LIMITATION: the FULL router usually can't be imported in a bare test —
+`Prerender()`/`createLoader()` need the plugin-injected `$$id` (real `Prerender()`
+throws "missing $$id"). Build a router from a `Prerender`-free include (your API
+routes); `dispatch` accepts the public router type with no cast:
 
+```ts
+import { describe, it, expect } from "vitest";
 import { dispatch } from "@rangojs/router/testing";
-import { router } from "../src/router"; // your createRouter(...).routes(...)
+import { createRouter } from "@rangojs/router";
+import { apiPatterns } from "../src/api/urls"; // path.json(...) routes only
+
+const router = createRouter().routes(apiPatterns);
 
 it("serializes a JSON response route (auto-wrapped under data)", async () => {
-  const res = await dispatch(router, "/api/health");
+  const res = await dispatch(router, "/health");
   expect(res.status).toBe(200);
-  expect(res.headers.get("content-type")).toBe(
-    "application/json;charset=utf-8",
-  );
-  expect(await res.json()).toEqual({ data: { ok: true } });
+  expect(await res.json()).toEqual({ data: { status: "ok" } });
 });
 
-it("honors a global-middleware redirect short-circuit", async () => {
-  const res = await dispatch(router, "/admin");
-  expect(res.status).toBe(302);
-  expect(res.headers.get("Location")).toBe("/login");
+it("maps a thrown RouterError to its status + typed JSON envelope", async () => {
+  const res = await dispatch(router, "/products/999");
+  expect(res.status).toBe(404);
+  expect((await res.json()).error.code).toBe("NOT_FOUND");
 });
 ```
 

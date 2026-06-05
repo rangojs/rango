@@ -51,10 +51,13 @@ import { RouterError } from "../errors.js";
 import { createResponseErrorPayload } from "../rsc/response-error.js";
 import { createResponseWithMergedHeaders } from "../rsc/helpers.js";
 import { isWebSocketUpgradeResponse } from "../response-utils.js";
+import type { Rango } from "../router/router-interfaces.js";
 
 /**
- * The subset of the router surface dispatch depends on. Any object satisfying
- * this shape works (the public Rango router does).
+ * The internal subset of the router surface dispatch depends on. The public
+ * `Rango` router carries these members at runtime (they are declared on the
+ * internal interface), so dispatch accepts a public `Rango` and reads them
+ * through this shape — the consumer never needs a cast.
  */
 interface DispatchableRouter<TEnv> {
   id?: string;
@@ -188,10 +191,14 @@ function serializeResponseRouteError(
  * ```
  */
 export async function dispatch<TEnv = any>(
-  router: DispatchableRouter<TEnv>,
+  publicRouter: Rango<TEnv, any>,
   request: Request | string,
   opts: DispatchOptions<TEnv> = {},
 ): Promise<Response> {
+  // The public Rango type intentionally hides the matching internals; read them
+  // through the dispatchable shape (present at runtime). Consumers pass their
+  // real router with no cast.
+  const router = publicRouter as unknown as DispatchableRouter<TEnv>;
   const req = toRequest(request);
   const url = new URL(req.url);
   const env = (opts.env ?? {}) as TEnv;
