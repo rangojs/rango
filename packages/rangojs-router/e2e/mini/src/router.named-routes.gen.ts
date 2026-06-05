@@ -5,6 +5,7 @@ export const NamedRoutes = {
   combined: "/combined",
   counter: "/counter",
   errBoom: "/errors/boom",
+  errClientBoom: "/errors/client-boom",
   errGo: "/errors/go",
   errMissing: "/errors/missing",
   home: "/",

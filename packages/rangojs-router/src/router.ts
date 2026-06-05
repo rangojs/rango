@@ -1008,6 +1008,13 @@ export function createRouter<TEnv = any>(
     // Expose basename for runtime manifest generation
     __basename: basename,
 
+    // Expose router-level boundary defaults for build-time clientChunks
+    // discovery (so a "use client" default boundary lands in app-fallback).
+    // These are createRouter options, never pushed onto EntryData.
+    __defaultErrorBoundary: defaultErrorBoundary,
+    __defaultNotFoundBoundary: defaultNotFoundBoundary,
+    __notFound: notFound,
+
     // RSC request handler (lazily created on first call)
     fetch: (() => {
       // Handler is created on first call and reused

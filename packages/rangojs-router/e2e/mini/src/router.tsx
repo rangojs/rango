@@ -36,6 +36,10 @@ import { productsPatterns } from "./urls/products.js";
 // demonstrate per-route client chunking under `clientChunks: true`.
 import { WidgetA } from "./routes/widgets/WidgetA.js";
 import { ChartB } from "./routes/charts/ChartB.js";
+// A "use client" error-boundary fallback: the built-in clientChunks strategy
+// pulls registered error/notFound fallbacks into a dedicated app-fallback chunk.
+import { ClientErrorFallback } from "./ClientErrorFallback.js";
+import { DefaultClientError } from "./DefaultClientError.js";
 import {
   AppNav,
   BreadcrumbTrail,
@@ -155,6 +159,23 @@ function GlobalNotFound() {
   );
 }
 
+// Server-component provider wrapper for the default error boundary (no
+// "use client") — stands in for a real app's IntlProvider/theme wrapper that the
+// boundary needs because the layout didn't mount on a thrown handler.
+function FallbackWrap({
+  label,
+  children,
+}: {
+  label: string;
+  children: import("react").ReactNode;
+}) {
+  return (
+    <div data-testid="fallback-wrap" data-label={label}>
+      {children}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // The router.
 // ---------------------------------------------------------------------------
@@ -165,6 +186,16 @@ export const router = createRouter({
     short: { ttl: 60, swr: 120 },
   },
   notFound: <GlobalNotFound />,
+  // Router-level default error boundary as a HANDLER FUNCTION that wraps the
+  // "use client" boundary in a server provider — the common real-world shape (the
+  // layout that would supply context did not mount). The client boundary
+  // (DefaultClientError) is nested in the JSX the function returns, so the build
+  // must invoke the handler and walk the tree to route it into app-fallback.
+  defaultErrorBoundary: ({ error }) => (
+    <FallbackWrap label={error instanceof Error ? "error" : "unknown"}>
+      <DefaultClientError />
+    </FallbackWrap>
+  ),
 })
   // Global middleware: tags every request with an id (header + ctx var).
   .use(requestIdMiddleware)
@@ -419,6 +450,18 @@ export const router = createRouter({
             },
             { name: "errBoom" },
             () => [errorBoundary(<ErrorFallback />)],
+          ),
+
+          // Error boundary with a "use client" fallback. The fallback module is
+          // pulled into the dedicated app-fallback chunk (not co-bundled with the
+          // route code it catches). Renders only on error.
+          path(
+            "/errors/client-boom",
+            () => {
+              throw new Error("client boom!");
+            },
+            { name: "errClientBoom" },
+            () => [errorBoundary(<ClientErrorFallback />)],
           ),
 
           // Not-found boundary (thrown DataNotFoundError).
