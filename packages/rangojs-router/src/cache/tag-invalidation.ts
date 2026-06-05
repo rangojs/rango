@@ -153,6 +153,12 @@ export async function updateTag(...tags: string[]): Promise<void> {
  * Use in Route Handlers / webhooks. For read-your-own-writes inside a Server
  * Action, use updateTag() instead so the action's own response is fresh.
  *
+ * Fire-and-forget: because this returns void and runs in the background, a
+ * failed durable marker write (e.g. a transient KV outage) is NOT surfaced to
+ * the caller - it is logged via the background-task error path. If you need the
+ * invalidation to be CONFIRMED (and to retry on failure), use `await updateTag()`
+ * instead, which rejects when a store's durable write fails.
+ *
  * @example
  * ```typescript
  * // route handler invoked by an external webhook

@@ -386,6 +386,12 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    * Receives the full RequestContext (including env) and the default-generated key.
    * Return value becomes the final cache key (unless route overrides with `key` option).
    *
+   * Reserved prefixes: tag-invalidation markers live in the SAME KV namespace as
+   * data, keyed `__tag__/<tag>` (and `__tagmarker__/<tag>` for the L1 cache). A
+   * returned key must NOT begin with `__tag__/` or `__tagmarker__/`, or it can
+   * collide with a tag marker and corrupt invalidation. The documented
+   * prepend-style generators below are safe.
+   *
    * @example Using headers for user segmentation
    * ```typescript
    * keyGenerator: (ctx, defaultKey) => {
@@ -1292,12 +1298,18 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
     // Write-through memo + L1 only for tags with a confirmed durable marker (or
     // for every tag when there is no KV at all - a purge-only/dev config, where
-    // the in-memory write-through is the only invalidation signal there is).
+    // the in-memory write-through is the only invalidation signal there is). The
+    // memo write is synchronous (read-your-own-writes); the L1 Cache API writes
+    // are independent, so fan them out in parallel rather than awaiting each.
+    const l1Writes: Promise<void>[] = [];
     for (const tag of tags) {
       if (failedTags.has(tag)) continue;
       memo?.set(tag, invalidatedAt);
-      if (this.tagCacheTtl > 0) await this.putTagMarkerL1(tag, invalidatedAt);
+      if (this.tagCacheTtl > 0) {
+        l1Writes.push(this.putTagMarkerL1(tag, invalidatedAt));
+      }
     }
+    if (l1Writes.length > 0) await Promise.all(l1Writes);
 
     // One batched eager purge of the lookup markers for the whole call. Fired
     // regardless of KV write outcome (it is additive and uses pure string ops).
