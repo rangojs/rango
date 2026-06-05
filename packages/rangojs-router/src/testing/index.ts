@@ -84,6 +84,7 @@ export type {
 // Advanced: build a real RequestContext for bespoke loader/middleware setups
 export {
   createTestRequestContext,
+  runInRequestContext,
   toRequest,
   seedVariables,
 } from "./internal/context.js";
@@ -92,6 +93,12 @@ export type {
   TestRequestContext,
   VarsInit,
 } from "./internal/context.js";
+
+// The low-level context runner that enters a RequestContext (the same one the
+// RSC handler uses for server actions). Re-exported so a ctx built with
+// createTestRequestContext can be entered directly; runInRequestContext is the
+// one-call convenience over createTestRequestContext + runWithRequestContext.
+export { runWithRequestContext } from "../server/request-context.js";
 
 // The E2E harness is NOT re-exported here: it must be imported from
 // `@rangojs/router/testing/e2e` so it stays loadable in a plain Playwright

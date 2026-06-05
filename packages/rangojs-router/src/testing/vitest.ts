@@ -22,18 +22,29 @@
  * - Cloudflare apps additionally import the `cloudflare:workers` /
  *   `cloudflare:email` runtime virtuals; pass `{ cloudflare: true }` to stub them.
  *
- * Usage:
+ * Usage (recommended one-call form — see {@link rangoTestConfig}):
  *
  * ```ts
  * // vitest.config.ts
  * import { defineConfig } from "vitest/config";
- * import { rangoTestAliases } from "@rangojs/router/testing/vitest";
+ * import { rangoTestConfig } from "@rangojs/router/testing/vitest";
  *
  * export default defineConfig({
- *   test: { globals: true, include: ["test/**\/*.test.{ts,tsx}"], environment: "node" },
- *   resolve: { alias: rangoTestAliases({ cloudflare: true }) },
+ *   test: {
+ *     globals: true,
+ *     include: ["test/**\/*.test.{ts,tsx}"],
+ *     environment: "node",
+ *     ...rangoTestConfig({ cloudflare: true }),
+ *   },
  * });
  * ```
+ *
+ * `rangoTestConfig` bundles the resolve aliases ({@link rangoTestAliases}) with
+ * the `server.deps.inline` contract ({@link rangoInlineDeps}) an installed
+ * consumer needs — @rangojs/router ships as TS source, and without `deps.inline`
+ * Vitest hands those `.ts` files to Node, which on Node >= 23 throws
+ * `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`. Use the lower-level
+ * `rangoTestAliases` directly only if you wire `deps.inline` yourself.
  *
  * Notes:
  * - This is for the node/DOM project. The Flight project (real RSC rendering via
@@ -66,9 +77,16 @@ export interface RangoTestAliasOptions {
   cloudflare?: boolean;
 }
 
-/** Resolve a path relative to this module (works in source + built layouts). */
-function here(relativePath: string): string {
-  return fileURLToPath(new URL(relativePath, import.meta.url));
+/**
+ * Resolve a path relative to this module. Anchored at the PACKAGE ROOT
+ * (`../../` from both `src/testing/vitest.ts` and the shipped
+ * `dist/testing/vitest.js` — each is two levels below the root), so the alias
+ * targets always point at the `src/*.ts` files Vite transpiles at test time,
+ * regardless of whether this helper is loaded as source (in-repo) or as the
+ * compiled `dist` entry (an installed consumer).
+ */
+function here(relativeFromRoot: string): string {
+  return fileURLToPath(new URL(`../../${relativeFromRoot}`, import.meta.url));
 }
 
 /**
@@ -84,14 +102,14 @@ export function rangoTestAliases(
     // Real impls (index.rsc.ts) for the bare specifier ONLY — exact regex so
     // subpaths (/testing, /client, /cache, ...) are untouched. React stays the
     // client build, so createContext and "use client" modules work.
-    { find: /^@rangojs\/router$/, replacement: here("../index.rsc.ts") },
+    { find: /^@rangojs\/router$/, replacement: here("src/index.rsc.ts") },
     {
       find: "@rangojs/router:version",
-      replacement: here("./vitest-stubs/version.ts"),
+      replacement: here("src/testing/vitest-stubs/version.ts"),
     },
     {
       find: /^@vitejs\/plugin-rsc\/rsc$/,
-      replacement: here("./vitest-stubs/plugin-rsc.ts"),
+      replacement: here("src/testing/vitest-stubs/plugin-rsc.ts"),
     },
   ];
 
@@ -99,14 +117,67 @@ export function rangoTestAliases(
     aliases.push(
       {
         find: "cloudflare:workers",
-        replacement: here("./vitest-stubs/cloudflare-workers.ts"),
+        replacement: here("src/testing/vitest-stubs/cloudflare-workers.ts"),
       },
       {
         find: "cloudflare:email",
-        replacement: here("./vitest-stubs/cloudflare-email.ts"),
+        replacement: here("src/testing/vitest-stubs/cloudflare-email.ts"),
       },
     );
   }
 
   return aliases;
+}
+
+/**
+ * Vitest `server.deps.inline` patterns that force Vite (not Node) to transpile
+ * @rangojs/router's TypeScript source under test.
+ *
+ * REQUIRED for an installed (node_modules) consumer: @rangojs/router ships as TS
+ * source, and Vitest externalizes node_modules by default — so without this Node
+ * loads the `.ts` files directly and, on Node >= 23, throws
+ * `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`. In this monorepo it is a no-op
+ * (the workspace symlink resolves to a realpath outside node_modules, which Vite
+ * already transpiles), which is precisely why an in-repo dogfood never surfaces
+ * the need and the contract has to be shipped explicitly.
+ */
+export const rangoInlineDeps: RegExp[] = [/@rangojs[/\\]router/];
+
+/** The Vitest `test`-block fragment {@link rangoTestConfig} returns. */
+export interface RangoTestConfig {
+  alias: TestAlias[];
+  server: { deps: { inline: RegExp[] } };
+}
+
+/**
+ * The complete Vitest `test`-block fragment a consumer needs: the resolve
+ * aliases ({@link rangoTestAliases}) AND the `server.deps.inline` contract
+ * ({@link rangoInlineDeps}). Spread it into your `test` block so both land in
+ * one place and a consumer cannot forget the `deps.inline` half (omitting it
+ * loads rango's TS source through Node and breaks on Node >= 23):
+ *
+ * ```ts
+ * // vitest.config.ts
+ * import { defineConfig } from "vitest/config";
+ * import { rangoTestConfig } from "@rangojs/router/testing/vitest";
+ *
+ * export default defineConfig({
+ *   test: {
+ *     globals: true,
+ *     include: ["test/**\/*.test.{ts,tsx}"],
+ *     environment: "node",
+ *     ...rangoTestConfig({ cloudflare: true }),
+ *   },
+ * });
+ * ```
+ */
+export function rangoTestConfig(
+  opts: RangoTestAliasOptions = {},
+): RangoTestConfig {
+  return {
+    alias: rangoTestAliases(opts),
+    // fresh copy so the shared rangoInlineDeps const is never aliased into (or
+    // mutated through) a consumer's resolved config
+    server: { deps: { inline: [...rangoInlineDeps] } },
+  };
 }

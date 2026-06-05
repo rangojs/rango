@@ -7,7 +7,7 @@
  * (middleware fns, client components) and build small routers where needed.
  */
 import { defineConfig } from "vitest/config";
-import { rangoTestAliases } from "@rangojs/router/testing/vitest";
+import { rangoTestConfig } from "@rangojs/router/testing/vitest";
 
 export default defineConfig({
   test: {
@@ -15,8 +15,6 @@ export default defineConfig({
     include: ["test/**/*.{test,spec}.{ts,tsx}"],
     exclude: ["node_modules", "dist", "e2e", "test/**/*.rsc-test.*"],
     environment: "node",
-  },
-  resolve: {
-    alias: rangoTestAliases(),
+    ...rangoTestConfig(),
   },
 });

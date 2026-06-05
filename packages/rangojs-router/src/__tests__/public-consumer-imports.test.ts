@@ -186,8 +186,11 @@ import {
   assertGeneratedRoutesMatch,
   createCacheSink,
   collectHandle,
+  createTestRequestContext,
+  runInRequestContext,
+  runWithRequestContext,
 } from "@rangojs/router/testing";
-import { rangoTestAliases } from "@rangojs/router/testing/vitest";
+import { rangoTestConfig, rangoTestAliases, rangoInlineDeps } from "@rangojs/router/testing/vitest";
 import { renderRoute } from "@rangojs/router/testing/dom";
 import { createRangoE2E } from "@rangojs/router/testing/e2e";
 import { renderToFlightString } from "@rangojs/router/testing/flight";
@@ -196,7 +199,12 @@ import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 void runMiddleware;
 void runLoader;
 void dispatch;
+void rangoTestConfig;
 void rangoTestAliases;
+void rangoInlineDeps;
+void createTestRequestContext;
+void runInRequestContext;
+void runWithRequestContext;
 void renderRoute;
 void assertCacheStatus;
 void assertGeneratedRoutesMatch;

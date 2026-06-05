@@ -10,7 +10,7 @@
  * Flight (RSC) tests live in vitest.rsc.config.ts (the `react-server` condition).
  */
 import { defineConfig } from "vitest/config";
-import { rangoTestAliases } from "@rangojs/router/testing/vitest";
+import { rangoTestConfig } from "@rangojs/router/testing/vitest";
 
 export default defineConfig({
   test: {
@@ -18,8 +18,6 @@ export default defineConfig({
     include: ["test/**/*.{test,spec}.{ts,tsx}"],
     exclude: ["node_modules", "dist", "e2e", "test/**/*.rsc-test.*"],
     environment: "node",
-  },
-  resolve: {
-    alias: rangoTestAliases({ cloudflare: true }),
+    ...rangoTestConfig({ cloudflare: true }),
   },
 });

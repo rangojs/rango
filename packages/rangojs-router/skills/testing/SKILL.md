@@ -8,7 +8,7 @@ argument-hint: [layer]
 
 Rango ships six consumer-facing testing entries, one per test runtime/dependency:
 `@rangojs/router/testing` (unit + integration, under a Vite-driven Vitest
-project), `@rangojs/router/testing/vitest` (the `rangoTestAliases` setup preset),
+project), `@rangojs/router/testing/vitest` (the `rangoTestConfig`/`rangoTestAliases` setup preset),
 `@rangojs/router/testing/dom` (`renderRoute`, needs RTL + a DOM env),
 `@rangojs/router/testing/e2e` (the Playwright harness),
 `@rangojs/router/testing/flight` (real Flight, react-server condition only), and
@@ -100,9 +100,9 @@ the underlying `RequestContext` — read `ctx.cookies()`, `ctx.get(...)`,
 ```ts
 import { describe, it, expect } from "vitest";
 import { runMiddleware } from "@rangojs/router/testing";
-import type { MiddlewareFn } from "@rangojs/router";
+import type { Middleware } from "@rangojs/router";
 
-const requireUser: MiddlewareFn = async (ctx, next) => {
+const requireUser: Middleware = async (ctx, next) => {
   if (!ctx.get("user")) return new Response(null, { status: 401 });
   return next();
 };
@@ -180,6 +180,44 @@ If your real loader source is `export const L = createLoader(async (ctx) => {...
 extract the inner async function so it is importable on its own, and register
 the `createLoader` wrapper in `urls()`. Then `runLoader` tests the body and the
 DSL/e2e tests cover registration.
+
+COOKIE SEEDING: there is no `cookies`/`headers` option — seed a request cookie by
+passing a full `Request` with the header, `runLoader(body, { request: new
+Request("https://app.test/", { headers: { Cookie: "sid=abc" } }) })`. A loader
+that reads `cookies()` then sees `abc`. (`search`/`method` are baked onto this
+request for you, so pass a `Request` only when you need headers/cookies.)
+
+### runInRequestContext — an action (or any fn) that reads request context
+
+For a server ACTION (or any function) that authenticates off the request cookie
+and calls `getRequestContext()` / `cookies()` but has no loader-context shape,
+`runInRequestContext(fn, opts)` builds a real `RequestContext` (same `opts` as the
+other primitives — `env`, `request`, `vars`, ...) AND enters it, so the function
+runs exactly as in production. Its return value (including a promise) passes
+straight through; the context stays active across awaits.
+
+```ts
+import { runInRequestContext } from "@rangojs/router/testing";
+import { authorizeTenantAction } from "../src/actions/authorize"; // reads cookies()
+
+it("authorizes when the session cookie is present", async () => {
+  const session = await runInRequestContext(
+    () => authorizeTenantAction(input),
+    {
+      env,
+      request: new Request("https://app.test/admin", {
+        headers: { Cookie: "sid=abc" },
+      }),
+    },
+  );
+  expect(session).toMatchObject({ tenant: "acme" });
+});
+```
+
+For the low-level case where you already hold a context from
+`createTestRequestContext(...)`, `runWithRequestContext(ctx, fn)` is re-exported
+from `@rangojs/router/testing` to enter it directly; `runInRequestContext` is the
+one-call convenience over the two.
 
 ### renderRoute — a client component reading router context
 
@@ -301,21 +339,33 @@ throw), and importing your router also pulls `@vitejs/plugin-rsc/rsc` (whose bod
 imports Vite virtuals). Vitest does not apply the `react-server` condition to
 bare-package resolution. The preset `@rangojs/router/testing/vitest` handles all
 of it — alias `@rangojs/router` to real impls + stub the virtuals — so no
-per-file `vi.mock` is needed:
+per-file `vi.mock` is needed. Spread `rangoTestConfig(...)` into your `test`
+block:
 
 ```ts
 // vitest.config.ts
 import { defineConfig } from "vitest/config";
-import { rangoTestAliases } from "@rangojs/router/testing/vitest";
+import { rangoTestConfig } from "@rangojs/router/testing/vitest";
 export default defineConfig({
   test: {
     globals: true,
     include: ["test/**/*.test.{ts,tsx}"],
     environment: "node",
+    ...rangoTestConfig({ cloudflare: true }),
   },
-  resolve: { alias: rangoTestAliases({ cloudflare: true }) },
 });
 ```
+
+`rangoTestConfig` returns BOTH the resolve `alias` entries AND
+`server.deps.inline: [/@rangojs[/\\]router/]`. The `deps.inline` half is
+mandatory for an installed (node_modules) consumer: `@rangojs/router` ships as
+TypeScript source, Vitest externalizes node_modules by default, and Node >= 23
+refuses to type-strip `.ts` under `node_modules`
+(`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`) — `deps.inline` forces Vite (not
+Node) to transpile rango's source. The preset entry itself ships as compiled JS,
+so the `import { rangoTestConfig }` line loads under plain Node config loading.
+(If you need only the aliases, `rangoTestAliases(...)` is still exported, but then
+you must wire `server.deps.inline` yourself.)
 
 LIMITATION: the FULL router usually can't be imported in a bare test —
 `Prerender()`/`createLoader()` need the plugin-injected `$$id` (real `Prerender()`

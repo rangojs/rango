@@ -4,7 +4,7 @@ This is the prose guide. For the dense, decision-tree-first version, see the
 [`/testing` skill](../skills/testing/SKILL.md). Both describe the same public
 surface, split into six entries by test runtime/dependency:
 `@rangojs/router/testing` (unit + integration, under a Vite-driven Vitest
-project), `@rangojs/router/testing/vitest` (the `rangoTestAliases` setup preset),
+project), `@rangojs/router/testing/vitest` (the `rangoTestConfig`/`rangoTestAliases` setup preset),
 `@rangojs/router/testing/dom` (`renderRoute`, needs RTL + a DOM env),
 `@rangojs/router/testing/e2e` (the Playwright harness),
 `@rangojs/router/testing/flight` (real Flight, react-server condition only), and
@@ -104,7 +104,7 @@ pnpm add -D vitest @testing-library/react @testing-library/dom happy-dom @playwr
 
 - `vitest` — the unit/integration/RSC test runner. The router internals import
   the `@rangojs/router:version` virtual module, so a plain-node Vitest cannot
-  load them as-is; use the **`rangoTestAliases()` preset** (next section) to
+  load them as-is; use the **`rangoTestConfig()` preset** (next section) to
   resolve them — you do NOT need to wire the full rango Vite plugin into the test
   config.
 - `@testing-library/react` (and its `@testing-library/dom` peer) + a DOM env
@@ -138,25 +138,37 @@ than hand-assemble that, use the shipped preset:
 ```ts
 // vitest.config.ts  (the node + DOM project)
 import { defineConfig } from "vitest/config";
-import { rangoTestAliases } from "@rangojs/router/testing/vitest";
+import { rangoTestConfig } from "@rangojs/router/testing/vitest";
 
 export default defineConfig({
   test: {
     globals: true,
     include: ["test/**/*.{test,spec}.{ts,tsx}"],
     environment: "node", // renderRoute tests use a `// @vitest-environment happy-dom` pragma
-  },
-  resolve: {
     // `cloudflare: true` also stubs the cloudflare:workers / cloudflare:email
     // runtime virtuals a Cloudflare app's route tree imports.
-    alias: rangoTestAliases({ cloudflare: true }),
+    ...rangoTestConfig({ cloudflare: true }),
   },
 });
 ```
 
-`rangoTestAliases()` aliases the bare `@rangojs/router` to its real impls and
-stubs the build-only `@rangojs/router:version` and `@vitejs/plugin-rsc/rsc`
-virtuals — so you do **not** need a per-file `vi.mock("@vitejs/plugin-rsc/rsc")`.
+`rangoTestConfig()` returns the resolve `alias` entries AND
+`server.deps.inline: [/@rangojs[/\\]router/]`, spread together into `test`. The
+aliases point the bare `@rangojs/router` at its real impls and stub the
+build-only `@rangojs/router:version` and `@vitejs/plugin-rsc/rsc` virtuals — so
+you do **not** need a per-file `vi.mock("@vitejs/plugin-rsc/rsc")`.
+
+The `deps.inline` half is mandatory for an installed (node_modules) consumer:
+`@rangojs/router` ships as TypeScript source, Vitest externalizes node_modules by
+default, and Node >= 23 refuses to type-strip `.ts` under `node_modules`
+(`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`). `deps.inline` forces Vite, not
+Node, to transpile rango's source under test. The preset entry itself ships as
+compiled JS, so the `import { rangoTestConfig }` line loads under plain Node
+config loading. (In this monorepo `deps.inline` is a no-op — the workspace
+symlink resolves to a realpath outside node_modules that Vite already transpiles
+— which is exactly why the contract has to be shipped rather than discovered
+in-repo. If you want only the aliases, `rangoTestAliases()` is still exported;
+then wire `server.deps.inline` yourself.)
 
 > **Limitation:** even with the preset, the **full** app router cannot be
 > imported if it uses `Prerender()` / `createLoader()` — their build-time
@@ -470,7 +482,7 @@ run.
 and global + route-level middleware short-circuits. An RSC (component) route
 throws a clear directive error.
 
-Setup: use the `rangoTestAliases()` preset (above) so `@rangojs/router` resolves
+Setup: use the `rangoTestConfig()` preset (above) so `@rangojs/router` resolves
 to real impls and the `@vitejs/plugin-rsc/rsc` virtual is stubbed — no per-file
 `vi.mock` needed. `dispatch` accepts your public router type directly (no cast).
 
@@ -711,13 +723,15 @@ All from `@rangojs/router/testing` unless noted — `renderRoute` is from
 the Flight helpers from `@rangojs/router/testing/flight`.
 
 ```ts
-// Setup — @rangojs/router/testing/vitest (node/DOM project resolve.alias)
-rangoTestAliases(opts?: { cloudflare?: boolean }): { find: string|RegExp; replacement: string }[];
-// resolve: { alias: rangoTestAliases({ cloudflare: true }) }
+// Setup — @rangojs/router/testing/vitest (ships as compiled JS; node-loadable in vitest.config.ts)
+rangoTestConfig(opts?: { cloudflare?: boolean }): { alias: TestAlias[]; server: { deps: { inline: RegExp[] } } };
+// test: { ..., ...rangoTestConfig({ cloudflare: true }) }   // aliases + the required deps.inline
+rangoTestAliases(opts?: { cloudflare?: boolean }): { find: string|RegExp; replacement: string }[]; // aliases only
+rangoInlineDeps: RegExp[];  // the server.deps.inline patterns, if wiring them yourself
 
 // Unit
 runMiddleware(
-  mw: MiddlewareFn | MiddlewareFn[],
+  mw: Middleware | Middleware[],
   request: Request | string,
   opts?: { env?, params?, vars?, routeMap?, routeName?, next?: () => Promise<Response> },
 ): Promise<{ response: Response; ctx: RequestContext; nextCalled: number }>;
@@ -781,8 +795,12 @@ assertGeneratedRoutesMatch(router, generatedMap?): void;
 // on each generated pattern) before diffing — the whole-app drift check works in
 // a unit test. (Plain `{ routeMap }` objects without findMatch are diffed as-is.)
 
-// Advanced context construction
+// Advanced context construction (for an action / fn that reads getRequestContext()/cookies())
+runInRequestContext<T>(fn: (ctx) => T, opts?): T;   // build + ENTER a real ctx in one call
+runWithRequestContext(ctx, fn);                     // low-level: enter a ctx you already built
 createTestRequestContext(opts); toRequest(...); seedVariables(...);
+// const s = await runInRequestContext(() => authorizeAction(input),
+//   { env, request: new Request(url, { headers: { Cookie: "sid=abc" } }) });
 
 // E2E factory (from @rangojs/router/testing/e2e; you pass Playwright test/expect)
 createRangoE2E({ test, expect, defaultRoot? }): {

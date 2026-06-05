@@ -78,8 +78,17 @@ import { useTheme } from "@rangojs/router/theme";
 import { rango, type RangoOptions } from "@rangojs/router/vite";
 import { createRSCHandler } from "@rangojs/router/rsc";
 import { createSSRHandler } from "@rangojs/router/ssr";
-import { runLoader, dispatch } from "@rangojs/router/testing";
-import { rangoTestAliases } from "@rangojs/router/testing/vitest";
+import {
+  runLoader,
+  dispatch,
+  createTestRequestContext,
+  runInRequestContext,
+  runWithRequestContext,
+} from "@rangojs/router/testing";
+import {
+  rangoTestAliases,
+  rangoTestConfig,
+} from "@rangojs/router/testing/vitest";
 import { renderRoute } from "@rangojs/router/testing/dom";
 import { createRangoE2E } from "@rangojs/router/testing/e2e";
 import { renderToFlightString } from "@rangojs/router/testing/flight";
@@ -96,6 +105,10 @@ void createRSCHandler;
 void createSSRHandler;
 void runLoader;
 void rangoTestAliases;
+void rangoTestConfig;
+void createTestRequestContext;
+void runInRequestContext;
+void runWithRequestContext;
 void dispatch;
 void renderRoute;
 void createRangoE2E;

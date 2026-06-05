@@ -9,6 +9,7 @@
 
 import {
   createRequestContext,
+  runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
 import { createReverseFunction } from "../../router/handler-context.js";
@@ -116,9 +117,13 @@ export interface TestRequestContext<TEnv> {
 }
 
 /**
- * Create a real RequestContext for unit-testing loaders/middleware. The
- * returned ctx must be entered via runWithRequestContext() before use so that
- * cookie/header mutations and getRequestContext() resolve.
+ * Create a real RequestContext for unit-testing loaders/middleware.
+ *
+ * The returned `ctx` must be ENTERED before use — wrap your call in
+ * `runWithRequestContext(ctx, fn)` (re-exported from `@rangojs/router/testing`)
+ * so that cookie/header mutations and `getRequestContext()` resolve. For the
+ * common case prefer {@link runInRequestContext}, which builds AND enters the
+ * context in a single call.
  */
 export function createTestRequestContext<TEnv>(
   opts: CreateTestContextOptions<TEnv> = {},
@@ -148,4 +153,41 @@ export function createTestRequestContext<TEnv>(
     ) as RequestContext<TEnv>["reverse"];
   }
   return { ctx, request, url, variables };
+}
+
+/**
+ * Build a seeded RequestContext (via {@link createTestRequestContext}) and run
+ * `fn` inside it, so code under test that calls `getRequestContext()`,
+ * `cookies()`, or reads/mutates request headers resolves exactly as in
+ * production.
+ *
+ * This is the entry point for the advanced cases the unit wrappers
+ * (`runLoader` / `runMiddleware`) do not model — most notably a server ACTION
+ * that authenticates off the request cookie: an action has no loader context, so
+ * `runLoader` is the wrong shape, yet it still needs a real request context to
+ * read the cookie and resolve `getRequestContext()`.
+ *
+ * `fn` receives the same `RequestContext` `createTestRequestContext` returns; its
+ * return value is passed straight through — a returned promise keeps the context
+ * active across awaits because it runs inside AsyncLocalStorage.
+ *
+ * @example
+ * ```ts
+ * const session = await runInRequestContext(
+ *   () => authorizeTenantAction(input),
+ *   {
+ *     env,
+ *     request: new Request("https://app.test/", {
+ *       headers: { Cookie: "sid=abc" },
+ *     }),
+ *   },
+ * );
+ * ```
+ */
+export function runInRequestContext<T, TEnv = unknown>(
+  fn: (ctx: RequestContext<TEnv>) => T,
+  opts: CreateTestContextOptions<TEnv> = {},
+): T {
+  const { ctx } = createTestRequestContext<TEnv>(opts);
+  return runWithRequestContext(ctx, () => fn(ctx));
 }
