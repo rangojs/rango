@@ -76,6 +76,10 @@ details, but they are not the first stop for learning the public API.
 - [Why include() is synchronous](./internal/why-includes-is-sync.md) -
   design rationale for the `UrlPatterns`-only `include()` signature and
   the trie/reverse-map/type-gen/prerender invariants it protects
+- [Why SSR/RSC streaming uses Web Streams everywhere](./internal/why-web-streams-everywhere.md) -
+  why both render layers use `renderToReadableStream` on Node (not
+  `renderToPipeableStream`), the conversion-tax and plugin-locked-Flight
+  constraints, and that edge/node conditions resolve correctly
 - [Generated route type surfaces handoff](./internal/generated-route-type-surfaces-handoff.md) -
   **completed audit** (findings applied to the skills/docs); retained as the
   record of the three generated type surfaces — `GeneratedRouteMap`, per-module
