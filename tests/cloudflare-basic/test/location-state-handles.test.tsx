@@ -4,7 +4,8 @@ import { cleanup } from "@testing-library/react";
 import { renderRoute } from "@rangojs/router/testing/dom";
 import { ActionLocationStateTest } from "../src/components/ActionLocationStateTest.js";
 import { BreadcrumbNav } from "../src/components/BreadcrumbNav.js";
-import { ActionFlash } from "../src/location-states.js";
+import { FeatureLoading } from "../src/components/FeatureLoading.js";
+import { ActionFlash, FeatureLocationState } from "../src/location-states.js";
 import { Breadcrumbs } from "../src/handles/breadcrumbs.js";
 
 afterEach(cleanup);
@@ -33,6 +34,34 @@ describe("renderRoute location-state seeding (cloudflare-basic)", () => {
       { initialUrl: "/action-location-state" },
     );
     expect(getByTestId("flash-message").textContent).toBe("none");
+  });
+
+  it("FeatureLoading renders seeded FeatureLocationState (name + description)", async () => {
+    const { getByTestId } = await renderRoute(
+      [{ path: "/features/:slug", Component: FeatureLoading }],
+      {
+        initialUrl: "/features/streaming",
+        locationState: [
+          [
+            FeatureLocationState,
+            { name: "Streaming", description: "Fast SSR" },
+          ],
+        ],
+      },
+    );
+    expect(getByTestId("feature-loading-name").textContent).toBe("Streaming");
+    expect(getByTestId("feature-loading-description").textContent).toBe(
+      "Fast SSR",
+    );
+  });
+
+  it("FeatureLoading shows the skeleton when no state is seeded", async () => {
+    const { getByTestId, queryByTestId } = await renderRoute(
+      [{ path: "/features/:slug", Component: FeatureLoading }],
+      { initialUrl: "/features/streaming" },
+    );
+    expect(getByTestId("feature-loading-skeleton-name")).toBeTruthy();
+    expect(queryByTestId("feature-loading-name")).toBeNull();
   });
 });
 

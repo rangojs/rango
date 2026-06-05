@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { collectHandle } from "../collect-handle.js";
 import { createHandle } from "../../handle.js";
+import { Meta, Breadcrumbs } from "../../handles/index.js";
 
 // collectHandle runs a handle's REAL registered collect on per-segment values.
 // createHandle() with no injected id still registers its collect (via the runtime
@@ -60,5 +61,139 @@ describe("collectHandle", () => {
     expect(result).toEqual([1, 2, 3]);
     expect(warn).toHaveBeenCalledOnce();
     warn.mockRestore();
+  });
+});
+
+// Coverage of the SHIPPED built-in handles' accumulators. collectMeta /
+// collectBreadcrumbs are internal (not exported), so collectHandle is the only
+// way to unit-test them — exactly the accumulator logic a consumer relies on.
+describe("collectHandle on the built-in Breadcrumbs handle", () => {
+  const home = { label: "Home", href: "/" };
+  const blog = { label: "Blog", href: "/blog" };
+
+  it("flattens breadcrumb items across segments in parent -> child order", () => {
+    expect(collectHandle(Breadcrumbs, [[home], [blog]])).toEqual([home, blog]);
+  });
+
+  it("dedupes by href, keeping the last occurrence", () => {
+    const homeV2 = { label: "Home (current)", href: "/" };
+    expect(collectHandle(Breadcrumbs, [[home], [homeV2], [blog]])).toEqual([
+      homeV2,
+      blog,
+    ]);
+  });
+
+  it("returns an empty array for no segments", () => {
+    expect(collectHandle(Breadcrumbs, [])).toEqual([]);
+  });
+});
+
+describe("collectHandle on the built-in Meta handle", () => {
+  // Helper: find the resolved title string in the collected descriptors.
+  const titleOf = (segs: Array<Array<Record<string, unknown>>>): unknown =>
+    (collectHandle(Meta, segs as never) as Array<Record<string, unknown>>).find(
+      (d) => "title" in d,
+    )?.title;
+
+  it("includes the default descriptors (charSet + viewport)", () => {
+    const result = collectHandle(Meta, [[{ title: "Home" }]] as never) as Array<
+      Record<string, unknown>
+    >;
+    expect(result).toContainEqual({ charSet: "utf-8" });
+    expect(result).toContainEqual({
+      name: "viewport",
+      content: "width=device-width, initial-scale=1",
+    });
+    expect(result).toContainEqual({ title: "Home" });
+  });
+
+  it("lets a child title override a parent title (last wins)", () => {
+    expect(titleOf([[{ title: "Parent" }], [{ title: "Child" }]])).toBe(
+      "Child",
+    );
+  });
+
+  it("applies a parent title template (%s) to a child string title", () => {
+    expect(
+      titleOf([
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [{ title: "Product" }],
+      ]),
+    ).toBe("Product | Acme");
+  });
+
+  it("uses the template's default when no child title is pushed", () => {
+    expect(
+      titleOf([[{ title: { template: "%s | Acme", default: "Acme" } }]]),
+    ).toBe("Acme");
+  });
+
+  it("an absolute title bypasses the template", () => {
+    expect(
+      titleOf([
+        [{ title: { template: "%s | Acme", default: "Acme" } }],
+        [{ title: { absolute: "Exact Title" } }],
+      ]),
+    ).toBe("Exact Title");
+  });
+
+  it("merges/overrides keyed descriptors (e.g. property:og:title)", () => {
+    const result = collectHandle(Meta, [
+      [{ property: "og:title", content: "A" }],
+      [{ property: "og:title", content: "B" }],
+    ] as never) as Array<Record<string, unknown>>;
+    const og = result.filter((d) => d.property === "og:title");
+    expect(og).toEqual([{ property: "og:title", content: "B" }]);
+  });
+
+  it("unset removes a previously-added descriptor by key", () => {
+    const result = collectHandle(Meta, [
+      [{ name: "description", content: "hello" }],
+      [{ unset: "name:description" }],
+    ] as never) as Array<Record<string, unknown>>;
+    expect(result.some((d) => d.name === "description")).toBe(false);
+  });
+
+  describe("JSON-LD (script:ld+json)", () => {
+    const ldBlocks = (segs: unknown): unknown[] =>
+      (collectHandle(Meta, segs as never) as Array<Record<string, unknown>>)
+        .filter((d) => "script:ld+json" in d)
+        .map((d) => d["script:ld+json"]);
+
+    it("collects a single JSON-LD block", () => {
+      const product = {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        name: "Widget",
+      };
+      expect(ldBlocks([[{ "script:ld+json": product }]])).toEqual([product]);
+    });
+
+    it("keeps MULTIPLE JSON-LD blocks across segments (not deduped) — the multi-JSON-LD option", () => {
+      const product = { "@type": "Product", name: "Widget" };
+      const crumbs = { "@type": "BreadcrumbList", itemListElement: [] };
+      expect(
+        ldBlocks([
+          [{ "script:ld+json": product }],
+          [{ "script:ld+json": crumbs }],
+        ]),
+      ).toEqual([product, crumbs]);
+    });
+
+    it("keeps multiple JSON-LD blocks pushed within the SAME segment", () => {
+      const org = { "@type": "Organization", name: "Acme" };
+      const site = { "@type": "WebSite", url: "https://acme.test" };
+      expect(
+        ldBlocks([[{ "script:ld+json": org }, { "script:ld+json": site }]]),
+      ).toEqual([org, site]);
+    });
+
+    it("does NOT dedupe two identical-@type JSON-LD blocks (unlike name/property meta)", () => {
+      const a = { "@type": "Product", name: "A" };
+      const b = { "@type": "Product", name: "B" };
+      expect(
+        ldBlocks([[{ "script:ld+json": a }], [{ "script:ld+json": b }]]),
+      ).toEqual([a, b]);
+    });
   });
 });

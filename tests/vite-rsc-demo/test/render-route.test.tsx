@@ -5,8 +5,42 @@ import { renderRoute } from "@rangojs/router/testing/dom";
 import { CartBadge } from "../src/components/CartBadge.js";
 import { CartLoader } from "../src/handlers/shop/loaders/cart.js";
 import { LoadingSpinner } from "../src/handlers/shop/components/loading.js";
+import { BreadcrumbNav } from "../src/components/BreadcrumbNav.js";
+import { Breadcrumbs } from "../src/handles/breadcrumbs.js";
 
 afterEach(cleanup);
+
+describe("renderRoute handle seeding (vite-rsc-demo BreadcrumbNav)", () => {
+  it("renders seeded breadcrumb items via useHandle(Breadcrumbs)", async () => {
+    const { container } = await renderRoute(
+      [{ path: "/shop/product/:slug", Component: BreadcrumbNav }],
+      {
+        initialUrl: "/shop/product/headphones",
+        handles: [
+          [
+            Breadcrumbs,
+            [
+              { label: "Shop", href: "/shop" },
+              { label: "Headphones", href: "/shop/product/headphones" },
+            ],
+          ],
+        ],
+      },
+    );
+    const nav = container.querySelector('nav[aria-label="Breadcrumb"]');
+    expect(nav).not.toBeNull();
+    expect(nav?.textContent).toContain("Shop");
+    expect(nav?.textContent).toContain("Headphones");
+  });
+
+  it("renders nothing when no breadcrumbs are seeded", async () => {
+    const { container } = await renderRoute(
+      [{ path: "/shop/product/:slug", Component: BreadcrumbNav }],
+      { initialUrl: "/shop/product/headphones" },
+    );
+    expect(container.querySelector('nav[aria-label="Breadcrumb"]')).toBeNull();
+  });
+});
 
 describe("renderRoute against vite-rsc-demo client components", () => {
   // The REAL CartBadge reads useLoader(CartLoader). Seed by REFERENCE via the
