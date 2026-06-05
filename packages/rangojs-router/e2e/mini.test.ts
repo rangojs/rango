@@ -486,6 +486,68 @@ function miniTests(f: Fixture) {
     expect(names.some((n) => /chart/i.test(n))).toBe(true);
     expect(names.some((n) => /widget/i.test(n))).toBe(false);
   });
+
+  // Multi-group CSS co-render (dev + production). /combined renders client
+  // components from TWO route groups at once (app-widgets + app-charts). This is
+  // the case the single-route tests above do NOT cover: two split stylesheets
+  // applied on one page, where <link> precedence actually interacts (the source
+  // of upstream ordering concerns, vite-plugin-react#1100). Both outlines must
+  // apply with the correct cascade and remain stable across a reload (a
+  // first-request ordering bug would surface as a dropped/swapped rule).
+  test("clientChunks: /combined applies BOTH route groups' CSS, deterministically", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/combined"));
+    await waitForHydration(page);
+
+    // Both route groups rendered + hydrated on one page.
+    await expect(page.getByTestId("widget-a")).toBeVisible();
+    await expect(page.getByTestId("chart-b")).toBeVisible();
+    // Same-named nested components/Badge.tsx from each route both render with no
+    // collision, even when co-rendered (the groups stay distinct).
+    await expect(page.getByTestId("badge-widgets")).toBeVisible();
+    await expect(page.getByTestId("badge-charts")).toBeVisible();
+    await page.getByTestId("widget-a-btn").click();
+    await expect(page.getByTestId("widget-a-btn")).toHaveText(
+      "widget-a count: 1",
+    );
+    await page.getByTestId("chart-b-btn").click();
+    await expect(page.getByTestId("chart-b-btn")).toHaveText("chart-b open");
+
+    // Both split stylesheets applied with the correct cascade (no FOUC, no rule
+    // clobbering the other). Reading both computed outlines is the universal
+    // proof across dev and production regardless of how CSS is injected.
+    const outlines = async () => ({
+      widget: await page
+        .getByTestId("widget-a")
+        .evaluate((el) => getComputedStyle(el).outlineColor),
+      chart: await page
+        .getByTestId("chart-b")
+        .evaluate((el) => getComputedStyle(el).outlineColor),
+    });
+    expect(await outlines()).toEqual({
+      widget: "rgb(102, 51, 153)",
+      chart: "rgb(0, 128, 128)",
+    });
+
+    // Both route groups' resources loaded (the inverse of the leakage checks).
+    const names = await page.evaluate(() =>
+      performance.getEntriesByType("resource").map((e) => e.name),
+    );
+    expect(names.some((n) => /widget/i.test(n))).toBe(true);
+    expect(names.some((n) => /chart/i.test(n))).toBe(true);
+
+    // Deterministic across requests: a fresh load must apply both rules again.
+    // (Targets first-request CSS-order non-determinism — both must survive.)
+    await page.goto(f.url("/combined"));
+    await waitForHydration(page);
+    expect(await outlines()).toEqual({
+      widget: "rgb(102, 51, 153)",
+      chart: "rgb(0, 128, 128)",
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------

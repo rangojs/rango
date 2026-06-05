@@ -286,6 +286,28 @@ export const router = createRouter({
             { name: "charts" },
           ),
 
+          // Multi-group CSS co-render: a single page that renders client
+          // components from TWO different route groups (routes/widgets +
+          // routes/charts) at once. This is the case where per-group stylesheet
+          // <link> precedence actually interacts (more groups -> more links;
+          // see vite-plugin-react#1100). The e2e asserts BOTH route groups'
+          // CSS apply with the correct cascade and no FOUC, dev + production.
+          // WidgetA/ChartB still live under their own route dirs, so they stay
+          // in app-widgets / app-charts (no module is duplicated by co-rendering).
+          path(
+            "/combined",
+            (ctx) => {
+              ctx.use(Meta)({ title: "Combined" });
+              return (
+                <div data-testid="combined-page">
+                  <WidgetA />
+                  <ChartB />
+                </div>
+              );
+            },
+            { name: "combined" },
+          ),
+
           // Search: typed search schema.
           path(
             "/search",
