@@ -27,7 +27,7 @@ import {
   type CreateTestContextOptions,
   type VarsInit,
 } from "./internal/context.js";
-import type { ResolvedThemeConfig } from "../theme/types.js";
+import type { ThemeConfig } from "../theme/types.js";
 
 /**
  * Options for runMiddleware.
@@ -45,8 +45,8 @@ export interface RunMiddlewareOptions<TEnv = any> {
   routeName?: string;
   /** Router basename surfaced on the context (drives redirect() prefixing). */
   basename?: string;
-  /** Theme config the real handler would inject (enables ctx.theme/ctx.setTheme). */
-  themeConfig?: ResolvedThemeConfig | null;
+  /** Theme config in the `createRouter({ theme })` shape (enables ctx.theme). */
+  theme?: ThemeConfig | true;
   /**
    * Terminal handler invoked when the chain calls `next()` all the way through.
    * Defaults to a 200 empty Response. Use this to model the downstream
@@ -103,7 +103,7 @@ export async function runMiddleware<TEnv = any>(
     routeName: opts.routeName,
     params: opts.params,
     basename: opts.basename,
-    themeConfig: opts.themeConfig,
+    theme: opts.theme,
   };
 
   const {
@@ -118,12 +118,13 @@ export async function runMiddleware<TEnv = any>(
     return opts.next?.() ?? new Response(null, { status: 200 });
   };
 
+  // Match production: app/response middleware receive ctx.reverse built from the
+  // route map ALONE (no matched route name or current params), so reversing a
+  // parameterized route without explicit params does NOT auto-fill from the
+  // current request. Passing routeName/params here would recreate the
+  // false-confidence class fixed in dispatch.
   const reverse = opts.routeMap
-    ? (createReverseFunction(
-        opts.routeMap,
-        opts.routeName,
-        opts.params ?? {},
-      ) as (
+    ? (createReverseFunction(opts.routeMap) as (
         name: string,
         params?: Record<string, string>,
         search?: Record<string, unknown>,

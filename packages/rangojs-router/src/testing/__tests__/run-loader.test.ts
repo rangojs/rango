@@ -48,6 +48,17 @@ describe("runLoader", () => {
     expect(result).toEqual({});
   });
 
+  it("bakes opts.search into the request URL so ctx.request.url and ctx.searchParams agree", async () => {
+    const result = await runLoader(
+      async (ctx) => ({
+        fromRequest: new URL(ctx.request.url).searchParams.get("q"),
+        fromSearchParams: ctx.searchParams.get("q"),
+      }),
+      { search: { q: "shoes" } },
+    );
+    expect(result).toEqual({ fromRequest: "shoes", fromSearchParams: "shoes" });
+  });
+
   it("reads variables seeded via vars (string key and ContextVar)", async () => {
     const User = createVar<{ name: string }>();
     const result = await runLoader(

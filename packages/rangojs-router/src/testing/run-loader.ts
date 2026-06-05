@@ -26,7 +26,7 @@ import { createReverseFunction } from "../router/handler-context.js";
 import type { LoaderContext, LoaderDefinition } from "../types.js";
 import type { ContextVar } from "../context-var.js";
 import type { Handle } from "../handle.js";
-import type { ResolvedThemeConfig } from "../theme/types.js";
+import type { ThemeConfig } from "../theme/types.js";
 import {
   createTestRequestContext,
   type CreateTestContextOptions,
@@ -84,11 +84,10 @@ export interface RunLoaderOptions<TEnv = any> {
   /** Router basename surfaced on the context (drives redirect() prefixing). */
   basename?: string;
   /**
-   * Theme config the real router/RSC handler would inject. Without it
-   * `ctx.theme`/`ctx.setTheme` are inert (undefined). Pass one to test a loader
-   * that reads them.
+   * Theme config in the same shape `createRouter({ theme })` takes (e.g. `true`
+   * or `{ themes: [...] }`). Without it `ctx.theme`/`ctx.setTheme` are inert.
    */
-  themeConfig?: ResolvedThemeConfig | null;
+  theme?: ThemeConfig | true;
   /** Environment bindings surfaced as `ctx.env`. */
   env?: TEnv;
   /** Override the backing Request (string or Request). Defaults to a localhost GET. */
@@ -134,6 +133,30 @@ export interface RunLoaderOptions<TEnv = any> {
 }
 
 /**
+ * Merge `search` into a request's URL, returning a value `toRequest` can build.
+ * Keeps the original method/headers/body when a Request was passed.
+ */
+function withSearch(
+  request: Request | string | undefined,
+  search: Record<string, string> | undefined,
+): Request | string | undefined {
+  if (!search) return request;
+  const DEFAULT_ORIGIN = "http://localhost/";
+  if (request instanceof Request) {
+    const url = new URL(request.url);
+    for (const [key, value] of Object.entries(search)) {
+      url.searchParams.set(key, value);
+    }
+    return new Request(url, request);
+  }
+  const url = new URL(request ?? DEFAULT_ORIGIN, DEFAULT_ORIGIN);
+  for (const [key, value] of Object.entries(search)) {
+    url.searchParams.set(key, value);
+  }
+  return url.toString();
+}
+
+/**
  * Run a raw loader body and return its resolved data.
  *
  * @example
@@ -150,24 +173,20 @@ export async function runLoader<T>(
 ): Promise<T> {
   const ctxOpts: CreateTestContextOptions<any> = {
     env: opts.env,
-    request: opts.request,
+    // Bake opts.search into the request URL itself so ctx.request.url, ctx.url,
+    // and ctx.searchParams all agree (production carries the query string on the
+    // real request — a loader reading ctx.request.url must see it too).
+    request: withSearch(opts.request, opts.search),
     requestInit: opts.method ? { method: opts.method } : undefined,
     vars: opts.vars,
     routeMap: opts.routeMap,
     routeName: opts.routeName,
     params: opts.params,
     basename: opts.basename,
-    themeConfig: opts.themeConfig,
+    theme: opts.theme,
   };
 
   const { ctx } = createTestRequestContext(ctxOpts);
-
-  // Apply search params onto the URL-derived searchParams so the loader sees them.
-  if (opts.search) {
-    for (const [key, value] of Object.entries(opts.search)) {
-      ctx.searchParams.set(key, value);
-    }
-  }
 
   const reqCtx = ctx as RequestContext<any>;
 

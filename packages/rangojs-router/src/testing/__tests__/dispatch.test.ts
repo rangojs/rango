@@ -147,7 +147,35 @@ describe("dispatch", () => {
     const body = (await res.json()) as {
       data: { reversed?: string; error?: string };
     };
-    expect(body.data.reversed).not.toBe("/api/self/42");
+    // Pin the exact production behavior: with no explicit params the :id segment
+    // is left unsubstituted (the raw pattern), NOT auto-filled from the request.
+    expect(body.data.reversed).toBe("/api/self/:id");
+    expect(body.data.error).toBeUndefined();
+  });
+
+  it("short-circuits a partial (_rsc_partial) request to X-RSC-Reload without running the handler", async () => {
+    let handlerRan = false;
+    const router = createRouter<{}>({}).routes(
+      urls(({ path }) => [
+        path.json(
+          "/api/data",
+          () => {
+            handlerRan = true;
+            return { hello: "world" };
+          },
+          { name: "api.data" },
+        ),
+      ]),
+    ) as Parameters<typeof dispatch>[0];
+
+    const res = await dispatch(router, "/api/data?_rsc_partial=1");
+    expect(res.status).toBe(200);
+    const reload = res.headers.get("X-RSC-Reload");
+    // Full URL with the internal _rsc_partial param stripped (production parity).
+    expect(reload).toContain("/api/data");
+    expect(reload).not.toContain("_rsc_partial");
+    expect(res.headers.get("content-type")).toContain("text/x-component");
+    expect(handlerRan).toBe(false);
   });
 
   it("throws a clear error for an RSC (component) route", async () => {

@@ -164,7 +164,9 @@ export function createRouter<TEnv = any>(
   // no X-Rango-Cache header is emitted and output is byte-identical.
   const cacheSignalEnabled =
     debugCacheSignalOption ||
-    (typeof process !== "undefined" && process.env.RANGO_TEST_SIGNALS === "1");
+    (typeof process !== "undefined" &&
+      (process as { env?: Record<string, string | undefined> }).env
+        ?.RANGO_TEST_SIGNALS === "1");
 
   // Normalize basename: ensure leading slash, strip trailing slash.
   // A bare "/" is equivalent to no basename.

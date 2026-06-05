@@ -342,33 +342,29 @@ project). The render runs inside a request context, so async components can call
 ```tsx
 // flight.rsc-test.tsx  (note the *.rsc-test suffix)
 import { describe, it, expect } from "vitest";
-import {
-  renderToFlightString,
-  flightMatchers,
-} from "@rangojs/router/testing/flight";
-import { getRequestContext } from "@rangojs/router";
+import { renderToFlightString } from "@rangojs/router/testing/flight";
+// Matchers are a SEPARATE subpath (they import vitest); renderToFlightString does not.
+import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 
 expect.extend(flightMatchers);
 
+// Keep components PURE leaves: take data as props. Do NOT import a server API
+// (getRequestContext, cookies) from the `@rangojs/router` barrel — under the
+// react-server condition the bare specifier resolves to the throwing stub, so
+// it cannot be flight-tested in a bare consumer project.
 async function Greeting({ name }: { name: string }) {
   await Promise.resolve();
   return <div>Hello {name}!</div>;
 }
-async function ParamEcho() {
-  const ctx = getRequestContext();
-  return <span>id={ctx.params.id}</span>;
+async function ItemView({ id }: { id: string }) {
+  return <span>id={id}</span>;
 }
 
-it("renders text and reads request context", async () => {
+it("renders text and props", async () => {
   expect(await renderToFlightString(<Greeting name="Ada" />)).toMatchFlight(
     "Ada",
   );
-  const flight = await renderToFlightString(<ParamEcho />, {
-    url: "http://localhost/items/42",
-    params: { id: "42" },
-    routeName: "items.show",
-  });
-  expect(flight).toMatchFlight("42");
+  expect(await renderToFlightString(<ItemView id="42" />)).toMatchFlight("42");
 });
 
 it("matches a normalized snapshot", async () => {

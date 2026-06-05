@@ -44,8 +44,13 @@ import type {
   MiddlewareEntry,
   MiddlewareFn,
 } from "../router/middleware-types.js";
-import { createReverseFunction } from "../router/handler-context.js";
+import {
+  createReverseFunction,
+  stripInternalParams,
+} from "../router/handler-context.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
+import type { SegmentCacheStore } from "../cache/types.js";
+import type { CacheProfile } from "../cache/profile-registry.js";
 import { setRouterManifest } from "../route-map-builder.js";
 import { RESPONSE_TYPE_MIME } from "../router/content-negotiation.js";
 import { RouterError } from "../errors.js";
@@ -84,6 +89,14 @@ interface DispatchableRouter<TEnv> {
     routeKey?: string;
     negotiated?: boolean;
   } | null>;
+  basename?: string;
+  cache?:
+    | { enabled?: boolean; store?: SegmentCacheStore }
+    | ((
+        env: TEnv,
+        executionContext: unknown,
+      ) => { enabled?: boolean; store?: SegmentCacheStore });
+  cacheProfiles?: Record<string, CacheProfile>;
 }
 
 /**
@@ -249,17 +262,33 @@ export async function dispatch<TEnv = any>(
   }
 
   const variables: Record<string, unknown> = {};
+
+  // Resolve the router's cache store the way the production handler does, so a
+  // "use cache" inside a response-route handler reaches the request-scope
+  // (NOCACHE) detection below instead of bypassing on a missing store.
+  let cacheStore: SegmentCacheStore | undefined;
+  const cacheOption = router.cache;
+  if (cacheOption && !url.searchParams.has("__no_cache")) {
+    const cacheConfig =
+      typeof cacheOption === "function"
+        ? cacheOption(env, undefined)
+        : cacheOption;
+    if (cacheConfig.enabled !== false) cacheStore = cacheConfig.store;
+  }
+
   const requestContext = createRequestContext<TEnv>({
     env,
     request: req,
     url,
     variables,
+    cacheStore,
+    cacheProfiles: router.cacheProfiles,
   });
   // Match production: the RSC handler stores the router's basename on the
   // request context (handler.ts), and redirect() prefixes root-relative URLs
   // with it. Mirror it so basename-redirect tests behave as they do in a real
   // mounted app instead of always seeing no prefix.
-  requestContext._basename = (router as { basename?: string }).basename;
+  requestContext._basename = router.basename;
 
   // Match production's response-route reverse EXACTLY: the real handler builds
   // it from the route map alone (response-route-handler.ts), with NO matched
@@ -275,6 +304,20 @@ export async function dispatch<TEnv = any>(
   ) => string;
 
   return runWithRequestContext(requestContext, async () => {
+    // Match production: a partial (client-navigation) request to a response
+    // route is short-circuited to X-RSC-Reload BEFORE the handler runs
+    // (response-route-handler.ts). dispatch must not invoke the handler for
+    // these, or a test could assert data the real server never returns.
+    if (url.searchParams.has("_rsc_partial")) {
+      return createResponseWithMergedHeaders(null, {
+        status: 200,
+        headers: {
+          "X-RSC-Reload": stripInternalParams(url).toString(),
+          "content-type": "text/x-component;charset=utf-8",
+        },
+      });
+    }
+
     if (routeKey !== undefined) {
       setRequestContextParams(params, routeKey);
     } else {
