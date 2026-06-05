@@ -52,6 +52,12 @@ function runConsumerTypecheck(files: Record<string, string>) {
             "@rangojs/router/vite": [publicTypeEntry("./vite")],
             "@rangojs/router/rsc": [publicTypeEntry("./rsc")],
             "@rangojs/router/ssr": [publicTypeEntry("./ssr")],
+            "@rangojs/router/testing": [publicTypeEntry("./testing")],
+            "@rangojs/router/testing/dom": [publicTypeEntry("./testing/dom")],
+            "@rangojs/router/testing/e2e": [publicTypeEntry("./testing/e2e")],
+            "@rangojs/router/testing/flight": [
+              publicTypeEntry("./testing/flight"),
+            ],
           },
           typeRoots: [resolve(packageRoot, "node_modules", "@types")],
           types: ["node", "react"],
@@ -164,6 +170,30 @@ import {
 void createSSRHandler;
 type _Deps = SSRDependencies;
 type _RenderOptions = SSRRenderOptions;
+`,
+      "testing-consumer.ts": `
+import {
+  runMiddleware,
+  runLoader,
+  dispatch,
+  assertCacheStatus,
+  assertGeneratedRoutesMatch,
+  createCacheSink,
+} from "@rangojs/router/testing";
+import { renderRoute } from "@rangojs/router/testing/dom";
+import { createRangoE2E } from "@rangojs/router/testing/e2e";
+import { renderToFlightString, flightMatchers } from "@rangojs/router/testing/flight";
+
+void runMiddleware;
+void runLoader;
+void dispatch;
+void renderRoute;
+void assertCacheStatus;
+void assertGeneratedRoutesMatch;
+void createCacheSink;
+void createRangoE2E;
+void renderToFlightString;
+void flightMatchers;
 `,
     });
 

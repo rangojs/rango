@@ -78,6 +78,10 @@ import { useTheme } from "@rangojs/router/theme";
 import { rango, type RangoOptions } from "@rangojs/router/vite";
 import { createRSCHandler } from "@rangojs/router/rsc";
 import { createSSRHandler } from "@rangojs/router/ssr";
+import { runLoader, dispatch } from "@rangojs/router/testing";
+import { renderRoute } from "@rangojs/router/testing/dom";
+import { createRangoE2E } from "@rangojs/router/testing/e2e";
+import { renderToFlightString } from "@rangojs/router/testing/flight";
 
 void createLoader;
 void createRouter;
@@ -88,6 +92,11 @@ void useTheme;
 void rango;
 void createRSCHandler;
 void createSSRHandler;
+void runLoader;
+void dispatch;
+void renderRoute;
+void createRangoE2E;
+void renderToFlightString;
 
 const options: RangoOptions = { preset: "cloudflare" };
 void options;

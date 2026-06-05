@@ -90,6 +90,34 @@ export interface HandlerErrorEvent extends BaseEvent {
   params?: Record<string, string>;
 }
 
+/**
+ * Per-segment (or coarse route-level) cache status carried on the
+ * cache.decision telemetry event and the X-Rango-Cache debug header.
+ *
+ * v1 is COARSE: the router's pipeline tracks cache decisions at the
+ * route/entry level (cacheHit/cacheSource/shouldRevalidate), not per
+ * individual segment. The `segments` array therefore contains a single
+ * route-level entry keyed by the route key. The shape is forward-compatible
+ * with genuine per-segment status if the pipeline later exposes it.
+ */
+export type CacheSegmentStatus =
+  | "hit"
+  | "miss"
+  | "stale"
+  | "prerendered"
+  | "passthrough";
+
+export interface CacheSegmentSignal {
+  /** Segment id (v1: the route key, since status is route-level). */
+  id: string;
+  /** Segment type (v1: "route" for the coarse route-level entry). */
+  type: string;
+  /** Resolved cache status for this segment. */
+  cacheStatus: CacheSegmentStatus;
+  /** Whether stale-while-revalidate was triggered for this segment. */
+  shouldRevalidate?: boolean;
+}
+
 export interface CacheDecisionEvent extends BaseEvent {
   type: "cache.decision";
   pathname: string;
@@ -98,6 +126,12 @@ export interface CacheDecisionEvent extends BaseEvent {
   /** Whether stale-while-revalidate was triggered */
   shouldRevalidate: boolean;
   source?: "runtime" | "prerender";
+  /**
+   * Optional per-segment (v1: coarse route-level) cache status. Present only
+   * when telemetry or the debug cache signal is enabled. Optional so existing
+   * sinks are unaffected.
+   */
+  segments?: CacheSegmentSignal[];
 }
 
 export interface RevalidationDecisionEvent extends BaseEvent {
@@ -139,6 +173,71 @@ export type TelemetryEvent =
   | RevalidationDecisionEvent
   | RequestTimeoutEvent
   | OriginCheckRejectedEvent;
+
+// ---------------------------------------------------------------------------
+// Cache signal derivation (coarse, route-level)
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the coarse, route-level cache status from pipeline cache state.
+ *
+ * v1 mapping (route-level — see CacheSegmentSignal):
+ *   - prerender hit                         -> "prerendered"
+ *   - runtime hit + shouldRevalidate (SWR)  -> "stale"
+ *   - runtime hit                           -> "hit"
+ *   - no hit                                -> "miss"
+ *
+ * Note: "passthrough" is a build-time prerender concept (a route opts out of
+ * being prerendered for some params). At runtime a passthrough route renders
+ * fresh and is indistinguishable from a normal miss in the pipeline state, so
+ * v1 reports it as "miss". The "passthrough" status remains in the type union
+ * for forward compatibility.
+ */
+export function deriveCacheStatus(state: {
+  cacheHit: boolean;
+  cacheSource?: "runtime" | "prerender";
+  shouldRevalidate?: boolean;
+}): CacheSegmentStatus {
+  if (state.cacheHit) {
+    if (state.cacheSource === "prerender") return "prerendered";
+    if (state.shouldRevalidate) return "stale";
+    return "hit";
+  }
+  return "miss";
+}
+
+/**
+ * Build the coarse route-level cache signal array (a single entry keyed by
+ * the route key). Used for both the cache.decision telemetry event and the
+ * X-Rango-Cache debug header.
+ */
+export function buildCacheSignalSegments(
+  routeKey: string,
+  state: {
+    cacheHit: boolean;
+    cacheSource?: "runtime" | "prerender";
+    shouldRevalidate?: boolean;
+  },
+): CacheSegmentSignal[] {
+  return [
+    {
+      id: routeKey,
+      type: "route",
+      cacheStatus: deriveCacheStatus(state),
+      shouldRevalidate: !!state.shouldRevalidate,
+    },
+  ];
+}
+
+/**
+ * Serialize cache signal segments into the X-Rango-Cache header value:
+ * `<segId>=<status>, <segId2>=<status2>`.
+ */
+export function formatCacheSignalHeader(
+  segments: CacheSegmentSignal[],
+): string {
+  return segments.map((s) => `${s.id}=${s.cacheStatus}`).join(", ");
+}
 
 // ---------------------------------------------------------------------------
 // Sink interface

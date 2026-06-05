@@ -156,7 +156,14 @@ export function createRouter<TEnv = any>(
     onTimeout,
     originCheck: originCheckOption,
     viewTransition: viewTransitionOption = "auto",
+    debugCacheSignal: debugCacheSignalOption = false,
   } = options;
+
+  // Debug cache signal gate (DEVELOPMENT/TEST ONLY). Enabled by the
+  // debugCacheSignal option OR the RANGO_TEST_SIGNALS=1 env flag. When off,
+  // no X-Rango-Cache header is emitted and output is byte-identical.
+  const cacheSignalEnabled =
+    debugCacheSignalOption || process.env.RANGO_TEST_SIGNALS === "1";
 
   // Normalize basename: ensure leading slash, strip trailing slash.
   // A bare "/" is equivalent to no basename.
@@ -663,6 +670,7 @@ export function createRouter<TEnv = any>(
     findMatch,
     findInterceptForRoute,
     telemetry: telemetrySink,
+    cacheSignalEnabled,
   });
 
   const { match, matchPartial, matchError, previewMatch } = matchHandlers;

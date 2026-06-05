@@ -1,0 +1,295 @@
+// Dev/production parity helpers. `parityDescribe` registers a dev and a
+// production describe from a single body, auto-generating the `(production)`
+// title suffix so a suite can never drift into the wrong dev/prod bucket.
+// `expectParity` runs one intent over the JS and no-JS paths and asserts the
+// observable result is identical (progressive-enhancement parity).
+
+import type { Expect, Page, TestType } from "@playwright/test";
+import type { Fixture, FixtureOptions } from "./fixture.js";
+
+export interface ParityDescribeOptions extends Partial<
+  Omit<FixtureOptions, "mode">
+> {}
+
+export type ParityIntent =
+  | { navigate: string }
+  | { submit: { testId: string; data?: Record<string, string> } };
+
+export interface ExpectParityOptions {
+  /** data-testid values whose text content must match across JS and no-JS. */
+  observe: string[];
+  /** Base URL to resolve a relative `navigate` intent against. */
+  baseURL?: string;
+  /**
+   * Escape hatch invoked after the intent is applied and before the snapshot is
+   * taken, on BOTH the JS and the no-JS transports. When provided for a `submit`
+   * intent it REPLACES the generic settle (the navigation/observed-change wait):
+   * you take responsibility for awaiting the post-submit effect — for example,
+   * awaiting a specific testid to reach a known value, or a network response the
+   * page does not reflect in the observed testids. Receives the page for the
+   * transport being snapshotted.
+   */
+  waitFor?: (page: Page) => Promise<void>;
+}
+
+export interface Parity {
+  /**
+   * Register a dev describe (title `name`) and a production describe (title
+   * `` `${name} (production)` ``) from one body. The `(production)` suffix is
+   * generated here, so the production suite always lands in the production
+   * bucket regardless of how the consumer names things.
+   *
+   * `options.root` is required, either here or as `defaultRoot` passed to the
+   * factory.
+   */
+  parityDescribe: (
+    name: string,
+    body: (f: Fixture) => void,
+    options?: ParityDescribeOptions,
+  ) => void;
+  /**
+   * Run a single `intent` over both the JS path (the given `page`) and a
+   * fresh no-JS context, then assert the observed snapshots are equal.
+   *
+   * PE parity only holds if the consumer's submit target is a real `<form>`
+   * that progressively enhances: with JS disabled the browser performs a native
+   * form POST, and the server must produce the same observable result the
+   * enhanced client path produces. Navigation intents must be plain links/URLs
+   * that resolve server-side without JS.
+   *
+   * For a `submit` intent the helper waits for the action's observable effect
+   * before snapshotting: either a navigation away from the form, or a change to
+   * one of the `observe` testids from its pre-submit value (then a brief
+   * stability confirm). A submit that produces neither within ~5s throws —
+   * include the testid that changes in `observe`, or pass `waitFor` to express
+   * the precise wait. This prevents snapshotting the pre-submit DOM when the
+   * action is slow.
+   *
+   * The snapshot is intentionally strict: it compares the text of every
+   * observed `data-testid`, the resulting `page.url()`, and any Set-Cookie
+   * surfaced via `document.cookie`. No ephemeral-value normalization is applied
+   * in v1; if a consumer's page renders nondeterministic values, exclude that
+   * testid from `observe`.
+   */
+  expectParity: (
+    page: Page,
+    intent: ParityIntent,
+    opts: ExpectParityOptions,
+  ) => Promise<void>;
+}
+
+interface ParitySnapshot {
+  testIds: Record<string, string | null>;
+  url: string;
+  cookies: string;
+}
+
+async function applyIntent(
+  page: Page,
+  intent: ParityIntent,
+  baseURL?: string,
+): Promise<void> {
+  if ("navigate" in intent) {
+    const target = baseURL
+      ? new URL(intent.navigate, baseURL).href
+      : intent.navigate;
+    await page.goto(target, { waitUntil: "networkidle" });
+    return;
+  }
+  const form = page.locator(`[data-testid="${intent.submit.testId}"]`);
+  if (intent.submit.data) {
+    for (const [name, value] of Object.entries(intent.submit.data)) {
+      await form.locator(`[name="${name}"]`).fill(value);
+    }
+  }
+  // No post-click wait here: a native (no-JS) submit triggers a top-level
+  // navigation while an enhanced (JS) submit usually updates the DOM in place
+  // with no navigation, so a navigation-based wait races the click and can
+  // resolve before the effect lands. The post-action settle in expectParity is
+  // DOM-driven (settleSubmit) and works whether or not a navigation occurs.
+  await form
+    .locator('button[type="submit"], input[type="submit"]')
+    .first()
+    .click();
+}
+
+// Concatenate the observed testids' text into a single comparable string used
+// to detect post-submit change/stability. "\0" marks an absent testid and
+// "\x01" joins parts so two distinct testid layouts can never concatenate to the
+// same string. Written as escaped control chars (not literal bytes) for source
+// readability.
+async function readObserved(page: Page, observe: string[]): Promise<string> {
+  const parts: string[] = [];
+  for (const id of observe) {
+    const text = await page
+      .locator(`[data-testid="${id}"]`)
+      .first()
+      .textContent()
+      .catch(() => null);
+    parts.push(`${id}=${text ?? "\0"}`);
+  }
+  return parts.join("\x01");
+}
+
+// Settle a submit's observable effect. An enhanced (JS) submit mutates the DOM
+// in place with no navigation, while a native (no-JS) submit navigates — so we
+// wait for EITHER a navigation away from the form OR a change in the observed
+// testids from their pre-submit `baseline`, then confirm the new state is stable
+// across two reads. Requiring an observed change (not just stability) closes the
+// gap where a slow action leaves the pre-submit DOM momentarily stable and gets
+// snapshotted as the "result". A submit that produces neither a navigation nor
+// an observed change within the ceiling throws, rather than silently capturing
+// the pre-submit state — pass `waitFor` when the observed set cannot capture the
+// effect.
+async function settleSubmit(
+  page: Page,
+  observe: string[],
+  baseline: string,
+  originUrl: string,
+): Promise<void> {
+  const pollIntervalMs = 50;
+  const maxAttempts = 100; // ~5s ceiling
+  let landed = false;
+  let last = baseline;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await page.waitForTimeout(pollIntervalMs);
+    const current = await readObserved(page, observe);
+    if (!landed) {
+      if (page.url() !== originUrl || current !== baseline) {
+        landed = true;
+        last = current;
+      }
+      continue;
+    }
+    if (current === last) return;
+    last = current;
+  }
+  if (!landed) {
+    throw new Error(
+      `expectParity: the submit intent produced no observable effect within 5s — ` +
+        `no navigation away from "${originUrl}" and no change to the observed ` +
+        `testids [${observe.join(", ")}]. Include the testid that changes in ` +
+        `\`observe\`, or pass \`waitFor\` to express the precise post-submit wait.`,
+    );
+  }
+  // Landed but never stabilized within the ceiling: fall through and snapshot
+  // the last-read state; the parity equality assertion surfaces any mismatch.
+}
+
+async function snapshot(
+  page: Page,
+  observe: string[],
+): Promise<ParitySnapshot> {
+  const testIds: Record<string, string | null> = {};
+  for (const id of observe) {
+    testIds[id] = await page.locator(`[data-testid="${id}"]`).textContent();
+  }
+  return {
+    testIds,
+    url: page.url(),
+    cookies: await page.evaluate(() => document.cookie),
+  };
+}
+
+export function createParity({
+  test: _test,
+  expect,
+  useFixture,
+  defaultRoot,
+}: {
+  test: TestType<any, any>;
+  expect: Expect;
+  useFixture: (options: FixtureOptions) => Fixture;
+  defaultRoot?: string;
+}): Parity {
+  function parityDescribe(
+    name: string,
+    body: (f: Fixture) => void,
+    options?: ParityDescribeOptions,
+  ): void {
+    const root = options?.root ?? defaultRoot;
+    if (!root) {
+      throw new Error(
+        `parityDescribe("${name}") requires a root: pass options.root or set defaultRoot in createRangoE2E.`,
+      );
+    }
+    _test.describe(name, () => {
+      const f = useFixture({ ...options, root, mode: "dev" });
+      body(f);
+    });
+    _test.describe(`${name} (production)`, () => {
+      const f = useFixture({ ...options, root, mode: "build" });
+      body(f);
+    });
+  }
+
+  async function expectParity(
+    page: Page,
+    intent: ParityIntent,
+    opts: ExpectParityOptions,
+  ): Promise<void> {
+    // For a submit intent, the form lives on the page the caller already
+    // navigated to; capture that origin URL before the JS submit changes it so
+    // the no-JS path can load the same form, and so settleSubmit can detect a
+    // navigation away from it.
+    const originUrl = page.url();
+
+    // Settle the intent's observable effect before snapshotting. A `navigate`
+    // intent already awaited its navigation in applyIntent (page.goto), so only
+    // `submit` needs the DOM-driven settle, and only when no `waitFor` override
+    // is given. waitFor, when present, replaces the generic settle for submit
+    // and runs after the navigation for navigate — on whichever page is about to
+    // be snapshotted.
+    const settle = async (
+      target: Page,
+      baseline: string,
+      origin: string,
+    ): Promise<void> => {
+      if ("submit" in intent) {
+        if (opts.waitFor) {
+          await opts.waitFor(target);
+        } else {
+          await settleSubmit(target, opts.observe, baseline, origin);
+        }
+      } else if (opts.waitFor) {
+        await opts.waitFor(target);
+      }
+    };
+
+    // JS path: the given page (JS enabled by default). Read the pre-submit
+    // baseline before applying the intent so the settle can require a change.
+    const jsBaseline =
+      "submit" in intent ? await readObserved(page, opts.observe) : "";
+    await applyIntent(page, intent, opts.baseURL);
+    await settle(page, jsBaseline, originUrl);
+    const jsSnapshot = await snapshot(page, opts.observe);
+
+    // No-JS path: a fresh context with scripting disabled.
+    const browser = page.context().browser()!;
+    const noJsContext = await browser.newContext({ javaScriptEnabled: false });
+    try {
+      const noJsPage = await noJsContext.newPage();
+      if (!("navigate" in intent)) {
+        // A submit intent needs the form rendered first; start from the same
+        // URL the JS path observed the form on.
+        await noJsPage.goto(originUrl, { waitUntil: "networkidle" });
+      }
+      const noJsOrigin = noJsPage.url();
+      const noJsBaseline =
+        "submit" in intent ? await readObserved(noJsPage, opts.observe) : "";
+      await applyIntent(noJsPage, intent, opts.baseURL);
+      await settle(noJsPage, noJsBaseline, noJsOrigin);
+      const noJsSnapshot = await snapshot(noJsPage, opts.observe);
+
+      expect(noJsSnapshot.testIds).toEqual(jsSnapshot.testIds);
+      expect(new URL(noJsSnapshot.url).pathname).toEqual(
+        new URL(jsSnapshot.url).pathname,
+      );
+      expect(noJsSnapshot.cookies).toEqual(jsSnapshot.cookies);
+    } finally {
+      await noJsContext.close();
+    }
+  }
+
+  return { parityDescribe, expectParity };
+}

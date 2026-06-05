@@ -126,6 +126,23 @@
     "./host/testing": {
       "types": "./src/host/testing.ts",
       "default": "./src/host/testing.ts"
+    },
+    "./testing": {
+      "types": "./src/testing/index.ts",
+      "default": "./src/testing/index.ts"
+    },
+    "./testing/dom": {
+      "types": "./src/testing/dom.entry.ts",
+      "default": "./src/testing/dom.entry.ts"
+    },
+    "./testing/e2e": {
+      "types": "./src/testing/e2e/index.ts",
+      "default": "./src/testing/e2e/index.ts"
+    },
+    "./testing/flight": {
+      "types": "./src/testing/flight.entry.ts",
+      "react-server": "./src/testing/flight.entry.ts",
+      "default": "./src/testing/flight.entry.ts"
     }
   },
   "publishConfig": {
@@ -140,7 +157,8 @@
     "test:ui": "playwright test --ui",
     "test:hmr-local": "playwright test --project=dev-warmup --project=hmr-routes --project=hmr-basename --project=hmr-prerender --no-deps --workers=1",
     "test:unit": "vitest run",
-    "test:unit:watch": "vitest"
+    "test:unit:watch": "vitest",
+    "test:unit:rsc": "vitest run --config vitest.rsc.config.ts"
   },
   "dependencies": {
     "@types/debug": "^4.1.12",
@@ -148,24 +166,29 @@
     "debug": "^4.4.1",
     "magic-string": "^0.30.17",
     "picomatch": "^4.0.3",
-    "rsc-html-stream": "^0.0.7"
+    "rsc-html-stream": "^0.0.7",
+    "tinyexec": "^0.3.2"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",
     "@shared/e2e": "workspace:*",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^24.10.1",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "esbuild": "^0.27.0",
+    "happy-dom": "^20.10.1",
     "jiti": "^2.6.1",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "tinyexec": "^0.3.2",
     "typescript": "^5.3.0",
     "vitest": "^4.0.0"
   },
   "peerDependencies": {
     "@cloudflare/vite-plugin": "^1.38.0",
+    "@playwright/test": "^1.49.1",
+    "@testing-library/react": ">=16",
     "@vitejs/plugin-rsc": "^0.5.26",
     "react": ">=19.2.6 <20",
     "react-dom": ">=19.2.6 <20",
@@ -173,6 +196,12 @@
   },
   "peerDependenciesMeta": {
     "@cloudflare/vite-plugin": {
+      "optional": true
+    },
+    "@playwright/test": {
+      "optional": true
+    },
+    "@testing-library/react": {
       "optional": true
     },
     "vite": {
