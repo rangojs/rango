@@ -3,6 +3,7 @@ import {
   directoryClientChunks,
   resolveClientChunks,
 } from "../utils/client-chunks.js";
+import { hashRefKey } from "../plugins/client-ref-hashing.js";
 import type { ClientChunkMeta } from "../plugin-types.js";
 
 function meta(id: string, normalizedId = id): ClientChunkMeta {
@@ -187,12 +188,56 @@ describe("resolveClientChunks", () => {
     expect(resolveClientChunks(undefined)).toBeUndefined();
   });
 
-  it("returns the built-in directory strategy for true", () => {
-    expect(resolveClientChunks(true)).toBe(directoryClientChunks);
+  it("returns the built-in directory strategy for true (behaviorally)", () => {
+    const fn = resolveClientChunks(true);
+    expect(fn).toBeTypeOf("function");
+    // Bound to directoryClientChunks (no context): same decisions.
+    expect(
+      fn!(
+        meta("/p/src/routes/products/Cart.tsx", "src/routes/products/Cart.tsx"),
+      ),
+    ).toBe("app-products");
+    expect(
+      fn!(meta("/p/src/components/Button.tsx", "src/components/Button.tsx")),
+    ).toBeUndefined();
   });
 
-  it("returns a user function verbatim", () => {
+  it("returns a user function verbatim (no fallback refinement)", () => {
     const fn = (m: ClientChunkMeta) => `custom-${m.serverChunk}`;
     expect(resolveClientChunks(fn)).toBe(fn);
+    // Even with a context present, a custom function owns grouping.
+    expect(resolveClientChunks(fn, { fallbackRefs: new Set(["x"]) })).toBe(fn);
+  });
+});
+
+describe("directoryClientChunks (registered fallbacks)", () => {
+  it("routes a registered fallback module into app-fallback", () => {
+    // The strategy hashes meta.normalizedId; the context holds that same hash.
+    const m = meta("/p/src/ErrorFallback.tsx", "src/ErrorFallback.tsx");
+    const ctx = { fallbackRefs: new Set([hashRefKey(m.normalizedId)]) };
+    expect(directoryClientChunks(m, ctx)).toBe("app-fallback");
+  });
+
+  it("fallback grouping wins over a route-root marker", () => {
+    const m = meta(
+      "/p/src/routes/shop/Boundary.tsx",
+      "src/routes/shop/Boundary.tsx",
+    );
+    const ctx = { fallbackRefs: new Set([hashRefKey(m.normalizedId)]) };
+    expect(directoryClientChunks(m, ctx)).toBe("app-fallback");
+  });
+
+  it("a non-fallback module is unaffected by the fallback set", () => {
+    const m = meta("/p/src/components/Button.tsx", "src/components/Button.tsx");
+    const ctx = { fallbackRefs: new Set(["someotherhash"]) };
+    expect(directoryClientChunks(m, ctx)).toBeUndefined();
+  });
+
+  it("no context -> behaves exactly like the bare strategy", () => {
+    expect(
+      directoryClientChunks(
+        meta("/p/src/routes/a/X.tsx", "src/routes/a/X.tsx"),
+      ),
+    ).toBe("app-a");
   });
 });

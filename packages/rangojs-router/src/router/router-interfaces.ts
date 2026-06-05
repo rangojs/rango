@@ -365,6 +365,17 @@ export interface RangoInternal<
   /** @internal basename for runtime manifest generation */
   readonly __basename?: string;
 
+  /**
+   * @internal Router-level error/notFound fallbacks (`createRouter` options),
+   * exposed for the build-time clientChunks discovery so a `"use client"`
+   * default boundary is routed into the dedicated `app-fallback` chunk. Unlike
+   * the route-tree `errorBoundary()`/`notFoundBoundary()` helpers these never
+   * land in `EntryData`, so they are read directly off the router instance.
+   */
+  readonly __defaultErrorBoundary?: RangoOptions<TEnv>["defaultErrorBoundary"];
+  readonly __defaultNotFoundBoundary?: RangoOptions<TEnv>["defaultNotFoundBoundary"];
+  readonly __notFound?: RangoOptions<TEnv>["notFound"];
+
   match(
     request: Request,
     input?: RouterRequestInput<TEnv>,

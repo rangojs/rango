@@ -22,6 +22,17 @@ const FS_PREFIX = "/@fs/";
  * Returns the input unchanged if it doesn't match a known dev-mode pattern
  * (e.g., already a production hash).
  */
+/**
+ * The production client-reference key hash: `sha256(relativeId).slice(0,12)`,
+ * matching @vitejs/plugin-rsc's `hashString`. Exported so the client-chunks
+ * strategy can hash a `clientChunks` callback's `meta.normalizedId` (already the
+ * project-root-relative id) and compare it against fallback hashes collected
+ * during discovery.
+ */
+export function hashRefKey(relativeId: string): string {
+  return createHash("sha256").update(relativeId).digest("hex").slice(0, 12);
+}
+
 export function computeProductionHash(
   projectRoot: string,
   refKey: string,
@@ -49,7 +60,7 @@ export function computeProductionHash(
     return refKey;
   }
 
-  return createHash("sha256").update(toHash).digest("hex").slice(0, 12);
+  return hashRefKey(toHash);
 }
 
 // Regex to match registerClientReference() calls as emitted by @vitejs/plugin-rsc.

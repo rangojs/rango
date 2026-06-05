@@ -20,6 +20,13 @@ export interface PluginOptions {
   buildEnv?: import("../plugin-types.js").BuildEnvOption;
   /** Deployment preset (needed for buildEnv "auto" resolution). */
   preset?: "node" | "cloudflare";
+  /**
+   * Shared context the built-in clientChunks strategy reads. Discovery populates
+   * it (registered fallback hashes + single-router name) before the client build
+   * invokes the strategy. Present only when the built-in strategy is active
+   * (`clientChunks: true`/default); undefined for `false` or a custom function.
+   */
+  clientChunkCtx?: import("../utils/client-chunks.js").ClientChunkContext;
 }
 
 export interface PrecomputedEntry {

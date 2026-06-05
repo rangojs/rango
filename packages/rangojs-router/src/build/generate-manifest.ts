@@ -16,6 +16,7 @@ import type { EntryData, TrackedInclude } from "../server/context.js";
 import type { TrailingSlashMode } from "../types.js";
 import { createRouteHelpers } from "../route-definition.js";
 import MapRootLayout from "../server/root-layout.js";
+import { collectFallbackClientRefs } from "./collect-fallback-refs.js";
 
 /**
  * Node in the prefix tree
@@ -290,7 +291,17 @@ export function generateManifest<TEnv>(
 export function generateManifestFull<TEnv>(
   urlpatterns: UrlPatterns<TEnv, any>,
   mountIndex: number = 0,
-  options?: { urlPrefix?: string },
+  options?: {
+    urlPrefix?: string;
+    /**
+     * Called once per `"use client"` component registered as an
+     * errorBoundary/notFoundBoundary fallback, with its client-reference key
+     * (`$$id`). Lets the build collect fallback module ids for dedicated
+     * chunking without exposing the otherwise-discarded EntryData tree. The
+     * EntryData map built below is local; this is the only seam that surfaces it.
+     */
+    collectClientFallbackRef?: (refKey: string) => void;
+  },
 ): FullManifest {
   const routeManifest: Record<string, string> = {};
   const routeAncestry: Record<string, string[]> = {};
@@ -327,6 +338,22 @@ export function generateManifestFull<TEnv>(
       });
     },
   );
+
+  // Surface the "use client" components registered as error/notFound fallbacks
+  // (route-tree errorBoundary()/notFoundBoundary() helpers, stored on EntryData).
+  // The boundary may be a handler function and/or wrap the client boundary in
+  // server providers, so walk the whole tree (see collectFallbackClientRefs).
+  if (options?.collectClientFallbackRef) {
+    const report = options.collectClientFallbackRef;
+    const collect = (boundary: unknown[] | undefined) => {
+      for (const item of boundary ?? [])
+        collectFallbackClientRefs(item, report);
+    };
+    for (const entry of manifest.values()) {
+      collect(entry.errorBoundary);
+      collect(entry.notFoundBoundary);
+    }
+  }
 
   // Collect root-level routes and trailing slash config
   const routeTrailingSlash: Record<string, string> = {};
