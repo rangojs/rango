@@ -15,7 +15,11 @@
  *    (which carry the same coarse `segments` cache signal).
  *
  * v1 cache status is COARSE (route-level): the router reports a single entry
- * keyed by the route key, not per individual segment.
+ * keyed by the route key (the route NAME), not per individual segment.
+ *
+ * Import path: from a Vitest unit/integration test use `@rangojs/router/testing`;
+ * from a Playwright e2e use `@rangojs/router/testing/e2e` (the barrel pulls a
+ * build-only virtual that does not resolve in a plain Playwright runner).
  */
 
 import type {

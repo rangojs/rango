@@ -12,6 +12,11 @@ import type { AppBindings } from "./env.js";
 // Navigation is handled by NavLayout in urls.tsx
 export const router = createRouter<AppBindings>({
   document: Document,
+  // Test app only: emit the X-Rango-Cache debug header so the consumer
+  // cache-status primitives (assertCacheStatus/parseCacheHeader) can be
+  // exercised against a real response in e2e (see e2e/cache-signal.test.ts).
+  // The header is additive; never enable this in a real production app.
+  debugCacheSignal: true,
   // Enable theme support with system detection
   theme: {
     defaultTheme: "light",

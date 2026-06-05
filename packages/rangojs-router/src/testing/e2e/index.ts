@@ -35,6 +35,22 @@ import {
 } from "./parity.js";
 import { createRangoMatchers, type RangoMatchers } from "./matchers.js";
 
+// Cache-status helpers are pure (cache-status.ts imports only TYPES), so they
+// are safe to surface from this Playwright-runnable entry. Importing them from
+// the `@rangojs/router/testing` barrel does NOT work in a plain Playwright
+// runner — the barrel transitively pulls the build-only `@rangojs/router:version`
+// virtual via the route-manifest path. Asserting cache status on a real
+// response is an e2e activity, so this is their Playwright-safe home.
+export {
+  assertCacheStatus,
+  parseCacheHeader,
+  createCacheSink,
+  filterCacheDecisions,
+  type CacheSink,
+  type ExpectedCacheStatus,
+  type CacheStatusTarget,
+} from "../cache-status.js";
+
 // Re-export standalone helpers and all public types so the barrel can re-export
 // them from a single module.
 export {

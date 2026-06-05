@@ -479,7 +479,9 @@ by the route key — the route NAME, e.g. `product.detail`, NOT the URL pattern)
 not per-individual-segment. `assertCacheStatus` reads that header.
 
 ```ts
-import { assertCacheStatus } from "@rangojs/router/testing";
+// In a Playwright e2e, import cache-status helpers from the e2e entry (the
+// `@rangojs/router/testing` barrel is Vitest-only — it pulls a build virtual).
+import { assertCacheStatus } from "@rangojs/router/testing/e2e";
 
 // e2e (the gate must be enabled on the app under test). The segment key is the
 // route NAME the header carries, not the URL pattern ("/products/:id").

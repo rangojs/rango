@@ -657,7 +657,10 @@ const router = createRouter({
 Then assert across two requests (the gate must be on in the app under test):
 
 ```ts
-import { assertCacheStatus } from "@rangojs/router/testing";
+// In a Playwright e2e, import the cache-status helpers from the e2e entry —
+// the `@rangojs/router/testing` barrel pulls a build-only virtual that does
+// not resolve in a plain Playwright runner.
+import { assertCacheStatus } from "@rangojs/router/testing/e2e";
 
 parityDescribe("product page caches", (f) => {
   test("second request is a hit", async ({ page }) => {
