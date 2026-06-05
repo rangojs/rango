@@ -35,6 +35,7 @@ export const NS = {
   build: "rango:build",
   dev: "rango:dev",
   transform: "rango:transform",
+  chunks: "rango:chunks",
 } as const;
 
 // Back-compat: the legacy INTERNAL_RANGO_DEBUG env var enabled per-site

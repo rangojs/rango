@@ -47,6 +47,64 @@ export type BuildEnvOption =
   | Record<string, unknown>
   | BuildEnvFactory;
 
+// -- Client chunking --------------------------------------------------------
+
+/**
+ * Metadata for one client ("use client") module, passed to a {@link ClientChunks}
+ * function. Mirrors the shape `@vitejs/plugin-rsc` passes to its own
+ * `clientChunks` option.
+ */
+export interface ClientChunkMeta {
+  /** Absolute module id of the "use client" file. */
+  id: string;
+  /** Normalized (posix) module id — convenient for path-based matching. */
+  normalizedId: string;
+  /**
+   * The RSC/server chunk that statically imports this client reference. This is
+   * the key used for the default grouping when no override is supplied: a single
+   * router that statically imports every route yields ONE `serverChunk`, hence
+   * one client chunk for all routes.
+   */
+  serverChunk: string;
+}
+
+/**
+ * Controls how client ("use client") components are grouped into browser
+ * chunks, i.e. per-route / per-feature code splitting of the client bundle.
+ *
+ * Without splitting, a single router ships ONE client chunk containing every
+ * route's client components (and their CSS) — navigating to one route downloads
+ * every other route's client code. (Host sub-apps loaded via a dynamic `import()`
+ * are the exception: each forms its own chunk.) This option controls how that
+ * monolith is split.
+ *
+ * Behavior branches:
+ * - `true` / omitted (**default**, pre-1.0): Rango's built-in **directory
+ *   strategy**. It splits app `"use client"` modules by **route id** — the segment
+ *   after a route-root directory (`routes`, `app`, `pages`, `features`, `handlers`,
+ *   …) — so `routes/dashboard/**` becomes `app-dashboard` at any nesting depth.
+ *   Where it finds NO route structure (a flat `src/components/`, or host sub-apps
+ *   already split by a dynamic `import()`), it inherits the default grouping
+ *   unchanged — so the shared `src/components` chunk stays shared and host apps do
+ *   not leak across each other. Shared runtime (React, the router, `node_modules`)
+ *   is never split.
+ * - `false`: opt out — inherit `@vitejs/plugin-rsc`'s default grouping everywhere
+ *   (one chunk per router / per host sub-app).
+ * - function: full override. Return a chunk group name, or `undefined` to fall
+ *   back to the default grouping for that one module. Forwarded directly to
+ *   `@vitejs/plugin-rsc`'s `clientChunks`.
+ *
+ * Every module maps to exactly one group, so there is no byte duplication: a
+ * component used by two routes lives in one group and is fetched whenever it
+ * renders. Put genuinely shared client components OUTSIDE route directories so
+ * they land in the shared group rather than one route's chunk.
+ *
+ * @default true
+ */
+export type ClientChunks =
+  | boolean
+  | ((meta: ClientChunkMeta) => string | undefined);
+
 // -- Plugin options ---------------------------------------------------------
 
 /**
@@ -58,6 +116,15 @@ interface RangoBaseOptions {
    * @default true
    */
   banner?: boolean;
+
+  /**
+   * Group client ("use client") components into browser chunks for per-route /
+   * per-feature code splitting. On by default (pre-1.0); pass `false` to opt out.
+   * See {@link ClientChunks}.
+   *
+   * @default true
+   */
+  clientChunks?: ClientChunks;
 
   /**
    * Environment bindings available to Prerender and Static handlers at build

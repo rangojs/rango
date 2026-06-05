@@ -32,6 +32,10 @@ import { Outlet, Link, ScrollRestoration } from "@rangojs/router/client";
 import { ClockLoader, CounterLoader } from "./shared.js";
 import { increment, incrementWithResult } from "./actions.js";
 import { productsPatterns } from "./urls/products.js";
+// Route-colocated client components (each in its own directory) used to
+// demonstrate per-route client chunking under `clientChunks: true`.
+import { WidgetA } from "./routes/widgets/WidgetA.js";
+import { ChartB } from "./routes/charts/ChartB.js";
 import {
   AppNav,
   BreadcrumbTrail,
@@ -252,6 +256,57 @@ export const router = createRouter({
 
           // Products: include() of the sub-app above.
           include("/products", productsPatterns, { name: "products" }),
+
+          // Per-route client chunking demo: /widgets and /charts each render a
+          // client component colocated in its own directory. With
+          // `clientChunks: true` they ship as separate client chunks (+ CSS).
+          path(
+            "/widgets",
+            (ctx) => {
+              ctx.use(Meta)({ title: "Widgets" });
+              return (
+                <div data-testid="widgets-page">
+                  <WidgetA />
+                </div>
+              );
+            },
+            { name: "widgets" },
+          ),
+
+          path(
+            "/charts",
+            (ctx) => {
+              ctx.use(Meta)({ title: "Charts" });
+              return (
+                <div data-testid="charts-page">
+                  <ChartB />
+                </div>
+              );
+            },
+            { name: "charts" },
+          ),
+
+          // Multi-group CSS co-render: a single page that renders client
+          // components from TWO different route groups (routes/widgets +
+          // routes/charts) at once. This is the case where per-group stylesheet
+          // <link> precedence actually interacts (more groups -> more links;
+          // see vite-plugin-react#1100). The e2e asserts BOTH route groups'
+          // CSS apply with the correct cascade and no FOUC, dev + production.
+          // WidgetA/ChartB still live under their own route dirs, so they stay
+          // in app-widgets / app-charts (no module is duplicated by co-rendering).
+          path(
+            "/combined",
+            (ctx) => {
+              ctx.use(Meta)({ title: "Combined" });
+              return (
+                <div data-testid="combined-page">
+                  <WidgetA />
+                  <ChartB />
+                </div>
+              );
+            },
+            { name: "combined" },
+          ),
 
           // Search: typed search schema.
           path(

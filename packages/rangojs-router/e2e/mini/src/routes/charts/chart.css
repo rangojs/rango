@@ -1,0 +1,6 @@
+/* Route-colocated CSS for the /charts route. Loaded only when ChartB's client
+   chunk loads, proving per-route CSS splitting under clientChunks. */
+.mini-chart-b {
+  outline: 3px solid rgb(0, 128, 128);
+  padding: 4px;
+}
