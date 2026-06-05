@@ -21,6 +21,7 @@ import {
   computeExpiration,
   DEFAULT_FUNCTION_TTL,
 } from "./cache-policy.js";
+import { reportCacheError } from "./cache-error.js";
 
 const CACHE_REGISTRY_KEY = "__rsc_router_segment_cache_registry__";
 const RESPONSE_CACHE_REGISTRY_KEY = "__rsc_router_response_cache_registry__";
@@ -285,26 +286,37 @@ export class MemorySegmentCacheStore<
     swr?: number,
     tags?: string[],
   ): Promise<void> {
-    const body = await response.clone().arrayBuffer();
-    const headers: [string, string][] = [];
-    response.headers.forEach((value, name) => {
-      headers.push([name, value]);
-    });
+    try {
+      // arrayBuffer() can reject (e.g. an already-consumed body). A write
+      // failure must degrade to a no-op (entry simply not cached), never throw
+      // up and fail the request.
+      const body = await response.clone().arrayBuffer();
+      const headers: [string, string][] = [];
+      response.headers.forEach((value, name) => {
+        headers.push([name, value]);
+      });
 
-    const swrWindow = resolveSwrWindow(swr, this.defaults);
-    const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
+      const swrWindow = resolveSwrWindow(swr, this.defaults);
+      const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
 
-    const prefixedKey = `res:${key}`;
-    this.unregisterTags(prefixedKey);
-    this.responseCache.set(key, {
-      body,
-      status: response.status,
-      headers,
-      expiresAt,
-      staleAt,
-    });
-    if (tags && tags.length > 0) {
-      this.registerTags(tags, prefixedKey);
+      const prefixedKey = `res:${key}`;
+      this.unregisterTags(prefixedKey);
+      this.responseCache.set(key, {
+        body,
+        status: response.status,
+        headers,
+        expiresAt,
+        staleAt,
+      });
+      if (tags && tags.length > 0) {
+        this.registerTags(tags, prefixedKey);
+      }
+    } catch (error) {
+      reportCacheError(
+        error,
+        "cache-write",
+        "[MemorySegmentCacheStore] putResponse",
+      );
     }
   }
 

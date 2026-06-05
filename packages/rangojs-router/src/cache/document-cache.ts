@@ -19,6 +19,7 @@ import {
 import { mayNeedSSR } from "../rsc/ssr-setup.js";
 import { sortedSearchString } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
+import { reportCacheError } from "./cache-error.js";
 
 // ============================================================================
 // Constants
@@ -347,7 +348,11 @@ export function createDocumentCacheMiddleware<TEnv = any>(
               log(`[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`);
             }
           } catch (error) {
-            console.error(`[DocumentCache] Revalidation failed:`, error);
+            reportCacheError(
+              error,
+              "cache-write",
+              "[DocumentCache] revalidation",
+            );
           }
         });
 
@@ -396,7 +401,11 @@ export function createDocumentCacheMiddleware<TEnv = any>(
               collectRequestTags(requestCtx),
             );
           } catch (error) {
-            console.error(`[DocumentCache] Cache write failed:`, error);
+            reportCacheError(
+              error,
+              "cache-write",
+              "[DocumentCache] cache write",
+            );
           }
         });
 
@@ -409,7 +418,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       // No cache headers - pass through
       return originalResponse;
     } catch (error) {
-      console.error(`[DocumentCache] Error:`, error);
+      reportCacheError(error, "cache-read", "[DocumentCache] middleware");
       if (handlerCalled) {
         // Post-handler failure (e.g. body.tee()): do not call next() again
         // as that would re-run handler side effects.

@@ -17,6 +17,7 @@ import {
   _getRequestContext,
 } from "../server/request-context.js";
 import { recordRequestTags } from "./cache-tag.js";
+import { reportCacheError } from "./cache-error.js";
 import { serializeSegments, deserializeSegments } from "./segment-codec.js";
 import { captureHandles, restoreHandles } from "./handle-snapshot.js";
 import { sortedSearchString, sortedRouteParams } from "./cache-key-utils.js";
@@ -265,8 +266,26 @@ export class CacheScope {
 
       const { data: cached, shouldRevalidate } = result;
 
-      // Deserialize segments
-      const segments = await deserializeSegments(cached.segments);
+      // Deserialize segments. A failure means the cached segments are corrupt/
+      // partial: evict the entry (self-heal - the re-render re-caches under the
+      // same key) and report it as corruption, distinct from a transient infra
+      // error (handled by the outer catch).
+      let segments: ResolvedSegment[];
+      try {
+        segments = await deserializeSegments(cached.segments);
+      } catch (error) {
+        reportCacheError(
+          error,
+          "cache-corrupt",
+          `[CacheScope] ${key}: corrupt cached segments, evicting`,
+        );
+        await store
+          .delete(key)
+          .catch((e) =>
+            reportCacheError(e, "cache-delete", `[CacheScope] ${key}: evict`),
+          );
+        return null;
+      }
 
       // Replay handle data
       const handleStore = _getRequestContext()?._handleStore;
@@ -285,7 +304,7 @@ export class CacheScope {
 
       return { segments, shouldRevalidate };
     } catch (error) {
-      console.error(`[CacheScope] Failed to lookup ${key}:`, error);
+      reportCacheError(error, "cache-read", `[CacheScope] lookup ${key}`);
       return null;
     }
   }

@@ -41,6 +41,7 @@ import {
   recordRequestTags,
   runWithCacheTagScope,
 } from "./cache-tag.js";
+import { reportCacheError } from "./cache-error.js";
 
 /**
  * Convert encodeReply result to a stable string key.
@@ -196,8 +197,15 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         // runtime cacheTag() tags are only available from the stored entry).
         recordRequestTags(cached.tags, requestCtx);
         return result;
-      } catch {
-        // Deserialization failed, fall through to fresh execution
+      } catch (error) {
+        // The stored value is corrupt/partial (failed RSC deserialize). Report
+        // it, then fall through to fresh execution - the miss path below re-runs
+        // and setItem() overwrites the faulty entry under the same key (self-heal).
+        reportCacheError(
+          error,
+          "cache-corrupt",
+          `[use cache] "${id}" fresh-hit`,
+        );
       }
     }
 
@@ -297,8 +305,14 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           }
         });
         return result;
-      } catch {
-        // Deserialization of stale value failed, fall through
+      } catch (error) {
+        // Stale value is corrupt/partial; report and fall through to a fresh
+        // execution, which overwrites the faulty entry under the same key.
+        reportCacheError(
+          error,
+          "cache-corrupt",
+          `[use cache] "${id}" stale-hit`,
+        );
       }
     }
 

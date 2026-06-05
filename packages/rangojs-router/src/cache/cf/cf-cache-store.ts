@@ -45,6 +45,7 @@ import {
   resolveSwrWindow,
   DEFAULT_FUNCTION_TTL,
 } from "../cache-policy.js";
+import { reportCacheError, reportingAsync } from "../cache-error.js";
 
 // ============================================================================
 // Constants
@@ -584,8 +585,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       // Case 1: Fresh or already being revalidated - just return data
       if (!isStale || isRevalidating) {
-        const data = (await response.json()) as CachedEntryData;
-        return { data, shouldRevalidate: false };
+        const data = await this.parseOrEvict<CachedEntryData>(
+          () => response.json() as Promise<CachedEntryData>,
+          () => cache.delete(request),
+          "get",
+        );
+        return data === null ? null : { data, shouldRevalidate: false };
       }
 
       // Case 2: Stale and needs revalidation - atomically mark REVALIDATING
@@ -600,10 +605,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         new Response(b1, { status: response.status, headers }),
       );
 
-      const data = (await new Response(b2).json()) as CachedEntryData;
-      return { data, shouldRevalidate: true };
+      const data = await this.parseOrEvict<CachedEntryData>(
+        () => new Response(b2).json() as Promise<CachedEntryData>,
+        () => cache.delete(request),
+        "get(revalidating)",
+      );
+      return data === null ? null : { data, shouldRevalidate: true };
     } catch (error) {
-      console.error("[CFCacheStore] get failed:", error);
+      reportCacheError(error, "cache-read", "[CFCacheStore] get");
       return null;
     }
   }
@@ -652,9 +661,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       if (this.waitUntil) {
         // Non-blocking write
-        this.waitUntil(async () => {
-          await putPromise;
-        });
+        this.waitUntil(() =>
+          reportingAsync(
+            () => putPromise,
+            "cache-write",
+            "[CFCacheStore] L1 write",
+          ),
+        );
       } else {
         // Blocking fallback
         await putPromise;
@@ -663,7 +676,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // L2: persist to KV
       this.kvSetSegment(key, dataToStore, staleAt, totalTtl, swrWindow);
     } catch (error) {
-      console.error("[CFCacheStore] set failed:", error);
+      reportCacheError(error, "cache-write", "[CFCacheStore] set");
     }
   }
 
@@ -678,18 +691,18 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // L2: delete from KV
       if (this.kv && this.waitUntil) {
         const kvKey = this.toKVKey(key);
-        this.waitUntil(async () => {
-          try {
-            await this.kv!.delete(kvKey);
-          } catch {
-            // KV delete failures are non-critical
-          }
-        });
+        this.waitUntil(() =>
+          reportingAsync(
+            () => this.kv!.delete(kvKey),
+            "cache-delete",
+            "[CFCacheStore] delete L2",
+          ),
+        );
       }
 
       return result;
     } catch (error) {
-      console.error("[CFCacheStore] delete failed:", error);
+      reportCacheError(error, "cache-delete", "[CFCacheStore] delete");
       return false;
     }
   }
@@ -730,7 +743,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         shouldRevalidate: isStale,
       };
     } catch (error) {
-      console.error("[CFCacheStore] getResponse failed:", error);
+      reportCacheError(error, "cache-read", "[CFCacheStore] getResponse");
       return null;
     }
   }
@@ -815,9 +828,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       if (this.waitUntil) {
         // Non-blocking write
-        this.waitUntil(async () => {
-          await putPromise;
-        });
+        this.waitUntil(() =>
+          reportingAsync(
+            () => putPromise,
+            "cache-write",
+            "[CFCacheStore] L1 write",
+          ),
+        );
       } else {
         // Blocking fallback
         await putPromise;
@@ -834,28 +851,30 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           : new ArrayBuffer(0);
         const bodyBase64 = bufferToBase64(bodyBuf);
 
-        this.waitUntil(async () => {
-          try {
-            const envelope: KVResponseEnvelope = {
-              b: bodyBase64,
-              st: response.status,
-              stx: response.statusText,
-              hd: headersArray,
-              s: staleAt,
-              e: staleAt + swrWindow * 1000,
-              t: tags,
-              ta: taggedAt,
-            };
-            await this.kv!.put(kvKey, JSON.stringify(envelope), {
-              expirationTtl: totalTtl,
-            });
-          } catch (error) {
-            console.error("[CFCacheStore] KV putResponse failed:", error);
-          }
-        });
+        this.waitUntil(() =>
+          reportingAsync(
+            () => {
+              const envelope: KVResponseEnvelope = {
+                b: bodyBase64,
+                st: response.status,
+                stx: response.statusText,
+                hd: headersArray,
+                s: staleAt,
+                e: staleAt + swrWindow * 1000,
+                t: tags,
+                ta: taggedAt,
+              };
+              return this.kv!.put(kvKey, JSON.stringify(envelope), {
+                expirationTtl: totalTtl,
+              });
+            },
+            "cache-write",
+            "[CFCacheStore] kvPutResponse",
+          ),
+        );
       }
     } catch (error) {
-      console.error("[CFCacheStore] putResponse failed:", error);
+      reportCacheError(error, "cache-write", "[CFCacheStore] putResponse");
     }
   }
 
@@ -892,10 +911,19 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const isRevalidating =
         status === "REVALIDATING" && age < MAX_REVALIDATION_INTERVAL;
 
-      const data = (await response.json()) as {
+      const data = await this.parseOrEvict<{
         value: string;
         handles?: Record<string, Record<string, unknown[]>>;
-      };
+      }>(
+        () =>
+          response.json() as Promise<{
+            value: string;
+            handles?: Record<string, Record<string, unknown[]>>;
+          }>,
+        () => cache.delete(request),
+        "getItem",
+      );
+      if (data === null) return null;
 
       if (!isStale || isRevalidating) {
         return {
@@ -921,7 +949,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         tags: tagInfo.tags,
       };
     } catch (error) {
-      console.error("[CFCacheStore] getItem failed:", error);
+      reportCacheError(error, "cache-read", "[CFCacheStore] getItem");
       return null;
     }
   }
@@ -961,9 +989,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const putPromise = cache.put(request, response);
 
       if (this.waitUntil) {
-        this.waitUntil(async () => {
-          await putPromise;
-        });
+        this.waitUntil(() =>
+          reportingAsync(
+            () => putPromise,
+            "cache-write",
+            "[CFCacheStore] L1 write",
+          ),
+        );
       } else {
         await putPromise;
       }
@@ -971,26 +1003,28 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // L2: persist to KV (KV requires expirationTtl >= 60s)
       if (this.kv && this.waitUntil && totalTtl >= 60) {
         const kvKey = this.toKVKey(`fn:${key}`);
-        this.waitUntil(async () => {
-          try {
-            const envelope: KVItemEnvelope = {
-              v: value,
-              h: options?.handles,
-              s: staleAt,
-              e: staleAt + swrWindow * 1000,
-              t: tags,
-              ta: taggedAt,
-            };
-            await this.kv!.put(kvKey, JSON.stringify(envelope), {
-              expirationTtl: totalTtl,
-            });
-          } catch (error) {
-            console.error("[CFCacheStore] KV setItem failed:", error);
-          }
-        });
+        this.waitUntil(() =>
+          reportingAsync(
+            () => {
+              const envelope: KVItemEnvelope = {
+                v: value,
+                h: options?.handles,
+                s: staleAt,
+                e: staleAt + swrWindow * 1000,
+                t: tags,
+                ta: taggedAt,
+              };
+              return this.kv!.put(kvKey, JSON.stringify(envelope), {
+                expirationTtl: totalTtl,
+              });
+            },
+            "cache-write",
+            "[CFCacheStore] kvSetItem",
+          ),
+        );
       }
     } catch (error) {
-      console.error("[CFCacheStore] setItem failed:", error);
+      reportCacheError(error, "cache-write", "[CFCacheStore] setItem");
     }
   }
 
@@ -1020,6 +1054,91 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private toKVKey(key: string): string {
     const versionPath = this.version ? `v/${this.version}/` : "";
     return `${versionPath}${key}`;
+  }
+
+  /**
+   * Parse a stored entry, EVICTING it if the parse fails. A parse failure means
+   * the entry is corrupt or partial (truncated Cache API body, malformed KV
+   * envelope/base64) - it would deterministically fail every future read - so it
+   * is deleted to self-heal (the next read misses and re-renders) and reported as
+   * cache-corrupt. This is distinct from a transient infra error (the caller's
+   * outer catch reports cache-read and does NOT delete a still-good entry).
+   * Returns null on corruption; the caller treats null as a miss.
+   * @internal
+   */
+  private async parseOrEvict<T>(
+    parse: () => Promise<T> | T,
+    evict: () => Promise<unknown>,
+    label: string,
+  ): Promise<T | null> {
+    try {
+      return await parse();
+    } catch (error) {
+      reportCacheError(
+        error,
+        "cache-corrupt",
+        `[CFCacheStore] ${label}: corrupt/partial entry, evicting`,
+      );
+      try {
+        await evict();
+      } catch (evictError) {
+        reportCacheError(
+          evictError,
+          "cache-delete",
+          `[CFCacheStore] ${label}: evicting corrupt entry failed`,
+        );
+      }
+      return null;
+    }
+  }
+
+  /**
+   * KV-get a JSON envelope, EVICTING the key when it is corrupt. kv.get throws on
+   * invalid JSON; `validate` returns false for a partial-but-valid envelope
+   * (fields missing from a truncated write). Either case deletes the key + reports
+   * cache-corrupt. A MISSING key (kv.get -> null) is a normal miss, not corruption.
+   * @internal
+   */
+  private async kvGetOrEvict<T>(
+    kvKey: string,
+    validate: (envelope: T) => boolean,
+    label: string,
+  ): Promise<T | null> {
+    let raw: unknown;
+    try {
+      raw = await this.kv!.get(kvKey, { type: "json" });
+    } catch (error) {
+      reportCacheError(
+        error,
+        "cache-corrupt",
+        `[CFCacheStore] ${label}: corrupt JSON in KV, evicting`,
+      );
+      await this.kv!.delete(kvKey).catch((e) =>
+        reportCacheError(
+          e,
+          "cache-delete",
+          `[CFCacheStore] ${label}: evict failed`,
+        ),
+      );
+      return null;
+    }
+    if (raw == null) return null; // missing key = miss, not corruption
+    if (!validate(raw as T)) {
+      reportCacheError(
+        new Error("malformed/partial KV envelope"),
+        "cache-corrupt",
+        `[CFCacheStore] ${label}: malformed envelope, evicting`,
+      );
+      await this.kv!.delete(kvKey).catch((e) =>
+        reportCacheError(
+          e,
+          "cache-delete",
+          `[CFCacheStore] ${label}: evict failed`,
+        ),
+      );
+      return null;
+    }
+    return raw as T;
   }
 
   // ============================================================================
@@ -1094,7 +1213,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       }
       return false;
     } catch (error) {
-      console.error("[CFCacheStore] tag invalidation check failed:", error);
+      reportCacheError(
+        error,
+        "cache-read",
+        "[CFCacheStore] tag invalidation check",
+      );
       return false;
     }
   }
@@ -1317,7 +1440,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       try {
         await this.onRevalidateTag(tags.map((tag) => this.lookupPurgeTag(tag)));
       } catch (error) {
-        console.error("[CFCacheStore] onRevalidateTag hook failed:", error);
+        reportCacheError(
+          error,
+          "cache-invalidate",
+          "[CFCacheStore] onRevalidateTag hook",
+        );
       }
     }
 
@@ -1347,10 +1474,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
     try {
       const kvKey = this.toKVKey(key);
-      const raw = await this.kv.get(kvKey, { type: "json" });
-      if (!raw) return null;
+      const envelope = await this.kvGetOrEvict<KVSegmentEnvelope>(
+        kvKey,
+        (e) =>
+          typeof e.e === "number" && typeof e.s === "number" && e.d != null,
+        "kvGetSegment",
+      );
+      if (!envelope) return null;
 
-      const envelope = raw as KVSegmentEnvelope;
       const now = Date.now();
 
       // Hard-expired — treat as miss
@@ -1370,7 +1501,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       return { data: envelope.d, shouldRevalidate };
     } catch (error) {
-      console.error("[CFCacheStore] KV get failed:", error);
+      reportCacheError(error, "cache-read", "[CFCacheStore] kvGetSegment");
       return null;
     }
   }
@@ -1392,20 +1523,22 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     const kvKey = this.toKVKey(key);
     const expiresAt = staleAt + swrWindow * 1000;
 
-    this.waitUntil(async () => {
-      try {
-        const envelope: KVSegmentEnvelope = {
-          d: data,
-          s: staleAt,
-          e: expiresAt,
-        };
-        await this.kv!.put(kvKey, JSON.stringify(envelope), {
-          expirationTtl: totalTtl,
-        });
-      } catch (error) {
-        console.error("[CFCacheStore] KV set failed:", error);
-      }
-    });
+    this.waitUntil(() =>
+      reportingAsync(
+        () => {
+          const envelope: KVSegmentEnvelope = {
+            d: data,
+            s: staleAt,
+            e: expiresAt,
+          };
+          return this.kv!.put(kvKey, JSON.stringify(envelope), {
+            expirationTtl: totalTtl,
+          });
+        },
+        "cache-write",
+        "[CFCacheStore] kvSetSegment",
+      ),
+    );
   }
 
   /**
@@ -1415,30 +1548,35 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private promoteSegmentToL1(key: string, envelope: KVSegmentEnvelope): void {
     if (!this.waitUntil) return;
 
-    this.waitUntil(async () => {
-      try {
-        const now = Date.now();
-        const remainingTtl = Math.max(1, Math.floor((envelope.e - now) / 1000));
-        const cache = await this.getCache();
-        const request = this.keyToRequest(key);
+    this.waitUntil(() =>
+      reportingAsync(
+        async () => {
+          const now = Date.now();
+          const remainingTtl = Math.max(
+            1,
+            Math.floor((envelope.e - now) / 1000),
+          );
+          const cache = await this.getCache();
+          const request = this.keyToRequest(key);
 
-        const response = new Response(JSON.stringify(envelope.d), {
-          headers: {
-            "Content-Type": "application/json",
-            "Cache-Control": `public, max-age=${remainingTtl}`,
-            [CACHE_STALE_AT_HEADER]: String(envelope.s),
-            [CACHE_STATUS_HEADER]: "HIT",
-            // Preserve tags across KV->L1 promotion so the promoted entry stays
-            // tag-invalidatable.
-            ...this.tagHeaderEntries(envelope.d.tags, envelope.d.taggedAt),
-          },
-        });
+          const response = new Response(JSON.stringify(envelope.d), {
+            headers: {
+              "Content-Type": "application/json",
+              "Cache-Control": `public, max-age=${remainingTtl}`,
+              [CACHE_STALE_AT_HEADER]: String(envelope.s),
+              [CACHE_STATUS_HEADER]: "HIT",
+              // Preserve tags across KV->L1 promotion so the promoted entry
+              // stays tag-invalidatable.
+              ...this.tagHeaderEntries(envelope.d.tags, envelope.d.taggedAt),
+            },
+          });
 
-        await cache.put(request, response);
-      } catch (error) {
-        console.error("[CFCacheStore] L1 promote failed:", error);
-      }
-    });
+          await cache.put(request, response);
+        },
+        "cache-write",
+        "[CFCacheStore] promoteSegmentToL1",
+      ),
+    );
   }
 
   /**
@@ -1450,10 +1588,16 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
     try {
       const kvKey = this.toKVKey(`fn:${key}`);
-      const raw = await this.kv.get(kvKey, { type: "json" });
-      if (!raw) return null;
+      const envelope = await this.kvGetOrEvict<KVItemEnvelope>(
+        kvKey,
+        (e) =>
+          typeof e.v === "string" &&
+          typeof e.e === "number" &&
+          typeof e.s === "number",
+        "kvGetItem",
+      );
+      if (!envelope) return null;
 
-      const envelope = raw as KVItemEnvelope;
       const now = Date.now();
 
       if (now > envelope.e) return null;
@@ -1475,7 +1619,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         tags: envelope.t,
       };
     } catch (error) {
-      console.error("[CFCacheStore] KV getItem failed:", error);
+      reportCacheError(error, "cache-read", "[CFCacheStore] kvGetItem");
       return null;
     }
   }
@@ -1487,31 +1631,39 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private promoteItemToL1(key: string, envelope: KVItemEnvelope): void {
     if (!this.waitUntil) return;
 
-    this.waitUntil(async () => {
-      try {
-        const now = Date.now();
-        const remainingTtl = Math.max(1, Math.floor((envelope.e - now) / 1000));
-        const cache = await this.getCache();
-        const request = this.keyToRequest(`fn:${key}`);
+    this.waitUntil(() =>
+      reportingAsync(
+        async () => {
+          const now = Date.now();
+          const remainingTtl = Math.max(
+            1,
+            Math.floor((envelope.e - now) / 1000),
+          );
+          const cache = await this.getCache();
+          const request = this.keyToRequest(`fn:${key}`);
 
-        const body = JSON.stringify({ value: envelope.v, handles: envelope.h });
-        const response = new Response(body, {
-          headers: {
-            "Content-Type": "application/json",
-            "Cache-Control": `public, max-age=${remainingTtl}`,
-            [CACHE_STALE_AT_HEADER]: String(envelope.s),
-            [CACHE_STATUS_HEADER]: "HIT",
-            // Preserve tags across KV->L1 promotion (the item tier previously
-            // dropped them, permanently disabling tag invalidation here).
-            ...this.tagHeaderEntries(envelope.t, envelope.ta),
-          },
-        });
+          const body = JSON.stringify({
+            value: envelope.v,
+            handles: envelope.h,
+          });
+          const response = new Response(body, {
+            headers: {
+              "Content-Type": "application/json",
+              "Cache-Control": `public, max-age=${remainingTtl}`,
+              [CACHE_STALE_AT_HEADER]: String(envelope.s),
+              [CACHE_STATUS_HEADER]: "HIT",
+              // Preserve tags across KV->L1 promotion (the item tier previously
+              // dropped them, permanently disabling tag invalidation here).
+              ...this.tagHeaderEntries(envelope.t, envelope.ta),
+            },
+          });
 
-        await cache.put(request, response);
-      } catch (error) {
-        console.error("[CFCacheStore] L1 item promote failed:", error);
-      }
-    });
+          await cache.put(request, response);
+        },
+        "cache-write",
+        "[CFCacheStore] promoteItemToL1",
+      ),
+    );
   }
 
   /**
@@ -1525,10 +1677,18 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
     try {
       const kvKey = this.toKVKey(`doc:${key}`);
-      const raw = await this.kv.get(kvKey, { type: "json" });
-      if (!raw) return null;
+      const envelope = await this.kvGetOrEvict<KVResponseEnvelope>(
+        kvKey,
+        (e) =>
+          typeof e.b === "string" &&
+          typeof e.st === "number" &&
+          typeof e.e === "number" &&
+          typeof e.s === "number" &&
+          Array.isArray(e.hd),
+        "kvGetResponse",
+      );
+      if (!envelope) return null;
 
-      const envelope = raw as KVResponseEnvelope;
       const now = Date.now();
 
       if (now > envelope.e) return null;
@@ -1540,9 +1700,21 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       const shouldRevalidate = now > envelope.s;
 
-      // Reconstruct Response (decode base64 → binary)
+      // Reconstruct Response (decode base64 → binary). Corrupt/partial base64
+      // throws in atob: that is a faulty entry, so evict it and miss.
+      let bodyBuffer: ArrayBuffer;
+      try {
+        bodyBuffer = base64ToBuffer(envelope.b);
+      } catch (error) {
+        reportCacheError(
+          error,
+          "cache-corrupt",
+          "[CFCacheStore] kvGetResponse: corrupt base64 body, evicting",
+        );
+        await this.kv.delete(kvKey).catch(() => {});
+        return null;
+      }
       const headers = new Headers(envelope.hd);
-      const bodyBuffer = base64ToBuffer(envelope.b);
       const response = new Response(bodyBuffer, {
         status: envelope.st,
         statusText: envelope.stx,
@@ -1554,7 +1726,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       return { response, shouldRevalidate };
     } catch (error) {
-      console.error("[CFCacheStore] KV getResponse failed:", error);
+      reportCacheError(error, "cache-read", "[CFCacheStore] kvGetResponse");
       return null;
     }
   }
@@ -1566,39 +1738,45 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private promoteResponseToL1(key: string, envelope: KVResponseEnvelope): void {
     if (!this.waitUntil) return;
 
-    this.waitUntil(async () => {
-      try {
-        const now = Date.now();
-        const remainingTtl = Math.max(1, Math.floor((envelope.e - now) / 1000));
-        const cache = await this.getCache();
-        const request = this.keyToRequest(`doc:${key}`);
+    this.waitUntil(() =>
+      reportingAsync(
+        async () => {
+          const now = Date.now();
+          const remainingTtl = Math.max(
+            1,
+            Math.floor((envelope.e - now) / 1000),
+          );
+          const cache = await this.getCache();
+          const request = this.keyToRequest(`doc:${key}`);
 
-        const headers = new Headers(envelope.hd);
-        const originalCacheControl = headers.get("Cache-Control");
-        if (originalCacheControl !== null) {
-          headers.set(CACHE_ORIG_CC_HEADER, originalCacheControl);
-        }
-        headers.set("Cache-Control", `public, max-age=${remainingTtl}`);
-        headers.set(CACHE_STALE_AT_HEADER, String(envelope.s));
-        // Re-attach the internal tag headers (envelope.hd is client-facing and
-        // intentionally excludes them) so the promoted entry stays invalidatable.
-        const tagHeaders = this.tagHeaderEntries(envelope.t, envelope.ta);
-        for (const [name, value] of Object.entries(tagHeaders)) {
-          headers.set(name, value);
-        }
+          const headers = new Headers(envelope.hd);
+          const originalCacheControl = headers.get("Cache-Control");
+          if (originalCacheControl !== null) {
+            headers.set(CACHE_ORIG_CC_HEADER, originalCacheControl);
+          }
+          headers.set("Cache-Control", `public, max-age=${remainingTtl}`);
+          headers.set(CACHE_STALE_AT_HEADER, String(envelope.s));
+          // Re-attach the internal tag headers (envelope.hd is client-facing
+          // and intentionally excludes them) so the promoted entry stays
+          // invalidatable.
+          const tagHeaders = this.tagHeaderEntries(envelope.t, envelope.ta);
+          for (const [name, value] of Object.entries(tagHeaders)) {
+            headers.set(name, value);
+          }
 
-        const bodyBuffer = base64ToBuffer(envelope.b);
-        const response = new Response(bodyBuffer, {
-          status: envelope.st,
-          statusText: envelope.stx,
-          headers,
-        });
+          const bodyBuffer = base64ToBuffer(envelope.b);
+          const response = new Response(bodyBuffer, {
+            status: envelope.st,
+            statusText: envelope.stx,
+            headers,
+          });
 
-        await cache.put(request, response);
-      } catch (error) {
-        console.error("[CFCacheStore] L1 response promote failed:", error);
-      }
-    });
+          await cache.put(request, response);
+        },
+        "cache-write",
+        "[CFCacheStore] promoteResponseToL1",
+      ),
+    );
   }
 }
 

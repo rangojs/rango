@@ -617,4 +617,90 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       getSpy.mockRestore();
     });
   });
+
+  describe("error resilience (report onError + degrade + self-heal)", () => {
+    function ctxWithReporter() {
+      const reported: Array<{ error: unknown; category: string }> = [];
+      const reqCtx = makeReqCtx();
+      (reqCtx as any)._reportBackgroundError = (
+        error: unknown,
+        category: string,
+      ) => reported.push({ error, category });
+      return { reqCtx, reported };
+    }
+
+    it("reports a read infra error via onError and degrades to a miss (does not throw)", async () => {
+      const store = makeStore();
+      await store.set("k", createTestData(), 300);
+      await ctx.flush();
+
+      vi.spyOn(mockCaches._default, "match").mockRejectedValueOnce(
+        new Error("cache api unavailable"),
+      );
+      const { reqCtx, reported } = ctxWithReporter();
+      const result = await runWithRequestContext(reqCtx, () => store.get("k"));
+
+      expect(result).toBeNull(); // degraded to a miss, no throw
+      expect(reported.some((r) => r.category === "cache-read")).toBe(true);
+    });
+
+    it("evicts and reports a CORRUPT L1 entry as cache-corrupt (self-heal)", async () => {
+      const store = makeStore();
+      await store.set("k", createTestData(), 300);
+      await ctx.flush();
+      expect(await store.get("k")).not.toBeNull();
+
+      // Corrupt the L1 body in place, keeping the valid HIT/stale-at headers so
+      // the read reaches response.json() and fails there (partial/truncated body).
+      const internal = (mockCaches._default as any).store as Map<
+        string,
+        { response: Response; expiresAt: number }
+      >;
+      const [url, entry] = [...internal.entries()][0]!;
+      internal.set(url, {
+        response: new Response("{ truncated json", {
+          headers: entry.response.headers,
+        }),
+        expiresAt: entry.expiresAt,
+      });
+
+      const delSpy = vi.spyOn(mockCaches._default, "delete");
+      const { reqCtx, reported } = ctxWithReporter();
+      const result = await runWithRequestContext(reqCtx, () => store.get("k"));
+
+      expect(result).toBeNull(); // degrade
+      expect(reported.some((r) => r.category === "cache-corrupt")).toBe(true);
+      expect(delSpy).toHaveBeenCalled(); // faulty L1 entry evicted
+    });
+
+    it("evicts and reports a CORRUPT KV envelope as cache-corrupt (self-heal)", async () => {
+      const store = makeStore();
+      // Malformed JSON directly at the segment KV key (version-prefixed), no L1.
+      kv.store.set("v/v1/k", "{ not valid json");
+
+      const delSpy = vi.spyOn(kv, "delete");
+      const { reqCtx, reported } = ctxWithReporter();
+      const result = await runWithRequestContext(reqCtx, () => store.get("k"));
+
+      expect(result).toBeNull();
+      expect(reported.some((r) => r.category === "cache-corrupt")).toBe(true);
+      expect(delSpy).toHaveBeenCalledWith("v/v1/k"); // faulty KV entry evicted
+    });
+
+    it("reports a write error via onError and degrades to a no-op", async () => {
+      const store = makeStore();
+      vi.spyOn(mockCaches._default, "put").mockRejectedValue(
+        new Error("cache api write failed"),
+      );
+      const { reqCtx, reported } = ctxWithReporter();
+
+      // setItem must not throw even though the underlying L1 write fails.
+      await runWithRequestContext(reqCtx, () =>
+        store.setItem("k", "v", { ttl: 300 }),
+      );
+      await ctx.flush();
+
+      expect(reported.some((r) => r.category === "cache-write")).toBe(true);
+    });
+  });
 });
