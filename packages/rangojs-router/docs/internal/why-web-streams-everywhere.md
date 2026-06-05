@@ -23,7 +23,7 @@ to Node streams should read this first.
   (`src/rsc/rsc-rendering.ts:217-227`).
 
 `react-dom@19.x` `./server.edge` exports **only** `renderToReadableStream`.
-`./server.node` exports **both** `renderToPipeableStream` *and*
+`./server.node` exports **both** `renderToPipeableStream` _and_
 `renderToReadableStream` — so the edge pin is not about Web Streams availability
 (Node 18+ ships `ReadableStream`/`TransformStream`/`TextEncoder` as globals); it
 is about keeping a single, runtime-identical render path.
@@ -32,7 +32,7 @@ is about keeping a single, runtime-identical render path.
 
 React's docs recommend a per-runtime split — `renderToPipeableStream` on Node,
 `renderToReadableStream` on Web/edge — and Node streams are genuinely faster than
-Web Streams *in isolation* on Node. We still don't adopt it, for two independent
+Web Streams _in isolation_ on Node. We still don't adopt it, for two independent
 reasons, either of which is sufficient:
 
 1. **The downstream pipeline is immovably Web Streams, so a swap pays a
@@ -50,7 +50,7 @@ reasons, either of which is sufficient:
    (`@vitejs/plugin-rsc/vendor/react-server-dom/server.edge`). The plugin
    hard-pins `.edge` for both the `ssr` and `rsc` environments, exposes **no**
    config option to select a render API or stream type, and never imports the
-   `server.node` vendor file it ships. You cannot make the *whole* pipeline
+   `server.node` vendor file it ships. You cannot make the _whole_ pipeline
    Node-streams without forking the plugin.
 
 A partial (HTML-only) swap is therefore "forking-equivalent surgery for no
@@ -65,7 +65,7 @@ runtime-agnostic contract.
 from `srvx/node`). `srvx` drains the Web `ReadableStream` body with
 `stream.getReader()` and pumps chunks into `nodeRes.write()` with `'drain'`
 backpressure — a single, unavoidable Web→Node hop at the very last step. (`srvx`
-has a `stream.pipe(nodeRes)` fast path for bodies that are *already* Node
+has a `stream.pipe(nodeRes)` fast path for bodies that are _already_ Node
 `Readable`s, but a `.edge` render never produces one, so that branch is dead for
 this stack.) This boundary lives entirely in plugin/`srvx` code, not in framework
 source.
@@ -97,7 +97,7 @@ difference here.
 Only if one of these changes — and only then with a benchmark, not on principle:
 
 - `@vitejs/plugin-rsc` ships an opt-in `server.node`/pipeable Flight+SSR mode.
-  Then a *coherent all-Node pipeline* (no mid-pipeline conversion) becomes
+  Then a _coherent all-Node pipeline_ (no mid-pipeline conversion) becomes
   possible and the calculus changes.
 - `rsc-html-stream/server` gains a native Node-stream `injectRSCPayload`,
   removing the Web `TransformStream` constraint on the HTML path.
