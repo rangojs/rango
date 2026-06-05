@@ -80,6 +80,10 @@ details, but they are not the first stop for learning the public API.
   why both render layers use `renderToReadableStream` on Node (not
   `renderToPipeableStream`), the conversion-tax and plugin-locked-Flight
   constraints, and that edge/node conditions resolve correctly
+- [FILE_NAME_CONFLICT build warnings](./internal/file-name-conflict-warnings.md) -
+  why the shared `onwarn` suppresses content-hashed asset re-emit collisions
+  from `@vitejs/plugin-rsc`'s cross-environment copy, the sourcemap-safety
+  argument, and why the warning is only reproducible in a host-router multi-app
 - [Generated route type surfaces handoff](./internal/generated-route-type-surfaces-handoff.md) -
   **completed audit** (findings applied to the skills/docs); retained as the
   record of the three generated type surfaces — `GeneratedRouteMap`, per-module

@@ -168,6 +168,14 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
             client: {
               build: {
                 rollupOptions: {
+                  // FILE_NAME_CONFLICT (and any other client-build warning) is
+                  // emitted by the CLIENT environment build, which consults THIS
+                  // env's onwarn -- Vite 8's environment builds do NOT propagate
+                  // the top-level build.rollupOptions.onwarn into the client env.
+                  // Wire it here so the suppression runs where the conflicts
+                  // originate (the top-level handler is invoked 0x for these; the
+                  // client-env handler is invoked for all of them).
+                  onwarn,
                   output: {
                     manualChunks: getManualChunks,
                   },
@@ -328,6 +336,14 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
             client: {
               build: {
                 rollupOptions: {
+                  // FILE_NAME_CONFLICT (and any other client-build warning) is
+                  // emitted by the CLIENT environment build, which consults THIS
+                  // env's onwarn -- Vite 8's environment builds do NOT propagate
+                  // the top-level build.rollupOptions.onwarn into the client env.
+                  // Wire it here so the suppression runs where the conflicts
+                  // originate (the top-level handler is invoked 0x for these; the
+                  // client-env handler is invoked for all of them).
+                  onwarn,
                   output: {
                     manualChunks: getManualChunks,
                   },
