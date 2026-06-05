@@ -23,6 +23,23 @@ describe("runMiddleware", () => {
     expect(response.headers.get("Location")).toBe("/login");
   });
 
+  it("ctx.reverse does NOT auto-fill the current params (production parity)", async () => {
+    // Production app/response middleware get createReverseFunction(routeMap)
+    // alone — no route name or current params. Reversing a :slug route with no
+    // explicit params must leave it unsubstituted, NOT fill from the request.
+    let reversed: string | undefined;
+    const mw: MiddlewareFn = async (ctx, next) => {
+      reversed = (ctx as { reverse: (n: string) => string }).reverse("post");
+      return next();
+    };
+    await runMiddleware(mw, "/blog/hello", {
+      routeMap: { post: "/blog/:slug" },
+      routeName: "post",
+      params: { slug: "hello" },
+    });
+    expect(reversed).toBe("/blog/:slug");
+  });
+
   it("passes through (next called once) and returns the downstream 200", async () => {
     const mw: MiddlewareFn = async (_ctx, next) => next();
     const { response, nextCalled } = await runMiddleware(mw, "/dashboard");

@@ -18,6 +18,7 @@ import { createRouter } from "../../router.js";
 import { urls } from "../../urls/urls-function.js";
 import { cookies } from "../../server/cookie-store.js";
 import { getRequestContext } from "../../server/request-context.js";
+import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import { RouterError } from "../../errors.js";
 import type { MiddlewareFn } from "../../router/middleware.js";
 
@@ -176,6 +177,32 @@ describe("dispatch", () => {
     expect(reload).not.toContain("_rsc_partial");
     expect(res.headers.get("content-type")).toContain("text/x-component");
     expect(handlerRan).toBe(false);
+  });
+
+  it("wires the router's cache store into the request context", async () => {
+    // Without the store, registerCachedFunction bypasses BEFORE the request-scope
+    // (NOCACHE) check, so the brand would be inert. dispatch must surface the
+    // configured store the way the production handler does.
+    const store = new MemorySegmentCacheStore();
+    const router = createRouter<{}>({ cache: { store } }).routes(
+      urls(({ path }) => [
+        path.json(
+          "/api/probe",
+          () => ({
+            hasStore:
+              (
+                getRequestContext() as unknown as {
+                  _cacheStore?: unknown;
+                }
+              )._cacheStore === store,
+          }),
+          { name: "api.probe" },
+        ),
+      ]),
+    ) as Parameters<typeof dispatch>[0];
+
+    const res = await dispatch(router, "/api/probe");
+    expect((await res.json()).data.hasStore).toBe(true);
   });
 
   it("throws a clear error for an RSC (component) route", async () => {

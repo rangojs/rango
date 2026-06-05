@@ -198,9 +198,10 @@ export interface RenderRouteOptions {
   routeMap?: Record<string, string>;
   /**
    * Theme config in the `createRouter({ theme })` shape (resolved internally) to
-   * wrap the tree in a ThemeProvider. Defaults to no provider, mirroring an app
-   * with no theme configured (where `useTheme()` returns its inert default).
-   * Pass a config (e.g. `true`) to test a component that reads/sets the theme.
+   * wrap the tree in a ThemeProvider. Defaults to no provider. Note: a component
+   * that calls `useTheme()` REQUIRES a provider — it throws "used outside
+   * ThemeProvider" without one — so pass a config (e.g. `true`) to test such a
+   * component.
    */
   theme?: ThemeConfig | true;
 }

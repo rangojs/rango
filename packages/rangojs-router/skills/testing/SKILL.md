@@ -257,6 +257,15 @@ are `renderToFlightString` / e2e territory. Loader data is seeded, never run.
 Needs a DOM env (`// @vitest-environment happy-dom`, or jsdom) and the consumer
 must install `@testing-library/react` (optional peer).
 
+CATCH — streaming `use(promise)` Suspense content (e.g. an async breadcrumb
+`content: Promise<ReactNode>`): a plain `Promise.resolve(node)` does NOT flush
+its Suspense retry in RTL/happy-dom (renderRoute renders internally, not inside
+an awaited `act`), so the DOM stays on the fallback. Assert the **pending**
+fallback with a never-resolving `new Promise(() => {})`; for the **arrived**
+state pass an already-settled promise so `use()` reads it synchronously:
+`const p = Promise.resolve(node) as any; p.status = "fulfilled"; p.value = node;`.
+The real pending→resolved transition is an e2e concern.
+
 ### Type-level test: a reverse misuse should fail to compile
 
 `reverse`/`href` are compile-time checked (`/typesafety`). Pin that contract
