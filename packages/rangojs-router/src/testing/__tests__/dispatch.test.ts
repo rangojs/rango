@@ -122,6 +122,34 @@ describe("dispatch", () => {
     expect(res.status).toBe(404);
   });
 
+  it("builds ctx.reverse WITHOUT auto-filling the matched route's params (production parity)", async () => {
+    // Production's response-route handler builds reverse from the route map
+    // alone (no matched params). dispatch must match: reversing the current
+    // :id route with no explicit params must NOT silently produce the request
+    // URL, or a test would pass where the real handler throws/500s.
+    const router = createRouter<{}>({}).routes(
+      urls(({ path }) => [
+        path.json(
+          "/api/self/:id",
+          (ctx: { reverse: (n: string) => string }) => {
+            try {
+              return { reversed: ctx.reverse("api.self") };
+            } catch (e) {
+              return { error: (e as Error).message };
+            }
+          },
+          { name: "api.self" },
+        ),
+      ]),
+    ) as Parameters<typeof dispatch>[0];
+
+    const res = await dispatch(router, "/api/self/42");
+    const body = (await res.json()) as {
+      data: { reversed?: string; error?: string };
+    };
+    expect(body.data.reversed).not.toBe("/api/self/42");
+  });
+
   it("throws a clear error for an RSC (component) route", async () => {
     const router = buildRouter();
     await expect(dispatch(router, "/")).rejects.toThrow(

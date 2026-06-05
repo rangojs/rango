@@ -13,6 +13,7 @@ import {
 } from "../../server/request-context.js";
 import { createReverseFunction } from "../../router/handler-context.js";
 import { contextSet, type ContextVar } from "../../context-var.js";
+import type { ResolvedThemeConfig } from "../../theme/types.js";
 
 const DEFAULT_ORIGIN = "http://localhost/";
 
@@ -72,6 +73,17 @@ export interface CreateTestContextOptions<TEnv> {
   routeMap?: Record<string, string>;
   routeName?: string;
   params?: Record<string, string>;
+  /**
+   * Router basename for this request (what the RSC handler stores on the
+   * context). Drives redirect() prefixing. Defaults to undefined (no basename).
+   */
+  basename?: string;
+  /**
+   * Theme config the real router/RSC handler would inject. Without it
+   * `ctx.theme`/`ctx.setTheme` are inert (undefined) in a test, mirroring an app
+   * with no theme configured. Pass one to exercise a handler that reads them.
+   */
+  themeConfig?: ResolvedThemeConfig | null;
 }
 
 export interface TestRequestContext<TEnv> {
@@ -97,7 +109,9 @@ export function createTestRequestContext<TEnv>(
     request,
     url,
     variables,
+    themeConfig: opts.themeConfig,
   });
+  if (opts.basename !== undefined) ctx._basename = opts.basename;
   if (opts.params) ctx.params = opts.params;
   if (opts.routeMap) {
     ctx._routeName = opts.routeName;

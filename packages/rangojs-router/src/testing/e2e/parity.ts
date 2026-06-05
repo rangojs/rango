@@ -282,9 +282,14 @@ export function createParity({
       const noJsSnapshot = await snapshot(noJsPage, opts.observe);
 
       expect(noJsSnapshot.testIds).toEqual(jsSnapshot.testIds);
-      expect(new URL(noJsSnapshot.url).pathname).toEqual(
-        new URL(jsSnapshot.url).pathname,
-      );
+      // Compare pathname + search + hash, not pathname alone: a JS vs no-JS flow
+      // that diverges only in query/hash (e.g. /search?q=a vs /search?q=b) would
+      // otherwise pass.
+      const locationOf = (u: string): string => {
+        const url = new URL(u);
+        return url.pathname + url.search + url.hash;
+      };
+      expect(locationOf(noJsSnapshot.url)).toEqual(locationOf(jsSnapshot.url));
       expect(noJsSnapshot.cookies).toEqual(jsSnapshot.cookies);
     } finally {
       await noJsContext.close();

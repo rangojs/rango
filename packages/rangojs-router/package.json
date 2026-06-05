@@ -147,6 +147,11 @@
       "types": "./src/testing/flight.entry.ts",
       "react-server": "./src/testing/flight.entry.ts",
       "default": "./src/testing/flight.entry.ts"
+    },
+    "./testing/flight-matchers": {
+      "types": "./src/testing/flight-matchers.ts",
+      "react-server": "./src/testing/flight-matchers.ts",
+      "default": "./src/testing/flight-matchers.ts"
     }
   },
   "publishConfig": {
@@ -196,7 +201,8 @@
     "@vitejs/plugin-rsc": "^0.5.26",
     "react": ">=19.2.6 <20",
     "react-dom": ">=19.2.6 <20",
-    "vite": "^8.0.0"
+    "vite": "^8.0.0",
+    "vitest": ">=3"
   },
   "peerDependenciesMeta": {
     "@cloudflare/vite-plugin": {
@@ -209,6 +215,9 @@
       "optional": true
     },
     "vite": {
+      "optional": true
+    },
+    "vitest": {
       "optional": true
     }
   }

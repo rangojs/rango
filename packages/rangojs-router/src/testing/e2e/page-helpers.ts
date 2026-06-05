@@ -71,16 +71,24 @@ export async function waitForNavigation(
 
 /** Navigate back and wait for navigation to complete. */
 export async function goBack(page: Page): Promise<void> {
+  // Wait for the URL to actually CHANGE. A `/.*/ ` pattern matches the current
+  // URL immediately, so it would resolve before the history navigation happened.
+  const from = page.url();
   await Promise.all([
-    page.waitForURL(/.*/, { waitUntil: "networkidle" }),
+    page.waitForURL((url) => url.toString() !== from, {
+      waitUntil: "networkidle",
+    }),
     page.goBack(),
   ]);
 }
 
 /** Navigate forward and wait for navigation to complete. */
 export async function goForward(page: Page): Promise<void> {
+  const from = page.url();
   await Promise.all([
-    page.waitForURL(/.*/, { waitUntil: "networkidle" }),
+    page.waitForURL((url) => url.toString() !== from, {
+      waitUntil: "networkidle",
+    }),
     page.goForward(),
   ]);
 }

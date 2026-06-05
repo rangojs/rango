@@ -27,6 +27,7 @@ import {
   type CreateTestContextOptions,
   type VarsInit,
 } from "./internal/context.js";
+import type { ResolvedThemeConfig } from "../theme/types.js";
 
 /**
  * Options for runMiddleware.
@@ -42,6 +43,10 @@ export interface RunMiddlewareOptions<TEnv = any> {
   routeMap?: Record<string, string>;
   /** Matched route name for scoped `.name` reverse resolution. */
   routeName?: string;
+  /** Router basename surfaced on the context (drives redirect() prefixing). */
+  basename?: string;
+  /** Theme config the real handler would inject (enables ctx.theme/ctx.setTheme). */
+  themeConfig?: ResolvedThemeConfig | null;
   /**
    * Terminal handler invoked when the chain calls `next()` all the way through.
    * Defaults to a 200 empty Response. Use this to model the downstream
@@ -97,6 +102,8 @@ export async function runMiddleware<TEnv = any>(
     routeMap: opts.routeMap,
     routeName: opts.routeName,
     params: opts.params,
+    basename: opts.basename,
+    themeConfig: opts.themeConfig,
   };
 
   const {

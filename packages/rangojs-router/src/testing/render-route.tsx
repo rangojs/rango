@@ -44,6 +44,7 @@ import { compilePattern } from "../router/pattern-matching.js";
 import type { LoaderDefinition } from "../types.js";
 import type { LocationStateDefinition } from "../browser/react/location-state-shared.js";
 import type { Handle } from "../handle.js";
+import type { ResolvedThemeConfig } from "../theme/types.js";
 
 const TEST_ORIGIN = "http://localhost";
 
@@ -194,6 +195,13 @@ export interface RenderRouteOptions {
    * is not consumed by the client hooks.
    */
   routeMap?: Record<string, string>;
+  /**
+   * Theme config to wrap the tree in a ThemeProvider. Defaults to `null` (no
+   * provider), mirroring an app with no theme configured — in which case
+   * `useTheme()` returns its inert default. Pass a config to test a component
+   * that reads/sets the theme.
+   */
+  themeConfig?: ResolvedThemeConfig | null;
 }
 
 /**
@@ -479,7 +487,7 @@ export async function renderRoute(
       eventController={eventController}
       initialPayload={{ root: initialTree, metadata: initialMetadata }}
       bridge={bridge}
-      themeConfig={null}
+      themeConfig={options.themeConfig ?? null}
     />,
   );
 

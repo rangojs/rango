@@ -19,7 +19,9 @@ function) is slow; one too low (a node test for Flight) fails to compile or
 silently asserts nothing.
 
 For the prose guide with full setup and migration, see
-[`docs/testing.md`](../../docs/testing.md).
+[`docs/testing.md`](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md)
+(the `docs/` directory is not shipped in the published package, so this is an
+absolute link).
 
 ## When to use
 

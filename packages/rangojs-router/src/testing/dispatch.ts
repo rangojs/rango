@@ -45,6 +45,7 @@ import type {
   MiddlewareFn,
 } from "../router/middleware-types.js";
 import { createReverseFunction } from "../router/handler-context.js";
+import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import { setRouterManifest } from "../route-map-builder.js";
 import { RESPONSE_TYPE_MIME } from "../router/content-negotiation.js";
 import { RouterError } from "../errors.js";
@@ -254,12 +255,19 @@ export async function dispatch<TEnv = any>(
     url,
     variables,
   });
-  requestContext._basename = undefined;
+  // Match production: the RSC handler stores the router's basename on the
+  // request context (handler.ts), and redirect() prefixes root-relative URLs
+  // with it. Mirror it so basename-redirect tests behave as they do in a real
+  // mounted app instead of always seeing no prefix.
+  requestContext._basename = (router as { basename?: string }).basename;
 
+  // Match production's response-route reverse EXACTLY: the real handler builds
+  // it from the route map alone (response-route-handler.ts), with NO matched
+  // routeKey or params. Passing routeKey/params here would auto-fill params from
+  // the matched route, so ctx.reverse("name") could pass in a test while the
+  // real handler throws for the missing param.
   const reverse = createReverseFunction(
     router.routeMap as Record<string, string>,
-    routeKey,
-    params,
   ) as (
     name: string,
     p?: Record<string, string>,
@@ -295,6 +303,10 @@ export async function dispatch<TEnv = any>(
       executionContext: requestContext.executionContext,
       _responseType: responseType,
     };
+    // Brand as request-scoped so a "use cache" inside a response-route handler
+    // is detected as a request-scope violation here exactly as in production
+    // (response-route-handler.ts brands the same shape).
+    (responseHandlerCtx as Record<symbol, unknown>)[NOCACHE_SYMBOL] = true;
 
     const callHandler = async (): Promise<Response> => {
       let serialized: Response;

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  assertFlightRuntimeAvailable,
-  flightMatchers,
   renderToFlightString,
+  assertFlightRuntimeAvailable,
 } from "@rangojs/router/testing/flight";
+import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 
 expect.extend(flightMatchers);
 

@@ -1,10 +1,28 @@
 import { describe, it, expect } from "vitest";
 import { runMiddleware } from "../run-middleware.js";
 import { cookies } from "../../server/cookie-store.js";
+import { redirect } from "../../route-definition/redirect.js";
 import type { MiddlewareFn } from "../../router/middleware.js";
 import type { RequestContext } from "../../server/request-context.js";
 
 describe("runMiddleware", () => {
+  it("prefixes a redirect() Location with the seeded basename", async () => {
+    // redirect() reads _basename from the active request context; seeding
+    // `basename` lets a middleware redirect be tested as it behaves in a real
+    // sub-path-mounted app (instead of always producing no prefix).
+    const mw: MiddlewareFn = async () => redirect("/login");
+    const { response } = await runMiddleware(mw, "/dashboard", {
+      basename: "/app",
+    });
+    expect(response.headers.get("Location")).toBe("/app/login");
+  });
+
+  it("does NOT prefix the redirect when no basename is seeded", async () => {
+    const mw: MiddlewareFn = async () => redirect("/login");
+    const { response } = await runMiddleware(mw, "/dashboard");
+    expect(response.headers.get("Location")).toBe("/login");
+  });
+
   it("passes through (next called once) and returns the downstream 200", async () => {
     const mw: MiddlewareFn = async (_ctx, next) => next();
     const { response, nextCalled } = await runMiddleware(mw, "/dashboard");

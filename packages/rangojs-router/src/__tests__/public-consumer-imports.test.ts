@@ -61,6 +61,9 @@ function runConsumerTypecheck(files: Record<string, string>) {
             "@rangojs/router/testing/flight": [
               publicTypeEntry("./testing/flight"),
             ],
+            "@rangojs/router/testing/flight-matchers": [
+              publicTypeEntry("./testing/flight-matchers"),
+            ],
           },
           typeRoots: [resolve(packageRoot, "node_modules", "@types")],
           types: ["node", "react"],
@@ -187,7 +190,8 @@ import {
 import { rangoTestAliases } from "@rangojs/router/testing/vitest";
 import { renderRoute } from "@rangojs/router/testing/dom";
 import { createRangoE2E } from "@rangojs/router/testing/e2e";
-import { renderToFlightString, flightMatchers } from "@rangojs/router/testing/flight";
+import { renderToFlightString } from "@rangojs/router/testing/flight";
+import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 
 void runMiddleware;
 void runLoader;

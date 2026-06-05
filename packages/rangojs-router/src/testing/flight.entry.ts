@@ -8,8 +8,10 @@
  * configured with that condition (see vitest.rsc.config.ts) — name those test
  * files `*.rsc-test.{ts,tsx}` and run `pnpm test:unit:rsc`.
  *
- * Importing this module also registers the `toMatchFlight` / `toMatchFlightSnapshot`
- * matcher type augmentation on Vitest's `expect`.
+ * This entry deliberately does NOT pull in Vitest. The `toMatchFlight` /
+ * `toMatchFlightSnapshot` matchers (which import `vitest`) live at the separate
+ * `@rangojs/router/testing/flight-matchers` subpath, so a consumer can import
+ * `renderToFlightString` without taking a hard dependency on Vitest.
  */
 
 export {
@@ -18,4 +20,3 @@ export {
   assertFlightRuntimeAvailable,
 } from "./flight.js";
 export type { RenderToFlightStringOptions } from "./flight.js";
-export { flightMatchers } from "./flight-matchers.js";

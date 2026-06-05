@@ -34,6 +34,20 @@ describe("runLoader", () => {
     expect(result).toBe("shoes");
   });
 
+  it("seeds the typed ctx.search via searchData (distinct from raw searchParams)", async () => {
+    const result = await runLoader(async (ctx) => ctx.search, {
+      searchData: { q: "shoes", page: 2, inStock: true },
+    });
+    expect(result).toEqual({ q: "shoes", page: 2, inStock: true });
+  });
+
+  it("defaults ctx.search to {} when searchData is omitted", async () => {
+    const result = await runLoader(async (ctx) => ctx.search, {
+      search: { q: "raw" },
+    });
+    expect(result).toEqual({});
+  });
+
   it("reads variables seeded via vars (string key and ContextVar)", async () => {
     const User = createVar<{ name: string }>();
     const result = await runLoader(

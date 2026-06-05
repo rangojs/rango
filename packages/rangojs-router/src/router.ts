@@ -163,7 +163,8 @@ export function createRouter<TEnv = any>(
   // debugCacheSignal option OR the RANGO_TEST_SIGNALS=1 env flag. When off,
   // no X-Rango-Cache header is emitted and output is byte-identical.
   const cacheSignalEnabled =
-    debugCacheSignalOption || process.env.RANGO_TEST_SIGNALS === "1";
+    debugCacheSignalOption ||
+    (typeof process !== "undefined" && process.env.RANGO_TEST_SIGNALS === "1");
 
   // Normalize basename: ensure leading slash, strip trailing slash.
   // A bare "/" is equivalent to no basename.

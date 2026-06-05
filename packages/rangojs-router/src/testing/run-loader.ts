@@ -26,6 +26,7 @@ import { createReverseFunction } from "../router/handler-context.js";
 import type { LoaderContext, LoaderDefinition } from "../types.js";
 import type { ContextVar } from "../context-var.js";
 import type { Handle } from "../handle.js";
+import type { ResolvedThemeConfig } from "../theme/types.js";
 import {
   createTestRequestContext,
   type CreateTestContextOptions,
@@ -74,6 +75,20 @@ export interface RunLoaderOptions<TEnv = any> {
   params?: Record<string, string>;
   /** Search params; merged into the request URL so `ctx.searchParams` reflects them. */
   search?: Record<string, string>;
+  /**
+   * The TYPED `ctx.search` object a route's search schema would produce. Distinct
+   * from `search` (which sets the raw `ctx.searchParams`): a loader on a typed
+   * search route reads `ctx.search`, which is otherwise `{}` in a test.
+   */
+  searchData?: Record<string, unknown>;
+  /** Router basename surfaced on the context (drives redirect() prefixing). */
+  basename?: string;
+  /**
+   * Theme config the real router/RSC handler would inject. Without it
+   * `ctx.theme`/`ctx.setTheme` are inert (undefined). Pass one to test a loader
+   * that reads them.
+   */
+  themeConfig?: ResolvedThemeConfig | null;
   /** Environment bindings surfaced as `ctx.env`. */
   env?: TEnv;
   /** Override the backing Request (string or Request). Defaults to a localhost GET. */
@@ -141,6 +156,8 @@ export async function runLoader<T>(
     routeMap: opts.routeMap,
     routeName: opts.routeName,
     params: opts.params,
+    basename: opts.basename,
+    themeConfig: opts.themeConfig,
   };
 
   const { ctx } = createTestRequestContext(ctxOpts);
@@ -168,7 +185,7 @@ export async function runLoader<T>(
       routeParams: (opts.params ?? {}) as Record<string, string>,
       request: reqCtx.request,
       searchParams: ctx.searchParams,
-      search: {},
+      search: opts.searchData ?? {},
       pathname: reqCtx.pathname,
       url: reqCtx.url,
       originalUrl: reqCtx.originalUrl,

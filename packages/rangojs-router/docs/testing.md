@@ -63,6 +63,32 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 | `Prerender(...)` routes                       | served from a build-time artifact (a cache hit)     | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`        | `/prerender`                             |
 | the generated `*.named-routes.gen.ts`         | it matches the runtime route map (drift in CI)      | unit (node)         | `assertGeneratedRoutesMatch`                   | `/typesafety`                            |
 
+## What these primitives deliberately don't cover
+
+The unit/integration primitives test the **pieces** (a loader body, a middleware
+fn, a seeded component read, a collect fn). They do NOT run the real server, real
+Flight round-trip, or the client navigation lifecycle. Several behaviors look
+unit-testable but are not — a test can mount/run and go green while proving
+nothing. Know these traps, and the seeds that close the easy ones:
+
+| Looks testable, but…                                                                                                                        | Reality                                                                                                                                   | What to do                                                                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `useNavigation()` / `useLinkStatus()` / `useAction()` **non-idle** states (loading/streaming/pending, action result/error) in `renderRoute` | `renderRoute.navigate()` bypasses the navigation lifecycle, so the controller never leaves `idle` — you can only assert the idle snapshot | Test the pending/streaming UI at **e2e**                                                          |
+| `ctx.search` (typed search schema) in a loader                                                                                              | Defaults to `{}`; `opts.search` only sets the raw `ctx.searchParams`                                                                      | Seed the typed object with **`searchData`** on `runLoader`                                        |
+| `ctx.theme` / `ctx.setTheme` in a handler                                                                                                   | Always `undefined` — the real handler injects the theme config                                                                            | Pass **`themeConfig`** to `runLoader`/`runMiddleware`/`renderRoute`                               |
+| `redirect()` basename prefixing                                                                                                             | Defaults to no prefix                                                                                                                     | Seed **`basename`** on `runLoader`/`runMiddleware`; `dispatch` uses the router's own basename     |
+| `useReverse`/`useHref` under an `include('/shop', …)` mount in `renderRoute`                                                                | `renderRoute` does not model include mounts — reverse/href come back **un-prefixed**                                                      | Assert mount-prefixed URLs at **e2e**, or pass the fully-mounted pattern to `useReverse` directly |
+| `dispatch(router, req)` as a full request→response                                                                                          | Throws on RSC/component routes; rejects action/partial requests; only response routes + redirects + 404 + content negotiation             | Use `renderToFlightString` (Flight) or e2e for anything that renders                              |
+| `renderToFlightString` of a realistic page                                                                                                  | Pure **leaf / server-only** — a client island emits an un-hydratable `I[...]` row                                                         | Keep Flight tests to leaf server components; test full pages at e2e                               |
+
+The **real wiring** is e2e by construction and intentionally out of scope here:
+server actions + revalidation, `cache()` hit/miss/stale over real requests,
+prerender serving, progressive-enhancement parity, the Flight serialize→hydrate
+round-trip, and server→client reference identity (the remount-bug class — a
+client reference must resolve to the same client reference, which only a real
+hydrated render exercises). For those, reach for `createRangoE2E` /
+`parityDescribe` / `assertCacheStatus`.
+
 ## Setup
 
 ### Dependencies
@@ -70,15 +96,16 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 Install vitest plus the optional peers for the layers you use:
 
 ```bash
-pnpm add -D vitest @testing-library/react happy-dom @playwright/test
+pnpm add -D vitest @testing-library/react @testing-library/dom happy-dom @playwright/test
 ```
 
-- `vitest` — the unit/integration/RSC test runner. Run the `@rangojs/router/testing`
-  primitives under a **Vite-driven** Vitest config that includes the rango Vite
-  plugin: the router internals import the `@rangojs/router:version` virtual
-  module, so a plain-node Vitest with no plugin (and no `@rangojs/router:version`
-  alias) cannot load them.
-- `@testing-library/react` + a DOM env (`happy-dom` or `jsdom`) — required for
+- `vitest` — the unit/integration/RSC test runner. The router internals import
+  the `@rangojs/router:version` virtual module, so a plain-node Vitest cannot
+  load them as-is; use the **`rangoTestAliases()` preset** (next section) to
+  resolve them — you do NOT need to wire the full rango Vite plugin into the test
+  config.
+- `@testing-library/react` (and its `@testing-library/dom` peer) + a DOM env
+  (`happy-dom` or `jsdom`) — required for
   `renderRoute`, which lives at its own entry `@rangojs/router/testing/dom` and
   lazy-loads RTL at call time. Both are optional peers; the `@rangojs/router/testing`
   barrel never references them, so a unit suite testing only loaders/middleware/`dispatch`
@@ -454,34 +481,35 @@ response routes are auto-wrapped as `{ data: <value> }`. Cookies and
 Under the react-server vitest project (`*.rsc-test.{ts,tsx}`, run via
 `pnpm test:unit:rsc`):
 
+The matchers live at the separate `@rangojs/router/testing/flight-matchers`
+subpath (they import `vitest`); `renderToFlightString` itself does not pull in
+Vitest. Keep the component a **pure leaf** — receive data as props, do NOT import
+a server API from the `@rangojs/router` barrel (see the caveat below):
+
 ```tsx
 import { it, expect } from "vitest";
-import {
-  renderToFlightString,
-  flightMatchers,
-} from "@rangojs/router/testing/flight";
-import { getRequestContext } from "@rangojs/router";
+import { renderToFlightString } from "@rangojs/router/testing/flight";
+import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 expect.extend(flightMatchers);
 
-async function Profile() {
-  const ctx = getRequestContext(); // request context is active
-  return <h1>User {ctx.params.id}</h1>;
+// Pure leaf server component: data comes in as props, not from getRequestContext.
+async function Profile({ id }: { id: string }) {
+  const user = await Promise.resolve({ name: `User ${id}` });
+  return <h1>{user.name}</h1>;
 }
 
-it("renders an async server component reading params", async () => {
-  const flight = await renderToFlightString(<Profile />, {
-    url: "http://localhost/users/7",
-    params: { id: "7" },
-    routeName: "users.show",
-  });
-  expect(flight).toMatchFlight("User ");
-  expect(flight).toMatchFlight("7");
+it("renders an async server component to Flight", async () => {
+  const flight = await renderToFlightString(<Profile id="7" />);
+  expect(flight).toMatchFlight("User 7");
 });
 ```
 
 `toMatchFlight(substring)` is containment on the normalized string (row framing
 is an internal detail). `toMatchFlightSnapshot()` snapshots the normalized
-payload. Options: `url`, `headers`, `env`, `params`, `routeName`.
+payload. `renderToFlightString` options (`url`, `headers`, `env`, `params`,
+`routeName`) set up the request context for a component that genuinely needs it
+via internal imports — but a **consumer** importing those server APIs from the
+barrel hits the caveat below, so prefer props.
 
 Scope: server-only / leaf trees. A client component in the tree emits an
 unresolved `I[...]` import row against the empty client manifest — fine for
