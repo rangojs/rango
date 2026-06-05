@@ -17,6 +17,20 @@
 
 import { _getRequestContext } from "../server/request-context.js";
 
+/**
+ * Minimal shape of a request context for error reporting. Passed explicitly by
+ * background tasks (waitUntil) where the ALS context is already gone, so the
+ * error can still reach the router's onError. Structural to avoid importing the
+ * full RequestContext type (request-context.ts imports CacheErrorCategory from
+ * here - a mutual type-only reference).
+ */
+export interface CacheErrorReporter {
+  _reportBackgroundError?: (
+    error: unknown,
+    category: CacheErrorCategory,
+  ) => void;
+}
+
 export type CacheErrorCategory =
   /** A read failed (transient infra: KV/Cache API error). Degrade to a miss. */
   | "cache-read"
@@ -32,21 +46,34 @@ export type CacheErrorCategory =
    */
   | "cache-corrupt"
   /** A tag-invalidation side effect failed (e.g. the eager CDN purge hook). */
-  | "cache-invalidate";
+  | "cache-invalidate"
+  /**
+   * A background stale-while-revalidate refresh failed (the `"use cache"`
+   * read-through path). The stale value was already served; the refresh that
+   * would have replaced it errored.
+   */
+  | "stale-revalidation";
 
 /**
  * Report a non-fatal cache error loudly without failing the request: always logs
  * (label + error) and, when a request context is available, routes the error
  * through the router's onError callback. Never throws.
+ *
+ * `ctx` is for callers running in a detached background task (waitUntil), where
+ * the ALS request context is already gone (so `_getRequestContext()` is null):
+ * they capture the context up front and pass it here so onError still fires.
+ * Foreground callers omit it and fall back to the ALS context.
  */
 export function reportCacheError(
   error: unknown,
   category: CacheErrorCategory,
   label: string,
+  ctx?: CacheErrorReporter,
 ): void {
   console.error(`${label}:`, error);
   try {
-    _getRequestContext()?._reportBackgroundError?.(error, category);
+    const target = ctx ?? _getRequestContext();
+    target?._reportBackgroundError?.(error, category);
   } catch {
     // Reporting must never itself break the cache path.
   }
@@ -58,16 +85,20 @@ export function reportCacheError(
  * (non-blocking L1 writes, KV persistence, L1 promotion) reports failures via
  * onError instead of throwing or silently swallowing. Never rejects.
  *
+ * Pass `ctx` when the task runs detached (the ALS context is gone) and the
+ * failure should still reach onError; omit it to fall back to the ALS context.
+ *
  * @example this.waitUntil(() => reportingAsync(() => cache.put(req, res), "cache-write", "[CFCacheStore] L1 write"))
  */
 export async function reportingAsync(
   task: () => Promise<unknown>,
   category: CacheErrorCategory,
   label: string,
+  ctx?: CacheErrorReporter,
 ): Promise<void> {
   try {
     await task();
   } catch (error) {
-    reportCacheError(error, category, label);
+    reportCacheError(error, category, label, ctx);
   }
 }

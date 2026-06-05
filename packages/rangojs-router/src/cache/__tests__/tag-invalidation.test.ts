@@ -203,4 +203,37 @@ describe("revalidateTag (background / SWR)", () => {
     expect(await app.getItem("a")).toBeNull();
     expect(await custom.getItem("c")).toBeNull();
   });
+
+  it("reports a failed background invalidation via onError (cache-invalidate) rather than swallowing it (#3)", async () => {
+    // revalidateTag is fire-and-forget, so the only way a failed durable write
+    // is observable is through onError. It runs in a detached waitUntil where the
+    // ALS context is gone, so the captured ctx must be threaded to the reporter.
+    const failing = {
+      get: async () => null,
+      set: async () => {},
+      delete: async () => false,
+      invalidateTags: vi.fn().mockRejectedValue(new Error("KV unavailable")),
+    } as unknown as SegmentCacheStore;
+    const ctx = makeCtx({ cacheStore: failing });
+
+    const reported: Array<{ error: unknown; category: string }> = [];
+    (ctx as unknown as Record<string, unknown>)._reportBackgroundError = (
+      error: unknown,
+      category: string,
+    ) => reported.push({ error, category });
+
+    // Capture the detached waitUntil task so the test can await it.
+    const pending: Promise<unknown>[] = [];
+    ctx.waitUntil = (fn: () => Promise<void>) => {
+      pending.push(Promise.resolve().then(fn));
+    };
+
+    await runWithRequestContext(ctx, async () => {
+      revalidateTag("products");
+    });
+    await Promise.all(pending);
+
+    expect(failing.invalidateTags).toHaveBeenCalled();
+    expect(reported.some((r) => r.category === "cache-invalidate")).toBe(true);
+  });
 });

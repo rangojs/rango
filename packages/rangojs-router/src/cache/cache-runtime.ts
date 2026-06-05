@@ -293,7 +293,15 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             }
           } catch (bgError) {
             bgStopCapture?.();
-            requestCtx?._reportBackgroundError?.(bgError, "stale-revalidation");
+            // Pass requestCtx explicitly: this runs in a detached background
+            // task where the ALS context is gone, so onError can only fire if
+            // we hand it the context captured up front.
+            reportCacheError(
+              bgError,
+              "stale-revalidation",
+              "[use cache] background revalidation failed",
+              requestCtx,
+            );
           } finally {
             for (const arg of bgTaintedArgs) {
               unstampCacheExec(arg as object);

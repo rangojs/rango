@@ -24,6 +24,7 @@
  */
 
 import { _getRequestContext } from "../server/request-context.js";
+import { reportingAsync } from "./cache-error.js";
 import { normalizeTags } from "./cache-tag.js";
 import type { SegmentCacheStore } from "./types.js";
 
@@ -155,9 +156,12 @@ export async function updateTag(...tags: string[]): Promise<void> {
  *
  * Fire-and-forget: because this returns void and runs in the background, a
  * failed durable marker write (e.g. a transient KV outage) is NOT surfaced to
- * the caller - it is logged via the background-task error path. If you need the
- * invalidation to be CONFIRMED (and to retry on failure), use `await updateTag()`
- * instead, which rejects when a store's durable write fails.
+ * the caller. It IS reported - logged loudly and routed through the router's
+ * `onError` callback (phase `cache`, `metadata.category === "cache-invalidate"`)
+ * via reportingAsync - so the failure is observable in telemetry even though it
+ * cannot be awaited. If you need the invalidation to be CONFIRMED (and to retry
+ * on failure), use `await updateTag()` instead, which rejects when a store's
+ * durable write fails.
  *
  * @example
  * ```typescript
@@ -181,11 +185,22 @@ export function revalidateTag(...tags: string[]): void {
   if (incapable > 0) warnPartialTagStore("revalidateTag", incapable);
 
   const ctx = _getRequestContext();
-  const run = () => invalidateAcross(capable, valid);
+  // reportingAsync never rejects: it catches a failed durable write and routes
+  // it through reportCacheError (loud log + onError). This is the only place a
+  // revalidateTag failure can be observed, since it is not awaitable. Pass ctx
+  // explicitly - the run executes in a detached waitUntil where the ALS context
+  // is gone, so onError fires only if we hand it the captured context.
+  const run = () =>
+    reportingAsync(
+      () => invalidateAcross(capable, valid),
+      "cache-invalidate",
+      "[revalidateTag] background invalidation",
+      ctx,
+    );
   if (ctx?.waitUntil) {
     ctx.waitUntil(run);
   } else {
     // No request context (e.g. called outside ALS): best-effort background run.
-    run().catch(() => {});
+    void run();
   }
 }

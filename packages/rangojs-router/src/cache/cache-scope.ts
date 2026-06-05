@@ -432,7 +432,11 @@ export class CacheScope {
           );
         }
       } catch (error) {
-        console.error(`[CacheScope] Failed to cache ${key}:`, error);
+        reportCacheError(
+          error,
+          "cache-write",
+          `[CacheScope] Failed to cache ${key}`,
+        );
       }
     });
   }

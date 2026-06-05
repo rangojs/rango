@@ -426,6 +426,29 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       expect(cacheTag).toBe("rg:shop,rg:shop:lk,rg:shop:lk:products");
       putSpy.mockRestore();
     });
+
+    it("write-through fans out an L1 marker for EVERY invalidated tag, not just the last", async () => {
+      // Guards the per-tag fan-out (Promise.all over tags). An off-by-one that
+      // only wrote the last tag's marker would still pass single-tag tests.
+      const store = makeStore({ tagCacheTtl: 60 });
+      const putSpy = vi.spyOn(mockCaches._default, "put");
+
+      await runWithRequestContext(makeReqCtx(), () =>
+        store.invalidateTags(["alpha", "beta", "gamma"]),
+      );
+      await ctx.flush();
+
+      const markerWritten = (tag: string) =>
+        putSpy.mock.calls.some(([req]) =>
+          decodeURIComponent((req as Request).url).includes(
+            `__tagmarker__/${tag}`,
+          ),
+        );
+      expect(markerWritten("alpha")).toBe(true);
+      expect(markerWritten("beta")).toBe(true);
+      expect(markerWritten("gamma")).toBe(true);
+      putSpy.mockRestore();
+    });
   });
 
   describe("non-Latin1 tags (header ByteString safety)", () => {
@@ -637,11 +660,45 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       vi.spyOn(mockCaches._default, "match").mockRejectedValueOnce(
         new Error("cache api unavailable"),
       );
+      const delSpy = vi.spyOn(mockCaches._default, "delete");
       const { reqCtx, reported } = ctxWithReporter();
       const result = await runWithRequestContext(reqCtx, () => store.get("k"));
 
       expect(result).toBeNull(); // degraded to a miss, no throw
       expect(reported.some((r) => r.category === "cache-read")).toBe(true);
+      // A transient L1 error must NOT be mistaken for corruption: the entry is
+      // left intact (no eviction), unlike the cache-corrupt self-heal path.
+      expect(reported.some((r) => r.category === "cache-corrupt")).toBe(false);
+      expect(delSpy).not.toHaveBeenCalled();
+    });
+
+    it("a TRANSIENT KV read error degrades to a miss WITHOUT evicting the still-good entry (#1)", async () => {
+      // The whole point of reading KV as text + parsing manually: a 5xx/429/
+      // network blip must not delete a healthy cross-colo entry (miss storm).
+      const store = makeStore();
+      await store.set("k", createTestData(), 300);
+      await ctx.flush();
+      mockCaches.clear(); // force an L1 miss so the read falls through to KV
+
+      const getSpy = vi
+        .spyOn(kv, "get")
+        .mockRejectedValueOnce(new Error("KV 503 transient"));
+      const delSpy = vi.spyOn(kv, "delete");
+      const { reqCtx, reported } = ctxWithReporter();
+
+      const result = await runWithRequestContext(reqCtx, () => store.get("k"));
+
+      expect(result).toBeNull(); // degraded to a miss, no throw
+      expect(reported.some((r) => r.category === "cache-read")).toBe(true);
+      expect(reported.some((r) => r.category === "cache-corrupt")).toBe(false);
+      expect(delSpy).not.toHaveBeenCalled(); // the good KV entry survives
+
+      // Once the blip clears, the SAME KV entry is still readable.
+      getSpy.mockRestore();
+      const recovered = await runWithRequestContext(reqCtx, () =>
+        store.get("k"),
+      );
+      expect(recovered).not.toBeNull();
     });
 
     it("evicts and reports a CORRUPT L1 entry as cache-corrupt (self-heal)", async () => {
@@ -701,6 +758,102 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       await ctx.flush();
 
       expect(reported.some((r) => r.category === "cache-write")).toBe(true);
+    });
+  });
+
+  describe("reserved tag-marker namespace guard", () => {
+    function ctxWithReporter() {
+      const reported: Array<{ error: unknown; category: string }> = [];
+      const reqCtx = makeReqCtx();
+      (reqCtx as any)._reportBackgroundError = (
+        error: unknown,
+        category: string,
+      ) => reported.push({ error, category });
+      return { reqCtx, reported };
+    }
+
+    it("a segment key colliding with __tag__/ is rejected (no write, no marker clobber) and reported", async () => {
+      const store = makeStore();
+      // Establish a live marker for tag "x" via a real invalidation.
+      await runWithRequestContext(makeReqCtx(), () =>
+        store.invalidateTags(["x"]),
+      );
+      await ctx.flush();
+      const markerBefore = kv.store.get("v/v1/__tag__/x");
+      expect(markerBefore).toBeDefined();
+
+      // A misconfigured keyGenerator returning "__tag__/x" must NOT overwrite
+      // the marker; the write is a reported no-op.
+      const { reqCtx, reported } = ctxWithReporter();
+      await runWithRequestContext(reqCtx, () =>
+        store.set("__tag__/x", createTestData(), 300),
+      );
+      await ctx.flush();
+
+      expect(kv.store.get("v/v1/__tag__/x")).toBe(markerBefore); // untouched
+      expect(reported.some((r) => r.category === "cache-write")).toBe(true);
+    });
+
+    it("a reserved-key get/delete is a reported miss/no-op and never evicts the marker", async () => {
+      const store = makeStore();
+      await runWithRequestContext(makeReqCtx(), () =>
+        store.invalidateTags(["x"]),
+      );
+      await ctx.flush();
+      expect(kv.store.get("v/v1/__tag__/x")).toBeDefined();
+
+      const delSpy = vi.spyOn(kv, "delete");
+      const { reqCtx, reported } = ctxWithReporter();
+
+      const got = await runWithRequestContext(reqCtx, () =>
+        store.get("__tag__/x"),
+      );
+      const deleted = await runWithRequestContext(reqCtx, () =>
+        store.delete("__tag__/x"),
+      );
+
+      expect(got).toBeNull();
+      expect(deleted).toBe(false);
+      expect(delSpy).not.toHaveBeenCalledWith("v/v1/__tag__/x"); // marker safe
+      expect(kv.store.get("v/v1/__tag__/x")).toBeDefined();
+      expect(reported.some((r) => r.category === "cache-read")).toBe(true);
+      expect(reported.some((r) => r.category === "cache-delete")).toBe(true);
+    });
+
+    it("also guards the __tagmarker__/ L1-marker namespace (set/get/delete are reported no-ops/misses, marker untouched)", async () => {
+      // The L1 marker lives in the Cache API under a __tagmarker__/<tag> request
+      // URL, a DIFFERENT prefix from the KV __tag__/ key - a colliding segment
+      // key would slip past a __tag__/-only guard. The guard returns before any
+      // Cache API call, so the marker request URL is never written or deleted.
+      const store = makeStore({ tagCacheTtl: 60 });
+      const putSpy = vi.spyOn(mockCaches._default, "put");
+      const delSpy = vi.spyOn(mockCaches._default, "delete");
+      const { reqCtx, reported } = ctxWithReporter();
+
+      await runWithRequestContext(reqCtx, () =>
+        store.set("__tagmarker__/x", createTestData(), 300),
+      );
+      const got = await runWithRequestContext(reqCtx, () =>
+        store.get("__tagmarker__/x"),
+      );
+      const deleted = await runWithRequestContext(reqCtx, () =>
+        store.delete("__tagmarker__/x"),
+      );
+      await ctx.flush();
+
+      const touchedMarker = (calls: unknown[][]) =>
+        calls.some(([req]) =>
+          decodeURIComponent((req as Request).url).includes("__tagmarker__/x"),
+        );
+
+      expect(got).toBeNull();
+      expect(deleted).toBe(false);
+      // marker namespace never written or evicted by the segment ops
+      expect(touchedMarker(putSpy.mock.calls)).toBe(false);
+      expect(touchedMarker(delSpy.mock.calls)).toBe(false);
+      expect(reported.some((r) => r.category === "cache-write")).toBe(true);
+      expect(reported.some((r) => r.category === "cache-read")).toBe(true);
+      expect(reported.some((r) => r.category === "cache-delete")).toBe(true);
     });
   });
 });

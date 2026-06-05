@@ -46,6 +46,7 @@ import {
   DEFAULT_FUNCTION_TTL,
 } from "../cache-policy.js";
 import { reportCacheError, reportingAsync } from "../cache-error.js";
+import type { CacheErrorCategory } from "../cache-error.js";
 
 // ============================================================================
 // Constants
@@ -545,6 +546,39 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   // ============================================================================
 
   /**
+   * Guard the segment tier against a `keyGenerator` that returns a key colliding
+   * with a reserved tag-marker namespace: `__tag__/` (the KV marker key) or
+   * `__tagmarker__/` (the L1 Cache API marker request). The item/doc tiers are
+   * internally prefixed (`fn:`/`doc:`) so only the bare segment key can collide;
+   * a collision would let a segment write clobber - or a segment read/delete
+   * evict - a live tag marker, silently breaking invalidation. Report loudly
+   * (so a misconfigured keyGenerator surfaces immediately) and treat the segment
+   * operation as a miss/no-op rather than corrupting the marker namespace.
+   * @internal
+   */
+  private isReservedSegmentKey(
+    key: string,
+    category: CacheErrorCategory,
+  ): boolean {
+    const reserved = key.startsWith(TAG_MARKER_PREFIX)
+      ? TAG_MARKER_PREFIX
+      : key.startsWith(TAG_MARKER_CACHE_PREFIX)
+        ? TAG_MARKER_CACHE_PREFIX
+        : null;
+    if (!reserved) return false;
+    reportCacheError(
+      new Error(
+        `segment key "${key}" collides with the reserved "${reserved}" ` +
+          `tag-marker namespace; the operation is ignored. Fix the store ` +
+          `keyGenerator so it does not produce keys with this prefix.`,
+      ),
+      category,
+      "[CFCacheStore] reserved key",
+    );
+    return true;
+  }
+
+  /**
    * Get cached entry data by key.
    *
    * Handles SWR atomically:
@@ -556,6 +590,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * KV hits are promoted to L1 in the background.
    */
   async get(key: string): Promise<CacheGetResult | null> {
+    if (this.isReservedSegmentKey(key, "cache-read")) return null;
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(key);
@@ -628,6 +663,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     ttl: number,
     swr?: number,
   ): Promise<void> {
+    if (this.isReservedSegmentKey(key, "cache-write")) return;
     try {
       const cache = await this.getCache();
       const request = this.keyToRequest(key);
@@ -660,7 +696,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const putPromise = cache.put(request, response);
 
       if (this.waitUntil) {
-        // Non-blocking write
+        // Non-blocking write. These store-level background tasks intentionally
+        // omit the reportingAsync ctx argument: the store is a request-agnostic
+        // singleton and this.waitUntil is the execution context's, not a single
+        // request's, so a failure is reported console-loud only (it cannot be
+        // attributed to one request's onError). The request-scoped tag verbs
+        // (revalidateTag / stale-revalidation) DO thread their captured ctx.
         this.waitUntil(() =>
           reportingAsync(
             () => putPromise,
@@ -684,6 +725,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * Delete a cached entry from L1 and L2.
    */
   async delete(key: string): Promise<boolean> {
+    if (this.isReservedSegmentKey(key, "cache-delete")) return false;
     try {
       const cache = await this.getCache();
       const result = await cache.delete(this.keyToRequest(key));
@@ -738,6 +780,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const staleAt = Number(response.headers.get(CACHE_STALE_AT_HEADER) || 0);
       const isStale = staleAt > 0 && Date.now() > staleAt;
 
+      // L1 document bodies are streamed through verbatim - unlike the segment/
+      // item tiers (which JSON-parse and so structurally detect corruption) and
+      // the KV doc tier (validated in kvGetResponse, KV being the real partial-
+      // read vector). Integrity here relies on the Cache API: cache.put stores a
+      // response atomically or fails, so a truncated body is not served back. We
+      // deliberately do NOT buffer+hash the body to re-verify it: that would
+      // defeat streaming the document and add a full read to every cache hit.
       return {
         response: this.toClientResponse(response),
         shouldRevalidate: isStale,
@@ -1093,10 +1142,34 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
-   * KV-get a JSON envelope, EVICTING the key when it is corrupt. kv.get throws on
-   * invalid JSON; `validate` returns false for a partial-but-valid envelope
-   * (fields missing from a truncated write). Either case deletes the key + reports
-   * cache-corrupt. A MISSING key (kv.get -> null) is a normal miss, not corruption.
+   * Best-effort delete of a single KV key, reporting (not swallowing) a delete
+   * failure as cache-delete. Used by the corrupt-entry self-heal paths.
+   * @internal
+   */
+  private async evictKvKey(kvKey: string, label: string): Promise<void> {
+    try {
+      await this.kv!.delete(kvKey);
+    } catch (error) {
+      reportCacheError(
+        error,
+        "cache-delete",
+        `[CFCacheStore] ${label}: evict failed`,
+      );
+    }
+  }
+
+  /**
+   * KV-get a JSON envelope, EVICTING the key only when it is genuinely corrupt.
+   *
+   * Reads as { type: "text" }, NOT { type: "json" }, on purpose: the "json" form
+   * fuses the network read and the JSON parse, so a transient KV outage (5xx/429/
+   * network blip) is indistinguishable from a malformed body and would delete a
+   * still-good cross-colo entry - a self-inflicted miss storm. Reading text lets a
+   * transient read error propagate to the caller's outer catch (reported
+   * cache-read, the entry left intact); only a JSON.parse failure on a body that
+   * WAS successfully read - or an envelope that parses but fails `validate`
+   * (fields missing from a truncated write) - is true corruption that evicts +
+   * reports cache-corrupt. A MISSING key (kv.get -> null) is a normal miss.
    * @internal
    */
   private async kvGetOrEvict<T>(
@@ -1104,41 +1177,34 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     validate: (envelope: T) => boolean,
     label: string,
   ): Promise<T | null> {
-    let raw: unknown;
+    // A transient error here throws and is reported cache-read (no eviction) by
+    // the caller's outer catch - deliberately NOT caught as corruption.
+    const text = await this.kv!.get(kvKey, { type: "text" });
+    if (text == null) return null; // missing key = miss, not corruption
+
+    let raw: T;
     try {
-      raw = await this.kv!.get(kvKey, { type: "json" });
+      raw = JSON.parse(text) as T;
     } catch (error) {
       reportCacheError(
         error,
         "cache-corrupt",
         `[CFCacheStore] ${label}: corrupt JSON in KV, evicting`,
       );
-      await this.kv!.delete(kvKey).catch((e) =>
-        reportCacheError(
-          e,
-          "cache-delete",
-          `[CFCacheStore] ${label}: evict failed`,
-        ),
-      );
+      await this.evictKvKey(kvKey, label);
       return null;
     }
-    if (raw == null) return null; // missing key = miss, not corruption
-    if (!validate(raw as T)) {
+
+    if (!validate(raw)) {
       reportCacheError(
         new Error("malformed/partial KV envelope"),
         "cache-corrupt",
         `[CFCacheStore] ${label}: malformed envelope, evicting`,
       );
-      await this.kv!.delete(kvKey).catch((e) =>
-        reportCacheError(
-          e,
-          "cache-delete",
-          `[CFCacheStore] ${label}: evict failed`,
-        ),
-      );
+      await this.evictKvKey(kvKey, label);
       return null;
     }
-    return raw as T;
+    return raw;
   }
 
   // ============================================================================
@@ -1700,26 +1766,28 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       const shouldRevalidate = now > envelope.s;
 
-      // Reconstruct Response (decode base64 → binary). Corrupt/partial base64
-      // throws in atob: that is a faulty entry, so evict it and miss.
-      let bodyBuffer: ArrayBuffer;
+      // Reconstruct Response: decode base64 -> binary, rebuild headers/status.
+      // Corrupt/partial base64 throws in atob; malformed `hd` or an out-of-range
+      // `st` throws in new Headers/new Response. Any of these is a faulty entry,
+      // so evict it and miss rather than re-failing every read until TTL.
+      let response: Response;
       try {
-        bodyBuffer = base64ToBuffer(envelope.b);
+        const bodyBuffer = base64ToBuffer(envelope.b);
+        const headers = new Headers(envelope.hd);
+        response = new Response(bodyBuffer, {
+          status: envelope.st,
+          statusText: envelope.stx,
+          headers,
+        });
       } catch (error) {
         reportCacheError(
           error,
           "cache-corrupt",
-          "[CFCacheStore] kvGetResponse: corrupt base64 body, evicting",
+          "[CFCacheStore] kvGetResponse: corrupt response envelope, evicting",
         );
-        await this.kv.delete(kvKey).catch(() => {});
+        await this.evictKvKey(kvKey, "kvGetResponse");
         return null;
       }
-      const headers = new Headers(envelope.hd);
-      const response = new Response(bodyBuffer, {
-        status: envelope.st,
-        statusText: envelope.stx,
-        headers,
-      });
 
       // Promote to L1
       this.promoteResponseToL1(key, envelope);

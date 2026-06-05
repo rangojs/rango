@@ -11,6 +11,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { CacheErrorCategory } from "../cache/cache-error.js";
 import type { CookieOptions } from "../router/middleware.js";
 import type { LoaderDefinition, LoaderContext } from "../types.js";
 import type { ScopedReverseFunction } from "../reverse.js";
@@ -323,9 +324,13 @@ export interface RequestContext<
    * @internal Report a non-fatal background error through the router's
    * onError callback. Wired by the RSC handler / router during request
    * creation. Cache-runtime and other subsystems call this to surface
-   * errors without failing the response.
+   * errors without failing the response. `category` is surfaced to consumers as
+   * `metadata.category` on the onError context (phase `cache`).
    */
-  _reportBackgroundError?: (error: unknown, category: string) => void;
+  _reportBackgroundError?: (
+    error: unknown,
+    category: CacheErrorCategory,
+  ) => void;
 
   /** @internal Per-request debug performance override (set via ctx.debugPerformance()) */
   _debugPerformance?: boolean;

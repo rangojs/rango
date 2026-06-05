@@ -42,3 +42,9 @@ export {
   createDocumentCacheMiddleware,
   type DocumentCacheOptions,
 } from "./document-cache.js";
+
+// Cache error reporting. CacheErrorCategory is the discriminator surfaced to a
+// router's onError callback as `metadata.category` for the `cache` phase, so
+// consumers can branch on the failure kind (e.g. distinguish a transient
+// cache-read outage from cache-corrupt self-heal).
+export type { CacheErrorCategory } from "./cache-error.js";

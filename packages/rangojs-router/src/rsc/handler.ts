@@ -57,6 +57,7 @@ import {
   getRouterTrie,
 } from "../route-map-builder.js";
 import type { HandlerContext } from "./handler-context.js";
+import type { CacheErrorCategory } from "../cache/cache-error.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import { buildRouterTrieFromUrlpatterns } from "./manifest-init.js";
 import { handleProgressiveEnhancement } from "./progressive-enhancement.js";
@@ -445,7 +446,7 @@ export function createRSCHandler<
     // can surface non-fatal errors through the router's onError callback.
     requestContext._reportBackgroundError = (
       error: unknown,
-      category: string,
+      category: CacheErrorCategory,
     ) => {
       callOnError(error, "cache", {
         request,

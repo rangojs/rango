@@ -155,7 +155,11 @@ export interface OnErrorContext<TEnv = any> {
   stack?: string;
 
   /**
-   * Additional metadata specific to the error phase
+   * Additional metadata specific to the error phase. For the `cache` phase,
+   * `metadata.category` is a `CacheErrorCategory` (exported from
+   * `@rangojs/router/cache`) identifying the failure kind, e.g. `cache-read`
+   * (transient outage, degraded to a miss) vs `cache-corrupt` (faulty entry
+   * self-healed) vs `cache-invalidate` (a failed background revalidateTag).
    */
   metadata?: Record<string, unknown>;
 }
