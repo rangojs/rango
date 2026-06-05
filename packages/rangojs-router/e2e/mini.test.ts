@@ -660,25 +660,25 @@ test.describe("mini (production)", () => {
     expect(js.some((name) => /^router-.*\.js$/.test(name))).toBe(true);
     expect(widgetsCode).not.toContain("createRoot");
 
-    // Registered "use client" error fallback -> dedicated app-fallback chunk.
-    // Its marker must appear ONLY there (not co-bundled with route or entry code),
+    // Registered "use client" fallbacks -> dedicated app-fallback chunk, via BOTH
+    // registration paths: the route-tree errorBoundary() helper (mini-client-error)
+    // AND a router-level createRouter({ defaultErrorBoundary }) (mini-default-error,
+    // which never lands in EntryData). Each marker must appear ONLY in app-fallback
     // so the error UI is decoupled from the code it catches failures for.
     const fallbackJs = js.find((name) => /^app-fallback-.*\.js$/.test(name));
     expect(fallbackJs, "expected an app-fallback-*.js chunk").toBeTruthy();
-    expect(readFileSync(join(assetsDir, fallbackJs!), "utf8")).toContain(
-      "mini-client-error",
-    );
-    const fallbackLeaks = js.filter(
-      (name) =>
-        name !== fallbackJs &&
-        readFileSync(join(assetsDir, name), "utf8").includes(
-          "mini-client-error",
-        ),
-    );
-    expect(
-      fallbackLeaks,
-      "fallback code must live only in app-fallback",
-    ).toEqual([]);
+    const fallbackCode = readFileSync(join(assetsDir, fallbackJs!), "utf8");
+    for (const marker of ["mini-client-error", "mini-default-error"]) {
+      expect(fallbackCode, `${marker} must be in app-fallback`).toContain(
+        marker,
+      );
+      const leaks = js.filter(
+        (name) =>
+          name !== fallbackJs &&
+          readFileSync(join(assetsDir, name), "utf8").includes(marker),
+      );
+      expect(leaks, `${marker} must live ONLY in app-fallback`).toEqual([]);
+    }
     expect(widgetsCode).not.toContain("mini-client-error");
   });
 });

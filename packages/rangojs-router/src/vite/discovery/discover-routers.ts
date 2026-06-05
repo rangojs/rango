@@ -154,6 +154,19 @@ export async function discoverRouters(
           computeProductionHash(state.projectRoot, refKey),
         )
     : undefined;
+  // Router-level boundary defaults (`createRouter({ defaultErrorBoundary, ... })`)
+  // are NOT in EntryData, so generateManifestFull's walk misses them. Collect any
+  // "use client" default boundary directly off the router instance: an element
+  // whose `.type` is a plugin-rsc client reference contributes its `$$id`.
+  const CLIENT_REF = Symbol.for("react.client.reference");
+  const collectFromBoundaryNode = (node: unknown): void => {
+    if (!collectClientFallbackRef) return;
+    const type = (node as { type?: { $$typeof?: symbol; $$id?: string } })
+      ?.type;
+    if (type?.$$typeof === CLIENT_REF && typeof type.$$id === "string") {
+      collectClientFallbackRef(type.$$id.split("#")[0]);
+    }
+  };
 
   const manifestGenStart = debug ? performance.now() : 0;
   for (const [id, router] of registry) {
@@ -171,6 +184,16 @@ export async function discoverRouters(
     );
     routerMountIndex++;
     allManifests.push({ id, manifest });
+
+    // Router-level "use client" boundary defaults -> app-fallback (the
+    // route-tree errorBoundary()/notFoundBoundary() helpers are already
+    // collected inside generateManifestFull via collectClientFallbackRef).
+    if (collectClientFallbackRef) {
+      collectFromBoundaryNode(router.__defaultErrorBoundary);
+      collectFromBoundaryNode(router.__defaultNotFoundBoundary);
+      collectFromBoundaryNode(router.__notFound);
+    }
+
     const routeCount = Object.keys(manifest.routeManifest).length;
     const staticRoutes = Object.values(manifest.routeManifest).filter(
       (p: any) => !p.includes(":") && !p.includes("*"),

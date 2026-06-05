@@ -39,6 +39,7 @@ import { ChartB } from "./routes/charts/ChartB.js";
 // A "use client" error-boundary fallback: the built-in clientChunks strategy
 // pulls registered error/notFound fallbacks into a dedicated app-fallback chunk.
 import { ClientErrorFallback } from "./ClientErrorFallback.js";
+import { DefaultClientError } from "./DefaultClientError.js";
 import {
   AppNav,
   BreadcrumbTrail,
@@ -168,6 +169,10 @@ export const router = createRouter({
     short: { ttl: 60, swr: 120 },
   },
   notFound: <GlobalNotFound />,
+  // Router-level "use client" default error boundary. Registered here (not via
+  // the route-tree errorBoundary() helper), so it exercises the router-default
+  // collection path for app-fallback chunking.
+  defaultErrorBoundary: <DefaultClientError />,
 })
   // Global middleware: tags every request with an id (header + ctx var).
   .use(requestIdMiddleware)
