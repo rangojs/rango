@@ -3,7 +3,7 @@
   // @rangojs/router/testing* TYPES resolve cleanly from a consumer).
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "types": ["node", "react", "react-dom"],
+    "types": ["node", "react", "react-dom", "vite/client"],
     "noEmit": true
   },
   "include": ["test/**/*", "vitest.config.ts", "vitest.rsc.config.ts"]
