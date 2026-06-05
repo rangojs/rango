@@ -20,6 +20,22 @@ real async Server Component cannot be a plain node test at all. Pick the layer
 function) is slow; one too low (a node test for Flight) fails to compile or
 silently asserts nothing.
 
+Compatibility (the setup that bit the first installed consumer — read before
+writing `vitest.config.ts`):
+
+- **Node >= 23:** use **`rangoTestConfig()`**, not the bare `rangoTestAliases()`.
+  `@rangojs/router` is consumed as SOURCE (its exports resolve to `./src/*.ts`),
+  and Node >= 23 refuses to type-strip `.ts` under `node_modules`
+  (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`). `rangoTestConfig` ships as
+  compiled JS (so the config itself loads under Node) AND adds the required
+  `server.deps.inline: [/@rangojs[/\\]router/]` so Vite — not Node — transpiles
+  rango's source under test. With bare `rangoTestAliases` you must wire
+  `deps.inline` yourself.
+- **Vitest:** the rango fragment goes under `test` (`test.alias` +
+  `test.server.deps.inline`, both returned by `rangoTestConfig`). The node/DOM
+  project keeps React as its CLIENT build; the Flight project uses the
+  `react-server` condition in a separate `vitest.rsc.config.ts`.
+
 For the prose guide with full setup and migration, see
 [`docs/testing.md`](https://github.com/ivogt/vite-rsc/blob/main/packages/rangojs-router/docs/testing.md)
 (the `docs/` directory is not shipped in the published package, so this is an
@@ -219,6 +235,32 @@ For the low-level case where you already hold a context from
 from `@rangojs/router/testing` to enter it directly; `runInRequestContext` is the
 one-call convenience over the two.
 
+### Your bindings are your seam (env.DB / Durable Objects / R2)
+
+The node primitives test the router's seams; the moment your loader/middleware/
+action calls a **platform binding** (`env.DB`, a Durable Object stub, `env.R2`),
+you have crossed out of rango and into your app's I/O. rango deliberately ships
+**no doubles** for these — they are app- and schema-specific — so the double is
+yours to build and inject through the `env` option every primitive already takes:
+
+```ts
+await runLoader(bundleLoaderBody, { env: { DB: fakeD1 } });
+await runMiddleware(requireMembership, "/t/acme/edit", { env: { DB: fakeD1 } });
+await runInRequestContext(() => authorizeAction(input), {
+  env: { DB: fakeD1 },
+  request,
+});
+```
+
+Plan for this seam — it is usually the single biggest effort in a consumer unit
+suite, and the work is in matching the **driver contract**, not the binding's
+public API. The sharp edge: a `D1Database` double for **`drizzle-orm/d1`** must
+serve **positional row arrays in schema-column order** for drizzle's `.raw()`
+path (with the driver-level encodings so the decoder round-trips `Date`/JSON) —
+NOT `{ column: value }` objects. A naive object-shaped double returns
+silently-wrong or empty rows. Keep the double at the binding boundary; never mock
+a rango primitive to dodge building it.
+
 ### renderRoute — a client component reading router context
 
 RTL-style stub. Peer of React Router's `createRoutesStub` / Expo's
@@ -305,6 +347,12 @@ fallback with a never-resolving `new Promise(() => {})`; for the **arrived**
 state pass an already-settled promise so `use()` reads it synchronously:
 `const p = Promise.resolve(node) as any; p.status = "fulfilled"; p.value = node;`.
 The real pending→resolved transition is an e2e concern.
+
+ARIA GOTCHA — query a `<Link>` by `getByRole("link")` only when it renders a bare
+anchor. An explicit `role` on the link (e.g. `<Link role="tab">` in a tablist)
+OVERRIDES the anchor's implicit `link` role, so `getByRole("link")` finds
+nothing — query the explicit role (`getByRole("tab")`) or fall back to
+`getByText`/`getByTestId` and assert `getAttribute("href")`.
 
 ### Type-level test: a reverse misuse should fail to compile
 

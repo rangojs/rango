@@ -92,6 +92,21 @@ client reference must resolve to the same client reference, which only a real
 hydrated render exercises). For those, reach for `createRangoE2E` /
 `parityDescribe` / `assertCacheStatus`.
 
+There is one more boundary, and it is yours, not a layer ceiling: **platform
+bindings** (`env.DB`, Durable Objects, `env.R2`). The moment a loader/middleware/
+action touches one, it has left rango and entered your app's I/O — rango ships no
+doubles for these by design (they are app- and schema-specific). Inject your own
+double through the `env` option every primitive takes
+(`runLoader(body, { env: { DB: fakeD1 } })`, likewise `runMiddleware` /
+`runInRequestContext`). Budget for it: this is usually the biggest single effort
+in a consumer suite, and the work is matching the **driver contract**, not the
+binding's public API. Concretely, a `D1Database` double for **`drizzle-orm/d1`**
+must serve **positional row arrays in schema-column order** for drizzle's `.raw()`
+path (with driver-level encodings so the decoder round-trips `Date`/JSON), not
+`{ column: value }` objects — an object-shaped double returns silently-wrong or
+empty rows. Build the double at the binding boundary; do not mock a rango
+primitive to avoid it.
+
 ## Setup
 
 ### Dependencies
