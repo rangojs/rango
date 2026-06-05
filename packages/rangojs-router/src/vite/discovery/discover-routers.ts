@@ -156,15 +156,13 @@ export async function discoverRouters(
     : undefined;
   // Router-level boundary defaults (`createRouter({ defaultErrorBoundary, ... })`)
   // are NOT in EntryData, so generateManifestFull's walk misses them. Collect any
-  // "use client" default boundary directly off the router instance: an element
-  // whose `.type` is a plugin-rsc client reference contributes its `$$id`.
-  const CLIENT_REF = Symbol.for("react.client.reference");
+  // "use client" default boundary directly off the router instance. The value is
+  // commonly a handler function wrapping the client boundary in server providers,
+  // so collectFallbackClientRefs invokes + walks the tree. Routed through buildMod
+  // so it runs in the same RSC runner realm the boundary value came from.
   const collectFromBoundaryNode = (node: unknown): void => {
-    if (!collectClientFallbackRef) return;
-    const type = (node as { type?: { $$typeof?: symbol; $$id?: string } })
-      ?.type;
-    if (type?.$$typeof === CLIENT_REF && typeof type.$$id === "string") {
-      collectClientFallbackRef(type.$$id.split("#")[0]);
+    if (collectClientFallbackRef && buildMod.collectFallbackClientRefs) {
+      buildMod.collectFallbackClientRefs(node, collectClientFallbackRef);
     }
   };
 

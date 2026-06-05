@@ -159,6 +159,23 @@ function GlobalNotFound() {
   );
 }
 
+// Server-component provider wrapper for the default error boundary (no
+// "use client") — stands in for a real app's IntlProvider/theme wrapper that the
+// boundary needs because the layout didn't mount on a thrown handler.
+function FallbackWrap({
+  label,
+  children,
+}: {
+  label: string;
+  children: import("react").ReactNode;
+}) {
+  return (
+    <div data-testid="fallback-wrap" data-label={label}>
+      {children}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // The router.
 // ---------------------------------------------------------------------------
@@ -169,10 +186,16 @@ export const router = createRouter({
     short: { ttl: 60, swr: 120 },
   },
   notFound: <GlobalNotFound />,
-  // Router-level "use client" default error boundary. Registered here (not via
-  // the route-tree errorBoundary() helper), so it exercises the router-default
-  // collection path for app-fallback chunking.
-  defaultErrorBoundary: <DefaultClientError />,
+  // Router-level default error boundary as a HANDLER FUNCTION that wraps the
+  // "use client" boundary in a server provider — the common real-world shape (the
+  // layout that would supply context did not mount). The client boundary
+  // (DefaultClientError) is nested in the JSX the function returns, so the build
+  // must invoke the handler and walk the tree to route it into app-fallback.
+  defaultErrorBoundary: ({ error }) => (
+    <FallbackWrap label={error instanceof Error ? "error" : "unknown"}>
+      <DefaultClientError />
+    </FallbackWrap>
+  ),
 })
   // Global middleware: tags every request with an id (header + ctx var).
   .use(requestIdMiddleware)

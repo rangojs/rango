@@ -24,6 +24,8 @@ export {
 
 export { buildRouteTrie, type TrieNode, type TrieLeaf } from "./route-trie.js";
 
+export { collectFallbackClientRefs } from "./collect-fallback-refs.js";
+
 export {
   writePerModuleRouteTypes,
   extractRoutesFromSource,

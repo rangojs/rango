@@ -16,6 +16,7 @@ import type { EntryData, TrackedInclude } from "../server/context.js";
 import type { TrailingSlashMode } from "../types.js";
 import { createRouteHelpers } from "../route-definition.js";
 import MapRootLayout from "../server/root-layout.js";
+import { collectFallbackClientRefs } from "./collect-fallback-refs.js";
 
 /**
  * Node in the prefix tree
@@ -338,24 +339,15 @@ export function generateManifestFull<TEnv>(
     },
   );
 
-  // Surface the "use client" components registered as error/notFound fallbacks.
-  // The fallback values are stored verbatim on EntryData (raw elements or handler
-  // functions). For an element whose component is a "use client" module, its
-  // `.type` is a plugin-rsc client-reference proxy carrying the reference key as
-  // `$$id`; we report that key so the build can route these into app-fallback.
+  // Surface the "use client" components registered as error/notFound fallbacks
+  // (route-tree errorBoundary()/notFoundBoundary() helpers, stored on EntryData).
+  // The boundary may be a handler function and/or wrap the client boundary in
+  // server providers, so walk the whole tree (see collectFallbackClientRefs).
   if (options?.collectClientFallbackRef) {
-    const CLIENT_REF = Symbol.for("react.client.reference");
     const report = options.collectClientFallbackRef;
     const collect = (boundary: unknown[] | undefined) => {
-      for (const item of boundary ?? []) {
-        const type = (item as { type?: { $$typeof?: symbol; $$id?: string } })
-          ?.type;
-        if (type?.$$typeof === CLIENT_REF && typeof type.$$id === "string") {
-          // $$id is `<referenceKey>#<exportName>`; the referenceKey (module hash
-          // in build, dev path otherwise) is everything before the first `#`.
-          report(type.$$id.split("#")[0]);
-        }
-      }
+      for (const item of boundary ?? [])
+        collectFallbackClientRefs(item, report);
     };
     for (const entry of manifest.values()) {
       collect(entry.errorBoundary);

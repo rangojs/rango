@@ -219,6 +219,27 @@ so `app-fallback` is fetched only when a fallback renders — never on a success
 navigation. (Suspense `loading()` skeletons are deliberately **not** grouped here:
 they must paint immediately while content streams, so they stay eager.)
 
+Both registration styles are covered: the route-tree `errorBoundary(<X/>)` /
+`notFoundBoundary(<X/>)` helpers **and** the router-level `createRouter({
+defaultErrorBoundary, defaultNotFoundBoundary, notFound })` options. The boundary
+may also be a **handler function** and/or **wrap** the client component in server
+providers (the common pattern — the boundary needs an Intl/theme provider the
+unmounted layout would have supplied):
+
+```ts
+createRouter({
+  defaultErrorBoundary: ({ error }) => (
+    <FallbackIntl locales={...}>
+      <ThemedError error={error} /> {/* the "use client" boundary -> app-fallback */}
+    </FallbackIntl>
+  ),
+});
+```
+
+The build invokes the handler with synthetic props (only to construct the JSX
+tree — the inner components are not rendered) and walks it for the client
+boundary.
+
 Notes:
 
 - A component used as **both** a fallback and normal route UI lands in
@@ -226,6 +247,11 @@ Notes:
   separate to avoid pulling route UI onto the error path.
 - This applies to the built-in strategy (`clientChunks: true`/default). A custom
   `clientChunks` function owns grouping entirely and is not refined.
+- **Limit:** a boundary that picks a _different_ client component depending on the
+  runtime error (a conditional that the synthetic build-time error doesn't take),
+  or that needs a real render context to even return its tree, can't be resolved
+  statically — it simply stays on the default grouping. Use a `clientChunks`
+  function to force those into a group.
 
 ## CSS
 
