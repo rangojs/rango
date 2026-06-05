@@ -238,6 +238,18 @@ export function middleware(): never {
 export function revalidate(): never {
   throw serverOnlyStubError("revalidate");
 }
+// Cache tag APIs are server-only (real implementations in index.rsc.ts). These
+// stubs keep the named-export shape identical under the default/non-react-server
+// condition so SSR/client/default bundles that encounter the import link cleanly.
+export function cacheTag(): never {
+  throw serverOnlyStubError("cacheTag");
+}
+export function updateTag(): never {
+  throw serverOnlyStubError("updateTag");
+}
+export function revalidateTag(): never {
+  throw serverOnlyStubError("revalidateTag");
+}
 export function loader(): never {
   throw serverOnlyStubError("loader");
 }

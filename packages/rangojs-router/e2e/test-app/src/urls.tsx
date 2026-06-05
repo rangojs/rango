@@ -62,6 +62,7 @@ import { manifestCacheTestPatterns } from "./urls/manifest-cache-test.js";
 import { authBoundaryPatterns } from "./urls/auth-boundary.js";
 import { contentOwnershipPatterns } from "./urls/content-ownership.js";
 import { cacheIsolationPatterns } from "./urls/cache-isolation.js";
+import { cacheTagPatterns } from "./urls/cache-tag.js";
 import { actionCtxSetPatterns } from "./urls/action-ctx-set.js";
 import { isActionPatterns } from "./urls/is-action.js";
 import { paramsAfterActionPatterns } from "./urls/params-after-action.js";
@@ -942,6 +943,9 @@ export const urlpatterns = urls(
       include("/cache-isolation", cacheIsolationPatterns, {
         name: "cacheIsolation",
       }),
+
+      // Cache-tag invalidation tests (cacheTag / updateTag / cache({ tags }))
+      include("/cache-tag-test", cacheTagPatterns, { name: "cacheTag" }),
 
       // ALS scope propagation tests (request, render, intercept scopes)
       include("/als-scope", alsScopePatterns, { name: "alsScope" }),

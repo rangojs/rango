@@ -12,7 +12,7 @@ import { contextGet } from "../context-var.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import { traverseBack } from "../router/pattern-matching.js";
 import { RESPONSE_TYPE_MIME } from "../router/content-negotiation.js";
-import { createCacheScope } from "../cache/cache-scope.js";
+import { createCacheScope, resolveCacheTags } from "../cache/cache-scope.js";
 import { executeMiddleware } from "../router/middleware.js";
 import {
   createReverseFunction,
@@ -255,6 +255,11 @@ export async function handleResponseRoute<TEnv>(
           }
         }
 
+        // Resolve cache tags for this document entry (static or dynamic),
+        // while request context is available. Passed to putResponse so the
+        // entry is tag-invalidatable.
+        const responseTags = resolveCacheTags(cacheScope.config, reqCtx);
+
         // Save pre-handler callbacks (registered by app-level middleware
         // before we reach the cache block) and clear the live array.
         // createResponseWithMergedHeaders (inside the handler) eagerly
@@ -296,6 +301,7 @@ export async function handleResponseRoute<TEnv>(
                     fresh.clone(),
                     cacheScope!.ttl,
                     cacheScope!.swr,
+                    responseTags,
                   );
                 }
               } catch (error) {
@@ -324,6 +330,7 @@ export async function handleResponseRoute<TEnv>(
                 response.clone(),
                 cacheScope!.ttl,
                 cacheScope!.swr,
+                responseTags,
               );
             } catch (error) {
               console.error(`[ResponseCache] Cache write failed:`, error);

@@ -338,6 +338,19 @@ Orthogonal to pre-rendering. Runtime cache operates on segments resolved at
 request time. Pre-rendered segments bypass the runtime cache entirely (the
 prerender lookup happens first in `cache-lookup.ts`).
 
+### Tag invalidation (`cacheTag` / `updateTag` / `revalidateTag`)
+
+Disjoint from pre-rendering. `updateTag()` / `revalidateTag()` invalidate
+runtime cache entries (segment / `"use cache"` item / document caches) via the
+store's tag markers; they do NOT refresh a pre-rendered (B-segment) route's
+build-time Flight payload, because that payload is served from the prerender
+store before the tag system is consulted. A `cacheTag()` call inside a
+`"use cache"` function that runs during pre-rendering has no runtime effect (the
+result is frozen into the prerendered payload, not stored as a tagged runtime
+entry). To make a tag-invalidatable route, serve it from the runtime cache (a
+`Passthrough()` route, or a non-prerendered route with `cache()` / `cacheTag`)
+rather than pre-rendering it.
+
 ### Middleware
 
 Skipped during pre-rendering (no request object). Middleware runs at request

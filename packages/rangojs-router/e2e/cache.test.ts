@@ -1795,3 +1795,319 @@ test.describe("cache-search-params-isolation (production)", () => {
     await expect(page.getByTestId("search-page-value")).toHaveText("page:2");
   });
 });
+
+// ============================================================================
+// Tag invalidation: cacheTag() / cache({ tags }) / updateTag() (dev)
+// ============================================================================
+
+test.describe("cache-tag invalidation", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+    isolatedServer: true,
+  });
+
+  async function pollTs(request: any, path: string) {
+    const res = await request.get(f.url(path), {
+      headers: { Accept: "application/json" },
+    });
+    return (await res.json()).data.ts;
+  }
+
+  test('"use cache" + cacheTag: entries are cached and invalidated by tag', async ({
+    request,
+  }) => {
+    const first = await pollTs(request, "/cache-tag-test/item/1");
+    // Poll until the async cache write lands (stable ts == cached).
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/item/1"), { timeout: 5000 })
+      .toBe(first);
+
+    const inv = await request.get(f.url("/cache-tag-test/invalidate/items"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(inv.status()).toBe(200);
+
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/item/1"), { timeout: 5000 })
+      .not.toBe(first);
+  });
+
+  test('"use cache" + cacheTag: a specific item tag invalidates only that item', async ({
+    request,
+  }) => {
+    const a = await pollTs(request, "/cache-tag-test/item/a");
+    const b = await pollTs(request, "/cache-tag-test/item/b");
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/item/a"), { timeout: 5000 })
+      .toBe(a);
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/item/b"), { timeout: 5000 })
+      .toBe(b);
+
+    await request.get(f.url("/cache-tag-test/invalidate/item:a"), {
+      headers: { Accept: "application/json" },
+    });
+
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/item/a"), { timeout: 5000 })
+      .not.toBe(a);
+    // Item b is untouched.
+    expect(await pollTs(request, "/cache-tag-test/item/b")).toBe(b);
+  });
+
+  test("cache() DSL tags: entries are cached and invalidated by tag", async ({
+    request,
+  }) => {
+    const first = await pollTs(request, "/cache-tag-test/catalog/x");
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/catalog/x"), {
+        timeout: 5000,
+      })
+      .toBe(first);
+
+    await request.get(f.url("/cache-tag-test/invalidate/catalog"), {
+      headers: { Accept: "application/json" },
+    });
+
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/catalog/x"), {
+        timeout: 5000,
+      })
+      .not.toBe(first);
+  });
+
+  test("invalidating an unknown tag is a safe no-op", async ({ request }) => {
+    const first = await pollTs(request, "/cache-tag-test/item/noop");
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/item/noop"), {
+        timeout: 5000,
+      })
+      .toBe(first);
+
+    const inv = await request.get(
+      f.url("/cache-tag-test/invalidate/nonexistent-tag-xyz"),
+      { headers: { Accept: "application/json" } },
+    );
+    expect(inv.status()).toBe(200);
+
+    // Unrelated entry still cached (same ts).
+    expect(await pollTs(request, "/cache-tag-test/item/noop")).toBe(first);
+  });
+
+  test("revalidateTag invalidates a tagged entry in the background (not awaited)", async ({
+    request,
+  }) => {
+    const first = await pollTs(request, "/cache-tag-test/item/rev");
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/item/rev"), {
+        timeout: 5000,
+      })
+      .toBe(first);
+
+    // Fire-and-forget: revalidateTag returns before invalidation lands.
+    const rev = await request.get(f.url("/cache-tag-test/revalidate/items"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(rev.status()).toBe(200);
+
+    // Poll until the background invalidation makes the next read fresh.
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/item/rev"), {
+        timeout: 5000,
+      })
+      .not.toBe(first);
+  });
+
+  test("server action updateTag() invalidates a cached page segment", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-tag-test/action-page"));
+    await waitForHydration(page);
+    const initialTs = await page.getByTestId("action-tag-ts").textContent();
+    expect(initialTs).toMatch(/^\d+$/);
+
+    // Poll until cached (revisit returns the same ts).
+    await expect
+      .poll(
+        async () => {
+          await page.goto(f.url("/cache-tag-test/action-page"));
+          await waitForHydration(page);
+          return page.getByTestId("action-tag-ts").textContent();
+        },
+        { timeout: 10000 },
+      )
+      .toBe(initialTs);
+
+    await page.getByTestId("invalidate-tag-btn").click();
+    await expect(page.getByTestId("invalidate-tag-result")).toBeVisible();
+
+    await expect
+      .poll(
+        async () => {
+          await page.goto(f.url("/cache-tag-test/action-page"));
+          await waitForHydration(page);
+          return page.getByTestId("action-tag-ts").textContent();
+        },
+        { timeout: 10000 },
+      )
+      .not.toBe(initialTs);
+  });
+});
+
+// ============================================================================
+// Tag invalidation (production)
+// ============================================================================
+
+test.describe("cache-tag invalidation (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+    isolatedServer: true,
+  });
+
+  async function pollTs(request: any, path: string) {
+    const res = await request.get(f.url(path), {
+      headers: { Accept: "application/json" },
+    });
+    return (await res.json()).data.ts;
+  }
+
+  test('"use cache" + cacheTag: entries are cached and invalidated by tag', async ({
+    request,
+  }) => {
+    const first = await pollTs(request, "/cache-tag-test/item/1");
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/item/1"), { timeout: 5000 })
+      .toBe(first);
+
+    await request.get(f.url("/cache-tag-test/invalidate/items"), {
+      headers: { Accept: "application/json" },
+    });
+
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/item/1"), { timeout: 5000 })
+      .not.toBe(first);
+  });
+
+  test('"use cache" + cacheTag: a specific item tag invalidates only that item', async ({
+    request,
+  }) => {
+    const a = await pollTs(request, "/cache-tag-test/item/a");
+    const b = await pollTs(request, "/cache-tag-test/item/b");
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/item/a"), { timeout: 5000 })
+      .toBe(a);
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/item/b"), { timeout: 5000 })
+      .toBe(b);
+
+    await request.get(f.url("/cache-tag-test/invalidate/item:a"), {
+      headers: { Accept: "application/json" },
+    });
+
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/item/a"), { timeout: 5000 })
+      .not.toBe(a);
+    expect(await pollTs(request, "/cache-tag-test/item/b")).toBe(b);
+  });
+
+  test("cache() DSL tags: entries are cached and invalidated by tag", async ({
+    request,
+  }) => {
+    const first = await pollTs(request, "/cache-tag-test/catalog/x");
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/catalog/x"), {
+        timeout: 5000,
+      })
+      .toBe(first);
+
+    await request.get(f.url("/cache-tag-test/invalidate/catalog"), {
+      headers: { Accept: "application/json" },
+    });
+
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/catalog/x"), {
+        timeout: 5000,
+      })
+      .not.toBe(first);
+  });
+
+  test("invalidating an unknown tag is a safe no-op", async ({ request }) => {
+    const first = await pollTs(request, "/cache-tag-test/item/noop");
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/item/noop"), {
+        timeout: 5000,
+      })
+      .toBe(first);
+
+    const inv = await request.get(
+      f.url("/cache-tag-test/invalidate/nonexistent-tag-xyz"),
+      { headers: { Accept: "application/json" } },
+    );
+    expect(inv.status()).toBe(200);
+
+    expect(await pollTs(request, "/cache-tag-test/item/noop")).toBe(first);
+  });
+
+  test("revalidateTag invalidates a tagged entry in the background (not awaited)", async ({
+    request,
+  }) => {
+    const first = await pollTs(request, "/cache-tag-test/item/rev");
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/item/rev"), {
+        timeout: 5000,
+      })
+      .toBe(first);
+
+    // Fire-and-forget: revalidateTag returns before invalidation lands.
+    const rev = await request.get(f.url("/cache-tag-test/revalidate/items"), {
+      headers: { Accept: "application/json" },
+    });
+    expect(rev.status()).toBe(200);
+
+    // Poll until the background invalidation makes the next read fresh.
+    await expect
+      .poll(() => pollTs(request, "/cache-tag-test/item/rev"), {
+        timeout: 5000,
+      })
+      .not.toBe(first);
+  });
+
+  test("server action updateTag() invalidates a cached page segment", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-tag-test/action-page"));
+    await waitForHydration(page);
+    const initialTs = await page.getByTestId("action-tag-ts").textContent();
+
+    await expect
+      .poll(
+        async () => {
+          await page.goto(f.url("/cache-tag-test/action-page"));
+          await waitForHydration(page);
+          return page.getByTestId("action-tag-ts").textContent();
+        },
+        { timeout: 10000 },
+      )
+      .toBe(initialTs);
+
+    await page.getByTestId("invalidate-tag-btn").click();
+    await expect(page.getByTestId("invalidate-tag-result")).toBeVisible();
+
+    await expect
+      .poll(
+        async () => {
+          await page.goto(f.url("/cache-tag-test/action-page"));
+          await waitForHydration(page);
+          return page.getByTestId("action-tag-ts").textContent();
+        },
+        { timeout: 10000 },
+      )
+      .not.toBe(initialTs);
+  });
+});

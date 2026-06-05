@@ -81,6 +81,78 @@ cache(
 );
 ```
 
+## Tag-Based Invalidation
+
+Tag cached entries, then invalidate them on demand. Tags can be attached three ways:
+
+```typescript
+// 1. Static tags in the cache() DSL
+cache({ ttl: 300, tags: ["products"] }, () => [path("/products", List)]);
+
+// 2. Dynamic tags (function of ctx)
+cache(
+  { ttl: 300, tags: (ctx) => [`product:${ctx.params.id}`, "products"] },
+  () => [path("/products/:id", Detail)],
+);
+
+// 3. Runtime tags inside a "use cache" function
+async function getProduct(id: string) {
+  "use cache";
+  cacheTag(`product:${id}`, "products"); // variadic, additive
+  return db.getProduct(id);
+}
+```
+
+Invalidate with one of two server-only verbs (both variadic, imported from
+`@rangojs/router`):
+
+```typescript
+// Server Action — read-your-own-writes. Await it so the action's own re-render
+// (and the next navigation) sees fresh data.
+async function updateProduct(formData: FormData) {
+  "use server";
+  await db.updateProduct(formData);
+  await updateTag("products");
+}
+
+// Route handler / webhook — background, non-blocking (waitUntil). Hard-purge:
+// the next read re-renders fresh (NOT stale-while-revalidate).
+export async function POST() {
+  "use server";
+  revalidateTag("products");
+  return new Response("ok");
+}
+```
+
+| API                      | Timing                      | Use in                    | Semantics                                             |
+| ------------------------ | --------------------------- | ------------------------- | ----------------------------------------------------- |
+| `updateTag(...tags)`     | awaitable (`Promise<void>`) | server actions            | immediate; next read is fresh                         |
+| `revalidateTag(...tags)` | background (`void`)         | route handlers / webhooks | background (non-blocking); next read re-renders fresh |
+
+Both built-in stores support tags. For `CFCacheStore`, distributed (cross-colo)
+invalidation requires a `kv` namespace — the tag-invalidation markers live in
+that same namespace; there is **no** separate tag-invalidation store to wire.
+If no tag-capable store is configured, `updateTag`/`revalidateTag` warn and no-op.
+
+By default `CFCacheStore` reads the KV marker on every tagged cache read
+(strongest invalidation latency). To cut KV reads on hot tagged routes, set
+`tagCacheTtl` (seconds) to cache each marker in the per-colo edge cache for that
+window — the colo running `updateTag`/`revalidateTag` writes the fresh marker
+into its own edge cache immediately (read-your-own-writes), while other colos
+converge within `tagCacheTtl` (the **maximum extra cross-colo invalidation
+latency** when no purge is wired). Keep it small (e.g. 30–60), or wire a purge
+(below) and set it large. (Contrast `tagInvalidationTtl`, which must be _large_
+— it bounds how long the KV marker itself lives and must exceed your max entry
+TTL+SWR.)
+
+To make other colos prompt without a short `tagCacheTtl`, pass `onRevalidateTag`:
+each cached marker carries a namespaced Cloudflare `Cache-Tag`, and the hook is
+handed exactly those tags (batched, once per `updateTag`/`revalidateTag` call) to
+feed Cloudflare's purge-by-tag API — evicting the cached lookups everywhere.
+Purge-by-tag is available on all plans (since April 2025), subject to per-plan
+rate limits, so the batched single call matters. With a purge wired, `tagCacheTtl`
+becomes a pure read-cost reducer + fallback window.
+
 ## Named Profile Shorthand
 
 Use a named cache profile string instead of an options object. The profile must be

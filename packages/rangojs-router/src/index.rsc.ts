@@ -190,6 +190,13 @@ export {
   type ReadonlyHeaders,
 } from "./server/cookie-store.js";
 
+// Cache tag APIs (server-only)
+// cacheTag: tag the current "use cache" entry at runtime.
+// updateTag: read-your-own-writes invalidation (awaitable, for Server Actions).
+// revalidateTag: stale-while-revalidate invalidation (background, for webhooks).
+export { cacheTag } from "./cache/cache-tag.js";
+export { updateTag, revalidateTag } from "./cache/tag-invalidation.js";
+
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 

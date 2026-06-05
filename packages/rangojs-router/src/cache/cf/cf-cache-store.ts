@@ -57,6 +57,40 @@ export const CACHE_STALE_AT_HEADER = "x-edge-cache-stale-at";
 export const CACHE_STATUS_HEADER = "x-edge-cache-status";
 
 /**
+ * Header storing this entry's cache tags as a JSON array. JSON-encoded (not the
+ * comma-delimited CF `Cache-Tag` format) so tags containing commas round-trip
+ * safely; the read paths parse this to run the tag-invalidation check.
+ */
+export const CACHE_TAGS_HEADER = "x-edge-cache-tags";
+
+/** Header storing the ms-epoch timestamp when this entry's tags were attached. */
+export const CACHE_TAGGED_AT_HEADER = "x-edge-cache-tagged-at";
+
+/**
+ * KV key prefix for tag-invalidation markers. A marker stores the ms-epoch
+ * timestamp of the most recent invalidation of a tag; reads treat any entry
+ * whose taggedAt is older than its tags' latest marker as invalidated. Markers
+ * live in the SAME KV namespace as the cached entries - there is no separate
+ * tag-invalidation store.
+ */
+const TAG_MARKER_PREFIX = "__tag__/";
+
+/**
+ * Cache-API path prefix for the optional per-colo L1 cache of tag-invalidation
+ * markers (enabled by tagCacheTtl). Distinct from data keys (doc:/fn:/segment)
+ * and from the KV marker prefix so the two never collide.
+ */
+const TAG_MARKER_CACHE_PREFIX = "__tagmarker__/";
+
+/**
+ * Sentinel body for an L1-cached marker meaning "this tag has no invalidation
+ * marker." Distinct from any real ms-epoch timestamp (always a large positive
+ * integer). A Cache API miss (match() === undefined) always means "re-read KV",
+ * never "no marker" - absence is only ever represented by this cached sentinel.
+ */
+const TAG_MARKER_ABSENT = "none";
+
+/**
  * Header stashing the route author's original Cache-Control on L1 document
  * entries. putResponse/promoteResponseToL1 overwrite Cache-Control with a long
  * `max-age` so the CF Cache API retains the entry across the whole SWR window;
@@ -71,6 +105,74 @@ const CACHE_ORIG_CC_HEADER = "x-edge-cache-orig-cc";
  * @internal
  */
 export const MAX_REVALIDATION_INTERVAL = 30;
+
+/**
+ * Per-request memo of tag-invalidation markers (tag -> latest invalidatedAt, or
+ * null when no marker exists). Keyed by the request context object so it is
+ * naturally request-scoped and garbage-collected with the request.
+ *
+ * Without it, isGloballyInvalidated() issues a KV read per tag on every tagged
+ * cache read, so a page composed of many segments/items sharing a tag pays that
+ * cost N times. The memo collapses it to one KV read per distinct tag per
+ * request. invalidateTags() writes through so a same-request updateTag() stays
+ * read-your-own-writes consistent (the action's own re-render sees its own
+ * invalidation from the memo, without a re-read).
+ *
+ * It does NOT span requests, so a hot single-entry route still pays one KV read
+ * per request; that read hits Cloudflare KV's own edge read cache for hot keys.
+ */
+const tagMarkerMemo = new WeakMap<object, Map<string, number | null>>();
+
+function getTagMarkerMemo(ctx: object): Map<string, number | null> {
+  let memo = tagMarkerMemo.get(ctx);
+  if (!memo) {
+    memo = new Map();
+    tagMarkerMemo.set(ctx, memo);
+  }
+  return memo;
+}
+
+/**
+ * Per-request map of IN-FLIGHT marker reads (tag -> the pending read promise).
+ * The resolved-value memo above only collapses SEQUENTIAL reads of a tag; the
+ * router resolves sibling segments in PARALLEL, so without this several
+ * concurrently-resolving segments sharing a tag would each issue their own KV
+ * read before any of them populates the memo. Sharing the in-flight promise
+ * collapses those to a single KV read. Entries are dropped once resolved (the
+ * value is then in the memo), so this only spans the concurrent read window.
+ */
+const tagMarkerInflight = new WeakMap<
+  object,
+  Map<string, Promise<number | null>>
+>();
+
+function getTagMarkerInflight(
+  ctx: object,
+): Map<string, Promise<number | null>> {
+  let inflight = tagMarkerInflight.get(ctx);
+  if (!inflight) {
+    inflight = new Map();
+    tagMarkerInflight.set(ctx, inflight);
+  }
+  return inflight;
+}
+
+/** KV key byte-length ceiling. Cloudflare KV rejects keys larger than this. */
+const KV_MAX_KEY_BYTES = 512;
+
+const kvKeyEncoder = new TextEncoder();
+
+/** UTF-8 byte length of a KV key (multibyte tags can exceed the char count). */
+function kvKeyByteLength(key: string): number {
+  return kvKeyEncoder.encode(key).length;
+}
+
+/**
+ * Stores (by namespace) already warned about tag machinery configured without a
+ * KV namespace, so the warning fires once per process rather than per request
+ * (CFCacheStore is constructed per request).
+ */
+const warnedNoKvReadInvalidation = new Set<string>();
 
 // ============================================================================
 // Types
@@ -122,6 +224,10 @@ interface KVItemEnvelope {
   s: number;
   /** When entry hard-expires (ms epoch) */
   e: number;
+  /** Cache tags (for distributed tag invalidation) */
+  t?: string[];
+  /** Timestamp when tags were attached (ms epoch) */
+  ta?: number;
 }
 
 /**
@@ -135,12 +241,16 @@ interface KVResponseEnvelope {
   st: number;
   /** HTTP status text */
   stx: string;
-  /** Serialized headers as key-value pairs */
+  /** Serialized headers as key-value pairs (client-facing; no internal headers) */
   hd: [string, string][];
   /** When entry becomes stale (ms epoch) */
   s: number;
   /** When entry hard-expires (ms epoch) */
   e: number;
+  /** Cache tags (for distributed tag invalidation) */
+  t?: string[];
+  /** Timestamp when tags were attached (ms epoch) */
+  ta?: number;
 }
 
 export interface CFCacheStoreOptions<TEnv = unknown> {
@@ -184,8 +294,83 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    * ```typescript
    * new CFCacheStore({ ctx: env.ctx, kv: env.CACHE_KV })
    * ```
+   *
+   * Tag-based invalidation (updateTag/revalidateTag) requires KV: the
+   * tag-invalidation markers are stored in this same namespace. There is no
+   * separate tag-invalidation store to configure.
    */
   kv?: KVNamespace;
+
+  /**
+   * Optional eager-purge hook, called ONCE per updateTag()/revalidateTag() with
+   * the namespaced Cloudflare Cache-Tags to purge (one batched call for the
+   * whole invalidation, not one per tag). These exactly match the `Cache-Tag`
+   * header this store writes on its tag-lookup marker entries
+   * (`rg:{namespace}:lk:{encodedTag}`), so forwarding them to Cloudflare's
+   * purge-by-tag API evicts the cached lookups in every colo - making
+   * cross-colo invalidation prompt instead of waiting out `tagCacheTtl`.
+   *
+   * Only meaningful with `tagCacheTtl > 0` (otherwise there are no cached
+   * lookups to purge). The values are pre-encoded, so commas in tag names are
+   * safe to pass straight to the purge API.
+   *
+   * @example
+   * ```ts
+   * onRevalidateTag: async (cacheTags) => {
+   *   await fetch(`https://api.cloudflare.com/client/v4/zones/${ZONE}/purge_cache`, {
+   *     method: "POST",
+   *     headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
+   *     body: JSON.stringify({ tags: cacheTags }),
+   *   });
+   * }
+   * ```
+   */
+  onRevalidateTag?: (cacheTags: string[]) => Promise<void>;
+
+  /**
+   * Optional expiration (seconds) for tag-invalidation markers in KV. A marker
+   * must outlive every entry tagged before the invalidation, so this MUST
+   * exceed your largest entry TTL+SWR. Defaults to no expiration (markers
+   * persist; they are tiny - one timestamp per distinct invalidated tag).
+   *
+   * Note the opposite sizing from `tagCacheTtl` below: `tagInvalidationTtl` must
+   * be LARGE (outlive data); `tagCacheTtl` should be SMALL (a staleness ceiling).
+   *
+   * Cardinality matters: each DISTINCT invalidated tag writes one permanent KV
+   * marker (with the no-expiry default). Keep tags LOW-cardinality and never
+   * derive an invalidation tag from untrusted input (e.g.
+   * `revalidateTag(req.query.tag)`) - an attacker could otherwise grow your KV
+   * namespace without bound. Set a `tagInvalidationTtl` only if your tags are
+   * unavoidably high-cardinality AND it can still safely exceed your max entry
+   * TTL+SWR.
+   */
+  tagInvalidationTtl?: number;
+
+  /**
+   * Optional TTL (seconds) for caching tag-invalidation markers in the per-colo
+   * Cache API (L1), to avoid a KV marker read on every tagged cache read.
+   *
+   * Default `0` = disabled: the marker is read from KV on every tagged read
+   * (today's behavior), giving the strongest cross-colo invalidation latency
+   * (~KV consistency). A positive value caches each marker (including the
+   * "no marker yet" state) in L1 for that many seconds, so within the window a
+   * colo answers from L1 with no KV read.
+   *
+   * The colo that runs `updateTag`/`revalidateTag` writes the fresh marker
+   * straight into its own L1 (write-through), so it observes the invalidation
+   * immediately. By default OTHER colos only converge when their cached marker
+   * expires, so `tagCacheTtl` is the MAXIMUM extra cross-colo invalidation
+   * latency for them. Recommended 30-60 for high-read, low-mutation tags; leave
+   * at 0 when prompt global invalidation matters and you cannot wire a purge.
+   *
+   * To make other colos prompt WITHOUT a short TTL, wire `onRevalidateTag` to a
+   * Cloudflare purge-by-tag call: each marker entry carries a namespaced
+   * `Cache-Tag`, and `onRevalidateTag` is handed exactly those tags to purge, so
+   * the cached lookups are evicted everywhere on invalidation. With a purge
+   * wired, `tagCacheTtl` becomes purely a read-cost reducer + fallback window
+   * (safe to set large) rather than the invalidation-latency ceiling.
+   */
+  tagCacheTtl?: number;
 
   /**
    * Cache version string override. When this changes, all cached entries are
@@ -253,6 +438,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly waitUntil?: (fn: () => Promise<void>) => void;
   private readonly version?: string;
   private readonly kv?: KVNamespace;
+  private readonly onRevalidateTag?: (tags: string[]) => Promise<void>;
+  private readonly tagInvalidationTtl?: number;
+  private readonly tagCacheTtl: number;
 
   constructor(options: CFCacheStoreOptions<TEnv>) {
     if (!options.ctx) {
@@ -270,6 +458,28 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     this.keyGenerator = options.keyGenerator;
     this.waitUntil = (fn) => options.ctx.waitUntil(fn());
     this.kv = options.kv;
+    this.onRevalidateTag = options.onRevalidateTag;
+    this.tagInvalidationTtl = options.tagInvalidationTtl;
+    this.tagCacheTtl = options.tagCacheTtl ?? 0;
+
+    // Read-side tag invalidation requires KV: isGloballyInvalidated() compares an
+    // entry's taggedAt against the per-tag KV marker and short-circuits to "not
+    // invalidated" when no KV namespace is configured. A consumer who wires the
+    // tag machinery (tagCacheTtl for L1 markers, or onRevalidateTag for CDN purge)
+    // but omits kv gets markers written and the purge fired, yet every tagged read
+    // still serves stale data with no other signal. Surface that misconfiguration.
+    if (!this.kv && (this.tagCacheTtl > 0 || this.onRevalidateTag)) {
+      const id = this.namespace ?? "default";
+      if (!warnedNoKvReadInvalidation.has(id)) {
+        warnedNoKvReadInvalidation.add(id);
+        console.warn(
+          `[CFCacheStore] tagCacheTtl/onRevalidateTag is configured without a KV ` +
+            `namespace, so tag invalidation has NO read-side effect: tagged reads ` +
+            `are never treated as invalidated and serve stale data. Configure ` +
+            `{ kv } for distributed tag invalidation.`,
+        );
+      }
+    }
   }
 
   /**
@@ -348,6 +558,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return this.kvGetSegment(key);
       }
 
+      // Tag invalidation: an entry whose tags were invalidated after it was
+      // cached is treated as a miss, so the next render re-populates it.
+      const tagInfo = this.readTagInfo(response.headers);
+      if (await this.isGloballyInvalidated(tagInfo.tags, tagInfo.taggedAt)) {
+        return null;
+      }
+
       // Read status headers
       const status = response.headers.get(CACHE_STATUS_HEADER);
       const age = Number(response.headers.get("age") ?? "0");
@@ -405,13 +622,23 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const totalTtl = ttl + swrWindow;
       const staleAt = Date.now() + ttl * 1000;
 
-      const body = JSON.stringify(data);
+      // Stamp the tag timestamp at write time and carry it (with the tags)
+      // into both the L1 body and the KV envelope so reads can run the
+      // invalidation check.
+      const taggedAt =
+        data.tags && data.tags.length > 0 ? Date.now() : undefined;
+      const dataToStore: CachedEntryData = taggedAt
+        ? { ...data, taggedAt }
+        : data;
+
+      const body = JSON.stringify(dataToStore);
       const response = new Response(body, {
         headers: {
           "Content-Type": "application/json",
           "Cache-Control": `public, max-age=${totalTtl}`,
           [CACHE_STALE_AT_HEADER]: String(staleAt),
           [CACHE_STATUS_HEADER]: "HIT",
+          ...this.tagHeaderEntries(dataToStore.tags, taggedAt),
         },
       });
 
@@ -428,7 +655,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       }
 
       // L2: persist to KV
-      this.kvSetSegment(key, data, staleAt, totalTtl, swrWindow);
+      this.kvSetSegment(key, dataToStore, staleAt, totalTtl, swrWindow);
     } catch (error) {
       console.error("[CFCacheStore] set failed:", error);
     }
@@ -482,6 +709,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         return this.kvGetResponse(key);
       }
 
+      // Tag invalidation check (treat invalidated entry as a miss).
+      const tagInfo = this.readTagInfo(response.headers);
+      if (await this.isGloballyInvalidated(tagInfo.tags, tagInfo.taggedAt)) {
+        return null;
+      }
+
       // Check staleness
       const staleAt = Number(response.headers.get(CACHE_STALE_AT_HEADER) || 0);
       const isStale = staleAt > 0 && Date.now() > staleAt;
@@ -513,6 +746,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     headers.delete(CACHE_ORIG_CC_HEADER);
     headers.delete(CACHE_STALE_AT_HEADER);
     headers.delete(CACHE_STATUS_HEADER);
+    headers.delete(CACHE_TAGS_HEADER);
+    headers.delete(CACHE_TAGGED_AT_HEADER);
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
@@ -529,6 +764,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     response: Response,
     ttl: number,
     swr?: number,
+    tags?: string[],
   ): Promise<void> {
     try {
       const cache = await this.getCache();
@@ -538,6 +774,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const swrWindow = resolveSwrWindow(swr, this.defaults);
       const totalTtl = ttl + swrWindow;
       const staleAt = Date.now() + ttl * 1000;
+      const taggedAt = tags && tags.length > 0 ? Date.now() : undefined;
 
       // Clone body for potential KV write before consuming it for L1
       const [l1Body, kvBody] = this.kv
@@ -556,6 +793,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       }
       headers.set("Cache-Control", `public, max-age=${totalTtl}`);
       headers.set(CACHE_STALE_AT_HEADER, String(staleAt));
+      // Internal tag headers (stripped by toClientResponse before serving).
+      const tagHeaders = this.tagHeaderEntries(tags, taggedAt);
+      for (const [name, value] of Object.entries(tagHeaders)) {
+        headers.set(name, value);
+      }
 
       const toCache = new Response(l1Body, {
         status: response.status,
@@ -595,6 +837,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
               hd: headersArray,
               s: staleAt,
               e: staleAt + swrWindow * 1000,
+              t: tags,
+              ta: taggedAt,
             };
             await this.kv!.put(kvKey, JSON.stringify(envelope), {
               expirationTtl: totalTtl,
@@ -626,6 +870,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       if (!response) return this.kvGetItem(key);
 
+      // Tag invalidation check (treat invalidated entry as a miss).
+      const tagInfo = this.readTagInfo(response.headers);
+      if (await this.isGloballyInvalidated(tagInfo.tags, tagInfo.taggedAt)) {
+        return null;
+      }
+
       const staleAt = Number(
         response.headers.get(CACHE_STALE_AT_HEADER) ?? "0",
       );
@@ -646,6 +896,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           value: data.value,
           handles: data.handles,
           shouldRevalidate: false,
+          tags: tagInfo.tags,
         };
       }
 
@@ -661,6 +912,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         value: data.value,
         handles: data.handles,
         shouldRevalidate: true,
+        tags: tagInfo.tags,
       };
     } catch (error) {
       console.error("[CFCacheStore] getItem failed:", error);
@@ -686,6 +938,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const totalTtl = ttl + swrWindow;
       const staleAt = Date.now() + ttl * 1000;
 
+      const tags = options?.tags;
+      const taggedAt = tags && tags.length > 0 ? Date.now() : undefined;
+
       const body = JSON.stringify({ value, handles: options?.handles });
       const response = new Response(body, {
         headers: {
@@ -693,6 +948,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           "Cache-Control": `public, max-age=${totalTtl}`,
           [CACHE_STALE_AT_HEADER]: String(staleAt),
           [CACHE_STATUS_HEADER]: "HIT",
+          ...this.tagHeaderEntries(tags, taggedAt),
         },
       });
 
@@ -716,6 +972,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
               h: options?.handles,
               s: staleAt,
               e: staleAt + swrWindow * 1000,
+              t: tags,
+              ta: taggedAt,
             };
             await this.kv!.put(kvKey, JSON.stringify(envelope), {
               expirationTtl: totalTtl,
@@ -759,6 +1017,310 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   // ============================================================================
+  // Tag Invalidation (single-store: markers live in this.kv)
+  // ============================================================================
+
+  /** KV key for a tag's invalidation marker. */
+  private tagMarkerKey(tag: string): string {
+    return this.toKVKey(`${TAG_MARKER_PREFIX}${tag}`);
+  }
+
+  /**
+   * Header entries carrying an entry's tags (JSON-encoded, comma-safe) and the
+   * timestamp they were attached. Returns an empty object when there are no
+   * tags so untagged entries stay header-free and skip the invalidation check.
+   */
+  private tagHeaderEntries(
+    tags: string[] | undefined,
+    taggedAt: number | undefined,
+  ): Record<string, string> {
+    if (!tags || tags.length === 0 || !taggedAt) return {};
+    return {
+      // encodeURIComponent so the value is pure ASCII: HTTP header values are
+      // ByteStrings, but JSON.stringify leaves codepoints > U+00FF (emoji/CJK)
+      // verbatim, which makes new Response({ headers }) throw and the outer
+      // try/catch silently drop the whole entry from cache. Decoded in
+      // readTagInfo. The L1 marker Cache-Tag path encodes for the same reason.
+      [CACHE_TAGS_HEADER]: encodeURIComponent(JSON.stringify(tags)),
+      [CACHE_TAGGED_AT_HEADER]: String(taggedAt),
+    };
+  }
+
+  /** Read an entry's tags/taggedAt back from its headers. */
+  private readTagInfo(headers: Headers): {
+    tags?: string[];
+    taggedAt?: number;
+  } {
+    const rawTags = headers.get(CACHE_TAGS_HEADER);
+    const rawTaggedAt = headers.get(CACHE_TAGGED_AT_HEADER);
+    if (!rawTags || !rawTaggedAt) return {};
+    try {
+      return {
+        tags: JSON.parse(decodeURIComponent(rawTags)) as string[],
+        taggedAt: Number(rawTaggedAt),
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * Whether an entry tagged at `taggedAt` with `tags` has been invalidated since.
+   * Reads the per-tag invalidation markers from KV and returns true if any tag's
+   * latest invalidation is at or after taggedAt (>= so a same-millisecond
+   * invalidate wins, favouring freshness over staleness). Fails open: KV errors
+   * never turn a hit into a wrongful miss-storm beyond this single read.
+   */
+  private async isGloballyInvalidated(
+    tags: string[] | undefined,
+    taggedAt: number | undefined,
+  ): Promise<boolean> {
+    if (!this.kv || !tags || tags.length === 0 || !taggedAt) return false;
+    const ctx = _getRequestContext();
+    const memo = ctx ? getTagMarkerMemo(ctx) : undefined;
+    const inflight = ctx ? getTagMarkerInflight(ctx) : undefined;
+    try {
+      const markers = await Promise.all(
+        tags.map((tag) => this.readTagMarker(tag, memo, inflight)),
+      );
+      for (const marker of markers) {
+        if (marker != null && marker >= taggedAt) return true;
+      }
+      return false;
+    } catch (error) {
+      console.error("[CFCacheStore] tag invalidation check failed:", error);
+      return false;
+    }
+  }
+
+  /** Synthetic Cache API request for a tag's L1-cached invalidation marker. */
+  private tagMarkerRequest(tag: string): Request {
+    return this.keyToRequest(`${TAG_MARKER_CACHE_PREFIX}${tag}`);
+  }
+
+  /**
+   * Read a tag's latest invalidation timestamp (or null if never invalidated)
+   * through the cascade: per-request memo -> per-colo L1 cache (only when
+   * tagCacheTtl > 0) -> KV (the global truth). The memo is always consulted
+   * first so it stays authoritative within a request (read-your-own-writes),
+   * and every KV/L1 result is written back into the memo. A Cache API miss
+   * always falls through to KV; absence is represented by a cached sentinel,
+   * never by a miss.
+   *
+   * Concurrent reads of the same tag within a request share one in-flight read
+   * (the resolved-value memo only collapses sequential reads; parallel segment
+   * loading would otherwise issue one KV read per concurrent reader).
+   * @internal
+   */
+  private async readTagMarker(
+    tag: string,
+    memo: Map<string, number | null> | undefined,
+    inflight: Map<string, Promise<number | null>> | undefined,
+  ): Promise<number | null> {
+    if (memo && memo.has(tag)) return memo.get(tag) ?? null;
+
+    // Collapse concurrent (not-yet-resolved) reads of this tag onto one promise.
+    if (inflight) {
+      const pending = inflight.get(tag);
+      if (pending) return pending;
+      const read = this.fetchTagMarker(tag, memo);
+      inflight.set(tag, read);
+      try {
+        return await read;
+      } finally {
+        // Resolved values now live in the memo; drop the in-flight entry.
+        inflight.delete(tag);
+      }
+    }
+
+    return this.fetchTagMarker(tag, memo);
+  }
+
+  /**
+   * Uncached body of readTagMarker: L1 (per-colo Cache API, opt-in via
+   * tagCacheTtl) -> KV. Writes the resolved value back into the memo.
+   * @internal
+   */
+  private async fetchTagMarker(
+    tag: string,
+    memo: Map<string, number | null> | undefined,
+  ): Promise<number | null> {
+    // L1 (per-colo) marker cache - opt-in via tagCacheTtl.
+    if (this.tagCacheTtl > 0) {
+      try {
+        const cache = await this.getCache();
+        const hit = await cache.match(this.tagMarkerRequest(tag));
+        if (hit) {
+          const body = await hit.text();
+          const value = body === TAG_MARKER_ABSENT ? null : Number(body);
+          memo?.set(tag, value);
+          return value;
+        }
+      } catch {
+        // Fall through to KV on any L1 read error.
+      }
+    }
+
+    // KV (global truth).
+    const raw = await this.kv!.get(this.tagMarkerKey(tag), { type: "text" });
+    const value = raw != null ? Number(raw) : null;
+    memo?.set(tag, value);
+
+    // Populate L1 for subsequent reads in this colo (non-blocking).
+    if (this.tagCacheTtl > 0) {
+      const put = () => this.putTagMarkerL1(tag, value);
+      if (this.waitUntil) this.waitUntil(put);
+      else void put();
+    }
+    return value;
+  }
+
+  /**
+   * Cloudflare Cache-Tags written on a tag's L1 marker entry, namespaced per
+   * store so purges never collide with other Cache-Tags in the zone. Three
+   * tiers, broad to specific:
+   *   rg:{ns}            - everything this store cached (deploy/nuclear reset)
+   *   rg:{ns}:lk         - all tag-lookup markers
+   *   rg:{ns}:lk:{tag}   - this tag's lookup (the normal updateTag purge target)
+   * The tag value is encodeURIComponent'd so commas/spaces can't corrupt the
+   * comma-delimited Cache-Tag header.
+   * @internal
+   */
+  private lookupCacheTags(tag: string): string[] {
+    const ns = this.namespace ?? "default";
+    return [`rg:${ns}`, `rg:${ns}:lk`, this.lookupPurgeTag(tag)];
+  }
+
+  /** The specific Cache-Tag a consumer purges to evict tag `tag`'s lookup. */
+  private lookupPurgeTag(tag: string): string {
+    const ns = this.namespace ?? "default";
+    return `rg:${ns}:lk:${encodeURIComponent(tag)}`;
+  }
+
+  /**
+   * Write a tag marker value into the per-colo L1 Cache API with tagCacheTtl.
+   * `null` is stored as the TAG_MARKER_ABSENT sentinel so "no marker yet" is
+   * cacheable (most tags are never invalidated - that is where the read savings
+   * come from). The entry also carries a namespaced Cache-Tag so an external
+   * purge-by-tag (via onRevalidateTag) can evict it across colos promptly,
+   * rather than waiting out tagCacheTtl. Best-effort.
+   * @internal
+   */
+  private async putTagMarkerL1(
+    tag: string,
+    value: number | null,
+  ): Promise<void> {
+    if (this.tagCacheTtl <= 0) return;
+    try {
+      const cache = await this.getCache();
+      const body = value != null ? String(value) : TAG_MARKER_ABSENT;
+      await cache.put(
+        this.tagMarkerRequest(tag),
+        new Response(body, {
+          headers: {
+            "Cache-Control": `public, max-age=${this.tagCacheTtl}`,
+            "Cache-Tag": this.lookupCacheTags(tag).join(","),
+          },
+        }),
+      );
+    } catch {
+      // Best-effort: a failed L1 populate just means the next read consults KV.
+    }
+  }
+
+  /**
+   * Invalidate every entry tagged with any of `tags`. Receives the whole batch
+   * from one updateTag()/revalidateTag() call so the eager-purge hook fires
+   * ONCE (one CDN purge request, not one per tag). For each tag: records the KV
+   * marker (the durable cross-colo truth that reads compare taggedAt against),
+   * writes the fresh marker straight into this colo's L1 (write-through, NOT
+   * delete - a delete would let the next read re-read a not-yet-converged KV
+   * value and re-arm the stale window), and memoizes it for same-request
+   * read-your-own-writes. Finally fires onRevalidateTag with the namespaced
+   * lookup Cache-Tags so a consumer purge evicts the cached lookups in other
+   * colos promptly (otherwise they converge within tagCacheTtl).
+   *
+   * Durable-write integrity: the in-memory write-through (memo + L1) for a tag
+   * runs ONLY after that tag's KV marker write is confirmed. If any KV write
+   * fails (transient error, or an over-512-byte key), this rejects with the
+   * failed tags so an awaiting updateTag() surfaces the failure instead of
+   * silently reporting success while other requests/colos serve stale data. The
+   * eager purge still fires for the whole batch first (it is additive).
+   */
+  async invalidateTags(tags: string[]): Promise<void> {
+    if (tags.length === 0) return;
+    const invalidatedAt = Date.now();
+    const ctx = _getRequestContext();
+    const memo = ctx ? getTagMarkerMemo(ctx) : undefined;
+
+    if (!this.kv && !this.onRevalidateTag) {
+      console.warn(
+        `[CFCacheStore] invalidateTags had no effect: configure a KV namespace ` +
+          `for distributed invalidation, or an onRevalidateTag hook.`,
+      );
+    }
+
+    const failedTags = new Set<string>();
+    const errors: unknown[] = [];
+    if (this.kv) {
+      await Promise.all(
+        tags.map(async (tag) => {
+          const markerKey = this.tagMarkerKey(tag);
+          if (kvKeyByteLength(markerKey) > KV_MAX_KEY_BYTES) {
+            failedTags.add(tag);
+            errors.push(
+              new Error(
+                `tag "${tag}" produces a ${kvKeyByteLength(markerKey)}-byte KV ` +
+                  `marker key, over the ${KV_MAX_KEY_BYTES}-byte limit`,
+              ),
+            );
+            return;
+          }
+          try {
+            await this.kv!.put(markerKey, String(invalidatedAt), {
+              ...(this.tagInvalidationTtl
+                ? { expirationTtl: this.tagInvalidationTtl }
+                : {}),
+            });
+          } catch (error) {
+            failedTags.add(tag);
+            errors.push(error);
+          }
+        }),
+      );
+    }
+
+    // Write-through memo + L1 only for tags with a confirmed durable marker (or
+    // for every tag when there is no KV at all - a purge-only/dev config, where
+    // the in-memory write-through is the only invalidation signal there is).
+    for (const tag of tags) {
+      if (failedTags.has(tag)) continue;
+      memo?.set(tag, invalidatedAt);
+      if (this.tagCacheTtl > 0) await this.putTagMarkerL1(tag, invalidatedAt);
+    }
+
+    // One batched eager purge of the lookup markers for the whole call. Fired
+    // regardless of KV write outcome (it is additive and uses pure string ops).
+    if (this.onRevalidateTag) {
+      try {
+        await this.onRevalidateTag(tags.map((tag) => this.lookupPurgeTag(tag)));
+      } catch (error) {
+        console.error("[CFCacheStore] onRevalidateTag hook failed:", error);
+      }
+    }
+
+    if (failedTags.size > 0) {
+      const err = new Error(
+        `[CFCacheStore] ${failedTags.size}/${tags.length} tag marker write(s) ` +
+          `failed: ${[...failedTags].join(", ")}. Those tags may still serve ` +
+          `stale data across requests/colos; retry the invalidation.`,
+      );
+      (err as Error & { cause?: unknown }).cause = errors[0];
+      throw err;
+    }
+  }
+
+  // ============================================================================
   // KV L2 Helpers
   // ============================================================================
 
@@ -781,6 +1343,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       // Hard-expired — treat as miss
       if (now > envelope.e) return null;
+
+      // Tag invalidation check (also covers the KV tier, not just L1).
+      if (
+        await this.isGloballyInvalidated(envelope.d.tags, envelope.d.taggedAt)
+      ) {
+        return null;
+      }
 
       const shouldRevalidate = now > envelope.s;
 
@@ -847,6 +1416,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             "Cache-Control": `public, max-age=${remainingTtl}`,
             [CACHE_STALE_AT_HEADER]: String(envelope.s),
             [CACHE_STATUS_HEADER]: "HIT",
+            // Preserve tags across KV->L1 promotion so the promoted entry stays
+            // tag-invalidatable.
+            ...this.tagHeaderEntries(envelope.d.tags, envelope.d.taggedAt),
           },
         });
 
@@ -874,6 +1446,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
       if (now > envelope.e) return null;
 
+      // Tag invalidation check (also covers the KV tier, not just L1).
+      if (await this.isGloballyInvalidated(envelope.t, envelope.ta)) {
+        return null;
+      }
+
       const shouldRevalidate = now > envelope.s;
 
       // Promote to L1
@@ -883,6 +1460,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         value: envelope.v,
         handles: envelope.h,
         shouldRevalidate,
+        tags: envelope.t,
       };
     } catch (error) {
       console.error("[CFCacheStore] KV getItem failed:", error);
@@ -911,6 +1489,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             "Cache-Control": `public, max-age=${remainingTtl}`,
             [CACHE_STALE_AT_HEADER]: String(envelope.s),
             [CACHE_STATUS_HEADER]: "HIT",
+            // Preserve tags across KV->L1 promotion (the item tier previously
+            // dropped them, permanently disabling tag invalidation here).
+            ...this.tagHeaderEntries(envelope.t, envelope.ta),
           },
         });
 
@@ -939,6 +1520,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const now = Date.now();
 
       if (now > envelope.e) return null;
+
+      // Tag invalidation check (also covers the KV tier, not just L1).
+      if (await this.isGloballyInvalidated(envelope.t, envelope.ta)) {
+        return null;
+      }
 
       const shouldRevalidate = now > envelope.s;
 
@@ -982,6 +1568,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         }
         headers.set("Cache-Control", `public, max-age=${remainingTtl}`);
         headers.set(CACHE_STALE_AT_HEADER, String(envelope.s));
+        // Re-attach the internal tag headers (envelope.hd is client-facing and
+        // intentionally excludes them) so the promoted entry stays invalidatable.
+        const tagHeaders = this.tagHeaderEntries(envelope.t, envelope.ta);
+        for (const [name, value] of Object.entries(tagHeaders)) {
+          headers.set(name, value);
+        }
 
         const bodyBuffer = base64ToBuffer(envelope.b);
         const response = new Response(bodyBuffer, {

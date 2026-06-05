@@ -16,6 +16,7 @@ import {
   getRequestContext,
   _getRequestContext,
 } from "../server/request-context.js";
+import { recordRequestTags } from "./cache-tag.js";
 import { serializeSegments, deserializeSegments } from "./segment-codec.js";
 import { captureHandles, restoreHandles } from "./handle-snapshot.js";
 import { sortedSearchString, sortedRouteParams } from "./cache-key-utils.js";
@@ -23,7 +24,23 @@ import {
   DEFAULT_ROUTE_TTL,
   resolveCacheKey,
   resolveCacheStore,
+  resolveTagsOption,
 } from "./cache-policy.js";
+import type { RequestContext } from "../server/request-context.js";
+
+/**
+ * Resolve tags for a cache() boundary from its config (static array or
+ * function of ctx). Thin wrapper over the shared resolveTagsOption so the
+ * cache() DSL and loader caching resolve tags identically.
+ * @internal
+ */
+export function resolveCacheTags(
+  config: PartialCacheOptions | false,
+  ctx: RequestContext | undefined,
+): string[] | undefined {
+  if (config === false) return undefined;
+  return resolveTagsOption(config.tags, ctx, "CacheScope");
+}
 
 function debugCacheLog(message: string): void {
   if (INTERNAL_RANGO_DEBUG) {
@@ -311,6 +328,10 @@ export class CacheScope {
     // Resolve cache key early (while request context is available)
     const key = await this.resolveKey(pathname, params, isIntercept);
 
+    // Resolve tags early (while request context is available, before waitUntil)
+    const tags = resolveCacheTags(this.config, requestCtx);
+    recordRequestTags(tags, requestCtx);
+
     // Check if this is a partial request (navigation) vs document request
     const isPartial = requestCtx.originalUrl.searchParams.has("_rsc_partial");
 
@@ -374,6 +395,7 @@ export class CacheScope {
           segments: serializedSegments,
           handles,
           expiresAt: Date.now() + ttl * 1000,
+          tags,
         };
 
         if (INTERNAL_RANGO_DEBUG) {

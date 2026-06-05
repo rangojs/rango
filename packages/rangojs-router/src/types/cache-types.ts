@@ -78,6 +78,14 @@ export interface CacheOptions<TEnv = unknown> {
    * - Loader-specific caching strategies
    * - Hot data in fast cache, cold data in larger/slower cache
    *
+   * Tag invalidation caveat: a per-boundary store becomes reachable by
+   * `updateTag()` / `revalidateTag()` once this boundary is resolved in the
+   * current process. If the store is *durable* (shared across processes) and the
+   * very first request to a fresh worker is an `updateTag`/`revalidateTag` for a
+   * tag held only in this store - before this boundary is matched - that
+   * invalidation can miss it. For data you invalidate by tag, prefer the
+   * app-level store (always reachable), or ensure the boundary is warmed.
+   *
    * @example
    * ```typescript
    * const kvStore = new CloudflareKVStore(env.CACHE_KV);
@@ -145,10 +153,11 @@ export interface CacheOptions<TEnv = unknown> {
    * Tags for cache invalidation.
    * Can be a static array or a function that returns tags.
    *
-   * Note: Tags are passed through to the store but built-in stores
-   * (MemorySegmentCacheStore, CFCacheStore) do not yet index or
-   * invalidate by tag. Effective tag-based invalidation requires a
-   * custom store implementation with secondary indices.
+   * The built-in `MemorySegmentCacheStore` and `CFCacheStore` index by tag.
+   * Invalidate on demand with `updateTag(...tags)` (awaitable, read-your-own-writes;
+   * for server actions) or `revalidateTag(...tags)` (background SWR; for route
+   * handlers / webhooks). For `CFCacheStore`, distributed invalidation requires a
+   * `kv` namespace (markers live in that same namespace).
    *
    * @example
    * ```typescript
