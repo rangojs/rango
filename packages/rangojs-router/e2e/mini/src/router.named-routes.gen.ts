@@ -2,6 +2,7 @@
 export const NamedRoutes = {
   cache: "/cache",
   charts: "/charts",
+  combined: "/combined",
   counter: "/counter",
   errBoom: "/errors/boom",
   errGo: "/errors/go",

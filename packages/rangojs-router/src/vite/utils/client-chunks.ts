@@ -5,9 +5,24 @@
 // the RSC/server build chunked the importing modules.
 
 import type { ClientChunkMeta, ClientChunks } from "../plugin-types.js";
+import { createRangoDebugger, NS } from "../debug.js";
 
 /** The callback shape @vitejs/plugin-rsc's `clientChunks` option accepts. */
 export type RscClientChunksFn = (meta: ClientChunkMeta) => string | undefined;
+
+/**
+ * Opt-in observability for the built-in strategy. The route-root marker list is
+ * intentionally finite (see {@link ROUTE_ROOT_DIRS}); a consumer whose layout
+ * has no recognized marker (e.g. `src/parts/<feature>/…`) silently inherits the
+ * default grouping (no per-route split). That silence is the only real downside
+ * of a convention-based default, so we make the decision observable: run a build
+ * with `DEBUG=rango:chunks` to see, per client module, which route group it was
+ * assigned to or why it fell back to the shared grouping. Zero cost when off
+ * (the debugger is `undefined` unless the namespace is enabled). For full control
+ * over any layout, pass a `clientChunks` function instead of relying on the
+ * convention — that is the supported configurability path, not widening the list.
+ */
+const debugChunks = createRangoDebugger(NS.chunks);
 
 /**
  * Modules that must stay on the default (shared) grouping regardless of strategy:
@@ -94,19 +109,32 @@ const ROUTE_ROOT_DIRS = new Set([
 export function directoryClientChunks(
   meta: ClientChunkMeta,
 ): string | undefined {
-  if (isSharedRuntime(meta)) return undefined;
+  if (isSharedRuntime(meta)) {
+    // React / router runtime / node_modules: always shared, expected, uninteresting.
+    return undefined;
+  }
   const segments = meta.normalizedId.split("/").filter(Boolean);
   const dirCount = segments.length - 1; // exclude the filename
-  if (dirCount < 1) return undefined;
-  // Route-root marker -> the segment after it is the route id. First marker wins,
-  // so a top-level route owns its whole subtree. The `< dirCount - 1` bound
-  // guarantees the segment after the marker is a directory, not the file.
-  for (let i = 0; i < dirCount - 1; i++) {
-    if (ROUTE_ROOT_DIRS.has(segments[i].toLowerCase())) {
-      return `app-${sanitizeGroup(segments[i + 1])}`;
+  if (dirCount >= 1) {
+    // Route-root marker -> the segment after it is the route id. First marker
+    // wins, so a top-level route owns its whole subtree. The `< dirCount - 1`
+    // bound guarantees the segment after the marker is a directory, not the file.
+    for (let i = 0; i < dirCount - 1; i++) {
+      if (ROUTE_ROOT_DIRS.has(segments[i].toLowerCase())) {
+        const group = `app-${sanitizeGroup(segments[i + 1])}`;
+        debugChunks?.("split %s -> %s", meta.normalizedId, group);
+        return group;
+      }
     }
   }
   // No recognized route structure -> inherit the default serverChunk grouping.
+  // This is the actionable "silent" case: app code that did NOT split by route.
+  // Surface it (under DEBUG=rango:chunks) so a consumer can see their layout
+  // missed the convention and either colocate under a marker dir or pass a fn.
+  debugChunks?.(
+    "shared %s (no route-root marker; inherits default grouping)",
+    meta.normalizedId,
+  );
   return undefined;
 }
 

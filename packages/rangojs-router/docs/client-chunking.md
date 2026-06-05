@@ -6,9 +6,10 @@ shrinking the client bundle of a given route.
 
 ## TL;DR
 
-- **Per-route client splitting is ON by default** (pre-1.0): `rango()` groups your
+- **Per-route client splitting is ON by default**: `rango()` groups your
   `"use client"` components by route id, so visiting `/a` does not download `/b`'s
-  client code. Opt out with `rango({ clientChunks: false })`.
+  client code. Opt out with `rango({ clientChunks: false })`. (The cost-side
+  benchmark backing this default is in "When is splitting worth it?" below.)
 - The default is **safe because it only splits where it recognizes a route
   structure**. Three branches:
   - **Structured route dirs** (`routes/<id>/…`, `app/<id>/…`, `handlers/<id>/…`, …)
@@ -82,7 +83,7 @@ src/
       components/
         Field.tsx             // -> ALSO "app-settings"
   components/
-    Button.tsx                // -> shared "app-components-*.js" (no route root)
+    Button.tsx                // no route marker -> stays in the shared chunk
 ```
 
 `clientChunks: true` groups each app `"use client"` module by its **route id**.
@@ -98,11 +99,36 @@ leakage). The chunk loads only when a dashboard route renders; visiting
 (`app-dashboard-*.css`).
 
 When the path has **no** route-root directory (e.g. a flat `src/components/`),
-the strategy falls back to the immediate **parent directory name** — so a flat
-`components/` folder collapses to one shared `app-components` chunk, as intended.
+the strategy returns `undefined` and the module **inherits `@vitejs/plugin-rsc`'s
+default grouping** — it folds into the shared app chunk, exactly as if splitting
+were off. It is **not** forced into a parent-named `app-components` chunk: a
+parent-dir fallback would merge unrelated modules across routes (and, worse, merge
+every host sub-app's `components/Layout.tsx` into one chunk, re-introducing the
+cross-app leakage the host split exists to prevent). Returning `undefined` is what
+makes the default a true no-op for flat and host-split layouts.
 
 React, the router runtime, and anything in `node_modules` always stay on the
 shared grouping — they are never fragmented per route.
+
+#### Seeing what split (and what didn't)
+
+The route-root marker list is intentionally finite and conventional. A layout it
+doesn't recognize (say `src/parts/<feature>/…`) silently inherits the shared
+grouping — no error, no split. To make that observable, run a production build
+with the `rango:chunks` debug namespace:
+
+```sh
+DEBUG=rango:chunks pnpm build
+# rango:chunks split src/routes/dashboard/Chart.tsx -> app-dashboard
+# rango:chunks shared src/parts/editor/Editor.tsx (no route-root marker; inherits default grouping)
+```
+
+Every `"use client"` module the built-in strategy sees is logged with its group,
+or with the reason it fell back to shared. If your app code shows up as `shared`
+when you expected a split, either colocate it under a marker directory or take
+full control with a `clientChunks` **function** (next). Widening the built-in
+marker list is deliberately **not** the configurability mechanism — the function
+is, because it covers any layout without an ever-growing convention list.
 
 ### Option 2 — custom `clientChunks` function
 
@@ -171,20 +197,46 @@ stylesheets. Injection is driven by the RSC render, so only the CSS of the
 components actually rendered on the current route is linked — no FOUC, no
 unrelated routes' CSS.
 
-## When is splitting worth it?
+## When is splitting worth it? (measured)
 
-It is on by default, but be aware of the trade-off. On every route the browser
-already loads React (~115 KB gzip) and the Rango runtime (~50 KB gzip); those
-dominate. Per-route splitting only moves your **app-specific** client bytes. It is
-a clear win when routes carry heavy, independent client code (dashboards, editors,
-data grids) and a wash — or a small regression from extra requests — when client
-components are small and shared. The default only splits where it recognizes a
-route structure, so a flat-layout app is unaffected either way.
+On every route the browser already loads React (~115 KB gzip) and the Rango
+runtime (~50 KB gzip); those are shared and unaffected. Splitting only moves your
+**app-specific** client bytes. Here is the cost side, measured on a real app
+(`tests/vite-rsc-demo`, 5 feature routes, ~33 KB gzip of app client code) built
+both ways (`node tools/bench-client-chunks.mjs`):
 
-To measure for your app, build with and without `clientChunks: false` and compare
-the first-load client JS for a representative route (the bundle-analysis tooling,
-`tools/bundle-report.mjs`, helps here). If extra requests hurt more than the byte
-savings help, opt out with `clientChunks: false`.
+| Metric                            | `clientChunks: false`            | default (on)                                    |
+| --------------------------------- | -------------------------------- | ----------------------------------------------- |
+| Shared runtime (every route)      | 95 KB gz                         | 95 KB gz (identical)                            |
+| App code on **every first paint** | **38.3 KB** (one combined chunk) | **13–19 KB** (residual + this route's group)    |
+| Per-route first-load saving       | —                                | **20–25 KB gz (~51–66% of app bytes)**          |
+| First-load requests               | shared + 1 app chunk             | shared + 1 group = **+1 request** (multiplexed) |
+| Total client JS (whole app)       | 134 KB                           | 141 KB (**+5%** fragmentation overhead)         |
+
+Read this as three navigation patterns:
+
+- **Land on one route (the common case): split wins.** You download only that
+  route's client code, not every route's — here ~20–25 KB less, more on a bigger
+  app.
+- **A typical 1–3 route session: split wins.** After the first route the ~95 KB
+  shared baseline is cached; each further route adds only its own small group.
+- **A full cold crawl of _every_ route in one session: split costs ~5%.** That is
+  the only case the +7 KB fragmentation overhead is fully paid, and it is not a
+  realistic first-load.
+
+**This is why the default scales.** The baseline's every-route app chunk grows
+with your **total** app client code; the split's per-route first-load grows only
+with **one** route's code. The larger the app — and the smaller the fraction of it
+any single user visits — the bigger the win and the more wasteful shipping every
+route's code on every visit becomes. Per-route groups in this real app are
+3.7–9.4 KB (not sub-KB fragments), so there is nothing to coalesce; tiny groups
+only appear in toy apps, which opt out with one line.
+
+If your app is small and every route's client code is trivial, the split is a wash
+and the one-line opt-out (`clientChunks: false`) is the right call. To measure your
+own app, build both ways and run `node tools/bench-client-chunks.mjs <dist-off>
+<dist-on>` (or compare first-load client JS for a representative route with the
+`tools/bundle-report.mjs` analyzer).
 
 ## Caveats
 
@@ -193,5 +245,18 @@ savings help, opt out with `clientChunks: false`.
   modules load) but there are no named `app-*` chunks.
 - Upstream `@vitejs/plugin-rsc` has a known first-request CSS-ordering edge case
   when many client groups interact
-  ([vite-plugin-react#1100](https://github.com/vitejs/vite-plugin-react/issues/1100));
-  validate styling in both dev and a production preview when adopting splitting.
+  ([vite-plugin-react#1100](https://github.com/vitejs/vite-plugin-react/issues/1100)).
+  The e2e suite covers a page that renders **two** route groups' CSS at once and
+  asserts both stylesheets apply with the correct cascade, deterministically
+  across reloads, in dev and a production preview (`e2e/mini.test.ts`,
+  `/combined`). Still validate your own styling under a production preview when
+  adopting splitting.
+- **No minimum-chunk-size coalescing.** `experimentalMinChunkSize` was removed in
+  Vite 8 / Rolldown, and byte-based coalescing cannot be reconstructed inside the
+  `clientChunks` callback — grouping is finalized before any chunk is rendered, so
+  emitted sizes do not exist yet. It is also unnecessary: per-route groups are
+  fetched lazily, so a tiny group costs one extra (multiplexed) request **on its
+  own route only** and never taxes another route's first load. An app whose routes
+  are uniformly tiny is the small-app case that opts out with `clientChunks:
+false`, or hand-tunes grouping with a `clientChunks` function (return `undefined`
+  to fold a route back into the shared chunk).
