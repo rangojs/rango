@@ -45,6 +45,11 @@ function defaultCollect<T>(segments: T[][]): T[] {
 // Used by useHandle() to recover collect when handle is deserialized from RSC prop.
 const collectRegistry = new Map<string, (segments: unknown[][]) => unknown>();
 
+// Monotonic counter for runtime fallback ids (see createHandle). Module-scoped
+// and deterministic, so each createHandle() call gets a stable, unique id within
+// the process. Only used when no build id was injected (a bare unit test).
+let runtimeHandleIdCounter = 0;
+
 /**
  * Look up a collect function from the registry by handle $$id.
  * Returns undefined if not registered (falls back to defaultCollect in useHandle).
@@ -95,10 +100,22 @@ export function createHandle<TData, TAccumulated = TData[]>(
   collect?: (segments: TData[][]) => TAccumulated,
   __injectedId?: string,
 ): Handle<TData, TAccumulated> {
-  const handleId = __injectedId ?? "";
+  let handleId = __injectedId ?? "";
 
   if (!handleId && process.env.NODE_ENV === "development") {
     throw missingInjectedIdError("Handle", "createHandle");
+  }
+
+  // No build-injected id. This only happens in a bare unit test — every real
+  // build runs the rango Vite plugin, which always injects a stable id (and the
+  // line above throws for a genuinely non-exported handle in dev). Assign a
+  // process-stable runtime id so the collect registers below and the handle is
+  // fully exercisable in tests (useHandle, collectHandle, renderRoute's `handles`
+  // seeding run the REAL collect). Provably inert in production: the fallback
+  // never triggers when the plugin injects the id, so server/client id
+  // consistency (required for RSC recovery) is unaffected.
+  if (!handleId) {
+    handleId = `__rango_runtime_handle_${runtimeHandleIdCounter++}`;
   }
 
   const collectFn =
@@ -107,12 +124,10 @@ export function createHandle<TData, TAccumulated = TData[]>(
 
   // Register collect in module-level registry so useHandle() can recover it
   // when the handle is deserialized from RSC props (toJSON strips collect).
-  if (handleId) {
-    collectRegistry.set(
-      handleId,
-      collectFn as (segments: unknown[][]) => unknown,
-    );
-  }
+  collectRegistry.set(
+    handleId,
+    collectFn as (segments: unknown[][]) => unknown,
+  );
 
   return {
     __brand: "handle" as const,

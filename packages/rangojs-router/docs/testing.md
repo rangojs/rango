@@ -45,22 +45,23 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 
 ## The testing surface, mapped to the API
 
-| You ship / consume…                           | Test that…                                      | Layer               | Primitive                                      | Skill                                    |
-| --------------------------------------------- | ----------------------------------------------- | ------------------- | ---------------------------------------------- | ---------------------------------------- |
-| `reverse` / `useReverse` / `href`             | the URL is correct; misuse fails to compile     | unit + types        | call directly; `@ts-expect-error`              | `/typesafety`, `/links`                  |
-| a `loader()` body                             | data logic given params/env/vars/search         | unit (node)         | `runLoader` (raw fn)                           | `/loader`                                |
-| `middleware()` (auth, logging)                | ordering, short-circuit, cookie/header merge    | unit (node)         | `runMiddleware`                                | `/middleware`                            |
-| a client component reading router context     | it renders given params/loaderData/Outlet       | unit (DOM)          | `renderRoute`                                  | `/hooks`                                 |
-| a component reading `useLocationState`        | it renders the seeded location-state value      | unit (DOM)          | `renderRoute` (`locationState` option)         | `/location-state`                        |
-| a component reading `useHandle` (Breadcrumbs) | it renders the seeded handle output             | unit (DOM)          | `renderRoute` (`handles` option)               | `/handles`                               |
-| a response route (`path.json/.text/...`)      | status, content-type, body, content negotiation | integration         | `dispatch`                                     | `/response-routes`, `/mime-routes`       |
-| a redirect / `404` / middleware redirect      | the `Response` (status + `Location`)            | integration         | `dispatch`                                     | `/middleware`, `/route`                  |
-| an async Server Component                     | real Flight output / serialization shape        | RSC unit            | `renderToFlightString` + `toMatchFlight`       | `/route`                                 |
-| a `"use server"` action + revalidation flow   | the mutate -> reload -> UI update, JS and no-JS | e2e                 | `parityDescribe` + `expectParity`              | `/server-actions`                        |
-| navigation / hydration / view transitions     | no reload, no page error, correct pathname      | e2e                 | `parityDescribe`, `waitForHydration`, matchers | `/hooks`, `/view-transitions`            |
-| `cache()` / `"use cache"` / loader cache      | hit/miss/stale across two requests              | e2e + signal        | `assertCacheStatus` / telemetry sink           | `/caching`, `/use-cache`, `/cache-guide` |
-| `Prerender(...)` routes                       | served from a build-time artifact (a cache hit) | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`        | `/prerender`                             |
-| the generated `*.named-routes.gen.ts`         | it matches the runtime route map (drift in CI)  | unit (node)         | `assertGeneratedRoutesMatch`                   | `/typesafety`                            |
+| You ship / consume…                           | Test that…                                          | Layer               | Primitive                                      | Skill                                    |
+| --------------------------------------------- | --------------------------------------------------- | ------------------- | ---------------------------------------------- | ---------------------------------------- |
+| `reverse` / `useReverse` / `href`             | the URL is correct; misuse fails to compile         | unit + types        | call directly; `@ts-expect-error`              | `/typesafety`, `/links`                  |
+| a `loader()` body                             | data logic given params/env/vars/search             | unit (node)         | `runLoader` (raw fn)                           | `/loader`                                |
+| `middleware()` (auth, logging)                | ordering, short-circuit, cookie/header merge        | unit (node)         | `runMiddleware`                                | `/middleware`                            |
+| a client component reading router context     | it renders given params/loaderData/Outlet           | unit (DOM)          | `renderRoute`                                  | `/hooks`                                 |
+| a component reading `useLocationState`        | it renders the seeded location-state value          | unit (DOM)          | `renderRoute` (`locationState` option)         | `/location-state`                        |
+| a component reading `useHandle` (Breadcrumbs) | it renders the seeded handle output                 | unit (DOM)          | `renderRoute` (`handles` option)               | `/handles`                               |
+| a handle's `collect`/accumulator              | it maps per-segment pushes to the accumulated value | unit (node)         | `collectHandle`                                | `/handles`                               |
+| a response route (`path.json/.text/...`)      | status, content-type, body, content negotiation     | integration         | `dispatch`                                     | `/response-routes`, `/mime-routes`       |
+| a redirect / `404` / middleware redirect      | the `Response` (status + `Location`)                | integration         | `dispatch`                                     | `/middleware`, `/route`                  |
+| an async Server Component                     | real Flight output / serialization shape            | RSC unit            | `renderToFlightString` + `toMatchFlight`       | `/route`                                 |
+| a `"use server"` action + revalidation flow   | the mutate -> reload -> UI update, JS and no-JS     | e2e                 | `parityDescribe` + `expectParity`              | `/server-actions`                        |
+| navigation / hydration / view transitions     | no reload, no page error, correct pathname          | e2e                 | `parityDescribe`, `waitForHydration`, matchers | `/hooks`, `/view-transitions`            |
+| `cache()` / `"use cache"` / loader cache      | hit/miss/stale across two requests                  | e2e + signal        | `assertCacheStatus` / telemetry sink           | `/caching`, `/use-cache`, `/cache-guide` |
+| `Prerender(...)` routes                       | served from a build-time artifact (a cache hit)     | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`        | `/prerender`                             |
+| the generated `*.named-routes.gen.ts`         | it matches the runtime route map (drift in CI)      | unit (node)         | `assertGeneratedRoutesMatch`                   | `/typesafety`                            |
 
 ## Setup
 
@@ -364,29 +365,33 @@ pairs), and `useHandle(handle)` reads (e.g. a client Breadcrumbs trail) with the
 the same plugin-injected-id reason. A component reading only `useParams` /
 `useReverse` / `useNavigation` needs no seeding.
 
-Testing a handle's `collect`/accumulator: a handle's collect function (the
-`createHandle(collect)` argument that maps per-segment pushes to the accumulated
-value) is a **pure function** — export it and call it directly:
+### Testing a handle's `collect`/accumulator
+
+A handle's collect function (the `createHandle(collect)` argument that maps the
+per-segment pushed values into the accumulated result) is unit-testable directly
+with `collectHandle(handle, segments)` — it runs your handle's REAL registered
+collect on the per-segment values you provide:
 
 ```ts
-// breadcrumbs.ts
-export function collectBreadcrumbs(segments: Item[][]): Item[] {
-  return segments.flat();
-}
-export const Breadcrumbs = createHandle<Item, Item[]>(collectBreadcrumbs);
+import { collectHandle } from "@rangojs/router/testing";
 
-// breadcrumbs.test.ts
-expect(collectBreadcrumbs([[home], [post]])).toEqual([home, post]);
+const PageTitle = createHandle<string, string>(
+  (s) => s.flat().at(-1) ?? "Home",
+);
+expect(collectHandle(PageTitle, [["Home"], ["Products"], ["Shoes"]])).toBe(
+  "Shoes",
+);
+
+const Breadcrumbs = createHandle<Item>(); // default flatten
+expect(collectHandle(Breadcrumbs, [[home], [post]])).toEqual([home, post]);
 ```
 
-There is no `runHandle` primitive, and one can't introspect an inline collect:
-`createHandle` keeps the collect off the (serializable) handle and only registers
-it in a private module registry when the `$$id` is non-empty — which it is not in
-a bare test. CAVEAT for `renderRoute`'s `handles` seeding: because a consumer
-handle's collect is not registered in a bare test, the seeded per-segment values
-are aggregated with the **default flatten**, not your custom collect. So for a
-custom-collect handle, test the collect directly (above) and seed `renderRoute`
-with values whose flatten equals the shape your component should see.
+This works because `createHandle()` registers its collect even in a bare test
+(it assigns a runtime fallback id when the Vite plugin did not inject one). The
+same applies to `renderRoute`'s `handles` seeding: a handle's **custom** collect
+now runs end-to-end, so a `useHandle(handle)` component sees the real
+accumulated value (not a default flatten). The collect is also just a function,
+so you can always export and call it directly if you prefer.
 
 Fidelity caveat: client tree only. It will NOT catch server/client boundary
 remount bugs, real Flight serialization, loader execution, middleware, or handler
@@ -693,6 +698,10 @@ assertCacheStatus(target: Response | { headers }, segment: string,
 parseCacheHeader(value): Record<string, string>;
 createCacheSink(): { sink, events };   // wire via createRouter({ telemetry: sink })
 filterCacheDecisions(events): CacheDecisionEvent[];
+
+// Handle collect/accumulator
+collectHandle(handle, segments: TData[][]): TAccumulated; // runs the handle's real collect
+// expect(collectHandle(PageTitle, [["a"],["b"]])).toBe("b"); // a "last wins" collect
 
 // Generated-route drift
 diffGeneratedRoutes(router, generatedMap?): { missing, extra, mismatch, ok };

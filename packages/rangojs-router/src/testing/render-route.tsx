@@ -421,12 +421,12 @@ export async function renderRoute(
   const handleSeed: HandleDataSeed = cloneHandleSeed(options.handle);
   for (const [handle, values] of options.handles ?? []) {
     if (leafRouteSegmentId === undefined) continue;
-    // Assign a synthetic id when the handle's own id is empty (a local
-    // createHandle() in a bare test — the id is plugin-injected). Built-in
-    // handles keep their stable id (and their registered collect); empty-id
-    // handles fall back to the default flatten collect, which is correct for the
-    // common no-custom-collect handle (e.g. Breadcrumbs).
-    const id = ensureSyntheticId(handle as object, "$$id");
+    // createHandle always has a non-empty $$id (the Vite plugin injects one, and
+    // createHandle assigns a runtime fallback otherwise) with its REAL collect
+    // registered — so seeding under handle.$$id makes useHandle(handle) run the
+    // handle's actual collect/accumulator (custom collects included), not just a
+    // default flatten.
+    const id = (handle as unknown as { $$id: string }).$$id;
     (handleSeed[id] ??= {})[leafRouteSegmentId] = values;
   }
 

@@ -68,6 +68,9 @@ export type {
   CacheSink,
 } from "./cache-status.js";
 
+// Cross-cutting: handle collect/accumulator
+export { collectHandle } from "./collect-handle.js";
+
 // Cross-cutting: generated-route drift
 export {
   diffGeneratedRoutes,

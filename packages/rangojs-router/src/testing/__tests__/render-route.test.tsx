@@ -7,11 +7,32 @@ import { useReverse } from "../../browser/react/use-reverse.js";
 import { useNavigation } from "../../browser/react/use-navigation.js";
 import { usePathname } from "../../browser/react/use-pathname.js";
 import { useLoader } from "../../use-loader.js";
+import { useHandle } from "../../browser/react/use-handle.js";
+import { createHandle } from "../../handle.js";
 import type { LoaderDefinition } from "../../types.js";
 import { renderRoute } from "../render-route.js";
 
 afterEach(() => {
   cleanup();
+});
+
+describe("renderRoute handles seeding runs the real collect", () => {
+  it("applies a handle's CUSTOM collect (not just a flatten) to seeded values", () => {
+    const LastTitle = createHandle<string, string>(
+      (segments) => segments.flat().at(-1) ?? "none",
+    );
+    function TitleView() {
+      const title = useHandle(LastTitle);
+      return <span data-testid="title">{title}</span>;
+    }
+
+    return renderRoute([{ path: "/p", Component: TitleView }], {
+      handles: [[LastTitle, ["A", "B", "C"]]],
+    }).then(({ getByTestId }) => {
+      // "last wins" collect -> "C", not the flattened array.
+      expect(getByTestId("title").textContent).toBe("C");
+    });
+  });
 });
 
 describe("renderRoute", () => {

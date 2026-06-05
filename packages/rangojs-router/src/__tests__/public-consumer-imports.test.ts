@@ -182,6 +182,7 @@ import {
   assertCacheStatus,
   assertGeneratedRoutesMatch,
   createCacheSink,
+  collectHandle,
 } from "@rangojs/router/testing";
 import { rangoTestAliases } from "@rangojs/router/testing/vitest";
 import { renderRoute } from "@rangojs/router/testing/dom";
@@ -196,6 +197,7 @@ void renderRoute;
 void assertCacheStatus;
 void assertGeneratedRoutesMatch;
 void createCacheSink;
+void collectHandle;
 void createRangoE2E;
 void renderToFlightString;
 void flightMatchers;
