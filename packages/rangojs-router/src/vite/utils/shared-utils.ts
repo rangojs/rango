@@ -116,6 +116,50 @@ export function createVirtualEntriesPlugin(
   };
 }
 
+// Matches rollup's FILE_NAME_CONFLICT message and reports whether the colliding
+// file is a content-hashed asset, e.g.
+//   The emitted file "assets/index-DlGNrvnU.css" overwrites a previously ...
+//   The emitted file "assets/inter-latin-Dx4kXJAl.woff2" overwrites a ...
+// The match is UNANCHORED on purpose: by the time the warning reaches this user
+// onwarn handler, Vite's logger has wrapped rollup's raw message with an ANSI
+// color sequence and a "[CODE] " label, e.g.
+//   "[33m[FILE_NAME_CONFLICT] [0mThe emitted file \"...\" overwrites ..."
+// A "^The emitted file" anchor sits behind that prefix and never matches; and
+// Vite also strips the JSON.stringify quotes rollup puts around the filename, so
+// the match is UNANCHORED and quote-OPTIONAL ("?...?"?). The non-whitespace
+// capture stops at the space before "overwrites" (Vite's unquoted display form)
+// or the closing quote (raw rollup form); either way it carries no ANSI.
+// A content-hashed name ends with a "-" separator + a Vite content hash. The
+// hash is a FIXED-LENGTH base64url run ([A-Za-z0-9_-], default 8), so it can
+// itself contain "-"/"_": it CANNOT be located by splitting on the last "-"
+// (that lands inside the hash whenever it carries a dash, e.g. "...-Cabi7G8-" ->
+// "" or "...-CkhJZR-_" -> "_", which let those conflicts leak). Instead take the
+// trailing HASH_LEN chars and require the "-" separator right before them. The
+// hash must hold an uppercase letter or digit (a real hash is never an
+// all-lowercase word), so stable names like "assets/manifest.json" or
+// "assets/loading-skeleton.css" still surface as potential genuine overwrites.
+function isContentHashedAssetConflict(message: string | undefined): boolean {
+  if (!message) return false;
+  const match =
+    /The emitted file "?([^"\s]+)"? overwrites a previously emitted file/.exec(
+      message,
+    );
+  if (!match) return false;
+  const fileName = match[1];
+  const base = fileName.slice(fileName.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  if (dot <= 0) return false;
+  const stem = base.slice(0, dot);
+  // HASH_LEN tracks Vite's default [hash] width; bump it if an app sets a custom
+  // assetFileNames hash length.
+  const HASH_LEN = 8;
+  if (stem.length < HASH_LEN + 1 || stem[stem.length - HASH_LEN - 1] !== "-") {
+    return false;
+  }
+  const hash = stem.slice(-HASH_LEN);
+  return /^[A-Za-z0-9_-]+$/.test(hash) && /[A-Z0-9]/.test(hash);
+}
+
 /**
  * Rollup onwarn handler that suppresses known harmless warnings:
  * - "use client" directives: handled by the RSC plugin, not relevant to Rollup
@@ -126,6 +170,14 @@ export function createVirtualEntriesPlugin(
  *   by the bundler, rather than the vite:reporter message handled below (Rollup/Vite 7 shape).
  * - empty bundle: @vitejs/plugin-rsc scan build (step 1/5) produces an empty "index" chunk
  *   because the RSC entry is fully externalized during client-reference analysis
+ * - file name conflicts on content-hashed assets: @vitejs/plugin-rsc copies the rsc
+ *   environment's imported CSS/assets into the client bundle (its assets-manifest
+ *   generateBundle re-emits each via emitFile with an explicit content-hashed
+ *   fileName). When the client bundle already produced that identical asset,
+ *   rollup raises FILE_NAME_CONFLICT even though the bytes are identical (a
+ *   content hash collision IS a content match). Only these are suppressed; a
+ *   collision on a stable name still surfaces. No upstream fix as of
+ *   @vitejs/plugin-rsc@0.5.27; remove when it skips the redundant emit.
  */
 export function onwarn(
   warning: Vite.Rollup.RollupLog,
@@ -136,6 +188,12 @@ export function onwarn(
     warning.code === "SOURCEMAP_ERROR" ||
     warning.code === "EMPTY_BUNDLE" ||
     warning.code === "INEFFECTIVE_DYNAMIC_IMPORT"
+  ) {
+    return;
+  }
+  if (
+    warning.code === "FILE_NAME_CONFLICT" &&
+    isContentHashedAssetConflict(warning.message)
   ) {
     return;
   }
