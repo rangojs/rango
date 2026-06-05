@@ -6,9 +6,27 @@
 
 import type { ClientChunkMeta, ClientChunks } from "../plugin-types.js";
 import { createRangoDebugger, NS } from "../debug.js";
+import { hashRefKey } from "../plugins/client-ref-hashing.js";
 
 /** The callback shape @vitejs/plugin-rsc's `clientChunks` option accepts. */
 export type RscClientChunksFn = (meta: ClientChunkMeta) => string | undefined;
+
+/**
+ * Build-time context the discovery pass populates and the built-in strategy
+ * reads. It refines how the catch-all (no route-root marker) modules are grouped
+ * without touching marker splits or the shared runtime:
+ *
+ * - `fallbackRefs`: production hashes of the `"use client"` modules a consumer
+ *   registered as `errorBoundary`/`notFoundBoundary` fallbacks. Pulled into a
+ *   dedicated `app-fallback` chunk so the error UI is not co-bundled with the
+ *   very route code it exists to catch failures for (resilience), and so the
+ *   chunk it would otherwise sit in gets named after a real module rather than
+ *   the boundary. Populated by reading each fallback element's client-reference
+ *   `$$id` during discovery (see discover-routers).
+ */
+export interface ClientChunkContext {
+  fallbackRefs: Set<string>;
+}
 
 /**
  * Opt-in observability for the built-in strategy. The route-root marker list is
@@ -101,17 +119,30 @@ const ROUTE_ROOT_DIRS = new Set([
  *   `app-components`), re-introducing cross-app leakage.
  *
  * Resolution order:
- * 1. If the path passes through a {@link ROUTE_ROOT_DIRS} marker that has a
- *    directory after it, key on that next segment (the route id) — robust to any
- *    nesting depth below it (`routes/foo/components/ui/X.tsx` -> `app-foo`).
- * 2. Otherwise return `undefined` (inherit the default `serverChunk` grouping).
+ * 1. Shared runtime (React / router / node_modules) -> `undefined` (never split).
+ * 2. A registered error/notFound fallback (`ctx.fallbackRefs`) -> `app-fallback`,
+ *    regardless of location, so the error UI is decoupled from the happy path.
+ * 3. A {@link ROUTE_ROOT_DIRS} marker with a directory after it -> key on that
+ *    next segment (the route id), robust to any nesting depth.
+ * 4. Otherwise `undefined` (inherit the default `serverChunk` grouping).
  */
 export function directoryClientChunks(
   meta: ClientChunkMeta,
+  ctx?: ClientChunkContext,
 ): string | undefined {
   if (isSharedRuntime(meta)) {
     // React / router runtime / node_modules: always shared, expected, uninteresting.
     return undefined;
+  }
+  // Registered error/notFound fallbacks -> a dedicated chunk. The error UI must
+  // not co-bundle with the code it catches failures for, and removing it lets the
+  // chunk it would otherwise anchor be named after a real module, not the boundary.
+  if (
+    ctx?.fallbackRefs.size &&
+    ctx.fallbackRefs.has(hashRefKey(meta.normalizedId))
+  ) {
+    debugChunks?.("fallback %s -> app-fallback", meta.normalizedId);
+    return "app-fallback";
   }
   const segments = meta.normalizedId.split("/").filter(Boolean);
   const dirCount = segments.length - 1; // exclude the filename
@@ -144,13 +175,16 @@ export function directoryClientChunks(
  * grouping.
  *
  * - `false` / `undefined` -> `undefined` (no override).
- * - `true`               -> the built-in {@link directoryClientChunks} strategy.
- * - function             -> the user's function, used verbatim.
+ * - `true`               -> the built-in {@link directoryClientChunks} strategy,
+ *   bound to the discovery-populated {@link ClientChunkContext} (fallback chunk).
+ * - function             -> the user's function, used verbatim (full control; the
+ *   fallback refinement does not apply — the consumer owns the grouping).
  */
 export function resolveClientChunks(
   option: ClientChunks | undefined,
+  ctx?: ClientChunkContext,
 ): RscClientChunksFn | undefined {
   if (!option) return undefined;
-  if (option === true) return directoryClientChunks;
+  if (option === true) return (meta) => directoryClientChunks(meta, ctx);
   return option;
 }

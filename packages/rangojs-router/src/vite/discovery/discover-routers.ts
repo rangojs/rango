@@ -26,6 +26,7 @@ import {
   type CaughtDiscoveryError,
 } from "./discovery-errors.js";
 import { createRangoDebugger, timed, NS } from "../debug.js";
+import { computeProductionHash } from "../plugins/client-ref-hashing.js";
 
 const debug = createRangoDebugger(NS.discovery);
 
@@ -143,6 +144,28 @@ export async function discoverRouters(
   // Collect all manifests for trie building (avoid re-running generateManifest)
   const allManifests: Array<{ id: string; manifest: any }> = [];
 
+  // Built-in clientChunks context (present only when the built-in strategy is
+  // active). Collect the production hashes of "use client" error/notFound
+  // fallback modules so the strategy can route them into app-fallback.
+  const clientChunkCtx = state.opts?.clientChunkCtx;
+  const collectClientFallbackRef = clientChunkCtx
+    ? (refKey: string) =>
+        clientChunkCtx.fallbackRefs.add(
+          computeProductionHash(state.projectRoot, refKey),
+        )
+    : undefined;
+  // Router-level boundary defaults (`createRouter({ defaultErrorBoundary, ... })`)
+  // are NOT in EntryData, so generateManifestFull's walk misses them. Collect any
+  // "use client" default boundary directly off the router instance. The value is
+  // commonly a handler function wrapping the client boundary in server providers,
+  // so collectFallbackClientRefs invokes + walks the tree. Routed through buildMod
+  // so it runs in the same RSC runner realm the boundary value came from.
+  const collectFromBoundaryNode = (node: unknown): void => {
+    if (collectClientFallbackRef && buildMod.collectFallbackClientRefs) {
+      buildMod.collectFallbackClientRefs(node, collectClientFallbackRef);
+    }
+  };
+
   const manifestGenStart = debug ? performance.now() : 0;
   for (const [id, router] of registry) {
     if (!router.urlpatterns || !generateManifestFull) {
@@ -152,10 +175,23 @@ export async function discoverRouters(
     const manifest = generateManifestFull(
       router.urlpatterns,
       routerMountIndex,
-      router.__basename ? { urlPrefix: router.__basename } : undefined,
+      {
+        ...(router.__basename ? { urlPrefix: router.__basename } : {}),
+        ...(collectClientFallbackRef ? { collectClientFallbackRef } : {}),
+      },
     );
     routerMountIndex++;
     allManifests.push({ id, manifest });
+
+    // Router-level "use client" boundary defaults -> app-fallback (the
+    // route-tree errorBoundary()/notFoundBoundary() helpers are already
+    // collected inside generateManifestFull via collectClientFallbackRef).
+    if (collectClientFallbackRef) {
+      collectFromBoundaryNode(router.__defaultErrorBoundary);
+      collectFromBoundaryNode(router.__defaultNotFoundBoundary);
+      collectFromBoundaryNode(router.__notFound);
+    }
+
     const routeCount = Object.keys(manifest.routeManifest).length;
     const staticRoutes = Object.values(manifest.routeManifest).filter(
       (p: any) => !p.includes(":") && !p.includes("*"),
