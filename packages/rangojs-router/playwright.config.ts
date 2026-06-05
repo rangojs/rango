@@ -72,6 +72,9 @@ export default defineConfig({
             "**/basename-hmr.test.ts",
             "**/refresh-cmd.test.ts",
             "**/*.setup.ts",
+            // mini is a Vitest dogfood app nested under e2e/; its vitest
+            // test/*.test.tsx files must not be collected by Playwright.
+            "**/mini/**",
           ],
           use: {
             ...browserConfig,
@@ -81,7 +84,7 @@ export default defineConfig({
         {
           name: "production",
           grep: /\(production/,
-          testIgnore: ["**/smoke.test.ts"],
+          testIgnore: ["**/smoke.test.ts", "**/mini/**"],
           use: {
             ...browserConfig,
             baseURL: `http://localhost:${PREVIEW_SERVER_PORT}`,
@@ -173,6 +176,9 @@ export default defineConfig({
             "**/basename-hmr.test.ts",
             "**/refresh-cmd.test.ts",
             "**/*.setup.ts",
+            // mini is a Vitest dogfood app nested under e2e/; its vitest
+            // test/*.test.tsx files must not be collected by Playwright.
+            "**/mini/**",
           ],
           use: {
             ...browserConfig,
@@ -183,7 +189,7 @@ export default defineConfig({
         {
           name: "production",
           grep: /\(production/,
-          testIgnore: ["**/smoke.test.ts"],
+          testIgnore: ["**/smoke.test.ts", "**/mini/**"],
           use: {
             ...browserConfig,
             baseURL: `http://localhost:${PREVIEW_SERVER_PORT}`,
