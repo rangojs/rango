@@ -1,0 +1,6 @@
+/* Route-colocated CSS for the /widgets route. Loaded only when WidgetA's
+   client chunk loads, proving per-route CSS splitting under clientChunks. */
+.mini-widget-a {
+  outline: 3px solid rgb(102, 51, 153);
+  padding: 4px;
+}

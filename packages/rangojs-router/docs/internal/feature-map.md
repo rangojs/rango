@@ -273,6 +273,16 @@ Tooling ────────────┘
 ## Optional / Advanced Features
 
 - Cloudflare preset mode in `rango()` with environment-specific build setup
+- `clientChunks` Vite plugin option (`false` | `true` | function; exported types
+  `ClientChunks`, `ClientChunkMeta`) — per-route/per-feature splitting of the
+  client (`"use client"`) bundle. The built-in strategy (`true`) groups app client
+  modules by **route id** (the segment after a route-root marker such as
+  `routes`/`app`/`pages`/`features`/`handlers`), and returns `undefined` where
+  there is no route structure so flat layouts and host-split sub-apps inherit the
+  default grouping unchanged (no collision, no cross-app merge). A function is
+  forwarded to `@vitejs/plugin-rsc`'s `clientChunks`. Shared runtime
+  (React/router/`node_modules`) stays unsplit. **On by default pre-1.0**; opt out
+  with `clientChunks: false`. See [client-chunking.md](../client-chunking.md).
 - Runtime CLI route extraction (`rango generate <paths>`) for CI and repo bootstrapping
 - Debug surfaces: `debugManifest()`, `getMatchDebugStats()`, strict runtime/per-route tracing in development
 - Internal instrumentation and plugin internals for multi-router deployments and manifest isolation

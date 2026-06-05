@@ -13,6 +13,8 @@ export type {
   RangoNodeOptions,
   RangoCloudflareOptions,
   RangoOptions,
+  ClientChunks,
+  ClientChunkMeta,
   BuildEnvOption,
   BuildEnvFactory,
   BuildEnvFactoryContext,

@@ -34,6 +34,9 @@ that route tree.
 - [React Compiler](./react-compiler.md) - opt-in wiring via `@rolldown/plugin-babel`
   - `reactCompilerPreset()` for both the default and `cloudflare` presets, plus how
     it interacts with build-time prerender
+- [Client chunking](./client-chunking.md) - how the browser bundle splits across
+  routes / `include()` / host apps, and the `clientChunks` option for per-route
+  splitting to shrink a route's client bundle
 
 ## Observability
 

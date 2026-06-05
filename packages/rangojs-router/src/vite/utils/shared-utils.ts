@@ -173,12 +173,19 @@ export function getManualChunks(id: string): string | undefined {
     return "react";
   }
   // Use dynamic package name from package.json
-  // Check both npm install path and workspace symlink resolved path
+  // Check both npm install path and workspace symlink resolved path.
+  //
+  // The workspace patterns are anchored to the package's own `src`/`dist` so
+  // they match the router runtime but NOT consumer apps that merely live under a
+  // `packages/rangojs-router/` ancestor (the in-repo e2e apps at
+  // `packages/rangojs-router/e2e/<app>/src/...`). Without the anchor those apps'
+  // own client components were force-merged into the shared "router" chunk,
+  // which both misrepresented real-consumer bundles and blocked `clientChunks`
+  // splitting from relocating them.
   const packageName = getPublishedPackageName();
   if (
     normalized.includes(`node_modules/${packageName}/`) ||
-    normalized.includes("packages/rsc-router/") ||
-    normalized.includes("packages/rangojs-router/")
+    /\/packages\/(rsc-router|rangojs-router)\/(src|dist)\//.test(normalized)
   ) {
     return "router";
   }
