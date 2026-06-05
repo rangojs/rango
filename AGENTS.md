@@ -6,7 +6,7 @@
 - **CRITICAL**: Always commit `router.named-routes.gen.ts` when adding/removing/renaming test-app routes. This generated file must stay in sync with the route definitions. Use `--no-verify` if the formatter hook rejects it.
 - **CRITICAL**: Before EVERY push, ALWAYS run ALL of the following and fix any failures. No exceptions:
   1. `pnpm run typecheck` (typecheck)
-  2. `pnpm run test:unit` AND `pnpm run test:unit:rsc` — run from the **repo root** so they cover **every package, not only the router**. Both are recursive (`pnpm -r --if-present run …`), running the unit and Flight/RSC suites for `@rangojs/router` AND every consumer app that defines them (cloudflare-basic, mini, vite-rsc-demo, …). Do NOT run only `pnpm --filter @rangojs/router test:unit`: a change can pass the router's own tests while breaking a consumer app's `@rangojs/router/testing` dogfood suite. (CI's `unit-tests` job runs these same two recursive scripts.)
+  2. `pnpm run test:unit:all` from the **repo root** — the one-shot shorthand for `pnpm run test:unit && pnpm run test:unit:rsc`. Both are recursive (`pnpm -r --if-present run …`), so this runs the unit AND Flight/RSC suites for **every package, not only the router**: `@rangojs/router` plus every consumer app that defines them (cloudflare-basic, mini, vite-rsc-demo, …). Do NOT run only `pnpm --filter @rangojs/router test:unit`: a change can pass the router's own tests while breaking a consumer app's `@rangojs/router/testing` dogfood suite. (CI's `unit-tests` job runs the same two recursive scripts.)
   3. `pnpm run lint` (oxlint)
   4. `pnpm run format` (oxfmt — run without `--check` to fix)
 - After changing router Vite plugin code (`packages/rangojs-router/src/vite/`), rebuild with `pnpm build-router` before running `pnpm dev`.
