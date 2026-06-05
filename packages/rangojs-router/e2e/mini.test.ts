@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Fixture } from "./fixture";
 import { useFixture } from "./fixture";
 import {
@@ -416,6 +418,74 @@ function miniTests(f: Fixture) {
     const mode = await page.evaluate(() => window.history.scrollRestoration);
     expect(mode).toBe("manual");
   });
+
+  // -- clientChunks: per-route client splitting (dev + production) -----------
+  // /widgets and /charts each render a client component colocated in its own
+  // directory (routes/widgets, routes/charts). With `clientChunks: true` (mini's
+  // vite config) each ships as a separate client chunk + CSS in production; in
+  // dev each module loads on demand. Either way, visiting one route must NOT
+  // load the other route's client code or CSS. The resource-name check works in
+  // both modes: prod chunk "app-widgets-*.js" and dev module ".../widgets/..."
+  // both match /widget/, while /charts loads nothing matching /chart/.
+
+  test("clientChunks: /widgets loads only its own client chunk + CSS", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/widgets"));
+    await waitForHydration(page);
+
+    // Rendered and hydrated (interactive).
+    await expect(page.getByTestId("widget-a")).toBeVisible();
+    // Nested components/Badge.tsx (same filename as the charts route's) renders
+    // for this route only.
+    await expect(page.getByTestId("badge-widgets")).toBeVisible();
+    await expect(page.getByTestId("badge-charts")).toHaveCount(0);
+    await page.getByTestId("widget-a-btn").click();
+    await expect(page.getByTestId("widget-a-btn")).toHaveText(
+      "widget-a count: 1",
+    );
+
+    // Route-colocated CSS loaded (outline from widget.css applied).
+    const outline = await page
+      .getByTestId("widget-a")
+      .evaluate((el) => getComputedStyle(el).outlineColor);
+    expect(outline).toBe("rgb(102, 51, 153)");
+
+    // No cross-route leakage: nothing from the /charts route was loaded.
+    const names = await page.evaluate(() =>
+      performance.getEntriesByType("resource").map((e) => e.name),
+    );
+    expect(names.some((n) => /widget/i.test(n))).toBe(true);
+    expect(names.some((n) => /chart/i.test(n))).toBe(false);
+  });
+
+  test("clientChunks: /charts loads only its own client chunk + CSS", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/charts"));
+    await waitForHydration(page);
+
+    await expect(page.getByTestId("chart-b")).toBeVisible();
+    await expect(page.getByTestId("badge-charts")).toBeVisible();
+    await expect(page.getByTestId("badge-widgets")).toHaveCount(0);
+    await page.getByTestId("chart-b-btn").click();
+    await expect(page.getByTestId("chart-b-btn")).toHaveText("chart-b open");
+
+    const outline = await page
+      .getByTestId("chart-b")
+      .evaluate((el) => getComputedStyle(el).outlineColor);
+    expect(outline).toBe("rgb(0, 128, 128)");
+
+    const names = await page.evaluate(() =>
+      performance.getEntriesByType("resource").map((e) => e.name),
+    );
+    expect(names.some((n) => /chart/i.test(n))).toBe(true);
+    expect(names.some((n) => /widget/i.test(n))).toBe(false);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -437,4 +507,67 @@ test.describe("mini (production)", () => {
   test.describe.configure({ mode: "serial" });
   const f = useFixture({ root: MINI_ROOT, mode: "build" });
   miniTests(f);
+
+  // Build-graph contract for `clientChunks: true`: route-colocated client
+  // components split into per-route JS chunks AND per-route CSS, while the
+  // React + router runtime stay in their own shared chunks (not duplicated into
+  // the app chunks). The production fixture above builds mini/dist before this
+  // runs. See packages/rangojs-router/docs/client-chunking.md.
+  test("clientChunks (production): per-route chunks + CSS, shared runtime", async () => {
+    const assetsDir = join(
+      import.meta.dirname,
+      "mini",
+      "dist",
+      "client",
+      "assets",
+    );
+    const files = readdirSync(assetsDir);
+    const js = files.filter((name) => name.endsWith(".js"));
+    const css = files.filter((name) => name.endsWith(".css"));
+
+    const widgetsJs = js.find((name) => /^app-widgets-.*\.js$/.test(name));
+    const chartsJs = js.find((name) => /^app-charts-.*\.js$/.test(name));
+    expect(widgetsJs, "expected an app-widgets-*.js chunk").toBeTruthy();
+    expect(chartsJs, "expected an app-charts-*.js chunk").toBeTruthy();
+    expect(widgetsJs).not.toBe(chartsJs);
+
+    // Each route chunk holds only its own component's code.
+    const widgetsCode = readFileSync(join(assetsDir, widgetsJs!), "utf8");
+    const chartsCode = readFileSync(join(assetsDir, chartsJs!), "utf8");
+    expect(widgetsCode).toContain("mini-widget-a");
+    expect(widgetsCode).not.toContain("mini-chart-b");
+    expect(chartsCode).toContain("mini-chart-b");
+    expect(chartsCode).not.toContain("mini-widget-a");
+
+    // Collision guard: each route has a same-named nested
+    // components/Badge.tsx. The built-in strategy keys on the route id, so they
+    // split per route (app-widgets / app-charts) instead of merging into one
+    // app-components chunk. No chunk may contain BOTH badges.
+    expect(widgetsCode).toContain("badge-widgets");
+    expect(widgetsCode).not.toContain("badge-charts");
+    expect(chartsCode).toContain("badge-charts");
+    expect(chartsCode).not.toContain("badge-widgets");
+    const collided = js.filter((name) => {
+      const code = readFileSync(join(assetsDir, name), "utf8");
+      return code.includes("badge-widgets") && code.includes("badge-charts");
+    });
+    expect(collided, "no chunk should hold both routes' badges").toEqual([]);
+
+    // CSS splits at the same granularity as JS.
+    const widgetsCss = css.find((name) => /^app-widgets-.*\.css$/.test(name));
+    const chartsCss = css.find((name) => /^app-charts-.*\.css$/.test(name));
+    expect(widgetsCss, "expected an app-widgets-*.css").toBeTruthy();
+    expect(chartsCss, "expected an app-charts-*.css").toBeTruthy();
+    expect(readFileSync(join(assetsDir, widgetsCss!), "utf8")).toContain(
+      "mini-widget-a",
+    );
+    expect(readFileSync(join(assetsDir, chartsCss!), "utf8")).toContain(
+      "mini-chart-b",
+    );
+
+    // Shared runtime lives in its own chunks, not duplicated into app chunks.
+    expect(js.some((name) => /^react-.*\.js$/.test(name))).toBe(true);
+    expect(js.some((name) => /^router-.*\.js$/.test(name))).toBe(true);
+    expect(widgetsCode).not.toContain("createRoot");
+  });
 });
