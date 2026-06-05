@@ -28,6 +28,8 @@ import {
   type VarsInit,
 } from "./internal/context.js";
 import type { ThemeConfig } from "../theme/types.js";
+import type { SegmentCacheStore } from "../cache/types.js";
+import type { CacheProfile } from "../cache/profile-registry.js";
 
 /**
  * Options for runMiddleware.
@@ -53,6 +55,14 @@ export interface RunMiddlewareOptions<TEnv = any> {
    * route/handler response.
    */
   next?: () => Promise<Response>;
+  /**
+   * Cache store backing any `use cache` function a middleware invokes. Without
+   * it, registerCachedFunction bypasses (it checks for a store first), so the
+   * cached function runs uncached and its taint/profile guards never fire.
+   */
+  cacheStore?: SegmentCacheStore;
+  /** Cache profiles (the `createRouter({ cacheProfiles })` shape). */
+  cacheProfiles?: Record<string, CacheProfile>;
 }
 
 /**
@@ -104,6 +114,8 @@ export async function runMiddleware<TEnv = any>(
     params: opts.params,
     basename: opts.basename,
     theme: opts.theme,
+    cacheStore: opts.cacheStore,
+    cacheProfiles: opts.cacheProfiles,
   };
 
   const {
@@ -130,6 +142,17 @@ export async function runMiddleware<TEnv = any>(
         search?: Record<string, unknown>,
       ) => string)
     : undefined;
+
+  // Keep the RETURNED ctx.reverse consistent with the map-only reverse the
+  // chain receives. createTestRequestContext installs an auto-fill reverse
+  // (correct for the loader phase) when routeName/params are passed, but
+  // production app/response middleware see a map-only reverse. Without this,
+  // a middleware reading getRequestContext().reverse — or a consumer asserting
+  // on result.ctx.reverse — would observe auto-fill that production never does.
+  if (reverse) {
+    (ctx as RequestContext<TEnv>).reverse =
+      reverse as RequestContext<TEnv>["reverse"];
+  }
 
   const response = await runWithRequestContext(ctx, () =>
     executeLoaderMiddleware<TEnv>(

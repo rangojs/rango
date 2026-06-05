@@ -14,8 +14,20 @@
  * Limitations (v1):
  * - `ctx.rendered()` is not available — it requires the DSL render barrier,
  *   which only exists inside a full match. Calling it throws.
- * - `ctx.reverse()` throws unless `routeMap` is provided.
+ * - `ctx.reverse()` throws unless `routeMap` is provided (it does NOT fall back
+ *   to the global route map — that would leak whichever routes another test
+ *   registered).
+ * - `ctx.use(handle)` follows the production rule: reading a handle before
+ *   `await ctx.rendered()` throws (pass `rendered` to mock the barrier).
+ * - `use cache` functions only cache (and only fire their taint/profile guards)
+ *   when a `cacheStore` is provided — without one, registerCachedFunction
+ *   bypasses (it checks for a store first). Pass `cacheStore`/`cacheProfiles`
+ *   to exercise cached loaders; otherwise such a call runs uncached, like an
+ *   app with no cache configured.
  * - `formData` is exposed verbatim; no multipart parsing is performed.
+ * - Scoped dot-local reverse (`.sibling`) uses only the supplied `routeMap`;
+ *   the production root-scoping signal (derived from the global registry) is
+ *   not modeled, so a dotted name resolves against `routeMap` as given.
  */
 
 import {
@@ -25,8 +37,10 @@ import {
 import { createReverseFunction } from "../router/handler-context.js";
 import type { LoaderContext, LoaderDefinition } from "../types.js";
 import type { ContextVar } from "../context-var.js";
-import type { Handle } from "../handle.js";
+import { isHandle, type Handle } from "../handle.js";
 import type { ThemeConfig } from "../theme/types.js";
+import type { SegmentCacheStore } from "../cache/types.js";
+import type { CacheProfile } from "../cache/profile-registry.js";
 import {
   createTestRequestContext,
   type CreateTestContextOptions,
@@ -107,6 +121,15 @@ export interface RunLoaderOptions<TEnv = any> {
   /** Resolver for `ctx.use(OtherLoader)` composition. */
   use?: UseResolver;
   /**
+   * Cache store backing `use cache` functions the loader invokes. Without it,
+   * a cached function bypasses (registerCachedFunction checks for a store
+   * first) and runs uncached — its taint/profile guards never fire. Pass one
+   * (e.g. `new MemorySegmentCacheStore()`) to test a cached loader.
+   */
+  cacheStore?: SegmentCacheStore;
+  /** Cache profiles (the `createRouter({ cacheProfiles })` shape). */
+  cacheProfiles?: Record<string, CacheProfile>;
+  /**
    * Mock the `ctx.rendered()` render barrier so a loader that does
    * `await ctx.rendered()` (to read handle data pushed during render) can be
    * unit-tested. By default `ctx.rendered()` throws, because the real barrier
@@ -184,6 +207,8 @@ export async function runLoader<T>(
     params: opts.params,
     basename: opts.basename,
     theme: opts.theme,
+    cacheStore: opts.cacheStore,
+    cacheProfiles: opts.cacheProfiles,
   };
 
   const { ctx } = createTestRequestContext(ctxOpts);
@@ -194,10 +219,22 @@ export async function runLoader<T>(
   // handle resolves regardless of its build-injected $$id).
   const handleSeeds = new Map<unknown, unknown>(opts.handles ?? []);
 
+  // Tracks whether the mocked render barrier has settled. ctx.use(handle)
+  // reads are gated on this, matching production (loader-resolution.ts).
+  let renderedResolved = false;
+
   return runWithRequestContext(reqCtx, () => {
     const reverse = opts.routeMap
       ? createReverseFunction(opts.routeMap, opts.routeName, opts.params ?? {})
-      : reqCtx.reverse;
+      : ((() => {
+          // Documented contract: reverse requires routeMap. Do NOT fall back to
+          // reqCtx.reverse (the global route map) — that leaks whichever routes
+          // another test registered and contradicts the documented behavior.
+          throw new Error(
+            "ctx.reverse() requires the `routeMap` option in runLoader(). " +
+              "Pass { routeMap: { name: pattern, ... } } to enable reverse().",
+          );
+        }) as TestLoaderContext["reverse"]);
 
     const loaderCtx: TestLoaderContext = {
       params: opts.params ?? {},
@@ -212,11 +249,22 @@ export async function runLoader<T>(
       waitUntil: reqCtx.waitUntil.bind(reqCtx),
       executionContext: reqCtx.executionContext,
       get: reqCtx.get as TestLoaderContext["get"],
-      use: ((dep: LoaderDefinition<any, any>) => {
+      use: ((dep: LoaderDefinition<any, any> | Handle<any, any>) => {
+        // Match production (loader-resolution.ts): reading a handle in a loader
+        // requires the render barrier to have settled. Gate BEFORE returning a
+        // seed, so a loader that forgets `await ctx.rendered()` fails in the
+        // test exactly as it would at runtime.
+        if (isHandle(dep) && !renderedResolved) {
+          throw new Error(
+            `ctx.use(handle) in a loader requires "await ctx.rendered()" first. ` +
+              `Handle "${(dep as Handle<any, any>).$$id}" cannot be read until ` +
+              `the render tree has settled.`,
+          );
+        }
         // Handle reads (ctx.use(SomeHandle)) resolve from the seeded map first.
         if (handleSeeds.has(dep)) return handleSeeds.get(dep);
-        if (opts.use) return opts.use(dep);
-        return reqCtx.use(dep);
+        if (opts.use) return opts.use(dep as LoaderDefinition<any, any>);
+        return reqCtx.use(dep as LoaderDefinition<any, any>);
       }) as LoaderContext<any, any>["use"],
       method: opts.method ?? "GET",
       body: opts.body,
@@ -224,12 +272,13 @@ export async function runLoader<T>(
       reverse: reverse as TestLoaderContext["reverse"],
       rendered:
         opts.rendered !== undefined && opts.rendered !== false
-          ? () =>
-              Promise.resolve(
-                typeof opts.rendered === "function"
-                  ? opts.rendered()
-                  : undefined,
-              )
+          ? async () => {
+              if (typeof opts.rendered === "function") {
+                await opts.rendered();
+              }
+              // Barrier has settled: subsequent ctx.use(handle) reads resolve.
+              renderedResolved = true;
+            }
           : () => {
               throw new Error(
                 "ctx.rendered() is not available in runLoader() by default. It " +

@@ -83,6 +83,7 @@ import { rangoTestAliases } from "@rangojs/router/testing/vitest";
 import { renderRoute } from "@rangojs/router/testing/dom";
 import { createRangoE2E } from "@rangojs/router/testing/e2e";
 import { renderToFlightString } from "@rangojs/router/testing/flight";
+import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 
 void createLoader;
 void createRouter;
@@ -99,6 +100,7 @@ void dispatch;
 void renderRoute;
 void createRangoE2E;
 void renderToFlightString;
+void flightMatchers;
 
 const options: RangoOptions = { preset: "cloudflare" };
 void options;

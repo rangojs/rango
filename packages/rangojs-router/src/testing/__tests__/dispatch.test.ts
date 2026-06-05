@@ -179,6 +179,74 @@ describe("dispatch", () => {
     expect(handlerRan).toBe(false);
   });
 
+  it("runs GLOBAL middleware BEFORE the partial short-circuit (an auth gate still blocks a partial)", async () => {
+    // Production wraps coreHandler (which holds the _rsc_partial short-circuit)
+    // with global middleware (handler.ts:481-489), so a global auth middleware
+    // runs first and can 401/redirect a partial request. dispatch must match,
+    // or a consumer test of "my middleware blocks partial requests" falsely
+    // passes (the bug: dispatch used to return X-RSC-Reload before any
+    // middleware ran). This test fails on the pre-fix code.
+    let globalRan = false;
+    let handlerRan = false;
+    const authMw: MiddlewareFn = async () => {
+      globalRan = true;
+      return new Response(null, { status: 401 });
+    };
+    const router = createRouter<{}>({})
+      .use(authMw)
+      .routes(
+        urls(({ path }) => [
+          path.json(
+            "/api/data",
+            () => {
+              handlerRan = true;
+              return { hello: "world" };
+            },
+            { name: "api.data" },
+          ),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+    const res = await dispatch(router, "/api/data?_rsc_partial=1");
+    expect(globalRan).toBe(true);
+    expect(res.status).toBe(401);
+    expect(res.headers.get("X-RSC-Reload")).toBeNull();
+    expect(handlerRan).toBe(false);
+  });
+
+  it("emits X-RSC-Reload (not the handler) when global middleware passes a partial through", async () => {
+    let globalRan = false;
+    let handlerRan = false;
+    const tagMw: MiddlewareFn = async (ctx, next) => {
+      globalRan = true;
+      ctx.header("X-Tag", "yes");
+      return next();
+    };
+    const router = createRouter<{}>({})
+      .use(tagMw)
+      .routes(
+        urls(({ path }) => [
+          path.json(
+            "/api/data",
+            () => {
+              handlerRan = true;
+              return { hello: "world" };
+            },
+            { name: "api.data" },
+          ),
+        ]),
+      ) as Parameters<typeof dispatch>[0];
+
+    const res = await dispatch(router, "/api/data?_rsc_partial=1");
+    expect(globalRan).toBe(true);
+    // The handler never runs on a partial — the reload IS the terminal handler.
+    expect(handlerRan).toBe(false);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-RSC-Reload")).toContain("/api/data");
+    // Global middleware header effects still merge onto the reload response.
+    expect(res.headers.get("X-Tag")).toBe("yes");
+  });
+
   it("wires the router's cache store into the request context", async () => {
     // Without the store, registerCachedFunction bypasses BEFORE the request-scope
     // (NOCACHE) check, so the brand would be inert. dispatch must surface the

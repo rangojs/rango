@@ -56,6 +56,7 @@ import { buildDebugManifest } from "./router/debug-manifest.js";
 
 import type { SegmentResolutionDeps, MatchApiDeps } from "./router/types.js";
 import { createHandlerContext } from "./router/handler-context.js";
+import { normalizeBasename } from "./router/basename.js";
 import {
   setupLoaderAccess,
   setupLoaderAccessSilent,
@@ -169,11 +170,9 @@ export function createRouter<TEnv = any>(
         ?.RANGO_TEST_SIGNALS === "1");
 
   // Normalize basename: ensure leading slash, strip trailing slash.
-  // A bare "/" is equivalent to no basename.
-  const basename =
-    basenameOption && basenameOption.replace(/^\/+|\/+$/g, "")
-      ? "/" + basenameOption.replace(/^\/+|\/+$/g, "")
-      : undefined;
+  // A bare "/" is equivalent to no basename. Shared with the testing
+  // primitives via normalizeBasename so they can never drift.
+  const basename = normalizeBasename(basenameOption);
 
   // Resolve telemetry sink (no-op when not configured)
   const telemetry = resolveSink(telemetrySink);

@@ -150,7 +150,6 @@
     },
     "./testing/flight-matchers": {
       "types": "./src/testing/flight-matchers.ts",
-      "react-server": "./src/testing/flight-matchers.ts",
       "default": "./src/testing/flight-matchers.ts"
     }
   },

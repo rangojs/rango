@@ -34,14 +34,16 @@ export type ExpectedCacheStatus = CacheSegmentStatus;
 export type CacheStatusTarget = Response | { headers: Headers };
 
 /**
- * Parse an `X-Rango-Cache` header value into a `{ segmentId: status }` map.
+ * Parse an `X-Rango-Cache` header value into a `{ routeKey: status }` map.
  *
- * Header format: `<segId>=<status>, <segId2>=<status2>`. Whitespace around
- * entries and the `=` is tolerated. Entries without a status are ignored.
+ * Header format: `<routeKey>=<status>, <routeKey2>=<status2>`. The key is the
+ * route NAME (ctx.routeKey, e.g. `product.detail`), NOT the URL pattern —
+ * see assertCacheStatus. Whitespace around entries and the `=` is tolerated.
+ * Entries without a status are ignored.
  *
  * @example
- * parseCacheHeader("/products/:id=hit, /layout=stale")
- * // => { "/products/:id": "hit", "/layout": "stale" }
+ * parseCacheHeader("product.detail=hit, shop.layout=stale")
+ * // => { "product.detail": "hit", "shop.layout": "stale" }
  */
 export function parseCacheHeader(
   headerValue: string | null | undefined,
@@ -66,16 +68,23 @@ function getHeaders(target: CacheStatusTarget): Headers {
 }
 
 /**
- * Assert that the `X-Rango-Cache` header reports `expected` status for
- * `segment`. Throws a descriptive error when the header is missing (gate off),
- * the segment is absent, or the status differs.
+ * Assert that the `X-Rango-Cache` header reports `expected` status for the
+ * given route. Throws a descriptive error when the header is missing (gate
+ * off), the route is absent, or the status differs.
  *
- * Requires the router's debug cache signal gate to be enabled
- * (`debugCacheSignal: true` or `RANGO_TEST_SIGNALS=1`).
+ * `routeKey` is the route NAME (e.g. `product.detail`), the same id the header
+ * carries — NOT the URL pattern (`/products/:id`). The signal is built from
+ * ctx.routeKey (telemetry.ts), so a pattern-shaped key never matches.
+ *
+ * The header is produced by the RSC render pipeline, so get the Response from
+ * the router's real fetch path (`router.fetch(...)`), with the debug cache
+ * signal gate enabled (`debugCacheSignal: true` or `RANGO_TEST_SIGNALS=1`).
+ * NOTE: `dispatch()` is the non-RSC primitive and never emits this header.
  *
  * @example
- * const res = await dispatch(request);
- * assertCacheStatus(res, "/products/:id", "hit");
+ * // debugCacheSignal must be enabled on the router under test.
+ * const res = await router.fetch(new Request("https://app/products/42"));
+ * assertCacheStatus(res, "product.detail", "hit");
  */
 export function assertCacheStatus(
   target: CacheStatusTarget,
@@ -127,7 +136,7 @@ export interface CacheSink {
  * @example
  * const { sink, events } = createCacheSink();
  * const router = createRouter({ telemetry: sink, ... });
- * // ...dispatch a request...
+ * // ...send a request through the router's RSC fetch path...
  * const decisions = filterCacheDecisions(events);
  * expect(decisions[0].segments?.[0].cacheStatus).toBe("hit");
  */

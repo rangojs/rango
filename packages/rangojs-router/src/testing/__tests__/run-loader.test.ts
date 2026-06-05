@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { runLoader } from "../run-loader.js";
 import { createVar } from "../../context-var.js";
 import { createHandle } from "../../handle.js";
+import { getRequestContext } from "../../server/request-context.js";
+import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import type { LoaderContext, LoaderDefinition } from "../../types.js";
 
 describe("runLoader", () => {
@@ -183,6 +185,43 @@ describe("runLoader", () => {
         ),
       ).rejects.toThrow(/rendered\(\) is not available/);
     });
+
+    it("throws if ctx.use(handle) is read BEFORE await ctx.rendered() (production parity)", async () => {
+      // Production gates handle reads on the render barrier
+      // (loader-resolution.ts). A loader that forgets `await ctx.rendered()`
+      // must fail in the test too — not silently return the seeded data — or
+      // the bug (a loader that throws on the first real request) ships green.
+      // This test fails on the pre-fix code (which returned the seed regardless).
+      const Products = createHandle<string>();
+      await expect(
+        runLoader(async (ctx) => ({ products: ctx.use(Products) }), {
+          rendered: true,
+          handles: [[Products, ["a", "b"]]],
+        }),
+      ).rejects.toThrow(/requires "await ctx\.rendered\(\)" first/);
+    });
+  });
+
+  it("wires cacheStore/cacheProfiles into the request context so use cache does not bypass", async () => {
+    // Without a store, registerCachedFunction bypasses BEFORE the taint/profile
+    // checks (cache-runtime.ts), making a cached loader a silent no-op under
+    // test. The options must reach createRequestContext._cacheStore so a real
+    // cached loader can be exercised.
+    const store = new MemorySegmentCacheStore();
+    const result = await runLoader(
+      async () => {
+        const ctx = getRequestContext() as unknown as {
+          _cacheStore?: unknown;
+          _cacheProfiles?: Record<string, unknown>;
+        };
+        return {
+          hasStore: ctx._cacheStore === store,
+          hasProfile: Boolean(ctx._cacheProfiles?.fast),
+        };
+      },
+      { cacheStore: store, cacheProfiles: { fast: { ttl: 60 } } },
+    );
+    expect(result).toEqual({ hasStore: true, hasProfile: true });
   });
 
   it("throws on ctx.reverse() use without a routeMap", async () => {

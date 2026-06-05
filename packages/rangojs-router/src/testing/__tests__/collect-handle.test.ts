@@ -53,6 +53,18 @@ describe("collectHandle", () => {
     expect(result).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
   });
 
+  it("drops empty per-segment arrays before the collect runs (production parity)", () => {
+    // Production collectHandleData (handle.ts) only passes segments that pushed
+    // something. A collect that inspects segment count must see the same input,
+    // so a segment that pushed nothing (empty array) must NOT appear.
+    const SegmentCount = createHandle<string, number>((segments) => {
+      return segments.length;
+    });
+    // Three segments, but the middle one pushed nothing.
+    expect(collectHandle(SegmentCount, [["a"], [], ["b"]])).toBe(2);
+    expect(collectHandle(SegmentCount, [[], [], []])).toBe(0);
+  });
+
   it("warns and flattens for a handle whose module never registered a collect", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     // A bare object masquerading as a handle with an unregistered id.

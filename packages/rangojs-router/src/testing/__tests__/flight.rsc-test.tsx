@@ -35,6 +35,12 @@ async function ParamEcho(): Promise<React.ReactElement> {
   return <span>id={ctx.params.id}</span>;
 }
 
+// A Server Component that throws during render.
+async function Boom(): Promise<React.ReactElement> {
+  await Promise.resolve();
+  throw new Error("KABOOM from server component");
+}
+
 describe("renderToFlightString (Flight RSC)", () => {
   it("vendored serializer subpath resolves", () => {
     expect(() => assertFlightRuntimeAvailable()).not.toThrow();
@@ -82,4 +88,15 @@ describe("renderToFlightString (Flight RSC)", () => {
     const flight = await renderToFlightString(<Greeting name="World" />);
     expect(flight).toMatchFlightSnapshot();
   });
+
+  it("rejects (does not hang) when a server component throws", async () => {
+    // Pre-fix, onError rethrew inside the serializer's scheduled work: the
+    // stream never closed, the drain hung until the test timeout, and the error
+    // escaped as an unhandled rejection. The fix captures the error and rejects
+    // after draining — a clean, awaitable rejection. A 2s timeout proves it
+    // does not hang (the bug took the full default 5s timeout).
+    await expect(renderToFlightString(<Boom />)).rejects.toThrow(
+      "KABOOM from server component",
+    );
+  }, 2000);
 });

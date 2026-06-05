@@ -2,11 +2,13 @@
 
 This is the prose guide. For the dense, decision-tree-first version, see the
 [`/testing` skill](../skills/testing/SKILL.md). Both describe the same public
-surface, split into four entries by test runtime/dependency:
+surface, split into six entries by test runtime/dependency:
 `@rangojs/router/testing` (unit + integration, under a Vite-driven Vitest
-project), `@rangojs/router/testing/dom` (`renderRoute`, needs RTL + a DOM env),
-`@rangojs/router/testing/e2e` (the Playwright harness), and
-`@rangojs/router/testing/flight` (real Flight, react-server condition only).
+project), `@rangojs/router/testing/vitest` (the `rangoTestAliases` setup preset),
+`@rangojs/router/testing/dom` (`renderRoute`, needs RTL + a DOM env),
+`@rangojs/router/testing/e2e` (the Playwright harness),
+`@rangojs/router/testing/flight` (real Flight, react-server condition only), and
+`@rangojs/router/testing/flight-matchers` (the Flight matchers).
 
 ## Philosophy: the RSC-first testing pyramid
 
@@ -71,16 +73,16 @@ Flight round-trip, or the client navigation lifecycle. Several behaviors look
 unit-testable but are not — a test can mount/run and go green while proving
 nothing. Know these traps, and the seeds that close the easy ones:
 
-| Looks testable, but…                                                                                                                        | Reality                                                                                                                                   | What to do                                                                                                                      |
-| ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `useNavigation()` / `useLinkStatus()` / `useAction()` **non-idle** states (loading/streaming/pending, action result/error) in `renderRoute` | `renderRoute.navigate()` bypasses the navigation lifecycle, so the controller never leaves `idle` — you can only assert the idle snapshot | Test the pending/streaming UI at **e2e**                                                                                        |
-| `ctx.search` (typed search schema) in a loader                                                                                              | Defaults to `{}`; `opts.search` only sets the raw `ctx.searchParams`                                                                      | Seed the typed object with **`searchData`** on `runLoader`                                                                      |
-| `ctx.theme` / `ctx.setTheme` in a handler                                                                                                   | Always `undefined` — the real handler injects the theme config                                                                            | Pass **`theme`** (the `createRouter({ theme })` shape) to `runLoader`/`runMiddleware`/`renderRoute`                             |
-| `redirect()` basename prefixing                                                                                                             | Defaults to no prefix                                                                                                                     | Seed **`basename`** on `runLoader`/`runMiddleware`; `dispatch` uses the router's own basename                                   |
-| `useReverse`/`useHref` under an `include('/shop', …)` mount in `renderRoute`                                                                | `renderRoute` does not model include mounts — reverse/href come back **un-prefixed**                                                      | Assert mount-prefixed URLs at **e2e**, or pass the fully-mounted pattern to `useReverse` directly                               |
-| `dispatch(router, req)` as a full request→response                                                                                          | Throws on RSC/component routes; rejects action/partial requests; only response routes + redirects + 404 + content negotiation             | Use `renderToFlightString` (Flight) or e2e for anything that renders                                                            |
-| `renderToFlightString` of a realistic page                                                                                                  | Pure **leaf / server-only** — a client island emits an un-hydratable `I[...]` row                                                         | Keep Flight tests to leaf server components; test full pages at e2e                                                             |
-| streaming `use(promise)` Suspense content (e.g. async breadcrumb `content`) in `renderRoute`                                                | a plain resolving promise's Suspense **retry does not flush** in RTL — the DOM stays on the fallback                                      | Assert the pending **fallback**; for the arrived state pass a **settled** promise (see the Catch under renderRoute), or use e2e |
+| Looks testable, but…                                                                                                                        | Reality                                                                                                                                                                                                                                      | What to do                                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `useNavigation()` / `useLinkStatus()` / `useAction()` **non-idle** states (loading/streaming/pending, action result/error) in `renderRoute` | `renderRoute.navigate()` bypasses the navigation lifecycle, so the controller never leaves `idle` — you can only assert the idle snapshot                                                                                                    | Test the pending/streaming UI at **e2e**                                                                                        |
+| `ctx.search` (typed search schema) in a loader                                                                                              | Defaults to `{}`; `opts.search` only sets the raw `ctx.searchParams`                                                                                                                                                                         | Seed the typed object with **`searchData`** on `runLoader`                                                                      |
+| `ctx.theme` / `ctx.setTheme` in a handler                                                                                                   | Always `undefined` — the real handler injects the theme config                                                                                                                                                                               | Pass **`theme`** (the `createRouter({ theme })` shape) to `runLoader`/`runMiddleware`/`renderRoute`                             |
+| `redirect()` basename prefixing                                                                                                             | Defaults to no prefix                                                                                                                                                                                                                        | Seed **`basename`** on `runLoader`/`runMiddleware`; `dispatch` uses the router's own basename                                   |
+| `useReverse`/`useHref` under an `include('/shop', …)` mount in `renderRoute`                                                                | `renderRoute` does not model include mounts — reverse/href come back **un-prefixed**                                                                                                                                                         | Assert mount-prefixed URLs at **e2e**, or pass the fully-mounted pattern to `useReverse` directly                               |
+| `dispatch(router, req)` as a full request→response                                                                                          | Throws on RSC/component routes; rejects actions; a `_rsc_partial` request to a response route runs global middleware then returns `X-RSC-Reload` (route mw skipped, like prod); else response routes + redirects + 404 + content negotiation | Use `renderToFlightString` (Flight) or e2e for anything that renders                                                            |
+| `renderToFlightString` of a realistic page                                                                                                  | Pure **leaf / server-only** — a client island emits an un-hydratable `I[...]` row                                                                                                                                                            | Keep Flight tests to leaf server components; test full pages at e2e                                                             |
+| streaming `use(promise)` Suspense content (e.g. async breadcrumb `content`) in `renderRoute`                                                | a plain resolving promise's Suspense **retry does not flush** in RTL — the DOM stays on the fallback                                                                                                                                         | Assert the pending **fallback**; for the arrived state pass a **settled** promise (see the Catch under renderRoute), or use e2e |
 
 The **real wiring** is e2e by construction and intentionally out of scope here:
 server actions + revalidation, `cache()` hit/miss/stale over real requests,
@@ -659,14 +661,15 @@ import { assertCacheStatus } from "@rangojs/router/testing";
 
 parityDescribe("product page caches", (f) => {
   test("second request is a hit", async ({ page }) => {
+    // The key is the route NAME (the X-Rango-Cache id), NOT the URL pattern.
     assertCacheStatus(
       await page.request.get(f.url("/products/1")),
-      "/products/:id",
+      "product.detail",
       "miss",
     );
     assertCacheStatus(
       await page.request.get(f.url("/products/1")),
-      "/products/:id",
+      "product.detail",
       "hit",
     );
   });
@@ -674,8 +677,9 @@ parityDescribe("product page caches", (f) => {
 ```
 
 Statuses: `hit | miss | stale | prerendered | passthrough`. v1 is COARSE
-(route-level, keyed by route key), not per-individual-segment. `parseCacheHeader`
-exposes the raw `{ segment: status }` map if you need it.
+(route-level, keyed by the route key — the route NAME, e.g. `product.detail`, NOT
+the URL pattern), not per-individual-segment. `parseCacheHeader` exposes the raw
+`{ routeKey: status }` map if you need it.
 
 Zero-prod-surface alternative — the telemetry sink. No header at all; you inspect
 captured `cache.decision` events:

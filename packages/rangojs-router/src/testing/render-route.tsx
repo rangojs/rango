@@ -26,6 +26,10 @@
  * OutletContext — useParams, useReverse, useHref, useMount, useNavigation,
  * useRouter, usePathname, useSearchParams, Outlet nesting, useLoader /
  * useFetchLoader (seeded data), useLocationState (seeded), and useHandle (seeded).
+ * Basename-mounted apps: pass the `basename` option so useRouter().basename,
+ * <Link> prefixing, and useMount/useHref resolve against the mount prefix
+ * (without it they resolve at the root "/"). include() subtree mount prefixes
+ * are still not modeled — those stay renderServer/e2e territory.
  */
 
 import type { ReactNode, ComponentType } from "react";
@@ -41,6 +45,7 @@ import type { EventController } from "../browser/event-controller.js";
 import type { ResolvedSegment, RscMetadata } from "../browser/types.js";
 import { NavigationProvider } from "../browser/react/NavigationProvider.js";
 import { compilePattern } from "../router/pattern-matching.js";
+import { normalizeBasename } from "../router/basename.js";
 import type { LoaderDefinition } from "../types.js";
 import type { LocationStateDefinition } from "../browser/react/location-state-shared.js";
 import type { Handle } from "../handle.js";
@@ -196,6 +201,14 @@ export interface RenderRouteOptions {
    * is not consumed by the client hooks.
    */
   routeMap?: Record<string, string>;
+  /**
+   * Router basename (the `createRouter({ basename })` value). Wired into
+   * NavigationProvider so `useRouter().basename`, `<Link>` href prefixing, and
+   * `useMount`/`useHref` resolve against the mounted prefix instead of the root.
+   * Normalized exactly like createRouter (leading slash forced, trailing
+   * stripped, bare "/" -> undefined). Defaults to undefined (root mount).
+   */
+  basename?: string;
   /**
    * Theme config in the `createRouter({ theme })` shape (resolved internally) to
    * wrap the tree in a ThemeProvider. Defaults to no provider. Note: a component
@@ -489,6 +502,7 @@ export async function renderRoute(
       eventController={eventController}
       initialPayload={{ root: initialTree, metadata: initialMetadata }}
       bridge={bridge}
+      basename={normalizeBasename(options.basename)}
       themeConfig={
         options.theme === undefined ? null : resolveThemeConfig(options.theme)
       }

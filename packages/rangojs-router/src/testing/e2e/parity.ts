@@ -66,10 +66,16 @@ export interface Parity {
    * action is slow.
    *
    * The snapshot is intentionally strict: it compares the text of every
-   * observed `data-testid`, the resulting `page.url()`, and any Set-Cookie
-   * surfaced via `document.cookie`. No ephemeral-value normalization is applied
-   * in v1; if a consumer's page renders nondeterministic values, exclude that
-   * testid from `observe`.
+   * observed `data-testid`, the resulting `page.url()`, and the cookies visible
+   * via `document.cookie`. No ephemeral-value normalization is applied in v1;
+   * if a consumer's page renders nondeterministic values, exclude that testid
+   * from `observe`.
+   *
+   * LIMITATION: cookie parity is read from `document.cookie`, which by design
+   * EXCLUDES HttpOnly cookies. Session/auth cookies (the typical HttpOnly case)
+   * are therefore NOT compared — a PE/JS divergence in an HttpOnly cookie will
+   * not be caught here. Assert on those via `read_network_requests` / response
+   * Set-Cookie headers in a dedicated test, not expectParity.
    */
   expectParity: (
     page: Page,

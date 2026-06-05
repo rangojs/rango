@@ -23,6 +23,43 @@ describe("runMiddleware", () => {
     expect(response.headers.get("Location")).toBe("/login");
   });
 
+  it("normalizes a non-canonical basename exactly like createRouter", async () => {
+    // createRouter normalizes the basename (leading slash forced, trailing
+    // stripped, bare "/" -> undefined). The helper must match, so a consumer
+    // passing the same un-normalized value their router accepts observes the
+    // same Location. Pre-fix this produced "app/login" / "/app//login" / "//login".
+    const mw: MiddlewareFn = async () => redirect("/login");
+
+    const noLead = await runMiddleware(mw, "/dashboard", { basename: "app" });
+    expect(noLead.response.headers.get("Location")).toBe("/app/login");
+
+    const trailing = await runMiddleware(mw, "/dashboard", {
+      basename: "/app/",
+    });
+    expect(trailing.response.headers.get("Location")).toBe("/app/login");
+
+    const bare = await runMiddleware(mw, "/dashboard", { basename: "/" });
+    expect(bare.response.headers.get("Location")).toBe("/login");
+  });
+
+  it("returned ctx.reverse is map-only (matches the chain), NOT auto-fill", async () => {
+    // Middleware-phase reverse is map-only in production; the RETURNED ctx must
+    // reflect that too. Pre-fix createTestRequestContext installed the
+    // loader-phase auto-fill reverse on the returned ctx, so reading
+    // result.ctx.reverse("post") wrongly produced "/blog/hello".
+    const { ctx } = await runMiddleware(
+      async (_c, next) => next(),
+      "/blog/hello",
+      {
+        routeMap: { post: "/blog/:slug" },
+        routeName: "post",
+        params: { slug: "hello" },
+      },
+    );
+    const rev = (ctx as unknown as { reverse: (n: string) => string }).reverse;
+    expect(rev("post")).toBe("/blog/:slug");
+  });
+
   it("ctx.reverse does NOT auto-fill the current params (production parity)", async () => {
     // Production app/response middleware get createReverseFunction(routeMap)
     // alone — no route name or current params. Reversing a :slug route with no

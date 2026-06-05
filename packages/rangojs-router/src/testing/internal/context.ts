@@ -12,9 +12,12 @@ import {
   type RequestContext,
 } from "../../server/request-context.js";
 import { createReverseFunction } from "../../router/handler-context.js";
+import { normalizeBasename } from "../../router/basename.js";
 import { contextSet, type ContextVar } from "../../context-var.js";
 import type { ThemeConfig } from "../../theme/types.js";
 import { resolveThemeConfig } from "../../theme/constants.js";
+import type { SegmentCacheStore } from "../../cache/types.js";
+import type { CacheProfile } from "../../cache/profile-registry.js";
 
 const DEFAULT_ORIGIN = "http://localhost/";
 
@@ -76,9 +79,26 @@ export interface CreateTestContextOptions<TEnv> {
   params?: Record<string, string>;
   /**
    * Router basename for this request (what the RSC handler stores on the
-   * context). Drives redirect() prefixing. Defaults to undefined (no basename).
+   * context). Drives redirect() prefixing. Normalized exactly like
+   * createRouter({ basename }) (leading slash forced, trailing stripped, bare
+   * "/" -> undefined) so passing the same value your router takes yields the
+   * same redirect Location. Defaults to undefined (no basename).
    */
   basename?: string;
+  /**
+   * Cache store backing `use cache` functions invoked during the test, the
+   * same shape `createRouter({ cache })` resolves. Without it,
+   * registerCachedFunction bypasses (it checks for a store FIRST), so a cached
+   * function runs uncached and its taint/profile guards never fire. Wire one
+   * (e.g. `new MemorySegmentCacheStore()`) to exercise real cache behavior.
+   */
+  cacheStore?: SegmentCacheStore;
+  /**
+   * Cache profiles in the `createRouter({ cacheProfiles })` shape. Required for
+   * a `use cache: "profileName"` function to resolve its profile (an unknown
+   * profile throws), once a `cacheStore` is wired.
+   */
+  cacheProfiles?: Record<string, CacheProfile>;
   /**
    * Theme config in the same shape `createRouter({ theme })` takes (resolved
    * internally). Without it `ctx.theme`/`ctx.setTheme` are inert (undefined),
@@ -113,8 +133,11 @@ export function createTestRequestContext<TEnv>(
     variables,
     themeConfig:
       opts.theme === undefined ? undefined : resolveThemeConfig(opts.theme),
+    cacheStore: opts.cacheStore,
+    cacheProfiles: opts.cacheProfiles,
   });
-  if (opts.basename !== undefined) ctx._basename = opts.basename;
+  if (opts.basename !== undefined)
+    ctx._basename = normalizeBasename(opts.basename);
   if (opts.params) ctx.params = opts.params;
   if (opts.routeMap) {
     ctx._routeName = opts.routeName;

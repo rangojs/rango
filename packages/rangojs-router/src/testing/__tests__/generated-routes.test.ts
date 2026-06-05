@@ -66,6 +66,26 @@ describe("diffGeneratedRoutes", () => {
 
     expect(diff.ok).toBe(true);
   });
+
+  it("ignores auto-generated runtime names ($path_/$prefix_) as extras", () => {
+    // An app with an unnamed path()/include() route carries synthetic
+    // $path_*/$prefix_* names in router.routeMap that are deliberately absent
+    // from the generated file (route-types-writer / runtime-discovery skip
+    // them). They must NOT be reported as `extra`, or the assertion throws on a
+    // perfectly in-sync app. Pre-fix this returned extra: ["$path__about"] and
+    // ok: false.
+    const router = fakeRouter({
+      home: "/",
+      $path__about: "/about",
+      "blog.$prefix_0.index": "/blog",
+    });
+    const generated = { home: "/" };
+
+    const diff = diffGeneratedRoutes(router, generated);
+
+    expect(diff.extra).toEqual([]);
+    expect(diff.ok).toBe(true);
+  });
 });
 
 describe("assertGeneratedRoutesMatch", () => {
@@ -73,6 +93,15 @@ describe("assertGeneratedRoutesMatch", () => {
     const router = fakeRouter({ home: "/", post: "/blog/:slug" });
     expect(() =>
       assertGeneratedRoutesMatch(router, { home: "/", post: "/blog/:slug" }),
+    ).not.toThrow();
+  });
+
+  it("does not throw when the runtime map carries only auto-generated extras", () => {
+    // The flagship whole-app assertion must stay green for an in-sync app that
+    // uses unnamed routes/includes (an extremely common pattern).
+    const router = fakeRouter({ home: "/", $path__about: "/about" });
+    expect(() =>
+      assertGeneratedRoutesMatch(router, { home: "/" }),
     ).not.toThrow();
   });
 

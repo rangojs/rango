@@ -111,25 +111,42 @@ export async function renderToFlightString(
 
   return runWithRequestContext(ctx, async () => {
     setRequestContextParams(opts.params ?? {}, opts.routeName);
+    // Capture (do NOT rethrow) the first render error. The serializer calls
+    // onError from its own scheduled work; throwing there escapes as an
+    // unhandled rejection AND leaves the stream un-closed, so the drain below
+    // would hang until the test times out. Production's onError returns void
+    // (rsc-rendering.ts) so the stream completes with an error row. We mirror
+    // that — let the stream finish — then surface the error as a clean
+    // rejection after draining, so `await expect(...).rejects.toThrow()` works.
+    let renderError: unknown;
+    let didError = false;
     const stream = RSDServer.renderToReadableStream(
       payload,
       {},
       {
         onError(error: unknown) {
-          // Surface render errors instead of silently emitting an error row.
-          throw error;
+          if (!didError) {
+            didError = true;
+            renderError = error;
+          }
         },
       },
     );
     // Drain inside the context so async components see ctx during streaming.
-    return new Response(stream).text();
+    const text = await new Response(stream).text();
+    if (didError) throw renderError;
+    return text;
   });
 }
 
 // Volatile leading reference row: `:N<timestamp>` (dev debug-info anchor).
 const REFERENCE_ROW_RE = /^:N[\d.]+\n/;
-// Absolute file:// paths embedded in dev stack rows.
-const FILE_URL_RE = /file:\/\/[^"\\]+/g;
+// Absolute file:// paths embedded in dev STACK rows. The serializer emits stack
+// frames as `["Component","file:///abs/path.tsx",<line>,<col>,...]`, so the
+// path is a quoted JSON string immediately followed by `",<line>,<col>`. The
+// lookahead scopes the scrub to exactly that frame shape, leaving a legitimate
+// `file://` href in RENDERED content (e.g. `{"href":"file:///x"}`) untouched.
+const FILE_URL_RE = /file:\/\/[^"\\]+(?=",\d+,\d+)/g;
 
 /**
  * Scrub volatile bits from a Flight string so snapshots are stable across runs

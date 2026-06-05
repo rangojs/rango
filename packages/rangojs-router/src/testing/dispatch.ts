@@ -22,12 +22,21 @@
  *   - content-negotiated route:                         Vary: Accept appended
  * - Global middleware (router.use(...)) AND route-level middleware, with full
  *   next()/short-circuit/throw-Response/header+cookie-merge fidelity.
+ * - Partial (client-navigation) requests to a RESPONSE route (?_rsc_partial):
+ *   global middleware runs first (so an auth gate can still 401/redirect),
+ *   then — if it passes through — an X-RSC-Reload is returned. Route-level
+ *   middleware is skipped on a partial, exactly as production skips it.
  *
  * What dispatch DOES NOT support (and why):
  * - RSC component routes — rendering requires the Flight serializer + React
  *   server runtime, which is the boundary this primitive is defined to avoid.
- * - Server actions and partial (client navigation) requests — those are RSC
- *   protocol concerns handled by router.fetch().
+ *   This includes partial requests that resolve to a component route.
+ * - Server actions (?_rsc_action) — RSC protocol concerns handled by
+ *   router.fetch().
+ * - ctx.onError() callbacks on a thrown response-route handler error: the
+ *   error is serialized into the same typed 500 / RouterError Response as
+ *   production, but registered onError handlers are NOT invoked here. Cover
+ *   onError side effects with an e2e test.
  *
  * dispatch reuses router.previewMatch(), which itself runs content negotiation
  * and resolves route middleware from the matched entry tree, so dispatch's
@@ -304,25 +313,32 @@ export async function dispatch<TEnv = any>(
   ) => string;
 
   return runWithRequestContext(requestContext, async () => {
+    // Set params before middleware/handler run, so global middleware sees
+    // ctx.params (production sets them during matching, before middleware).
+    if (routeKey !== undefined) {
+      setRequestContextParams(params, routeKey);
+    } else {
+      requestContext.params = params;
+    }
+
     // Match production: a partial (client-navigation) request to a response
-    // route is short-circuited to X-RSC-Reload BEFORE the handler runs
-    // (response-route-handler.ts). dispatch must not invoke the handler for
-    // these, or a test could assert data the real server never returns.
-    if (url.searchParams.has("_rsc_partial")) {
-      return createResponseWithMergedHeaders(null, {
+    // route is short-circuited to X-RSC-Reload, but ONLY after GLOBAL
+    // (app-level) middleware has run. In production the partial check lives
+    // inside coreHandler (handler.ts wraps it with executeMiddleware) and,
+    // within handleResponseRoute, precedes the route-level middleware
+    // (response-route-handler.ts). So global middleware (e.g. an auth gate)
+    // can still 401/redirect a partial request; only when it calls next()
+    // through does the reload get emitted. Route-level middleware is skipped
+    // on a partial, exactly as production skips it.
+    const isPartial = url.searchParams.has("_rsc_partial");
+    const partialFinalHandler = async (): Promise<Response> =>
+      createResponseWithMergedHeaders(null, {
         status: 200,
         headers: {
           "X-RSC-Reload": stripInternalParams(url).toString(),
           "content-type": "text/x-component;charset=utf-8",
         },
       });
-    }
-
-    if (routeKey !== undefined) {
-      setRequestContextParams(params, routeKey);
-    } else {
-      requestContext.params = params;
-    }
 
     const cleanUrl = new URL(req.url);
     for (const key of [...cleanUrl.searchParams.keys()]) {
@@ -385,25 +401,31 @@ export async function dispatch<TEnv = any>(
       return merged;
     };
 
+    // On a partial request the reload IS the terminal handler; otherwise the
+    // response-route handler is. Either way global middleware wraps it.
+    const finalHandler = isPartial ? partialFinalHandler : callHandler;
+
     // Combine global (pattern-matched) middleware with route middleware,
-    // preserving the router's order: global runs before route-level.
+    // preserving the router's order: global runs before route-level. Route
+    // middleware is skipped on a partial request (production returns the
+    // reload before handleResponseRoute reaches its route middleware).
     const globalMatches = matchMiddleware(url.pathname, router.middleware);
-    const routeMiddlewareEntries = (preview?.routeMiddleware ?? []).map(
-      (mw) => ({
-        entry: {
-          pattern: null,
-          regex: null,
-          paramNames: [],
-          handler: mw.handler,
-          mountPrefix: null,
-        } as MiddlewareEntry<TEnv>,
-        params: mw.params,
-      }),
-    );
+    const routeMiddlewareEntries = isPartial
+      ? []
+      : (preview?.routeMiddleware ?? []).map((mw) => ({
+          entry: {
+            pattern: null,
+            regex: null,
+            paramNames: [],
+            handler: mw.handler,
+            mountPrefix: null,
+          } as MiddlewareEntry<TEnv>,
+          params: mw.params,
+        }));
     const allMiddleware = [...globalMatches, ...routeMiddlewareEntries];
 
     if (allMiddleware.length === 0) {
-      return callHandler();
+      return finalHandler();
     }
 
     return executeMiddleware<TEnv>(
@@ -411,7 +433,7 @@ export async function dispatch<TEnv = any>(
       req,
       env,
       variables,
-      callHandler,
+      finalHandler,
       reverse,
     );
   });

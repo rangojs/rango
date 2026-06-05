@@ -6,11 +6,13 @@ argument-hint: [layer]
 
 # Testing @rangojs/router apps
 
-Rango ships four consumer-facing testing entries, one per test runtime/dependency:
+Rango ships six consumer-facing testing entries, one per test runtime/dependency:
 `@rangojs/router/testing` (unit + integration, under a Vite-driven Vitest
-project), `@rangojs/router/testing/dom` (`renderRoute`, needs RTL + a DOM env),
-`@rangojs/router/testing/e2e` (the Playwright harness), and
-`@rangojs/router/testing/flight` (real Flight, react-server condition only).
+project), `@rangojs/router/testing/vitest` (the `rangoTestAliases` setup preset),
+`@rangojs/router/testing/dom` (`renderRoute`, needs RTL + a DOM env),
+`@rangojs/router/testing/e2e` (the Playwright harness),
+`@rangojs/router/testing/flight` (real Flight, react-server condition only), and
+`@rangojs/router/testing/flight-matchers` (the Flight matchers).
 The hard problem in an RSC app is that the layer you reach for is dictated by
 **what the behavior touches** — a pure predicate is a one-line vitest test; a
 real async Server Component cannot be a plain node test at all. Pick the layer
@@ -473,16 +475,18 @@ not assume them).
 The `X-Rango-Cache` header is emitted **only** when the gate is on:
 `createRouter({ debugCacheSignal: true })` or `process.env.RANGO_TEST_SIGNALS === "1"`.
 Off by default — zero production surface. v1 status is COARSE (route-level, keyed
-by route key), not per-individual-segment. `assertCacheStatus` reads that header.
+by the route key — the route NAME, e.g. `product.detail`, NOT the URL pattern),
+not per-individual-segment. `assertCacheStatus` reads that header.
 
 ```ts
 import { assertCacheStatus } from "@rangojs/router/testing";
 
-// e2e (the gate must be enabled on the app under test)
+// e2e (the gate must be enabled on the app under test). The segment key is the
+// route NAME the header carries, not the URL pattern ("/products/:id").
 const res = await page.request.get(f.url("/products/1"));
-assertCacheStatus(res, "/products/:id", "miss");
+assertCacheStatus(res, "product.detail", "miss");
 const res2 = await page.request.get(f.url("/products/1"));
-assertCacheStatus(res2, "/products/:id", "hit");
+assertCacheStatus(res2, "product.detail", "hit");
 ```
 
 Statuses: `"hit" | "miss" | "stale" | "prerendered" | "passthrough"`.

@@ -141,9 +141,9 @@ export interface RangoOptions<TEnv = any> {
    * `RANGO_TEST_SIGNALS=1` environment flag is set, NO header is emitted and
    * router output is byte-identical to the default.
    *
-   * The header encodes per-segment (v1: coarse route-level) status, e.g.
-   * `X-Rango-Cache: /products/:id=hit`. Do NOT enable in production — it
-   * exposes internal cache decisions.
+   * The header encodes per-segment (v1: coarse route-level) status keyed by the
+   * route NAME, e.g. `X-Rango-Cache: product.detail=hit`. Do NOT enable in
+   * production — it exposes internal cache decisions.
    */
   debugCacheSignal?: boolean;
 
