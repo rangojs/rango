@@ -290,7 +290,17 @@ export function generateManifest<TEnv>(
 export function generateManifestFull<TEnv>(
   urlpatterns: UrlPatterns<TEnv, any>,
   mountIndex: number = 0,
-  options?: { urlPrefix?: string },
+  options?: {
+    urlPrefix?: string;
+    /**
+     * Called once per `"use client"` component registered as an
+     * errorBoundary/notFoundBoundary fallback, with its client-reference key
+     * (`$$id`). Lets the build collect fallback module ids for dedicated
+     * chunking without exposing the otherwise-discarded EntryData tree. The
+     * EntryData map built below is local; this is the only seam that surfaces it.
+     */
+    collectClientFallbackRef?: (refKey: string) => void;
+  },
 ): FullManifest {
   const routeManifest: Record<string, string> = {};
   const routeAncestry: Record<string, string[]> = {};
@@ -327,6 +337,31 @@ export function generateManifestFull<TEnv>(
       });
     },
   );
+
+  // Surface the "use client" components registered as error/notFound fallbacks.
+  // The fallback values are stored verbatim on EntryData (raw elements or handler
+  // functions). For an element whose component is a "use client" module, its
+  // `.type` is a plugin-rsc client-reference proxy carrying the reference key as
+  // `$$id`; we report that key so the build can route these into app-fallback.
+  if (options?.collectClientFallbackRef) {
+    const CLIENT_REF = Symbol.for("react.client.reference");
+    const report = options.collectClientFallbackRef;
+    const collect = (boundary: unknown[] | undefined) => {
+      for (const item of boundary ?? []) {
+        const type = (item as { type?: { $$typeof?: symbol; $$id?: string } })
+          ?.type;
+        if (type?.$$typeof === CLIENT_REF && typeof type.$$id === "string") {
+          // $$id is `<referenceKey>#<exportName>`; the referenceKey (module hash
+          // in build, dev path otherwise) is everything before the first `#`.
+          report(type.$$id.split("#")[0]);
+        }
+      }
+    };
+    for (const entry of manifest.values()) {
+      collect(entry.errorBoundary);
+      collect(entry.notFoundBoundary);
+    }
+  }
 
   // Collect root-level routes and trailing slash config
   const routeTrailingSlash: Record<string, string> = {};

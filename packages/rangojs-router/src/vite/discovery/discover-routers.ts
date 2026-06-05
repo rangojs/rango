@@ -26,6 +26,7 @@ import {
   type CaughtDiscoveryError,
 } from "./discovery-errors.js";
 import { createRangoDebugger, timed, NS } from "../debug.js";
+import { computeProductionHash } from "../plugins/client-ref-hashing.js";
 
 const debug = createRangoDebugger(NS.discovery);
 
@@ -143,6 +144,17 @@ export async function discoverRouters(
   // Collect all manifests for trie building (avoid re-running generateManifest)
   const allManifests: Array<{ id: string; manifest: any }> = [];
 
+  // Built-in clientChunks context (present only when the built-in strategy is
+  // active). Collect the production hashes of "use client" error/notFound
+  // fallback modules so the strategy can route them into app-fallback.
+  const clientChunkCtx = state.opts?.clientChunkCtx;
+  const collectClientFallbackRef = clientChunkCtx
+    ? (refKey: string) =>
+        clientChunkCtx.fallbackRefs.add(
+          computeProductionHash(state.projectRoot, refKey),
+        )
+    : undefined;
+
   const manifestGenStart = debug ? performance.now() : 0;
   for (const [id, router] of registry) {
     if (!router.urlpatterns || !generateManifestFull) {
@@ -152,7 +164,10 @@ export async function discoverRouters(
     const manifest = generateManifestFull(
       router.urlpatterns,
       routerMountIndex,
-      router.__basename ? { urlPrefix: router.__basename } : undefined,
+      {
+        ...(router.__basename ? { urlPrefix: router.__basename } : {}),
+        ...(collectClientFallbackRef ? { collectClientFallbackRef } : {}),
+      },
     );
     routerMountIndex++;
     allManifests.push({ id, manifest });

@@ -548,6 +548,34 @@ function miniTests(f: Fixture) {
       chart: "rgb(0, 128, 128)",
     });
   });
+
+  // clientChunks: registered "use client" error fallback (dev + production).
+  // The fallback is pulled into its own app-fallback chunk and is NOT fetched on
+  // the happy path; it renders (and hydrates) only when an error is caught.
+  test("clientChunks: error fallback is off the happy path, renders on error", async ({
+    page,
+  }) => {
+    // Happy route: the fallback's client code must not be fetched.
+    await page.goto(f.url("/widgets"));
+    await waitForHydration(page);
+    const happyResources = await page.evaluate(() =>
+      performance.getEntriesByType("resource").map((e) => e.name),
+    );
+    expect(
+      happyResources.some((n) => /fallback|ClientErrorFallback/i.test(n)),
+      "fallback chunk must not load on a happy route",
+    ).toBe(false);
+
+    // Error route: the boundary catches the throw and renders the client fallback.
+    await page.goto(f.url("/errors/client-boom"));
+    await waitForHydration(page);
+    await expect(page.getByTestId("client-error-fallback")).toBeVisible();
+    // Hydrated/interactive (its chunk loaded and ran).
+    await page.getByTestId("client-error-ack").click();
+    await expect(page.getByTestId("client-error-fallback")).toContainText(
+      "acknowledged",
+    );
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -631,5 +659,26 @@ test.describe("mini (production)", () => {
     expect(js.some((name) => /^react-.*\.js$/.test(name))).toBe(true);
     expect(js.some((name) => /^router-.*\.js$/.test(name))).toBe(true);
     expect(widgetsCode).not.toContain("createRoot");
+
+    // Registered "use client" error fallback -> dedicated app-fallback chunk.
+    // Its marker must appear ONLY there (not co-bundled with route or entry code),
+    // so the error UI is decoupled from the code it catches failures for.
+    const fallbackJs = js.find((name) => /^app-fallback-.*\.js$/.test(name));
+    expect(fallbackJs, "expected an app-fallback-*.js chunk").toBeTruthy();
+    expect(readFileSync(join(assetsDir, fallbackJs!), "utf8")).toContain(
+      "mini-client-error",
+    );
+    const fallbackLeaks = js.filter(
+      (name) =>
+        name !== fallbackJs &&
+        readFileSync(join(assetsDir, name), "utf8").includes(
+          "mini-client-error",
+        ),
+    );
+    expect(
+      fallbackLeaks,
+      "fallback code must live only in app-fallback",
+    ).toEqual([]);
+    expect(widgetsCode).not.toContain("mini-client-error");
   });
 });

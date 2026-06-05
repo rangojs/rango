@@ -23,7 +23,10 @@ import {
   onwarn,
   getManualChunks,
 } from "./utils/shared-utils.js";
-import { resolveClientChunks } from "./utils/client-chunks.js";
+import {
+  resolveClientChunks,
+  type ClientChunkContext,
+} from "./utils/client-chunks.js";
 import type { RangoOptions } from "./plugin-types.js";
 import { printBanner, rangoVersion } from "./utils/banner.js";
 import { createVersionInjectorPlugin } from "./plugins/version-injector.js";
@@ -69,9 +72,17 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   // @vitejs/plugin-rsc in both presets. The built-in strategy only splits where it
   // recognizes a route structure, so this default is a no-op for flat / host-split
   // apps and never duplicates the shared runtime.
-  const clientChunks = resolveClientChunks(
-    resolvedOptions.clientChunks ?? true,
-  );
+  const clientChunksOption = resolvedOptions.clientChunks ?? true;
+  // Shared context the built-in strategy reads at build time: the production
+  // hashes of registered error/notFound fallback modules (-> app-fallback).
+  // Populated by the discovery plugin in buildStart, before the client build
+  // invokes the strategy. Only wired when the built-in strategy is active; a
+  // custom function owns its own grouping.
+  const useBuiltInClientChunks = clientChunksOption === true;
+  const clientChunkCtx: ClientChunkContext | undefined = useBuiltInClientChunks
+    ? { fallbackRefs: new Set<string>() }
+    : undefined;
+  const clientChunks = resolveClientChunks(clientChunksOption, clientChunkCtx);
   debugConfig?.("rango(%s) setup start", preset);
 
   const plugins: PluginOption[] = [];
@@ -508,6 +519,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       enableBuildPrerender: prerenderEnabled,
       buildEnv: options?.buildEnv,
       preset,
+      clientChunkCtx,
     }),
   );
 

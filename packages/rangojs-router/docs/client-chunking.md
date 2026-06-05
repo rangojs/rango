@@ -187,6 +187,46 @@ duplication. The only question is _which_ group a shared component lands in:
   still works — visiting `/settings` will load the `app-dashboard` chunk for it —
   but it is clearer to hoist shared components to a shared directory.
 
+## Error / not-found fallbacks: the `app-fallback` chunk
+
+A `"use client"` component you register as an `errorBoundary` or `notFoundBoundary`
+fallback is grouped into a dedicated **`app-fallback`** chunk, regardless of where
+it lives:
+
+```ts
+// router.tsx
+import { ClientErrorFallback } from "./ClientErrorFallback.js"; // "use client"
+
+errorBoundary(<ClientErrorFallback />); // -> app-fallback-*.js
+notFoundBoundary(<NotFound />); //        -> app-fallback-*.js
+```
+
+Two reasons this is the right default, both of which matter most for the
+**root/layout-level** boundaries that wrap large subtrees:
+
+- **Honest chunk names.** Without this, a small fallback (a 1 KB error component is
+  common) can be the alphabetically-first module in a large shared chunk, so
+  rolldown names the whole chunk after it — a 487 KB `ErrorBoundary-*.js` that is
+  really your theme. Pulling the boundary out lets that chunk be named after a real
+  module.
+- **Resilience.** The error UI must not be co-bundled with the very code it exists
+  to catch failures for. As its own chunk it is decoupled: a failure in a route
+  chunk does not take the fallback down with it.
+
+It is also genuinely **off the happy path**: error/not-found fallbacks are resolved
+server-side and only become client references when an error/404 is actually caught,
+so `app-fallback` is fetched only when a fallback renders — never on a successful
+navigation. (Suspense `loading()` skeletons are deliberately **not** grouped here:
+they must paint immediately while content streams, so they stay eager.)
+
+Notes:
+
+- A component used as **both** a fallback and normal route UI lands in
+  `app-fallback` (one module, one group); keep dedicated fallback components
+  separate to avoid pulling route UI onto the error path.
+- This applies to the built-in strategy (`clientChunks: true`/default). A custom
+  `clientChunks` function owns grouping entirely and is not refined.
+
 ## CSS
 
 CSS imported by a client component is collected per client-reference group and

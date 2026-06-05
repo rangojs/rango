@@ -36,6 +36,9 @@ import { productsPatterns } from "./urls/products.js";
 // demonstrate per-route client chunking under `clientChunks: true`.
 import { WidgetA } from "./routes/widgets/WidgetA.js";
 import { ChartB } from "./routes/charts/ChartB.js";
+// A "use client" error-boundary fallback: the built-in clientChunks strategy
+// pulls registered error/notFound fallbacks into a dedicated app-fallback chunk.
+import { ClientErrorFallback } from "./ClientErrorFallback.js";
 import {
   AppNav,
   BreadcrumbTrail,
@@ -419,6 +422,18 @@ export const router = createRouter({
             },
             { name: "errBoom" },
             () => [errorBoundary(<ErrorFallback />)],
+          ),
+
+          // Error boundary with a "use client" fallback. The fallback module is
+          // pulled into the dedicated app-fallback chunk (not co-bundled with the
+          // route code it catches). Renders only on error.
+          path(
+            "/errors/client-boom",
+            () => {
+              throw new Error("client boom!");
+            },
+            { name: "errClientBoom" },
+            () => [errorBoundary(<ClientErrorFallback />)],
           ),
 
           // Not-found boundary (thrown DataNotFoundError).
