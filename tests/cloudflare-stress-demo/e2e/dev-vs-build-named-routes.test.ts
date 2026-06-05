@@ -652,7 +652,13 @@ test.describe("dev vs build named-routes parity", () => {
         //     a direct check of "refresh B ran and wrote correctly."
         //     If it never appears, the test times out with a clear
         //     diagnostic (full dev buffer dumped on failure).
-        await waitForDiscoveries(3, "post-tail-race");
+        // Do NOT gate on a discovery-cycle COUNT here. The two rapid edits can
+        // coalesce into a single rediscovery cycle on platforms where chokidar
+        // batches the events, so the cold+A+B == 3 assumption is
+        // non-deterministic — it flaked as "seen=2" → 90s timeout → Playwright
+        // retry (the dominant cause of this job's CI time variance). The
+        // gen-file poll below is the correct end-state signal per the contract
+        // described above (refresh B ran and wrote the new route).
         await waitForGenFileContains(
           genFilePath,
           '"shop.product.item101":',

@@ -23,6 +23,7 @@ import {
   onwarn,
   getManualChunks,
 } from "./utils/shared-utils.js";
+import { resolveClientChunks } from "./utils/client-chunks.js";
 import type { RangoOptions } from "./plugin-types.js";
 import { printBanner, rangoVersion } from "./utils/banner.js";
 import { createVersionInjectorPlugin } from "./plugins/version-injector.js";
@@ -62,6 +63,15 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   const resolvedOptions: RangoOptions = options ?? { preset: "node" };
   const preset = resolvedOptions.preset ?? "node";
   const showBanner = resolvedOptions.banner ?? true;
+  // Client-chunking strategy (per-route/per-feature splitting of the browser
+  // bundle). Defaults to the built-in directory strategy (`true`) pre-1.0; pass
+  // `clientChunks: false` to opt out. Resolved once and forwarded to
+  // @vitejs/plugin-rsc in both presets. The built-in strategy only splits where it
+  // recognizes a route structure, so this default is a no-op for flat / host-split
+  // apps and never duplicates the shared runtime.
+  const clientChunks = resolveClientChunks(
+    resolvedOptions.clientChunks ?? true,
+  );
   debugConfig?.("rango(%s) setup start", preset);
 
   const plugins: PluginOption[] = [];
@@ -231,6 +241,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
       rsc({
         entries: finalEntries,
         serverHandler: false,
+        clientChunks,
       }) as PluginOption,
     );
 
@@ -394,6 +405,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
     plugins.push(
       rsc({
         entries: finalEntries,
+        clientChunks,
       }) as PluginOption,
     );
 

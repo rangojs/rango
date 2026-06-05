@@ -159,7 +159,7 @@ jobs:
         run: pnpm run test:unit:rsc
 
   vite-rsc-demo-e2e:
-    needs: [install-playwright, smoke-e2e]
+    needs: [install-playwright]
     if: |
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
       github.event_name == 'workflow_dispatch' ||
@@ -222,6 +222,11 @@ jobs:
           path: tests/vite-rsc-demo/playwright-report/
           retention-days: 7
 
+  # smoke-e2e is a fast fail-signal that runs in parallel with the heavy e2e
+  # jobs. It intentionally does NOT gate them (they depend only on
+  # install-playwright): gating serialized smoke's ~110s ahead of the entire
+  # e2e fan-out for no correctness benefit. Trade-off: a broken commit now
+  # launches all e2e shards instead of being short-circuited by smoke.
   smoke-e2e:
     needs: [install-playwright]
     if: |
@@ -270,7 +275,7 @@ jobs:
           retention-days: 7
 
   rangojs-router-e2e:
-    needs: [install-playwright, smoke-e2e]
+    needs: [install-playwright]
     if: |
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
       github.event_name == 'workflow_dispatch' ||
@@ -369,7 +374,7 @@ jobs:
           retention-days: 7
 
   cloudflare-basic-e2e:
-    needs: [install-playwright, smoke-e2e]
+    needs: [install-playwright]
     if: |
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
       github.event_name == 'workflow_dispatch' ||
@@ -420,7 +425,7 @@ jobs:
           retention-days: 7
 
   cloudflare-multi-router-e2e:
-    needs: [install-playwright, smoke-e2e]
+    needs: [install-playwright]
     if: |
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
       github.event_name == 'workflow_dispatch' ||
@@ -471,7 +476,7 @@ jobs:
           retention-days: 7
 
   react-experimental-e2e:
-    needs: [install-playwright, smoke-e2e]
+    needs: [install-playwright]
     if: |
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
       github.event_name == 'workflow_dispatch' ||
@@ -520,7 +525,7 @@ jobs:
           retention-days: 7
 
   no-typescript-e2e:
-    needs: [install-playwright, smoke-e2e]
+    needs: [install-playwright]
     if: |
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
       github.event_name == 'workflow_dispatch' ||
@@ -569,7 +574,7 @@ jobs:
           retention-days: 7
 
   cloudflare-stress-demo-e2e:
-    needs: [install-playwright, smoke-e2e]
+    needs: [install-playwright]
     if: |
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
       github.event_name == 'workflow_dispatch' ||
