@@ -162,14 +162,28 @@ export function createTestRequestContext<TEnv>(
  * assert what an action produced.
  */
 export interface RunInRequestContextResult<T> {
-  /** The value `fn` returned (awaited if it returned a promise). */
-  result: T;
   /**
-   * A Response carrying the status, headers, and Set-Cookie cookies the run set
-   * on the request context (via `cookies().set()`, `ctx.header()`, etc.).
-   * Assert Set-Cookie with `response.headers.getSetCookie()`. This is the
-   * accumulated side-channel, NOT a Response `fn` itself returned (that is
-   * `result`).
+   * The value `fn` returned (awaited), or `undefined` if `fn` threw — in which
+   * case the thrown value is on {@link thrown}. The snapshot below is captured
+   * either way.
+   */
+  result: T | undefined;
+  /**
+   * The value `fn` threw, or `undefined` if it returned normally. Commonly a
+   * `Response` from `throw redirect(...)` / `throw notFound()` — the dominant
+   * cookie+flash case is an action that sets them then throws a redirect — so
+   * this (and the snapshot below) is observable WITHOUT wrapping the action in
+   * your own try/catch. NOTE: the value is captured, NOT re-thrown; assert on it
+   * for a throwing action.
+   */
+  thrown: unknown;
+  /**
+   * A Response carrying the status, headers, and Set-Cookie the run set (via
+   * `cookies().set()`, `ctx.header()`, etc.). Assert Set-Cookie with
+   * `response.headers.getSetCookie()`. When `fn` threw a `Response` (a redirect),
+   * THIS is that Response with the accumulated Set-Cookie/headers merged in
+   * (mirroring how the framework merges them in production), so a redirect's
+   * Location AND the cookies it set are both observable here.
    */
   response: Response;
   /**
@@ -202,6 +216,33 @@ export function snapshotRunEffects<TEnv>(ctx: RequestContext<TEnv>): {
 }
 
 /**
+ * Build the observable response from what the run accumulated on `ctx.res`. When
+ * `fn` threw a `Response` (a `redirect()`/`notFound()`), that Response IS the
+ * response — merge the accumulated Set-Cookie/other headers into it (the
+ * framework does this when it catches the thrown Response in production), with
+ * its status/Location preserved. Otherwise snapshot the stub (status + headers).
+ * The `Response`/`Headers` constructors copy, so the result is immutable.
+ */
+function buildRunResponse<TEnv>(
+  ctx: RequestContext<TEnv>,
+  thrown: unknown,
+): Response {
+  const stub = ctx.res;
+  if (thrown instanceof Response) {
+    const headers = new Headers(thrown.headers);
+    for (const cookie of stub.headers.getSetCookie()) {
+      headers.append("set-cookie", cookie);
+    }
+    stub.headers.forEach((value, name) => {
+      if (name.toLowerCase() === "set-cookie") return;
+      if (!headers.has(name)) headers.set(name, value);
+    });
+    return new Response(null, { status: thrown.status, headers });
+  }
+  return new Response(null, { status: stub.status, headers: stub.headers });
+}
+
+/**
  * Build a seeded RequestContext (via {@link createTestRequestContext}) and run
  * `fn` inside it, so code under test that calls `getRequestContext()`,
  * `cookies()`, or reads/mutates request headers resolves exactly as in
@@ -214,16 +255,19 @@ export function snapshotRunEffects<TEnv>(ctx: RequestContext<TEnv>): {
  * still needs a real request context to read the cookie and resolve
  * `getRequestContext()`.
  *
- * Returns `{ result, response, cookies, locationState }` so the action's OUTPUT
- * (Set-Cookie, headers, flash) is assertable without casting through the
- * `@internal` `ctx.res` / `ctx.cookies()`. `fn` may be async — the context
- * stays active across its awaits (AsyncLocalStorage), and the snapshot is taken
- * after it settles.
+ * Returns `{ result, thrown, response, cookies, locationState }` so the action's
+ * OUTPUT (Set-Cookie, headers, flash) is assertable without casting through the
+ * `@internal` `ctx.res` / `ctx.cookies()`. `fn` may be async — the context stays
+ * active across its awaits (AsyncLocalStorage), and the snapshot is captured
+ * whether `fn` returns OR throws. The throw path matters: the most common
+ * cookie+flash case is an auth action that sets a cookie + flash then
+ * `throw redirect(...)` on success — the thrown redirect is on `thrown` (NOT
+ * re-thrown) and its Location plus the cookies are on `response`/`cookies`.
  *
  * @example
  * ```ts
- * const { result, cookies, response } = await runInRequestContext(
- *   () => loginAction(input),
+ * const { result, cookies, response, thrown } = await runInRequestContext(
+ *   () => loginAction(input), // sets a session cookie, then `throw redirect("/app")`
  *   {
  *     env,
  *     request: new Request("https://app.test/", {
@@ -232,6 +276,7 @@ export function snapshotRunEffects<TEnv>(ctx: RequestContext<TEnv>): {
  *   },
  * );
  * expect(cookies.session).toBe("new-token");
+ * expect((thrown as Response).headers.get("Location")).toBe("/app");
  * expect(response.headers.getSetCookie()).toContainEqual(
  *   expect.stringContaining("session="),
  * );
@@ -242,14 +287,18 @@ export async function runInRequestContext<T, TEnv = unknown>(
   opts: CreateTestContextOptions<TEnv> = {},
 ): Promise<RunInRequestContextResult<T>> {
   const { ctx } = createTestRequestContext<TEnv>(opts);
-  const result = (await runWithRequestContext(ctx, () => fn(ctx))) as T;
+  let result: T | undefined;
+  let thrown: unknown;
+  let didThrow = false;
+  try {
+    result = (await runWithRequestContext(ctx, () => fn(ctx))) as T;
+  } catch (error) {
+    // Capture (do NOT re-throw): a redirect/notFound action throws its Response
+    // on the SUCCESS path, and its cookie/flash output must stay observable.
+    didThrow = true;
+    thrown = error;
+  }
   const { cookies, locationState } = snapshotRunEffects(ctx);
-  // Snapshot the accumulated response from the stub directly (status + headers,
-  // incl. Set-Cookie). The Response constructor copies the Headers, so this is
-  // an immutable snapshot independent of later ctx mutations.
-  const response = new Response(null, {
-    status: ctx.res.status,
-    headers: ctx.res.headers,
-  });
-  return { result, response, cookies, locationState };
+  const response = buildRunResponse(ctx, didThrow ? thrown : undefined);
+  return { result, thrown, response, cookies, locationState };
 }

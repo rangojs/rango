@@ -1,9 +1,9 @@
 import { createLoader, cookies } from "@rangojs/router";
 
-// The loader body is exported separately so it can be unit-tested with
-// `runLoader(cookieOverlayLoaderBody, ...)` — runLoader takes the RAW async body
-// (not the createLoader() handle), since the handle's `$$id` is injected by the
-// Vite plugin at build time and is absent in a bare test process.
+// runLoader accepts either the registered `createLoader()` handle
+// (`CookieOverlayLoader` below) or this raw body — the handle's fn is recovered
+// from the registry, so exporting the body separately is optional. It is kept
+// here only to dogfood both runLoader entry shapes in run-loader.test.ts.
 export async function cookieOverlayLoaderBody() {
   const jar = cookies();
   return {

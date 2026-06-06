@@ -25,6 +25,10 @@ import { missingInjectedIdError } from "./missing-id-error.js";
 
 export { getFetchableLoader };
 
+// Counter for runtime-fallback loader ids assigned only in a bare unit test
+// (no Vite plugin to inject one). Process-stable; never reached in a real build.
+let runtimeLoaderIdCounter = 0;
+
 // Overload 1: With function only (not fetchable)
 export function createLoader<T>(
   fn: LoaderFn<T, Record<string, string | undefined>, any>,
@@ -51,10 +55,24 @@ export function createLoader<T>(
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>> {
   // The $$id will be set on the returned object by Vite plugin
   // For fetchable loaders, __injectedId is also passed as a parameter
-  const loaderId = __injectedId || "";
+  let loaderId = __injectedId || "";
 
   if (!loaderId && process.env.NODE_ENV === "development") {
     throw missingInjectedIdError("Loader", "createLoader");
+  }
+
+  // No build-injected id. This happens in a bare unit test (no plugin), or for
+  // a call shape the plugin's id injection does not support (e.g. a namespace
+  // import `rango.createLoader(...)`) — but those are caught by the dev-throw
+  // above in `pnpm dev`, and such a loader cannot be exported to the client in a
+  // supported shape, so the client-fetchable / RSC-recovery $$id path is
+  // unaffected (the plugin always injects a stable id for supported, exported
+  // loaders on BOTH builds). Assign a process-stable runtime id so the fn
+  // registers below and the loader is exercisable via runLoader(loaderHandle)
+  // (it recovers the fn from the registry by $$id). Mirrors createHandle's
+  // runtime fallback.
+  if (!loaderId) {
+    loaderId = `__rango_runtime_loader_${runtimeLoaderIdCounter++}`;
   }
 
   // If not fetchable, store fn in registry (for SSR ctx.use() resolution)

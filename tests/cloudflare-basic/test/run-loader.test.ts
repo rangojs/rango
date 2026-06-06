@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { runLoader } from "@rangojs/router/testing";
-import { cookieOverlayLoaderBody } from "../src/loaders/cookie-overlay.js";
+import {
+  cookieOverlayLoaderBody,
+  CookieOverlayLoader,
+} from "../src/loaders/cookie-overlay.js";
 import {
   livePricesLoaderBody,
   RenderedProducts,
@@ -31,6 +34,41 @@ describe("runLoader against cloudflare-basic loader bodies", () => {
         actionCookie: null,
         deletedCookie: null,
       });
+    });
+  });
+
+  // #7: runLoader now accepts the registered createLoader() HANDLE directly, not
+  // only the extracted body. createLoader assigns a runtime-fallback $$id and
+  // registers its fn even without the Vite plugin (when imported through the
+  // server build, which @rangojs/router under rangoTestConfig resolves to), so
+  // runLoader recovers the fn from the registry. This removes the
+  // body-extraction tax: an app no longer has to export the body separately for
+  // testability.
+  describe("the registered createLoader() handle (no body extraction needed)", () => {
+    it("runs CookieOverlayLoader (the handle) and resolves request cookies", async () => {
+      const data = await runLoader(CookieOverlayLoader, {
+        request: new Request("http://localhost/cookie-overlay", {
+          headers: {
+            cookie: "mw-overlay=from-middleware; action-overlay=from-action",
+          },
+        }),
+      });
+      expect(data.mwCookie).toBe("from-middleware");
+      expect(data.actionCookie).toBe("from-action");
+    });
+
+    it("the handle and the extracted body produce identical results", async () => {
+      const makeReq = () =>
+        new Request("http://localhost/cookie-overlay", {
+          headers: { cookie: "mw-overlay=x; action-overlay=y" },
+        });
+      const viaHandle = await runLoader(CookieOverlayLoader, {
+        request: makeReq(),
+      });
+      const viaBody = await runLoader(cookieOverlayLoaderBody, {
+        request: makeReq(),
+      });
+      expect(viaHandle).toEqual(viaBody);
     });
   });
 

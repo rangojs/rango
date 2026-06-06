@@ -3,6 +3,7 @@ import { runLoader } from "../run-loader.js";
 import { createVar } from "../../context-var.js";
 import { createHandle } from "../../handle.js";
 import { getRequestContext } from "../../server/request-context.js";
+import { registerFetchableLoader } from "../../server/fetchable-loader-store.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import type { LoaderContext, LoaderDefinition } from "../../types.js";
 
@@ -228,5 +229,54 @@ describe("runLoader", () => {
     await expect(
       runLoader(async (ctx) => ctx.reverse("post", { slug: "x" })),
     ).rejects.toThrow();
+  });
+});
+
+describe("runLoader accepts a registered createLoader handle", () => {
+  it("recovers and runs the fn from the fetchable registry by $$id", async () => {
+    // What a real createLoader() does: register the fn under its $$id. (A real
+    // createLoader via @rangojs/router does this with a runtime-fallback id in a
+    // bare test; here we register directly to test the recovery path in isolation.)
+    const id = "test/recover#L1";
+    registerFetchableLoader(
+      id,
+      async (ctx: LoaderContext) => ({ id: ctx.params.id, who: "registry" }),
+      [],
+      false,
+    );
+    const def = {
+      __brand: "loader",
+      $$id: id,
+    } as LoaderDefinition<{ id: string; who: string }>;
+
+    const data = await runLoader(def, { params: { id: "42" } });
+    expect(data).toEqual({ id: "42", who: "registry" });
+  });
+
+  it("runs an inline def.fn when present (no registry entry needed)", async () => {
+    const def = {
+      __brand: "loader",
+      $$id: "test/inline#L2",
+      fn: async (ctx: LoaderContext) => ({ q: ctx.searchParams.get("q") }),
+    } as unknown as LoaderDefinition<{ q: string | null }>;
+
+    const data = await runLoader(def, { search: { q: "hi" } });
+    expect(data).toEqual({ q: "hi" });
+  });
+
+  it("throws a clear error when the handle's fn cannot be recovered", async () => {
+    // A handle imported through the CLIENT build (body dropped) and never
+    // registered: runLoader cannot recover a fn and must say so.
+    const def = {
+      __brand: "loader",
+      $$id: "test/unrecoverable#L3",
+    } as LoaderDefinition<unknown>;
+
+    await expect(runLoader(def)).rejects.toThrow(/could not be recovered/);
+  });
+
+  it("still accepts a raw loader body (unchanged)", async () => {
+    const data = await runLoader(async (ctx) => ({ m: ctx.method }));
+    expect(data).toEqual({ m: "GET" });
   });
 });

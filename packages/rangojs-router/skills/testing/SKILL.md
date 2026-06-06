@@ -161,31 +161,37 @@ capability, not a middleware one. Read handle data in a loader and test it with
 
 ### runLoader — one loader's data logic
 
-Pass the **RAW loader function** `(ctx) => ...`, NOT a `createLoader(...)`
-handle. `createLoader` relies on the Vite `$$id` injection for RSC
-registration, which does not exist in a bare vitest process — calling it gives
-you a handle with no `fn` to run. `runLoader` invokes your function directly
-against a real `RequestContext`, so cookies, headers, `ctx.get`, and
-`ctx.reverse` resolve.
+Pass a registered `createLoader()` handle **or** the raw loader body `(ctx) => ...`.
+A handle's fn is recovered from the registry: `createLoader` assigns a
+runtime-fallback `$$id` and registers the fn even without the Vite plugin, when
+imported through the server build (`@rangojs/router` under the `rangoTestConfig`
+preset). The raw body needs no build at all. Either way `runLoader` invokes the
+function against a real `RequestContext`, so cookies, headers, `ctx.get`, and
+`ctx.reverse` resolve. (A handle imported through the CLIENT build has its body
+dropped — `runLoader` then throws a clear error pointing you to the preset or the
+raw body.)
 
 ```ts
 import { runLoader } from "@rangojs/router/testing";
-import { createVar } from "@rangojs/router";
+import { createLoader, createVar } from "@rangojs/router";
 
-// CORRECT: test the function body directly.
-async function productLoaderBody(ctx) {
-  return { id: ctx.params.id, region: ctx.env.REGION, user: ctx.get(User) };
-}
+const User = createVar<{ name: string }>();
+// The registered loader — no separate body export needed for testability:
+const ProductLoader = createLoader(async (ctx) => ({
+  id: ctx.params.id,
+  region: ctx.env.REGION,
+  user: ctx.get(User),
+}));
 
 it("reads params, env, and seeded vars", async () => {
-  const User = createVar<{ name: string }>();
-  const data = await runLoader(productLoaderBody, {
+  const data = await runLoader(ProductLoader, {
     params: { id: "42" },
     env: { REGION: "eu" },
     vars: [[User, { name: "Ada" }]],
   });
   expect(data).toEqual({ id: "42", region: "eu", user: { name: "Ada" } });
 });
+// runLoader(async (ctx) => ({ ... }), opts) — the bare body — works identically.
 ```
 
 Options: `params` (also surfaced as `routeParams`), `search`, `env`, `vars`,
@@ -200,10 +206,10 @@ Two unit-only limitations to document in your test, not work around:
   match) and `ctx.isAction(...)` (the action-render context) is not available —
   test those with `renderToFlightString` or e2e.
 
-If your real loader source is `export const L = createLoader(async (ctx) => {...})`,
-extract the inner async function so it is importable on its own, and register
-the `createLoader` wrapper in `urls()`. Then `runLoader` tests the body and the
-DSL/e2e tests cover registration.
+No body extraction needed: `export const L = createLoader(async (ctx) => {...})`
+can be imported and passed straight to `runLoader(L, ...)`. Exporting the inner
+body separately is optional now (only if you want to test it without going
+through `createLoader` at all).
 
 COOKIE SEEDING: there is no `cookies`/`headers` option — seed a request cookie by
 passing a full `Request` with the header, `runLoader(body, { request: new
@@ -218,21 +224,25 @@ and calls `getRequestContext()` / `cookies()` but has no loader-context shape,
 `runInRequestContext(fn, opts)` builds a real `RequestContext` (same `opts` as the
 other primitives — `env`, `request`, `vars`, ...) AND enters it, so the function
 runs exactly as in production. `fn` may be async; the context stays active across
-its awaits. It returns `{ result, response, cookies, locationState }` so the
-action's OUTPUT is assertable WITHOUT casting through the `@internal` `ctx.res` /
-`ctx.cookies()`:
+its awaits. It captures the action's OUTPUT whether `fn` RETURNS or THROWS, so it
+is assertable WITHOUT casting through the `@internal` `ctx.res` / `ctx.cookies()`:
 
-- `result` — fn's return value (awaited)
-- `response` — a Response carrying the status, headers, and Set-Cookie the action set
+- `result` — fn's return value (awaited), or `undefined` if it threw
+- `thrown` — what `fn` threw (a redirect/notFound `Response` on the SUCCESS path), or `undefined`. Captured, NOT re-thrown — assert on it for a throwing action
+- `response` — Set-Cookie / headers / status the run set; on a thrown redirect, that redirect's `Location` merged with the cookies
 - `cookies` — the effective `{ name: value }` cookie view after the run
 - `locationState` — the flash the action set via `ctx.setLocationState()` / `redirect({ state })`, resolved to the `{ key: value }` the client reads
 
+The THROW path matters: the dominant cookie+flash case is an auth action that sets
+a cookie + flash then `throw redirect("/app")` on success. Because the snapshot
+fires on the throw too, you do NOT have to wrap the action in your own try/catch:
+
 ```ts
 import { runInRequestContext } from "@rangojs/router/testing";
-import { loginAction } from "../src/actions/login"; // reads cookies(), sets a session cookie + flash
+import { loginAction } from "../src/actions/login"; // sets a session cookie + flash, then throw redirect("/app")
 
-it("authorizes, sets the session cookie, and sets a flash", async () => {
-  const { result, cookies, locationState } = await runInRequestContext(
+it("sets the session cookie + flash and redirects", async () => {
+  const { thrown, cookies, locationState } = await runInRequestContext(
     () => loginAction(input),
     {
       env,
@@ -241,8 +251,8 @@ it("authorizes, sets the session cookie, and sets a flash", async () => {
       }),
     },
   );
-  expect(result).toMatchObject({ tenant: "acme" });
-  expect(cookies.session).toBeDefined(); // the cookie the action set, no @internal cast
+  expect((thrown as Response).headers.get("Location")).toBe("/app"); // redirected
+  expect(cookies.session).toBeDefined(); // cookie set before the throw, no @internal cast
   expect(locationState).toEqual({ flash: { text: "Welcome back" } });
 });
 ```
@@ -369,6 +379,14 @@ the unit layer instead of e2e-only:
 await renderRoute([{ path: "/c/wine", Component: PDP }], { mount: "/shop" });
 // useMount() -> "/shop"; useReverse({ product: "/c/:slug" })("product", { slug: "wine" }) -> "/shop/c/wine"
 ```
+
+Don't confuse this with an OPTIONAL param in the matched pattern: `/:locale?/c/:group`
+at `/en/c/wine` auto-fills `locale` from the match, so `reverse("group", { group })`
+returns `/en/c/group` with NO `mount` needed (production parity — `useReverse`
+merges `useParams()`). Use `mount` only for an `include()` prefix; a param-bearing
+mount like `include("/:locale?", …)` resolves to a concrete prefix you pass as
+`mount: "/en"`. A locale "dropping" from a reversed URL in a test is usually a
+missing `mount` seed, not an auto-fill gap.
 
 FIDELITY CAVEAT — this is the **client tree only**. It does NOT catch
 server/client boundary reference-identity remount bugs, real Flight

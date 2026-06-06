@@ -47,25 +47,25 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 
 ## The testing surface, mapped to the API
 
-| You ship / consume…                              | Test that…                                           | Layer               | Primitive                                                      | Skill                                    |
-| ------------------------------------------------ | ---------------------------------------------------- | ------------------- | -------------------------------------------------------------- | ---------------------------------------- |
-| `reverse` / `useReverse` / `href`                | the URL is correct; misuse fails to compile          | unit + types        | call directly; `@ts-expect-error`                              | `/typesafety`, `/links`                  |
-| a `loader()` body                                | data logic given params/env/vars/search              | unit (node)         | `runLoader` (raw fn)                                           | `/loader`                                |
-| `middleware()` (auth, logging)                   | ordering, short-circuit, cookie/header merge         | unit (node)         | `runMiddleware`                                                | `/middleware`                            |
-| a client component reading router context        | it renders given params/loaderData/Outlet            | unit (DOM)          | `renderRoute`                                                  | `/hooks`                                 |
-| a component reading `useLocationState`           | it renders the seeded location-state value           | unit (DOM)          | `renderRoute` (`locationState` option)                         | `/location-state`                        |
-| a component reading `useHandle` (Breadcrumbs)    | it renders the seeded handle output                  | unit (DOM)          | `renderRoute` (`handles` option)                               | `/handles`                               |
-| a handle's `collect`/accumulator                 | it maps per-segment pushes to the accumulated value  | unit (node)         | `collectHandle`                                                | `/handles`                               |
-| a component under an `include('/shop', …)` mount | `useMount`/`useHref`/`useReverse` resolve the prefix | unit (DOM)          | `renderRoute` (`mount` option)                                 | `/include`                               |
-| a server action's cookie / flash output          | the `Set-Cookie` / location-state the action set     | unit (node)         | `runInRequestContext` (`{ response, cookies, locationState }`) | `/server-actions`                        |
-| a response route (`path.json/.text/...`)         | status, content-type, body, content negotiation      | integration         | `dispatch`                                                     | `/response-routes`, `/mime-routes`       |
-| a redirect / `404` / middleware redirect         | the `Response` (status + `Location`)                 | integration         | `dispatch`                                                     | `/middleware`, `/route`                  |
-| an async Server Component                        | real Flight output / serialization shape             | RSC unit            | `renderToFlightString` + `toMatchFlight`                       | `/route`                                 |
-| a `"use server"` action + revalidation flow      | the mutate -> reload -> UI update, JS and no-JS      | e2e                 | `parityDescribe` + `expectParity`                              | `/server-actions`                        |
-| navigation / hydration / view transitions        | no reload, no page error, correct pathname           | e2e                 | `parityDescribe`, `waitForHydration`, matchers                 | `/hooks`, `/view-transitions`            |
-| `cache()` / `"use cache"` / loader cache         | hit/miss/stale across two requests                   | e2e + signal        | `assertCacheStatus` / telemetry sink                           | `/caching`, `/use-cache`, `/cache-guide` |
-| `Prerender(...)` routes                          | served from a build-time artifact (a cache hit)      | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`                        | `/prerender`                             |
-| the generated `*.named-routes.gen.ts`            | it matches the runtime route map (drift in CI)       | unit (node)         | `assertGeneratedRoutesMatch`                                   | `/typesafety`                            |
+| You ship / consume…                              | Test that…                                               | Layer               | Primitive                                                                      | Skill                                    |
+| ------------------------------------------------ | -------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------ | ---------------------------------------- |
+| `reverse` / `useReverse` / `href`                | the URL is correct; misuse fails to compile              | unit + types        | call directly; `@ts-expect-error`                                              | `/typesafety`, `/links`                  |
+| a `loader()` body                                | data logic given params/env/vars/search                  | unit (node)         | `runLoader` (handle or raw fn)                                                 | `/loader`                                |
+| `middleware()` (auth, logging)                   | ordering, short-circuit, cookie/header merge             | unit (node)         | `runMiddleware`                                                                | `/middleware`                            |
+| a client component reading router context        | it renders given params/loaderData/Outlet                | unit (DOM)          | `renderRoute`                                                                  | `/hooks`                                 |
+| a component reading `useLocationState`           | it renders the seeded location-state value               | unit (DOM)          | `renderRoute` (`locationState` option)                                         | `/location-state`                        |
+| a component reading `useHandle` (Breadcrumbs)    | it renders the seeded handle output                      | unit (DOM)          | `renderRoute` (`handles` option)                                               | `/handles`                               |
+| a handle's `collect`/accumulator                 | it maps per-segment pushes to the accumulated value      | unit (node)         | `collectHandle`                                                                | `/handles`                               |
+| a component under an `include('/shop', …)` mount | `useMount`/`useHref`/`useReverse` resolve the prefix     | unit (DOM)          | `renderRoute` (`mount` option)                                                 | `/include`                               |
+| a server action's cookie / flash output          | the `Set-Cookie` / flash set, even on `throw redirect()` | unit (node)         | `runInRequestContext` (`{ result, thrown, response, cookies, locationState }`) | `/server-actions`                        |
+| a response route (`path.json/.text/...`)         | status, content-type, body, content negotiation          | integration         | `dispatch`                                                                     | `/response-routes`, `/mime-routes`       |
+| a redirect / `404` / middleware redirect         | the `Response` (status + `Location`)                     | integration         | `dispatch`                                                                     | `/middleware`, `/route`                  |
+| an async Server Component                        | real Flight output / serialization shape                 | RSC unit            | `renderToFlightString` + `toMatchFlight`                                       | `/route`                                 |
+| a `"use server"` action + revalidation flow      | the mutate -> reload -> UI update, JS and no-JS          | e2e                 | `parityDescribe` + `expectParity`                                              | `/server-actions`                        |
+| navigation / hydration / view transitions        | no reload, no page error, correct pathname               | e2e                 | `parityDescribe`, `waitForHydration`, matchers                                 | `/hooks`, `/view-transitions`            |
+| `cache()` / `"use cache"` / loader cache         | hit/miss/stale across two requests                       | e2e + signal        | `assertCacheStatus` / telemetry sink                                           | `/caching`, `/use-cache`, `/cache-guide` |
+| `Prerender(...)` routes                          | served from a build-time artifact (a cache hit)          | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`                                        | `/prerender`                             |
+| the generated `*.named-routes.gen.ts`            | it matches the runtime route map (drift in CI)           | unit (node)         | `assertGeneratedRoutesMatch`                                                   | `/typesafety`                            |
 
 ## What these primitives deliberately don't cover
 
@@ -277,35 +277,36 @@ export const { useFixture, parityDescribe, expectParity, rangoMatchers } = e2e;
 
 ## Unit testing
 
-### Loaders — pass the raw function, not `createLoader`
+### Loaders — the raw body or a registered `createLoader`
 
-`runLoader` runs a loader's body against a real `RequestContext` (cookies,
-headers, `ctx.get`, `ctx.reverse` all resolve) in plain node.
+`runLoader` runs a loader against a real `RequestContext` (cookies, headers,
+`ctx.get`, `ctx.reverse` all resolve) in plain node. Pass **either** a registered
+`createLoader()` handle **or** the raw async body `(ctx) => ...`.
 
-The `$$id` caveat, in depth: `createLoader(fn)` returns a handle whose job is
-RSC registration. The Vite plugin injects a `$$id` (`path#export`) into that
-handle at transform time so the loader can be serialized to the client and
-matched on the server. In a bare vitest process there is no Vite transform, so a
-`createLoader(...)` value has no usable `fn` to invoke and no real `$$id`. That
-is by design — `runLoader` deliberately takes the **raw** async body so no build
-step is required:
+How the handle works without a build: `createLoader(fn)` normally gets its `$$id`
+injected by the Vite plugin (`path#export`) for RSC registration. In a bare
+vitest process there is no transform, so `createLoader` assigns a process-stable
+runtime-fallback `$$id` and registers its fn under it — which happens when the
+handle is imported through the SERVER build, the build `@rangojs/router` resolves
+to under the `rangoTestConfig()` preset. `runLoader(ProductLoader, ...)` then
+recovers that fn from the registry and runs it. (A handle imported through the
+CLIENT build has its body dropped, so `runLoader` throws a clear error telling
+you to import through the preset or pass the raw body.) Exporting the body
+separately is therefore optional — no longer a testability requirement:
 
 ```ts
 import { runLoader } from "@rangojs/router/testing";
-import { createVar } from "@rangojs/router";
 
-// Source: export the body separately so it is importable on its own.
 // loaders/product.ts
-export async function productLoaderBody(ctx) {
+export const ProductLoader = createLoader(async (ctx) => {
   const product = await ctx.env.DB.get(ctx.params.id);
   if (!product) return { product: null };
   return { product, self: ctx.reverse("product", { id: ctx.params.id }) };
-}
-// export const ProductLoader = createLoader(productLoaderBody); // registered in urls()
+});
 
-// product.test.ts
+// product.test.ts — pass the registered handle directly (no body extraction)
 it("returns the product and a self link", async () => {
-  const data = await runLoader(productLoaderBody, {
+  const data = await runLoader(ProductLoader, {
     params: { id: "42" },
     env: { DB: { get: async () => ({ name: "Widget" }) } },
     routeMap: { product: "/products/:id" }, // required for ctx.reverse
@@ -313,6 +314,9 @@ it("returns the product and a self link", async () => {
   expect(data.product.name).toBe("Widget");
   expect(data.self).toBe("/products/42");
 });
+
+// Or pass the raw body — identical behavior, no createLoader needed:
+//   const data = await runLoader(async (ctx) => ({ ... }), { params: { id: "42" } });
 ```
 
 Options: `params` (also surfaced as `routeParams`), `search`, `env`, `vars`
@@ -451,6 +455,16 @@ const { getByTestId } = await renderRoute(
 );
 // useMount() -> "/shop"; useReverse({ product: "/c/:slug" })("product", { slug: "wine" }) -> "/shop/c/wine"
 ```
+
+Optional params vs an include mount — two different prefixes, don't confuse them.
+An optional param that is part of the matched PATTERN (`/:locale?/c/:group` at
+`/en/c/wine`) is auto-filled from the current match by `useReverse` exactly like
+production: `reverse("group", { group: "food" })` returns `/en/c/food` (the
+`locale: "en"` from `useParams()` is merged in) — **no `mount` needed**. Use
+`mount` only when the prefix is an `include()` MOUNT — including a param-bearing
+mount like `include("/:locale?", …)`, which resolves to a concrete prefix you
+pass as `mount: "/en"`. (If a locale "drops" from a reversed URL in a test, the
+cause is usually a missing `mount` seed, not an auto-fill gap.)
 
 #### Catch: streaming `use(promise)` Suspense content
 
@@ -835,14 +849,15 @@ runMiddleware(
 // const { response, nextCalled, cookies } = await runMiddleware(authMw, "/dashboard", { vars: { user: u } });
 
 runLoader<T>(
-  loaderFn: (ctx) => T | Promise<T>,   // RAW function, NOT createLoader(...)
+  loader: ((ctx) => T | Promise<T>) | LoaderDefinition<T>, // raw body OR a registered createLoader() handle
   opts?: { params?, search?, env?, request?, vars?, routeMap?, routeName?, method?, body?,
            formData?, use?, rendered?, handles? },
 ): Promise<T>;
+// A createLoader() handle's fn is recovered from the registry (works through the server build / rangoTestConfig preset).
 // vars accepts an object ({ user: u }) or [key, value] tuples ([[userVar, u]]).
 // In the body, ctx.reverse accepts any routeMap name and ctx.get any string/ContextVar.
 // rendered: true mocks ctx.rendered(); handles: [[H, accumulated]] seeds ctx.use(H).
-// const data = await runLoader(loaderBody, { params: { id: "1" }, env });
+// const data = await runLoader(ProductLoader, { params: { id: "1" }, env }); // or runLoader(rawBody, ...)
 
 // Component — @rangojs/router/testing/dom (DOM env + @testing-library/react)
 renderRoute(                            // async; lazy-loads RTL at call time
@@ -897,14 +912,17 @@ assertGeneratedRoutesMatch(router, generatedMap?): void;
 
 // Advanced context construction (for an action / fn that reads getRequestContext()/cookies())
 runInRequestContext<T>(fn: (ctx) => T | Promise<T>, opts?):
-  Promise<{ result: T; response: Response; cookies: Record<string, string>; locationState: Record<string, unknown> }>;
-  // build + ENTER a real ctx in one call; returns fn's `result` PLUS the action's OUTPUT:
-  // `response` (Set-Cookie/headers/status it set), `cookies` (effective view), `locationState` (the flash).
+  Promise<{ result: T | undefined; thrown: unknown; response: Response;
+            cookies: Record<string, string>; locationState: Record<string, unknown> }>;
+  // build + ENTER a real ctx in one call; captures the action's OUTPUT whether fn RETURNS or THROWS.
+  // result = fn's return (undefined if it threw); thrown = what it threw (a redirect Response on the
+  // success path — captured, NOT re-thrown); response = Set-Cookie/headers/status (a thrown redirect's
+  // Location merged with the cookies); cookies = effective view; locationState = the flash.
 runWithRequestContext(ctx, fn);                     // low-level: enter a ctx you already built
 createTestRequestContext(opts); toRequest(...); seedVariables(...);
-// const { result, cookies, response } = await runInRequestContext(() => loginAction(input),
+// const { cookies, response, thrown } = await runInRequestContext(() => loginAction(input), // sets cookie, throw redirect("/app")
 //   { env, request: new Request(url, { headers: { Cookie: "sid=abc" } }) });
-// expect(cookies.session).toBe("..."); expect(response.headers.getSetCookie()).toContainEqual(expect.stringContaining("session="));
+// expect(cookies.session).toBe("..."); expect((thrown as Response).headers.get("Location")).toBe("/app");
 
 // E2E factory (from @rangojs/router/testing/e2e; you pass Playwright test/expect)
 createRangoE2E({ test, expect, defaultRoot? }): {

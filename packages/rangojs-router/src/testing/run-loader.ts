@@ -1,10 +1,13 @@
 /**
- * runLoader — unit-test a raw loader function in isolation.
+ * runLoader — unit-test a loader function in isolation.
  *
- * Consumers pass the RAW async loader body `(ctx) => ...`, NOT a createLoader()
- * handle. This sidesteps the Vite `$$id` injection that createLoader() relies on
- * for RSC registration: the function is invoked directly with a constructed
- * LoaderContext, so no build step is required.
+ * Pass the RAW async loader body `(ctx) => ...`, or a registered `createLoader()`
+ * handle (its fn is recovered from the fetchable registry by `$$id`). The raw
+ * body needs no build step; the handle works because `createLoader` assigns a
+ * runtime-fallback `$$id` and registers its fn even without the Vite plugin (when
+ * imported through the server build — the consumer's `@rangojs/router` under the
+ * `rangoTestConfig()` preset). Either way the function is invoked directly with a
+ * constructed LoaderContext.
  *
  * The LoaderContext mirrors the canonical shape the router builds at runtime
  * (see createUseFunction in server/request-context.ts). The loader runs inside
@@ -35,6 +38,7 @@ import {
   type RequestContext,
 } from "../server/request-context.js";
 import { createReverseFunction } from "../router/handler-context.js";
+import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import type { LoaderContext, LoaderDefinition } from "../types.js";
 import type { ContextVar } from "../context-var.js";
 import { isHandle, type Handle } from "../handle.js";
@@ -179,21 +183,62 @@ function withSearch(
   return url.toString();
 }
 
+/** A raw loader body, or a registered `createLoader()` handle (its fn is recovered). */
+export type RunnableLoader<T> =
+  | ((ctx: TestLoaderContext) => Promise<T> | T)
+  | LoaderDefinition<T, any>;
+
 /**
- * Run a raw loader body and return its resolved data.
+ * Resolve the function to run from either a raw body or a `createLoader()` handle.
+ *
+ * A handle carries no inline body (`createLoader` registers it in the fetchable
+ * registry by `$$id`), so recover it from there — `def.fn` first (a hand-built
+ * def), then the registry. This works when the handle resolves through the
+ * SERVER build (the consumer's `@rangojs/router` under `rangoTestConfig`, which
+ * registers the fn); the CLIENT stub drops the body, so a handle imported that
+ * way is unrecoverable and we say so explicitly.
+ */
+function resolveLoaderFn<T>(
+  loader: RunnableLoader<T>,
+): (ctx: TestLoaderContext) => Promise<T> | T {
+  if (typeof loader === "function") {
+    return loader as (ctx: TestLoaderContext) => Promise<T> | T;
+  }
+  const def = loader as LoaderDefinition<T, any>;
+  const fn = def.fn ?? getFetchableLoader(def.$$id)?.fn;
+  if (!fn) {
+    throw new Error(
+      `runLoader() received a createLoader() handle whose function could not be ` +
+        `recovered (id "${def.$$id || "<empty>"}"). The loader was likely imported ` +
+        `through the CLIENT build, which drops the body. Either import it through ` +
+        `@rangojs/router with the rangoTestConfig() preset (resolves to the server ` +
+        `build that registers the fn), or pass the raw loader body directly: ` +
+        `runLoader((ctx) => ...).`,
+    );
+  }
+  return fn as (ctx: TestLoaderContext) => Promise<T> | T;
+}
+
+/**
+ * Run a loader and return its resolved data. Pass the RAW loader body, or a
+ * registered `createLoader()` handle (its fn is recovered from the registry).
  *
  * @example
  * ```ts
- * const data = await runLoader(
+ * // raw body
+ * const a = await runLoader(
  *   async (ctx) => ({ id: ctx.params.id, user: ctx.get("user") }),
  *   { params: { id: "42" }, vars: { user: { name: "Ada" } } },
  * );
+ * // registered createLoader() handle (recovered from the registry)
+ * const b = await runLoader(ProductLoader, { params: { id: "42" } });
  * ```
  */
 export async function runLoader<T>(
-  loaderFn: (ctx: TestLoaderContext) => Promise<T> | T,
+  loader: RunnableLoader<T>,
   opts: RunLoaderOptions = {},
 ): Promise<T> {
+  const loaderFn = resolveLoaderFn(loader);
   const ctxOpts: CreateTestContextOptions<any> = {
     env: opts.env,
     // Bake opts.search into the request URL itself so ctx.request.url, ctx.url,

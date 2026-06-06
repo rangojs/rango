@@ -6,14 +6,16 @@ import {
 } from "../index.js";
 import { getRequestContext } from "../../server/request-context.js";
 import { cookies } from "../../server/cookie-store.js";
+import { redirect } from "../../route-definition/redirect.js";
 import { createVar } from "../../context-var.js";
 
 // runInRequestContext is the reachable entry for the advanced action-auth path:
 // a server action has no loader context (so runLoader is the wrong shape) yet
 // still needs a real request context to read the request cookie and resolve
-// getRequestContext(). It returns { result, response, cookies, locationState }
-// so the action's OUTPUT (Set-Cookie, headers, flash) is assertable at the unit
-// layer without casting through the @internal ctx.res / ctx.cookies().
+// getRequestContext(). It returns { result, thrown, response, cookies,
+// locationState } so the action's OUTPUT (Set-Cookie, headers, flash) is
+// assertable at the unit layer — whether fn returns OR throws (e.g. a success
+// `throw redirect(...)`) — without casting through @internal ctx.res/ctx.cookies().
 
 describe("runInRequestContext", () => {
   it("enters a context so getRequestContext() resolves inside fn", async () => {
@@ -132,6 +134,59 @@ describe("runInRequestContext", () => {
   it("returns an empty locationState when the run set none", async () => {
     const { locationState } = await runInRequestContext(() => "noop");
     expect(locationState).toEqual({});
+  });
+
+  it("captures a thrown redirect (the success path) with cookie + flash still observable", async () => {
+    // The dominant case: an auth action sets a cookie + flash, then
+    // `throw redirect(...)` on success. The snapshot must fire on the THROW path,
+    // and the thrown redirect is captured (not re-thrown), so the consumer never
+    // has to wrap the action in their own try/catch.
+    const {
+      result,
+      thrown,
+      response,
+      cookies: cookieView,
+      locationState,
+    } = await runInRequestContext((ctx) => {
+      cookies().set("session", "tok", { path: "/" });
+      ctx.setLocationState({
+        __rsc_ls_key: "flash",
+        __rsc_ls_value: { text: "Welcome" },
+      });
+      throw redirect("/app");
+    });
+
+    expect(result).toBeUndefined();
+    // The thrown redirect is observable on `thrown`.
+    expect(thrown).toBeInstanceOf(Response);
+    expect((thrown as Response).headers.get("Location")).toBe("/app");
+    // Cookie + flash set before the throw are still observable.
+    expect(cookieView.session).toBe("tok");
+    expect(locationState).toEqual({ flash: { text: "Welcome" } });
+    // response merges the redirect's Location AND the accumulated Set-Cookie.
+    expect(response.headers.get("Location")).toBe("/app");
+    expect(
+      response.headers.getSetCookie().some((c) => c.startsWith("session=tok")),
+    ).toBe(true);
+  });
+
+  it("captures a non-Response throw on `thrown` without re-throwing", async () => {
+    const err = new Error("boom");
+    const {
+      result,
+      thrown,
+      response,
+      cookies: cookieView,
+    } = await runInRequestContext(() => {
+      cookies().set("partial", "x");
+      throw err;
+    });
+    // Not re-thrown: the consumer asserts on `thrown` (no rejection).
+    expect(result).toBeUndefined();
+    expect(thrown).toBe(err);
+    // Effects set before the throw are still observable; response is the stub snapshot.
+    expect(cookieView.partial).toBe("x");
+    expect(response.status).toBe(200);
   });
 
   it("does not leak the context outside the runner", async () => {

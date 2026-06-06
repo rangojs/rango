@@ -256,6 +256,49 @@ describe("renderRoute mount (include() scope)", () => {
   });
 });
 
+describe("renderRoute reverse + optional params from the match", () => {
+  // Pin the behavior the consumer asked about: with /:locale?/c/:group at
+  // /en/c/wine, does reverse(group, { group }) (NOT passing locale) keep the
+  // optional :locale? from the current match? Production useReverse merges
+  // useParams() (the matched params) under explicit params, so it should.
+  it("auto-fills an optional :locale? present in the match", async () => {
+    function Probe() {
+      const params = useParams<{ locale?: string; group?: string }>();
+      const reverse = useReverse({ group: "/:locale?/c/:group" });
+      return (
+        <div>
+          <span data-testid="locale">{params.locale ?? "none"}</span>
+          <a data-testid="rev" href={reverse("group", { group: "food" })}>
+            x
+          </a>
+        </div>
+      );
+    }
+    const { getByTestId } = await renderRoute(
+      [{ path: "/:locale?/c/:group", Component: Probe }],
+      { initialUrl: "/en/c/wine" },
+    );
+    expect(getByTestId("locale").textContent).toBe("en");
+    expect(getByTestId("rev").getAttribute("href")).toBe("/en/c/food");
+  });
+
+  it("omits an optional :locale? that is absent from the match", async () => {
+    function Probe() {
+      const reverse = useReverse({ group: "/:locale?/c/:group" });
+      return (
+        <a data-testid="rev" href={reverse("group", { group: "food" })}>
+          x
+        </a>
+      );
+    }
+    const { getByTestId } = await renderRoute(
+      [{ path: "/:locale?/c/:group", Component: Probe }],
+      { initialUrl: "/c/wine" },
+    );
+    expect(getByTestId("rev").getAttribute("href")).toBe("/c/food");
+  });
+});
+
 describe("renderRoute handles reach LAYOUT components, not just the leaf", () => {
   // The consumer's confusion: a layout (DetailLayout/ActionToolbar) that reads a
   // handle "could not go through renderRoute". It can — handles are accumulated
