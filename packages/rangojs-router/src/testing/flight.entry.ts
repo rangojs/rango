@@ -30,12 +30,17 @@ export type { RenderToFlightStringOptions } from "./flight.js";
 export {
   renderServerTree,
   findClientBoundaries,
+  findElements,
+  textContent,
   assertFlightTreeRuntimeAvailable,
 } from "./flight-tree.js";
 export type {
   RenderServerTreeOptions,
   RenderServerTreeResult,
   ClientBoundary,
+  BoundarySelector,
+  FoundElement,
+  ElementSelector,
 } from "./flight-tree.js";
 
 export { renderHandler } from "./render-handler.js";

@@ -47,10 +47,17 @@
  * `rangoTestAliases` directly only if you wire `deps.inline` yourself.
  *
  * Notes:
- * - This is for the node/DOM project. The Flight project (real RSC rendering via
- *   `@rangojs/router/testing/flight`) uses the `react-server` condition and pure
- *   leaf server components — it does NOT use this alias (which would crash under
- *   the server React build). See the testing guide for the Flight config.
+ * - The Flight project (real RSC rendering via `@rangojs/router/testing/flight`)
+ *   uses the `react-server` condition AND needs this same alias whenever a
+ *   rendered handler/component imports a server API (`getRequestContext`,
+ *   `cookies`) from the bare `@rangojs/router` — without it that import resolves
+ *   to the throwing out-of-react-server stub (`resolve.conditions` alone is not
+ *   reliably applied to bare-package export resolution). The alias points at
+ *   `index.rsc.ts` (the real react-server build) and leaves React itself
+ *   untouched, so it does NOT crash the server React build. The router's OWN
+ *   Flight tests omit it only because they import via RELATIVE paths, not the
+ *   bare specifier; a consumer importing the bare specifier must include it. See
+ *   the testing guide for the full Flight config.
  * - `renderRoute` (`@rangojs/router/testing/dom`) tests run in this same project
  *   under a DOM environment (`happy-dom`/`jsdom`); the alias does not affect them.
  * - LIMITATION: the FULL app router still cannot be imported if it uses

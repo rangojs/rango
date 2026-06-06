@@ -6,10 +6,16 @@ import {
   renderHandler,
   renderServerTree,
 } from "@rangojs/router/testing/flight";
-import { createLoader, type HandlerContext } from "@rangojs/router";
+import {
+  createLoader,
+  createVar,
+  getRequestContext,
+  type HandlerContext,
+} from "@rangojs/router";
 import { PriceTag } from "./fixtures/PriceTag.js";
 
 const PriceLoader = createLoader(async () => ({ amount: 0, currency: "USD" }));
+const Tenant = createVar<{ name: string }>();
 
 // A pure leaf server component wrapping a client island (the documented v1
 // scope: import-light leaf trees). Mirrors the existing flight.rsc-test pattern.
@@ -103,5 +109,28 @@ describe("renderServerTree against cloudflare-basic", () => {
     const [priceTag] = findClientBoundaries(tree, "PriceTag");
     expect(priceTag.props.amount).toBe(12.5); // from the seeded loader
     expect(priceTag.props.asOf).toBeInstanceOf(Date);
+  });
+
+  it("renderHandler: a handler reading getRequestContext() resolves the real react-server impl", async () => {
+    // The trap this config's alias guards against: a handler that imports
+    // getRequestContext() from the bare @rangojs/router. Without the
+    // index.rsc.ts alias it resolves to the throwing out-of-react-server stub.
+    async function TenantBanner() {
+      const tenant = getRequestContext().get(Tenant);
+      return <p data-testid="tenant">tenant: {tenant?.name}</p>;
+    }
+
+    const { tree } = await renderHandler(TenantBanner, {
+      vars: [[Tenant, { name: "Acme" }]],
+    });
+    expect(JSON.stringify(tree)).toContain("Acme");
+  });
+
+  it("findClientBoundaries selects an island by a props subset", async () => {
+    const { tree } = await renderServerTree(
+      <ProductPanel name="Gadget" amount={19.5} asOf={new Date(0)} />,
+    );
+    const [byProps] = findClientBoundaries(tree, { props: { amount: 19.5 } });
+    expect(byProps?.props.currency).toBe("USD");
   });
 });

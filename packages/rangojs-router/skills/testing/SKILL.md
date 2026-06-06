@@ -87,19 +87,20 @@ The single rule that drives everything:
 
 ## Decision tree: behavior -> layer -> primitive
 
-| The behavior is…                                                                                          | Layer        | Primitive                                                        | Import root                      |
-| --------------------------------------------------------------------------------------------------------- | ------------ | ---------------------------------------------------------------- | -------------------------------- |
-| a pure function / `reverse` / a predicate (`revalidate`, `isAction`)                                      | unit (node)  | call it directly; `runMiddleware`/`runLoader` for ctx            | `@rangojs/router/testing`        |
-| one loader's data logic                                                                                   | unit (node)  | `runLoader` (a registered `createLoader` handle, or the raw fn)  | `@rangojs/router/testing`        |
-| one middleware's ordering / short-circuit / cookie+header merge                                           | unit (node)  | `runMiddleware`                                                  | `@rangojs/router/testing`        |
-| a CLIENT component reading router context (`useParams`/`useReverse`/`Outlet`/`useNavigation`/`useLoader`) | unit (DOM)   | `renderRoute` (needs happy-dom/jsdom + `@testing-library/react`) | `@rangojs/router/testing/dom`    |
-| a redirect / status / headers / cookies / **response route** (json/text/html/xml/md), no Flight           | integration  | `dispatch` (router -> Response)                                  | `@rangojs/router/testing`        |
-| a real async **Server Component** / Flight serialization shape                                            | RSC unit     | `renderToFlightString` + `toMatchFlight`                         | `@rangojs/router/testing/flight` |
-| a client island's **typed props** across the boundary / inlined-vs-island                                 | RSC unit     | `renderServerTree` + `findClientBoundaries`                      | `@rangojs/router/testing/flight` |
-| a real route **handler** `(ctx) => rsc` (params/loaders/vars -> rendered RSC + effects)                   | RSC unit     | `renderHandler` (seeded `HandlerContext`)                        | `@rangojs/router/testing/flight` |
-| navigation, hydration, PE parity, view transitions, real SSR                                              | e2e          | `createRangoE2E` -> `parityDescribe`/`expectParity`              | `@rangojs/router/testing/e2e`    |
-| cache hit/miss/stale, prerender (= a cache hit by design)                                                 | e2e + signal | `assertCacheStatus` / telemetry sink (gate on)                   | `@rangojs/router/testing`        |
-| generated route map drift vs runtime                                                                      | unit (node)  | `assertGeneratedRoutesMatch`                                     | `@rangojs/router/testing`        |
+| The behavior is…                                                                                          | Layer        | Primitive                                                         | Import root                      |
+| --------------------------------------------------------------------------------------------------------- | ------------ | ----------------------------------------------------------------- | -------------------------------- |
+| a pure function / `reverse` / a predicate (`revalidate`, `isAction`)                                      | unit (node)  | call it directly; `runMiddleware`/`runLoader` for ctx             | `@rangojs/router/testing`        |
+| one loader's data logic                                                                                   | unit (node)  | `runLoader` (a registered `createLoader` handle, or the raw fn)   | `@rangojs/router/testing`        |
+| one middleware's ordering / short-circuit / cookie+header merge                                           | unit (node)  | `runMiddleware`                                                   | `@rangojs/router/testing`        |
+| a CLIENT component reading router context (`useParams`/`useReverse`/`Outlet`/`useNavigation`/`useLoader`) | unit (DOM)   | `renderRoute` (needs happy-dom/jsdom + `@testing-library/react`)  | `@rangojs/router/testing/dom`    |
+| a redirect / status / headers / cookies / **response route** (json/text/html/xml/md), no Flight           | integration  | `dispatch` (router -> Response)                                   | `@rangojs/router/testing`        |
+| a real async **Server Component** / Flight serialization shape                                            | RSC unit     | `renderToFlightString` + `toMatchFlight`                          | `@rangojs/router/testing/flight` |
+| a client island's **typed props** across the boundary / inlined-vs-island                                 | RSC unit     | `renderServerTree` + `findClientBoundaries(tree, {testId/props})` | `@rangojs/router/testing/flight` |
+| the **server-rendered** tree content (host elements / text) of an RSC render                              | RSC unit     | `findElements(tree, sel)` + `textContent(node)`                   | `@rangojs/router/testing/flight` |
+| a real route **handler** `(ctx) => rsc` (params/loaders/vars -> rendered RSC + effects)                   | RSC unit     | `renderHandler` (seeded `HandlerContext`)                         | `@rangojs/router/testing/flight` |
+| navigation, hydration, PE parity, view transitions, real SSR                                              | e2e          | `createRangoE2E` -> `parityDescribe`/`expectParity`               | `@rangojs/router/testing/e2e`    |
+| cache hit/miss/stale, prerender (= a cache hit by design)                                                 | e2e + signal | `assertCacheStatus` / telemetry sink (gate on)                    | `@rangojs/router/testing`        |
+| generated route map drift vs runtime                                                                      | unit (node)  | `assertGeneratedRoutesMatch`                                      | `@rangojs/router/testing`        |
 
 Cross-references: `/loader`, `/middleware`, `/server-actions`, `/caching`,
 `/prerender`, `/typesafety`.
@@ -547,10 +548,12 @@ import { flightMatchers } from "@rangojs/router/testing/flight-matchers";
 
 expect.extend(flightMatchers);
 
-// Keep components PURE leaves: take data as props. Do NOT import a server API
-// (getRequestContext, cookies) from the `@rangojs/router` barrel — under the
-// react-server condition the bare specifier resolves to the throwing stub, so
-// it cannot be flight-tested in a bare consumer project.
+// Prefer PURE leaves (data as props) for renderToFlightString. A component that
+// DOES import a server API (getRequestContext, cookies) from the `@rangojs/router`
+// barrel works ONLY if the rsc project aliases the bare specifier to index.rsc.ts
+// (rangoTestAliases — see the two-projects section); without that alias the bare
+// import resolves to the throwing out-of-react-server stub. (renderHandler /
+// renderServerTree seed that context via vars/headers/params.)
 async function Greeting({ name }: { name: string }) {
   await Promise.resolve();
   return <div>Hello {name}!</div>;
@@ -589,7 +592,13 @@ inlined. No hydration / no interaction (that is the e2e tier).
 
 Wire `rangoUseClientTransform()` into `vitest.rsc.config.ts`
 (`plugins: [rangoUseClientTransform()]`, imported from `@rangojs/router/testing/vitest`)
-so islands are auto-discovered from the server tree's own imports — pass nothing:
+so islands are auto-discovered from the server tree's own imports — pass nothing.
+That same project must ALSO alias the bare specifier to the react-server build:
+`resolve: { conditions: ["react-server"], alias: rangoTestAliases({ preset }) }` —
+without the `@rangojs/router` -> `index.rsc.ts` alias, a rendered handler/component
+that reads `getRequestContext()`/`cookies()` resolves the throwing stub and
+`renderHandler` returns `tree: undefined`. (`resolve.conditions` alone is not
+reliably applied to bare-package export resolution.)
 
 ```tsx
 import { it, expect } from "vitest";
@@ -615,12 +624,30 @@ it("client props survive the round trip", async () => {
 });
 ```
 
-`findClientBoundaries(tree, name?)` always returns an array (`{ id, name, props,
-element }[]`) in document order, optionally filtered by export name; destructure
-`const [tag] = …` for one island, assert `.length` when count matters (missing
-name -> `[]`). Without the transform, register islands explicitly instead:
-`renderServerTree(<Panel/>, { clientComponents: { PriceTag } })`. A true
-interactive, clickable DOM `renderServer` is intentionally NOT shipped —
+`findClientBoundaries(tree, selector?)` always returns an array (`{ id, name,
+props, element }[]`) in document order; destructure `const [tag] = …` for one
+island, assert `.length` when count matters (no match -> `[]`). The selector is a
+**string** (export name) or an object filtering by `name` / `testId`
+(`props["data-testid"]`) / `props` (subset deep-equal) / `where`, AND-ed:
+`findClientBoundaries(tree, { testId: "cta" })`. Without the transform, register
+islands explicitly: `renderServerTree(<Panel/>, { clientComponents: { PriceTag } })`.
+
+To select the **server-rendered** tree (not islands), use `findElements(tree,
+selector?)` -> `{ tag, type, props, children, text, element }[]` (host elements in
+document order; selector = tag string or `{ tag, testId, props, text, where }`)
+and `textContent(node)` (concatenated subtree text — use instead of
+`JSON.stringify(tree).toContain`). Caveat: server COMPONENTS don't survive Flight
+as identities (executed during serialization), so `findElements` matches the host
+elements they produced, not the component function.
+
+```tsx
+const [h2] = findElements(tree, "h2");
+expect(h2.text).toBe("Wine");
+findElements(tree, { tag: "article", text: /in stock/i });
+expect(textContent(tree)).toContain("Wine");
+```
+
+A true interactive, clickable DOM `renderServer` is intentionally NOT shipped —
 in-process happy-dom hydration re-tests React and misses server/client divergence
 (which needs a real browser). Use e2e for interaction.
 

@@ -11,7 +11,9 @@ import { describe, expect, test } from "vitest";
 import {
   assertFlightTreeRuntimeAvailable,
   findClientBoundaries,
+  findElements,
   renderServerTree,
+  textContent,
 } from "../flight.entry.js";
 import { Counter } from "./fixtures/Counter.js";
 import { MemoBadge, RefInput } from "./fixtures/Badge.js";
@@ -122,6 +124,58 @@ describe("renderServerTree", () => {
     expect(first.props.start).toBe(1);
   });
 
+  test("findClientBoundaries filters by testId / props / where (AND-ed)", async () => {
+    const when = new Date(0);
+    function Page() {
+      return (
+        <ul>
+          <Counter start={1} when={when} tags={new Map()} data-testid="first" />
+          <Counter
+            start={2}
+            when={when}
+            tags={new Map()}
+            data-testid="second"
+          />
+        </ul>
+      );
+    }
+    const { tree } = await renderServerTree(<Page />);
+
+    // by test id (a prop that crossed the boundary, not a server host attr).
+    const [byTestId, ...others] = findClientBoundaries(tree, {
+      testId: "second",
+    });
+    expect(others).toHaveLength(0);
+    expect(byTestId.props.start).toBe(2);
+
+    // props subset, deep-equal: a primitive prop...
+    const [byStart] = findClientBoundaries(tree, { props: { start: 1 } });
+    expect(byStart.props["data-testid"]).toBe("first");
+    // ...and a Date prop, where Object.is would fail (two distinct instances).
+    expect(
+      findClientBoundaries(tree, { props: { when: new Date(0) } }),
+    ).toHaveLength(2);
+
+    // name + props AND-ed.
+    expect(
+      findClientBoundaries(tree, { name: "Counter", props: { start: 2 } }),
+    ).toHaveLength(1);
+    expect(
+      findClientBoundaries(tree, { name: "Nope", props: { start: 2 } }),
+    ).toEqual([]);
+
+    // arbitrary predicate.
+    const hot = findClientBoundaries(tree, {
+      where: (b) => (b.props.start as number) >= 2,
+    });
+    expect(hot.map((b) => b.props.start)).toEqual([2]);
+
+    // string form still matches by name (back-compat).
+    expect(findClientBoundaries(tree, "Counter")).toHaveLength(2);
+    // empty selector returns all.
+    expect(findClientBoundaries(tree, {})).toHaveLength(2);
+  });
+
   test("memo / forwardRef islands are auto-discovered (object exports)", async () => {
     // memo(...) and forwardRef(...) are objects at runtime; the transform must
     // still register them so they emit I-rows instead of being inlined.
@@ -171,6 +225,103 @@ describe("renderServerTree", () => {
     const { tree } = await renderServerTree(<Banner />, {
       vars: [[Flag, true]],
     });
-    expect(JSON.stringify(tree)).toContain("flag: true");
+    expect(textContent(tree)).toBe("flag: true");
+  });
+
+  test("children are split out of props (boundary and host element alike)", async () => {
+    function Page() {
+      return (
+        <section>
+          <Counter start={1} when={new Date(0)} tags={new Map()}>
+            inner text
+          </Counter>
+        </section>
+      );
+    }
+    const { tree } = await renderServerTree(<Page />);
+
+    const [counter] = findClientBoundaries(tree);
+    expect(counter.props.children).toBeUndefined(); // not duplicated into props
+    expect(counter.children).toBe("inner text"); // exposed separately, like FoundElement
+
+    const [section] = findElements(tree, "section");
+    expect(section.props.children).toBeUndefined();
+    expect(section.children).toBeDefined(); // the nested Counter boundary
+  });
+
+  test("props selector deep-equals Set members by structure, not identity", async () => {
+    const Tagged = (_props: { groups: Set<{ id: number }> }) => <span />;
+    function Page() {
+      return <Tagged groups={new Set([{ id: 1 }, { id: 2 }])} />;
+    }
+    const { tree } = await renderServerTree(<Page />, {
+      clientComponents: { Tagged },
+    });
+    // distinct object instances of the same structure must still match.
+    const [hit] = findClientBoundaries(tree, {
+      props: { groups: new Set([{ id: 1 }, { id: 2 }]) },
+    });
+    expect(hit).toBeDefined();
+    expect(
+      findClientBoundaries(tree, { props: { groups: new Set([{ id: 9 }]) } }),
+    ).toEqual([]);
+  });
+
+  test("findElements selects server/host elements (boundaries excluded)", async () => {
+    async function Page() {
+      await Promise.resolve();
+      return (
+        <article data-rank="1">
+          <h1>Hello Ada</h1>
+          <h2 data-testid="subtitle">Subtitle here</h2>
+          <Counter start={5} when={new Date(0)} tags={new Map()} />
+        </article>
+      );
+    }
+    const { tree } = await renderServerTree(<Page />);
+
+    // host elements only, in document order — the client boundary (Counter) is
+    // NOT a host element and is excluded.
+    expect(findElements(tree).map((e) => e.tag)).toEqual([
+      "article",
+      "h1",
+      "h2",
+    ]);
+    expect(findClientBoundaries(tree)).toHaveLength(1); // Counter still findable
+
+    // by tag (string form) + text content.
+    const [h1] = findElements(tree, "h1");
+    expect(h1.tag).toBe("h1");
+    expect(h1.text).toBe("Hello Ada");
+
+    // by data-testid on a HOST element (not a boundary prop).
+    const [subtitle] = findElements(tree, { testId: "subtitle" });
+    expect(subtitle.tag).toBe("h2");
+    expect(textContent(subtitle.element)).toBe("Subtitle here");
+
+    // by props subset.
+    const [article] = findElements(tree, { props: { "data-rank": "1" } });
+    expect(article.tag).toBe("article");
+
+    // by text (substring and RegExp).
+    expect(findElements(tree, { tag: "h2", text: "Subtitle" })).toHaveLength(1);
+    expect(findElements(tree, { text: /Ada/ }).map((e) => e.tag)).toEqual([
+      "article", // article's subtree contains "Hello Ada" too
+      "h1",
+    ]);
+
+    // by predicate.
+    expect(
+      findElements(tree, { where: (e) => (e.tag ?? "").startsWith("h") }).map(
+        (e) => e.tag,
+      ),
+    ).toEqual(["h1", "h2"]);
+
+    // a boundary name is not a host tag -> no host-element match.
+    expect(findElements(tree, "Counter")).toEqual([]);
+
+    // textContent over the whole tree.
+    expect(textContent(tree)).toContain("Hello Ada");
+    expect(textContent(tree)).toContain("Subtitle here");
   });
 });

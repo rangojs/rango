@@ -213,9 +213,20 @@ then wire `server.deps.inline` yourself.)
 
 You need two, because real Flight rendering requires the `react-server` node
 condition, and that condition flips React to its server (no client hooks) build —
-which would break every client/`renderRoute` test. The Flight project does **not**
-use the preset (its `@rangojs/router` alias would crash under the server React
-build); Flight tests cover pure leaf server components.
+which would break every client/`renderRoute` test.
+
+The Flight project needs **both** `resolve.conditions: ["react-server"]` **and**
+the bare `@rangojs/router` → `index.rsc.ts` alias from `rangoTestAliases`. The
+alias is not optional once you render anything that reads the request context: a
+handler (or server component) that imports `getRequestContext()` / `cookies()`
+from the bare `@rangojs/router` resolves to the **out-of-react-server stub**
+(which throws `"… only available in a react-server environment"`) when only
+`resolve.conditions` is set — Vite does not reliably apply the condition to
+bare-package export resolution. The alias points at `index.rsc.ts`, which **is**
+the react-server build (real impls), so it does not conflict with the server
+React build. (Pure leaf server components that never touch the request context
+work without it — which is why this used to be omitted.) Symptom when missing:
+`renderHandler` returns `tree: undefined` with the stub error on `thrown`.
 
 `vitest.config.ts` (the default node + DOM project) — uses the preset, above.
 
@@ -223,7 +234,10 @@ build); Flight tests cover pure leaf server components.
 
 ```ts
 import { defineConfig } from "vitest/config";
-import { rangoUseClientTransform } from "@rangojs/router/testing/vitest";
+import {
+  rangoTestAliases,
+  rangoUseClientTransform,
+} from "@rangojs/router/testing/vitest";
 
 // Force production React in this process and any forked worker (forks inherit
 // process.env). Dev NODE_ENV crashes the bare worker (jsxDEV owner-stack
@@ -237,7 +251,13 @@ export default defineConfig({
   // Server components are untouched (renderToFlightString of leaf trees is
   // unaffected). Omit it only if you don't use renderServerTree.
   plugins: [rangoUseClientTransform()],
-  resolve: { conditions: ["react-server"] },
+  resolve: {
+    conditions: ["react-server"],
+    // Bare @rangojs/router -> index.rsc.ts (real react-server impls), so a
+    // rendered handler/component reading getRequestContext()/cookies() does not
+    // hit the throwing stub. Use the same preset as your node project.
+    alias: rangoTestAliases({ preset: "cloudflare" }), // or { preset: "node" }
+  },
   test: {
     globals: true,
     include: ["**/*.rsc-test.{ts,tsx}"],
@@ -705,8 +725,10 @@ Under the react-server vitest project (`*.rsc-test.{ts,tsx}`, run via
 
 The matchers live at the separate `@rangojs/router/testing/flight-matchers`
 subpath (they import `vitest`); `renderToFlightString` itself does not pull in
-Vitest. Keep the component a **pure leaf** — receive data as props, do NOT import
-a server API from the `@rangojs/router` barrel (see the caveat below):
+Vitest. A **pure leaf** (data in as props) is the simplest case; a component that
+imports a server API from the `@rangojs/router` barrel (`getRequestContext`,
+`cookies`) also works as long as the rsc project aliases the barrel (see the
+caveat below):
 
 ```tsx
 import { it, expect } from "vitest";
@@ -782,12 +804,51 @@ it("client props survive the serialize -> deserialize round trip", async () => {
 });
 ```
 
-`findClientBoundaries(tree, name?)` returns every boundary (each
-`{ id, name, props, element }`) in document order, optionally filtered by name; it
-always returns an array, so destructure `const [tag] = …` for a single expected
-island and assert on `.length` when the count matters (a missing name yields
-`[]`). Same **pure-leaf** caveat as `renderToFlightString` applies to the server
-component (don't import server-only APIs).
+`findClientBoundaries(tree, selector?)` returns every boundary (each
+`{ id, name, props, element }`) in document order; it always returns an array, so
+destructure `const [tag] = …` for a single expected island and assert on
+`.length` when the count matters (no match yields `[]`). The selector is either a
+**string** (match by export name) or an object that filters by `name` / `testId`
+/ `props` (subset deep-equal, Date/Map/Set/array aware) / `where`, all AND-ed:
+
+```ts
+findClientBoundaries(tree, "PriceTag"); // by export name
+findClientBoundaries(tree, { testId: "primary-cta" }); // by props["data-testid"]
+findClientBoundaries(tree, { name: "PriceTag", props: { currency: "USD" } });
+findClientBoundaries(tree, { where: (b) => (b.props.amount as number) > 100 });
+```
+
+A `testId` matches a `data-testid` you passed **as a prop** to the island
+(`<PriceTag data-testid="primary-cta" />`) — it crosses the boundary. A
+`data-testid` rendered on a plain server host element is not a boundary; select
+those with **`findElements`** (next). Same **pure-leaf** caveat as
+`renderToFlightString` applies to the server component (don't import server-only
+APIs).
+
+#### findElements / textContent — select the server-rendered tree
+
+`findClientBoundaries` finds client islands; `findElements(tree, selector?)`
+finds the **server/host elements** a server component rendered (`<article>`,
+`<h2>`, …) — each `{ tag, type, props, children, text, element }`, in document
+order, always an array. The selector is a host **tag string** (`"h2"`) or an
+object filtering by `tag` / `testId` / `props` (subset deep-equal) / `text`
+(substring or `RegExp`) / `where`:
+
+```ts
+import { findElements, textContent } from "@rangojs/router/testing/flight";
+
+const [h2] = findElements(tree, "h2");
+expect(h2.text).toBe("Wine");
+findElements(tree, { testId: "subtitle" }); // data-testid on a host element
+findElements(tree, { tag: "article", text: /in stock/i });
+expect(textContent(tree)).toContain("Wine"); // instead of JSON.stringify(tree)
+```
+
+`textContent(node)` concatenates every string/number leaf of a node's subtree —
+the clean way to assert rendered text. **Caveat:** server _components_ do not
+survive Flight as identities (they are executed during serialization), so
+`findElements` matches the host elements they produced, not the component
+function. Client islands keep identity — use `findClientBoundaries` for those.
 
 `renderServerTree` renders an **element** you build (`<Page />`). `vars` seeds
 `ctx.get(MyVar)` for a server component that reads `getRequestContext()` during
@@ -806,17 +867,19 @@ const { tree } = await renderServerTree(<ProductPanel … />, {
 });
 ```
 
-Consumer caveat: a server component that imports a server API from the
-`@rangojs/router` **barrel** (e.g. `getRequestContext`, `cookies`) cannot be
-flight-tested in a bare consumer project — under the Flight project's
-`react-server` condition the bare specifier still resolves to the throwing
-server-only stub, and the preset's alias (which fixes that for the node project)
-crashes under the server React build on the router's `virtual:` imports. So keep
-Flight tests to **pure leaf** server components (no `@rangojs/router` imports);
-the example above reads params via the request context the test harness sets up,
-which works because `renderToFlightString` enters `runWithRequestContext` for
-you — but a component that itself calls `getRequestContext()` from the barrel is
-outside v1 scope (cover it with e2e).
+Consumer caveat: a server component (or handler) that imports a server API from
+the `@rangojs/router` **barrel** (e.g. `getRequestContext`, `cookies`) works in
+the Flight project **only if** that project aliases the bare specifier to
+`index.rsc.ts` via `rangoTestAliases` (see "Two vitest projects" above). The
+alias points at the real react-server impls, so it does **not** crash the server
+React build — it leaves React itself untouched and only redirects
+`@rangojs/router`. Without the alias the bare specifier resolves to the throwing
+out-of-react-server stub (symptom: `renderHandler` returns `tree: undefined`, the
+stub error on `thrown`). With the alias wired, `renderToFlightString` enters
+`runWithRequestContext` for you and `renderServerTree`/`renderHandler` seed the
+context (vars/headers/params), so barrel-importing components are testable. (Pure
+leaf components that take all data as props need no barrel import at all and are
+the simplest case — but they are no longer the only supported one.)
 
 ### renderHandler — run a real route handler and assert its RSC
 
@@ -1058,13 +1121,18 @@ flightMatchers; // expect.extend -> toMatchFlight(substring), toMatchFlightSnaps
 renderServerTree(element, opts?: { ...same, vars?, clientComponents? }): Promise<{ flight, tree }>;
 renderHandler(handler, opts?: { params?, env?, vars?, loaders?, routeMap?, headers?, clientComponents? }):
   Promise<{ tree, flight, thrown, response, cookies, headers, locationState, handles }>;
-findClientBoundaries(tree, name?): ClientBoundary[]; // {id,name,props,element}[]; [] if none
+findClientBoundaries(tree, selector?: string | { name?, testId?, props?, where? }): ClientBoundary[]; // {id,name,props,element}[]; [] if none
+findElements(tree, selector?: string | { tag?, testId?, props?, text?, where? }): FoundElement[]; // server/host elements {tag,props,children,text,element}[]
+textContent(node): string; // concatenated subtree text (use instead of JSON.stringify(tree).toContain)
 rangoUseClientTransform(); // Vite plugin for vitest.rsc.config.ts -> auto-discover islands
+// react-server vitest project MUST also alias @rangojs/router -> index.rsc.ts (rangoTestAliases) or a
+// handler/component reading getRequestContext()/cookies() hits the throwing stub (tree: undefined).
 // renderServerTree renders an ELEMENT; renderHandler runs a route handler (ctx)=>rsc with a seeded ctx.
 // const { tree } = await renderServerTree(<Page/>);                       // element
 // const { tree, handles } = await renderHandler(ProductPage, { params: { slug: "wine" },
 //   loaders: [[ProductLoader, data]], vars: [[Tenant, t]] });             // real handler
-// const [tag] = findClientBoundaries(tree, "PriceTag"); expect(tag.props.asOf).toBeInstanceOf(Date);
+// const [tag] = findClientBoundaries(tree, { testId: "cta" }); expect(tag.props.asOf).toBeInstanceOf(Date);
+// const [h2] = findElements(tree, "h2"); expect(h2.text).toBe("Wine");   // server/host element (not a boundary)
 // fallback (no transform): pass { clientComponents: { PriceTag } } to either
 
 // Cache / prerender

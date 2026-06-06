@@ -4,14 +4,23 @@
  *
  * Real Flight rendering needs the `react-server` export condition, which flips
  * React to its server build (no client hooks). That MUST be isolated in its own
- * project. Note: this project does NOT use the `@rangojs/router/testing/vitest`
- * preset — that preset aliases `@rangojs/router` to real impls for the client
- * React build, which would crash under the server React build here. Flight tests
- * cover pure leaf server components (the documented v1 scope), so they need no
- * router alias. Modeled on the router package's own vitest.rsc.config.ts.
+ * project.
+ *
+ * It ALSO needs the bare `@rangojs/router` -> `index.rsc.ts` alias (from
+ * `rangoTestAliases`): a rendered handler (or server component) that imports
+ * `getRequestContext()` / `cookies()` from the bare specifier resolves to the
+ * OUT-of-react-server stub (which throws) when only `resolve.conditions` is set —
+ * Vite does not reliably apply the condition to bare-package export resolution.
+ * The alias points at `index.rsc.ts`, which IS the react-server build (real
+ * impls), so it does NOT conflict with the server React build here. (Pure leaf
+ * server components — `renderServerTree` of a tree that never reads the request
+ * context — work without the alias, which is why earlier Flight tests omitted it.)
  */
 import { defineConfig } from "vitest/config";
-import { rangoUseClientTransform } from "@rangojs/router/testing/vitest";
+import {
+  rangoTestAliases,
+  rangoUseClientTransform,
+} from "@rangojs/router/testing/vitest";
 
 // Force production React in this process and any forked worker (forks inherit
 // process.env). Dev NODE_ENV crashes the bare worker (uninitialized owner-stack
@@ -25,6 +34,11 @@ export default defineConfig({
   plugins: [rangoUseClientTransform()],
   resolve: {
     conditions: ["react-server"],
+    // Bare @rangojs/router -> index.rsc.ts (real react-server impls), so a
+    // rendered handler reading getRequestContext()/cookies() does not hit the
+    // throwing out-of-react-server stub. preset: "cloudflare" also stubs the
+    // cloudflare:* runtime virtuals.
+    alias: rangoTestAliases({ preset: "cloudflare" }),
   },
   test: {
     globals: true,
