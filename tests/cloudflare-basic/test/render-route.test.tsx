@@ -14,7 +14,7 @@ describe("renderRoute against cloudflare-basic client components", () => {
   it("reads route params via useParams()", async () => {
     const { getByTestId } = await renderRoute(
       [{ path: "/cr/:tenantId/posts/:postId", Component: CRClientNav }],
-      { initialUrl: "/cr/acme/posts/p1" },
+      { request: "/cr/acme/posts/p1" },
     );
     expect(getByTestId("cr-cf-tenant").textContent).toBe("acme");
   });
@@ -22,7 +22,7 @@ describe("renderRoute against cloudflare-basic client components", () => {
   it("resolves useReverse() against the component's route map", async () => {
     const { getByTestId } = await renderRoute(
       [{ path: "/cr/:tenantId/posts/:postId", Component: CRClientNav }],
-      { initialUrl: "/cr/acme/posts/p1" },
+      { request: "/cr/acme/posts/p1" },
     );
     // crRoutes = { index: "/", post: "/posts/:postId" }. The dotted and
     // non-dotted forms must resolve identically (PR #529), and an explicit
@@ -39,7 +39,7 @@ describe("renderRoute against cloudflare-basic client components", () => {
   it("re-resolves params after a client-side navigate()", async () => {
     const { getByTestId, router } = await renderRoute(
       [{ path: "/cr/:tenantId/posts/:postId", Component: CRClientNav }],
-      { initialUrl: "/cr/acme/posts/p1" },
+      { request: "/cr/acme/posts/p1" },
     );
     expect(getByTestId("cr-cf-tenant").textContent).toBe("acme");
     await router.navigate("/cr/zeta/posts/p9");

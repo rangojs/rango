@@ -14,10 +14,11 @@
  * (de)serialization. Consequences:
  *   - It will NOT catch server/client boundary reference-identity remount bugs
  *     (a server-serialized component reference differing from the client
- *     reference). Use renderServer / e2e for those.
+ *     reference). Use renderServerTree / e2e for those.
  *   - It will NOT catch real Flight serialization errors (non-serializable
  *     props crossing the RSC boundary), loader execution on the server,
- *     middleware, or handler ordering. Those are renderServer / e2e territory.
+ *     middleware, or handler ordering. Those are renderServerTree / renderHandler
+ *     / e2e territory.
  *   - Loader data, location state, and handle output are SEEDED directly into
  *     client context (see the `loaders` / `locationState` / `handles` options) —
  *     nothing is executed on the server. This exercises the read path
@@ -104,7 +105,7 @@ export interface RenderRouteSpec {
   /**
    * The route pattern this node matches, e.g. "/products/:productId". The LAST
    * spec in the array is treated as the leaf route; earlier specs are layouts
-   * wrapping it. Only the leaf pattern is matched against `initialUrl` to
+   * wrapping it. Only the leaf pattern is matched against the `request` URL to
    * extract params; layout patterns are informational.
    */
   path: string;
@@ -131,8 +132,13 @@ export interface RenderRouteSpec {
  * Options for renderRoute.
  */
 export interface RenderRouteOptions {
-  /** Initial URL to render at. Defaults to the leaf spec's static prefix or "/". */
-  initialUrl?: string;
+  /**
+   * The initial location to render at: a `Request`, or a URL string (absolute or
+   * path). Only the URL is read (this is a client render — headers/method are
+   * ignored); named `request` for parity with the other primitives. Defaults to
+   * the leaf spec's static prefix or "/".
+   */
+  request?: Request | string;
   /**
    * Loader data to seed into client context, keyed by loader id ($$id). A
    * component calling useLoader(SomeLoader) reads `loaderData[SomeLoader.$$id]`.
@@ -155,8 +161,8 @@ export interface RenderRouteOptions {
    */
   loaders?: ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>;
   /**
-   * Explicit params. Merged over (and overriding) params extracted from
-   * `initialUrl`. Use this when the URL alone cannot express the params, or to
+   * Explicit params. Merged over (and overriding) params extracted from the
+   * `request` URL. Use this when the URL alone cannot express the params, or to
    * avoid relying on URL parsing.
    */
   params?: Record<string, string>;
@@ -395,7 +401,7 @@ function buildSegments(
  *
  * const { getByText, router } = await renderRoute(
  *   [{ path: "/products/:productId", Component: Product }],
- *   { initialUrl: "/products/1" },
+ *   { request: "/products/1" },
  * );
  * ```
  */
@@ -410,7 +416,9 @@ export async function renderRoute(
   const { render, act } = await import("@testing-library/react");
 
   const leaf = routes[routes.length - 1];
-  const initialUrl = options.initialUrl ?? staticPrefix(leaf.path) ?? "/";
+  const requestUrl =
+    options.request instanceof Request ? options.request.url : options.request;
+  const initialUrl = requestUrl ?? staticPrefix(leaf.path) ?? "/";
   const url = new URL(initialUrl, TEST_ORIGIN);
 
   // Seed loader data: explicit-id entries from `loaderData`, plus by-reference

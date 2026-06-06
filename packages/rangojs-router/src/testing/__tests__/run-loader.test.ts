@@ -106,6 +106,31 @@ describe("runLoader", () => {
     expect(result).toBe(42);
   });
 
+  it("seeds ctx.use(OtherLoader) from the loaders tuples (by reference)", async () => {
+    const Dep = { __brand: "loader", $$id: "x#Dep2" } as LoaderDefinition<{
+      count: number;
+    }>;
+    const result = await runLoader(
+      async (ctx) => {
+        const dep = await ctx.use(Dep);
+        return dep.count * 2;
+      },
+      { loaders: [[Dep, { count: 10 }]] },
+    );
+    expect(result).toBe(20);
+  });
+
+  it("loaders tuples win over the use resolver when both match", async () => {
+    const Dep = { __brand: "loader", $$id: "x#Dep3" } as LoaderDefinition<{
+      count: number;
+    }>;
+    const result = await runLoader(async (ctx) => (await ctx.use(Dep)).count, {
+      loaders: [[Dep, { count: 7 }]],
+      use: () => ({ count: 99 }) as any,
+    });
+    expect(result).toBe(7);
+  });
+
   it("delegates ctx.use to the real request-context use() (runs the dep fn)", async () => {
     // A loader definition that carries its own fn runs via the real ctx.use().
     const Dep = {

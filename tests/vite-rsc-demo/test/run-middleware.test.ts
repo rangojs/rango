@@ -13,10 +13,9 @@ import { permissionsMiddleware } from "../src/handlers/shop/middleware/permissio
 // executeMiddleware, so the ctx propagation matches production.
 describe("runMiddleware against vite-rsc-demo shop middleware", () => {
   it("mockAuthMiddleware injects a typed user and passes through", async () => {
-    const { ctx, nextCalled } = await runMiddleware(
-      mockAuthMiddleware,
-      "/shop",
-    );
+    const { ctx, nextCalled } = await runMiddleware(mockAuthMiddleware, {
+      request: "/shop",
+    });
     expect(nextCalled).toBe(1); // ran the terminal handler
     expect(ctx.get("user")).toMatchObject({
       id: "user-123",
@@ -29,7 +28,7 @@ describe("runMiddleware against vite-rsc-demo shop middleware", () => {
     // Chain auth -> requireAuth: the second reads the user the first set.
     const { nextCalled } = await runMiddleware(
       [...mockAuthMiddleware, ...requireAuthMiddleware],
-      "/shop/checkout",
+      { request: "/shop/checkout" },
     );
     expect(nextCalled).toBe(1);
   });
@@ -37,7 +36,7 @@ describe("runMiddleware against vite-rsc-demo shop middleware", () => {
   it("permissionsMiddleware reads the user set upstream (combined chain)", async () => {
     const { ctx, nextCalled } = await runMiddleware(
       [...mockAuthMiddleware, ...permissionsMiddleware],
-      "/shop/account/orders",
+      { request: "/shop/account/orders" },
     );
     expect(nextCalled).toBe(1);
     expect(ctx.get("user")).toBeTruthy();
@@ -48,7 +47,9 @@ describe("runMiddleware against vite-rsc-demo shop middleware", () => {
     // short-circuit. Pin that observable contract.
     const { response, nextCalled } = await runMiddleware(
       requireAuthMiddleware,
-      "/shop/checkout",
+      {
+        request: "/shop/checkout",
+      },
     );
     expect(nextCalled).toBe(1);
     expect(response.status).toBe(200);

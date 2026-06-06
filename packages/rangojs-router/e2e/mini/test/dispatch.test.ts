@@ -8,18 +8,18 @@ import { router } from "../src/router.js";
 // "does not render RSC routes" directive.
 describe("dispatch against the full mini router", () => {
   it("returns 404 for an unmatched path (mini has no catch-all)", async () => {
-    const res = await dispatch(router, "/no/such/route");
+    const res = await dispatch(router, { request: "/no/such/route" });
     expect(res.status).toBe(404);
   });
 
   it("throws the clear directive for an RSC (component) route", async () => {
-    await expect(dispatch(router, "/counter")).rejects.toThrow(
+    await expect(dispatch(router, { request: "/counter" })).rejects.toThrow(
       /does not render RSC routes/,
     );
   });
 
   it("throws the clear directive for the home RSC route", async () => {
-    await expect(dispatch(router, "/")).rejects.toThrow(
+    await expect(dispatch(router, { request: "/" })).rejects.toThrow(
       /does not render RSC routes/,
     );
   });

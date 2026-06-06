@@ -21,7 +21,7 @@ describe("renderRoute location-state seeding (cloudflare-basic)", () => {
     const { getByTestId } = await renderRoute(
       [{ path: "/action-location-state", Component: ActionLocationStateTest }],
       {
-        initialUrl: "/action-location-state",
+        request: "/action-location-state",
         locationState: [[ActionFlash, { message: "saved-from-action" }]],
       },
     );
@@ -31,7 +31,7 @@ describe("renderRoute location-state seeding (cloudflare-basic)", () => {
   it("falls back to 'none' when no ActionFlash is seeded", async () => {
     const { getByTestId } = await renderRoute(
       [{ path: "/action-location-state", Component: ActionLocationStateTest }],
-      { initialUrl: "/action-location-state" },
+      { request: "/action-location-state" },
     );
     expect(getByTestId("flash-message").textContent).toBe("none");
   });
@@ -40,7 +40,7 @@ describe("renderRoute location-state seeding (cloudflare-basic)", () => {
     const { getByTestId } = await renderRoute(
       [{ path: "/features/:slug", Component: FeatureLoading }],
       {
-        initialUrl: "/features/streaming",
+        request: "/features/streaming",
         locationState: [
           [
             FeatureLocationState,
@@ -58,7 +58,7 @@ describe("renderRoute location-state seeding (cloudflare-basic)", () => {
   it("FeatureLoading shows the skeleton when no state is seeded", async () => {
     const { getByTestId, queryByTestId } = await renderRoute(
       [{ path: "/features/:slug", Component: FeatureLoading }],
-      { initialUrl: "/features/streaming" },
+      { request: "/features/streaming" },
     );
     expect(getByTestId("feature-loading-skeleton-name")).toBeTruthy();
     expect(queryByTestId("feature-loading-name")).toBeNull();
@@ -70,7 +70,7 @@ describe("renderRoute handle seeding (cloudflare-basic Breadcrumbs)", () => {
     const { getByTestId } = await renderRoute(
       [{ path: "/blog/:slug", Component: BreadcrumbNav }],
       {
-        initialUrl: "/blog/hello",
+        request: "/blog/hello",
         handles: [
           [
             Breadcrumbs,
@@ -90,7 +90,7 @@ describe("renderRoute handle seeding (cloudflare-basic Breadcrumbs)", () => {
   it("renders nothing when no breadcrumbs are seeded", async () => {
     const { container } = await renderRoute(
       [{ path: "/blog/:slug", Component: BreadcrumbNav }],
-      { initialUrl: "/blog/hello" },
+      { request: "/blog/hello" },
     );
     expect(container.querySelector("[data-testid='breadcrumbs']")).toBeNull();
   });

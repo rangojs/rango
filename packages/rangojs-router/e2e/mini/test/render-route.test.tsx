@@ -10,7 +10,7 @@ describe("renderRoute against mini client components", () => {
   it("ParamReadout reads route params via useParams()", async () => {
     const { getByTestId } = await renderRoute(
       [{ path: "/products/:id", Component: ParamReadout }],
-      { initialUrl: "/products/7" },
+      { request: "/products/7" },
     );
     expect(getByTestId("param-id").textContent).toBe("7");
   });
@@ -20,7 +20,7 @@ describe("renderRoute against mini client components", () => {
     // the global map's absolute paths pass through unchanged at the root mount.
     const { getByTestId } = await renderRoute(
       [{ path: "/", Component: GlobalReverse }],
-      { initialUrl: "/" },
+      { request: "/" },
     );
     expect(getByTestId("global-reverse-home").textContent).toBe("/");
     expect(getByTestId("global-reverse-product").textContent).toBe(

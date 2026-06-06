@@ -7,7 +7,7 @@
  * and middleware short-circuits behave exactly as in production. It deliberately
  * does NOT render React Server Components: there is no Flight stream, no SSR,
  * and no DOM. Hit an RSC (component) route and dispatch throws a clear error
- * directing you to renderServer()/renderToFlightString or an e2e test.
+ * directing you to renderToFlightString/renderServerTree/renderHandler or an e2e test.
  *
  * What dispatch DOES support:
  * - Trailing-slash and other findMatch() redirects   -> 308 with Location
@@ -112,6 +112,8 @@ interface DispatchableRouter<TEnv> {
  * Options for dispatch.
  */
 export interface DispatchOptions<TEnv = any> {
+  /** The request to dispatch: a `Request`, or a URL string (absolute or path). */
+  request: Request | string;
   /** Environment bindings forwarded to matching and middleware. */
   env?: TEnv;
 }
@@ -208,21 +210,20 @@ function serializeResponseRouteError(
  *   path.json("/api/health", () => ({ ok: true }), { name: "health" }),
  * ]));
  *
- * const res = await dispatch(router, "/api/health");
+ * const res = await dispatch(router, { request: "/api/health" });
  * expect(res.status).toBe(200);
  * expect(await res.json()).toEqual({ data: { ok: true } });
  * ```
  */
 export async function dispatch<TEnv = any>(
   publicRouter: Rango<TEnv, any>,
-  request: Request | string,
-  opts: DispatchOptions<TEnv> = {},
+  opts: DispatchOptions<TEnv>,
 ): Promise<Response> {
   // The public Rango type intentionally hides the matching internals; read them
   // through the dispatchable shape (present at runtime). Consumers pass their
   // real router with no cast.
   const router = publicRouter as unknown as DispatchableRouter<TEnv>;
-  const req = toRequest(request);
+  const req = toRequest(opts.request);
   const url = new URL(req.url);
   const env = (opts.env ?? {}) as TEnv;
 
@@ -265,8 +266,8 @@ export async function dispatch<TEnv = any>(
     throw new Error(
       `dispatch() does not render RSC routes — the route matched at ` +
         `"${url.pathname}" is a React Server Component route, not a response ` +
-        `route. Use renderServer()/renderToFlightString or an e2e test to ` +
-        `exercise component rendering.`,
+        `route. Use renderHandler/renderServerTree/renderToFlightString or an ` +
+        `e2e test to exercise component rendering.`,
     );
   }
 

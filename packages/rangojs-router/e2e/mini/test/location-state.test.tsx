@@ -15,7 +15,7 @@ describe("renderRoute location-state seeding (mini)", () => {
   it("OriginReadout reads a seeded persistent location-state value", async () => {
     const { getByTestId } = await renderRoute(
       [{ path: "/state", Component: OriginReadout }],
-      { initialUrl: "/state", locationState: [[Origin, { from: "checkout" }]] },
+      { request: "/state", locationState: [[Origin, { from: "checkout" }]] },
     );
     expect(getByTestId("origin").textContent).toBe("checkout");
   });
@@ -23,7 +23,7 @@ describe("renderRoute location-state seeding (mini)", () => {
   it("renders the empty fallback when no location state is seeded", async () => {
     const { getByTestId } = await renderRoute(
       [{ path: "/state", Component: OriginReadout }],
-      { initialUrl: "/state" },
+      { request: "/state" },
     );
     expect(getByTestId("origin").textContent).toBe("no-origin");
   });
@@ -32,7 +32,7 @@ describe("renderRoute location-state seeding (mini)", () => {
     const { getByTestId } = await renderRoute(
       [{ path: "/state", Component: FlashBanner }],
       {
-        initialUrl: "/state",
+        request: "/state",
         locationState: [[FlashMessage, { text: "Saved!" }]],
       },
     );
@@ -43,7 +43,7 @@ describe("renderRoute location-state seeding (mini)", () => {
     const { getByTestId } = await renderRoute(
       [{ path: "/state", Component: OriginReadout }],
       {
-        initialUrl: "/state",
+        request: "/state",
         locationState: [
           [Origin, { from: "home" }],
           [FlashMessage, { text: "hi" }],

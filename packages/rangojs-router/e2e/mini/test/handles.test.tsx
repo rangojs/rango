@@ -15,7 +15,7 @@ describe("renderRoute handle seeding (mini Breadcrumbs)", () => {
     const { getByTestId } = await renderRoute(
       [{ path: "/products/:id", Component: BreadcrumbTrail }],
       {
-        initialUrl: "/products/2",
+        request: "/products/2",
         handles: [
           [
             Breadcrumbs,
@@ -36,7 +36,7 @@ describe("renderRoute handle seeding (mini Breadcrumbs)", () => {
   it("renders an empty trail when no handle data is seeded", async () => {
     const { queryByTestId } = await renderRoute(
       [{ path: "/products/:id", Component: BreadcrumbTrail }],
-      { initialUrl: "/products/2" },
+      { request: "/products/2" },
     );
     expect(queryByTestId("crumb-0")).toBeNull();
   });

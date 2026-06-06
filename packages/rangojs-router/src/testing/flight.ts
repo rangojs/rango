@@ -19,9 +19,9 @@
  * Scope / limitations (v1):
  * - Server-only / leaf trees. A tree containing a CLIENT component emits an
  *   `I[...]` import row whose module id will not resolve against the empty `{}`
- *   client manifest used here — fine for snapshotting the SHAPE of the payload,
- *   but the client reference cannot be executed/hydrated. The interactive DOM
- *   render (`renderServer`) is deferred (see module TODO at bottom of report).
+ *   client manifest used here — fine for snapshotting the SHAPE of the payload.
+ *   To inspect a client boundary's deserialized props instead, use
+ *   `renderServerTree` (flight-tree.ts). Interactive hydration stays at the e2e tier.
  * - The vendored subpath is a private plugin-rsc path; a minor bump could move
  *   it. `assertFlightRuntimeAvailable()` provides a smoke check.
  * - For stable snapshots, run under NODE_ENV=production: the production
@@ -49,9 +49,14 @@ import type { ResolvedSegment } from "../types.js";
  * Options for {@link renderToFlightString}.
  */
 export interface RenderToFlightStringOptions {
-  /** Request URL. Defaults to `http://localhost/`. */
-  url?: string;
-  /** Request headers (e.g. Cookie) visible to the server tree. */
+  /**
+   * The request the render runs under: a `Request`, or a URL string (absolute or
+   * path). Defaults to `http://localhost/`. A server component reading
+   * `getRequestContext()` sees this request's url/cookies. When a `Request` is
+   * passed, its headers are used and `headers` below is ignored.
+   */
+  request?: Request | string;
+  /** Request headers (e.g. Cookie) visible to the server tree (when `request` is a string). */
   headers?: HeadersInit;
   /** Env / bindings exposed as `ctx.env`. Defaults to `{}`. */
   env?: unknown;
@@ -126,8 +131,13 @@ export async function serializeToFlightString(
   opts: RenderToFlightStringOptions,
   clientManifest: unknown,
 ): Promise<string> {
-  const url = new URL(opts.url ?? DEFAULT_URL);
-  const request = new Request(url, { headers: opts.headers });
+  const request =
+    opts.request instanceof Request
+      ? opts.request
+      : new Request(new URL(opts.request ?? DEFAULT_URL, DEFAULT_URL), {
+          headers: opts.headers,
+        });
+  const url = new URL(request.url);
   const ctx = createRequestContext({
     env: opts.env ?? {},
     request,

@@ -37,6 +37,8 @@ import type { CacheProfile } from "../cache/profile-registry.js";
  * Options for runMiddleware.
  */
 export interface RunMiddlewareOptions<TEnv = any> {
+  /** The request the chain runs under: a `Request`, or a URL string (absolute or path). */
+  request: Request | string;
   /** Environment bindings surfaced as `ctx.env`. */
   env?: TEnv;
   /** Route params surfaced as `ctx.params`. */
@@ -96,6 +98,13 @@ export interface RunMiddlewareResult<TEnv = any> {
    * without reading `ctx.res.headers`. Header names are lowercased.
    */
   headers: Record<string, string>;
+  /**
+   * Location state the chain set via `ctx.setLocationState()` / `redirect({ state })`,
+   * resolved to the flat `{ key: value }` shape the client reads off
+   * `history.state` (empty object when none) — parity with `runInRequestContext`
+   * and `renderHandler`.
+   */
+  locationState: Record<string, unknown>;
 }
 
 /**
@@ -108,22 +117,20 @@ export interface RunMiddlewareResult<TEnv = any> {
  *     if (!ctx.get("user")) return new Response(null, { status: 401 });
  *     return next();
  *   },
- *   "/dashboard",
- *   { vars: [["user", { id: 1 }]] },
+ *   { request: "/dashboard", vars: [["user", { id: 1 }]] },
  * );
  * // nextCalled === 1, response.status === 200
  * ```
  */
 export async function runMiddleware<TEnv = any>(
   mw: MiddlewareFn<TEnv> | MiddlewareFn<TEnv>[],
-  request: Request | string,
-  opts: RunMiddlewareOptions<TEnv> = {},
+  opts: RunMiddlewareOptions<TEnv>,
 ): Promise<RunMiddlewareResult<TEnv>> {
   const mwArray = Array.isArray(mw) ? mw : [mw];
 
   const ctxOpts: CreateTestContextOptions<TEnv> = {
     env: opts.env,
-    request,
+    request: opts.request,
     vars: opts.vars,
     routeMap: opts.routeMap,
     routeName: opts.routeName,
@@ -182,7 +189,7 @@ export async function runMiddleware<TEnv = any>(
     ),
   );
 
-  const { cookies } = snapshotRunEffects(ctx);
+  const { cookies, locationState } = snapshotRunEffects(ctx);
   const headers = headersToObject(response.headers);
-  return { response, ctx, nextCalled, cookies, headers };
+  return { response, ctx, nextCalled, cookies, headers, locationState };
 }

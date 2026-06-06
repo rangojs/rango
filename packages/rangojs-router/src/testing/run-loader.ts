@@ -122,7 +122,15 @@ export interface RunLoaderOptions<TEnv = any> {
   body?: unknown;
   /** Form data surfaced as `ctx.formData`. */
   formData?: FormData;
-  /** Resolver for `ctx.use(OtherLoader)` composition. */
+  /**
+   * Seed the data `ctx.use(OtherLoader)` returns, by loader REFERENCE — the same
+   * tuple form `renderHandler` / `renderRoute` use (`[[OtherLoader, data]]`).
+   * Matched by reference, so a real `createLoader()` handle resolves regardless
+   * of its build-injected `$$id`. For dynamic resolution (compute per dependency)
+   * use `use` instead; `loaders` is checked first.
+   */
+  loaders?: ReadonlyArray<readonly [LoaderDefinition<any, any>, unknown]>;
+  /** Resolver for `ctx.use(OtherLoader)` composition (dynamic; `loaders` wins if both match). */
   use?: UseResolver;
   /**
    * Cache store backing `use cache` functions the loader invokes. Without it,
@@ -264,6 +272,10 @@ export async function runLoader<T>(
   // handle resolves regardless of its build-injected $$id).
   const handleSeeds = new Map<unknown, unknown>(opts.handles ?? []);
 
+  // Seed values for ctx.use(OtherLoader), matched by loader reference (same model
+  // as renderHandler/renderRoute). Checked before the `use` resolver.
+  const loaderSeeds = new Map<unknown, unknown>(opts.loaders ?? []);
+
   // Tracks whether the mocked render barrier has settled. ctx.use(handle)
   // reads are gated on this, matching production (loader-resolution.ts).
   let renderedResolved = false;
@@ -308,6 +320,9 @@ export async function runLoader<T>(
         }
         // Handle reads (ctx.use(SomeHandle)) resolve from the seeded map first.
         if (handleSeeds.has(dep)) return handleSeeds.get(dep);
+        // Loader reads (ctx.use(OtherLoader)) resolve from the seeded map next,
+        // then the dynamic `use` resolver, then the real request-context use().
+        if (loaderSeeds.has(dep)) return loaderSeeds.get(dep);
         if (opts.use) return opts.use(dep as LoaderDefinition<any, any>);
         return reqCtx.use(dep as LoaderDefinition<any, any>);
       }) as LoaderContext<any, any>["use"],

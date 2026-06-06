@@ -113,10 +113,12 @@ Runs the chain through the router's **real** `executeMiddleware`, so
 `next()`, return-Response short-circuit, throw-Response short-circuit,
 double-next guards, and header/cookie merging behave exactly as in production.
 `nextCalled` is `0` on short-circuit, `1` on pass-through. The result also
-carries `cookies` (the effective `{ name: value }` view — assert a cookie the
-chain set without casting through the `@internal` `ctx.cookies()`). The returned
-`ctx` is the underlying `RequestContext` for anything else (`ctx.get(...)`,
-`ctx.res.headers`).
+carries `cookies`, `headers`, and `locationState` (the effective `{ name: value }`
+/ `{ key: value }` views — assert a cookie/header/flash the chain set without
+casting through the `@internal` `ctx.cookies()`/`ctx.res.headers`; parity with
+`runInRequestContext`/`renderHandler`). The returned `ctx` is the underlying
+`RequestContext` for anything else (`ctx.get(...)`). The request the chain runs
+under is `opts.request` (a `Request` or URL string).
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -129,22 +131,18 @@ const requireUser: Middleware = async (ctx, next) => {
 };
 
 it("passes through when the user is present", async () => {
-  const { response, nextCalled } = await runMiddleware(
-    requireUser,
-    "/dashboard",
-    {
-      vars: { user: { id: 1 } }, // object form; or [[key, value]] tuples (key may be a createVar())
-    },
-  );
+  const { response, nextCalled } = await runMiddleware(requireUser, {
+    request: "/dashboard",
+    vars: { user: { id: 1 } }, // object form; or [[key, value]] tuples (key may be a createVar())
+  });
   expect(nextCalled).toBe(1);
   expect(response.status).toBe(200);
 });
 
 it("short-circuits (return OR throw Response) when unauthenticated", async () => {
-  const { response, nextCalled } = await runMiddleware(
-    requireUser,
-    "/dashboard",
-  );
+  const { response, nextCalled } = await runMiddleware(requireUser, {
+    request: "/dashboard",
+  });
   expect(nextCalled).toBe(0);
   expect(response.status).toBe(401);
 });
@@ -197,10 +195,12 @@ it("reads params, env, and seeded vars", async () => {
 // runLoader(async (ctx) => ({ ... }), opts) — the bare body — works identically.
 ```
 
-Options: `params` (also surfaced as `routeParams`), `search`, `env`, `vars`,
-`method`/`body`/`formData`, `routeMap`/`routeName` (for `ctx.reverse`), and
-`use` (a resolver for `ctx.use(OtherLoader)` composition — without it, `ctx.use`
-runs the dependency's own `fn` if it carries one).
+Options: `params` (also surfaced as `routeParams`), `search`/`searchData`, `env`,
+`vars`, `method`/`body`/`formData`, `routeMap`/`routeName` (for `ctx.reverse`),
+`loaders` (seed `ctx.use(OtherLoader)` by reference as `[[OtherLoader, data]]`
+tuples — same shape as `renderHandler`/`renderRoute`; checked before `use`), and
+`use` (a dynamic resolver for `ctx.use(OtherLoader)`; `loaders` wins). Without
+either, `ctx.use` runs the dependency's own `fn` if it carries one.
 
 Two unit-only limitations to document in your test, not work around:
 
@@ -276,7 +276,10 @@ yours to build and inject through the `env` option every primitive already takes
 
 ```ts
 await runLoader(bundleLoaderBody, { env: { DB: fakeD1 } });
-await runMiddleware(requireMembership, "/t/acme/edit", { env: { DB: fakeD1 } });
+await runMiddleware(requireMembership, {
+  request: "/t/acme/edit",
+  env: { DB: fakeD1 },
+});
 await runInRequestContext(() => authorizeAction(input), {
   env: { DB: fakeD1 },
   request,
@@ -338,7 +341,7 @@ it("resolves params + reverse + Outlet through the layout chain", async () => {
       { path: "/products", Component: Layout }, // layout (root)
       { path: "/products/:productId", Component: Product }, // leaf (last)
     ],
-    { initialUrl: "/products/1" },
+    { request: "/products/1" },
   );
   expect(getByTestId("shell").textContent).toBe("shell");
   expect(getByTestId("link").getAttribute("href")).toBe("/products/2");
@@ -363,7 +366,7 @@ await renderRoute(
     { path: "/shop", Component: CartLayout, loaderIds: [CartLoader.$$id] },
     { path: "/shop/item", Component: Page },
   ],
-  { initialUrl: "/shop/item", loaderData: { [CartLoader.$$id]: { count: 3 } } },
+  { request: "/shop/item", loaderData: { [CartLoader.$$id]: { count: 3 } } },
 );
 ```
 
@@ -520,13 +523,13 @@ import { apiPatterns } from "../src/api/urls"; // path.json(...) routes only
 const router = createRouter().routes(apiPatterns);
 
 it("serializes a JSON response route (auto-wrapped under data)", async () => {
-  const res = await dispatch(router, "/health");
+  const res = await dispatch(router, { request: "/health" });
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({ data: { status: "ok" } });
 });
 
 it("maps a thrown RouterError to its status + typed JSON envelope", async () => {
-  const res = await dispatch(router, "/products/999");
+  const res = await dispatch(router, { request: "/products/999" });
   expect(res.status).toBe(404);
   expect((await res.json()).error.code).toBe("NOT_FOUND");
 });

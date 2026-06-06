@@ -32,7 +32,7 @@ const env = {
 
 describe("dispatch against cloudflare-basic API route handlers", () => {
   it("serializes /health and auto-wraps the value under { data }", async () => {
-    const res = await dispatch(router, "/health", { env });
+    const res = await dispatch(router, { request: "/health", env });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe(
       "application/json;charset=utf-8",
@@ -43,7 +43,7 @@ describe("dispatch against cloudflare-basic API route handlers", () => {
   });
 
   it("serializes the full /products list from the real handler", async () => {
-    const res = await dispatch(router, "/products", { env });
+    const res = await dispatch(router, { request: "/products", env });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       data: Array<{ id: string; name: string; price: number }>;
@@ -57,7 +57,7 @@ describe("dispatch against cloudflare-basic API route handlers", () => {
   });
 
   it("resolves the :id route param in /products/:id", async () => {
-    const res = await dispatch(router, "/products/2", { env });
+    const res = await dispatch(router, { request: "/products/2", env });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       data: { id: string; name: string; description: string };
@@ -69,7 +69,7 @@ describe("dispatch against cloudflare-basic API route handlers", () => {
 
   it("maps the handler's thrown RouterError to a 404 + typed JSON envelope", async () => {
     // The real handler does: throw new RouterError("NOT_FOUND", ..., { status: 404 })
-    const res = await dispatch(router, "/products/999", { env });
+    const res = await dispatch(router, { request: "/products/999", env });
     expect(res.status).toBe(404);
     expect(res.headers.get("content-type")).toBe(
       "application/json;charset=utf-8",
@@ -82,7 +82,7 @@ describe("dispatch against cloudflare-basic API route handlers", () => {
   });
 
   it("returns 404 for an unmatched path (this router has no catch-all)", async () => {
-    const res = await dispatch(router, "/not-a-route", { env });
+    const res = await dispatch(router, { request: "/not-a-route", env });
     expect(res.status).toBe(404);
   });
 });

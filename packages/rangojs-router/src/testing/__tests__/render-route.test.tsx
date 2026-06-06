@@ -68,7 +68,7 @@ describe("renderRoute", () => {
         { path: "/products", Component: Layout },
         { path: "/products/:productId", Component: Product },
       ],
-      { initialUrl: "/products/1" },
+      { request: "/products/1" },
     );
 
     // Layout (Outlet) wraps the route.
@@ -87,7 +87,7 @@ describe("renderRoute", () => {
 
     const { getByTestId } = await renderRoute(
       [{ path: "/items/:id", Component: Page }],
-      { initialUrl: "/items/42", params: { mode: "edit" } },
+      { request: "/items/42", params: { mode: "edit" } },
     );
 
     expect(getByTestId("out").textContent).toBe("42:edit");
@@ -109,7 +109,7 @@ describe("renderRoute", () => {
 
     const { getByTestId, router } = await renderRoute(
       [{ path: "/users/:id", Component: Page }],
-      { initialUrl: "/users/alice" },
+      { request: "/users/alice" },
     );
 
     expect(getByTestId("id").textContent).toBe("alice");
@@ -137,7 +137,7 @@ describe("renderRoute", () => {
     const { getByTestId } = await renderRoute(
       [{ path: "/profile", Component: Profile }],
       {
-        initialUrl: "/profile",
+        request: "/profile",
         loaderData: { [ProfileLoader.$$id]: { name: "Ada" } },
       },
     );
@@ -174,7 +174,7 @@ describe("renderRoute", () => {
         { path: "/shop/item", Component: Page },
       ],
       {
-        initialUrl: "/shop/item",
+        request: "/shop/item",
         loaderData: { [CartLoader.$$id]: { count: 3 } },
       },
     );
@@ -199,7 +199,7 @@ describe("renderRoute mount (include() scope)", () => {
   it("seeds useMount() with the mount prefix (models include('/shop', ...))", async () => {
     const { getByTestId } = await renderRoute(
       [{ path: "/c/wine", Component: MountProbe }],
-      { mount: "/shop", initialUrl: "/c/wine" },
+      { mount: "/shop", request: "/c/wine" },
     );
     expect(getByTestId("mount").textContent).toBe("/shop");
   });
@@ -226,7 +226,7 @@ describe("renderRoute mount (include() scope)", () => {
         { path: "/c", Component: Layout },
         { path: "/c/wine", Component: MountProbe },
       ],
-      { mount: "/shop", initialUrl: "/c/wine" },
+      { mount: "/shop", request: "/c/wine" },
     );
     expect(getByTestId("layout-mount").textContent).toBe("/shop");
     expect(getByTestId("mount").textContent).toBe("/shop");
@@ -249,7 +249,7 @@ describe("renderRoute mount (include() scope)", () => {
     }
     const { getByTestId } = await renderRoute(
       [{ path: "/c/wine", Component: Linker }],
-      { mount: "/shop", initialUrl: "/c/wine" },
+      { mount: "/shop", request: "/c/wine" },
     );
     expect(getByTestId("rev").getAttribute("href")).toBe("/shop/c/wine");
     expect(getByTestId("href").getAttribute("href")).toBe("/shop/cart");
@@ -276,7 +276,7 @@ describe("renderRoute reverse + optional params from the match", () => {
     }
     const { getByTestId } = await renderRoute(
       [{ path: "/:locale?/c/:group", Component: Probe }],
-      { initialUrl: "/en/c/wine" },
+      { request: "/en/c/wine" },
     );
     expect(getByTestId("locale").textContent).toBe("en");
     expect(getByTestId("rev").getAttribute("href")).toBe("/en/c/food");
@@ -293,7 +293,7 @@ describe("renderRoute reverse + optional params from the match", () => {
     }
     const { getByTestId } = await renderRoute(
       [{ path: "/:locale?/c/:group", Component: Probe }],
-      { initialUrl: "/c/wine" },
+      { request: "/c/wine" },
     );
     expect(getByTestId("rev").getAttribute("href")).toBe("/c/food");
   });
@@ -326,7 +326,7 @@ describe("renderRoute handles reach LAYOUT components, not just the leaf", () =>
         { path: "/p/x", Component: Leaf },
       ],
       {
-        initialUrl: "/p/x",
+        request: "/p/x",
         handles: [[Crumbs, [{ label: "Home" }, { label: "P" }]]],
       },
     );

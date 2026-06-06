@@ -65,7 +65,7 @@ describe("BreadcrumbNav — streamed breadcrumb content", () => {
     const { getByText } = await renderRoute(
       [{ path: "/blog/author/:authorSlug", Component: BreadcrumbNav }],
       {
-        initialUrl: "/blog/author/ada",
+        request: "/blog/author/ada",
         handles: [
           [
             Breadcrumbs,
@@ -96,7 +96,7 @@ describe("BreadcrumbNav — streamed breadcrumb content", () => {
     const { getByText, queryByText, container } = await renderRoute(
       [{ path: "/blog/:slug", Component: BreadcrumbNav }],
       {
-        initialUrl: "/blog/hello-world",
+        request: "/blog/hello-world",
         handles: [
           [
             Breadcrumbs,
@@ -125,7 +125,7 @@ describe("BreadcrumbNav — streamed breadcrumb content", () => {
   it("renders nothing when no breadcrumbs are seeded", async () => {
     const { container } = await renderRoute(
       [{ path: "/blog/:slug", Component: BreadcrumbNav }],
-      { initialUrl: "/blog/hello-world" },
+      { request: "/blog/hello-world" },
     );
     expect(container.querySelector('nav[aria-label="Breadcrumb"]')).toBeNull();
   });

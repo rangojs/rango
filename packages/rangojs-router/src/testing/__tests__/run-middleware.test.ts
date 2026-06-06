@@ -10,7 +10,8 @@ describe("runMiddleware", () => {
     // `basename` lets a middleware redirect be tested as it behaves in a real
     // sub-path-mounted app (instead of always producing no prefix).
     const mw: MiddlewareFn = async () => redirect("/login");
-    const { response } = await runMiddleware(mw, "/dashboard", {
+    const { response } = await runMiddleware(mw, {
+      request: "/dashboard",
       basename: "/app",
     });
     expect(response.headers.get("Location")).toBe("/app/login");
@@ -18,8 +19,26 @@ describe("runMiddleware", () => {
 
   it("does NOT prefix the redirect when no basename is seeded", async () => {
     const mw: MiddlewareFn = async () => redirect("/login");
-    const { response } = await runMiddleware(mw, "/dashboard");
+    const { response } = await runMiddleware(mw, { request: "/dashboard" });
     expect(response.headers.get("Location")).toBe("/login");
+  });
+
+  it("surfaces location state a middleware set via redirect({ state })", async () => {
+    // Parity with runInRequestContext/renderHandler: a middleware that sets a
+    // flash via redirect({ state }) has it observable on result.locationState.
+    // NOTE: the helper snapshots location state PRE-SSR-loss (the contract). The
+    // redirect() dev warning about full-page SSR is expected here; do not "fix"
+    // the assertion to {} — the snapshot intentionally reflects what an SPA nav
+    // would deliver, matching runInRequestContext.
+    const mw: MiddlewareFn = async () =>
+      redirect("/login", {
+        state: [{ __rsc_ls_key: "flash", __rsc_ls_value: { text: "Sign in" } }],
+      });
+    const { locationState, response } = await runMiddleware(mw, {
+      request: "/dashboard",
+    });
+    expect(response.headers.get("Location")).toBe("/login");
+    expect(locationState).toEqual({ flash: { text: "Sign in" } });
   });
 
   it("normalizes a non-canonical basename exactly like createRouter", async () => {
@@ -29,15 +48,22 @@ describe("runMiddleware", () => {
     // same Location. Pre-fix this produced "app/login" / "/app//login" / "//login".
     const mw: MiddlewareFn = async () => redirect("/login");
 
-    const noLead = await runMiddleware(mw, "/dashboard", { basename: "app" });
+    const noLead = await runMiddleware(mw, {
+      request: "/dashboard",
+      basename: "app",
+    });
     expect(noLead.response.headers.get("Location")).toBe("/app/login");
 
-    const trailing = await runMiddleware(mw, "/dashboard", {
+    const trailing = await runMiddleware(mw, {
+      request: "/dashboard",
       basename: "/app/",
     });
     expect(trailing.response.headers.get("Location")).toBe("/app/login");
 
-    const bare = await runMiddleware(mw, "/dashboard", { basename: "/" });
+    const bare = await runMiddleware(mw, {
+      request: "/dashboard",
+      basename: "/",
+    });
     expect(bare.response.headers.get("Location")).toBe("/login");
   });
 
@@ -46,15 +72,12 @@ describe("runMiddleware", () => {
     // reflect that too. Pre-fix createTestRequestContext installed the
     // loader-phase auto-fill reverse on the returned ctx, so reading
     // result.ctx.reverse("post") wrongly produced "/blog/hello".
-    const { ctx } = await runMiddleware(
-      async (_c, next) => next(),
-      "/blog/hello",
-      {
-        routeMap: { post: "/blog/:slug" },
-        routeName: "post",
-        params: { slug: "hello" },
-      },
-    );
+    const { ctx } = await runMiddleware(async (_c, next) => next(), {
+      request: "/blog/hello",
+      routeMap: { post: "/blog/:slug" },
+      routeName: "post",
+      params: { slug: "hello" },
+    });
     const rev = (ctx as unknown as { reverse: (n: string) => string }).reverse;
     expect(rev("post")).toBe("/blog/:slug");
   });
@@ -68,7 +91,8 @@ describe("runMiddleware", () => {
       reversed = (ctx as { reverse: (n: string) => string }).reverse("post");
       return next();
     };
-    await runMiddleware(mw, "/blog/hello", {
+    await runMiddleware(mw, {
+      request: "/blog/hello",
       routeMap: { post: "/blog/:slug" },
       routeName: "post",
       params: { slug: "hello" },
@@ -78,7 +102,9 @@ describe("runMiddleware", () => {
 
   it("passes through (next called once) and returns the downstream 200", async () => {
     const mw: MiddlewareFn = async (_ctx, next) => next();
-    const { response, nextCalled } = await runMiddleware(mw, "/dashboard");
+    const { response, nextCalled } = await runMiddleware(mw, {
+      request: "/dashboard",
+    });
 
     expect(nextCalled).toBe(1);
     expect(response.status).toBe(200);
@@ -86,7 +112,8 @@ describe("runMiddleware", () => {
 
   it("uses opts.next as the terminal handler", async () => {
     const mw: MiddlewareFn = async (_ctx, next) => next();
-    const { response, nextCalled } = await runMiddleware(mw, "/x", {
+    const { response, nextCalled } = await runMiddleware(mw, {
+      request: "/x",
       next: async () => new Response("downstream", { status: 201 }),
     });
 
@@ -97,7 +124,9 @@ describe("runMiddleware", () => {
 
   it("short-circuits via returned Response (next NOT called)", async () => {
     const mw: MiddlewareFn = async () => new Response(null, { status: 401 });
-    const { response, nextCalled } = await runMiddleware(mw, "/secret");
+    const { response, nextCalled } = await runMiddleware(mw, {
+      request: "/secret",
+    });
 
     expect(nextCalled).toBe(0);
     expect(response.status).toBe(401);
@@ -110,7 +139,9 @@ describe("runMiddleware", () => {
         headers: { Location: "/login" },
       });
     };
-    const { response, nextCalled } = await runMiddleware(mw, "/secret");
+    const { response, nextCalled } = await runMiddleware(mw, {
+      request: "/secret",
+    });
 
     expect(nextCalled).toBe(0);
     expect(response.status).toBe(302);
@@ -123,13 +154,14 @@ describe("runMiddleware", () => {
       return next();
     };
 
-    const allowed = await runMiddleware(mw, "/dashboard", {
+    const allowed = await runMiddleware(mw, {
+      request: "/dashboard",
       vars: [["user", { id: 1 }]],
     });
     expect(allowed.nextCalled).toBe(1);
     expect(allowed.response.status).toBe(200);
 
-    const denied = await runMiddleware(mw, "/dashboard");
+    const denied = await runMiddleware(mw, { request: "/dashboard" });
     expect(denied.nextCalled).toBe(0);
     expect(denied.response.status).toBe(401);
   });
@@ -140,7 +172,9 @@ describe("runMiddleware", () => {
       return next();
     };
 
-    const { response, cookies: cookieView } = await runMiddleware(mw, "/");
+    const { response, cookies: cookieView } = await runMiddleware(mw, {
+      request: "/",
+    });
 
     // Public effective cookie view — no cast through the @internal ctx.cookies().
     expect(cookieView.session).toBe("abc123");
@@ -155,7 +189,7 @@ describe("runMiddleware", () => {
       return next();
     };
 
-    const { headers, response } = await runMiddleware(mw, "/");
+    const { headers, response } = await runMiddleware(mw, { request: "/" });
 
     // Public header view (names lowercased), excluding set-cookie.
     expect(headers["x-frame-options"]).toBe("DENY");
@@ -173,7 +207,7 @@ describe("runMiddleware", () => {
       return next();
     };
 
-    const { nextCalled } = await runMiddleware([a, b], "/");
+    const { nextCalled } = await runMiddleware([a, b], { request: "/" });
     expect(order).toEqual(["a", "b"]);
     expect(nextCalled).toBe(1);
   });
@@ -185,7 +219,10 @@ describe("runMiddleware", () => {
       return next();
     };
 
-    await runMiddleware(mw, "/", { routeMap: { post: "/blog/:slug" } });
+    await runMiddleware(mw, {
+      request: "/",
+      routeMap: { post: "/blog/:slug" },
+    });
     expect(reversed).toBe("/blog/hi");
   });
 });

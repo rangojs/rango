@@ -45,7 +45,7 @@ function buildRouter() {
 describe("dispatch", () => {
   it("serializes a JSON response route (auto-wrapped under data)", async () => {
     const router = buildRouter();
-    const res = await dispatch(router, "/api/data");
+    const res = await dispatch(router, { request: "/api/data" });
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe(
@@ -77,7 +77,7 @@ describe("dispatch", () => {
       ]),
     ) as any;
 
-    const res = await dispatch(router, "/api/hooked");
+    const res = await dispatch(router, { request: "/api/hooked" });
     expect(res.status).toBe(201);
     expect(res.headers.get("x-on-response")).toBe("ran");
     expect(await res.json()).toEqual({ data: { ok: true } });
@@ -85,7 +85,7 @@ describe("dispatch", () => {
 
   it("passes route params to a response-route handler", async () => {
     const router = buildRouter();
-    const res = await dispatch(router, "/api/echo/42");
+    const res = await dispatch(router, { request: "/api/echo/42" });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ data: { id: "42" } });
@@ -93,7 +93,7 @@ describe("dispatch", () => {
 
   it("serializes a text response route", async () => {
     const router = buildRouter();
-    const res = await dispatch(router, "/api/ping");
+    const res = await dispatch(router, { request: "/api/ping" });
 
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/plain;charset=utf-8");
@@ -102,7 +102,7 @@ describe("dispatch", () => {
 
   it("emits a 308 redirect for a trailing-slash mismatch", async () => {
     const router = buildRouter();
-    const res = await dispatch(router, "/old");
+    const res = await dispatch(router, { request: "/old" });
 
     expect(res.status).toBe(308);
     expect(res.headers.get("Location")).toBe("/old/");
@@ -110,7 +110,7 @@ describe("dispatch", () => {
 
   it("preserves the query string on a redirect", async () => {
     const router = buildRouter();
-    const res = await dispatch(router, "/old?ref=email");
+    const res = await dispatch(router, { request: "/old?ref=email" });
 
     expect(res.status).toBe(308);
     expect(res.headers.get("Location")).toBe("/old/?ref=email");
@@ -118,7 +118,7 @@ describe("dispatch", () => {
 
   it("returns 404 for an unmatched path", async () => {
     const router = buildRouter();
-    const res = await dispatch(router, "/nope");
+    const res = await dispatch(router, { request: "/nope" });
 
     expect(res.status).toBe(404);
   });
@@ -144,7 +144,7 @@ describe("dispatch", () => {
       ]),
     ) as Parameters<typeof dispatch>[0];
 
-    const res = await dispatch(router, "/api/self/42");
+    const res = await dispatch(router, { request: "/api/self/42" });
     const body = (await res.json()) as {
       data: { reversed?: string; error?: string };
     };
@@ -169,7 +169,7 @@ describe("dispatch", () => {
       ]),
     ) as Parameters<typeof dispatch>[0];
 
-    const res = await dispatch(router, "/api/data?_rsc_partial=1");
+    const res = await dispatch(router, { request: "/api/data?_rsc_partial=1" });
     expect(res.status).toBe(200);
     const reload = res.headers.get("X-RSC-Reload");
     // Full URL with the internal _rsc_partial param stripped (production parity).
@@ -207,7 +207,7 @@ describe("dispatch", () => {
         ]),
       ) as Parameters<typeof dispatch>[0];
 
-    const res = await dispatch(router, "/api/data?_rsc_partial=1");
+    const res = await dispatch(router, { request: "/api/data?_rsc_partial=1" });
     expect(globalRan).toBe(true);
     expect(res.status).toBe(401);
     expect(res.headers.get("X-RSC-Reload")).toBeNull();
@@ -237,7 +237,7 @@ describe("dispatch", () => {
         ]),
       ) as Parameters<typeof dispatch>[0];
 
-    const res = await dispatch(router, "/api/data?_rsc_partial=1");
+    const res = await dispatch(router, { request: "/api/data?_rsc_partial=1" });
     expect(globalRan).toBe(true);
     // The handler never runs on a partial — the reload IS the terminal handler.
     expect(handlerRan).toBe(false);
@@ -269,13 +269,13 @@ describe("dispatch", () => {
       ]),
     ) as Parameters<typeof dispatch>[0];
 
-    const res = await dispatch(router, "/api/probe");
+    const res = await dispatch(router, { request: "/api/probe" });
     expect((await res.json()).data.hasStore).toBe(true);
   });
 
   it("throws a clear error for an RSC (component) route", async () => {
     const router = buildRouter();
-    await expect(dispatch(router, "/")).rejects.toThrow(
+    await expect(dispatch(router, { request: "/" })).rejects.toThrow(
       /does not render RSC routes/,
     );
   });
@@ -297,7 +297,7 @@ describe("dispatch", () => {
         ]),
       ) as any;
 
-    const res = await dispatch(router, "/api/data");
+    const res = await dispatch(router, { request: "/api/data" });
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/login");
   });
@@ -318,7 +318,7 @@ describe("dispatch", () => {
         ]),
       ) as any;
 
-    const res = await dispatch(router, "/api/data");
+    const res = await dispatch(router, { request: "/api/data" });
     expect(ran).toBe(true);
     expect(res.status).toBe(200);
     expect(res.headers.get("X-Tag")).toBe("yes");
@@ -339,7 +339,7 @@ describe("dispatch", () => {
       ]),
     ) as any;
 
-    const res = await dispatch(router, "/api/login");
+    const res = await dispatch(router, { request: "/api/login" });
     const setCookie = res.headers.getSetCookie();
     expect(setCookie.some((c) => c.startsWith("session=tok"))).toBe(true);
   });
@@ -362,7 +362,7 @@ describe("dispatch", () => {
         ]),
       ) as any;
 
-      const res = await dispatch(router, "/api/boom");
+      const res = await dispatch(router, { request: "/api/boom" });
       expect(res.status).toBe(500);
       expect(res.headers.get("content-type")).toBe(
         "application/json;charset=utf-8",
@@ -388,7 +388,7 @@ describe("dispatch", () => {
           ]),
         ) as any;
 
-        const res = await dispatch(router, "/api/boom");
+        const res = await dispatch(router, { request: "/api/boom" });
         expect(res.status).toBe(500);
         expect(res.headers.get("content-type")).toBe(
           "application/json;charset=utf-8",
@@ -417,7 +417,7 @@ describe("dispatch", () => {
         ]),
       ) as any;
 
-      const res = await dispatch(router, "/api/missing");
+      const res = await dispatch(router, { request: "/api/missing" });
       expect(res.status).toBe(404);
       expect(res.headers.get("content-type")).toBe(
         "application/json;charset=utf-8",
@@ -441,7 +441,7 @@ describe("dispatch", () => {
         ]),
       ) as any;
 
-      const res = await dispatch(router, "/api/explode");
+      const res = await dispatch(router, { request: "/api/explode" });
       expect(res.status).toBe(500);
       expect(res.headers.get("content-type")).toBe("text/plain;charset=utf-8");
       expect(await res.text()).toBe("text boom");
@@ -463,7 +463,7 @@ describe("dispatch", () => {
           ]),
         ) as any;
 
-        const res = await dispatch(router, "/api/explode");
+        const res = await dispatch(router, { request: "/api/explode" });
         expect(res.status).toBe(500);
         expect(res.headers.get("content-type")).toBe(
           "text/plain;charset=utf-8",
@@ -515,12 +515,11 @@ describe("dispatch", () => {
 
     it("appends Vary: Accept when previewMatch reports a negotiated variant", async () => {
       const router = negotiatedStubRouter({ negotiated: true });
-      const res = await dispatch(
-        router,
-        new Request("http://localhost/data", {
+      const res = await dispatch(router, {
+        request: new Request("http://localhost/data", {
           headers: { accept: "application/json" },
         }),
-      );
+      });
 
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toBe(
@@ -536,12 +535,11 @@ describe("dispatch", () => {
         responseType: "text",
         handler: () => "shape=text",
       });
-      const res = await dispatch(
-        router,
-        new Request("http://localhost/data", {
+      const res = await dispatch(router, {
+        request: new Request("http://localhost/data", {
           headers: { accept: "text/plain" },
         }),
-      );
+      });
 
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toBe("text/plain;charset=utf-8");
@@ -551,7 +549,7 @@ describe("dispatch", () => {
 
     it("omits Vary on a non-negotiated response route", async () => {
       const router = negotiatedStubRouter({ negotiated: false });
-      const res = await dispatch(router, "/data");
+      const res = await dispatch(router, { request: "/data" });
 
       expect(res.status).toBe(200);
       expect(res.headers.get("Vary")).toBeNull();

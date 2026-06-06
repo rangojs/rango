@@ -15,7 +15,7 @@ describe("renderRoute handle seeding (vite-rsc-demo BreadcrumbNav)", () => {
     const { container } = await renderRoute(
       [{ path: "/shop/product/:slug", Component: BreadcrumbNav }],
       {
-        initialUrl: "/shop/product/headphones",
+        request: "/shop/product/headphones",
         handles: [
           [
             Breadcrumbs,
@@ -36,7 +36,7 @@ describe("renderRoute handle seeding (vite-rsc-demo BreadcrumbNav)", () => {
   it("renders nothing when no breadcrumbs are seeded", async () => {
     const { container } = await renderRoute(
       [{ path: "/shop/product/:slug", Component: BreadcrumbNav }],
-      { initialUrl: "/shop/product/headphones" },
+      { request: "/shop/product/headphones" },
     );
     expect(container.querySelector('nav[aria-label="Breadcrumb"]')).toBeNull();
   });
@@ -54,7 +54,7 @@ describe("renderRoute against vite-rsc-demo client components", () => {
     };
     const { getByTitle, container } = await renderRoute(
       [{ path: "/shop", Component: CartBadge }],
-      { initialUrl: "/shop", loaders: [[CartLoader, cart]] },
+      { request: "/shop", loaders: [[CartLoader, cart]] },
     );
     expect(container.textContent).toContain("(3)"); // itemCount in badge text
     expect(getByTitle("Total: $89.97")).toBeTruthy(); // total in title attr
@@ -63,7 +63,7 @@ describe("renderRoute against vite-rsc-demo client components", () => {
   it("LoadingSpinner reads useNavigation and shows no spinner at idle", async () => {
     const { container } = await renderRoute(
       [{ path: "/shop", Component: LoadingSpinner }],
-      { initialUrl: "/shop" },
+      { request: "/shop" },
     );
     // renderRoute cannot seed a non-idle navigation state (loading/streaming),
     // so only the idle branch is observable here — the loading/streaming

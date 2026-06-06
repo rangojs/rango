@@ -64,7 +64,7 @@ describe("renderToFlightString (Flight RSC)", () => {
 
   it("exposes the active request context to server components", async () => {
     const flight = await renderToFlightString(<ParamEcho />, {
-      url: "http://localhost/items/42",
+      request: "http://localhost/items/42",
       params: { id: "42" },
       routeName: "items.show",
     });

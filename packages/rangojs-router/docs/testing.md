@@ -85,7 +85,7 @@ nothing. Know these traps, and the seeds that close the easy ones:
 | `redirect()` basename prefixing                                                                                                             | Defaults to no prefix                                                                                                                                                                                                                                                                                                                                 | Seed **`basename`** on `runLoader`/`runMiddleware`; `dispatch` uses the router's own basename                                   |
 | a `middleware()` reading handle data (`ctx.use(Handle)` after `ctx.rendered()`)                                                             | Middleware runs **before** the render barrier, so it has no post-barrier handle access in production — `runMiddleware` has no `handles`/`rendered` by design (only `runLoader` does, because only loaders run after the barrier)                                                                                                                      | Read handle data in a **loader/handler** and seed it with `runLoader`'s `handles`/`rendered`                                    |
 | your real `/m/:slug` **component-route** middleware chain (the guard stack)                                                                 | `dispatch` runs the real route-level middleware chain for **response** routes, but throws on component routes; `renderToFlightString`/`renderRoute` don't run route middleware                                                                                                                                                                        | Assert a component route's guard stack at **e2e**, or extract the middleware fn and unit-test it directly with `runMiddleware`  |
-| `dispatch(router, req)` as a full request→response                                                                                          | Runs the real **global + route-level** middleware chain for **response** routes (so a guard stack IS exercised); throws on RSC/component routes; rejects actions; a `_rsc_partial` request to a response route runs global mw then returns `X-RSC-Reload` (route mw skipped, like prod); else response routes + redirects + 404 + content negotiation | Use `renderToFlightString` (Flight) or e2e for anything that renders                                                            |
+| `dispatch(router, { request })` as a full request→response                                                                                  | Runs the real **global + route-level** middleware chain for **response** routes (so a guard stack IS exercised); throws on RSC/component routes; rejects actions; a `_rsc_partial` request to a response route runs global mw then returns `X-RSC-Reload` (route mw skipped, like prod); else response routes + redirects + 404 + content negotiation | Use `renderToFlightString` (Flight) or e2e for anything that renders                                                            |
 | `renderToFlightString` of a realistic page                                                                                                  | Pure **leaf / server-only** — a client island emits an un-hydratable `I[...]` row                                                                                                                                                                                                                                                                     | Keep Flight tests to leaf server components; test full pages at e2e                                                             |
 | streaming `use(promise)` Suspense content (e.g. async breadcrumb `content`) in `renderRoute`                                                | a plain resolving promise's Suspense **retry does not flush** in RTL — the DOM stays on the fallback                                                                                                                                                                                                                                                  | Assert the pending **fallback**; for the arrived state pass a **settled** promise (see the Catch under renderRoute), or use e2e |
 
@@ -349,11 +349,13 @@ it("returns the product and a self link", async () => {
 //   const data = await runLoader(async (ctx) => ({ ... }), { params: { id: "42" } });
 ```
 
-Options: `params` (also surfaced as `routeParams`), `search`, `env`, `vars`
-(an object `{ key: value }`, or `[key, value]` tuples where the key may be a
-`createVar()` handle), `method`/`body`/`formData`, `routeMap`/`routeName`, and
-`use` (resolver for `ctx.use(OtherLoader)`). Without `use`, `ctx.use` runs a
-dependency's own `fn` if it carries one. In the body, `ctx.reverse` accepts any
+Options: `params` (also surfaced as `routeParams`), `search`/`searchData`, `env`,
+`vars` (an object `{ key: value }`, or `[key, value]` tuples where the key may be
+a `createVar()` handle), `method`/`body`/`formData`, `routeMap`/`routeName`,
+`loaders` (seed `ctx.use(OtherLoader)` by reference as `[[OtherLoader, data]]`
+tuples — the same shape as `renderHandler`/`renderRoute`; checked before `use`),
+and `use` (a dynamic resolver for `ctx.use(OtherLoader)`; `loaders` wins when both
+match). Without either, `ctx.use` runs a dependency's own `fn` if it carries one. In the body, `ctx.reverse` accepts any
 name from `routeMap` and `ctx.get` accepts any string key or `createVar()` handle
 (both are driven by the options, so neither is bound to the app's global
 augmentation).
@@ -394,7 +396,9 @@ it("sets a session cookie and passes through", async () => {
     cookies().set("session", "abc", { path: "/" });
     return next();
   };
-  const { response, ctx, nextCalled } = await runMiddleware(setSession, "/");
+  const { response, ctx, nextCalled } = await runMiddleware(setSession, {
+    request: "/",
+  });
   expect(nextCalled).toBe(1); // passed through
   expect(ctx.cookies().session).toBe("abc"); // observable on ctx
   expect(
@@ -403,10 +407,13 @@ it("sets a session cookie and passes through", async () => {
 });
 ```
 
-`nextCalled` is `0` on short-circuit, `1` on pass-through. The returned `ctx` is
-the underlying `RequestContext`. Seed prior state with `vars`, model the
-downstream route with `next`, enable `ctx.reverse` with `routeMap`/`routeName`,
-pass an array to run several in order.
+`nextCalled` is `0` on short-circuit, `1` on pass-through. The result also carries
+`cookies`, `headers`, and `locationState` (a flash set via `setLocationState` or
+`redirect({ state })`) as effective views, parity with `runInRequestContext`. The
+returned `ctx` is the underlying `RequestContext`. The request the chain runs
+under is `opts.request`. Seed prior state with `vars`, model the downstream route
+with `next`, enable `ctx.reverse` with `routeMap`/`routeName`, pass an array to
+run several in order.
 
 ### Reverse and components
 
@@ -436,7 +443,7 @@ it("exposes navigation state and re-resolves on navigate()", async () => {
   }
   const { getByTestId, router } = await renderRoute(
     [{ path: "/users/:id", Component: Page }],
-    { initialUrl: "/users/alice" },
+    { request: "/users/alice" },
   );
   expect(getByTestId("id").textContent).toBe("alice");
   expect(getByTestId("state").textContent).toBe("idle");
@@ -481,7 +488,7 @@ at the unit layer instead of e2e-only:
 ```tsx
 const { getByTestId } = await renderRoute(
   [{ path: "/c/wine", Component: ProductPage }],
-  { mount: "/shop", initialUrl: "/c/wine" },
+  { mount: "/shop", request: "/c/wine" },
 );
 // useMount() -> "/shop"; useReverse({ product: "/c/:slug" })("product", { slug: "wine" }) -> "/shop/c/wine"
 ```
@@ -639,7 +646,7 @@ import { apiPatterns } from "../src/api/urls"; // path.json(...) routes, no Prer
 const router = createRouter().routes(apiPatterns);
 
 it("serializes a JSON response route, auto-wrapped under { data }", async () => {
-  const res = await dispatch(router, "/health");
+  const res = await dispatch(router, { request: "/health" });
   expect(res.status).toBe(200);
   expect(res.headers.get("content-type")).toBe(
     "application/json;charset=utf-8",
@@ -648,13 +655,13 @@ it("serializes a JSON response route, auto-wrapped under { data }", async () => 
 });
 
 it("maps a thrown RouterError to its status + typed JSON envelope", async () => {
-  const res = await dispatch(router, "/products/999"); // handler throws RouterError 404
+  const res = await dispatch(router, { request: "/products/999" }); // handler throws RouterError 404
   expect(res.status).toBe(404);
   expect((await res.json()).error.code).toBe("NOT_FOUND");
 });
 
 it("returns 404 for an unmatched path", async () => {
-  expect((await dispatch(router, "/nope")).status).toBe(404);
+  expect((await dispatch(router, { request: "/nope" })).status).toBe(404);
 });
 ```
 
@@ -750,8 +757,8 @@ it("renders an async server component to Flight", async () => {
 
 `toMatchFlight(substring)` is containment on the normalized string (row framing
 is an internal detail). `toMatchFlightSnapshot()` snapshots the normalized
-payload. `renderToFlightString` options (`url`, `headers`, `env`, `params`,
-`routeName`) set up the request context for a component that genuinely needs it
+payload. `renderToFlightString` options (`request`, `headers`, `env`, `params`,
+`routeName`, `vars`) set up the request context for a component that genuinely needs it
 via internal imports — but a **consumer** importing those server APIs from the
 barrel hits the caveat below, so prefer props.
 
@@ -1068,58 +1075,65 @@ rangoTestConfig(opts?: { preset?: "node" | "cloudflare" }): { alias: TestAlias[]
 rangoTestAliases(opts?: { preset?: "node" | "cloudflare" }): { find: string|RegExp; replacement: string }[]; // aliases only
 rangoInlineDeps: RegExp[];  // the server.deps.inline patterns, if wiring them yourself
 
-// Unit
+// Unit. CONVENTION: the request a primitive runs under is opts.request (a Request
+// or a URL string) for every render/run primitive; only the client renderRoute's
+// initial location is also opts.request.
+// RETURN SHAPE (by design): runLoader -> the loader data directly; dispatch -> a
+// Response; the render/run primitives -> an envelope (effect snapshot and/or tree).
 runMiddleware(
   mw: Middleware | Middleware[],
-  request: Request | string,
-  opts?: { env?, params?, vars?, routeMap?, routeName?, next?: () => Promise<Response> },
-): Promise<{ response: Response; ctx: RequestContext; nextCalled: number; cookies: Record<string, string> }>;
-// `cookies` is the effective view — assert a cookie the chain set without the @internal ctx cast.
-// const { response, nextCalled, cookies } = await runMiddleware(authMw, "/dashboard", { vars: { user: u } });
+  opts: { request: Request | string; env?, params?, vars?, routeMap?, routeName?, basename?, next?: () => Promise<Response> },
+): Promise<{ response: Response; ctx: RequestContext; nextCalled: number;
+             cookies: Record<string, string>; headers: Record<string, string>;
+             locationState: Record<string, unknown> }>;
+// `cookies`/`headers`/`locationState` are the effective views — assert what the chain set without the @internal ctx cast.
+// const { response, nextCalled, cookies } = await runMiddleware(authMw, { request: "/dashboard", vars: { user: u } });
 
 runLoader<T>(
   loader: ((ctx) => T | Promise<T>) | LoaderDefinition<T>, // raw body OR a registered createLoader() handle
   opts?: { params?, search?, env?, request?, vars?, routeMap?, routeName?, method?, body?,
-           formData?, use?, rendered?, handles? },
+           formData?, loaders?: [loader, data][], use?, rendered?, handles? },
 ): Promise<T>;
 // A createLoader() handle's fn is recovered from the registry (works through the server build / rangoTestConfig preset).
 // vars accepts an object ({ user: u }) or [key, value] tuples ([[userVar, u]]).
+// loaders: [[OtherLoader, data]] seeds ctx.use(OtherLoader) by reference (same shape as renderHandler/renderRoute); use = dynamic resolver.
 // In the body, ctx.reverse accepts any routeMap name and ctx.get any string/ContextVar.
-// rendered: true mocks ctx.rendered(); handles: [[H, accumulated]] seeds ctx.use(H).
+// rendered: true mocks ctx.rendered(); handles: [[H, accumulated]] seeds ctx.use(H) with the POST-collect value (NOT raw pushes; cf renderRoute).
 // const data = await runLoader(ProductLoader, { params: { id: "1" }, env }); // or runLoader(rawBody, ...)
 
 // Component — @rangojs/router/testing/dom (DOM env + @testing-library/react)
 renderRoute(                            // async; lazy-loads RTL at call time
   routes: RenderRouteSpec[],            // root->leaf; last = leaf route
   options?: {
-    initialUrl?, params?, routeMap?,
+    request?: Request | string,         // initial location (URL is read; client render)
+    params?, routeMap?,
     loaders?: [loader, data][],         // seed useLoader by REFERENCE (real handles)
     loaderData?: Record<$$id, data>,    // seed useLoader by explicit $$id
     locationState?: [def, value][],     // seed useLocationState by REFERENCE
-    handles?: [handle, pushedValues[]][],// seed useHandle by REFERENCE (reaches layouts too)
+    handles?: [handle, pushedValues[]][],// seed useHandle by REFERENCE, RAW pushes[] (reaches layouts too)
     handle?,                            // advanced: raw handle wire data
     basename?,                          // createRouter({ basename }) value (Link/href/reverse prefixing)
     mount?,                             // include('/shop', …) prefix -> useMount/useHref/useReverse resolve it
     theme?,                             // createRouter({ theme }) shape (enables useTheme)
   },
 ): Promise<RenderResult & { router }>;
-// const { getByTestId, router } = await renderRoute([{ path: "/p/:id", Component: P }], { initialUrl: "/p/1" });
+// const { getByTestId, router } = await renderRoute([{ path: "/p/:id", Component: P }], { request: "/p/1" });
 // useLoader:        renderRoute([{ path: "/c", Component: CartBadge }], { loaders: [[CartLoader, cart]] });
 // useLocationState: renderRoute([{ path: "/s", Component: FlashBanner }], { locationState: [[FlashMessage, { text: "Saved" }]] });
 // useHandle:        renderRoute([{ path: "/p", Component: Trail }], { handles: [[Breadcrumbs, [{ label: "Home", href: "/" }]]] });
 // useMount/include:  renderRoute([{ path: "/c/wine", Component: PDP }], { mount: "/shop" }); // useMount() -> "/shop"
 
 // Integration — @rangojs/router/testing
-dispatch(router: Rango, request: Request | string, opts?: { env? }): Promise<Response>;
+dispatch(router: Rango, opts: { request: Request | string; env? }): Promise<Response>;
 // accepts your public router type (no cast); use rangoTestAliases() for setup.
-// const res = await dispatch(createRouter().routes(apiPatterns), "/health");
+// const res = await dispatch(createRouter().routes(apiPatterns), { request: "/health" });
 
 // RSC — @rangojs/router/testing/flight, react-server vitest project only
-renderToFlightString(element, opts?: { url?, headers?, env?, params?, routeName? }): Promise<string>;
+renderToFlightString(element, opts?: { request?: Request|string, headers?, env?, params?, routeName?, vars? }): Promise<string>;
 flightMatchers; // expect.extend -> toMatchFlight(substring), toMatchFlightSnapshot()
 // expect.extend(flightMatchers); expect(await renderToFlightString(<C/>)).toMatchFlight("hi");
-renderServerTree(element, opts?: { ...same, vars?, clientComponents? }): Promise<{ flight, tree }>;
-renderHandler(handler, opts?: { params?, env?, vars?, loaders?, routeMap?, headers?, clientComponents? }):
+renderServerTree(element, opts?: { ...same, clientComponents? }): Promise<{ flight, tree }>;
+renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeMap?, headers?, clientComponents? }):
   Promise<{ tree, flight, thrown, response, cookies, headers, locationState, handles }>;
 findClientBoundaries(tree, selector?: string | { name?, testId?, props?, where? }): ClientBoundary[]; // {id,name,props,element}[]; [] if none
 findElements(tree, selector?: string | { tag?, testId?, props?, text?, where? }): FoundElement[]; // server/host elements {tag,props,children,text,element}[]

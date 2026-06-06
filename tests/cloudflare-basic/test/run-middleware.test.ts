@@ -10,7 +10,7 @@ describe("runMiddleware against cloudflare-basic middleware", () => {
     it("passes through to the handler and emits the cookie", async () => {
       const { response, ctx, nextCalled } = await runMiddleware(
         setOverlayCookie,
-        "/cookie-overlay",
+        { request: "/cookie-overlay" },
       );
       expect(nextCalled).toBe(1); // ran the terminal handler (no short-circuit)
       expect(response.status).toBe(200);
@@ -28,11 +28,10 @@ describe("runMiddleware against cloudflare-basic middleware", () => {
     });
 
     it("forwards the downstream handler's response when it passes through", async () => {
-      const { response, nextCalled } = await runMiddleware(
-        setOverlayCookie,
-        "/cookie-overlay",
-        { next: async () => new Response("downstream", { status: 201 }) },
-      );
+      const { response, nextCalled } = await runMiddleware(setOverlayCookie, {
+        request: "/cookie-overlay",
+        next: async () => new Response("downstream", { status: 201 }),
+      });
       expect(nextCalled).toBe(1);
       expect(response.status).toBe(201);
       expect(await response.text()).toBe("downstream");
@@ -52,7 +51,9 @@ describe("runMiddleware against cloudflare-basic middleware", () => {
         if (!ctx.get("user")) return new Response(null, { status: 401 });
         return next();
       };
-      const { response, nextCalled } = await runMiddleware(gate, "/admin");
+      const { response, nextCalled } = await runMiddleware(gate, {
+        request: "/admin",
+      });
       expect(nextCalled).toBe(0);
       expect(response.status).toBe(401);
     });
@@ -65,7 +66,8 @@ describe("runMiddleware against cloudflare-basic middleware", () => {
         if (!ctx.get("user")) return new Response(null, { status: 401 });
         return next();
       };
-      const { response, nextCalled } = await runMiddleware(gate, "/admin", {
+      const { response, nextCalled } = await runMiddleware(gate, {
+        request: "/admin",
         vars: [["user", { id: 1 }]],
       });
       expect(nextCalled).toBe(1);
@@ -87,10 +89,9 @@ describe("runMiddleware against cloudflare-basic middleware", () => {
         ctx.header("x-second", "2");
         return next();
       };
-      const { response, nextCalled } = await runMiddleware(
-        [first, second],
-        "/chain",
-      );
+      const { response, nextCalled } = await runMiddleware([first, second], {
+        request: "/chain",
+      });
       expect(nextCalled).toBe(1);
       expect(response.headers.get("x-first")).toBe("1");
       expect(response.headers.get("x-second")).toBe("2");
