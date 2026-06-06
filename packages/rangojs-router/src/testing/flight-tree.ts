@@ -29,10 +29,10 @@
 // MUST be first: defines the webpack-style globals the vendored client reads at
 // module-eval time, before that client module is imported below.
 import "./internal/flight-client-globals.js";
-import type { ReactNode } from "react";
 import { createFromReadableStream } from "@vitejs/plugin-rsc/react/browser";
 import { setRequireModule } from "@vitejs/plugin-rsc/core/browser";
 import * as RSDServer from "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge";
+import type { ReactNode } from "react";
 import { serializeToFlightString } from "./flight.js";
 import type { RenderToFlightStringOptions } from "./flight.js";
 
@@ -103,7 +103,9 @@ function registerOne(value: unknown, id: string, exportName: string): void {
 }
 
 /** Register `{ name: Component }` entries, keyed by name (id === name). */
-function registerClientComponents(components: Record<string, unknown>): void {
+export function registerClientComponents(
+  components: Record<string, unknown>,
+): void {
   for (const [name, value] of Object.entries(components)) {
     registerOne(value, name, name);
   }
@@ -116,7 +118,7 @@ function registerClientComponents(components: Record<string, unknown>): void {
  * deserialized boundary's payload is a clean `resolved_module` whose value is
  * `[id, [], name]` — synchronously readable by {@link findClientBoundaries}.
  */
-function makeClientManifest(): unknown {
+export function makeClientManifest(): unknown {
   return new Proxy(
     {},
     {
@@ -176,10 +178,20 @@ export async function renderServerTree(
     opts,
     makeClientManifest(),
   );
+  return { flight, tree: await deserializeFlight(flight) };
+}
+
+/**
+ * Deserialize a Flight wire string back to an inspectable React element tree:
+ * `createFromReadableStream` (vendored client), then unwrap Rango's payload
+ * wrapper and resolve the top server chunk so the consumer gets their element,
+ * not a lazy. Reused by renderServerTree AND renderHandler. Client references
+ * stay as inert boundary markers ({@link findClientBoundaries} reads them).
+ */
+export async function deserializeFlight(flight: string): Promise<unknown> {
   installDeserializeLoad();
   const payload = await createFromReadableStream(stringToStream(flight));
-  // Resolve the top server chunk so the consumer gets their element, not a lazy.
-  return { flight, tree: resolveServerLazy(unwrapPayload(payload)) };
+  return resolveServerLazy(unwrapPayload(payload));
 }
 
 /**

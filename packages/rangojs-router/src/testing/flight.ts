@@ -41,6 +41,7 @@ import {
   runWithRequestContext,
   setRequestContextParams,
 } from "../server/request-context.js";
+import { seedVariables, type VarsInit } from "./internal/seed-vars.js";
 import type { RscPayload } from "../rsc/types.js";
 import type { ResolvedSegment } from "../types.js";
 
@@ -58,6 +59,14 @@ export interface RenderToFlightStringOptions {
   params?: Record<string, string>;
   /** Matched route name (drives `ctx.routeName` and scoped reverse). */
   routeName?: string;
+  /**
+   * Context variables visible to the rendered tree via `ctx.get(...)` — as a
+   * prior middleware would have set them. Seeds the SAME way the handler-test
+   * primitives (`runInRequestContext`/`runLoader`) do, so a server component
+   * that reads `getRequestContext().get(MyVar)` during render is testable.
+   * Object form (`{ user }`) or `[key, value]` tuples (`[[userVar, u]]`).
+   */
+  vars?: VarsInit;
 }
 
 const DEFAULT_URL = "http://localhost/";
@@ -123,35 +132,53 @@ export async function serializeToFlightString(
     env: opts.env ?? {},
     request,
     url,
-    variables: {},
+    // Seed vars so a server component reading ctx.get(MyVar) during render sees
+    // them — same seeding the handler-test primitives use.
+    variables: seedVariables({}, opts.vars),
   });
 
-  const payload = wrapAsPayload(element, url.pathname);
-
-  return runWithRequestContext(ctx, async () => {
+  return runWithRequestContext(ctx, () => {
     setRequestContextParams(opts.params ?? {}, opts.routeName);
-    // Capture (do NOT rethrow) the first render error. The serializer calls
-    // onError from its own scheduled work; throwing there escapes as an
-    // unhandled rejection AND leaves the stream un-closed, so the drain below
-    // would hang until the test times out. Production's onError returns void
-    // (rsc-rendering.ts) so the stream completes with an error row. We mirror
-    // that — let the stream finish — then surface the error as a clean
-    // rejection after draining, so `await expect(...).rejects.toThrow()` works.
-    let renderError: unknown;
-    let didError = false;
-    const stream = RSDServer.renderToReadableStream(payload, clientManifest, {
-      onError(error: unknown) {
-        if (!didError) {
-          didError = true;
-          renderError = error;
-        }
-      },
-    });
-    // Drain inside the context so async components see ctx during streaming.
-    const text = await new Response(stream).text();
-    if (didError) throw renderError;
-    return text;
+    return serializeNodeToFlight(element, clientManifest, url.pathname);
   });
+}
+
+/**
+ * Serialize a node to a Flight string, ASSUMING a request context is already
+ * active (i.e. called inside `runWithRequestContext`). This is the core
+ * `renderHandler` reuses: it enters its own context, builds a HandlerContext,
+ * invokes the handler, then serializes the returned RSC in that SAME context (so
+ * cookies/headers/vars/handles the handler set are all on one context).
+ *
+ * Must run under the `react-server` export condition (see module header).
+ */
+export async function serializeNodeToFlight(
+  node: ReactNode,
+  clientManifest: unknown,
+  pathname: string,
+): Promise<string> {
+  const payload = wrapAsPayload(node, pathname);
+  // Capture (do NOT rethrow) the first render error. The serializer calls
+  // onError from its own scheduled work; throwing there escapes as an unhandled
+  // rejection AND leaves the stream un-closed, so the drain below would hang
+  // until the test times out. Production's onError returns void (rsc-rendering.ts)
+  // so the stream completes with an error row. We mirror that — let the stream
+  // finish — then surface the error as a clean rejection after draining, so
+  // `await expect(...).rejects.toThrow()` works.
+  let renderError: unknown;
+  let didError = false;
+  const stream = RSDServer.renderToReadableStream(payload, clientManifest, {
+    onError(error: unknown) {
+      if (!didError) {
+        didError = true;
+        renderError = error;
+      }
+    },
+  });
+  // Drain inside the context so async components see ctx during streaming.
+  const text = await new Response(stream).text();
+  if (didError) throw renderError;
+  return text;
 }
 
 // Volatile leading reference row: `:N<timestamp>` (dev debug-info anchor).

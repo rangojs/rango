@@ -62,6 +62,7 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 | a redirect / `404` / middleware redirect         | the `Response` (status + `Location`)                               | integration         | `dispatch`                                                                              | `/middleware`, `/route`                  |
 | an async Server Component                        | real Flight output / serialization shape                           | RSC unit            | `renderToFlightString` + `toMatchFlight`                                                | `/route`                                 |
 | a client island's props across the boundary      | typed prop fidelity (`Date`/`Map`), inlined-vs-island              | RSC unit            | `renderServerTree` + `findClientBoundaries`                                             | `/route`                                 |
+| a real route **handler** `(ctx) => rsc`          | what it renders given params/loaders/vars; its effects             | RSC unit            | `renderHandler` (seeded `HandlerContext`)                                               | `/route`                                 |
 | a `"use server"` action + revalidation flow      | the mutate -> reload -> UI update, JS and no-JS                    | e2e                 | `parityDescribe` + `expectParity`                                                       | `/server-actions`                        |
 | navigation / hydration / view transitions        | no reload, no page error, correct pathname                         | e2e                 | `parityDescribe`, `waitForHydration`, matchers                                          | `/hooks`, `/view-transitions`            |
 | `cache()` / `"use cache"` / loader cache         | hit/miss/stale across two requests                                 | e2e + signal        | `assertCacheStatus` / telemetry sink                                                    | `/caching`, `/use-cache`, `/cache-guide` |
@@ -690,6 +691,13 @@ could neither name the vars nor separate set-by-handler from seeded.
 `runMiddleware` returns the same `cookies` / `headers` snapshot (plus `ctx`,
 `response`, `nextCalled`) for asserting a middleware's header/cookie effects.
 
+`runInRequestContext` asserts a handler's **effects** (cookies/headers/flash/
+redirect/return value) — it runs under client React and does NOT render RSC. When
+the handler **returns RSC** and you want to assert what it _rendered_, use
+`renderHandler` (RSC project) — it builds the real `HandlerContext`, calls the
+handler, and gives you the deserialized tree (plus the same effects). See
+"renderHandler — run a real route handler" below.
+
 ### renderToFlightString — real async Server Components
 
 Under the react-server vitest project (`*.rsc-test.{ts,tsx}`, run via
@@ -781,6 +789,12 @@ island and assert on `.length` when the count matters (a missing name yields
 `[]`). Same **pure-leaf** caveat as `renderToFlightString` applies to the server
 component (don't import server-only APIs).
 
+`renderServerTree` renders an **element** you build (`<Page />`). `vars` seeds
+`ctx.get(MyVar)` for a server component that reads `getRequestContext()` during
+render; cookies via `headers`, params via `params`. To test a route **handler**
+(a `(ctx) => rsc` function, what you pass to `path(...)`), use **`renderHandler`**
+(below) — it builds the real `HandlerContext` and calls the handler for you.
+
 **Fallback without the transform.** If you don't wire `rangoUseClientTransform()`,
 a plainly-imported island is just an unmarked function the serializer would render
 server-side. Register islands explicitly instead — list the components you already
@@ -803,6 +817,42 @@ the example above reads params via the request context the test harness sets up,
 which works because `renderToFlightString` enters `runWithRequestContext` for
 you — but a component that itself calls `getRequestContext()` from the barrel is
 outside v1 scope (cover it with e2e).
+
+### renderHandler — run a real route handler and assert its RSC
+
+A Rango route handler is a pure function `(ctx) => rsc` — the function you pass to
+`path("/p/:slug", ProductPage)`, NOT a component. `renderHandler` runs it with the
+real `HandlerContext` the router builds (so `ctx.params`, `ctx.use(Loader)`,
+`ctx.use(Meta)`/`ctx.use(Breadcrumbs)`, `ctx.reverse`, `ctx.get` all work), then
+serializes the returned RSC and deserializes it to an inspectable tree. Loaders
+are **seeded** (no real loader run — same model as `runLoader`):
+
+```tsx
+import {
+  renderHandler,
+  findClientBoundaries,
+} from "@rangojs/router/testing/flight";
+import { ProductPage } from "../src/pages/product"; // the real handler: (ctx) => rsc
+
+it("renders the product page for a tenant", async () => {
+  const { tree, handles } = await renderHandler(ProductPage, {
+    params: { slug: "wine" },
+    loaders: [[ProductLoader, { name: "Wine", price: 9 }]], // seeds ctx.use(ProductLoader)
+    vars: [[Tenant, { name: "Acme" }]], // seeds ctx.get(Tenant)
+    routeMap: { product: "/p/:slug" }, // enables ctx.reverse
+  });
+  expect(JSON.stringify(tree)).toContain("Wine");
+  const [counter] = findClientBoundaries(tree, "Counter"); // islands inspectable too
+  expect(handles.get(Meta)).toEqual([{ title: "Wine - Shop" }]); // ctx.use(Meta) pushes
+});
+```
+
+Result: `{ tree, flight, thrown, response, cookies, headers, locationState, handles }`.
+The handler's **effects** are surfaced (cookies/headers/flash) and a
+`throw redirect(...)` is captured on `thrown` (with `tree` undefined, since it
+produced a `Response`) — exactly like `runInRequestContext`, plus the rendered
+RSC. `handles` is a `Map<Handle, pushed[]>` of what the handler pushed via
+`ctx.use(Handle)`. An unseeded `ctx.use(loader)` rejects with a clear setup error.
 
 ## E2E with dev/prod and PE parity
 
@@ -1005,13 +1055,17 @@ dispatch(router: Rango, request: Request | string, opts?: { env? }): Promise<Res
 renderToFlightString(element, opts?: { url?, headers?, env?, params?, routeName? }): Promise<string>;
 flightMatchers; // expect.extend -> toMatchFlight(substring), toMatchFlightSnapshot()
 // expect.extend(flightMatchers); expect(await renderToFlightString(<C/>)).toMatchFlight("hi");
-renderServerTree(element, opts?: { ...same, clientComponents? }): Promise<{ flight, tree }>;
+renderServerTree(element, opts?: { ...same, vars?, clientComponents? }): Promise<{ flight, tree }>;
+renderHandler(handler, opts?: { params?, env?, vars?, loaders?, routeMap?, headers?, clientComponents? }):
+  Promise<{ tree, flight, thrown, response, cookies, headers, locationState, handles }>;
 findClientBoundaries(tree, name?): ClientBoundary[]; // {id,name,props,element}[]; [] if none
 rangoUseClientTransform(); // Vite plugin for vitest.rsc.config.ts -> auto-discover islands
-// serialize -> deserialize (no hydration). With rangoUseClientTransform() wired, no clientComponents:
-// const { tree } = await renderServerTree(<Page/>);
+// renderServerTree renders an ELEMENT; renderHandler runs a route handler (ctx)=>rsc with a seeded ctx.
+// const { tree } = await renderServerTree(<Page/>);                       // element
+// const { tree, handles } = await renderHandler(ProductPage, { params: { slug: "wine" },
+//   loaders: [[ProductLoader, data]], vars: [[Tenant, t]] });             // real handler
 // const [tag] = findClientBoundaries(tree, "PriceTag"); expect(tag.props.asOf).toBeInstanceOf(Date);
-// fallback (no transform): renderServerTree(<Page/>, { clientComponents: { PriceTag } })
+// fallback (no transform): pass { clientComponents: { PriceTag } } to either
 
 // Cache / prerender
 assertCacheStatus(target: Response | { headers }, segment: string,

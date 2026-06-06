@@ -96,6 +96,7 @@ The single rule that drives everything:
 | a redirect / status / headers / cookies / **response route** (json/text/html/xml/md), no Flight           | integration  | `dispatch` (router -> Response)                                  | `@rangojs/router/testing`        |
 | a real async **Server Component** / Flight serialization shape                                            | RSC unit     | `renderToFlightString` + `toMatchFlight`                         | `@rangojs/router/testing/flight` |
 | a client island's **typed props** across the boundary / inlined-vs-island                                 | RSC unit     | `renderServerTree` + `findClientBoundaries`                      | `@rangojs/router/testing/flight` |
+| a real route **handler** `(ctx) => rsc` (params/loaders/vars -> rendered RSC + effects)                   | RSC unit     | `renderHandler` (seeded `HandlerContext`)                        | `@rangojs/router/testing/flight` |
 | navigation, hydration, PE parity, view transitions, real SSR                                              | e2e          | `createRangoE2E` -> `parityDescribe`/`expectParity`              | `@rangojs/router/testing/e2e`    |
 | cache hit/miss/stale, prerender (= a cache hit by design)                                                 | e2e + signal | `assertCacheStatus` / telemetry sink (gate on)                   | `@rangojs/router/testing`        |
 | generated route map drift vs runtime                                                                      | unit (node)  | `assertGeneratedRoutesMatch`                                     | `@rangojs/router/testing`        |
@@ -622,6 +623,43 @@ name -> `[]`). Without the transform, register islands explicitly instead:
 interactive, clickable DOM `renderServer` is intentionally NOT shipped —
 in-process happy-dom hydration re-tests React and misses server/client divergence
 (which needs a real browser). Use e2e for interaction.
+
+`renderServerTree` renders an ELEMENT you build (`<Page/>`); `vars` seeds
+`ctx.get(MyVar)` for a server component reading `getRequestContext()` during
+render. To test a route **handler** (a `(ctx) => rsc` function), use
+`renderHandler` (below).
+
+### renderHandler — run a real route handler (`(ctx) => rsc`)
+
+A Rango route **handler** is a pure function `(ctx) => rsc` — what you pass to
+`path("/p/:slug", ProductPage)`, NOT a component. `renderHandler` runs it with the
+real `HandlerContext` (so `ctx.params`, `ctx.use(Loader)`, `ctx.use(Meta)`,
+`ctx.reverse`, `ctx.get` work), then serializes its RSC -> inspectable tree.
+Loaders are SEEDED (no real run), same as `runLoader`.
+
+```tsx
+import {
+  renderHandler,
+  findClientBoundaries,
+} from "@rangojs/router/testing/flight";
+
+const { tree, handles, thrown, cookies, headers, locationState } =
+  await renderHandler(ProductPage, {
+    // ProductPage: (ctx) => rsc, as authored
+    params: { slug: "wine" },
+    loaders: [[ProductLoader, { name: "Wine" }]], // seeds ctx.use(ProductLoader)
+    vars: [[Tenant, { name: "Acme" }]], // seeds ctx.get(Tenant)
+    routeMap: { product: "/p/:slug" }, // enables ctx.reverse
+  });
+expect(JSON.stringify(tree)).toContain("Wine");
+expect(handles.get(Meta)).toEqual([{ title: "Wine - Shop" }]); // ctx.use(Meta) pushes
+```
+
+Result: `{ tree, flight, thrown, response, cookies, headers, locationState, handles }`.
+The render counterpart to `runInRequestContext`: it surfaces the same effects AND
+the rendered RSC. A `throw redirect()` is captured on `thrown` (tree undefined,
+since it produced a Response). An unseeded `ctx.use(loader)` rejects. Use
+`renderServerTree` for a plain ELEMENT; `renderHandler` for a handler FUNCTION.
 
 ## E2E recipes (Playwright)
 

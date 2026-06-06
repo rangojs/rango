@@ -37,3 +37,10 @@ export type {
   RenderServerTreeResult,
   ClientBoundary,
 } from "./flight-tree.js";
+
+export { renderHandler } from "./render-handler.js";
+export type {
+  TestableHandler,
+  RenderHandlerOptions,
+  RenderHandlerResult,
+} from "./render-handler.js";

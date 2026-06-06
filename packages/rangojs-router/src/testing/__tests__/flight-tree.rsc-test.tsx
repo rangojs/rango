@@ -6,7 +6,7 @@
 // resolves islands from the server tree's own imports, no clientComponents.
 // The fixture is Counter.tsx (NOT Counter.client.tsx): "use client" is a
 // directive, not a filename.
-import { createElement, memo } from "react";
+import { memo } from "react";
 import { describe, expect, test } from "vitest";
 import {
   assertFlightTreeRuntimeAvailable,
@@ -15,6 +15,8 @@ import {
 } from "../flight.entry.js";
 import { Counter } from "./fixtures/Counter.js";
 import { MemoBadge, RefInput } from "./fixtures/Badge.js";
+import { createVar } from "../../context-var.js";
+import { getRequestContext } from "../../server/request-context.js";
 
 describe("renderServerTree", () => {
   test("runtime is available", () => {
@@ -24,13 +26,13 @@ describe("renderServerTree", () => {
   test("pure server tree deserializes; no client boundaries", async () => {
     async function ServerOnly() {
       await Promise.resolve();
-      return createElement(
-        "main",
-        { id: "root" },
-        createElement("h1", null, "Hello Ada"),
+      return (
+        <main id="root">
+          <h1>Hello Ada</h1>
+        </main>
       );
     }
-    const { flight, tree } = await renderServerTree(createElement(ServerOnly));
+    const { flight, tree } = await renderServerTree(<ServerOnly />);
     expect(flight).not.toContain("I[");
     expect(findClientBoundaries(tree)).toEqual([]);
     const json = JSON.stringify(tree);
@@ -41,18 +43,14 @@ describe("renderServerTree", () => {
   test("client island auto-discovered as an I-row (not inlined)", async () => {
     // No clientComponents: the transform registers Counter from its import.
     function Page() {
-      return createElement(
-        "main",
-        null,
-        createElement("h1", null, "Hello Ada"),
-        createElement(Counter, {
-          start: 5,
-          when: new Date(0),
-          tags: new Map([["a", 1]]),
-        }),
+      return (
+        <main>
+          <h1>Hello Ada</h1>
+          <Counter start={5} when={new Date(0)} tags={new Map([["a", 1]])} />
+        </main>
       );
     }
-    const { flight } = await renderServerTree(createElement(Page));
+    const { flight } = await renderServerTree(<Page />);
     // boundary preserved as an I-row...
     expect(flight).toContain("I[");
     expect(flight).toContain("Counter");
@@ -66,20 +64,22 @@ describe("renderServerTree", () => {
     // lazy-materialization path in the tree walk.
     async function Page() {
       await Promise.resolve();
-      return createElement(
-        "div",
-        null,
-        createElement(Counter, {
-          start: 5,
-          when: new Date(0),
-          tags: new Map([
-            ["a", 1],
-            ["b", 2],
-          ]),
-        }),
+      return (
+        <div>
+          <Counter
+            start={5}
+            when={new Date(0)}
+            tags={
+              new Map([
+                ["a", 1],
+                ["b", 2],
+              ])
+            }
+          />
+        </div>
       );
     }
-    const { tree } = await renderServerTree(createElement(Page));
+    const { tree } = await renderServerTree(<Page />);
 
     const [counter, ...rest] = findClientBoundaries(tree, "Counter");
     expect(rest).toHaveLength(0);
@@ -97,28 +97,24 @@ describe("renderServerTree", () => {
 
   test("an unknown name yields an empty array", async () => {
     function Page() {
-      return createElement(Counter, {
-        start: 1,
-        when: new Date(0),
-        tags: new Map(),
-      });
+      return <Counter start={1} when={new Date(0)} tags={new Map()} />;
     }
-    const { tree } = await renderServerTree(createElement(Page));
+    const { tree } = await renderServerTree(<Page />);
     expect(findClientBoundaries(tree, "Nope")).toEqual([]);
     expect(findClientBoundaries(tree)).toHaveLength(1);
   });
 
   test("findClientBoundaries returns every instance, in document order", async () => {
-    const props = { start: 1, when: new Date(0), tags: new Map() };
+    const when = new Date(0);
     function Page() {
-      return createElement(
-        "ul",
-        null,
-        createElement(Counter, { ...props, start: 1 }),
-        createElement(Counter, { ...props, start: 2 }),
+      return (
+        <ul>
+          <Counter start={1} when={when} tags={new Map()} />
+          <Counter start={2} when={when} tags={new Map()} />
+        </ul>
       );
     }
-    const { tree } = await renderServerTree(createElement(Page));
+    const { tree } = await renderServerTree(<Page />);
     const counters = findClientBoundaries(tree, "Counter");
     expect(counters).toHaveLength(2);
     expect(counters.map((b) => b.props.start)).toEqual([1, 2]);
@@ -130,14 +126,14 @@ describe("renderServerTree", () => {
     // memo(...) and forwardRef(...) are objects at runtime; the transform must
     // still register them so they emit I-rows instead of being inlined.
     function Page() {
-      return createElement(
-        "div",
-        null,
-        createElement(MemoBadge, { count: 3 }),
-        createElement(RefInput, { label: "Email" }),
+      return (
+        <div>
+          <MemoBadge count={3} />
+          <RefInput label="Email" />
+        </div>
       );
     }
-    const { flight, tree } = await renderServerTree(createElement(Page));
+    const { flight, tree } = await renderServerTree(<Page />);
     // not inlined: the rendered output of either island is absent.
     expect(flight).not.toContain("memo-badge");
     expect(flight).not.toContain("ref-input");
@@ -152,16 +148,29 @@ describe("renderServerTree", () => {
     // ignores it, so clientComponents (registerOne) must still register the
     // OBJECT memo returns — a function-only check would skip it.
     const Widget = memo(function Widget(_props: { value: number }) {
-      return createElement("span", null, "n/a");
+      return <span>n/a</span>;
     });
     function Page() {
-      return createElement(Widget, { value: 42 });
+      return <Widget value={42} />;
     }
-    const { tree } = await renderServerTree(createElement(Page), {
+    const { tree } = await renderServerTree(<Page />, {
       clientComponents: { Widget },
     });
     const [widget] = findClientBoundaries(tree, "Widget");
     expect(widget.id).toBe("Widget");
     expect(widget.props.value).toBe(42);
+  });
+
+  test("a server component reading getRequestContext() during render sees seeded vars", async () => {
+    // renderServerTree renders an ELEMENT; a server component inside it can read
+    // getRequestContext() during render, and `vars` seeds ctx.get(MyVar).
+    const Flag = createVar<boolean>();
+    async function Banner() {
+      return <p>{`flag: ${String(getRequestContext().get(Flag))}`}</p>;
+    }
+    const { tree } = await renderServerTree(<Banner />, {
+      vars: [[Flag, true]],
+    });
+    expect(JSON.stringify(tree)).toContain("flag: true");
   });
 });

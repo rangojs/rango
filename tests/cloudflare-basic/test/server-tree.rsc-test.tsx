@@ -1,13 +1,15 @@
-// Dogfood: renderServerTree against cloudflare-basic — serialize a server
-// component with a client island, deserialize, and assert TYPED prop fidelity
-// across the boundary (the win renderToFlightString's wire string can't give).
+// Dogfood: renderServerTree + renderHandler against cloudflare-basic.
 import { describe, expect, it } from "vitest";
 import {
   assertFlightTreeRuntimeAvailable,
   findClientBoundaries,
+  renderHandler,
   renderServerTree,
 } from "@rangojs/router/testing/flight";
+import { createLoader, type HandlerContext } from "@rangojs/router";
 import { PriceTag } from "./fixtures/PriceTag.js";
+
+const PriceLoader = createLoader(async () => ({ amount: 0, currency: "USD" }));
 
 // A pure leaf server component wrapping a client island (the documented v1
 // scope: import-light leaf trees). Mirrors the existing flight.rsc-test pattern.
@@ -74,5 +76,32 @@ describe("renderServerTree against cloudflare-basic", () => {
     expect((priceTag.props.asOf as Date).toISOString()).toBe(
       "2026-01-02T03:04:05.000Z",
     );
+  });
+
+  it("renderHandler runs a real handler (params + seeded loader) and renders its RSC", async () => {
+    // A route handler the way it's authored for path(): a (ctx) => rsc function.
+    async function ProductHandler(ctx: HandlerContext<{ slug: string }>) {
+      const price = await ctx.use(PriceLoader);
+      return (
+        <article>
+          <h2>{ctx.params.slug}</h2>
+          <PriceTag
+            amount={price.amount}
+            currency={price.currency}
+            asOf={new Date(0)}
+          />
+        </article>
+      );
+    }
+
+    const { tree } = await renderHandler(ProductHandler, {
+      params: { slug: "wine" },
+      loaders: [[PriceLoader, { amount: 12.5, currency: "USD" }]],
+    });
+
+    expect(JSON.stringify(tree)).toContain("wine"); // the param
+    const [priceTag] = findClientBoundaries(tree, "PriceTag");
+    expect(priceTag.props.amount).toBe(12.5); // from the seeded loader
+    expect(priceTag.props.asOf).toBeInstanceOf(Date);
   });
 });
