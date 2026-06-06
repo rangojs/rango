@@ -95,6 +95,7 @@ The single rule that drives everything:
 | a CLIENT component reading router context (`useParams`/`useReverse`/`Outlet`/`useNavigation`/`useLoader`) | unit (DOM)   | `renderRoute` (needs happy-dom/jsdom + `@testing-library/react`) | `@rangojs/router/testing/dom`    |
 | a redirect / status / headers / cookies / **response route** (json/text/html/xml/md), no Flight           | integration  | `dispatch` (router -> Response)                                  | `@rangojs/router/testing`        |
 | a real async **Server Component** / Flight serialization shape                                            | RSC unit     | `renderToFlightString` + `toMatchFlight`                         | `@rangojs/router/testing/flight` |
+| a client island's **typed props** across the boundary / inlined-vs-island                                 | RSC unit     | `renderServerTree` + `findClientBoundaries`                      | `@rangojs/router/testing/flight` |
 | navigation, hydration, PE parity, view transitions, real SSR                                              | e2e          | `createRangoE2E` -> `parityDescribe`/`expectParity`              | `@rangojs/router/testing/e2e`    |
 | cache hit/miss/stale, prerender (= a cache hit by design)                                                 | e2e + signal | `assertCacheStatus` / telemetry sink (gate on)                   | `@rangojs/router/testing`        |
 | generated route map drift vs runtime                                                                      | unit (node)  | `assertGeneratedRoutesMatch`                                     | `@rangojs/router/testing`        |
@@ -573,11 +574,53 @@ it("matches a normalized snapshot", async () => {
 `toMatchFlight(substring)` asserts the normalized Flight string CONTAINS the
 substring (containment, not equality — the row framing is an internal serializer
 detail). `toMatchFlightSnapshot()` snapshots the normalized payload. SCOPE:
-server-only / leaf trees — a client component emits an unresolved `I[...]` import
-row against the empty client manifest (fine for snapshotting shape, not
-hydratable). A true interactive, clickable DOM `renderServer` is a DEFERRED
-follow-up: the react-server-vs-default condition wall requires a two-environment
-setup. For interactive server-component behavior today, use e2e.
+`renderToFlightString` returns the wire STRING; for typed assertions on a client
+boundary's props, use `renderServerTree` (next).
+
+### renderServerTree — serialize then deserialize to an inspectable tree
+
+Same react-server project. Serializes the real Flight, then deserializes it to a
+React element tree you can traverse. The win over the wire string: a client
+boundary's props come back as REAL JS values (a `Date` is a `Date`), and you can
+confirm a `"use client"` component crossed the boundary (an `I` row) vs being
+inlined. No hydration / no interaction (that is the e2e tier).
+
+Wire `rangoUseClientTransform()` into `vitest.rsc.config.ts`
+(`plugins: [rangoUseClientTransform()]`, imported from `@rangojs/router/testing/vitest`)
+so islands are auto-discovered from the server tree's own imports — pass nothing:
+
+```tsx
+import { it, expect } from "vitest";
+import {
+  renderServerTree,
+  findClientBoundaries,
+} from "@rangojs/router/testing/flight";
+import { PriceTag } from "./PriceTag.js"; // a "use client" component (any filename)
+
+async function Panel({ amount, asOf }: { amount: number; asOf: Date }) {
+  await Promise.resolve();
+  return <PriceTag amount={amount} currency="USD" asOf={asOf} />;
+}
+
+it("client props survive the round trip", async () => {
+  const { flight, tree } = await renderServerTree(
+    <Panel amount={19.5} asOf={new Date("2026-01-02T00:00:00Z")} />,
+  );
+  expect(flight).toMatchFlight("PriceTag"); // wire assertions still work
+  const [tag] = findClientBoundaries(tree, "PriceTag");
+  expect(tag.props.amount).toBe(19.5); // a real number
+  expect(tag.props.asOf).toBeInstanceOf(Date); // a real Date, not "$D..."
+});
+```
+
+`findClientBoundaries(tree, name?)` always returns an array (`{ id, name, props,
+element }[]`) in document order, optionally filtered by export name; destructure
+`const [tag] = …` for one island, assert `.length` when count matters (missing
+name -> `[]`). Without the transform, register islands explicitly instead:
+`renderServerTree(<Panel/>, { clientComponents: { PriceTag } })`. A true
+interactive, clickable DOM `renderServer` is intentionally NOT shipped —
+in-process happy-dom hydration re-tests React and misses server/client divergence
+(which needs a real browser). Use e2e for interaction.
 
 ## E2E recipes (Playwright)
 

@@ -11,6 +11,7 @@
  * router alias. Modeled on the router package's own vitest.rsc.config.ts.
  */
 import { defineConfig } from "vitest/config";
+import { rangoUseClientTransform } from "@rangojs/router/testing/vitest";
 
 // Force production React in this process and any forked worker (forks inherit
 // process.env). Dev NODE_ENV crashes the bare worker (uninitialized owner-stack
@@ -18,6 +19,10 @@ import { defineConfig } from "vitest/config";
 process.env.NODE_ENV = "production";
 
 export default defineConfig({
+  // The "use client" transform lets renderServerTree resolve client islands
+  // from the server tree's own imports (no clientComponents). Server components
+  // are untouched, so renderToFlightString of leaf trees is unaffected.
+  plugins: [rangoUseClientTransform()],
   resolve: {
     conditions: ["react-server"],
   },

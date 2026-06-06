@@ -183,3 +183,88 @@ export function rangoTestConfig(
     server: { deps: { inline: [...rangoInlineDeps] } },
   };
 }
+
+/** A minimal Vite plugin shape (avoids a hard dependency on Vite's types). */
+interface FlightTransformPlugin {
+  name: string;
+  transform(
+    code: string,
+    id: string,
+  ): Promise<{ code: string; map: unknown } | undefined>;
+}
+
+/**
+ * A Vite plugin for the FLIGHT (react-server) Vitest project that applies the
+ * `"use client"` transform to a consumer's client modules — the same transform a
+ * real build applies. With it, `renderServerTree` (`@rangojs/router/testing/flight`)
+ * resolves client islands AUTOMATICALLY from the server tree's own imports: no
+ * `clientComponents` to pass, no filename convention. Without it, a `"use client"`
+ * module is imported as a plain (unmarked) function and would render server-side,
+ * so you must list islands via `renderServerTree(..., { clientComponents })`.
+ *
+ * Add it to your react-server Vitest project:
+ *
+ * ```ts
+ * // vitest.rsc.config.ts
+ * import { defineConfig } from "vitest/config";
+ * import { rangoUseClientTransform } from "@rangojs/router/testing/vitest";
+ *
+ * export default defineConfig({
+ *   resolve: { conditions: ["react-server"] },
+ *   plugins: [rangoUseClientTransform()],
+ *   test: {
+ *     include: ["test/**\/*.rsc-test.{ts,tsx}"],
+ *     pool: "forks",
+ *     execArgv: ["--conditions=react-server"],
+ *   },
+ * });
+ * ```
+ *
+ * Each `"use client"` module's exports are replaced with client references keyed
+ * by the module's absolute path (the boundary id), the export name becoming the
+ * boundary name. Modules without the directive (server components) are untouched,
+ * so `renderToFlightString` of pure leaf trees is unaffected.
+ */
+export function rangoUseClientTransform(): FlightTransformPlugin {
+  return {
+    name: "rango:testing-use-client",
+    async transform(code, id) {
+      if (id.includes("/node_modules/")) return undefined;
+      // Fast path: only parse modules that mention the directive.
+      if (!code.includes("use client")) return undefined;
+      const { parseAstAsync } = await import("vite");
+      const { hasDirective, transformDirectiveProxyExport } =
+        await import("@vitejs/plugin-rsc/transforms");
+      // vite's parser and the transforms ship structurally-compatible but
+      // distinctly-typed ASTs (oxc vs estree); cast through the transform's own
+      // parameter type, exactly as plugin-rsc does at runtime.
+      type TransformAst = Parameters<typeof transformDirectiveProxyExport>[0];
+      let ast: TransformAst;
+      try {
+        ast = (await parseAstAsync(code)) as unknown as TransformAst;
+      } catch {
+        return undefined;
+      }
+      if (!hasDirective(ast.body, "use client")) return undefined;
+      const result = transformDirectiveProxyExport(ast, {
+        directive: "use client",
+        code,
+        runtime: (name: string) =>
+          `$$RangoRSD.registerClientReference(` +
+          `() => { throw new Error("client reference " + ${JSON.stringify(name)} + " is not callable on the server"); }, ` +
+          `${JSON.stringify(id)}, ${JSON.stringify(name)})`,
+      });
+      if (!result) return undefined;
+      const { output } = result;
+      // The vendored server serializer is the one renderToFlightString uses;
+      // resolvable here under the react-server condition.
+      output.prepend(
+        `import * as $$RangoRSD from "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge";\n`,
+      );
+      return {
+        code: output.toString(),
+        map: output.generateMap({ hires: true }),
+      };
+    },
+  };
+}

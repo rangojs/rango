@@ -61,6 +61,7 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 | a response route (`path.json/.text/...`)         | status, content-type, body, content negotiation          | integration         | `dispatch`                                                                     | `/response-routes`, `/mime-routes`       |
 | a redirect / `404` / middleware redirect         | the `Response` (status + `Location`)                     | integration         | `dispatch`                                                                     | `/middleware`, `/route`                  |
 | an async Server Component                        | real Flight output / serialization shape                 | RSC unit            | `renderToFlightString` + `toMatchFlight`                                       | `/route`                                 |
+| a client island's props across the boundary      | typed prop fidelity (`Date`/`Map`), inlined-vs-island    | RSC unit            | `renderServerTree` + `findClientBoundaries`                                    | `/route`                                 |
 | a `"use server"` action + revalidation flow      | the mutate -> reload -> UI update, JS and no-JS          | e2e                 | `parityDescribe` + `expectParity`                                              | `/server-actions`                        |
 | navigation / hydration / view transitions        | no reload, no page error, correct pathname               | e2e                 | `parityDescribe`, `waitForHydration`, matchers                                 | `/hooks`, `/view-transitions`            |
 | `cache()` / `"use cache"` / loader cache         | hit/miss/stale across two requests                       | e2e + signal        | `assertCacheStatus` / telemetry sink                                           | `/caching`, `/use-cache`, `/cache-guide` |
@@ -92,14 +93,16 @@ server actions + revalidation, `cache()` hit/miss/stale over real requests,
 prerender serving, progressive-enhancement parity, the Flight serialize→hydrate
 round-trip, and server→client reference identity (the remount-bug class — a
 client reference must resolve to the same client reference, which only a real
-hydrated render exercises). An interactive, clickable `renderServer` (serialize a
-server tree, then deserialize, hydrate, and click it in the test) is a deliberate
-non-goal at the unit layer: serializing needs React's `react-server` build and
-hydrating needs React's client build, and those two export conditions cannot
-coexist in one vitest worker — it is the same reason the Flight tests live in
-their own `vitest.rsc.config` project. So "does my async Server Component render,
-hydrate, and respond to a click" is an **e2e** question by construction. For all
-of these, reach for `createRangoE2E` / `parityDescribe` / `assertCacheStatus`.
+hydrated render exercises). The serialize→deserialize half of that round trip IS
+available in-process via `renderServerTree` (assert a client boundary's typed
+props and inlined-vs-island — see below); what stays e2e is the **hydrate +
+click** half. An interactive, clickable `renderServer` (hydrate the deserialized
+tree and click it in the test) is a deliberate non-goal at the unit layer:
+hydrating in happy-dom re-tests React more than your app and misses the only
+hydration bug worth a dedicated test (server/client divergence needs a real
+browser). So "does my async Server Component render, hydrate, and respond to a
+click" is an **e2e** question by construction. For all of these, reach for
+`createRangoE2E` / `parityDescribe` / `assertCacheStatus`.
 
 There is one more boundary, and it is yours, not a layer ceiling: **platform
 bindings** (`env.DB`, Durable Objects, `env.R2`). The moment a loader/middleware/
@@ -219,6 +222,7 @@ build); Flight tests cover pure leaf server components.
 
 ```ts
 import { defineConfig } from "vitest/config";
+import { rangoUseClientTransform } from "@rangojs/router/testing/vitest";
 
 // Force production React in this process and any forked worker (forks inherit
 // process.env). Dev NODE_ENV crashes the bare worker (jsxDEV owner-stack
@@ -227,6 +231,11 @@ import { defineConfig } from "vitest/config";
 process.env.NODE_ENV = "production";
 
 export default defineConfig({
+  // Applies the "use client" transform so renderServerTree resolves client
+  // islands from a server tree's own imports — no clientComponents to pass.
+  // Server components are untouched (renderToFlightString of leaf trees is
+  // unaffected). Omit it only if you don't use renderServerTree.
+  plugins: [rangoUseClientTransform()],
   resolve: { conditions: ["react-server"] },
   test: {
     globals: true,
@@ -669,12 +678,72 @@ payload. `renderToFlightString` options (`url`, `headers`, `env`, `params`,
 via internal imports — but a **consumer** importing those server APIs from the
 barrel hits the caveat below, so prefer props.
 
-Scope: server-only / leaf trees. A client component in the tree emits an
-unresolved `I[...]` import row against the empty client manifest — fine for
-snapshotting the payload shape, not hydratable. A fully interactive, clickable
-DOM `renderServer` (hydrated) is a deferred follow-up: the react-server vs
-default condition wall needs a two-environment setup, which v1 does not ship. For
-interactive server-component behavior today, use e2e.
+Scope: `renderToFlightString` returns the wire STRING. A client component in the
+tree emits an `I[...]` row against its empty client manifest — fine for
+snapshotting the payload shape with `toMatchFlight`. To inspect a client
+boundary's props as real values, or to detect inlined-vs-island, use
+`renderServerTree` (below). A fully interactive, clickable DOM `renderServer`
+(hydrated, with state and clicks) is intentionally NOT shipped: in-process
+happy-dom hydration re-tests React more than your app and misses the only
+hydration bug worth a dedicated test (server/client divergence, which needs a
+real browser). Test interactive behavior at e2e.
+
+### renderServerTree — serialize then deserialize to an inspectable tree
+
+Same react-server vitest project. `renderServerTree` serializes the real Flight
+(identical bytes to `renderToFlightString`) and then deserializes it back to a
+React element tree you can traverse. The unique win over the wire string: a
+client boundary's props come back as **real JS values** (a `Date` is a `Date`,
+not the opaque `$D...` encoding), and you can confirm a `"use client"` component
+actually crossed the boundary (an `I` row) instead of being inlined. There is NO
+hydration and NO interaction — boundaries are inert placeholders carrying props.
+
+With `rangoUseClientTransform()` wired into the Flight project (above), client
+islands are **auto-discovered** from the server tree's own imports — you pass
+nothing:
+
+```tsx
+import { it, expect } from "vitest";
+import {
+  renderServerTree,
+  findClientBoundaries,
+} from "@rangojs/router/testing/flight";
+import { PriceTag } from "./PriceTag.js"; // a "use client" component (any filename)
+
+async function ProductPanel({ amount, asOf }: { amount: number; asOf: Date }) {
+  await Promise.resolve();
+  return <PriceTag amount={amount} currency="USD" asOf={asOf} />;
+}
+
+it("client props survive the serialize -> deserialize round trip", async () => {
+  const { flight, tree } = await renderServerTree(
+    <ProductPanel amount={19.5} asOf={new Date("2026-01-02T00:00:00Z")} />,
+  );
+  expect(flight).toMatchFlight("PriceTag"); // wire assertions still work
+
+  const [tag] = findClientBoundaries(tree, "PriceTag");
+  expect(tag.props.amount).toBe(19.5); // a real number
+  expect(tag.props.asOf).toBeInstanceOf(Date); // a real Date, not "$D..."
+});
+```
+
+`findClientBoundaries(tree, name?)` returns every boundary (each
+`{ id, name, props, element }`) in document order, optionally filtered by name; it
+always returns an array, so destructure `const [tag] = …` for a single expected
+island and assert on `.length` when the count matters (a missing name yields
+`[]`). Same **pure-leaf** caveat as `renderToFlightString` applies to the server
+component (don't import server-only APIs).
+
+**Fallback without the transform.** If you don't wire `rangoUseClientTransform()`,
+a plainly-imported island is just an unmarked function the serializer would render
+server-side. Register islands explicitly instead — list the components you already
+import (no filename convention; `"use client"` is a directive, not a name):
+
+```tsx
+const { tree } = await renderServerTree(<ProductPanel … />, {
+  clientComponents: { PriceTag },
+});
+```
 
 Consumer caveat: a server component that imports a server API from the
 `@rangojs/router` **barrel** (e.g. `getRequestContext`, `cookies`) cannot be
@@ -889,6 +958,13 @@ dispatch(router: Rango, request: Request | string, opts?: { env? }): Promise<Res
 renderToFlightString(element, opts?: { url?, headers?, env?, params?, routeName? }): Promise<string>;
 flightMatchers; // expect.extend -> toMatchFlight(substring), toMatchFlightSnapshot()
 // expect.extend(flightMatchers); expect(await renderToFlightString(<C/>)).toMatchFlight("hi");
+renderServerTree(element, opts?: { ...same, clientComponents? }): Promise<{ flight, tree }>;
+findClientBoundaries(tree, name?): ClientBoundary[]; // {id,name,props,element}[]; [] if none
+rangoUseClientTransform(); // Vite plugin for vitest.rsc.config.ts -> auto-discover islands
+// serialize -> deserialize (no hydration). With rangoUseClientTransform() wired, no clientComponents:
+// const { tree } = await renderServerTree(<Page/>);
+// const [tag] = findClientBoundaries(tree, "PriceTag"); expect(tag.props.asOf).toBeInstanceOf(Date);
+// fallback (no transform): renderServerTree(<Page/>, { clientComponents: { PriceTag } })
 
 // Cache / prerender
 assertCacheStatus(target: Response | { headers }, segment: string,

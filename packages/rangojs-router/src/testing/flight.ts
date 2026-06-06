@@ -98,6 +98,25 @@ export async function renderToFlightString(
   element: ReactNode,
   opts: RenderToFlightStringOptions = {},
 ): Promise<string> {
+  // Server-only trees: empty client manifest. A client reference would emit an
+  // unresolvable `I` row here; use renderServerTree (flight-tree.ts) when the
+  // tree has client boundaries you want to inspect.
+  return serializeToFlightString(element, opts, {});
+}
+
+/**
+ * Shared serialize core: set up a request context, wrap the element as a Rango
+ * payload, and serialize it with the given client-reference manifest. Used by
+ * {@link renderToFlightString} (empty manifest) and renderServerTree (a manifest
+ * that resolves every registered client reference).
+ *
+ * Must run under the `react-server` export condition (see module header).
+ */
+export async function serializeToFlightString(
+  element: ReactNode,
+  opts: RenderToFlightStringOptions,
+  clientManifest: unknown,
+): Promise<string> {
   const url = new URL(opts.url ?? DEFAULT_URL);
   const request = new Request(url, { headers: opts.headers });
   const ctx = createRequestContext({
@@ -120,18 +139,14 @@ export async function renderToFlightString(
     // rejection after draining, so `await expect(...).rejects.toThrow()` works.
     let renderError: unknown;
     let didError = false;
-    const stream = RSDServer.renderToReadableStream(
-      payload,
-      {},
-      {
-        onError(error: unknown) {
-          if (!didError) {
-            didError = true;
-            renderError = error;
-          }
-        },
+    const stream = RSDServer.renderToReadableStream(payload, clientManifest, {
+      onError(error: unknown) {
+        if (!didError) {
+          didError = true;
+          renderError = error;
+        }
       },
-    );
+    });
     // Drain inside the context so async components see ctx during streaming.
     const text = await new Response(stream).text();
     if (didError) throw renderError;
