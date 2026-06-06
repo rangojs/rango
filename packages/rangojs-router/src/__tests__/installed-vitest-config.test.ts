@@ -73,7 +73,7 @@ describe("installed vitest config (real node_modules realpath)", () => {
           join(tmp, "load.mjs"),
           `import { rangoTestConfig } from "@rangojs/router/testing/vitest";
 import { existsSync } from "node:fs";
-const cfg = rangoTestConfig({ cloudflare: true });
+const cfg = rangoTestConfig({ preset: "cloudflare" });
 if (cfg.alias.length !== 5) throw new Error("expected 5 aliases, got " + cfg.alias.length);
 if (!cfg.server.deps.inline.length) throw new Error("missing server.deps.inline");
 if (!cfg.alias.every((a) => existsSync(a.replacement)))

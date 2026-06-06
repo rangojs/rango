@@ -18,6 +18,6 @@ export default defineConfig({
     include: ["test/**/*.{test,spec}.{ts,tsx}"],
     exclude: ["node_modules", "dist", "e2e", "test/**/*.rsc-test.*"],
     environment: "node",
-    ...rangoTestConfig({ cloudflare: true }),
+    ...rangoTestConfig({ preset: "cloudflare" }),
   },
 });

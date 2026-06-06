@@ -20,7 +20,7 @@ items are inherent limitations (full-router import; flight ctx) documented below
 
 > **Resolution:** the manual setup below is now packaged as the
 > `@rangojs/router/testing/vitest` preset — `vitest.config.ts` here is just
-> `resolve: { alias: rangoTestAliases({ cloudflare: true }) }`. The notes below
+> `resolve: { alias: rangoTestAliases({ preset: "cloudflare" }) }`. The notes below
 > explain what that preset does and why.
 
 The docs' setup for `dispatch` is "`vi.mock('@vitejs/plugin-rsc/rsc')` then

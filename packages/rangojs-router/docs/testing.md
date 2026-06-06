@@ -173,9 +173,9 @@ export default defineConfig({
     globals: true,
     include: ["test/**/*.{test,spec}.{ts,tsx}"],
     environment: "node", // renderRoute tests use a `// @vitest-environment happy-dom` pragma
-    // `cloudflare: true` also stubs the cloudflare:workers / cloudflare:email
-    // runtime virtuals a Cloudflare app's route tree imports.
-    ...rangoTestConfig({ cloudflare: true }),
+    // `preset: "cloudflare"` also stubs the cloudflare:workers / cloudflare:email
+    // runtime virtuals a Cloudflare app's route tree imports (default: "node").
+    ...rangoTestConfig({ preset: "cloudflare" }),
   },
 });
 ```
@@ -834,9 +834,9 @@ the Flight helpers from `@rangojs/router/testing/flight`.
 
 ```ts
 // Setup — @rangojs/router/testing/vitest (ships as compiled JS; node-loadable in vitest.config.ts)
-rangoTestConfig(opts?: { cloudflare?: boolean }): { alias: TestAlias[]; server: { deps: { inline: RegExp[] } } };
-// test: { ..., ...rangoTestConfig({ cloudflare: true }) }   // aliases + the required deps.inline
-rangoTestAliases(opts?: { cloudflare?: boolean }): { find: string|RegExp; replacement: string }[]; // aliases only
+rangoTestConfig(opts?: { preset?: "node" | "cloudflare" }): { alias: TestAlias[]; server: { deps: { inline: RegExp[] } } };
+// test: { ..., ...rangoTestConfig({ preset: "cloudflare" }) }   // aliases + the required deps.inline
+rangoTestAliases(opts?: { preset?: "node" | "cloudflare" }): { find: string|RegExp; replacement: string }[]; // aliases only
 rangoInlineDeps: RegExp[];  // the server.deps.inline patterns, if wiring them yourself
 
 // Unit

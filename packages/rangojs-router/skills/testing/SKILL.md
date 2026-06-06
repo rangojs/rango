@@ -90,7 +90,7 @@ The single rule that drives everything:
 | The behavior is…                                                                                          | Layer        | Primitive                                                        | Import root                      |
 | --------------------------------------------------------------------------------------------------------- | ------------ | ---------------------------------------------------------------- | -------------------------------- |
 | a pure function / `reverse` / a predicate (`revalidate`, `isAction`)                                      | unit (node)  | call it directly; `runMiddleware`/`runLoader` for ctx            | `@rangojs/router/testing`        |
-| one loader's data logic                                                                                   | unit (node)  | `runLoader` (pass the **raw fn**, not `createLoader`)            | `@rangojs/router/testing`        |
+| one loader's data logic                                                                                   | unit (node)  | `runLoader` (a registered `createLoader` handle, or the raw fn)  | `@rangojs/router/testing`        |
 | one middleware's ordering / short-circuit / cookie+header merge                                           | unit (node)  | `runMiddleware`                                                  | `@rangojs/router/testing`        |
 | a CLIENT component reading router context (`useParams`/`useReverse`/`Outlet`/`useNavigation`/`useLoader`) | unit (DOM)   | `renderRoute` (needs happy-dom/jsdom + `@testing-library/react`) | `@rangojs/router/testing/dom`    |
 | a redirect / status / headers / cookies / **response route** (json/text/html/xml/md), no Flight           | integration  | `dispatch` (router -> Response)                                  | `@rangojs/router/testing`        |
@@ -486,7 +486,7 @@ export default defineConfig({
     globals: true,
     include: ["test/**/*.test.{ts,tsx}"],
     environment: "node",
-    ...rangoTestConfig({ cloudflare: true }),
+    ...rangoTestConfig({ preset: "cloudflare" }),
   },
 });
 ```

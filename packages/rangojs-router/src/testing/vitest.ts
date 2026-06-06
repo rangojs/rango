@@ -20,7 +20,7 @@
  * - The build-only `@rangojs/router:version` virtual and `@vitejs/plugin-rsc/rsc`
  *   (whose real body imports unresolvable Vite virtuals) are stubbed.
  * - Cloudflare apps additionally import the `cloudflare:workers` /
- *   `cloudflare:email` runtime virtuals; pass `{ cloudflare: true }` to stub them.
+ *   `cloudflare:email` runtime virtuals; pass `{ preset: "cloudflare" }` to stub them.
  *
  * Usage (recommended one-call form — see {@link rangoTestConfig}):
  *
@@ -34,7 +34,7 @@
  *     globals: true,
  *     include: ["test/**\/*.test.{ts,tsx}"],
  *     environment: "node",
- *     ...rangoTestConfig({ cloudflare: true }),
+ *     ...rangoTestConfig({ preset: "cloudflare" }),
  *   },
  * });
  * ```
@@ -70,11 +70,13 @@ export interface TestAlias {
 /** Options for {@link rangoTestAliases}. */
 export interface RangoTestAliasOptions {
   /**
-   * Stub the Cloudflare Workers runtime virtuals (`cloudflare:workers` /
-   * `cloudflare:email`). Enable for a Cloudflare app whose route tree imports
-   * them. Default: false.
+   * Deployment preset, matching `rango({ preset })` in the Vite plugin. With
+   * `"cloudflare"` the helper additionally stubs the Cloudflare Workers runtime
+   * virtuals (`cloudflare:workers` / `cloudflare:email`) a CF app's route tree
+   * imports. A string (not a boolean) so more presets can be added without an
+   * API change. Default: `"node"`.
    */
-  cloudflare?: boolean;
+  preset?: "node" | "cloudflare";
 }
 
 /**
@@ -113,7 +115,7 @@ export function rangoTestAliases(
     },
   ];
 
-  if (opts.cloudflare) {
+  if (opts.preset === "cloudflare") {
     aliases.push(
       {
         find: "cloudflare:workers",
@@ -166,7 +168,7 @@ export interface RangoTestConfig {
  *     globals: true,
  *     include: ["test/**\/*.test.{ts,tsx}"],
  *     environment: "node",
- *     ...rangoTestConfig({ cloudflare: true }),
+ *     ...rangoTestConfig({ preset: "cloudflare" }),
  *   },
  * });
  * ```
