@@ -232,6 +232,7 @@ is assertable WITHOUT casting through the `@internal` `ctx.res` / `ctx.cookies()
 - `thrown` — what `fn` threw (a redirect/notFound `Response` on the SUCCESS path), or `undefined`. Captured, NOT re-thrown — assert on it for a throwing action
 - `response` — Set-Cookie / headers / status the run set; on a thrown redirect, that redirect's `Location` merged with the cookies
 - `cookies` — the effective `{ name: value }` cookie view after the run
+- `headers` — the response headers the run set (via `ctx.header(...)`, plus a thrown redirect's `Location`) as a plain `{ name: value }` object, EXCLUDING set-cookie (that's `cookies`); names lowercased. (`runMiddleware` returns the same `headers`.)
 - `locationState` — the flash the action set via `ctx.setLocationState()` / `redirect({ state })`, resolved to the `{ key: value }` the client reads
 
 The THROW path matters: the dominant cookie+flash case is an auth action that sets

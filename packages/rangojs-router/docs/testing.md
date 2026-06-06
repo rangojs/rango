@@ -47,26 +47,26 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 
 ## The testing surface, mapped to the API
 
-| You ship / consume…                              | Test that…                                               | Layer               | Primitive                                                                      | Skill                                    |
-| ------------------------------------------------ | -------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------ | ---------------------------------------- |
-| `reverse` / `useReverse` / `href`                | the URL is correct; misuse fails to compile              | unit + types        | call directly; `@ts-expect-error`                                              | `/typesafety`, `/links`                  |
-| a `loader()` body                                | data logic given params/env/vars/search                  | unit (node)         | `runLoader` (handle or raw fn)                                                 | `/loader`                                |
-| `middleware()` (auth, logging)                   | ordering, short-circuit, cookie/header merge             | unit (node)         | `runMiddleware`                                                                | `/middleware`                            |
-| a client component reading router context        | it renders given params/loaderData/Outlet                | unit (DOM)          | `renderRoute`                                                                  | `/hooks`                                 |
-| a component reading `useLocationState`           | it renders the seeded location-state value               | unit (DOM)          | `renderRoute` (`locationState` option)                                         | `/location-state`                        |
-| a component reading `useHandle` (Breadcrumbs)    | it renders the seeded handle output                      | unit (DOM)          | `renderRoute` (`handles` option)                                               | `/handles`                               |
-| a handle's `collect`/accumulator                 | it maps per-segment pushes to the accumulated value      | unit (node)         | `collectHandle`                                                                | `/handles`                               |
-| a component under an `include('/shop', …)` mount | `useMount`/`useHref`/`useReverse` resolve the prefix     | unit (DOM)          | `renderRoute` (`mount` option)                                                 | `/include`                               |
-| a server action's cookie / flash output          | the `Set-Cookie` / flash set, even on `throw redirect()` | unit (node)         | `runInRequestContext` (`{ result, thrown, response, cookies, locationState }`) | `/server-actions`                        |
-| a response route (`path.json/.text/...`)         | status, content-type, body, content negotiation          | integration         | `dispatch`                                                                     | `/response-routes`, `/mime-routes`       |
-| a redirect / `404` / middleware redirect         | the `Response` (status + `Location`)                     | integration         | `dispatch`                                                                     | `/middleware`, `/route`                  |
-| an async Server Component                        | real Flight output / serialization shape                 | RSC unit            | `renderToFlightString` + `toMatchFlight`                                       | `/route`                                 |
-| a client island's props across the boundary      | typed prop fidelity (`Date`/`Map`), inlined-vs-island    | RSC unit            | `renderServerTree` + `findClientBoundaries`                                    | `/route`                                 |
-| a `"use server"` action + revalidation flow      | the mutate -> reload -> UI update, JS and no-JS          | e2e                 | `parityDescribe` + `expectParity`                                              | `/server-actions`                        |
-| navigation / hydration / view transitions        | no reload, no page error, correct pathname               | e2e                 | `parityDescribe`, `waitForHydration`, matchers                                 | `/hooks`, `/view-transitions`            |
-| `cache()` / `"use cache"` / loader cache         | hit/miss/stale across two requests                       | e2e + signal        | `assertCacheStatus` / telemetry sink                                           | `/caching`, `/use-cache`, `/cache-guide` |
-| `Prerender(...)` routes                          | served from a build-time artifact (a cache hit)          | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`                                        | `/prerender`                             |
-| the generated `*.named-routes.gen.ts`            | it matches the runtime route map (drift in CI)           | unit (node)         | `assertGeneratedRoutesMatch`                                                   | `/typesafety`                            |
+| You ship / consume…                              | Test that…                                                         | Layer               | Primitive                                                                               | Skill                                    |
+| ------------------------------------------------ | ------------------------------------------------------------------ | ------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `reverse` / `useReverse` / `href`                | the URL is correct; misuse fails to compile                        | unit + types        | call directly; `@ts-expect-error`                                                       | `/typesafety`, `/links`                  |
+| a `loader()` body                                | data logic given params/env/vars/search                            | unit (node)         | `runLoader` (handle or raw fn)                                                          | `/loader`                                |
+| `middleware()` (auth, logging)                   | ordering, short-circuit, cookie/header merge                       | unit (node)         | `runMiddleware`                                                                         | `/middleware`                            |
+| a client component reading router context        | it renders given params/loaderData/Outlet                          | unit (DOM)          | `renderRoute`                                                                           | `/hooks`                                 |
+| a component reading `useLocationState`           | it renders the seeded location-state value                         | unit (DOM)          | `renderRoute` (`locationState` option)                                                  | `/location-state`                        |
+| a component reading `useHandle` (Breadcrumbs)    | it renders the seeded handle output                                | unit (DOM)          | `renderRoute` (`handles` option)                                                        | `/handles`                               |
+| a handle's `collect`/accumulator                 | it maps per-segment pushes to the accumulated value                | unit (node)         | `collectHandle`                                                                         | `/handles`                               |
+| a component under an `include('/shop', …)` mount | `useMount`/`useHref`/`useReverse` resolve the prefix               | unit (DOM)          | `renderRoute` (`mount` option)                                                          | `/include`                               |
+| a server action's cookie / header / flash output | `Set-Cookie`, response headers, flash — even on `throw redirect()` | unit (node)         | `runInRequestContext` (`{ result, thrown, response, cookies, headers, locationState }`) | `/server-actions`                        |
+| a response route (`path.json/.text/...`)         | status, content-type, body, content negotiation                    | integration         | `dispatch`                                                                              | `/response-routes`, `/mime-routes`       |
+| a redirect / `404` / middleware redirect         | the `Response` (status + `Location`)                               | integration         | `dispatch`                                                                              | `/middleware`, `/route`                  |
+| an async Server Component                        | real Flight output / serialization shape                           | RSC unit            | `renderToFlightString` + `toMatchFlight`                                                | `/route`                                 |
+| a client island's props across the boundary      | typed prop fidelity (`Date`/`Map`), inlined-vs-island              | RSC unit            | `renderServerTree` + `findClientBoundaries`                                             | `/route`                                 |
+| a `"use server"` action + revalidation flow      | the mutate -> reload -> UI update, JS and no-JS                    | e2e                 | `parityDescribe` + `expectParity`                                                       | `/server-actions`                        |
+| navigation / hydration / view transitions        | no reload, no page error, correct pathname                         | e2e                 | `parityDescribe`, `waitForHydration`, matchers                                          | `/hooks`, `/view-transitions`            |
+| `cache()` / `"use cache"` / loader cache         | hit/miss/stale across two requests                                 | e2e + signal        | `assertCacheStatus` / telemetry sink                                                    | `/caching`, `/use-cache`, `/cache-guide` |
+| `Prerender(...)` routes                          | served from a build-time artifact (a cache hit)                    | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`                                                 | `/prerender`                             |
+| the generated `*.named-routes.gen.ts`            | it matches the runtime route map (drift in CI)                     | unit (node)         | `assertGeneratedRoutesMatch`                                                            | `/typesafety`                            |
 
 ## What these primitives deliberately don't cover
 
@@ -643,6 +643,53 @@ response routes are auto-wrapped as `{ data: <value> }`. Cookies and
 `ctx.header(...)` set inside a response-route handler surface on the returned
 `Response`. Pass env via `{ env }`.
 
+### runInRequestContext — the handler / server-action test primitive
+
+`runInRequestContext(fn, opts)` is **the** way to unit-test a route handler or
+server action — any function that reads the request (`getRequestContext()`,
+`cookies()`, `ctx.get(var)`) and produces side-effects (a `Set-Cookie`, a
+response header, a flash, a redirect). It builds a real `RequestContext` (same
+`opts` as the other primitives — `env`, `request`, `vars`, `params`, …) **and
+enters it**, runs `fn` (sync or async), then hands back a typed snapshot of
+everything the handler touched — captured whether `fn` **returns or throws**, so
+the dominant "`throw redirect()` on success" path needs no try/catch:
+
+```ts
+const { result, thrown, response, cookies, headers, locationState } =
+  await runInRequestContext(() => loginAction(input), {
+    env,
+    request: new Request("https://app.test/login", {
+      headers: { Cookie: "sid=abc" },
+    }),
+  });
+```
+
+| Field           | What it holds                                                                                                                                    |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `result`        | `fn`'s awaited return, or `undefined` if it threw                                                                                                |
+| `thrown`        | what `fn` threw (a redirect/`notFound` `Response` on the success path) — captured, **not** re-thrown; assert on it                               |
+| `response`      | the merged `Response` (status + headers + Set-Cookie); a thrown redirect's `Location` merged with the accumulated cookies                        |
+| `cookies`       | effective `{ name: value }` cookie view (request cookies + run mutations, last-write-wins)                                                       |
+| `headers`       | response headers as `{ name: value }`, **excluding** `set-cookie` (that's `cookies`), including a thrown redirect's `Location`; names lowercased |
+| `locationState` | the flash the handler set (`ctx.setLocationState()` / `redirect({ state })`), as the `{ key: value }` the client reads                           |
+
+```ts
+expect(cookies.session).toBe("new-token"); // Set-Cookie, parsed
+expect(headers["cache-control"]).toBe("no-store"); // a header the handler set
+expect(headers.location).toBe("/app"); // the thrown redirect's target
+expect(locationState).toEqual({ flash: { text: "Welcome back" } });
+```
+
+Reading **vars the handler set** is via the context, not the snapshot: pass
+`vars` to seed, and read with `ctx.get(token)` (the `fn` receives `ctx`, or use
+the low-level `createTestRequestContext` + `runWithRequestContext`). A
+self-describing "vars the handler set" map is intentionally not provided —
+`createVar()` keys are anonymous symbols with no reverse lookup, so such a map
+could neither name the vars nor separate set-by-handler from seeded.
+
+`runMiddleware` returns the same `cookies` / `headers` snapshot (plus `ctx`,
+`response`, `nextCalled`) for asserting a middleware's header/cookie effects.
+
 ### renderToFlightString — real async Server Components
 
 Under the react-server vitest project (`*.rsc-test.{ts,tsx}`, run via
@@ -989,11 +1036,13 @@ assertGeneratedRoutesMatch(router, generatedMap?): void;
 // Advanced context construction (for an action / fn that reads getRequestContext()/cookies())
 runInRequestContext<T>(fn: (ctx) => T | Promise<T>, opts?):
   Promise<{ result: T | undefined; thrown: unknown; response: Response;
-            cookies: Record<string, string>; locationState: Record<string, unknown> }>;
+            cookies: Record<string, string>; headers: Record<string, string>;
+            locationState: Record<string, unknown> }>;
   // build + ENTER a real ctx in one call; captures the action's OUTPUT whether fn RETURNS or THROWS.
   // result = fn's return (undefined if it threw); thrown = what it threw (a redirect Response on the
   // success path — captured, NOT re-thrown); response = Set-Cookie/headers/status (a thrown redirect's
-  // Location merged with the cookies); cookies = effective view; locationState = the flash.
+  // Location merged with the cookies); cookies = effective cookie view; headers = response headers as a
+  // plain object (excl. set-cookie; incl. a redirect Location); locationState = the flash.
 runWithRequestContext(ctx, fn);                     // low-level: enter a ctx you already built
 createTestRequestContext(opts); toRequest(...); seedVariables(...);
 // const { cookies, response, thrown } = await runInRequestContext(() => loginAction(input), // sets cookie, throw redirect("/app")

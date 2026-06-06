@@ -192,6 +192,14 @@ export interface RunInRequestContextResult<T> {
    */
   cookies: Record<string, string>;
   /**
+   * The response headers the run set (via `ctx.header(...)`, plus a thrown
+   * redirect's `Location`), as a plain `{ name: value }` object — the same view
+   * as `response.headers`, but assertable like `cookies`/`locationState`.
+   * EXCLUDES `set-cookie` (use `cookies`, or `response.headers.getSetCookie()`).
+   * Header names are lowercased (HTTP headers are case-insensitive).
+   */
+  headers: Record<string, string>;
+  /**
    * Location state the run set via `ctx.setLocationState()` / `redirect({ state })`,
    * resolved to the flat `{ key: value }` shape the client reads off
    * `history.state` (empty object when none) — so a post-action flash ("Saved!")
@@ -203,7 +211,9 @@ export interface RunInRequestContextResult<T> {
 /**
  * Snapshot the observable effects a run left on `ctx` (cookies + location
  * state). Reads the fields directly off the ctx object, so it works both inside
- * and outside the AsyncLocalStorage scope (no `getRequestContext()`).
+ * and outside the AsyncLocalStorage scope (no `getRequestContext()`). Headers are
+ * snapshotted separately from the final {@link Response} (via
+ * {@link headersToObject}) so a thrown redirect's `Location` is included.
  */
 export function snapshotRunEffects<TEnv>(ctx: RequestContext<TEnv>): {
   cookies: Record<string, string>;
@@ -213,6 +223,21 @@ export function snapshotRunEffects<TEnv>(ctx: RequestContext<TEnv>): {
     cookies: { ...ctx.cookies() },
     locationState: resolveLocationStateEntries(ctx._locationState ?? []),
   };
+}
+
+/**
+ * The response headers as a plain `{ name: value }` object, EXCLUDING
+ * `set-cookie` (surfaced parsed on `cookies`). Names are lowercased (HTTP header
+ * names are case-insensitive). Read from the final response so a thrown
+ * redirect's `Location` and any `ctx.header(...)` both appear.
+ */
+export function headersToObject(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  headers.forEach((value, name) => {
+    if (name.toLowerCase() === "set-cookie") return;
+    out[name] = value;
+  });
+  return out;
 }
 
 /**
@@ -255,9 +280,9 @@ function buildRunResponse<TEnv>(
  * still needs a real request context to read the cookie and resolve
  * `getRequestContext()`.
  *
- * Returns `{ result, thrown, response, cookies, locationState }` so the action's
- * OUTPUT (Set-Cookie, headers, flash) is assertable without casting through the
- * `@internal` `ctx.res` / `ctx.cookies()`. `fn` may be async — the context stays
+ * Returns `{ result, thrown, response, cookies, headers, locationState }` so the
+ * action's OUTPUT (Set-Cookie, response headers, flash) is assertable without
+ * casting through the `@internal` `ctx.res` / `ctx.cookies()`. `fn` may be async — the context stays
  * active across its awaits (AsyncLocalStorage), and the snapshot is captured
  * whether `fn` returns OR throws. The throw path matters: the most common
  * cookie+flash case is an auth action that sets a cookie + flash then
@@ -276,6 +301,7 @@ function buildRunResponse<TEnv>(
  *   },
  * );
  * expect(cookies.session).toBe("new-token");
+ * expect(headers.location).toBe("/app"); // response headers as a plain object
  * expect((thrown as Response).headers.get("Location")).toBe("/app");
  * expect(response.headers.getSetCookie()).toContainEqual(
  *   expect.stringContaining("session="),
@@ -300,5 +326,6 @@ export async function runInRequestContext<T, TEnv = unknown>(
   }
   const { cookies, locationState } = snapshotRunEffects(ctx);
   const response = buildRunResponse(ctx, didThrow ? thrown : undefined);
-  return { result, thrown, response, cookies, locationState };
+  const headers = headersToObject(response.headers);
+  return { result, thrown, response, cookies, headers, locationState };
 }

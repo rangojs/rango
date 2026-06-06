@@ -149,6 +149,19 @@ describe("runMiddleware", () => {
     expect(setCookie.some((c) => c.startsWith("session=abc123"))).toBe(true);
   });
 
+  it("surfaces a header set inside middleware on result.headers", async () => {
+    const mw: MiddlewareFn = async (ctx, next) => {
+      ctx.header("X-Frame-Options", "DENY");
+      return next();
+    };
+
+    const { headers, response } = await runMiddleware(mw, "/");
+
+    // Public header view (names lowercased), excluding set-cookie.
+    expect(headers["x-frame-options"]).toBe("DENY");
+    expect(response.headers.get("X-Frame-Options")).toBe("DENY");
+  });
+
   it("runs an array of middleware in order", async () => {
     const order: string[] = [];
     const a: MiddlewareFn = async (_ctx, next) => {

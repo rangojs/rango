@@ -24,6 +24,7 @@ import { createReverseFunction } from "../router/handler-context.js";
 import type { MiddlewareFn } from "../router/middleware-types.js";
 import {
   createTestRequestContext,
+  headersToObject,
   snapshotRunEffects,
   type CreateTestContextOptions,
   type VarsInit,
@@ -88,6 +89,13 @@ export interface RunMiddlewareResult<TEnv = any> {
    * the `@internal` `ctx.cookies()`. Set-Cookie headers are also on `response`.
    */
   cookies: Record<string, string>;
+  /**
+   * The final response's headers as a plain `{ name: value }` object (the same
+   * view as `response.headers`), EXCLUDING `set-cookie` (use `cookies`). The
+   * public way to assert a header a middleware set (e.g. a security header)
+   * without reading `ctx.res.headers`. Header names are lowercased.
+   */
+  headers: Record<string, string>;
 }
 
 /**
@@ -175,5 +183,6 @@ export async function runMiddleware<TEnv = any>(
   );
 
   const { cookies } = snapshotRunEffects(ctx);
-  return { response, ctx, nextCalled, cookies };
+  const headers = headersToObject(response.headers);
+  return { response, ctx, nextCalled, cookies, headers };
 }

@@ -136,6 +136,28 @@ describe("runInRequestContext", () => {
     expect(locationState).toEqual({});
   });
 
+  it("surfaces response headers an action set via `headers`", async () => {
+    const { headers, response } = await runInRequestContext((ctx) => {
+      ctx.header("X-RateLimit-Remaining", "59");
+      ctx.header("Cache-Control", "no-store");
+      return "ok";
+    });
+    // Assertable as a plain object (names lowercased), like cookies/locationState.
+    expect(headers["x-ratelimit-remaining"]).toBe("59");
+    expect(headers["cache-control"]).toBe("no-store");
+    // Consistent with the response view.
+    expect(response.headers.get("X-RateLimit-Remaining")).toBe("59");
+  });
+
+  it("excludes set-cookie from `headers` (it is on `cookies`)", async () => {
+    const { headers, cookies: cookieView } = await runInRequestContext(() => {
+      cookies().set("session", "tok", { path: "/" });
+      return "ok";
+    });
+    expect(headers["set-cookie"]).toBeUndefined();
+    expect(cookieView.session).toBe("tok");
+  });
+
   it("captures a thrown redirect (the success path) with cookie + flash still observable", async () => {
     // The dominant case: an auth action sets a cookie + flash, then
     // `throw redirect(...)` on success. The snapshot must fire on the THROW path,
@@ -168,6 +190,13 @@ describe("runInRequestContext", () => {
     expect(
       response.headers.getSetCookie().some((c) => c.startsWith("session=tok")),
     ).toBe(true);
+  });
+
+  it("surfaces a thrown redirect's Location on `headers`", async () => {
+    const { headers } = await runInRequestContext(() => {
+      throw redirect("/app");
+    });
+    expect(headers.location).toBe("/app");
   });
 
   it("captures a non-Response throw on `thrown` without re-throwing", async () => {
