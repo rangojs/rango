@@ -91,6 +91,7 @@ export {
 export type {
   CreateTestContextOptions,
   TestRequestContext,
+  RunInRequestContextResult,
   VarsInit,
 } from "./internal/context.js";
 

@@ -4,10 +4,12 @@ import { cleanup } from "@testing-library/react";
 import { Outlet } from "../../client.js";
 import { useParams } from "../../browser/react/use-params.js";
 import { useReverse } from "../../browser/react/use-reverse.js";
+import { useHref } from "../../browser/react/use-href.js";
 import { useNavigation } from "../../browser/react/use-navigation.js";
 import { usePathname } from "../../browser/react/use-pathname.js";
 import { useLoader } from "../../use-loader.js";
 import { useHandle } from "../../browser/react/use-handle.js";
+import { useMount } from "../../browser/react/use-mount.js";
 import { createHandle } from "../../handle.js";
 import type { LoaderDefinition } from "../../types.js";
 import { renderRoute } from "../render-route.js";
@@ -179,5 +181,113 @@ describe("renderRoute", () => {
 
     expect(getByTestId("cart").textContent).toBe("3");
     expect(getByTestId("page").textContent).toBe("page");
+  });
+});
+
+describe("renderRoute mount (include() scope)", () => {
+  function MountProbe() {
+    return <span data-testid="mount">{useMount()}</span>;
+  }
+
+  it("defaults useMount() to '/' with no mount option", async () => {
+    const { getByTestId } = await renderRoute([
+      { path: "/x", Component: MountProbe },
+    ]);
+    expect(getByTestId("mount").textContent).toBe("/");
+  });
+
+  it("seeds useMount() with the mount prefix (models include('/shop', ...))", async () => {
+    const { getByTestId } = await renderRoute(
+      [{ path: "/c/wine", Component: MountProbe }],
+      { mount: "/shop", initialUrl: "/c/wine" },
+    );
+    expect(getByTestId("mount").textContent).toBe("/shop");
+  });
+
+  it("normalizes the mount prefix exactly like basename", async () => {
+    const { getByTestId } = await renderRoute(
+      [{ path: "/c", Component: MountProbe }],
+      { mount: "shop/" },
+    );
+    expect(getByTestId("mount").textContent).toBe("/shop");
+  });
+
+  it("exposes the mount to a LAYOUT component in the chain (not just the leaf)", async () => {
+    function Layout() {
+      return (
+        <div>
+          <span data-testid="layout-mount">{useMount()}</span>
+          <Outlet />
+        </div>
+      );
+    }
+    const { getByTestId } = await renderRoute(
+      [
+        { path: "/c", Component: Layout },
+        { path: "/c/wine", Component: MountProbe },
+      ],
+      { mount: "/shop", initialUrl: "/c/wine" },
+    );
+    expect(getByTestId("layout-mount").textContent).toBe("/shop");
+    expect(getByTestId("mount").textContent).toBe("/shop");
+  });
+
+  it("makes useReverse / useHref prefix by the mount (full include() modeling)", async () => {
+    function Linker() {
+      const reverse = useReverse({ product: "/c/:slug" });
+      const href = useHref();
+      return (
+        <div>
+          <a data-testid="rev" href={reverse("product", { slug: "wine" })}>
+            rev
+          </a>
+          <a data-testid="href" href={href("/cart")}>
+            cart
+          </a>
+        </div>
+      );
+    }
+    const { getByTestId } = await renderRoute(
+      [{ path: "/c/wine", Component: Linker }],
+      { mount: "/shop", initialUrl: "/c/wine" },
+    );
+    expect(getByTestId("rev").getAttribute("href")).toBe("/shop/c/wine");
+    expect(getByTestId("href").getAttribute("href")).toBe("/shop/cart");
+  });
+});
+
+describe("renderRoute handles reach LAYOUT components, not just the leaf", () => {
+  // The consumer's confusion: a layout (DetailLayout/ActionToolbar) that reads a
+  // handle "could not go through renderRoute". It can — handles are accumulated
+  // globally on the event controller (unlike loaders, which are segment-scoped
+  // via OutletContext), so any component in the chain reads the seeded values.
+  it("a LAYOUT reading useHandle sees the seeded values", async () => {
+    const Crumbs = createHandle<{ label: string }>();
+    function Layout() {
+      const crumbs = useHandle(Crumbs);
+      return (
+        <div>
+          <span data-testid="crumbs">
+            {crumbs.map((c) => c.label).join(">")}
+          </span>
+          <Outlet />
+        </div>
+      );
+    }
+    function Leaf() {
+      return <span data-testid="leaf">leaf</span>;
+    }
+    const { getByTestId } = await renderRoute(
+      [
+        { path: "/p", Component: Layout },
+        { path: "/p/x", Component: Leaf },
+      ],
+      {
+        initialUrl: "/p/x",
+        handles: [[Crumbs, [{ label: "Home" }, { label: "P" }]]],
+      },
+    );
+    expect(getByTestId("crumbs").textContent).toBe("Home>P");
+    expect(getByTestId("leaf").textContent).toBe("leaf");
   });
 });

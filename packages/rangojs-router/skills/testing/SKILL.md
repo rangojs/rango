@@ -109,9 +109,11 @@ Cross-references: `/loader`, `/middleware`, `/server-actions`, `/caching`,
 Runs the chain through the router's **real** `executeMiddleware`, so
 `next()`, return-Response short-circuit, throw-Response short-circuit,
 double-next guards, and header/cookie merging behave exactly as in production.
-`nextCalled` is `0` on short-circuit, `1` on pass-through. The returned `ctx` is
-the underlying `RequestContext` — read `ctx.cookies()`, `ctx.get(...)`,
-`ctx.res.headers`.
+`nextCalled` is `0` on short-circuit, `1` on pass-through. The result also
+carries `cookies` (the effective `{ name: value }` view — assert a cookie the
+chain set without casting through the `@internal` `ctx.cookies()`). The returned
+`ctx` is the underlying `RequestContext` for anything else (`ctx.get(...)`,
+`ctx.res.headers`).
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -148,8 +150,14 @@ it("short-circuits (return OR throw Response) when unauthenticated", async () =>
 Seed prior-middleware state with `vars` (string key or `createVar()` handle).
 Model the downstream route with `next`. Enable `ctx.reverse(...)` by passing
 `routeMap` (and `routeName` for scoped `.name` resolution). Pass an array to run
-several in order. Cookies set via `cookies().set(...)` surface both on
-`ctx.cookies()` and on the merged response `Set-Cookie`.
+several in order. Cookies set via `cookies().set(...)` surface on the result's
+`cookies` and on the merged response `Set-Cookie`.
+
+There is no `handles`/`rendered` option (only `runLoader` has them): middleware
+runs BEFORE the render barrier, so it has no post-barrier handle access in
+production — `ctx.use(Handle)` after `ctx.rendered()` is a loader/handler
+capability, not a middleware one. Read handle data in a loader and test it with
+`runLoader`'s `handles`/`rendered`.
 
 ### runLoader — one loader's data logic
 
@@ -209,16 +217,23 @@ For a server ACTION (or any function) that authenticates off the request cookie
 and calls `getRequestContext()` / `cookies()` but has no loader-context shape,
 `runInRequestContext(fn, opts)` builds a real `RequestContext` (same `opts` as the
 other primitives — `env`, `request`, `vars`, ...) AND enters it, so the function
-runs exactly as in production. Its return value (including a promise) passes
-straight through; the context stays active across awaits.
+runs exactly as in production. `fn` may be async; the context stays active across
+its awaits. It returns `{ result, response, cookies, locationState }` so the
+action's OUTPUT is assertable WITHOUT casting through the `@internal` `ctx.res` /
+`ctx.cookies()`:
+
+- `result` — fn's return value (awaited)
+- `response` — a Response carrying the status, headers, and Set-Cookie the action set
+- `cookies` — the effective `{ name: value }` cookie view after the run
+- `locationState` — the flash the action set via `ctx.setLocationState()` / `redirect({ state })`, resolved to the `{ key: value }` the client reads
 
 ```ts
 import { runInRequestContext } from "@rangojs/router/testing";
-import { authorizeTenantAction } from "../src/actions/authorize"; // reads cookies()
+import { loginAction } from "../src/actions/login"; // reads cookies(), sets a session cookie + flash
 
-it("authorizes when the session cookie is present", async () => {
-  const session = await runInRequestContext(
-    () => authorizeTenantAction(input),
+it("authorizes, sets the session cookie, and sets a flash", async () => {
+  const { result, cookies, locationState } = await runInRequestContext(
+    () => loginAction(input),
     {
       env,
       request: new Request("https://app.test/admin", {
@@ -226,7 +241,9 @@ it("authorizes when the session cookie is present", async () => {
       }),
     },
   );
-  expect(session).toMatchObject({ tenant: "acme" });
+  expect(result).toMatchObject({ tenant: "acme" });
+  expect(cookies.session).toBeDefined(); // the cookie the action set, no @internal cast
+  expect(locationState).toEqual({ flash: { text: "Welcome back" } });
 });
 ```
 
@@ -258,8 +275,12 @@ public API. The sharp edge: a `D1Database` double for **`drizzle-orm/d1`** must
 serve **positional row arrays in schema-column order** for drizzle's `.raw()`
 path (with the driver-level encodings so the decoder round-trips `Date`/JSON) —
 NOT `{ column: value }` objects. A naive object-shaped double returns
-silently-wrong or empty rows. Keep the double at the binding boundary; never mock
-a rango primitive to dodge building it.
+silently-wrong or empty rows. That contract is per-method: drizzle-d1 serves
+SELECTs through `.raw()` (the positional rows above), but writes
+(INSERT/UPDATE/DELETE) go through `.run()`, which returns `{ success, meta }` (no
+rows) and bypasses the row responder entirely — model BOTH paths, a read-only
+`.raw()` double silently no-ops every write. Keep the double at the binding
+boundary; never mock a rango primitive to dodge building it.
 
 ### renderRoute — a client component reading router context
 
@@ -332,6 +353,23 @@ await renderRoute(
 );
 ```
 
+Seed `useHandle` reads with `handles: [[handle, pushedValues[]]]` and
+`useLocationState` with `locationState: [[def, value]]` (both by reference).
+Handle data is accumulated GLOBALLY (not segment-scoped like loaders), so a
+LAYOUT component reading a handle (a `DetailLayout`/`ActionToolbar` reading
+`EditTarget`/`PageEyebrow`) sees the seeded values, not just the leaf route.
+
+Model an `include('/shop', …)` mount with the `mount` option: it wraps the
+segment chain in a MountContext exactly as production, so `useMount()` returns
+the prefix and `useHref`/`useReverse` resolve mount-prefixed URLs — a
+mount-relative subtree (`/c/:slug` mounted under `/shop`) becomes reproducible at
+the unit layer instead of e2e-only:
+
+```tsx
+await renderRoute([{ path: "/c/wine", Component: PDP }], { mount: "/shop" });
+// useMount() -> "/shop"; useReverse({ product: "/c/:slug" })("product", { slug: "wine" }) -> "/shop/c/wine"
+```
+
 FIDELITY CAVEAT — this is the **client tree only**. It does NOT catch
 server/client boundary reference-identity remount bugs, real Flight
 serialization errors, loader execution, middleware, or handler ordering. Those
@@ -354,20 +392,45 @@ OVERRIDES the anchor's implicit `link` role, so `getByRole("link")` finds
 nothing — query the explicit role (`getByRole("tab")`) or fall back to
 `getByText`/`getByTestId` and assert `getAttribute("href")`.
 
-### Type-level test: a reverse misuse should fail to compile
+### Type-level tests — make misuse fail to compile
 
-`reverse`/`href` are compile-time checked (`/typesafety`). Pin that contract
-with `@ts-expect-error` — a _runtime_ test cannot.
+The reverse/href/params/env types are a real contract; a wrong route name,
+missing param, or unknown binding should be a COMPILE error, not a runtime
+surprise. This is the highest signal-per-cost test in the suite, but it runs at
+typecheck time, not in the vitest runner — so it is its own layer, wired into CI
+as a real step (`pnpm run typecheck` / `tsc --noEmit`). Three recipes, smallest
+first:
 
-```ts
-import { useReverse } from "@rangojs/router/client";
-const reverse = useReverse({ product: "/products/:productId" });
-reverse("product", { productId: "2" }); // ok
-// @ts-expect-error missing required param
-reverse("product", {});
-// @ts-expect-error unknown route name
-reverse("nope", {});
-```
+1. Negative assertions with `@ts-expect-error` (a runtime test cannot do this) —
+   the directive ERRORS if the line below ever starts compiling, so a regressed
+   guard fails the typecheck:
+
+   ```ts
+   import { useReverse } from "@rangojs/router/client";
+   const reverse = useReverse({ product: "/products/:productId" });
+   reverse("product", { productId: "2" }); // ok
+   // @ts-expect-error missing required param
+   reverse("product", {});
+   // @ts-expect-error unknown route name
+   reverse("nope", {});
+   ```
+
+2. Positive assertions with vitest's `expectTypeOf` — for pinning an INFERRED
+   type (a loader's return, a parsed search schema, a handle's accumulated
+   shape), in a normal `*.test.ts`:
+
+   ```ts
+   import { expectTypeOf } from "vitest";
+   expectTypeOf(await runLoader(cartLoaderBody)).toEqualTypeOf<{
+     count: number;
+   }>();
+   ```
+
+3. A dedicated `*.test-d.ts` + `tsconfig.types.json` (extends base, includes only
+   those files; run `tsc -p tsconfig.types.json --noEmit`) for a large type
+   suite — the pattern rango itself uses for its augmentation contracts. Recipe 1
+   is enough for most apps; reach for 3 only when inline assertions clutter
+   runtime tests.
 
 ## Integration recipes
 
@@ -380,6 +443,12 @@ middleware** short-circuits with full `next()`/throw/header+cookie fidelity. It
 reuses the router's own `previewMatch`, so middleware collection is the router's,
 not a re-implementation. Hitting an RSC (component) route throws a clear
 directive error.
+
+So `dispatch` IS the way to exercise a RESPONSE route's real route-level
+middleware chain (the guard stack) against the actual registered tree. The gap:
+a COMPONENT route's guard stack cannot run here (dispatch refuses it, and
+`renderToFlightString`/`renderRoute` don't run route middleware) — assert that at
+e2e, or extract the middleware fn and unit-test it with `runMiddleware`.
 
 SETUP CAVEAT (use the preset): `@rangojs/router` resolves to server-only STUBS
 outside the `react-server` condition (urls/createRouter/cookies/getRequestContext

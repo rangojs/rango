@@ -28,8 +28,9 @@
  * useFetchLoader (seeded data), useLocationState (seeded), and useHandle (seeded).
  * Basename-mounted apps: pass the `basename` option so useRouter().basename,
  * <Link> prefixing, and useMount/useHref resolve against the mount prefix
- * (without it they resolve at the root "/"). include() subtree mount prefixes
- * are still not modeled — those stay renderServer/e2e territory.
+ * (without it they resolve at the root "/"). For an include("/shop", ...)
+ * subtree, pass the `mount` option so useMount() returns the mounted prefix
+ * (the segment chain is wrapped in a MountContext exactly as in production).
  */
 
 import type { ReactNode, ComponentType } from "react";
@@ -180,8 +181,12 @@ export interface RenderRouteOptions {
    * renderRoute attaches them to the leaf route segment under the handle's id.
    * Built-in handles (Breadcrumbs/Meta) have stable ids and work directly.
    *
-   * Most handle usage is server-side (`ctx.use(...)`) and is better covered by
-   * `renderToFlightString`/e2e; this seeds the client read path only.
+   * Handle data is accumulated GLOBALLY on the event controller, not scoped per
+   * segment like loaders — so ANY component in the chain reads the seeded values,
+   * a LAYOUT (e.g. a DetailLayout/ActionToolbar reading a handle) just as much as
+   * the leaf route. Most handle usage is server-side (`ctx.use(...)`) and is
+   * better covered by `renderToFlightString`/e2e; this seeds the client read path
+   * only.
    *
    * @example
    * renderRoute([{ path: "/p", Component: BreadcrumbTrail }], {
@@ -209,6 +214,19 @@ export interface RenderRouteOptions {
    * stripped, bare "/" -> undefined). Defaults to undefined (root mount).
    */
   basename?: string;
+  /**
+   * include() mount prefix, to model an `include("/shop", ...)` subtree so a
+   * component (route OR layout in the chain) calling `useMount()` returns the
+   * mounted prefix instead of "/". Wraps the segment chain in a MountContext
+   * exactly as `renderSegments` does in production (a segment whose `mountPath`
+   * is set is wrapped in a MountContextProvider). Normalized like a path prefix
+   * (leading slash forced, trailing stripped, bare "/" -> root). Defaults to "/".
+   *
+   * @example
+   * renderRoute([{ path: "/c/wine", Component: ProductPage }], { mount: "/shop" });
+   * // useMount() inside ProductPage returns "/shop"
+   */
+  mount?: string;
   /**
    * Theme config in the `createRouter({ theme })` shape (resolved internally) to
    * wrap the tree in a ThemeProvider. Defaults to no provider. Note: a component
@@ -292,6 +310,7 @@ function buildSegments(
   routes: RenderRouteSpec[],
   params: Record<string, string>,
   loaderData: Record<string, unknown>,
+  mount?: string,
 ): ResolvedSegment[] {
   const segments: ResolvedSegment[] = [];
   const leafIndex = routes.length - 1;
@@ -319,6 +338,12 @@ function buildSegments(
       params,
       belongsToRoute: true,
     };
+    // Model an include() mount: every component segment in the chain shares the
+    // same prefix, so renderSegments wraps each in a MountContextProvider and
+    // useMount() resolves the mounted prefix (production sets mountPath on every
+    // segment of an included subtree). Must be applied identically at both
+    // buildSegments call sites or segment-structure-assert flags a remount.
+    if (mount) node.mountPath = mount;
     // A leaf-owned layout component wraps the route via its own layout element.
     if (isLeaf && spec.layout) {
       const Layout = spec.layout;
@@ -423,10 +448,14 @@ export async function renderRoute(
 
   // Reuse the real browser primitives so context shape matches production.
   const historyKey = generateHistoryKey(url.href);
+  // Normalize the include() mount prefix once and apply it at BOTH buildSegments
+  // call sites (initial + navigate) so mountPath is consistent across renders.
+  const mount = normalizeBasename(options.mount);
   const initialSegments = buildSegments(
     routes,
     initialMatch.params,
     loaderData,
+    mount,
   );
   const store = createNavigationStore({
     initialLocation: { href: url.href },
@@ -467,7 +496,7 @@ export async function renderRoute(
   const navigate = async (target: string): Promise<void> => {
     const nextUrl = new URL(target, TEST_ORIGIN);
     const match = resolve(nextUrl.pathname);
-    const segments = buildSegments(routes, match.params, loaderData);
+    const segments = buildSegments(routes, match.params, loaderData, mount);
     const metadata = makeMetadata(nextUrl.pathname, segments, match.params);
     const root = await renderSegments(segments);
     eventController.setLocation(nextUrl);

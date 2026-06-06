@@ -12,6 +12,7 @@ import {
   runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
+import { resolveLocationStateEntries } from "../../browser/react/location-state-shared.js";
 import { createReverseFunction } from "../../router/handler-context.js";
 import { normalizeBasename } from "../../router/basename.js";
 import { contextSet, type ContextVar } from "../../context-var.js";
@@ -156,6 +157,51 @@ export function createTestRequestContext<TEnv>(
 }
 
 /**
+ * What a run accumulated on the request context, surfaced as PUBLIC values so a
+ * test never has to cast through the `@internal` `ctx.res` / `ctx.cookies()` to
+ * assert what an action produced.
+ */
+export interface RunInRequestContextResult<T> {
+  /** The value `fn` returned (awaited if it returned a promise). */
+  result: T;
+  /**
+   * A Response carrying the status, headers, and Set-Cookie cookies the run set
+   * on the request context (via `cookies().set()`, `ctx.header()`, etc.).
+   * Assert Set-Cookie with `response.headers.getSetCookie()`. This is the
+   * accumulated side-channel, NOT a Response `fn` itself returned (that is
+   * `result`).
+   */
+  response: Response;
+  /**
+   * The effective cookie view after the run: request cookies merged with
+   * anything the run set or deleted (last-write-wins), as `{ name: value }`.
+   */
+  cookies: Record<string, string>;
+  /**
+   * Location state the run set via `ctx.setLocationState()` / `redirect({ state })`,
+   * resolved to the flat `{ key: value }` shape the client reads off
+   * `history.state` (empty object when none) — so a post-action flash ("Saved!")
+   * is assertable at the unit layer.
+   */
+  locationState: Record<string, unknown>;
+}
+
+/**
+ * Snapshot the observable effects a run left on `ctx` (cookies + location
+ * state). Reads the fields directly off the ctx object, so it works both inside
+ * and outside the AsyncLocalStorage scope (no `getRequestContext()`).
+ */
+export function snapshotRunEffects<TEnv>(ctx: RequestContext<TEnv>): {
+  cookies: Record<string, string>;
+  locationState: Record<string, unknown>;
+} {
+  return {
+    cookies: { ...ctx.cookies() },
+    locationState: resolveLocationStateEntries(ctx._locationState ?? []),
+  };
+}
+
+/**
  * Build a seeded RequestContext (via {@link createTestRequestContext}) and run
  * `fn` inside it, so code under test that calls `getRequestContext()`,
  * `cookies()`, or reads/mutates request headers resolves exactly as in
@@ -163,18 +209,21 @@ export function createTestRequestContext<TEnv>(
  *
  * This is the entry point for the advanced cases the unit wrappers
  * (`runLoader` / `runMiddleware`) do not model — most notably a server ACTION
- * that authenticates off the request cookie: an action has no loader context, so
- * `runLoader` is the wrong shape, yet it still needs a real request context to
- * read the cookie and resolve `getRequestContext()`.
+ * that authenticates off the request cookie or sets a session cookie / flash:
+ * an action has no loader context, so `runLoader` is the wrong shape, yet it
+ * still needs a real request context to read the cookie and resolve
+ * `getRequestContext()`.
  *
- * `fn` receives the same `RequestContext` `createTestRequestContext` returns; its
- * return value is passed straight through — a returned promise keeps the context
- * active across awaits because it runs inside AsyncLocalStorage.
+ * Returns `{ result, response, cookies, locationState }` so the action's OUTPUT
+ * (Set-Cookie, headers, flash) is assertable without casting through the
+ * `@internal` `ctx.res` / `ctx.cookies()`. `fn` may be async — the context
+ * stays active across its awaits (AsyncLocalStorage), and the snapshot is taken
+ * after it settles.
  *
  * @example
  * ```ts
- * const session = await runInRequestContext(
- *   () => authorizeTenantAction(input),
+ * const { result, cookies, response } = await runInRequestContext(
+ *   () => loginAction(input),
  *   {
  *     env,
  *     request: new Request("https://app.test/", {
@@ -182,12 +231,25 @@ export function createTestRequestContext<TEnv>(
  *     }),
  *   },
  * );
+ * expect(cookies.session).toBe("new-token");
+ * expect(response.headers.getSetCookie()).toContainEqual(
+ *   expect.stringContaining("session="),
+ * );
  * ```
  */
-export function runInRequestContext<T, TEnv = unknown>(
-  fn: (ctx: RequestContext<TEnv>) => T,
+export async function runInRequestContext<T, TEnv = unknown>(
+  fn: (ctx: RequestContext<TEnv>) => T | Promise<T>,
   opts: CreateTestContextOptions<TEnv> = {},
-): T {
+): Promise<RunInRequestContextResult<T>> {
   const { ctx } = createTestRequestContext<TEnv>(opts);
-  return runWithRequestContext(ctx, () => fn(ctx));
+  const result = (await runWithRequestContext(ctx, () => fn(ctx))) as T;
+  const { cookies, locationState } = snapshotRunEffects(ctx);
+  // Snapshot the accumulated response from the stub directly (status + headers,
+  // incl. Set-Cookie). The Response constructor copies the Headers, so this is
+  // an immutable snapshot independent of later ctx mutations.
+  const response = new Response(null, {
+    status: ctx.res.status,
+    headers: ctx.res.headers,
+  });
+  return { result, response, cookies, locationState };
 }

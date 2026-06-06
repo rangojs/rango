@@ -3,7 +3,6 @@ import { runMiddleware } from "../run-middleware.js";
 import { cookies } from "../../server/cookie-store.js";
 import { redirect } from "../../route-definition/redirect.js";
 import type { MiddlewareFn } from "../../router/middleware.js";
-import type { RequestContext } from "../../server/request-context.js";
 
 describe("runMiddleware", () => {
   it("prefixes a redirect() Location with the seeded basename", async () => {
@@ -135,16 +134,16 @@ describe("runMiddleware", () => {
     expect(denied.response.status).toBe(401);
   });
 
-  it("makes a cookie set inside middleware observable on ctx and the response", async () => {
+  it("surfaces a cookie set inside middleware on result.cookies and the response", async () => {
     const mw: MiddlewareFn = async (_ctx, next) => {
       cookies().set("session", "abc123", { path: "/" });
       return next();
     };
 
-    const { response, ctx } = await runMiddleware(mw, "/");
+    const { response, cookies: cookieView } = await runMiddleware(mw, "/");
 
-    // Observable on the RequestContext effective cookie view.
-    expect((ctx as RequestContext).cookies().session).toBe("abc123");
+    // Public effective cookie view — no cast through the @internal ctx.cookies().
+    expect(cookieView.session).toBe("abc123");
     // Observable on the merged downstream response Set-Cookie header.
     const setCookie = response.headers.getSetCookie();
     expect(setCookie.some((c) => c.startsWith("session=abc123"))).toBe(true);

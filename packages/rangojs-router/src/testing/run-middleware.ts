@@ -24,6 +24,7 @@ import { createReverseFunction } from "../router/handler-context.js";
 import type { MiddlewareFn } from "../router/middleware-types.js";
 import {
   createTestRequestContext,
+  snapshotRunEffects,
   type CreateTestContextOptions,
   type VarsInit,
 } from "./internal/context.js";
@@ -80,6 +81,13 @@ export interface RunMiddlewareResult<TEnv = any> {
   ctx: RequestContext<TEnv>;
   /** Number of times the terminal handler ran (0 = short-circuited, 1 = passed through). */
   nextCalled: number;
+  /**
+   * The effective cookie view after the chain ran: request cookies merged with
+   * anything the chain set or deleted (last-write-wins), as `{ name: value }`.
+   * The public way to assert a cookie a middleware set, without casting through
+   * the `@internal` `ctx.cookies()`. Set-Cookie headers are also on `response`.
+   */
+  cookies: Record<string, string>;
 }
 
 /**
@@ -166,5 +174,6 @@ export async function runMiddleware<TEnv = any>(
     ),
   );
 
-  return { response, ctx, nextCalled };
+  const { cookies } = snapshotRunEffects(ctx);
+  return { response, ctx, nextCalled, cookies };
 }
